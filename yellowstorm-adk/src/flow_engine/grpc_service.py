@@ -41,6 +41,7 @@ from src.flow_engine.runtime.events import (
 )
 from src.flow_engine.runtime.invoker import stream_graph
 from src.flow_engine.state import ExecutionState
+from src.temporary_child_summary import pop_temporary_child_summary
 
 logger = get_logger(__name__)
 app_settings = get_settings()
@@ -126,6 +127,20 @@ _MESSAGE_TO_DICT_OPTIONS: dict[str, Any] = {
 
 def _request_to_log_payload(request: Any) -> dict[str, Any]:
     return MessageToDict(request, **_MESSAGE_TO_DICT_OPTIONS)
+
+
+def _log_temporary_child_summary(execution_id: str, label: str) -> None:
+    summary = pop_temporary_child_summary(execution_id)
+    if not summary["created_count"]:
+        return
+    logger.info(
+        "[TEMP CHILD] Summary before stream completion",
+        label=label,
+        execution_id=execution_id,
+        created_count=summary["created_count"],
+        execution_modes=summary["execution_modes"],
+        children=summary["children"],
+    )
 
 try:
     from src.grpc_generated import playbook_flow_pb2 as pb
@@ -243,6 +258,7 @@ class PlaybookFlowRuntimeServicer:
                     async for event in emit_events(execution_id, event_stream):
                         if event.event_type in (EVENT_EXECUTION_COMPLETED, EVENT_EXECUTION_FAILED):
                             saw_terminal_event = True
+                            _log_temporary_child_summary(execution_id, "PlaybookFlowRuntime.Run")
                         if event.event_type == EVENT_APPROVAL_REQUESTED:
                             active.waiting_for_approval = True
                             active.pending_interrupt = None
@@ -273,6 +289,7 @@ class PlaybookFlowRuntimeServicer:
 
                 active.terminal = True
                 if should_emit_fallback_completion(saw_terminal_event):
+                    _log_temporary_child_summary(execution_id, "PlaybookFlowRuntime.Run")
                     yield _build_event(EVENT_EXECUTION_COMPLETED, execution_id, "", {}, 0)
                 return
         except asyncio.CancelledError:  # NOSONAR: async generator cleanup, return is intentional
@@ -442,6 +459,7 @@ class PlaybookFlowRuntimeServicer:
                     async for event in emit_events(execution_id, event_stream):
                         if event.event_type in (EVENT_EXECUTION_COMPLETED, EVENT_EXECUTION_FAILED):
                             saw_terminal_event = True
+                            _log_temporary_child_summary(execution_id, "PlaybookFlowRuntime.RunFromCheckpoint")
                         if event.event_type == EVENT_APPROVAL_REQUESTED:
                             active.waiting_for_approval = True
                             active.pending_interrupt = None
@@ -472,6 +490,7 @@ class PlaybookFlowRuntimeServicer:
 
                 active.terminal = True
                 if should_emit_fallback_completion(saw_terminal_event):
+                    _log_temporary_child_summary(execution_id, "PlaybookFlowRuntime.RunFromCheckpoint")
                     yield _build_event(EVENT_EXECUTION_COMPLETED, execution_id, "", {}, 0)
                 return
         except asyncio.CancelledError:  # NOSONAR: async generator cleanup, return is intentional

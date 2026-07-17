@@ -37,11 +37,13 @@ const PAIRING_POLL_MS = 2500;
 interface AgentWhatsAppIntegrationSectionProps {
   agentId: string | null;
   agentName?: string;
+  readOnly?: boolean;
 }
 
 export function AgentWhatsAppIntegrationSection({
   agentId,
   agentName,
+  readOnly = false,
 }: AgentWhatsAppIntegrationSectionProps) {
   const { t } = useModuleTranslation('agent');
 
@@ -60,7 +62,7 @@ export function AgentWhatsAppIntegrationSection({
   const networkErrorLabel = t('createEdit.fields.whatsappNetworkUnreachable');
   const isFailed = isWhatsAppFailed(integration?.status);
   const isPairing = isWhatsAppPairing(integration?.status);
-  const listenForRecoveryEvents = Boolean(agentId && sessionId && (isFailed || isPairing));
+  const listenForRecoveryEvents = Boolean(!readOnly && agentId && sessionId && (isFailed || isPairing));
 
   const refreshIntegration = useCallback(async (id: string) => {
     const res = await getAgentWhatsAppIntegration(id);
@@ -260,6 +262,7 @@ export function AgentWhatsAppIntegrationSection({
   }, [agentId, sessionId, integration?.status, applyPairingPayload, refreshIntegration]);
 
   const startPairing = async (id: string) => {
+    if (readOnly) return;
     const res = await connectAgentWhatsApp(id);
     setSessionId(res.sessionId);
     setEnabled(true);
@@ -273,7 +276,7 @@ export function AgentWhatsAppIntegrationSection({
   };
 
   const handleConnect = async () => {
-    if (!agentId) return;
+    if (readOnly || !agentId) return;
     setBusy(true);
     try {
       await startPairing(agentId);
@@ -287,7 +290,7 @@ export function AgentWhatsAppIntegrationSection({
   };
 
   const handleEnabledChange = async (nextEnabled: boolean) => {
-    if (!agentId) return;
+    if (readOnly || !agentId) return;
     if (!integration) {
       setEnabled(nextEnabled);
       return;
@@ -316,7 +319,7 @@ export function AgentWhatsAppIntegrationSection({
   };
 
   const handleRefreshPairing = async () => {
-    if (!agentId || !sessionId) return;
+    if (readOnly || !agentId || !sessionId) return;
     setBusy(true);
     try {
       const res = await getAgentWhatsAppPairing(agentId, sessionId);
@@ -331,6 +334,7 @@ export function AgentWhatsAppIntegrationSection({
   };
 
   const handleCancelPairing = async () => {
+    if (readOnly) return;
     if (!agentId || !sessionId) {
       setIntegration(null);
       setEnabled(false);
@@ -357,7 +361,7 @@ export function AgentWhatsAppIntegrationSection({
   };
 
   const handleDisconnect = async () => {
-    if (!agentId) return;
+    if (readOnly || !agentId) return;
     setBusy(true);
     try {
       if (sessionId) {
@@ -381,7 +385,7 @@ export function AgentWhatsAppIntegrationSection({
   };
 
   const handleReconnect = async () => {
-    if (!agentId) return;
+    if (readOnly || !agentId) return;
     setBusy(true);
     try {
       if (sessionId && integration?.status !== 'DISCONNECTED') {
@@ -439,7 +443,7 @@ export function AgentWhatsAppIntegrationSection({
         <Switch
           data-testid="whatsapp-enabled-switch"
           checked={enabled}
-          disabled={!agentId || loading || busy || enabledBusy}
+          disabled={readOnly || !agentId || loading || busy || enabledBusy}
           onCheckedChange={(checked) => void handleEnabledChange(checked)}
         />
       </div>
@@ -541,7 +545,7 @@ export function AgentWhatsAppIntegrationSection({
                 type="button"
                 size="sm"
                 onClick={handleConnect}
-                disabled={busy || loading}
+                disabled={readOnly || busy || loading}
                 data-testid="whatsapp-connect"
               >
                 {busy ? (
@@ -562,7 +566,7 @@ export function AgentWhatsAppIntegrationSection({
                   variant="outline"
                   size="sm"
                   onClick={handleRefreshPairing}
-                  disabled={busy || loading}
+                  disabled={readOnly || busy || loading}
                   data-testid="whatsapp-refresh"
                 >
                   {t('createEdit.fields.whatsappRefreshCode')}
@@ -572,7 +576,7 @@ export function AgentWhatsAppIntegrationSection({
                   variant="outline"
                   size="sm"
                   onClick={handleCancelPairing}
-                  disabled={busy || loading}
+                  disabled={readOnly || busy || loading}
                   data-testid="whatsapp-cancel"
                 >
                   {t('createEdit.fields.whatsappCancel')}
@@ -587,7 +591,7 @@ export function AgentWhatsAppIntegrationSection({
                   variant="outline"
                   size="sm"
                   onClick={handleDisconnect}
-                  disabled={busy || loading}
+                  disabled={readOnly || busy || loading}
                   data-testid="whatsapp-disconnect"
                 >
                   {t('createEdit.fields.whatsappDisconnect')}
@@ -596,7 +600,7 @@ export function AgentWhatsAppIntegrationSection({
                   type="button"
                   size="sm"
                   onClick={handleReconnect}
-                  disabled={busy || loading}
+                  disabled={readOnly || busy || loading}
                   data-testid="whatsapp-reconnect"
                 >
                   {busy ? (

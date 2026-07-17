@@ -555,6 +555,22 @@ export class ConversationService {
     }
   }
 
+  /**
+   * Replaces conversation sticky routing agents with the latest @mention set.
+   * Call only when the user tagged agents on the current turn (full replace, not merge).
+   */
+  async replaceTaggedAgentIds(conversationId: string, agentIds: string[]): Promise<void> {
+    if (!agentIds.length) {
+      return;
+    }
+
+    await this.conversationModel.findByIdAndUpdate(conversationId, {
+      $set: {
+        taggedAgentIds: agentIds.map((id) => new Types.ObjectId(id)),
+      },
+    });
+  }
+
   async getGroupMembers(conversationId: string): Promise<any[]> {
     const conversation = await this.conversationModel
       .findById(conversationId)
@@ -907,6 +923,7 @@ export class ConversationService {
       ownerName,
       workspaces: conversation.workspaces?.map((w: any) => toStr(w)) || [],
       selectedSkills: conversation.selectedSkills?.map((s: any) => toStr(s)) || [],
+      taggedAgentIds: conversation.taggedAgentIds?.map((id: any) => toStr(id)) || [],
       systemWorkspaceId: toStr(conversation.systemWorkspaceId),
       lastMessageAt: toISO(conversation.lastMessageAt),
       messageCount: conversation.messageCount,

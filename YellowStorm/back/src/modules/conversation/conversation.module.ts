@@ -27,6 +27,7 @@ import { StreamGatewayService } from './services/stream-gateway.service';
 import { ShareService } from './services/share.service';
 import { ReportService } from './services/report.service';
 import { ComposerSuggestionsService } from './services/composer-suggestions.service';
+import { ChoiceInteractionService } from './services/choice-interaction.service';
 
 // Guards
 import { ConversationOwnerGuard } from './guards/conversation-owner.guard';
@@ -63,7 +64,7 @@ import conversationConfig from '../../config/conversation.config';
     ModelsModule,
     LoggerModule,
     UsageModule,
-    AgentModule,
+    forwardRef(() => AgentModule),
     TeamModule,
     AgentTypeModule,
     SkillModule,
@@ -86,6 +87,7 @@ import conversationConfig from '../../config/conversation.config';
     ShareService,
     ReportService,
     ComposerSuggestionsService,
+    ChoiceInteractionService,
     ConversationOwnerGuard,
     SseAuthGuard,
   ],

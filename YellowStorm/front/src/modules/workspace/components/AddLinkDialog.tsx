@@ -9,6 +9,9 @@ import {
 } from '@/components/ui/dialog';
 import { useWorkspaceStore } from '../store';
 import { useBrowserSession, normalizeUrl } from '../hooks/useBrowserSession';
+import { readAutoIndexationValue } from '../hooks/useAutoIndexation';
+import { readDeepSearchIndexationValue } from '../hooks/useDeepSearchIndexation';
+import { checkUrls } from '../api';
 import { BrowserSessionViewer } from './BrowserSessionViewer';
 import { CollectionSidebar } from './CollectionSidebar';
 
@@ -37,6 +40,7 @@ export function AddLinkDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [serverIndexedUrls, setServerIndexedUrls] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (open) {
@@ -66,10 +70,22 @@ export function AddLinkDialog({
   // not a flat array — flatten it defensively (tests may pass a plain array/[]).
   const indexedUrls = useMemo(() => {
     const all = documentsCache instanceof Map ? Array.from(documentsCache.values()).flat() : [];
-    return new Set(
-      all.filter((d) => d?.sourceUrl).map((d) => normalizeUrl(d.sourceUrl as string)),
-    );
-  }, [documentsCache]);
+    return new Set([
+      ...all.filter((d) => d?.sourceUrl).map((d) => normalizeUrl(d.sourceUrl as string)),
+      ...serverIndexedUrls,
+    ]);
+  }, [documentsCache, serverIndexedUrls]);
+
+  useEffect(() => {
+    const urls = session.pages.map((page) => page.url);
+    if (urls.length === 0) return;
+    const timer = window.setTimeout(() => {
+      void checkUrls(workspaceId, urls).then((response) => {
+        setServerIndexedUrls(new Set(response.results.filter((result) => result.exists).map((result) => normalizeUrl(result.normalizedUrl))));
+      }).catch(() => undefined);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [workspaceId, session.pages]);
 
   const handleStart = () => {
     setError(null);
@@ -94,7 +110,7 @@ export function AddLinkDialog({
     if (busy || chosen.length === 0) return;
     setBusy(true);
     try {
-      await addPageLinks(workspaceId, chosen);
+      await addPageLinks(workspaceId, chosen, { deepSearch: readDeepSearchIndexationValue(), autoIndex: readAutoIndexationValue() });
       toast.success(`${chosen.length} page(s) ajoutée(s) · conversion en cours`);
       onOpenChange(false);
     } catch {

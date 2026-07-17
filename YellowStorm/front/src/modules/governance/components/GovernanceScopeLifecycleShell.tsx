@@ -30,11 +30,9 @@ export function GovernanceScopeLifecycleShell({ programId, initialTab = 'overvie
   }, [selectedScopeId]);
 
   return (
-    <div className='grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]'>
-      <div className='order-2 xl:order-1'>
-        <GovernanceReadinessPanel overview={overview} onNavigateTab={setActiveTab} />
-      </div>
-      <div className='order-1 grid min-w-0 gap-4 xl:order-2'>
+    <div className='grid min-w-0 items-start gap-4 lg:grid-cols-[280px_minmax(0,1fr)]'>
+      <GovernanceReadinessPanel overview={overview} onNavigateTab={setActiveTab} />
+      <div className='grid min-w-0 gap-4'>
         <GovernanceScopeWorkspace programId={programId} scopeId={selectedScopeId} overview={overview} memberships={memberships} metrics={metrics} activeTab={activeTab} onTabChange={setActiveTab} />
       </div>
     </div>

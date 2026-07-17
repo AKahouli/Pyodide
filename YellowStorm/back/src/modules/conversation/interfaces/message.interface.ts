@@ -16,7 +16,8 @@ export type ComponentType =
   | 'artifact'
   | 'citation'
   | 'toolInfo'
-  | 'chainOfThought';
+  | 'chainOfThought'
+  | 'choice';
 
 export type FeedbackType = 'like' | 'dislike';
 
@@ -24,6 +25,17 @@ export interface MessageComponent {
   id: string;
   type: ComponentType;
   data: Record<string, unknown>;
+}
+
+export interface GuardrailDecisionMetadata {
+  phase: 'input' | 'output' | 'tool_call';
+  source: 'agent' | 'admin_forced' | string;
+  decision: 'allow' | 'sanitize' | 'block';
+  confidence: number;
+  attackType: string;
+  target: string;
+  reason?: string;
+  safeRewrite?: string | null;
 }
 
 export interface CreateUserMessageData {
@@ -37,6 +49,7 @@ export interface CreateUserMessageData {
   memberIds?: string[];
   requestId?: string;
   parentMessageId?: string;
+  interaction?: Record<string, unknown>;
 }
 
 export interface CreateAIPlaceholderData {
@@ -54,6 +67,8 @@ export interface CompleteAIMessageData {
   durationMs?: number;
   timeToFirstChunk?: number;
   timeToFirstToken?: number;
+  guardrailDecision?: GuardrailDecisionMetadata;
+  interaction?: Record<string, unknown>;
 }
 
 export interface MessageQueryParams {
@@ -98,6 +113,8 @@ export interface MessageResponse {
   requestId?: string;
   agentIds?: string[];
   memberIds?: string[];
+  guardrailDecision?: GuardrailDecisionMetadata;
+  interaction?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }

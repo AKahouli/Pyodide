@@ -67,14 +67,14 @@ export class EvaluationService {
      */
     async launchEvaluation(
         userId: string,
+        permissions: string[],
         agentId: string,
         datasetId: string,
         numRuns: number,
         mode: string,
         scenarioName: string,
     ): Promise<Evaluation> {
-        const agent = await this.agentService.findUserAgentById(userId, agentId);
-        if (!agent) throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
+        await this.assertCanManageAgent(userId, permissions, agentId);
 
         await this.findDatasetById(datasetId);
 
@@ -98,6 +98,7 @@ export class EvaluationService {
      */
     async runSingleEvaluation(
         userId: string,
+        permissions: string[],
         agentId: string,
         datasetId: string,
         mode: string,
@@ -108,8 +109,11 @@ export class EvaluationService {
         judgeModel?: string,
         threshold?: number,
     ): Promise<{ results: any[]; runIndex: number }> {
-        const agent = await this.agentService.findUserAgentById(userId, agentId);
-        if (!agent) throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
+        const agent = await this.assertCanManageAgent(userId, permissions, agentId);
+        const evaluation = await this.findEvaluationById(evaluationId);
+        if (evaluation.agentId.toString() !== agentId) {
+            throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
+        }
 
         const agentConfig = await this.agentService.buildAgentsForStream(userId, undefined, [agentId]);
         const dataset = await this.findDatasetById(datasetId);
@@ -261,9 +265,10 @@ export class EvaluationService {
     /**
      * Marks an evaluation as completed or failed.
      */
-    async finalizeEvaluation(userId: string, evaluationId: string, status: 'completed' | 'failed', error?: string): Promise<Evaluation> {
+    async finalizeEvaluation(userId: string, permissions: string[], evaluationId: string, status: 'completed' | 'failed', error?: string): Promise<Evaluation> {
         const evaluation = await this.evaluationModel.findById(evaluationId).exec();
         if (!evaluation) throw new NotFoundException(ErrorCode.NOT_FOUND);
+        await this.assertCanManageAgent(userId, permissions, evaluation.agentId.toString());
 
         const update: any = { status };
         if (error) update.error = error;
@@ -273,7 +278,8 @@ export class EvaluationService {
         return updated;
     }
 
-    async findEvaluationsByAgent(agentId: string): Promise<Evaluation[]> {
+    async findEvaluationsByAgent(userId: string, agentId: string): Promise<Evaluation[]> {
+        await this.agentService.findUserAgentById(userId, agentId);
         return this.evaluationModel.find({ agentId: new Types.ObjectId(agentId) }).sort({ createdAt: -1 }).exec();
     }
 
@@ -283,14 +289,39 @@ export class EvaluationService {
         return evaluation;
     }
 
-    async deleteEvaluation(userId: string, id: string): Promise<void> {
+    async findEvaluationByIdForUser(userId: string, id: string): Promise<Evaluation> {
+        const evaluation = await this.findEvaluationById(id);
+        await this.agentService.findUserAgentById(userId, evaluation.agentId.toString());
+        return evaluation;
+    }
+
+    async deleteEvaluation(userId: string, permissions: string[], id: string): Promise<void> {
         const evaluation = await this.evaluationModel.findById(id).exec();
         if (!evaluation) throw new NotFoundException(ErrorCode.NOT_FOUND);
-        if (evaluation.createdBy && evaluation.createdBy.toString() !== userId) {
-            const agent = await this.agentService.findUserAgentById(userId, evaluation.agentId.toString());
-            if (!agent) throw new ForbiddenException(ErrorCode.FORBIDDEN);
-        }
+        await this.assertCanManageAgent(userId, permissions, evaluation.agentId.toString());
         await this.evaluationModel.findByIdAndDelete(id).exec();
+    }
+
+    private async assertCanManageAgent(userId: string, permissions: string[], agentId: string) {
+        const agent = await this.agentService.findUserAgentById(userId, agentId);
+        if (agent.isDefault) {
+            if (!this.hasAgentManagerPermission(permissions)) {
+                throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY);
+            }
+            return agent;
+        }
+
+        const canWrite = await this.agentService.canWriteAgent(userId, agentId);
+        if (!canWrite) {
+            throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_SHARE_FORBIDDEN);
+        }
+        return agent;
+    }
+
+    private hasAgentManagerPermission(permissions: string[]): boolean {
+        return permissions.some(
+            (permission) => permission === '*' || permission === 'agents.*' || permission === 'agents.update',
+        );
     }
 
     private extractScore(val: any): number {

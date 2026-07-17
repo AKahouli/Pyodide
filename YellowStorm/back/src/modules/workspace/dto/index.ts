@@ -17,3 +17,4 @@ export * from './workspace-share-response.dto';
 export * from './check-workspace-access.dto';
 export * from './add-link.dto';
 export * from './add-links.dto';
+export * from './check-urls.dto';

@@ -92,6 +92,7 @@ export function AgentCardRich({
 
   // Edit: own agents, admins on default agents, or write-shared recipients.
   const canEdit = isOwned || (isDefault && hasPermission('agents.update')) || canWriteShared;
+  const canManageA2A = isOwned || (isDefault && hasPermission('agents.update'));
   // Delete: own agents or admins on default agents — never shared recipients.
   const canDelete = isOwned || (isDefault && hasPermission('agents.delete'));
   const isReadOnly = (isDefault && !canEdit) || (isShared && !canWriteShared);
@@ -144,7 +145,7 @@ export function AgentCardRich({
           <Pencil className="h-3.5 w-3.5" />
         </Button>
       )}
-      {isReadOnly && !isDefault && onView && (
+      {isReadOnly && onView && (
         <Button
           variant="ghost"
           size="icon"
@@ -186,7 +187,7 @@ export function AgentCardRich({
           <Share2 className="h-3.5 w-3.5" />
         </Button>
       )}
-      {isOwned && onPublishA2A && (
+      {canManageA2A && onPublishA2A && (
         <Button
           variant="ghost"
           size="icon"
@@ -209,7 +210,7 @@ export function AgentCardRich({
           )}
         </Button>
       )}
-      {isOwned && agent.a2aPublished && onRevokeA2A && (
+      {canManageA2A && agent.a2aPublished && onRevokeA2A && (
         <Button
           variant="ghost"
           size="icon"

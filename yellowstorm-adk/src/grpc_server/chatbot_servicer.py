@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import grpc
 import asyncio
-import uuid
 import json
+import uuid
 import base64
 import os
 import mimetypes
@@ -36,6 +36,7 @@ except ImportError:
 from src.smart_rag.core import AgentTeamService
 from src.evaluation.semantic_match import evaluate_semantic_match
 from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
+from src.temporary_child_summary import pop_temporary_child_summary
 from src.flow_engine.advisor.playbook_node_advisor import advise_playbook_node
 from src.flow_engine.advisor.execution_advisor_service import evaluate_task_execution
 
@@ -231,6 +232,20 @@ class ChatbotServicer(
         """Convert RunAgentTeam protobuf request to a JSON-safe dict for logging."""
         return _message_to_dict(request)
 
+    @staticmethod
+    def _log_temporary_child_summary(session_id: str, label: str) -> None:
+        summary = pop_temporary_child_summary(session_id)
+        if not summary["created_count"]:
+            return
+        logger.info(
+            "[TEMP CHILD] Summary before stream completion",
+            label=label,
+            session_id=session_id,
+            created_count=summary["created_count"],
+            execution_modes=summary["execution_modes"],
+            children=summary["children"],
+        )
+
     async def RunAgentTeam(
         self,
         request: "chatbot_pb2.RunAgentTeamRequest",
@@ -406,6 +421,10 @@ class ChatbotServicer(
                 yield chunk_pb
 
             # Explicitly return after breaking to ensure stream ends
+            self._log_temporary_child_summary(
+                request.conversation_id,
+                "RunAgentTeam",
+            )
             logger.info(
                 f"[gRPC] RunAgentTeam stream completed successfully - "
                 f"conversation_id: {request.conversation_id}, user_id: {request.user_context.user_id}"
@@ -614,6 +633,10 @@ class ChatbotServicer(
 
                 yield self._dict_to_stream_chunk(chunk_dict)
 
+            self._log_temporary_child_summary(
+                request.conversation_id,
+                "RunSingleAgent",
+            )
             logger.info(
                 f"[gRPC] RunSingleAgent stream completed successfully - "
                 f"conversation_id: {request.conversation_id}, user_id: {request.user_context.user_id}"
@@ -738,6 +761,31 @@ class ChatbotServicer(
 
         raw_agent_params = (
             dict(pb_agent.agent_params.params) if pb_agent.HasField("agent_params") else {}
+        )
+        has_connector_bindings = bool(raw_agent_params.get("connector_bindings_json"))
+        enable_temporary_child_agents = raw_agent_params.get(
+            "enable_temporary_child_agents"
+        )
+        temporary_child_agents_enabled = (
+            str(enable_temporary_child_agents or "false").lower() == "true"
+        )
+        logger.info(
+            "[gRPC IN] Agent params received agent_id=%s agent_name=%s "
+            "has_connector_bindings_json=%s enable_temporary_child_agents=%s "
+            "max_temporary_child_agents=%s enabled=%s agent_param_keys=%s",
+            pb_agent.id if pb_agent.id else "no_id",
+            pb_agent.name,
+            has_connector_bindings,
+            enable_temporary_child_agents,
+            raw_agent_params.get("max_temporary_child_agents"),
+            temporary_child_agents_enabled,
+            sorted(raw_agent_params.keys()),
+        )
+        logger.info(
+            "[TEMP CHILD] gRPC config agent=%s enabled=%s max_temporary_child_agents=%s",
+            pb_agent.id if pb_agent.id else "no_id",
+            temporary_child_agents_enabled,
+            raw_agent_params.get("max_temporary_child_agents"),
         )
         return AgentSuggestion(
             id=pb_agent.id if pb_agent.id else "no_id",
@@ -1622,6 +1670,7 @@ class ChatbotServicer(
                 metadata=chatbot_pb2.Metadata(
                     message_id=metadata.get("message_id", ""),
                     agent_id=metadata.get("agent_id", ""),
+                    guardrail_decision_json=self._guardrail_decision_json(metadata),
                 ),
                 usage=chatbot_pb2.Usage(
                     input_tokens=usage_data.get("input_tokens", 0),
@@ -1654,6 +1703,7 @@ class ChatbotServicer(
                 metadata=chatbot_pb2.Metadata(
                     message_id=metadata.get("message_id", ""),
                     agent_id=metadata.get("agent_id", ""),
+                    guardrail_decision_json=self._guardrail_decision_json(metadata),
                 ),
             )
         else:
@@ -1675,8 +1725,20 @@ class ChatbotServicer(
                 metadata=chatbot_pb2.Metadata(
                     message_id=chunk_dict.get("message_id", ""),
                     agent_id=chunk_dict.get("agent_id", ""),
+                    guardrail_decision_json=self._guardrail_decision_json(chunk_dict),
                 ),
             )
+
+    @staticmethod
+    def _guardrail_decision_json(payload: Dict[str, Any]) -> str:
+        decision = payload.get("guardrail_decision")
+        if not decision:
+            return ""
+        try:
+            return json.dumps(decision, ensure_ascii=False, default=str)
+        except (TypeError, ValueError) as exc:
+            logger.warning(f"[GUARDRAIL] Failed to serialize guardrail decision metadata: {exc}")
+            return ""
 
     def _build_component(
         self, component_id: str, component_type: str, component_data: Dict[str, Any]
@@ -1764,6 +1826,50 @@ class ChatbotServicer(
                 nameKey=component_data.get("nameKey", ""),
                 zAxisKey=component_data.get("zAxisKey", ""),
             )
+        elif component_type == "choice":
+            options = [
+                chatbot_pb2.ChoiceOption(
+                    id=item.get("id", ""),
+                    label=item.get("label", ""),
+                    submit_text=item.get("submitText", ""),
+                    value=item.get("value", ""),
+                    description=item.get("description", ""),
+                    disabled=bool(item.get("disabled", False)),
+                    url=item.get("url", ""),
+                )
+                for item in component_data.get("options", [])
+                if isinstance(item, dict)
+            ]
+            choice = chatbot_pb2.ChoiceComponent(
+                schema_version=component_data.get("schemaVersion", 1),
+                question_id=component_data.get("questionId", ""),
+                prompt=component_data.get("prompt", ""),
+                description=component_data.get("description", ""),
+                presentation=component_data.get("presentation", "quick_replies"),
+                selection_mode=component_data.get("selectionMode", "single"),
+                submit_behavior=component_data.get("submitBehavior", "immediate"),
+                options=options,
+                dismissible=bool(component_data.get("dismissible", False)),
+                fallback_text=component_data.get("fallbackText", ""),
+                status=component_data.get("status", "ready"),
+            )
+            other = component_data.get("otherOption")
+            if isinstance(other, dict):
+                choice.other_option.CopyFrom(chatbot_pb2.ChoiceOtherOption(
+                    enabled=bool(other.get("enabled", False)), label=other.get("label", ""),
+                    placeholder=other.get("placeholder", ""), max_length=other.get("maxLength", 500),
+                ))
+            labels = component_data.get("labels")
+            if isinstance(labels, dict):
+                choice.labels.CopyFrom(chatbot_pb2.ChoiceLabels(
+                    submit=labels.get("submit", ""), dismiss=labels.get("dismiss", ""), other=labels.get("other", ""),
+                ))
+            progress = component_data.get("progress")
+            if isinstance(progress, dict):
+                choice.progress.CopyFrom(chatbot_pb2.ChoiceProgress(
+                    current=progress.get("current", 0), total=progress.get("total", 0), label=progress.get("label", ""),
+                ))
+            component_kwargs["choice"] = choice
         elif component_type == "task":
             # Build TaskComponent with items array
             items = []

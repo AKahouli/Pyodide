@@ -12,6 +12,8 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { MultiSelect } from '@/components/ui/multi-select';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Select,
   SelectContent,
@@ -163,7 +165,7 @@ function buildRuntimeAuthConfig(form: ConnectorFormValues): Record<string, unkno
   return {
     strategy: 'http_header_bearer',
     headerName: form.runtimeHeaderName.trim() || 'Authorization',
-    headerPrefix: form.runtimeHeaderPrefix || 'Bearer ',
+    headerPrefix: form.runtimeHeaderPrefix,
   };
 }
 
@@ -212,9 +214,8 @@ export function CreateEditConnectorDialog({
 }) {
   const { t } = useModuleTranslation('admin');
   const [form, setForm] = useState<ConnectorFormValues>({ ...defaultConnectorFormValues });
+  const [selectedActionKey, setSelectedActionKey] = useState<string | null>(null);
   const [inspecting, setInspecting] = useState(false);
-  const [inspectError, setInspectError] = useState<string | null>(null);
-  const [inspectTools, setInspectTools] = useState<McpToolDefinition[]>([]);
   const [availableSkills, setAvailableSkills] = useState<SkillResponse[]>([]);
   const [availableCategories, setAvailableCategories] = useState<ConnectorCategoryResponse[]>([]);
   const [showCategoriesDialog, setShowCategoriesDialog] = useState(false);
@@ -247,8 +248,7 @@ export function CreateEditConnectorDialog({
 
   useEffect(() => {
     if (open) {
-      setInspectError(null);
-      setInspectTools([]);
+      setSelectedActionKey(null);
       getSkills({ isActive: true, limit: 1000 })
         .then((result) => setAvailableSkills(result.data || []))
         .catch(() => setAvailableSkills([]));
@@ -320,6 +320,13 @@ export function CreateEditConnectorDialog({
     }
   }, [form.authSourceType, form.connectedAppKey, open, refreshConnectionStatus]);
 
+  useEffect(() => {
+    if (!open || form.actions?.some((action) => action.key === selectedActionKey)) {
+      return;
+    }
+    setSelectedActionKey(form.actions?.[0]?.key ?? null);
+  }, [form.actions, open, selectedActionKey]);
+
   const handleSubmit = () => {
     if (!form.slug.trim() || !form.name.trim()) {
         toast.error(t('connectors.form.errors.slugNameRequired'));
@@ -383,8 +390,6 @@ export function CreateEditConnectorDialog({
     }
 
     setInspecting(true);
-    setInspectError(null);
-    setInspectTools([]);
     try {
       const runtimeAuthConfig = buildRuntimeAuthConfig(form);
       const result = await inspectMcp(
@@ -393,23 +398,26 @@ export function CreateEditConnectorDialog({
         mcpServerConfig,
         form.authSourceType === 'connected_app' ? form.connectedAppKey || undefined : undefined,
         runtimeAuthConfig,
+        connector?.id,
       );
       if (result.error) {
-        setInspectError(result.error);
+        toast.error(t('connectors.form.inspect.title'), { description: result.error });
         return;
       }
-      setInspectTools(result.tools ?? []);
       const actions = mapInspectToolsToActions(result.tools ?? []);
       setForm((current) => ({
         ...current,
         actions,
         actionsJson: JSON.stringify(actions, null, 2),
       }));
+      setSelectedActionKey(actions[0]?.key ?? null);
       toast.success(t('connectors.form.inspect.loadedTitle'), {
         description: t('connectors.form.inspect.loadedDescription', { count: actions.length }),
       });
     } catch (err) {
-      setInspectError(err instanceof Error ? err.message : 'Inspection failed');
+      toast.error(t('connectors.form.inspect.title'), {
+        description: err instanceof Error ? err.message : 'Inspection failed',
+      });
     } finally {
       setInspecting(false);
     }
@@ -562,13 +570,22 @@ export function CreateEditConnectorDialog({
     }));
   };
 
+  const connectorActions = form.actions ?? [];
+  const selectedAction = connectorActions.find((action) => action.key === selectedActionKey) ?? connectorActions[0];
+  const selectedActionKeyForDisplay = selectedAction?.key ?? null;
+  const safetyLabel = (safety: string) => {
+    if (safety === 'write') return t('connectors.form.actions.safety.write');
+    if (safety === 'delete') return t('connectors.form.actions.safety.delete');
+    return t('connectors.form.actions.safety.read');
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='max-w-2xl max-h-[85vh] overflow-y-auto'>
+      <DialogContent className='w-[calc(100vw-2rem)] max-w-2xl max-h-[85vh] overflow-y-auto'>
         <DialogHeader>
           <DialogTitle>{connector ? t('connectors.form.dialog.editTitle') : t('connectors.form.dialog.addTitle')}</DialogTitle>
         </DialogHeader>
-        <div className='grid gap-4 py-4'>
+        <div className='grid min-w-0 gap-4 py-4'>
           <div className='grid grid-cols-2 gap-4'>
             <div>
               <Label>{t('connectors.form.fields.slug.label')}</Label>
@@ -693,6 +710,45 @@ export function CreateEditConnectorDialog({
               </div>
             </div>
 
+            {form.authSourceType === 'connected_app' && form.connectedAppKey && (() => {
+              const app = getCurrentConnectedApp();
+              const isConnected = isCurrentAppConnected();
+              if (!app) return null;
+
+              return (
+                <div className='flex flex-wrap items-center gap-3 rounded-md bg-muted/40 p-3'>
+                  <span className={`text-sm font-medium ${isConnected ? 'text-green-600' : 'text-amber-600'}`}>
+                    {isConnected
+                      ? t('connectors.form.auth.connected', { app: app.displayName })
+                      : t('connectors.form.auth.notConnected', { app: app.displayName })}
+                  </span>
+                  {!isConnected ? (
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      onClick={() => handleOAuth(app.appKey, app.displayName)}
+                      disabled={oauthConnecting}
+                    >
+                      {oauthConnecting ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : null}
+                      {t('connectors.form.auth.connectAction', { app: app.displayName })}
+                    </Button>
+                  ) : (
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      onClick={() => handleDisconnect(app.appKey, app.displayName)}
+                      disabled={oauthConnecting}
+                    >
+                      {oauthConnecting ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <X className='mr-2 h-4 w-4' />}
+                      {t('connectors.form.auth.disconnectAction', { app: app.displayName })}
+                    </Button>
+                  )}
+                </div>
+              );
+            })()}
+
             {form.authSourceType !== 'none' && (
               <div className='grid gap-4'>
                 <div>
@@ -718,6 +774,9 @@ export function CreateEditConnectorDialog({
                     <div>
                       <Label>{t('connectors.form.auth.headerPrefixLabel')}</Label>
                       <Input value={form.runtimeHeaderPrefix} onChange={(e) => setForm({ ...form, runtimeHeaderPrefix: e.target.value })} placeholder={t('connectors.form.auth.headerPrefixPlaceholder')} />
+                      <p className='mt-1 text-xs text-muted-foreground'>
+                        {t('connectors.form.auth.headerPrefixHelper')}
+                      </p>
                     </div>
                   </div>
                 )}
@@ -796,6 +855,17 @@ export function CreateEditConnectorDialog({
                 value={form.mcpServerUrl}
                 onChange={(e) => setForm({ ...form, mcpServerUrl: e.target.value })}
               />
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                onClick={handleInspect}
+                disabled={inspecting || (form.authSourceType === 'connected_app' && form.connectedAppKey !== '' && !isCurrentAppConnected())}
+                className='mt-2'
+              >
+                {inspecting ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <TestTube2 className='mr-2 h-4 w-4' />}
+                {t('connectors.form.inspect.action')}
+              </Button>
             </div>
           </div>
 
@@ -861,124 +931,73 @@ export function CreateEditConnectorDialog({
             )}
           </div>
 
-          <div className='rounded-lg border bg-muted/20 p-4 space-y-4'>
-            <div className='space-y-2'>
-              <div className='flex items-center justify-between'>
-                <h4 className='font-semibold flex items-center gap-2'>
-                  <TestTube2 className='h-4 w-4' />
-                  {t('connectors.form.inspect.title')}
-                </h4>
-                {form.authSourceType === 'connected_app' && form.connectedAppKey && (() => {
-                  const app = getCurrentConnectedApp();
-                  const isConnected = isCurrentAppConnected();
-                  return app ? (
-                    <div className='flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium'>
-                      {isConnected ? (
-                        <>
-                          <div className='w-2 h-2 rounded-full bg-green-500 animate-pulse' />
-                          <span className='text-green-600'>{t('connectors.form.auth.connected', { app: app.displayName })}</span>
-                        </>
-                      ) : (
-                        <>
-                          <div className='w-2 h-2 rounded-full bg-amber-500' />
-                          <span className='text-amber-600'>{t('connectors.form.auth.notConnected', { app: app.displayName })}</span>
-                        </>
-                      )}
-                    </div>
-                  ) : null;
-                })()}
+          <div className='min-w-0 space-y-3'>
+            <div>
+              <Label>{t('connectors.form.actions.title')}</Label>
+              <p className='text-sm text-muted-foreground'>{t('connectors.form.actions.description')}</p>
+            </div>
+            {connectorActions.length === 0 ? (
+              <div className='rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground'>
+                {t('connectors.form.actions.empty')}
               </div>
-              <p className='text-sm text-muted-foreground'>
-                {t('connectors.form.inspect.description')}
-              </p>
-            </div>
-
-            <div className='flex flex-wrap items-center gap-3'>
-              {form.authSourceType === 'connected_app' && form.connectedAppKey && (() => {
-                const app = getCurrentConnectedApp();
-                const isConnected = isCurrentAppConnected();
-                if (!app) return null;
-
-                return (
-                  <>
-                    {!isConnected ? (
-                      <Button
-                        type='button'
-                        variant='outline'
-                        onClick={() => handleOAuth(app.appKey, app.displayName)}
-                        disabled={oauthConnecting}
-                        className='flex items-center gap-2'
-                      >
-                        {oauthConnecting ? <Loader2 className='h-4 w-4 animate-spin' /> : null}
-                        {t('connectors.form.auth.connectAction', { app: app.displayName })}
-                      </Button>
-                    ) : (
-                      <>
-                        <Button
-                          type='button'
-                          variant='default'
-                          className='flex items-center gap-2 bg-green-600 hover:bg-green-700'
-                          disabled
-                        >
-                          {t('connectors.form.auth.connectedAction', { app: app.displayName })}
-                        </Button>
-                        <Button
-                          type='button'
-                          variant='outline'
-                          onClick={() => handleDisconnect(app.appKey, app.displayName)}
-                          disabled={oauthConnecting}
-                          className='flex items-center gap-2'
-                        >
-                          {oauthConnecting ? <Loader2 className='h-4 w-4 animate-spin' /> : <X className='h-4 w-4' />}
-                          {t('connectors.form.auth.disconnectAction', { app: app.displayName })}
-                        </Button>
-                      </>
-                    )}
-                  </>
-                );
-              })()}
-              <Button
-                type='button'
-                variant='outline'
-                onClick={handleInspect}
-                disabled={inspecting || (form.authSourceType === 'connected_app' && form.connectedAppKey !== '' && !isCurrentAppConnected())}
-                className='flex items-center gap-2'
-              >
-                {inspecting ? <Loader2 className='h-4 w-4 animate-spin' /> : <TestTube2 className='h-4 w-4' />}
-                {t('connectors.form.inspect.action')}
-              </Button>
-            </div>
-          </div>
-
-          {(inspectError || inspectTools.length > 0) && (
-            <div className='rounded-md border p-3 space-y-2'>
-              {inspectError ? (
-                <p className='text-sm text-destructive'>{inspectError}</p>
-              ) : (
-                <div className='space-y-2'>
-                  <p className='text-sm font-medium'>{t('connectors.form.inspect.availableTools')}</p>
-                  <div className='space-y-1'>
-                    {inspectTools.map((tool) => (
-                      <div key={tool.name} className='rounded border px-2 py-1 text-xs'>
-                        <div className='font-medium'>{tool.name}</div>
-                        {tool.description ? <div className='text-muted-foreground'>{tool.description}</div> : null}
+            ) : (
+              <>
+                <ScrollArea className='h-56 rounded-md border'>
+                  <Table className='table-fixed'>
+                    <TableHeader className='sticky top-0 bg-background'>
+                      <TableRow>
+                        <TableHead className='w-1/3'>{t('connectors.form.actions.columns.tool')}</TableHead>
+                        <TableHead>{t('connectors.form.actions.columns.description')}</TableHead>
+                        <TableHead className='w-20'>{t('connectors.form.actions.columns.safety')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {connectorActions.map((action) => (
+                        <TableRow key={action.key} data-state={selectedActionKeyForDisplay === action.key ? 'selected' : undefined}>
+                          <TableCell className='break-all font-medium'>
+                            <Button type='button' variant='link' className='h-auto max-w-full break-all p-0 text-left font-medium' onClick={() => setSelectedActionKey(action.key)}>
+                              {action.label || action.key}
+                            </Button>
+                            {action.label !== action.key ? <p className='font-mono text-xs text-muted-foreground'>{action.key}</p> : null}
+                          </TableCell>
+                          <TableCell className='max-w-0 truncate text-muted-foreground'>{action.description || t('connectors.form.actions.noDescription')}</TableCell>
+                          <TableCell>{safetyLabel(action.safety)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </ScrollArea>
+                {selectedAction ? (
+                    <div className='space-y-3 rounded-md border bg-muted/20 p-3'>
+                      <div>
+                        <p className='font-medium'>{selectedAction.label || selectedAction.key}</p>
+                        <p className='font-mono text-xs text-muted-foreground'>{selectedAction.key}</p>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div>
-            <Label>{t('connectors.form.fields.actions.label')}</Label>
-            <Textarea
-              placeholder={t('connectors.form.fields.actions.placeholder')}
-              value={form.actionsJson}
-              onChange={(e) => setForm({ ...form, actionsJson: e.target.value, actions: [] })}
-              rows={6}
-              className='font-mono text-xs'
-            />
+                      <div>
+                        <p className='text-xs font-medium text-muted-foreground'>{t('connectors.form.actions.detail.description')}</p>
+                        <p className='mt-1 whitespace-pre-wrap text-sm'>{selectedAction.description || t('connectors.form.actions.noDescription')}</p>
+                      </div>
+                      <div className='grid grid-cols-3 gap-3 text-sm'>
+                        <div><p className='text-xs text-muted-foreground'>{t('connectors.form.actions.detail.safety')}</p><p>{safetyLabel(selectedAction.safety)}</p></div>
+                        <div><p className='text-xs text-muted-foreground'>{t('connectors.form.actions.detail.batch')}</p><p>{selectedAction.supportsBatch ? t('connectors.form.actions.yes') : t('connectors.form.actions.no')}</p></div>
+                        <div><p className='text-xs text-muted-foreground'>{t('connectors.form.actions.detail.iteration')}</p><p>{selectedAction.supportsIteration ? t('connectors.form.actions.yes') : t('connectors.form.actions.no')}</p></div>
+                      </div>
+                      <div>
+                        <p className='text-xs font-medium text-muted-foreground'>{t('connectors.form.actions.detail.inputSchema')}</p>
+                        <ScrollArea className='mt-1 h-36 rounded border bg-background'>
+                          <pre className='whitespace-pre-wrap break-words p-2 font-mono text-xs'>{JSON.stringify(selectedAction.parameterSchema, null, 2)}</pre>
+                        </ScrollArea>
+                      </div>
+                      <div>
+                        <p className='text-xs font-medium text-muted-foreground'>{t('connectors.form.actions.detail.outputSchema')}</p>
+                        <ScrollArea className='mt-1 h-28 rounded border bg-background'>
+                          <pre className='whitespace-pre-wrap break-words p-2 font-mono text-xs'>{JSON.stringify(selectedAction.outputSchema, null, 2)}</pre>
+                        </ScrollArea>
+                      </div>
+                    </div>
+                  ) : null}
+              </>
+            )}
           </div>
 
           <div>

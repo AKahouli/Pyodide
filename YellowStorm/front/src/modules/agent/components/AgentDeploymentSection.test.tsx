@@ -47,9 +47,11 @@ vi.mock('./WidgetRestApiPanel', () => ({
 }));
 
 import { AgentDeploymentSection } from './AgentDeploymentSection';
+import { DEFAULT_DEPLOYMENT_SETTINGS } from '../constants/widget-default-settings';
+import type { AgentDeploymentSettings } from '../types';
 
 function DeploymentSectionHarness() {
-  const [value, setValue] = useState({ embedEnabled: false, restEnabled: false });
+  const [value, setValue] = useState<AgentDeploymentSettings>(DEFAULT_DEPLOYMENT_SETTINGS);
   return <AgentDeploymentSection agentId="a1" agentName="Agent" value={value} onChange={setValue} />;
 }
 
@@ -59,15 +61,26 @@ describe('AgentDeploymentSection', () => {
     createWidgetTokenMock.mockResolvedValue({ token: 'token-1' });
   });
 
-  it('hides deployment generate actions until each channel toggle is enabled', () => {
+  it('keeps channel panes collapsed by default', () => {
     render(<DeploymentSectionHarness />);
 
     expect(screen.queryByText('createEdit.actions.generateDeploymentSnippet')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('embed-deployment-switch'));
+    fireEvent.click(screen.getByTestId('rest-deployment-switch'));
+
+    expect(screen.queryByText('createEdit.actions.generateDeploymentSnippet')).not.toBeInTheDocument();
+  });
+
+  it('shows deployment generate actions only inside expanded enabled panes', () => {
+    render(<DeploymentSectionHarness />);
+
+    fireEvent.click(screen.getByTestId('embed-deployment-switch'));
+    fireEvent.click(screen.getByRole('button', { name: /createEdit.fields.deploymentModeEmbed/i }));
     expect(screen.getAllByText('createEdit.actions.generateDeploymentSnippet')).toHaveLength(1);
 
     fireEvent.click(screen.getByTestId('rest-deployment-switch'));
+    fireEvent.click(screen.getByRole('button', { name: /createEdit.fields.deploymentModeRest/i }));
     expect(screen.getAllByText('createEdit.actions.generateDeploymentSnippet')).toHaveLength(2);
   });
 
@@ -75,6 +88,7 @@ describe('AgentDeploymentSection', () => {
     render(<DeploymentSectionHarness />);
 
     fireEvent.click(screen.getByTestId('embed-deployment-switch'));
+    fireEvent.click(screen.getByRole('button', { name: /createEdit.fields.deploymentModeEmbed/i }));
     fireEvent.click(screen.getByText('createEdit.actions.generateDeploymentSnippet'));
 
     await waitFor(() => {

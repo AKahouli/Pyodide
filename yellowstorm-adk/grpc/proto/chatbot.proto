@@ -362,6 +362,52 @@ message CitationComponent {
     }
 }
 
+message ChoiceOption {
+    string id = 1;
+    string label = 2;
+    string submit_text = 3;
+    string value = 4;
+    string description = 5;
+    bool disabled = 6;
+    string url = 7;
+}
+
+message ChoiceOtherOption {
+    bool enabled = 1;
+    string label = 2;
+    string placeholder = 3;
+    int32 max_length = 4;
+}
+
+message ChoiceLabels {
+    string submit = 1;
+    string dismiss = 2;
+    string other = 3;
+}
+
+message ChoiceProgress {
+    int32 current = 1;
+    int32 total = 2;
+    string label = 3;
+}
+
+message ChoiceComponent {
+    int32 schema_version = 1;
+    string question_id = 2;
+    string prompt = 3;
+    string description = 4;
+    string presentation = 5;
+    string selection_mode = 6;
+    string submit_behavior = 7;
+    repeated ChoiceOption options = 8;
+    ChoiceOtherOption other_option = 9;
+    ChoiceLabels labels = 10;
+    ChoiceProgress progress = 11;
+    bool dismissible = 12;
+    string fallback_text = 13;
+    string status = 14;
+}
+
 // Main Component message using oneof for type safety
 message Component {
     string id = 1;               // Component unique identifier
@@ -382,12 +428,14 @@ message Component {
         CitationComponent citation = 15;  // Document citation reference
         ToolInfoComponent tool_info = 16; // Tool execution status (running/completed/failed)
         ChainOfThoughtComponent chain_of_thought = 17; // Collapsed list of step titles
+        ChoiceComponent choice = 18;
     }
 }
 
 message Metadata {
     string message_id = 1;       // Message/session ID
     string agent_id = 2;         // Agent ID
+    string guardrail_decision_json = 3;  // JSON guardrail decision metadata for persistence
 }
 
 message Usage {

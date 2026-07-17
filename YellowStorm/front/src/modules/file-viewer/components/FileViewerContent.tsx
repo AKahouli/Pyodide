@@ -11,6 +11,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useFileViewerStore, useFileViewerTabs, useFileViewerActiveTabId } from '../store';
 import { getRenderer } from '../renderers';
 import { UnsupportedRenderer } from '../renderers/UnsupportedRenderer';
+import { FileTransformationTools } from './FileTransformationTools';
 
 export function FileViewerContent() {
   const { t } = useModuleTranslation('file-viewer');
@@ -44,6 +45,7 @@ export function FileViewerContent() {
           ))}
         </div>
       )}
+      {tabs.find((tab) => tab.id === activeTabId) && <div className='flex justify-end border-b p-2'><FileTransformationTools key={activeTabId} tab={tabs.find((tab) => tab.id === activeTabId)!} /></div>}
 
       {/* Renderer instances - all mounted, only active visible */}
       <div className='flex-1 min-h-0 relative'>

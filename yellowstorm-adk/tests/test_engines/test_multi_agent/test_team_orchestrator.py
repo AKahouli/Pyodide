@@ -171,6 +171,70 @@ class TestAutoAgentGenerationTeam:
         assert error_events == []
 
     @pytest.mark.asyncio
+    async def test_run_single_agent_uses_temporary_child_result_only_for_parent(self):
+        """Mono conversation parents should evaluate child results, not use child tools directly."""
+        mock_config = MagicMock()
+        mock_config.user_id = "user123"
+        orchestrator = AutoAgentGenerationTeam(mock_config)
+        orchestrator.streaming_processor = MagicMock()
+        orchestrator.streaming_processor.streaming_formatter = MagicMock()
+        orchestrator.agent_runner = MagicMock()
+        orchestrator.agent_runner.streaming_formatter = MagicMock()
+        orchestrator.streaming_formatter = MagicMock()
+        orchestrator.agent_repository = MagicMock()
+        orchestrator.agent_helper = MagicMock()
+
+        agent_config = {
+            "id": "search-1",
+            "name": "SearchAgent",
+            "prompt": "Search prompt",
+            "tools": [{"name": "search"}],
+            "agent_params": {
+                "enable_temporary_child_agents": "true",
+                "max_temporary_child_agents": "2",
+            },
+        }
+        mock_agent = MagicMock()
+        mock_agent.instruction = "Parent instruction"
+        mock_agent.tools = [{"name": "search"}]
+        mock_toolkit = MagicMock()
+        mock_citation_manager = MagicMock()
+        mock_citation_manager.global_manager._save_state = AsyncMock()
+
+        orchestrator.agent_repository.get_all_agents.return_value = [agent_config]
+        orchestrator.agent_repository.get_agent_id_by_name.return_value = "search-1"
+        orchestrator.agent_helper.normalize_agent_name.return_value = "searchagent"
+        orchestrator.delegation_factory._create_agent_with_error_handling = AsyncMock(
+            return_value=(mock_agent, mock_toolkit)
+        )
+        orchestrator.delegation_factory._execute_agent_with_error_handling = AsyncMock(
+            return_value='child answer [1]\n\n<child_visible_output_components>\n[{"type":"sources","data":{"sources":[]}}]\n</child_visible_output_components>'
+        )
+        orchestrator.agent_runner.run_agent_tool = AsyncMock(
+            return_value=("parent answer", [], None, [])
+        )
+        queue = AsyncMock()
+
+        with patch(
+            "src.smart_rag.infrastructure.session.citation_manager.get_citation_manager",
+            new=AsyncMock(return_value=mock_citation_manager),
+        ), patch(
+            "src.smart_rag.engines.multi_agent.team_orchestrator.get_database_session_service"
+        ) as mock_session_factory:
+            mock_session_factory.return_value.return_value = MagicMock()
+            result = await orchestrator.run_single_agent("parent task", "sess-1", queue)
+
+        assert result == "parent answer"
+        assert len(mock_agent.tools) == 1
+        assert mock_agent.tools[0].__name__ == "create_temporary_child_agent"
+        assert orchestrator.delegation_factory._execute_agent_with_error_handling.await_count == 1
+        parent_message = orchestrator.agent_runner.run_agent_tool.await_args.kwargs["message"]
+        assert "<required_temporary_child_result>" in parent_message
+        assert "child answer [1]" in parent_message
+        assert "child_visible_output_components" in parent_message
+        assert orchestrator.agent_runner.run_agent_tool.await_args.kwargs["agent"] is mock_agent
+
+    @pytest.mark.asyncio
     async def test_create_agent_team(self):
         """Test creating an agent team."""
         mock_config = MagicMock()

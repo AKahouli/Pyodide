@@ -12,6 +12,7 @@ import {
   PaginatedMessages,
   FeedbackType,
   AttachedFileResponse,
+  MessageComponent,
 } from '../interfaces/message.interface';
 import { ConversationService } from './conversation.service';
 import { StreamGatewayService } from './stream-gateway.service';
@@ -101,6 +102,7 @@ export class MessageService {
       isStreaming: false,
       isComplete: true,
       requestId: data.requestId,
+      interaction: data.interaction,
     });
 
     // Update conversation
@@ -218,6 +220,7 @@ export class MessageService {
     message.durationMs = data.durationMs;
     message.timeToFirstChunk = data.timeToFirstChunk;
     message.timeToFirstToken = data.timeToFirstToken;
+    message.guardrailDecision = (data.guardrailDecision ?? this.findGuardrailDecision(data.components)) as Record<string, unknown> | undefined;
 
     await message.save();
 
@@ -542,9 +545,12 @@ export class MessageService {
     message.editedAt = new Date();
     if (agentIds !== undefined) {
       message.agentIds = agentIds.map((id) => new Types.ObjectId(id));
-      // Persist tagged agents for group conversations
+      // Persist tagged agents for group conversations (roster only; sticky owned by sendMessage)
       if (agentIds.length > 0) {
-        await this.conversationService.updateTaggedAgents(message.conversationId.toString(), agentIds);
+        await this.conversationService.updateTaggedAgents(
+          message.conversationId.toString(),
+          agentIds,
+        );
       }
     }
     if (memberIds !== undefined) {
@@ -657,6 +663,8 @@ export class MessageService {
       timeToFirstChunk: message.timeToFirstChunk,
       timeToFirstToken: message.timeToFirstToken,
       requestId: message.requestId,
+      guardrailDecision: message.guardrailDecision as any,
+      interaction: message.interaction as Record<string, unknown> | undefined,
       agentIds: message.agentIds?.map((id: any) => toStr(id)),
       memberIds: message.memberIds?.map((id: any) => toStr(id)),
       senderId: toStr(message.senderId),
@@ -664,6 +672,16 @@ export class MessageService {
       createdAt: toISO(message.createdAt),
       updatedAt: toISO(message.updatedAt),
     };
+  }
+
+  private findGuardrailDecision(components: MessageComponent[]): CompleteAIMessageData['guardrailDecision'] {
+    for (const component of components) {
+      const decision = component.data?.guardrailDecision;
+      if (decision && typeof decision === 'object') {
+        return decision as CompleteAIMessageData['guardrailDecision'];
+      }
+    }
+    return undefined;
   }
 
   private async broadcastMessage(conversationId: string, event: StreamEvent): Promise<void> {

@@ -13,6 +13,8 @@ export interface IntegrationSnippetPanelProps {
   lines: string[];
   onCopy: () => void;
   isCopied: boolean;
+  /** Compact layout for short snippets (default: auto when ≤ 2 lines). */
+  compact?: boolean;
 }
 
 export function IntegrationSnippetPanel({
@@ -24,7 +26,10 @@ export function IntegrationSnippetPanel({
   lines,
   onCopy,
   isCopied,
+  compact,
 }: Readonly<IntegrationSnippetPanelProps>) {
+  const isCompact = compact ?? lines.length <= 2;
+
   return (
     <div className="min-w-0 max-w-full overflow-hidden rounded-xl border border-zinc-800/80 shadow-md">
       <div className="flex min-w-0 items-center gap-2 border-b border-white/[0.06] bg-zinc-900 px-3 py-2.5">
@@ -52,11 +57,19 @@ export function IntegrationSnippetPanel({
           {isCopied ? copiedLabel : copyLabel}
         </Button>
       </div>
-      <ScrollArea className="h-[min(260px,34vh)] w-full bg-[#0d1117]">
-        <pre className="p-3 font-mono text-[10px] leading-relaxed text-zinc-300">
-          <code>{lines.join("\n")}</code>
-        </pre>
-      </ScrollArea>
+      {isCompact ? (
+        <div className="min-w-0 max-w-full overflow-x-auto bg-[#0d1117]">
+          <pre className="min-w-0 max-w-full whitespace-pre-wrap break-all px-3 py-3 font-mono text-xs leading-relaxed text-zinc-300 sm:text-[13px]">
+            <code>{lines.join("\n")}</code>
+          </pre>
+        </div>
+      ) : (
+        <ScrollArea className="h-[min(260px,34vh)] min-w-0 max-w-full bg-[#0d1117]">
+          <pre className="min-w-0 max-w-full whitespace-pre-wrap break-all p-3 font-mono text-[10px] leading-relaxed text-zinc-300">
+            <code>{lines.join("\n")}</code>
+          </pre>
+        </ScrollArea>
+      )}
       <div className="flex gap-2 border-t border-white/[0.06] bg-zinc-900/95 px-3 py-2.5">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500" />
         <p className="text-[11px] text-zinc-500">{hint}</p>

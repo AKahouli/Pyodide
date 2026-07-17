@@ -41,8 +41,8 @@ neo4j==6.0.3
 pandas==2.3.3
 bcrypt==3.2.2
 beautifulsoup4==4.14.3
-grpcio==1.71.2
-grpcio-tools==1.71.2
+grpcio==1.80.0
+grpcio-tools==1.80.0
 qdrant_client==1.17.0
 langgraph==1.0.1
 langgraph-checkpoint==3.0.1

@@ -90,6 +90,15 @@ export class WorkspaceDoc extends Document {
   @Prop({ type: String })
   indexingTaskId?: string;
 
+  @Prop({ type: String, index: true })
+  indexingAttemptId?: string;
+
+  @Prop({ type: Date })
+  indexingAttemptStartedAt?: Date;
+
+  @Prop({ type: Date })
+  indexingAttemptCompletedAt?: Date;
+
   @Prop({ type: Date })
   lastIndexedAt?: Date;
 

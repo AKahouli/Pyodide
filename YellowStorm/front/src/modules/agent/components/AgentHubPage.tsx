@@ -250,6 +250,7 @@ export function AgentHubPage() {
           agent={ops.viewingAgent}
           onSave={ops.handleSave}
           saving={false}
+          readOnly
         />
       )}
 

@@ -62,8 +62,6 @@ export function buildMcpServerConfig(
 
   if (trimmedGithubPatToken) {
     parsedConfig.githubPat = trimmedGithubPatToken;
-  } else {
-    delete parsedConfig.githubPat;
   }
 
   return Object.keys(parsedConfig).length > 0 ? parsedConfig : undefined;

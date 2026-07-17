@@ -32,6 +32,8 @@ import { UserModule } from '../user/user.module';
 import { LoggerModule } from '../logger';
 import { CryptoService } from '@common/services/crypto.service';
 import { ConnectorAdminAuthService } from './services/connector-admin-auth.service';
+import { ConnectorPlaybookBindingSyncService } from './services/connector-playbook-binding-sync.service';
+import { ConnectorMcpRuntimeService } from './services/connector-mcp-runtime.service';
 
 @Module({
   imports: [
@@ -65,6 +67,8 @@ import { ConnectorAdminAuthService } from './services/connector-admin-auth.servi
     ConnectorCredentialService,
     ConnectorAuthServiceImpl,
     ConnectorTransferService,
+    ConnectorPlaybookBindingSyncService,
+    ConnectorMcpRuntimeService,
     M365TransferAdapter,
     ConnectorUserService,
     {
@@ -72,6 +76,6 @@ import { ConnectorAdminAuthService } from './services/connector-admin-auth.servi
       useExisting: ConnectorAuthServiceImpl,
     },
   ],
-  exports: [ConnectorService, ConnectorCredentialService, 'ConnectorAuthService', ConnectorTransferService],
+  exports: [ConnectorService, ConnectorCredentialService, 'ConnectorAuthService', ConnectorTransferService, ConnectorMcpRuntimeService],
 })
 export class ConnectorModule {}

@@ -10,12 +10,12 @@ import {
   MaxLength,
   Min,
   Max,
-  IsIn,
   ValidateNested,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { AgentConnectorActionSelectionDto } from './connector-action-selection.dto';
+import { AgentWidgetSettingsDto } from './widget-settings.dto';
 
 export class PromptInjectionGuardrailsDto {
   @ApiPropertyOptional({ description: 'Enable input prompt injection guardrail', default: false })
@@ -32,11 +32,6 @@ export class PromptInjectionGuardrailsDto {
   @IsOptional()
   @IsBoolean()
   toolCallGuardrailEnabled?: boolean;
-
-  @ApiPropertyOptional({ enum: ['monitor', 'balanced', 'strict'], default: 'balanced' })
-  @IsOptional()
-  @IsIn(['monitor', 'balanced', 'strict'])
-  mode?: 'monitor' | 'balanced' | 'strict';
 
   @ApiPropertyOptional({ description: 'Input classifier policy prompt', maxLength: 20000 })
   @IsOptional()
@@ -69,6 +64,7 @@ export class AgentGuardrailsDto {
   @ValidateNested()
   @Type(() => PromptInjectionGuardrailsDto)
   promptInjection?: PromptInjectionGuardrailsDto;
+
 }
 
 export class AgentDeploymentSettingsDto {
@@ -81,6 +77,12 @@ export class AgentDeploymentSettingsDto {
   @IsOptional()
   @IsBoolean()
   restEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Public embedded webchat appearance and content settings', type: AgentWidgetSettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AgentWidgetSettingsDto)
+  widget?: AgentWidgetSettingsDto;
 }
 
 export class CreateAgentDto {
@@ -198,4 +200,16 @@ export class CreateAgentDto {
   @ValidateNested()
   @Type(() => AgentDeploymentSettingsDto)
   deploymentSettings?: AgentDeploymentSettingsDto;
+
+  @ApiPropertyOptional({ description: 'Allow this agent to create temporary child agents', default: false })
+  @IsOptional()
+  @IsBoolean()
+  enable_temporary_child_agents?: boolean;
+
+  @ApiPropertyOptional({ description: 'Maximum temporary child agents this agent may create', default: 4, minimum: 1, maximum: 8 })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(8)
+  max_temporary_child_agents?: number;
 }

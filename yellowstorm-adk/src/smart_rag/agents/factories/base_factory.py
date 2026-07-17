@@ -84,7 +84,7 @@ class AgentFactory:
         self.diagram_tool_config = diagram_tool_config
 
     def _create_html_diagram_tool(
-        self, chatbot_name: str, instructions: Optional[str] = None
+        self, chatbot_name: str, instructions: Optional[str] = None, temperature: Optional[float] = 0.0
     ) -> AgentTool:
         """Create an HtmlAgent tool for diagramming.
 
@@ -97,7 +97,7 @@ class AgentFactory:
         if not instructions:
             instructions = self.diagram_tool_config["instructions"]
         diagramming_agent = self.create_html_diagram_agent(
-            instructions=instructions, chatbot_name=chatbot_name
+            instructions=instructions, chatbot_name=chatbot_name, temperature=temperature
         )
 
         return AgentTool(diagramming_agent, skip_summarization=False)
@@ -119,6 +119,7 @@ class AgentFactory:
         prompt: str,
         chatbot_name: str,
         calculator_tool: bool = False,
+        render_chart_tool: bool = False,
         search_web_tool: bool = False,
         in_memory_tool: bool = False,
         in_memory_tool_description: Optional[str] = None,
@@ -136,7 +137,7 @@ class AgentFactory:
         vectorstore_name: str = "default",
         task_order: Optional[str] = None,
         mcp_toolset: Optional[MCPToolset] = None,
-        temperature: float = 0.0,
+        temperature: Optional[float] = 0.0,
         max_tokens: int = 20000,
         session_id: Optional[str] = None,
         brain_documents: Optional[list] = None,
@@ -154,6 +155,7 @@ class AgentFactory:
             prompt (str): Instruction prompt for the agent.
             chatbot_name (str): Name of the chatbot model to use.
             calculator_tool (bool): Whether to include a calculator tool.
+            render_chart_tool (bool): Whether to include the chart rendering tool.
             search_web_tool (bool): Whether to include a web search tool.
             in_memory_tool (bool): Whether to include in-memory document extraction tool for accessing complete file context.
             in_memory_tool_description (Optional[str]): Custom description for the in-memory tool functionality.
@@ -191,11 +193,12 @@ class AgentFactory:
         if calculator_tool:
             tools.append(calculator)
 
-        tools.append(render_chart)
+        if render_chart_tool:
+            tools.append(render_chart)
 
         # Add HTML diagram tool if requested
         if html_design:
-            tools.append(self._create_html_diagram_tool(chatbot_name))
+            tools.append(self._create_html_diagram_tool(chatbot_name, temperature=temperature))
 
         # Add search tools if requested
         if search_tool and doc_tree and brain_ids:
@@ -553,6 +556,8 @@ class AgentFactory:
         vectorstore_mcp_tool: bool = False,
         logical_search_only: bool = False,
         deep_search: bool = False,
+        render_chart_tool: bool = False,
+        skills: Optional[List[Dict]] = None,
     ) -> Tuple[Agent, SearchToolkit, str]:
         """Create a search agent with appropriate tools."""
         if logical_search_only:
@@ -569,6 +574,9 @@ class AgentFactory:
             citation_manager=citation_manager,
             user_id=user_id,
         )
+
+        if render_chart_tool:
+            tools.append(render_chart)
 
         tree_info = ""
         if doc_tree:
@@ -599,7 +607,13 @@ class AgentFactory:
         web_search_prompt = self.prompt_processor.get_web_search_prompt(
             web_search_prompt_index
         )
-        instruction = str(search_agent_prompt) + str(web_search_prompt) + str(tree_info)
+        instruction = inject_skill_catalog(
+            str(search_agent_prompt) + str(web_search_prompt) + str(tree_info),
+            skills,
+        )
+        activate_skill_tool = make_activate_skill_tool(skills)
+        if activate_skill_tool:
+            tools.append(activate_skill_tool)
 
         if deep_search:
             instruction += (
@@ -712,6 +726,7 @@ class AgentFactory:
         instructions: str = None,
         chatbot_name: str = None,
         name: Optional[str] = "HtmlAgent",
+        temperature: Optional[float] = 0.0,
     ) -> Agent:
         """Create a visualizer agent capable of generating HTML.
         Args:
@@ -725,7 +740,7 @@ class AgentFactory:
         if not instructions:
             instructions = self.diagram_tool_config["instructions"]
 
-        model = self.llm_factory.create_no_tool_calls_llm(chatbot_name)
+        model = self.llm_factory.create_no_tool_calls_llm(chatbot_name, temperature=temperature)
         return Agent(
             name=name,
             model=model,

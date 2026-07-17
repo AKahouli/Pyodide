@@ -20,6 +20,8 @@ export interface AgentFormValues {
   connectorActionSelections: Array<{ connectorId: string; actionKeys: string[] }>;
   isActive: boolean;
   isDefaultForType: boolean;
+  enable_temporary_child_agents: boolean;
+  max_temporary_child_agents: number;
 }
 
 export function createAgentFormSchema(t: Translator) {
@@ -53,6 +55,8 @@ export function createAgentFormSchema(t: Translator) {
     ).default([]),
     isActive: z.boolean().default(true),
     isDefaultForType: z.boolean().default(false),
+    enable_temporary_child_agents: z.boolean().default(false),
+    max_temporary_child_agents: z.number().int().min(1).max(8).default(4),
   });
 }
 
@@ -73,4 +77,6 @@ export const defaultFormValues: AgentFormValues = {
   connectorActionSelections: [],
   isActive: true,
   isDefaultForType: false,
+  enable_temporary_child_agents: false,
+  max_temporary_child_agents: 4,
 };

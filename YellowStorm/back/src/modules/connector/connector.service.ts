@@ -22,6 +22,7 @@ import {
 } from './interfaces/connector.interface';
 import { ConnectorAuthService } from './interfaces/connector-auth.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
+import { ConnectorPlaybookBindingSyncService } from './services/connector-playbook-binding-sync.service';
 
 @Injectable()
 export class ConnectorService {
@@ -38,6 +39,7 @@ export class ConnectorService {
     private readonly connectedAppTokenService: ConnectedAppTokenService,
     @Inject('ConnectorAuthService')
     private readonly connectorAuthService: ConnectorAuthService,
+    private readonly playbookBindingSyncService: ConnectorPlaybookBindingSyncService,
   ) {
     this.logger.setContext(ConnectorService.name);
   }
@@ -162,12 +164,13 @@ export class ConnectorService {
       let authHeaders: Record<string, string> = {};
       let authEnv: Record<string, string> = {};
 
-      if (userId && connector.authSourceType === 'connected_app' && connector.connectedAppKey) {
+      if (userId && connector.authSourceType !== 'none') {
         try {
           const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
             authSourceType: connector.authSourceType,
             connectedAppKey: connector.connectedAppKey,
             runtimeAuthConfig: connector.runtimeAuthConfig || {},
+            connectorId: connector.id,
           });
           authHeaders = auth.headers;
           authEnv = auth.env;
@@ -268,8 +271,10 @@ export class ConnectorService {
     }
 
     const updateData: Record<string, unknown> = { ...dto };
+    let normalizedActions: ConnectorAction[] | null = null;
     if (dto.actions) {
-      (updateData as Record<string, unknown>).actions = this.normalizeConnectorActions(dto.actions);
+      normalizedActions = this.normalizeConnectorActions(dto.actions);
+      (updateData as Record<string, unknown>).actions = normalizedActions;
     }
     if (dto.referencedSkillIds) {
       (updateData as Record<string, unknown>).referencedSkillIds = dto.referencedSkillIds.map(
@@ -293,6 +298,20 @@ export class ConnectorService {
     if (!updated) {
       throw new NotFoundException(ErrorCode.CONNECTOR_NOT_FOUND);
     }
+    if (normalizedActions) {
+      try {
+        await this.playbookBindingSyncService.syncConnectorActions(
+          id,
+          this.getEnabledActionContracts(existing.actions || []),
+          this.getEnabledActionContracts(normalizedActions),
+        );
+      } catch (err) {
+        this.logger.warn('Failed to synchronize playbook connector action bindings after connector update', {
+          connectorId: id,
+          error: (err as Error).message,
+        });
+      }
+    }
     return this.toResponse(updated);
   }
 
@@ -301,6 +320,16 @@ export class ConnectorService {
     if (!connector) {
       throw new NotFoundException(ErrorCode.CONNECTOR_NOT_FOUND);
     }
+  }
+
+  private getEnabledActionContracts(actions: ConnectorAction[]) {
+    return actions
+      .filter((action) => action.isEnabled !== false)
+      .map((action) => ({
+        key: String(action.key || '').trim(),
+        parameterSchema: action.parameterSchema || {},
+      }))
+      .filter((action) => Boolean(action.key));
   }
 
   async importFromMcp(createdBy: string, transportType: string, serverUrl: string, serverConfig?: Record<string, unknown>): Promise<IMcpInspectResult> {
@@ -381,6 +410,7 @@ export class ConnectorService {
     connectedAppKey?: string,
     runtimeAuthConfig?: Record<string, unknown>,
     resolvedToken?: string,
+    resolvedAuthHeaders?: Record<string, string>,
   ): Promise<IMcpInspectResult> {
     try {
 
@@ -414,6 +444,16 @@ export class ConnectorService {
             error: `Failed to get authentication token: ${(error as Error).message}`,
           };
         }
+      }
+
+      if (resolvedAuthHeaders && Object.keys(resolvedAuthHeaders).length > 0) {
+        finalServerConfig = {
+          ...finalServerConfig,
+          headers: {
+            ...this.extractStringMap(finalServerConfig.headers),
+            ...resolvedAuthHeaders,
+          },
+        };
       }
 
       const requestInit = this.buildMcpRequestInit(finalServerConfig);

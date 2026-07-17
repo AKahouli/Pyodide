@@ -10,6 +10,7 @@ interface ActiveStream {
   buffer: Map<string, MessageComponent>;
   usage: { inputTokens: number; outputTokens: number; model: string };
   sseSubscribed: boolean;
+  running: boolean;
 }
 
 /** In-memory SSE streams with buffering until the browser subscribes. */
@@ -25,12 +26,27 @@ export class WidgetSseStreamRegistry {
         buffer: new Map(),
         usage: { inputTokens: 0, outputTokens: 0, model: '' },
         sseSubscribed: false,
+        running: false,
       });
     }
   }
 
   getActiveStream(sessionId: string): ActiveStream | undefined {
     return this.activeStreams.get(sessionId);
+  }
+
+  /** Acquires the single in-process run slot for a widget session. */
+  tryStartRun(sessionId: string): boolean {
+    this.ensureSession(sessionId);
+    const stream = this.activeStreams.get(sessionId)!;
+    if (stream.running) return false;
+    stream.running = true;
+    return true;
+  }
+
+  finishRun(sessionId: string): void {
+    const stream = this.activeStreams.get(sessionId);
+    if (stream) stream.running = false;
   }
 
   /** Clears accumulated components before a new gRPC run on the same session. */
@@ -65,12 +81,18 @@ export class WidgetSseStreamRegistry {
       map(() => ({ type: 'heartbeat', data: { timestamp: Date.now() } })),
     );
     return new Observable<WidgetStreamEvent>((subscriber) => {
-      stream.sseSubscribed = true;
-      this.flushPending(sessionId);
       const sub = merge(events$, heartbeat$)
         .pipe(takeUntil(stream.disconnect$))
         .subscribe(subscriber);
-      return () => sub.unsubscribe();
+      stream.sseSubscribed = true;
+      this.flushPending(sessionId);
+      return () => {
+        sub.unsubscribe();
+        // Allow emit() to buffer again while the browser reconnects between turns.
+        if (this.activeStreams.get(sessionId) === stream) {
+          stream.sseSubscribed = false;
+        }
+      };
     });
   }
 

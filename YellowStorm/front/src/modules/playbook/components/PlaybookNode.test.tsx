@@ -238,6 +238,75 @@ describe('PlaybookNode', () => {
     }));
   });
 
+  it('creates a dedicated input port for every dropped document', () => {
+    const updateNodeData = vi.fn();
+    const payload = {
+      type: 'document',
+      kind: 'document',
+      id: 'doc-3',
+      name: 'Third document.pdf',
+      metadata: {
+        filepath: '/documents/third-document.pdf',
+        mimeType: 'application/pdf',
+      },
+    };
+
+    const { container } = render(
+      <NodeDataActionsContext.Provider value={{ updateNodeData }}>
+        <PlaybookNode
+          {...({
+            id: 'node-1',
+            selected: false,
+            data: {
+              id: 'node-1',
+              title: 'Analyze documents',
+              description: 'Analyze all source documents',
+              assignedAgentId: 'agent-1',
+              executionOrder: 0,
+              positionX: 0,
+              positionY: 0,
+              interruptBefore: false,
+              interruptAfter: false,
+              allowClarification: false,
+              clarificationPrompt: '',
+              maxClarifications: 0,
+              inputKeys: [],
+              outputKey: '',
+              enabled: true,
+              notifyOnComplete: false,
+              notifyEmails: [],
+              inputFiles: [],
+              taskType: 'generic',
+              inputPorts: [
+                { id: 'input-doc-1', name: 'First document', artifactKind: 'document', required: false },
+                { id: 'input-doc-2', name: 'Second document', artifactKind: 'document', required: false },
+              ],
+              outputPorts: [],
+            },
+          } as any)}
+        />
+      </NodeDataActionsContext.Provider>,
+    );
+
+    fireEvent.drop(container.firstChild as Element, {
+      clientY: 0,
+      dataTransfer: {
+        getData: (type: string) => (type === 'application/json' ? JSON.stringify(payload) : ''),
+        dropEffect: 'copy',
+      },
+    });
+
+    const createdPort = updateNodeData.mock.calls[0][1].inputPorts[2];
+    expect(createdPort).toEqual(expect.objectContaining({
+      name: 'Third document.pdf',
+      artifactKind: 'document',
+    }));
+    expect(storeState.addInputFileToTask).toHaveBeenCalledWith('node-1', {
+      ...payload,
+      portId: createdPort.id,
+    });
+  });
+
   it('renders a constant document binding label on the input port', () => {
     storeState.currentPlaybook = {
       id: 'playbook-1',

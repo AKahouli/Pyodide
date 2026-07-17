@@ -12,6 +12,7 @@ import { GovernanceMembership, GovernanceMembershipDocument } from '../schemas/g
 import { GovernanceMetric, GovernanceMetricDocument } from '../schemas/governance-metric.schema';
 import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
 import { GovernanceSource, GovernanceSourceDocument } from '../schemas/governance-source.schema';
+import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
 import { Agent, AgentDocument } from '@modules/agent/schemas/agent.schema';
 
 type ReadinessStatus = 'ready' | 'blocked' | 'warning';
@@ -30,6 +31,7 @@ export interface GovernanceScopeOverviewCheck {
 
 export interface GovernanceScopeOverview {
   scope: Record<string, unknown>;
+  authorization: { canApprove: boolean };
   readiness: { score: number; status: ReadinessStatus; blockers: GovernanceScopeOverviewCheck[]; warnings: GovernanceScopeOverviewCheck[]; checks: GovernanceScopeOverviewCheck[] };
   knowledge: { sharedSources: Record<string, unknown>[]; localSources: Record<string, unknown>[]; workspaceMappings: Record<string, unknown>[]; reviewBlockers: GovernanceScopeOverviewCheck[] };
   agents: { mappedAgents: Array<{ id: string; isPrimary: boolean }>; primaryAgentId?: string; missingAgent: boolean };
@@ -46,6 +48,7 @@ export class GovernanceScopeOverviewService {
   constructor(
     @InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>,
     @InjectModel(GovernanceSource.name) private readonly sourceModel: Model<GovernanceSourceDocument>,
+    @InjectModel(GovernanceWorkspaceBinding.name) private readonly workspaceBindingModel: Model<GovernanceWorkspaceBindingDocument>,
     @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
     @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
     @InjectModel(GovernanceDryRun.name) private readonly dryRunModel: Model<GovernanceDryRunDocument>,
@@ -59,25 +62,28 @@ export class GovernanceScopeOverviewService {
   async getOverview(actorId: string, programId: string, scopeId: string): Promise<GovernanceScopeOverview> {
     await this.programService.assertOwnedProgram(actorId, programId);
     await this.accessService.assertScopeAccess(actorId, programId, scopeId);
-    const [scope, sources, deployment] = await Promise.all([
+    const [scope, sources, workspaceBindings, deployment] = await Promise.all([
       this.scopeModel.findOne({ _id: new Types.ObjectId(scopeId), programId: new Types.ObjectId(programId) }).lean().exec(),
       this.loadEffectiveSources(programId, scopeId),
+      this.loadEffectiveWorkspaceBindings(programId, scopeId),
       this.deploymentModel.findOne({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(scopeId) }).sort({ updatedAt: -1 }).lean().exec(),
     ]);
     if (!scope) throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
-    const [draftRevision, publishedRevision, latestDryRun, scopeMemberships, metrics, mappedAgents] = await Promise.all([
+    const [draftRevision, publishedRevision, latestDryRun, scopeMemberships, metrics, mappedAgents, canApprove] = await Promise.all([
       this.findRevision(deployment?.currentDraftRevisionId),
       this.findRevision(deployment?.currentPublishedRevisionId),
       this.findLatestDryRun(deployment?._id),
       this.findScopeMemberships(programId, scopeId),
       this.metricModel.find({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(scopeId) }).lean().exec(),
       this.findMappedAgents(scope.agentIds ?? []),
+      this.accessService.canActInScopeRole(actorId, programId, scopeId, ['scope_approver']),
     ]);
-    const checks = this.buildChecks(scope, sources, draftRevision, latestDryRun, scopeMemberships, mappedAgents);
+    const checks = this.buildChecks(scope, sources, workspaceBindings.length > 0, draftRevision, latestDryRun, scopeMemberships, mappedAgents);
     const sharedSources = sources.filter((source) => source.visibility === 'program_shared');
     const localSources = sources.filter((source) => source.visibility !== 'program_shared');
     return {
       scope: this.scopeToResponse(scope),
+      authorization: { canApprove },
       readiness: this.buildReadiness(checks),
       knowledge: {
         sharedSources: sharedSources.map((source) => this.sourceToResponse(source)),
@@ -102,6 +108,10 @@ export class GovernanceScopeOverviewService {
     }).sort({ visibility: 1, title: 1 }).lean().exec();
   }
 
+  private async loadEffectiveWorkspaceBindings(programId: string, scopeId: string): Promise<Record<string, unknown>[]> {
+    return this.workspaceBindingModel.find({ programId: new Types.ObjectId(programId), enabled: true, $or: [{ visibility: 'program_shared' }, { scopeIds: new Types.ObjectId(scopeId) }] }).lean().exec();
+  }
+
   private async findRevision(revisionId?: Types.ObjectId): Promise<Record<string, unknown> | null> {
     if (!revisionId) return null;
     return this.revisionModel.findById(revisionId).lean().exec();
@@ -112,14 +122,14 @@ export class GovernanceScopeOverviewService {
     return this.dryRunModel.findOne({ deploymentId }).sort({ createdAt: -1 }).lean().exec();
   }
 
-  private buildChecks(scope: Record<string, unknown>, sources: Record<string, unknown>[], draftRevision: Record<string, unknown> | null, latestDryRun: Record<string, unknown> | null, memberships: Record<string, unknown>[], agents: Record<string, unknown>[]): GovernanceScopeOverviewCheck[] {
+  private buildChecks(scope: Record<string, unknown>, sources: Record<string, unknown>[], hasWorkspaceBinding: boolean, draftRevision: Record<string, unknown> | null, latestDryRun: Record<string, unknown> | null, memberships: Record<string, unknown>[], agents: Record<string, unknown>[]): GovernanceScopeOverviewCheck[] {
     const agentIds = Array.isArray(scope.agentIds) ? scope.agentIds : [];
-    const ownershipAssigned = memberships.some((membership) => membership.status === 'active' && ['scope_admin', 'scope_approver', 'scope_editor', 'scope_reviewer'].includes(String(membership.role)));
+    const ownershipAssigned = memberships.some((membership) => membership.status === 'active' && String(membership.role) === 'scope_approver');
     const guardrailsReviewed = agents.length > 0 && agents.every((agent) => this.hasAnyGuardrailEnabled(agent));
     return [
       this.check('scope_active', 'Scope active', scope.status === 'active', 'blocking', 'rule'),
       this.check('agents_mapped', 'Agent mapped', agentIds.length > 0, 'blocking', 'agent'),
-      this.check('knowledge_mapped', 'Knowledge mapped', sources.length > 0, 'blocking', 'source'),
+      this.check('knowledge_mapped', 'Knowledge mapped', sources.length > 0 || hasWorkspaceBinding, 'blocking', 'source'),
       this.check('ownership_assigned', 'Ownership assigned', ownershipAssigned, 'blocking', 'rule'),
       this.check('guardrails_reviewed', 'Guardrails reviewed', guardrailsReviewed, 'warning', 'agent'),
       this.check('draft_revision', 'Draft revision exists', Boolean(draftRevision), 'blocking', 'rule'),

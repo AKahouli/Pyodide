@@ -12,6 +12,7 @@ import { UpgradePage } from './modules/usage/components/UpgradePage';
 import { RootGuard } from './modules/auth/components/RootGuard';
 import { PlaybookExecutionListPage as PlaybookExecutionListRoute } from './modules/playbook/components/PlaybookExecutionListPage';
 import { PlaybookExecutionComparePage as PlaybookExecutionCompareRoute } from './modules/playbook/components/PlaybookExecutionComparePage';
+import { dataRoomFeatures } from './config/dataRoomFeatures';
 
 // Lazy-loaded connected apps
 const ConnectedAppsPage = React.lazy(() => import('./modules/connected-app/components/ConnectedAppsPage').then((m) => ({ default: m.ConnectedAppsPage })));
@@ -70,6 +71,9 @@ const WorkspacePage = React.lazy(() =>
 );
 const WorkspaceHubPage = React.lazy(() =>
   import("./modules/workspace").then((m) => ({ default: m.WorkspaceHubPage }))
+);
+const DecisionFlowEditorPage = React.lazy(() =>
+  import('./modules/workspace').then((m) => ({ default: m.DecisionFlowEditorPage }))
 );
 const GovernancePage = React.lazy(() =>
   import('./modules/governance').then((m) => ({ default: m.GovernancePage }))
@@ -269,6 +273,10 @@ export const router = createHashRouter([
             <WorkspaceHubPage />
           </Suspense>
         ),
+      },
+      {
+        path: 'workspace/:id/artifacts/:artifactId',
+        element: dataRoomFeatures.decisionFlowArtifactsEnabled ? <Suspense fallback={null}><DecisionFlowEditorPage /></Suspense> : <NoMatch />,
       },
       {
         path: 'workspace/:id',

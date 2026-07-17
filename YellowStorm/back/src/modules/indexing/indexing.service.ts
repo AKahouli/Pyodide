@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
@@ -22,6 +22,9 @@ import {
   BadRequestException,
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
+import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
+import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
+import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class IndexingService {
@@ -44,6 +47,7 @@ export class IndexingService {
     private readonly documentService: DocumentService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
+    @Optional() private readonly outbox?: IntegrationEventOutboxService,
   ) {
     this.logger.setContext('IndexingService');
     this.batchSize = this.configService.get<number>('indexing.batchSize', 10);
@@ -85,6 +89,9 @@ export class IndexingService {
       document.indexingError = undefined;
       document.indexingTaskName = undefined;
       document.indexingTaskId = undefined;
+      document.indexingAttemptId = uuidv4();
+      document.indexingAttemptStartedAt = undefined;
+      document.indexingAttemptCompletedAt = undefined;
       await document.save();
     }
 
@@ -141,13 +148,12 @@ export class IndexingService {
     document.indexingError = undefined;
     document.indexingTaskName = undefined;
     document.indexingTaskId = undefined;
-    // Clear the persisted flag so a future plain reindex does not inherit it
-    if (document.metadata?.deepSearchRequested !== undefined) {
-      document.metadata = { ...document.metadata };
-      delete document.metadata.deepSearchRequested;
-    }
     document.indexingStartedAt = new Date();
+    document.indexingAttemptId ??= uuidv4();
+    document.indexingAttemptStartedAt = document.indexingStartedAt;
+    document.indexingAttemptCompletedAt = undefined;
     await document.save();
+    await this.recordIndexingEvent(WorkspaceIntegrationEvents.IndexingStartedV1, document);
 
     // Send notification so frontend sees pending → processing transition
     await this.sendIndexingStatusNotification(document);
@@ -229,7 +235,9 @@ export class IndexingService {
       // Store a user-friendly error — never expose raw API details
       document.indexingStatus = IndexingStatus.FAILED;
       document.indexingError = 'Document indexing failed. Please try again later.';
+      document.indexingAttemptCompletedAt = new Date();
       await document.save();
+      await this.recordIndexingEvent(WorkspaceIntegrationEvents.IndexingFailedV1, document);
 
       // Log the full technical error for debugging
       this.logger.error('Document indexing failed', {
@@ -246,6 +254,11 @@ export class IndexingService {
     }
   }
 
+  private async recordIndexingEvent(eventType: string, document: WorkspaceDocumentDoc): Promise<void> {
+    if (!this.outbox || !this.configService.get<boolean>('dataRoom.workspaceEventsEnabled')) return;
+    await this.outbox.record({ eventId: uuidv4(), eventType, aggregateType: 'workspace_document', aggregateId: document._id.toString(), payload: { workspaceId: document.workspaceId.toString(), documentId: document._id.toString(), createdBy: document.createdBy.toString(), documentType: document.type, originalName: document.originalName, mimeType: document.mimeType, sourceUrl: document.sourceUrl, normalizedSourceUrl: document.metadata?.normalizedSourceUrl, contentHash: document.contentHash, documentStatus: document.status, indexingStatus: document.indexingStatus, indexingTaskId: document.indexingTaskId, indexingAttemptId: document.indexingAttemptId, deepSearchRequested: document.metadata?.deepSearchRequested === 'true', metadata: document.metadata }, occurredAt: new Date() });
+  }
+
   /**
    * Trigger manual re-index for a document
    */
@@ -253,6 +266,7 @@ export class IndexingService {
     workspaceId: string,
     documentId: string,
     deepSearch?: boolean,
+    idempotencyKey?: string,
   ): Promise<WorkspaceDocumentDoc> {
     const document = await this.documentModel.findOne({
       _id: documentId,
@@ -264,6 +278,10 @@ export class IndexingService {
         ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND,
         'Document not found',
       );
+    }
+
+    if (idempotencyKey && document.metadata?.governanceReindexIdempotencyKey === idempotencyKey) {
+      return document;
     }
 
     if (document.status !== DocumentStatus.COMPLETED) {
@@ -284,10 +302,14 @@ export class IndexingService {
     // Reset to pending for re-indexing
     document.indexingStatus = IndexingStatus.PENDING;
     document.indexingError = undefined;
+    document.indexingAttemptId = uuidv4();
+    document.indexingAttemptStartedAt = undefined;
+    document.indexingAttemptCompletedAt = undefined;
     const { download_id, indexing_id, ...restMetadata } = document.metadata || {};
     document.metadata = {
       ...restMetadata,
       deepSearchRequested: deepSearch === true ? 'true' : 'false',
+      ...(idempotencyKey ? { governanceReindexIdempotencyKey: idempotencyKey } : {}),
     };
     await document.save();
 
@@ -462,12 +484,14 @@ export class IndexingService {
     } else if (status === 'FINISH') {
       document.indexingStatus = IndexingStatus.READY;
       document.lastIndexedAt = new Date();
+      document.indexingAttemptCompletedAt = document.lastIndexedAt;
       document.indexingError = undefined;
       document.indexingTaskName = undefined;
       document.indexingTaskId = undefined;
     } else {
       document.indexingStatus = IndexingStatus.FAILED;
       document.indexingError = details.errorMessage || 'Document indexing failed. Please try again later.';
+      document.indexingAttemptCompletedAt = new Date();
       this.logger.warn('Webhook reported indexing failure', {
         documentId,
         workspaceId,
@@ -477,6 +501,14 @@ export class IndexingService {
     }
 
     await document.save();
+    await this.recordIndexingEvent(
+      document.indexingStatus === IndexingStatus.READY
+        ? WorkspaceIntegrationEvents.IndexingReadyV1
+        : document.indexingStatus === IndexingStatus.FAILED
+          ? WorkspaceIntegrationEvents.IndexingFailedV1
+          : WorkspaceIntegrationEvents.IndexingStartedV1,
+      document,
+    );
 
     this.logger.log('Webhook processed successfully', {
       documentId,
@@ -673,7 +705,9 @@ export class IndexingService {
 
         document.indexingStatus = IndexingStatus.FAILED;
         document.indexingError = 'Indexing timed out. Please try re-indexing the document.';
+        document.indexingAttemptCompletedAt = new Date();
         await document.save();
+        await this.recordIndexingEvent(WorkspaceIntegrationEvents.IndexingFailedV1, document);
 
         this.logger.warn('Document indexing timed out', {
           documentId,

@@ -31,6 +31,56 @@ beforeAll(() => {
 });
 
 describe('AIMessageContent charts', () => {
+  it('renders an exact choice prompt only once', () => {
+    const prompt = 'Pour vous orienter, de quel type de dossier s’agit-il ?';
+    const parts: MessageContentPart[] = [
+      { type: 'text', content: ` ${prompt} ` },
+      {
+        type: 'choice', componentId: 'choice-1', schemaVersion: 1, questionId: 'dossier-type', prompt,
+        presentation: 'quick_replies', selectionMode: 'single', submitBehavior: 'immediate', status: 'ready',
+        options: [{ id: 'create', label: 'Créer une activité', submitText: 'Créer une activité' }, { id: 'funding', label: 'Demander une aide', submitText: 'Demander une aide' }],
+      },
+    ];
+
+    render(<AIMessageContent parts={parts} />);
+
+    expect(screen.getAllByText(prompt)).toHaveLength(1);
+  });
+
+  it('keeps non-identical text alongside a choice prompt', () => {
+    const prompt = 'Choisissez une option';
+    const parts: MessageContentPart[] = [
+      { type: 'text', content: `${prompt} pour continuer.` },
+      {
+        type: 'choice', componentId: 'choice-1', schemaVersion: 1, questionId: 'next-step', prompt,
+        presentation: 'quick_replies', selectionMode: 'single', submitBehavior: 'immediate', status: 'ready',
+        options: [{ id: 'one', label: 'Un', submitText: 'Un' }, { id: 'two', label: 'Deux', submitText: 'Deux' }],
+      },
+    ];
+
+    render(<AIMessageContent parts={parts} />);
+
+    expect(screen.getByText(`${prompt} pour continuer.`)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: prompt })).toBeInTheDocument();
+  });
+
+  it('keeps an exact text prompt for submitted choices', () => {
+    const prompt = 'Choisissez une option';
+    const parts: MessageContentPart[] = [
+      { type: 'text', content: prompt },
+      {
+        type: 'choice', componentId: 'choice-1', schemaVersion: 1, questionId: 'next-step', prompt,
+        presentation: 'quick_replies', selectionMode: 'single', submitBehavior: 'immediate', status: 'submitted',
+        options: [{ id: 'one', label: 'Un', submitText: 'Un' }, { id: 'two', label: 'Deux', submitText: 'Deux' }],
+      },
+    ];
+
+    render(<AIMessageContent parts={parts} />);
+
+    expect(screen.getByText(prompt)).toBeInTheDocument();
+    expect(screen.getByText('choice.submitted')).toBeInTheDocument();
+  });
+
   it('renders markdown lists with compact shared spacing', () => {
     const parts: MessageContentPart[] = [
       {
@@ -45,6 +95,38 @@ describe('AIMessageContent charts', () => {
 
     expect(list).toHaveClass('my-2');
     expect(listItem).toHaveClass('my-0', 'leading-relaxed');
+  });
+
+  it('renders titled assistant citations as safe title-only links', () => {
+    render(<AIMessageContent parts={[{ type: 'text', content: 'Voir [Aide de la Ville, https://example.com/aide].' }]} />);
+
+    const link = screen.getByRole('link', { name: 'Aide de la Ville' });
+    expect(link).toHaveAttribute('href', 'https://example.com/aide');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(screen.queryByText('https://example.com/aide')).not.toBeInTheDocument();
+  });
+
+  it('renders every titled assistant citation in one paragraph', () => {
+    render(<AIMessageContent parts={[{ type: 'text', content: '[First source, https://example.com/one] and [Second source, https://example.com/two]' }]} />);
+
+    expect(screen.getByRole('link', { name: 'First source' })).toHaveAttribute('href', 'https://example.com/one');
+    expect(screen.getByRole('link', { name: 'Second source' })).toHaveAttribute('href', 'https://example.com/two');
+  });
+
+  it('preserves assistant citation syntax in code and rejects non-HTTP(S) targets', () => {
+    render(<AIMessageContent parts={[{ type: 'text', content: '`[Code, https://example.com]`\n\n```\n[Block, https://example.com]\n```\n\n[Unsafe, javascript:alert(1)]' }]} />);
+
+    expect(screen.getByText('[Code, https://example.com]')).toBeInTheDocument();
+    expect(screen.getByText('[Block, https://example.com]')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Unsafe' })).not.toBeInTheDocument();
+  });
+
+  it('does not transform citation-shaped text inside standard Markdown links', () => {
+    render(<AIMessageContent parts={[{ type: 'text', content: '[Read [Example, https://example.com]](https://destination.test)' }]} />);
+
+    const link = screen.getByRole('link', { name: 'Read [Example, https://example.com]' });
+    expect(link).toHaveAttribute('href', 'https://destination.test');
   });
 
   it('renders inline citation markers without bracket text', () => {

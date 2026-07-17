@@ -73,17 +73,16 @@ export class ConnectorCredentialService {
   }
 
   async findByIdRaw(id: string, userId: string): Promise<ConnectorCredentialDocument | null> {
-    const cred = await this.credentialModel
+    return this.credentialModel
       .findOne({ _id: id, userId: new Types.ObjectId(userId) })
       .exec();
-    if (cred) return cred;
-    return this.credentialModel.findById(id).exec();
   }
 
-  async findActiveByConnectorId(connectorId: string): Promise<ConnectorCredentialDocument | null> {
+  async findActiveByConnectorId(connectorId: string, userId: string): Promise<ConnectorCredentialDocument | null> {
     return this.credentialModel
       .findOne({
         connectorId: new Types.ObjectId(connectorId),
+        userId: new Types.ObjectId(userId),
         status: 'active',
       })
       .sort({ createdAt: -1 })

@@ -50,8 +50,29 @@ vi.mock('@/components/ai-elements/input', () => ({
 }));
 
 vi.mock('@/modules/usage', () => ({
-  useUsage: () => ({ status: { isLimitExceeded: false } }),
   UsageLimitBanner: () => <div>usage-banner</div>,
+}));
+
+vi.mock('@/modules/usage/UsageContext', () => ({
+  useUsage: () => ({ status: { isLimitExceeded: false } }),
+}));
+
+vi.mock('@/modules/workspace/hooks/useAllowedUploadExtensions', () => ({
+  useAllowedUploadExtensions: () => ({ accept: '*' }),
+}));
+
+vi.mock('@/modules/localization', () => ({
+  useModuleTranslation: () => ({
+    t: (key: string) => key,
+  }),
+}));
+
+vi.mock('./ComposerSuggestionChips', () => ({
+  ComposerSuggestionChips: () => null,
+}));
+
+vi.mock('./SelectedConnectorRepo', () => ({
+  SelectedConnectorRepo: () => null,
 }));
 
 vi.mock('../hooks/useConversationFileUpload', () => ({
@@ -70,17 +91,42 @@ vi.mock('@/modules/auth/useAuth', () => ({
 }));
 
 vi.mock('../store', () => ({
-  useConversationStore: (selector: (state: Record<string, unknown>) => unknown) =>
-    selector({
-      sendMessage: sendMessageMock,
-      stopStream: stopStreamMock,
-      clearReplyingTo: vi.fn(),
-      isStreaming: false,
-    }),
+  useConversationStore: Object.assign(
+    (selector: (state: Record<string, unknown>) => unknown) =>
+      selector({
+        sendMessage: sendMessageMock,
+        stopStream: stopStreamMock,
+        clearReplyingTo: vi.fn(),
+        isStreaming: false,
+        selectedSkillIds: [],
+        selectedConnectorRepo: {
+          connectorId: 'connector-1',
+          connectorName: 'GitHub',
+          repoId: 'repo-1',
+          repoName: 'org-name/repo-name',
+          repoUrl: 'https://github.com/org-name/repo-name',
+        },
+        currentConversation: null,
+      }),
+    {
+      getState: () => ({
+        selectedSkillIds: [],
+        selectedConnectorRepo: {
+          connectorId: 'connector-1',
+          connectorName: 'GitHub',
+          repoId: 'repo-1',
+          repoName: 'org-name/repo-name',
+          repoUrl: 'https://github.com/org-name/repo-name',
+        },
+      }),
+    },
+  ),
   useIsAwaitingFirstChunk: () => false,
   useInputDisabled: () => false,
   useReplyingToMessage: () => null,
   useSelectedWorkspaceIds: () => [],
+  useDeepSearchEnabled: () => false,
+  useSetDeepSearchEnabled: () => vi.fn(),
   useSelectedConnectorRepo: () => ({
     connectorId: 'connector-1',
     connectorName: 'GitHub',

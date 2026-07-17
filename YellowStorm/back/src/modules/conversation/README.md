@@ -22,6 +22,7 @@ The conversation module handles AI chat functionality including real-time stream
 - [Data Flow](#data-flow)
 - [Timing Metrics](#timing-metrics)
 - [Agent Integration](#agent-integration)
+- [Sticky Agent Routing](#sticky-agent-routing)
 - [Reply Threading](#reply-threading)
 - [Group Member Tagging](#group-member-tagging)
 - [Tagged Agents for Group Conversations](#tagged-agents-for-group-conversations)
@@ -41,7 +42,8 @@ The conversation module provides:
 - **Conversation Sharing**: Public links and private sharing with message snapshots
 - **Content Reporting**: Report problematic AI responses with admin review workflow
 - **Timing Metrics**: Track time to first chunk, first token, and total duration
-- **Agent Integration**: Dynamic agent building with manager resolution for gRPC requests
+- **Agent Integration**: Dynamic agent building with mono / single / multi+manager resolution for gRPC requests
+- **Sticky Agent Routing**: Conversation-level `taggedAgentIds` reuse last `@mention` agents on subsequent turns without tags
 - **Mono-Agent gRPC**: `RunSingleAgent` / `RunSingleAgentRequest` for single-agent flows (e.g. WhatsApp inbound replies — no manager, no SSE)
 - **Email Invitations**: Automatic email notifications for participants invited to group conversations
 - **Group @mentions**: Persisted mention records per member, `mention_created` SSE to mentioned users, and PATCH to mark mentions seen
@@ -440,6 +442,8 @@ class Conversation {
   createdBy: ObjectId;              // User reference
   messages: ObjectId[];             // Message references
   workspaces: ObjectId[];           // Associated workspaces
+  selectedSkills: ObjectId[];       // Sticky skill selection for the conversation
+  taggedAgentIds: ObjectId[];       // Sticky routing agents (last @mention set)
   systemWorkspaceId?: ObjectId;     // Auto-created for file attachments
   lastMessageAt?: Date;             // For sorting
   messageCount: number;             // Counter
@@ -453,6 +457,7 @@ class Conversation {
     isGroup: boolean;
     members: { userId: ObjectId; joinedAt: Date; status: string; job?: string }[];
     invitedUsers: { email: string; status: string; invitedAt: Date }[];
+    taggedAgents?: ObjectId[];      // Group shared toolbox ($addToSet; not sticky routing)
   };
 }
 
@@ -913,7 +918,9 @@ The backend implements logic to skip AI responses under certain conditions:
 
 ## Tagged Agents for Group Conversations
 
-In group conversations (`isGroup: true`), agents tagged by users in their messages are automatically persisted to the conversation's metadata (`groupMeta.taggedAgents`). This allows all members of the conversation to see and use the same agents, creating a shared toolbox.
+In group conversations (`isGroup: true`), agents tagged by users in their messages are automatically persisted to the conversation's metadata (`groupMeta.taggedAgents`). This allows all members of the conversation to see and use the same agents, creating a **shared toolbox**.
+
+> **Not the same as sticky routing.** `groupMeta.taggedAgents` is append-only (`$addToSet`) and expands the agent pool available in group streams. Sticky routing (`taggedAgentIds`) selects which agents run on untagged follow-ups — see [Sticky Agent Routing](#sticky-agent-routing).
 
 ### Persistence Workflow
 
@@ -934,8 +941,8 @@ A dedicated endpoint allows the frontend to retrieve all agents that have been t
 When any member triggers an AI response in a group conversation, the `StreamService` automatically includes all previously tagged agents:
 
 1.  The `StreamService.startStream` method fetches the conversation document and extracts `groupMeta.taggedAgents`.
-2.  These IDs are passed to `AgentService.buildAgentsForStream`.
-3.  The gRPC request sent to the AI service includes both the user's personal agents and these shared conversation agents, ensuring the AI can utilize any agent that has been part of the conversation.
+2.  These IDs are passed to `AgentService.buildAgentsForStream` as `sharedAgentIds` (roster expansion).
+3.  The **selection** of which agents run still comes from the turn’s `agentIds` (mentions). Empty selection → mono-agent fallback. Sticky `taggedAgentIds` is **not** applied in groups.
 
 ---
 
@@ -1118,16 +1125,23 @@ PATCH  /api/v1/reports/:id/status               Update report status
 
 ```
 1. POST /conversations/:id/messages
-   Body: { content, attachedFileIds?, webSearchEnabled?, modelId?, agentIds? }
+   Body: { content, attachedFileIds?, webSearchEnabled?, modelId?, agentIds?, teamIds?, memberIds? }
 2. MessageController.sendMessage()
    ├── Validate model is active (ModelsService)
    ├── Check AI service available (StreamService.isAvailable())
    ├── Check if first message (for name generation)
-   └── Create system workspace if files attached
+   ├── Create system workspace if files attached
+   ├── resolveAgentIds(dto.agentIds, dto.teamIds) → mentionedAgentIds
+   ├── resolveStickyAgentRouting
+   │   ├── mention → replaceTaggedAgentIds (full $set on conversation.taggedAgentIds)
+   │   ├── sticky  → reuse conversation.taggedAgentIds
+   │   └── none    → undefined (mono-agent later in buildAgentsForStream)
+   └── effectiveAgentIds passed to message + stream
 3. MessageService.createUserMessage()
    ├── Validate content length (50000 max)
    ├── Validate file count (5 max)
-   ├── Create message document (stores agentIds for regenerate)
+   ├── Create message document (stores effective agentIds for regenerate)
+   ├── updateTaggedAgents (group roster $addToSet only if isGroup)
    └── Update conversation refs
 4. MessageService.createAIPlaceholder()
    ├── Create AI message (isStreaming: true)
@@ -1139,7 +1153,7 @@ PATCH  /api/v1/reports/:id/status               Update report status
    ├── Fetch conversation document (for workspace IDs + systemWorkspaceId)
    ├── In parallel:
    │   ├── Build workspace contexts from linked workspaces
-   │   └── Build agents via AgentService.buildAgentsForStream()
+   │   └── Build agents via AgentService.buildAgentsForStream(request.agentIds, sharedAgentIds)
    ├── In parallel:
    │   ├── Resolve agent brain contexts (knowledge bases)
    │   ├── Build attached_files (current turn: images + documents with indexing config)
@@ -1309,52 +1323,48 @@ async cleanupOrphanedConversations() {
 
 ## Agent Integration
 
-The conversation module depends on the `AgentModule` to dynamically build and resolve agents before every gRPC stream request. Agents are the AI personas (researchers, coders, etc.) that handle the user's query, and exactly **one manager** is always included to orchestrate them.
+The conversation module depends on the `AgentModule` to dynamically build and resolve agents before every gRPC stream request. Agents are the AI personas that handle the user's query.
 
 ### How Agents Are Passed
 
-When the client sends a message, it can optionally include `agentIds` — an array of MongoDB ObjectIds referencing specific agents the user wants to invoke (e.g., by mentioning them in the UI). These IDs are:
+When the client sends a message, it can optionally include `agentIds` / `teamIds` (from `@` mentions). Before streaming, `MessageController.sendMessage`:
 
-1. **Stored on the user message** (`Message.agentIds`) so they can be reused during regenerate
-2. **Passed to `StreamService.startStream()`** as part of the request payload
-3. **Used by `AgentService.buildAgentsForStream()`** to resolve the final agent list
+1. Expands teams into agent IDs and merges with direct agent mentions
+2. Applies **sticky routing** via `resolveStickyAgentRouting` (see [Sticky Agent Routing](#sticky-agent-routing))
+3. Persists the **effective** agent IDs on the user message (`Message.agentIds`) for regenerate
+4. Passes those IDs to `StreamService.startStream()` → `AgentService.buildAgentsForStream()`
 
 ### Building Agents for Stream
 
-`AgentService.buildAgentsForStream(userId, fallbackModelId?, agentIds?)` is called inside `StreamService.startStream()` and performs the following:
+`AgentService.buildAgentsForStream(userId, fallbackModelId?, agentIds?, sharedAgentIds?)` is called inside `StreamService.startStream()` and performs the following:
 
 ```
-1. Fetch all agents available to the user
+1. Fetch agents available to the user
    ├── Personal agents (created by the user)
-   └── Admin default agents (created by admins, shared with all users)
+   ├── Admin default agents
+   └── Shared group agents (sharedAgentIds from groupMeta.taggedAgents, if any)
 
-2. Filter agents based on mentioned agentIds
-   ├── If agentIds provided → filter to only those agents
-   └── If no agentIds → pingedAgents = [] (none specifically mentioned)
+2. Filter to pinged agents from agentIds (effective IDs for this turn)
+   ├── If agentIds provided → filter to those agents present in the roster
+   └── If no agentIds → pingedAgents = []
 
-3. Resolve exactly ONE manager agent (see Manager Resolution below)
+3. Resolve roster by ping count
+   ├── 0 tagged  → mono-agent only (resolveDefaultMonoAgent; type slug "mono-agent")
+   ├── 1 tagged  → that agent only (RunSingleAgent; no manager)
+   └── 2+ tagged → those agents + one manager (RunAgentTeam)
 
-4. Build final agent list
-   ├── Pinged non-manager agents (agents the user specifically mentioned)
-   ├── + The resolved manager
-   └── Safety net: if list is empty, send ALL user agents
+4. Batch-resolve resources (prompts, tools, models)
 
-5. Batch-resolve resources (efficient — max 3 DB queries)
-   ├── Prompts: AgentTypeService.resolvePromptsInBatch()
-   ├── Tools: ToolService.findByIds() for all unique tool IDs
-   └── Models: ModelsService.findById() for all unique model IDs
-
-6. Assemble IGrpcAgent[] for gRPC request
-   Each agent includes: id, name, description, prompt, agent_type, tools[], chatbot.model
+5. Assemble IGrpcAgent[] for gRPC
 ```
 
 ### Manager Resolution
 
-Every stream request includes exactly one manager agent. The manager orchestrates the other agents and coordinates the response. Resolution follows a strict priority order:
+A manager is included **only** when 2+ agents are tagged. Resolution priority:
 
 | Priority | Description |
 |----------|-------------|
-| 1 | **Pinged manager** — a manager explicitly mentioned by the user via `agentIds` |
+| 1 | **Pinged manager** — a manager explicitly mentioned via `agentIds` |
 | 2 | **Personal default-for-type** — user's own manager marked as `isDefaultForType: true` |
 | 3 | **First personal manager** — any manager created by the user |
 | 4 | **Admin default-for-type** — admin manager marked as `isDefaultForType: true` |
@@ -1378,6 +1388,47 @@ private resolveManager(
     || adminManagers.find((a) => a.isDefaultForType)
     || adminManagers[0];
 }
+```
+
+---
+
+## Sticky Agent Routing
+
+Sticky routing keeps the last `@mention` agent set on the conversation so follow-up messages without tags continue with the same agent(s), instead of falling back to the mono-agent.
+
+### Field
+
+| Field | Location | Semantics |
+|-------|----------|-----------|
+| `taggedAgentIds` | Top-level on `Conversation` | Sticky routing set — **full replace** on new mentions; **reuse** when the turn has no mentions |
+| `groupMeta.taggedAgents` | Group meta only | Shared toolbox — `$addToSet` (append-only); unrelated to sticky routing |
+
+### Decision helper
+
+`utils/sticky-agent-routing.ts` → `resolveStickyAgentRouting`:
+
+| Input | Result |
+|-------|--------|
+| Mentions present | `effectiveAgentIds = mentioned`; `shouldReplaceSticky = true` |
+| No mentions + sticky non-empty + AI turn | `effectiveAgentIds = sticky`; no replace |
+| No mentions + sticky empty | `effectiveAgentIds = undefined` → mono-agent in `buildAgentsForStream` |
+| Member-only turn (`memberIds` set) | Sticky is **not** reused |
+
+### Persistence
+
+`ConversationService.replaceTaggedAgentIds(conversationId, agentIds)` performs `$set: { taggedAgentIds }` (replace entire array). Called when the turn has new mentions.
+
+### Examples
+
+```
+Request 1: "@agent3 Bonjour"
+  → mentioned = [3], replace sticky → taggedAgentIds = [3], route to agent3
+
+Request 2: "Peux-tu continuer ?" (no tag)
+  → mentioned = [], reuse sticky → effective = [3], route to agent3
+
+Request 3: "@agent1 @agent2 Aidez-moi"
+  → mentioned = [1, 2], replace sticky → taggedAgentIds = [1, 2] (3 removed)
 ```
 
 ### Agent Interfaces
