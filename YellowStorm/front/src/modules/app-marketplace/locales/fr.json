@@ -1,0 +1,18 @@
+{
+  "button": {
+    "label": "App Marketplace",
+    "tooltip": "App Marketplace"
+  },
+  "page": {
+    "title": "Marché d'apps",
+    "description": "Vos applications déployées",
+    "empty": "Aucune application déployée pour le moment. Publiez une application depuis une conversation pour la voir ici.",
+    "error": "Impossible de charger vos applications déployées."
+  },
+  "card": {
+    "untitled": "Application sans titre",
+    "deployedAt": "Déployée le {{date}}",
+    "open": "Ouvrir l'application",
+    "conversation": "Accéder à la conversation"
+  }
+}

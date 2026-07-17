@@ -37,6 +37,7 @@ describe('ConversationV2Controller', () => {
     rename: jest.fn(),
     setShared: jest.fn(),
     setDeployState: jest.fn(),
+    listDeployedApps: jest.fn(),
     softDelete: jest.fn(),
   };
 
@@ -260,6 +261,29 @@ describe('ConversationV2Controller', () => {
       success: true,
     });
     expect(mockClient.resumeSession).toHaveBeenCalledWith('u1', 'ai-1');
+  });
+
+  it('GET /apps returns the deployed apps of the current user', async () => {
+    mockSessions.listDeployedApps.mockResolvedValueOnce([
+      {
+        sessionId: 'session-1',
+        title: 'Generated app',
+        deployedUrl: 'https://apps.example/app-1',
+        lastDeployedAt: '2026-07-17T10:00:00.000Z',
+      },
+    ]);
+
+    await expect(controller.listDeployedApps({ id: 'user-1' })).resolves.toEqual({
+      items: [
+        {
+          sessionId: 'session-1',
+          title: 'Generated app',
+          deployedUrl: 'https://apps.example/app-1',
+          lastDeployedAt: '2026-07-17T10:00:00.000Z',
+        },
+      ],
+    });
+    expect(mockSessions.listDeployedApps).toHaveBeenCalledWith('user-1');
   });
 
   it('POST /sessions/:id/deploy calls app-builder with the user and AI session ids', async () => {

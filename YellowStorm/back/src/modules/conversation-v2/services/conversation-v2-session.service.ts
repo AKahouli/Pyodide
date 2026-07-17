@@ -22,6 +22,13 @@ export interface PointerSummary {
   selectedConnectorIds: string[];
 }
 
+export interface DeployedAppSummary {
+  sessionId: string;
+  title: string;
+  deployedUrl: string;
+  lastDeployedAt: string | null;
+}
+
 @Injectable()
 export class ConversationV2SessionService {
   constructor(
@@ -89,6 +96,25 @@ export class ConversationV2SessionService {
       aiSessionId: null,
       deletedAt: null,
     });
+  }
+
+  /**
+   * List the owner's successfully deployed apps (sessions with a live URL),
+   * newest deployment first. Powers the App Marketplace page.
+   */
+  async listDeployedApps(ownerId: string): Promise<DeployedAppSummary[]> {
+    const docs = await this.model
+      .find({ ownerId, deletedAt: null, deployStatus: 'deployed', deployedUrl: { $ne: null } })
+      .sort({ lastDeployedAt: -1 })
+      .select('title deployedUrl lastDeployedAt')
+      .lean()
+      .exec();
+    return docs.map((doc) => ({
+      sessionId: doc._id.toString(),
+      title: (doc.title as string | undefined) ?? '',
+      deployedUrl: doc.deployedUrl as string,
+      lastDeployedAt: doc.lastDeployedAt ? new Date(doc.lastDeployedAt).toISOString() : null,
+    }));
   }
 
   async list(ownerId: string, dto: ListSessionsDto): Promise<PointerSummary[]> {

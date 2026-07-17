@@ -16,6 +16,9 @@ import { PlaybookExecutionComparePage as PlaybookExecutionCompareRoute } from '.
 // Lazy-loaded connected apps
 const ConnectedAppsPage = React.lazy(() => import('./modules/connected-app/components/ConnectedAppsPage').then((m) => ({ default: m.ConnectedAppsPage })));
 
+// Lazy-loaded app marketplace
+const AppMarketplacePage = React.lazy(() => import('./modules/app-marketplace/components/AppMarketplacePage').then((m) => ({ default: m.AppMarketplacePage })));
+
 // Lazy-loaded playbook routes
 const PlaybookListPage = React.lazy(() =>
   import("./modules/playbook/components/PlaybookListPage").then((m) => ({ default: m.PlaybookListPage }))
@@ -145,6 +148,14 @@ export const router = createHashRouter([
         element: (
           <Suspense fallback={null}>
             <ConnectedAppsPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'app-market',
+        element: (
+          <Suspense fallback={null}>
+            <AppMarketplacePage />
           </Suspense>
         ),
       },

@@ -137,6 +137,15 @@ export class ConversationV2Controller {
     return { items, nextCursor };
   }
 
+  /** Deployed apps of the current user, newest deployment first (App Marketplace). */
+  @Get('apps')
+  async listDeployedApps(@CurrentUser() user: AuthUser): Promise<{
+    items: { sessionId: string; title: string; deployedUrl: string; lastDeployedAt: string | null }[];
+  }> {
+    const items = await this.sessions.listDeployedApps(user.id);
+    return { items };
+  }
+
   @Get('sessions/:id')
   @UseGuards(ConversationV2OwnerGuard)
   async getSession(

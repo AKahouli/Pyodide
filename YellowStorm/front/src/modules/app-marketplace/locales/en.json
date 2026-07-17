@@ -1,0 +1,18 @@
+{
+  "button": {
+    "label": "App Marketplace",
+    "tooltip": "App Marketplace"
+  },
+  "page": {
+    "title": "App Market",
+    "description": "Your deployed applications",
+    "empty": "No deployed apps yet. Publish an app from a conversation to see it here.",
+    "error": "Failed to load your deployed apps."
+  },
+  "card": {
+    "untitled": "Untitled app",
+    "deployedAt": "Deployed {{date}}",
+    "open": "Open the application",
+    "conversation": "Go to the conversation"
+  }
+}

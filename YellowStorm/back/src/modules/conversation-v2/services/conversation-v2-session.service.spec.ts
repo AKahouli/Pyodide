@@ -34,6 +34,42 @@ describe('ConversationV2SessionService', () => {
     svc = mod.get(ConversationV2SessionService);
   });
 
+  it('listDeployedApps filters deployed sessions with a URL and maps the DTO', async () => {
+    const id = new Types.ObjectId();
+    const select = jest.fn().mockReturnValue({
+      lean: () => ({
+        exec: () =>
+          Promise.resolve([
+            {
+              _id: id,
+              title: 'Generated app',
+              deployedUrl: 'https://apps.example/app-1',
+              lastDeployedAt: new Date('2026-07-17T10:00:00.000Z'),
+            },
+          ]),
+      }),
+    });
+    const sort = jest.fn().mockReturnValue({ select });
+    find.mockReturnValueOnce({ sort });
+
+    await expect(svc.listDeployedApps('u1')).resolves.toEqual([
+      {
+        sessionId: id.toString(),
+        title: 'Generated app',
+        deployedUrl: 'https://apps.example/app-1',
+        lastDeployedAt: '2026-07-17T10:00:00.000Z',
+      },
+    ]);
+    expect(find).toHaveBeenCalledWith({
+      ownerId: 'u1',
+      deletedAt: null,
+      deployStatus: 'deployed',
+      deployedUrl: { $ne: null },
+    });
+    expect(sort).toHaveBeenCalledWith({ lastDeployedAt: -1 });
+    expect(select).toHaveBeenCalledWith('title deployedUrl lastDeployedAt');
+  });
+
   it('list filters by owner, excludes soft-deleted, sorts desc by lastEventAt', async () => {
     const limit = jest.fn().mockReturnValue({
       lean: () => ({ exec: () => Promise.resolve([{ _id: new Types.ObjectId(), title: 'a', status: 'active', lastEventAt: new Date(0), isShared: false, workspaceIds: [] }]) }),
