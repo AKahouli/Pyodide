@@ -202,8 +202,8 @@ describe('ConnectorService importFromMcp', () => {
           slug: 'github',
           createdBy: new Types.ObjectId(),
           actions: [
-            { key: 'old_tool', isEnabled: true },
-            { key: 'disabled_tool', isEnabled: true },
+            { key: 'old_tool', parameterSchema: { properties: { oldArg: {} } }, isEnabled: true },
+            { key: 'disabled_tool', parameterSchema: {}, isEnabled: true },
           ],
         }),
       }),
@@ -251,7 +251,7 @@ describe('ConnectorService importFromMcp', () => {
           key: 'old_tool',
           label: 'Old Tool',
           description: '',
-          parameterSchema: {},
+          parameterSchema: { properties: { newArg: {} } },
           outputSchema: {},
           safety: ConnectorActionSafety.READ,
           supportsBatch: false,
@@ -285,8 +285,14 @@ describe('ConnectorService importFromMcp', () => {
 
     expect(playbookBindingSyncService.syncConnectorActions).toHaveBeenCalledWith(
       connectorId,
-      ['old_tool', 'disabled_tool'],
-      ['old_tool', 'new_tool'],
+      [
+        { key: 'old_tool', parameterSchema: { properties: { oldArg: {} } } },
+        { key: 'disabled_tool', parameterSchema: {} },
+      ],
+      [
+        { key: 'old_tool', parameterSchema: { properties: { newArg: {} } } },
+        { key: 'new_tool', parameterSchema: {} },
+      ],
     );
   });
 

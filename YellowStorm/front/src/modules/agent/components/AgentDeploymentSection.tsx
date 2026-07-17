@@ -18,8 +18,7 @@ import { showSuccess, showWarning } from "@/lib/notifications";
 
 import { useModuleTranslation } from "@/modules/localization";
 
-import { buildWidgetSnippet } from "../constants/widget-template";
-
+import { buildWidgetCdnSnippet } from "../constants/widget-template";
 import {
 
   buildAgentIntegrationRestSpec,
@@ -43,6 +42,15 @@ import type { AgentDeploymentSettings } from '../types';
 
 function getApiBase(): string {
   return API_CONFIG.baseURL.replace(/\/$/, "");
+}
+
+/** Origin that hosts `/widget-embed.js` (YellowStorm web app / CDN). */
+function getWidgetCdnBase(): string {
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin.replace(/\/$/, "");
+  }
+  const fromEnv = (import.meta.env.VITE_APP_URL as string | undefined)?.replace(/\/$/, "");
+  return fromEnv || "http://localhost:5173";
 }
 
 
@@ -92,9 +100,10 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
       const apiBase = getApiBase();
 
       setEmbedSnippet(
-
-        buildWidgetSnippet({ agentId: id, embedHandle: token, apiBaseUrl: apiBase }),
-
+        buildWidgetCdnSnippet({
+          embedHandle: token,
+          cdnBaseUrl: getWidgetCdnBase(),
+        }),
       );
 
       setRestSpec(buildAgentIntegrationRestSpec(apiBase, id, token));
@@ -325,7 +334,7 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
       </div>
 
       <Dialog open={isEmbedDialogOpen} onOpenChange={setIsEmbedDialogOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-xl gap-4 sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>{t("createEdit.fields.deploymentSnippet")}</DialogTitle>
             <DialogDescription>{t("createEdit.fields.deploymentSnippetDialogDescription")}</DialogDescription>
@@ -336,6 +345,7 @@ export function AgentDeploymentSection({ agentId, agentName = "", value, onChang
               hint={t("createEdit.fields.deploymentSnippetHint")}
               badge="HTML"
               lines={embedLines}
+              compact
               isCopied={isCopied}
               copyLabel={t("createEdit.actions.copyDeploymentSnippet")}
               copiedLabel={t("createEdit.actions.deploymentSnippetCopiedShort")}

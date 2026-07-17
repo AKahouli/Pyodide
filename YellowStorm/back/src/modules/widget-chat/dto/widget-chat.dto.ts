@@ -124,6 +124,9 @@ export class WidgetCitationUrlDto {
   workspaceId?: string;
 }
 
+/** Query params for GET /widget/citation-file (same fields as citation-url body). */
+export class WidgetCitationFileQueryDto extends WidgetCitationUrlDto {}
+
 export class UpdateWidgetTokenDto {
   @ApiPropertyOptional({ maxLength: 200 })
   @IsOptional()

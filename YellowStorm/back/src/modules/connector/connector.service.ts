@@ -302,8 +302,8 @@ export class ConnectorService {
       try {
         await this.playbookBindingSyncService.syncConnectorActions(
           id,
-          this.getEnabledActionKeys(existing.actions || []),
-          this.getEnabledActionKeys(normalizedActions),
+          this.getEnabledActionContracts(existing.actions || []),
+          this.getEnabledActionContracts(normalizedActions),
         );
       } catch (err) {
         this.logger.warn('Failed to synchronize playbook connector action bindings after connector update', {
@@ -322,11 +322,14 @@ export class ConnectorService {
     }
   }
 
-  private getEnabledActionKeys(actions: ConnectorAction[]): string[] {
+  private getEnabledActionContracts(actions: ConnectorAction[]) {
     return actions
       .filter((action) => action.isEnabled !== false)
-      .map((action) => String(action.key || '').trim())
-      .filter(Boolean);
+      .map((action) => ({
+        key: String(action.key || '').trim(),
+        parameterSchema: action.parameterSchema || {},
+      }))
+      .filter((action) => Boolean(action.key));
   }
 
   async importFromMcp(createdBy: string, transportType: string, serverUrl: string, serverConfig?: Record<string, unknown>): Promise<IMcpInspectResult> {
