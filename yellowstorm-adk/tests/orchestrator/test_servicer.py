@@ -102,7 +102,7 @@ async def test_get_session_not_found_sets_status():
 
 
 async def test_stop_session_cancels_running_turn():
-    rm = MagicMock(set_session_status=AsyncMock())
+    rm = MagicMock(stop_incomplete=AsyncMock(), set_session_status=AsyncMock())
     s = _servicer(rm=rm)
 
     async def forever():

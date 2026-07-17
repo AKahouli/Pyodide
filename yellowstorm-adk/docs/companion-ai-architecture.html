@@ -615,13 +615,13 @@
         <li>
           <div>
             <div class="what">Runner.run_async(...) → map events → live status</div>
-            <div class="why">ADK's graph engine runs independent nodes concurrently up to <code>max_concurrency</code>, sequences dependent ones, and joins fan-in. Each event becomes a step status row update; the first ask-the-user interrupt is captured here.</div>
+            <div class="why">ADK's graph engine runs independent nodes concurrently up to <code>max_concurrency</code>, sequences dependent ones, and joins fan-in. Each event becomes a step status row update; every ask-the-user interrupt this run raises is captured here.</div>
           </div>
         </li>
         <li>
           <div>
             <div class="what">finalize: derive status, post the assistant reply</div>
-            <div class="why">Either the plan blocked (persist the interrupt id, surface the question in chat) or it finished — in which case the reply is the concatenated results of the terminal steps.</div>
+            <div class="why">Either the plan blocked (persist each parked step's interrupt id, surface its question in chat) or it finished — in which case the reply is the concatenated results of the terminal steps. It only finishes when no step is still parked, including ones parked by an earlier run.</div>
           </div>
         </li>
       </ol>
@@ -768,7 +768,7 @@ ni.path in ni.output_for      →  <span class="hl">completed</span>, and the ev
       </p>
       <p>The full cycle:</p>
       <pre><code>run     → node returns RequestInput(iid, question) → the run interrupts
-        → step goes <span class="hl">blocked</span>, sessions.interrupt_id = iid, question posted to chat
+        → step goes <span class="hl">blocked</span>, plan_steps.interrupt_id = iid, question posted to chat
 
         (the client shows the blocked step; the user replies)
 
@@ -782,6 +782,33 @@ resume  → next RunTask sees status=waiting → resume_turn
         <code>DatabaseSessionService</code> rather than held in memory, a turn blocked on a question
         survives a disconnect, a restart, or a hand-off to a different replica — a fresh Runner can
         rehydrate the interrupt and carry on.
+      </p>
+
+      <h3>Several steps can wait at once</h3>
+      <p>
+        A wave can park more than one step, each asking its own question. Every one gets its own
+        interrupt id — derived from the node path, so it is unique per step and stable across
+        replays — and each is answerable on its own, from a separate run, in any order.
+        <code>resume_turn</code> takes an optional <code>interrupt_id</code> to pick which parked
+        step an answer belongs to; a chat reply carries no such id and answers the session's first.
+        This is what lets a non-human answer arrive for one step while a human answers another.
+      </p>
+      <p>
+        One ADK behaviour makes this sharper than it looks: <strong>an interrupt is only ever
+        emitted on the run that raises it.</strong> Resuming step A produces no event at all for
+        still-parked step B — from that run's events alone, B is indistinguishable from a step that
+        was never blocked. So the outstanding set cannot be derived from a run; it lives in
+        <code>plan_steps.interrupt_id</code>, written when a step parks and cleared when it moves to
+        any other status. <code>_finalize</code> reads it back before completing, because the
+        completion branch marks every unfinished step <span class="hl">completed</span> — which
+        would quietly finish work nobody ever answered.
+      </p>
+      <p>
+        <code>sessions.interrupt_id</code> still carries the first parked id for the chat surface,
+        but the per-step ids are the routing truth: <code>(session_id, step_id)</code> identifies a
+        pending question uniquely, across every session a user has open.
+        Covered by <code>tests/orchestrator/test_multi_interrupt.py</code>, which pins the
+        no-re-emit behaviour so a future ADK change that starts re-emitting is caught.
       </p>
     </section>
 
@@ -799,9 +826,9 @@ resume  → next RunTask sees status=waiting → resume_turn
             <tr><th>Table</th><th>Published</th><th>Holds</th></tr>
           </thead>
           <tbody>
-            <tr><td class="file">sessions</td><td style="color:var(--completed)">yes</td><td>Status, title, and <code>interrupt_id</code> while waiting on an answer.</td></tr>
+            <tr><td class="file">sessions</td><td style="color:var(--completed)">yes</td><td>Status, title, and the first <code>interrupt_id</code> while waiting on an answer.</td></tr>
             <tr><td class="file">plans</td><td style="color:var(--completed)">yes</td><td>One row per session: title, goal, rolled-up status.</td></tr>
-            <tr><td class="file">plan_steps</td><td style="color:var(--completed)">yes</td><td>Row per step, so parallel work surfaces as independent live row updates.</td></tr>
+            <tr><td class="file">plan_steps</td><td style="color:var(--completed)">yes</td><td>Row per step, so parallel work surfaces as independent live row updates. <code>interrupt_id</code> is set while <em>that</em> step waits on an answer — the durable record of every question still outstanding.</td></tr>
             <tr><td class="file">messages</td><td style="color:var(--completed)">yes</td><td>The conversation view — user turns and assistant replies.</td></tr>
             <tr><td class="file">run_idempotency</td><td style="color:var(--ink-faint)">no</td><td>Durable RunTask de-duplication. Internal.</td></tr>
             <tr><td class="file">mcp_tasks</td><td style="color:var(--ink-faint)">no</td><td>Queue of long-running MCP handles for the poller. Internal.</td></tr>

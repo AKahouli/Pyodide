@@ -58,11 +58,13 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 agent          TEXT,
                 result         TEXT,
                 blocked_reason TEXT,
+                interrupt_id   TEXT,          -- set while THIS step waits on an answer
                 updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
                 PRIMARY KEY (session_id, step_id)
             )""")
         for col, typ in (("kind", "TEXT NOT NULL DEFAULT 'execute'"),
-                         ("question", "TEXT"), ("title", "TEXT")):
+                         ("question", "TEXT"), ("title", "TEXT"),
+                         ("interrupt_id", "TEXT")):
             await con.execute(
                 f'ALTER TABLE {_q(schema,"plan_steps")} ADD COLUMN IF NOT EXISTS {col} {typ}')
         await con.execute(f"""
@@ -176,7 +178,10 @@ class ReadModel:
 
     async def set_step_status(self, session_id: str, step_id: str, status: str, *,
                               agent: Optional[str] = None, result: Optional[str] = None,
-                              blocked_reason: Optional[str] = None) -> None:
+                              blocked_reason: Optional[str] = None,
+                              interrupt_id: Optional[str] = None) -> None:
+        """`interrupt_id` is written as given, not merged: a step that moves to any
+        status without one is no longer parked, so the default clears it."""
         async with self._pool.acquire() as con:
             await con.execute(f"""
                 UPDATE {_q(self._schema,'plan_steps')}
@@ -184,9 +189,24 @@ class ReadModel:
                     agent=COALESCE($4, agent),
                     result=COALESCE($5, result),
                     blocked_reason=$6,
+                    interrupt_id=$7,
                     updated_at=now()
                 WHERE session_id=$1 AND step_id=$2
-            """, session_id, step_id, status, agent, result, blocked_reason)
+            """, session_id, step_id, status, agent, result, blocked_reason, interrupt_id)
+
+    async def outstanding_interrupts(self, session_id: str) -> List[Tuple[str, str]]:
+        """(interrupt_id, step_id) for every step still parked on an answer.
+
+        ADK only emits an interrupt on the run that raises it — a step parked by
+        an earlier run stays parked silently. This is the durable record of what
+        is still outstanding, so a turn never completes work nobody answered.
+        """
+        async with self._pool.acquire() as con:
+            rows = await con.fetch(
+                f"SELECT interrupt_id, step_id FROM {_q(self._schema,'plan_steps')} "
+                f"WHERE session_id=$1 AND interrupt_id IS NOT NULL ORDER BY ordinal",
+                session_id)
+        return [(r["interrupt_id"], r["step_id"]) for r in rows]
 
     async def add_message(self, message_id: str, session_id: str, role: str, content: str) -> None:
         async with self._pool.acquire() as con:

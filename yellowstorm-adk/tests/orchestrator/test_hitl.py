@@ -44,7 +44,8 @@ async def _run():
 def test_block_and_ask_roundtrip():
     ids, state = asyncio.run(_run())
     assert ids[0].startswith("ask:"), ids
-    assert state.get("ask") == {"value": "pdf"}, state
+    # The node unwraps {"value": ...} so downstream steps read the text itself.
+    assert state.get("ask") == "pdf", state
 
 
 if __name__ == "__main__":

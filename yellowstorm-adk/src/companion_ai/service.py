@@ -25,7 +25,7 @@ import json
 import logging
 import re
 import uuid
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
@@ -240,20 +240,34 @@ class OrchestratorService:
         return plan
 
     async def resume_turn(self, *, session_id: str, user_id: str, answer: str,
-                          model: str, connectors: Optional[List[dict]] = None) -> Plan:
+                          model: str, connectors: Optional[List[dict]] = None,
+                          interrupt_id: Optional[str] = None) -> Plan:
         """Resume a turn blocked on ask-the-user with the user's `answer`.
 
         Reached from STEP 4 when the session is waiting; skips planning (STEP
         5-7 already happened on the original turn) and rejoins the sequence at
         STEP 8 by rebuilding the same workflow from the stored plan. ADK replays
         completed nodes from the durable session and re-runs the blocked one
-        with the answer injected."""
+        with the answer injected.
+
+        `interrupt_id` picks which parked step to answer when several are waiting
+        (a chat reply has no such id and answers the session's first). Any other
+        parked step stays parked and is still resumable afterwards."""
         if self._rm is None:
             raise RuntimeError("resume requires the read model")
         snap = await self._rm.snapshot(session_id)
-        interrupt_id = snap and snap["session"].get("interrupt_id")
-        if not snap or not interrupt_id:
+        if not snap:
+            raise RuntimeError(f"session {session_id} unknown; nothing to resume")
+        interrupt_id = interrupt_id or snap["session"].get("interrupt_id")
+        if not interrupt_id:
             raise RuntimeError(f"session {session_id} is not waiting on input")
+        # Resuming an id that is not parked would answer nothing yet still let
+        # _finalize complete the plan; refuse instead. Sessions parked before
+        # per-step ids existed have no rows, so an empty set skips the check.
+        outstanding = {i for i, _ in await self._rm.outstanding_interrupts(session_id)}
+        if outstanding and interrupt_id not in outstanding:
+            raise RuntimeError(
+                f"interrupt {interrupt_id} is not outstanding for session {session_id}")
 
         # STEP 8 (resume) — same step ids + depends_on ⇒ same node names + edges,
         # which is what lets the interrupt id from the earlier run still match.
@@ -323,41 +337,74 @@ class OrchestratorService:
         return plan
 
     async def _drive(self, runner, session_id, user_id, plan, name_to_step, new_message):
-        """Run the workflow, project step statuses, and capture the first
-        ask-the-user interrupt as (interrupt_id, step_id) or None."""
+        """Run the workflow, project step statuses, and capture every
+        ask-the-user interrupt this run raised as [(interrupt_id, step_id), ...].
+
+        A wave can park several steps at once (each asks its own question), and
+        each is resumable on its own — so collect them all, not just the first.
+        """
         started: set = set()
-        interrupt = None
+        interrupts: List[Tuple[str, Optional[str]]] = []
+        seen: set = set()
         async for ev in runner.run_async(
                 user_id=user_id, session_id=session_id, new_message=new_message):
             await self._apply_event(session_id, plan, ev, name_to_step, started)
-            if interrupt is None:
-                ids = hitl.interrupt_ids(ev)
-                if ids:
-                    ni = getattr(ev, "node_info", None)
-                    step_id = (name_to_step.get(_node_to_step_name(ni.path))
-                               if ni and getattr(ni, "path", None) else None)
-                    interrupt = (ids[0], step_id)
-        return interrupt
+            ni = getattr(ev, "node_info", None)
+            step_id = (name_to_step.get(_node_to_step_name(ni.path))
+                       if ni and getattr(ni, "path", None) else None)
+            for iid in hitl.interrupt_ids(ev):
+                if iid not in seen:
+                    seen.add(iid)
+                    interrupts.append((iid, step_id))
+        return interrupts
 
-    async def _finalize(self, session_id: str, plan: Plan, interrupt) -> None:
-        """STEP 10 — the turn ends one of two ways: blocked on a question (the
-        session parks with an interrupt id for a later resume), or done."""
-        if interrupt is not None:
-            interrupt_id, step_id = interrupt
-            if step_id:
-                step = plan.step(step_id)
-                step.status = Status.BLOCKED
-                step.blocked_reason = "awaiting user input"
-                await self._project(self._rm and self._rm.set_step_status(
-                    session_id, step_id, "blocked", blocked_reason="awaiting user input"))
-                # Surface the ask-the-user question in the chat.
-                await self._add_message(session_id, "assistant", step.question or step.description or "")
+    async def _outstanding(self, session_id: str,
+                           interrupts: List[Tuple[str, Optional[str]]]
+                           ) -> List[Tuple[str, Optional[str]]]:
+        """Every (interrupt_id, step_id) still parked: the ones this run raised
+        plus any a previous run parked and nobody has answered yet.
+
+        ADK re-emits nothing on resume — resuming step A produces no event at all
+        for a still-parked step B — so the durable record is the only way to know
+        B is outstanding. Without it a resume looks like "no interrupts" and the
+        completion branch below would mark B completed unanswered."""
+        if self._rm is None:
+            return list(interrupts)
+        try:
+            return await self._rm.outstanding_interrupts(session_id)
+        except Exception:  # read model is best-effort; fall back to this run's
+            logger.warning("[worky] 10. could not read outstanding interrupts session=%s",
+                           session_id, exc_info=True)
+            return list(interrupts)
+
+    async def _finalize(self, session_id: str, plan: Plan,
+                        interrupts: List[Tuple[str, Optional[str]]]) -> None:
+        """STEP 10 — the turn ends one of two ways: blocked on one or more
+        questions (each step parks with its own interrupt id, resumable
+        independently), or done."""
+        for interrupt_id, step_id in interrupts:
+            if not step_id:
+                continue
+            step = plan.step(step_id)
+            step.status = Status.BLOCKED
+            step.blocked_reason = "awaiting user input"
+            await self._project(self._rm and self._rm.set_step_status(
+                session_id, step_id, "blocked", blocked_reason="awaiting user input",
+                interrupt_id=interrupt_id))
+            # Surface the ask-the-user question in the chat.
+            await self._add_message(session_id, "assistant", step.question or step.description or "")
+
+        outstanding = await self._outstanding(session_id, interrupts)
+        if outstanding:
             plan.status = Status.BLOCKED
-            logger.info("[worky] 10. blocked on ask-user session=%s step=%s interrupt=%s",
-                        session_id, step_id, interrupt_id)
+            logger.info("[worky] 10. blocked on %d ask-user step(s) session=%s: %s",
+                        len(outstanding), session_id,
+                        ", ".join(f"{s}→{i}" for i, s in outstanding))
             await self._project(self._rm and self._rm.upsert_plan(
                 session_id, plan.id, plan.title, plan.goal, "blocked"))
-            await self._project(self._rm and self._rm.set_waiting(session_id, interrupt_id))
+            # sessions.interrupt_id carries the first for the chat surface; the
+            # per-step ids on plan_steps are the routing truth.
+            await self._project(self._rm and self._rm.set_waiting(session_id, outstanding[0][0]))
             return
         # Normal completion — any node the workflow finished is completed.
         for s in plan.steps:

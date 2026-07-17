@@ -14,8 +14,14 @@ import uuid
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import asyncpg
+import pytest
+import pytest_asyncio
 
 from src.companion_ai import mcp_tasks, readmodel
+
+# One pool, one loop, for the whole module: the tests share a schema and run in
+# order, and a per-test loop would strand the pool's connections on a dead one.
+pytestmark = pytest.mark.asyncio(loop_scope="module")
 
 DSN = dict(host=os.getenv("PGHOST", "localhost"), port=int(os.getenv("PGPORT", "5432")),
            database=os.getenv("PGDATABASE", "manus"), user=os.getenv("PGUSER", "manus"),
@@ -29,6 +35,22 @@ async def _pool():
     except Exception as e:
         print(f"SKIP: Postgres not reachable ({e})")
         return None
+
+
+@pytest_asyncio.fixture(loop_scope="module", scope="module")
+async def pool():
+    """Without this these tests error out under pytest instead of running, which
+    is how they silently drifted from the code they cover. Skip (don't error)
+    when there is no Postgres, so the suite stays green off-infra."""
+    p = await _pool()
+    if p is None:
+        pytest.skip("Postgres not reachable")
+    try:
+        yield p
+    finally:
+        async with p.acquire() as con:
+            await con.execute(f'DROP SCHEMA IF EXISTS "{SCHEMA}" CASCADE')
+        await p.close()
 
 
 async def test_claim_is_exclusive_under_concurrency(pool):
@@ -74,9 +96,10 @@ async def test_readmodel_roundtrip(pool):
     sid = "sess1"
     await rm.ensure_session(sid, "u1", "My task", "running")
     await rm.upsert_plan(sid, "p1", "Report", "Build a report", "running")
+    # (step_id, ordinal, wave, status, kind, question, title, description, depends_on, agent)
     await rm.upsert_steps(sid, [
-        ("a", 0, 0, "pending", "gather", "", ""),
-        ("b", 1, 1, "pending", "write", "a", ""),
+        ("a", 0, 0, "pending", "execute", "", "Gather", "gather the data", "", ""),
+        ("b", 1, 1, "pending", "execute", "", "Write", "write it up", "a", ""),
     ])
     await rm.set_step_status(sid, "a", "completed", agent="w_a", result="got data")
     await rm.set_step_status(sid, "b", "blocked", blocked_reason="need input")
@@ -92,6 +115,37 @@ async def test_readmodel_roundtrip(pool):
     print("ok  read-model: session/plan/steps/messages project + read back")
 
 
+async def test_outstanding_interrupts_are_tracked_per_step(pool):
+    """Several steps can be parked at once, each with its own interrupt id, and
+    the set survives across runs — ADK only reports an interrupt on the run that
+    raises it, so this table is the only record of what is still waiting."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)   # migration must be idempotent
+    sid = "sess_interrupts"
+    await rm.ensure_session(sid, "u1", "Two questions", "running")
+    await rm.upsert_steps(sid, [
+        ("a", 0, 0, "pending", "ask", "A?", "Ask A", "", "", ""),
+        ("b", 1, 0, "pending", "ask", "B?", "Ask B", "", "", ""),
+    ])
+
+    await rm.set_step_status(sid, "a", "blocked", blocked_reason="awaiting user input",
+                             interrupt_id="ask:plan@1/a@1")
+    await rm.set_step_status(sid, "b", "blocked", blocked_reason="awaiting user input",
+                             interrupt_id="ask:plan@1/b@1")
+    assert await rm.outstanding_interrupts(sid) == [
+        ("ask:plan@1/a@1", "a"), ("ask:plan@1/b@1", "b")], "both steps should be parked"
+
+    # Answering 'a' clears only its interrupt; 'b' stays parked and resumable.
+    await rm.set_step_status(sid, "a", "completed", result="AAA")
+    assert await rm.outstanding_interrupts(sid) == [("ask:plan@1/b@1", "b")], \
+        "resuming one step must not clear the other's interrupt"
+
+    await rm.set_step_status(sid, "b", "completed", result="BBB")
+    assert await rm.outstanding_interrupts(sid) == [], "no step should be parked once both answered"
+    print("ok  read-model: interrupts tracked per step, cleared independently")
+
+
 async def main():
     pool = await _pool()
     if pool is None:
@@ -100,6 +154,7 @@ async def main():
         await test_claim_is_exclusive_under_concurrency(pool)
         await test_requeue_and_fail(pool)
         await test_readmodel_roundtrip(pool)
+        await test_outstanding_interrupts_are_tracked_per_step(pool)
         print("\nall postgres-layer tests passed")
     finally:
         async with pool.acquire() as con:
