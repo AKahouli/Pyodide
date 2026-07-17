@@ -28,12 +28,25 @@ service AgentOrchestrator {
   // Steady-state progress comes from Electric, not this call.
   rpc GetSession (GetSessionRequest) returns (GetSessionResponse);
 
-  // Cancel a running/blocked session.
+  // Cancel a running/blocked session (terminal — cannot be continued).
   rpc StopSession (StopSessionRequest) returns (StopSessionResponse);
 
-  // Pause a running session: cancel the in-flight turn, keep the plan so it can
-  // be continued via RunTask on the same session_id. Non-terminal (unlike Stop).
+  // Pause a running session: cancel the in-flight turn and keep the plan so it
+  // can be continued later. Continue by sending RunTask on the same session_id
+  // (worky re-drives the remaining steps). Unlike Stop, this is not terminal.
   rpc PauseSession (PauseSessionRequest) returns (PauseSessionResponse);
+
+  // Hand an email reply to the step waiting for it. The routing token travelled
+  // in the outbound mail and came back on the reply; only worky can turn it into
+  // a session/step/interrupt, so the caller passes the token and worky resolves
+  // and resumes internally — it does NOT reimplement continuation, it delegates
+  // to the same resume the RunTask path uses.
+  //
+  // Claim-once: a token resolves for exactly one delivery. A duplicate (Graph
+  // retries anything it thinks failed) returns delivered=false rather than
+  // resuming the step a second time. Acks immediately like RunTask, so the
+  // caller's webhook can answer Graph inside its timeout.
+  rpc DeliverMailReply (DeliverMailReplyRequest) returns (DeliverMailReplyResponse);
 }
 
 // ===================== Commands =====================
@@ -45,10 +58,7 @@ message RunRequest {
   string user_id    = 1;
   string session_id = 2;
   string message    = 3;
-  // Full LiteLLM model id, e.g. "azure/gpt-4.1", "anthropic/claude-sonnet-4-5".
   string model      = 4;
-  // Skills injected into the agent prompts (same field shape as chatbot.proto
-  // so YellowMind reuses its existing mappers).
   repeated Skill skills = 5;
   // Per-user MCP servers exposed as tools; auth already resolved upstream.
   // These are also the source of long-running MCP tasks.
@@ -79,6 +89,32 @@ message StopSessionResponse { bool stopped = 1; }
 
 message PauseSessionRequest  { string user_id = 1; string session_id = 2; }
 message PauseSessionResponse { bool paused = 1; }
+
+message DeliverMailReplyRequest {
+  // The routing token extracted from the reply's subject or quoted body.
+  string token      = 1;
+  // The reply body — becomes the parked step's answer, exactly as if the owner
+  // had typed it in the chat.
+  string reply_body = 2;
+  // Who replied, for the audit line. Not used for routing: the token is, since
+  // a sender may reply from an alias or forward the thread on.
+  string reply_from = 3;
+  // Same executor context RunTask carries: the resumed plan runs its remaining
+  // steps and needs its model and tools. The caller resolves these for the
+  // wait's user; worky takes user_id and session_id from the wait row, never
+  // from the caller.
+  string model = 4;
+  repeated ConnectorBinding connectors = 5;
+}
+
+message DeliverMailReplyResponse {
+  // false when the token is unknown, already delivered, expired or cancelled.
+  // Not an error: a duplicate notification is routine, and the caller should ack
+  // it rather than have Graph retry.
+  bool   delivered  = 1;
+  string session_id = 2;
+  string step_id    = 3;
+}
 
 // ===================== Plan (the core UX object) =====================
 

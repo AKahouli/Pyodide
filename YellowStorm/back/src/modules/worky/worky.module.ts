@@ -93,6 +93,18 @@ import {
   WorkyMailEventLedgerSchema,
 } from './schemas/worky-mail-event-ledger.schema';
 import {
+  WorkyMailSubscription,
+  WorkyMailSubscriptionSchema,
+} from './schemas/worky-mail-subscription.schema';
+import { WorkyMailSubscriptionService } from './services/worky-mail-subscription.service';
+import { WorkyMailWebhookService } from './services/worky-mail-webhook.service';
+import { WorkyMailRenewalService } from './services/worky-mail-renewal.service';
+import { WorkyMailWebhookController } from './controllers/worky-mail-webhook.controller';
+import { ConnectedAppModule } from '@modules/connected-app/connected-app.module';
+// Stateless Graph client, reused rather than reimplemented; worky provides the
+// class directly instead of importing the whole PlaybookFlowModule for one service.
+import { PlaybookFlowMailGraphClientService } from '@modules/playbook-flow/services/playbook-flow-mail-graph-client.service';
+import {
   WorkyIdempotencyRecord,
   WorkyIdempotencyRecordSchema,
 } from './schemas/worky-idempotency-record.schema';
@@ -168,11 +180,13 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkspaceModule,
     ModelsModule,
     ConnectorModule,
+    ConnectedAppModule,
     forwardRef(() => WhatsAppModule),
     MongooseModule.forFeature([
       { name: WorkyStream.name, schema: WorkyStreamSchema },
       { name: WorkyTask.name, schema: WorkyTaskSchema },
       { name: WorkyMessage.name, schema: WorkyMessageSchema },
+      { name: WorkyMailSubscription.name, schema: WorkyMailSubscriptionSchema },
       { name: WorkyPlanVersion.name, schema: WorkyPlanVersionSchema },
       { name: WorkyPlanDelta.name, schema: WorkyPlanDeltaSchema },
       { name: WorkyInteraction.name, schema: WorkyInteractionSchema },
@@ -203,6 +217,7 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
   ],
   controllers: [
     WorkyStreamController,
+    WorkyMailWebhookController,
     WorkyEventsController,
     WorkyInternalController,
     WorkyMessageController,
@@ -226,6 +241,10 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyAuditService,
     WorkyRuntimeClient,
     WorkyOrchestratorGrpcClientService,
+    PlaybookFlowMailGraphClientService,
+    WorkyMailSubscriptionService,
+    WorkyMailWebhookService,
+    WorkyMailRenewalService,
     WorkyRuntimeDispatchService,
     WorkyPlanDeltaService,
     WorkyPlanningService,

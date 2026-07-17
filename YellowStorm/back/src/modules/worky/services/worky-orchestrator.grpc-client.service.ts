@@ -248,4 +248,45 @@ export class WorkyOrchestratorGrpcClientService
       );
     });
   }
+
+  /**
+   * Hand an email reply to whichever step was waiting for it.
+   *
+   * We hold only the routing token: the token->session/step mapping lives in the
+   * orchestrator's own store, so it resolves and resumes. `delivered: false` is
+   * a normal answer, not a failure — the token may be unknown (a mail that
+   * isn't ours), already delivered (Graph retried), or expired.
+   */
+  async deliverMailReply(input: {
+    token: string;
+    replyBody: string;
+    replyFrom?: string;
+    model?: string;
+    connectors?: unknown[];
+  }): Promise<{ delivered: boolean; sessionId: string; stepId: string }> {
+    return new Promise((resolve, reject) => {
+      this.client.DeliverMailReply(
+        {
+          token: input.token,
+          reply_body: input.replyBody,
+          reply_from: input.replyFrom ?? '',
+          model: input.model ?? '',
+          connectors: input.connectors ?? [],
+        },
+        createGrpcMetadata(this.config, WORKY_ORCHESTRATOR_GRPC_SECURITY_NS),
+        this.unaryDeadline,
+        (
+          err: grpc.ServiceError | null,
+          response: { delivered: boolean; session_id: string; step_id: string },
+        ) => {
+          if (err) return reject(err);
+          resolve({
+            delivered: !!response.delivered,
+            sessionId: response.session_id ?? '',
+            stepId: response.step_id ?? '',
+          });
+        },
+      );
+    });
+  }
 }

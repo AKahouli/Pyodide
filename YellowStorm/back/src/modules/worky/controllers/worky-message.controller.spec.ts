@@ -7,7 +7,8 @@ describe('WorkyMessageController', () => {
   let orchestrator: { runTask: jest.Mock };
   let models: { getDefaultModel: jest.Mock; getModelIdentifier: jest.Mock };
   let connectorService: { findBySlug: jest.Mock; findByIdsForGrpc: jest.Mock };
-  let logger: { setContext: jest.Mock; log: jest.Mock; warn: jest.Mock; error: jest.Mock };
+  let logger: { setContext: jest.Mock; log: jest.Mock; warn: jest.Mock; error: jest.Mock; debug: jest.Mock };
+  let mailSubscriptions: { ensureForUser: jest.Mock };
 
   beforeEach(() => {
     planning = {
@@ -39,7 +40,9 @@ describe('WorkyMessageController', () => {
       log: jest.fn(),
       warn: jest.fn(),
       error: jest.fn(),
+      debug: jest.fn(),
     };
+    mailSubscriptions = { ensureForUser: jest.fn().mockResolvedValue(undefined) };
 
     controller = new WorkyMessageController(
       planning as any,
@@ -47,6 +50,7 @@ describe('WorkyMessageController', () => {
       orchestrator as any,
       models as any,
       connectorService as any,
+      mailSubscriptions as any,
       logger as any,
     );
   });

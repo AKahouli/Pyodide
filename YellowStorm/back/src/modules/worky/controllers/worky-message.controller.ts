@@ -22,6 +22,7 @@ import { Permissions } from '../../authorization/constants/permissions';
 import { LoggerService } from '../../logger';
 import { ModelsService } from '../../models/models.service';
 import { ConnectorService } from '../../connector/connector.service';
+import { WorkyMailSubscriptionService } from '../services/worky-mail-subscription.service';
 
 @ApiTags('Worky')
 @ApiBearerAuth()
@@ -34,6 +35,7 @@ export class WorkyMessageController {
     private readonly orchestrator: WorkyOrchestratorGrpcClientService,
     private readonly models: ModelsService,
     private readonly connectorService: ConnectorService,
+    private readonly mailSubscriptions: WorkyMailSubscriptionService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(WorkyMessageController.name);
@@ -195,6 +197,7 @@ export class WorkyMessageController {
         await Promise.all(WORKY_CONNECTOR_SLUGS.map((slug) => this.connectorService.findBySlug(slug)))
       ).filter(Boolean);
       if (found.length) {
+        if (found.some((c) => c!.slug === 'microsoft365')) this.ensureMailSubscription(userId);
         return await this.connectorService.findByIdsForGrpc(
           found.map((c) => c!.id),
           userId,
@@ -206,5 +209,22 @@ export class WorkyMessageController {
       });
     }
     return [];
+  }
+
+  /**
+   * A turn that can send mail is a turn whose mail may be replied to, so the
+   * mailbox needs a live Graph subscription before the reply arrives — the
+   * subscription cannot be created retroactively once the mail is out.
+   *
+   * Fire-and-forget: the user is waiting on their message, and a subscription
+   * problem must not fail the turn. The cost of it failing is a reply that never
+   * routes, which the wait's own expiry already handles.
+   */
+  private ensureMailSubscription(userId: string): void {
+    void this.mailSubscriptions.ensureForUser(userId).catch((err) => {
+      this.logger.warn('[worky-orchestrator] mail subscription unavailable', {
+        error: (err as Error).message,
+      });
+    });
   }
 }
