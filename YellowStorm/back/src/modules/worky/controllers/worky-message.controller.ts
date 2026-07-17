@@ -54,38 +54,11 @@ export class WorkyMessageController {
       streamId,
       user._id.toString(),
     );
-    // Resolve the Manager model with the same priority chain used by
-    // planning turns: per-turn override → stream's persistent field →
-    // admin default. RunTask treats `model` as optional, but we always
-    // resolve a concrete model so the orchestrator never falls back to
-    // its own default unexpectedly.
-    const override = dto.managerModelId?.trim();
-    let model = override || managerModelId || null;
-    if (!model) {
-      model = this.models.getModelIdentifier(await this.models.getDefaultModel()) || null;
-    }
-    // Send only the connectors the orchestrator actually needs (code-interpreter
-    // & linkup). Resolution is per-user (auth headers/env resolved by
-    // ConnectorService); failures are non-fatal — we just send none.
-    const WORKY_CONNECTOR_SLUGS = ['code-interpreter', 'linkup'];
-    let connectors: unknown[] = [];
-    try {
-      const found = (
-        await Promise.all(
-          WORKY_CONNECTOR_SLUGS.map((slug) => this.connectorService.findBySlug(slug)),
-        )
-      ).filter(Boolean);
-      if (found.length) {
-        connectors = await this.connectorService.findByIdsForGrpc(
-          found.map((c) => c!.id),
-          user._id.toString(),
-        );
-      }
-    } catch (err) {
-      this.logger.warn('[worky-orchestrator] connector resolution failed; sending none', {
-        error: (err as Error).message,
-      });
-    }
+    // Manager model + per-user connectors (shared with the resume path).
+    const model = await this.resolveManagerModel(
+      dto.managerModelId?.trim() || managerModelId || null,
+    );
+    const connectors = await this.resolveWorkyConnectors(user._id.toString());
     // Fire-and-forget kickoff. The manager writes task/message rows into
     // its Postgres; the Electric consumer mirrors them into Mongo and
     // re-emits over the SSE channel `/worky/streams/{id}/events`.
@@ -99,7 +72,7 @@ export class WorkyMessageController {
     });
     void this.orchestrator
       .runTask(user._id.toString(), aiSessionId, dto.content, {
-        model: model ?? undefined,
+        model,
         idempotencyKey: saved.id,
         connectors,
       })
@@ -135,5 +108,103 @@ export class WorkyMessageController {
       streamId,
       parsedLimit,
     );
+  }
+
+  @Post(':id/stop')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Stop the running orchestrator turn (StopSession RPC)' })
+  @ApiParam({ name: 'id', description: 'Stream id' })
+  async stop(
+    @CurrentUser() user: UserDocument,
+    @Param('id') streamId: string,
+  ): Promise<{ stopped: boolean }> {
+    const stream = await this.streamService.findByIdInternal(streamId);
+    const aiSessionId = stream?.aiSessionId;
+    if (!aiSessionId) return { stopped: false }; // no turn ever started
+    return this.orchestrator.stopSession(user._id.toString(), aiSessionId);
+  }
+
+  // ':id/pause' is owned by the legacy stream controller (execution.pause), so
+  // the orchestrator turn-pause lives at ':id/pause-turn'.
+  @Post(':id/pause-turn')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Pause the running orchestrator turn (PauseSession RPC)' })
+  @ApiParam({ name: 'id', description: 'Stream id' })
+  async pauseTurn(
+    @CurrentUser() user: UserDocument,
+    @Param('id') streamId: string,
+  ): Promise<{ paused: boolean }> {
+    const stream = await this.streamService.findByIdInternal(streamId);
+    const aiSessionId = stream?.aiSessionId;
+    if (!aiSessionId) return { paused: false }; // no turn ever started
+    return this.orchestrator.pauseSession(user._id.toString(), aiSessionId);
+  }
+
+  // Resume a paused orchestrator session. Per design, continue is always a
+  // RunTask — an empty message on a paused session routes to continue_turn,
+  // which re-drives the remaining steps. Connectors/model are re-sent so the
+  // pending steps still have their tools.
+  @Post(':id/resume-turn')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Resume a paused orchestrator turn (continue via RunTask)' })
+  @ApiParam({ name: 'id', description: 'Stream id' })
+  async resumeTurn(
+    @CurrentUser() user: UserDocument,
+    @Param('id') streamId: string,
+  ): Promise<{ resumed: boolean }> {
+    const stream = await this.streamService.findByIdInternal(streamId);
+    const aiSessionId = stream?.aiSessionId;
+    if (!aiSessionId) return { resumed: false }; // nothing to resume
+
+    const model = await this.resolveManagerModel(stream.managerModelId ?? null);
+    const connectors = await this.resolveWorkyConnectors(user._id.toString());
+    void this.orchestrator
+      .runTask(user._id.toString(), aiSessionId, '', {
+        model,
+        idempotencyKey: `resume-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+        connectors,
+      })
+      .catch((err) =>
+        this.logger.error('[worky-orchestrator] resume RunTask failed', {
+          streamId,
+          error: (err as Error).message,
+        }),
+      );
+    return { resumed: true };
+  }
+
+  /** Manager model priority: given value → admin default. Returns undefined only
+   *  if no model resolves (RunTask treats model as optional). */
+  private async resolveManagerModel(preferred: string | null): Promise<string | undefined> {
+    let model = preferred || null;
+    if (!model) {
+      model = this.models.getModelIdentifier(await this.models.getDefaultModel()) || null;
+    }
+    return model ?? undefined;
+  }
+
+  /** Per-user connectors worky needs (code-interpreter, linkup, microsoft365).
+   *  Auth resolved by ConnectorService; failures are non-fatal (send none). */
+  private async resolveWorkyConnectors(userId: string): Promise<unknown[]> {
+    const WORKY_CONNECTOR_SLUGS = ['code-interpreter', 'linkup', 'microsoft365'];
+    try {
+      const found = (
+        await Promise.all(WORKY_CONNECTOR_SLUGS.map((slug) => this.connectorService.findBySlug(slug)))
+      ).filter(Boolean);
+      if (found.length) {
+        return await this.connectorService.findByIdsForGrpc(
+          found.map((c) => c!.id),
+          userId,
+        );
+      }
+    } catch (err) {
+      this.logger.warn('[worky-orchestrator] connector resolution failed; sending none', {
+        error: (err as Error).message,
+      });
+    }
+    return [];
   }
 }

@@ -30,6 +30,10 @@ service AgentOrchestrator {
 
   // Cancel a running/blocked session.
   rpc StopSession (StopSessionRequest) returns (StopSessionResponse);
+
+  // Pause a running session: cancel the in-flight turn, keep the plan so it can
+  // be continued via RunTask on the same session_id. Non-terminal (unlike Stop).
+  rpc PauseSession (PauseSessionRequest) returns (PauseSessionResponse);
 }
 
 // ===================== Commands =====================
@@ -72,6 +76,9 @@ message GetSessionResponse {
 
 message StopSessionRequest  { string user_id = 1; string session_id = 2; }
 message StopSessionResponse { bool stopped = 1; }
+
+message PauseSessionRequest  { string user_id = 1; string session_id = 2; }
+message PauseSessionResponse { bool paused = 1; }
 
 // ===================== Plan (the core UX object) =====================
 

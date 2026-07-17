@@ -233,4 +233,19 @@ export class WorkyOrchestratorGrpcClientService
       );
     });
   }
+
+  /** Pause a running session (non-terminal). Continue later via runTask. */
+  async pauseSession(userId: string, sessionId: string): Promise<{ paused: boolean }> {
+    return new Promise((resolve, reject) => {
+      this.client.PauseSession(
+        { user_id: userId, session_id: sessionId },
+        createGrpcMetadata(this.config, WORKY_ORCHESTRATOR_GRPC_SECURITY_NS),
+        this.unaryDeadline,
+        (err: grpc.ServiceError | null, response: { paused: boolean }) => {
+          if (err) return reject(err);
+          resolve({ paused: !!response.paused });
+        },
+      );
+    });
+  }
 }
