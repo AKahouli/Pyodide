@@ -247,6 +247,21 @@ def test_a_plan_with_no_wait_builds_ordinary_tools():
     assert svc._mail_stamping("s1", plan) is None
 
 
+def test_the_planner_is_told_when_to_await_a_reply():
+    """The prompt is the whole mechanism here — there is no code path that adds
+    an await_reply step, the planner either emits one or the plan sends a mail
+    and invents the answer. Pins the contract the prompt must keep stating.
+    (That the model obeys is checked against the live planner, not here.)"""
+    from src.companion_ai.service import PLANNER_INSTRUCTION
+
+    assert '"await_reply"' in PLANNER_INSTRUCTION
+    # It must be a separate step from the send, linked by depends_on — that link
+    # is what carries the routing token to the right wait.
+    assert "MUST depends_on the step" in PLANNER_INSTRUCTION
+    # And it must not be reached for mail that expects no answer.
+    assert "needs no answer" in PLANNER_INSTRUCTION
+
+
 def test_only_send_email_is_recognised_among_a_connectors_tools():
     """A connector publishes ~19 actions; only send_email may be stamped."""
     import inspect

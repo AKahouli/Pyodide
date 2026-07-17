@@ -821,6 +821,16 @@ resume  → next RunTask sees status=waiting → resume_turn
         free.
       </p>
       <p>
+        Whether a plan waits at all is decided by the planner, and by nothing else: no code adds an
+        <code>await_reply</code> step. Without one, "email her and then report" sends the mail and
+        runs the report immediately — on an answer that never arrived, which the executor duly
+        invents. So the planner prompt has to state three things and keep stating them: use it
+        whenever the task depends on a <em>reply</em>; make it a separate step that
+        <code>depends_on</code> the send (that edge is what carries the routing token to the right
+        wait); and never use it for mail that expects no answer. Steps needing the answer depend on
+        the <code>await_reply</code> step, not on the send.
+      </p>
+      <p>
         The two kinds are told apart by the interrupt id prefix — <code>ask:</code> versus
         <code>mail:</code> — and the distinction is load-bearing, not cosmetic. A chat message is
         routed to <code>sessions.interrupt_id</code>, so if a mail wait were allowed to land there,

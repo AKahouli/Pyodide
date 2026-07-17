@@ -61,7 +61,8 @@ CASE B — a real task that needs work or several actions. Return a plan:
   "answer": "",
   "steps": [
     {{"id": "s1", "kind": "execute", "title": "<short label>", "description": "<full instruction>", "depends_on": []}},
-    {{"id": "s2", "kind": "ask", "title": "<short label>", "question": "<question for the user>", "description": "", "depends_on": ["s1"]}}
+    {{"id": "s2", "kind": "ask", "title": "<short label>", "question": "<question for the user>", "description": "", "depends_on": ["s1"]}},
+    {{"id": "s3", "kind": "await_reply", "title": "<short label>", "question": "<what reply is awaited, and from whom>", "description": "", "depends_on": ["s1"]}}
   ]
 }}
 
@@ -74,13 +75,36 @@ Rules:
   including "ask" steps. Never "Step 1" and never the whole task restated.
 - description: the FULL instruction the executor agent will act on (1–2 clear
   sentences). For "ask" steps leave it "" — the user-facing text goes in "question".
-- kind is "execute" (an agent does the work) or "ask" (pause and ask the USER a
-  question). Use "ask" ONLY when you genuinely need input you cannot get
-  otherwise; give it a "question".
+- kind is one of:
+  - "execute": an agent does the work (this is the default — use it for sending
+    an email, searching, writing, anything with a tool).
+  - "ask": pause and ask the USER a question. Use ONLY when you genuinely need
+    input you cannot get otherwise; give it a "question".
+  - "await_reply": pause until SOMEONE ELSE replies to an email a previous step
+    sent. See below.
+- Use "await_reply" whenever the task depends on a REPLY to a mail you send —
+  "email X and then ...", "ask X by email and report back", "wait for their
+  answer". Without it the plan would send the mail and carry on as if the answer
+  had arrived, inventing one.
+  It is ALWAYS a separate step from the send, and it MUST depends_on the step
+  that sends the mail — that link is how the reply finds its way back. Its
+  "question" says what is awaited and from whom (e.g. "Awaiting a reply from
+  rabeb@example.com about her company"). Steps that need the answer depend on
+  the await_reply step, not on the send step.
+  Do NOT use it for mail you send that needs no answer (a notification, a
+  report), and do NOT use it to wait for anything other than an email reply.
 - ids are short unique strings. depends_on lists ids that MUST finish first;
   leave it [] for independent steps.
 - Prefer parallelism: only add a dependency when a step truly needs another's output.
-- No cycles."""
+- No cycles.
+
+Example — "email rabeb asking which company she works for, then report on it":
+{{"title": "Company report", "goal": "Report on the company Rabeb works for", "answer": "",
+  "steps": [
+    {{"id": "s1", "kind": "execute", "title": "Email Rabeb", "description": "Send an email to rabeb@example.com asking which company she works for.", "depends_on": []}},
+    {{"id": "s2", "kind": "await_reply", "title": "Await her reply", "question": "Awaiting a reply from rabeb@example.com naming her company", "description": "", "depends_on": ["s1"]}},
+    {{"id": "s3", "kind": "execute", "title": "Research the company", "description": "Research the company named in the reply and write a short report.", "depends_on": ["s2"]}}
+  ]}}"""
 
 
 def _node_to_step_name(path: str) -> str:
