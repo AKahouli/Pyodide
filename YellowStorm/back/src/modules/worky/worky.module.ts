@@ -99,6 +99,7 @@ import {
 import { WorkyMailSubscriptionService } from './services/worky-mail-subscription.service';
 import { WorkyMailWebhookService } from './services/worky-mail-webhook.service';
 import { WorkyMailRenewalService } from './services/worky-mail-renewal.service';
+import { WorkyMailCatchupService } from './services/worky-mail-catchup.service';
 import { WorkyMailWebhookController } from './controllers/worky-mail-webhook.controller';
 import { ConnectedAppModule } from '@modules/connected-app/connected-app.module';
 // Stateless Graph client, reused rather than reimplemented; worky provides the
@@ -245,6 +246,7 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyMailSubscriptionService,
     WorkyMailWebhookService,
     WorkyMailRenewalService,
+    WorkyMailCatchupService,
     WorkyRuntimeDispatchService,
     WorkyPlanDeltaService,
     WorkyPlanningService,

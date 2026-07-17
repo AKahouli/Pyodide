@@ -40,6 +40,10 @@ export class WorkyMailSubscription extends Document {
   /** Graph caps mailbox subscriptions at 72h; the renewal cron pushes this out. */
   @Prop({ type: Date, required: true })
   expiresAt!: Date;
+
+  /** Cursor for the catch-up sweep — how far the inbox has been re-read. */
+  @Prop({ type: Date, default: null })
+  lastSweptAt?: Date | null;
 }
 
 export const WorkyMailSubscriptionSchema =
