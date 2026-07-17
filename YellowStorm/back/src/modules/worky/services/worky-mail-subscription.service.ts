@@ -4,6 +4,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { LoggerService } from '@modules/logger';
 import { PlaybookFlowMailGraphClientService } from '@modules/playbook-flow/services/playbook-flow-mail-graph-client.service';
+import { ConnectedAppTokenService } from '@modules/connected-app/services/connected-app-token.service';
 import {
   WorkyMailSubscription,
   WorkyMailSubscriptionDocument,
@@ -27,6 +28,7 @@ export class WorkyMailSubscriptionService {
     @InjectModel(WorkyMailSubscription.name)
     private readonly subscriptionModel: Model<WorkyMailSubscriptionDocument>,
     private readonly graphClient: PlaybookFlowMailGraphClientService,
+    private readonly tokenService: ConnectedAppTokenService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('WorkyMailSubscription');
@@ -41,27 +43,48 @@ export class WorkyMailSubscriptionService {
     return process.env.WORKY_MAIL_NOTIFICATION_URL?.trim() || null;
   }
 
-  get enabled(): boolean {
+  /** True when replies can be pushed to us; false means they are polled instead. */
+  get pushEnabled(): boolean {
     return this.notificationUrl !== null;
   }
 
   /**
-   * Ensure this user's mailbox is subscribed. Idempotent and safe to call on
-   * every turn: an existing subscription that is not near expiry is left alone.
+   * Make sure this user's mailbox is watched. Idempotent and safe to call on
+   * every turn: a live subscription that is not near expiry is left alone.
    *
-   * Best-effort by design — the caller is sending a message, and a mail
-   * subscription failing must not fail the turn. The worst case is a reply that
-   * never routes, which the wait's own expiry already covers.
+   * Two ways a reply gets home, and only one of them needs a public URL. The row
+   * is written either way, because it is what tells the catch-up poll which
+   * mailbox to read — so a deployment with no public webhook still routes
+   * replies, just minutes later instead of seconds.
+   *
+   * Best-effort — the caller is sending a message, and this failing must not
+   * fail the turn. The worst case is a reply that routes late, or not at all,
+   * which the wait's own expiry already covers.
    */
   async ensureForUser(userId: string): Promise<void> {
+    const existing = await this.subscriptionModel.findOne({ userId }).lean().exec();
+    const live =
+      existing?.subscriptionId &&
+      existing.expiresAt &&
+      existing.expiresAt.getTime() > Date.now() + RENEWAL_WINDOW_MS;
+    if (live) return;
+
     const notificationUrl = this.notificationUrl;
     if (!notificationUrl) {
-      this.logger.debug('WORKY_MAIL_NOTIFICATION_URL unset — mail replies will not route');
+      // Poll-only: record the mailbox so the catch-up sweep can read it.
+      const { appKey } = await this.tokenService.getM365ValidToken(
+        userId, existing?.mailboxAppKey ?? 'microsoft');
+      await this.subscriptionModel.updateOne(
+        { userId, mailboxAppKey: appKey },
+        { $setOnInsert: { subscriptionId: null, clientState: null, expiresAt: null } },
+        { upsert: true },
+      );
+      this.logger.log(
+        'Worky mail: polling this mailbox (set WORKY_MAIL_NOTIFICATION_URL for instant replies)',
+        { userId, appKey },
+      );
       return;
     }
-
-    const existing = await this.subscriptionModel.findOne({ userId }).lean().exec();
-    if (existing && existing.expiresAt.getTime() > Date.now() + RENEWAL_WINDOW_MS) return;
 
     // A random secret, not the user id: clientState is the only thing proving a
     // notification came from the subscription we created, so it must not be
@@ -105,8 +128,11 @@ export class WorkyMailSubscriptionService {
     const existing = await this.subscriptionModel.findOne({ userId }).lean().exec();
     if (!existing) return;
     try {
-      await this.graphClient.deleteSubscription(
-        userId, existing.mailboxAppKey, existing.subscriptionId);
+      // Nothing to delete for a poll-only mailbox — there is no subscription.
+      if (existing.subscriptionId) {
+        await this.graphClient.deleteSubscription(
+          userId, existing.mailboxAppKey, existing.subscriptionId);
+      }
     } catch (err) {
       // Already gone at Graph's end is fine; drop our record either way rather
       // than keep renewing a subscription that no longer exists.

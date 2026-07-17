@@ -4,14 +4,20 @@ import { Document, HydratedDocument } from 'mongoose';
 export type WorkyMailSubscriptionDocument = HydratedDocument<WorkyMailSubscription>;
 
 /**
- * One Microsoft Graph inbox subscription per user mailbox — never one per step.
+ * One watched mailbox per user — never one per step.
  *
  * A Graph inbox subscription cannot filter by sender or conversation: it fires
  * for every mail that arrives. So N per-step subscriptions on one mailbox would
  * deliver N duplicate notifications for every single email, and burn the
  * per-mailbox subscription limit within a handful of concurrent sessions. One
- * subscription per mailbox, and the routing token decides which step (if any) a
- * given mail belongs to.
+ * per mailbox, and the routing token decides which step (if any) a given mail
+ * belongs to.
+ *
+ * The row exists whether or not a Graph subscription does. The push path needs
+ * a public webhook URL; the catch-up poll needs nothing but a token, and this
+ * row is how the poll knows which mailbox to read. Without it a deployment with
+ * no public URL could not route replies at all — instead it routes them a few
+ * minutes late.
  */
 @Schema({
   timestamps: true,
@@ -25,21 +31,22 @@ export class WorkyMailSubscription extends Document {
   @Prop({ type: String, required: true })
   mailboxAppKey!: string;
 
-  @Prop({ type: String, required: true, index: true })
-  subscriptionId!: string;
+  /** Null when there is no public webhook: the mailbox is polled, not pushed. */
+  @Prop({ type: String, default: null, index: true })
+  subscriptionId?: string | null;
 
   /**
    * Shared secret echoed by Graph on every notification, and the only thing
    * proving a notification came from the subscription we created. Random per
    * subscription — the playbook trigger reuses its flowId here, which is
-   * guessable; do not copy that.
+   * guessable; do not copy that. Null when polling.
    */
-  @Prop({ type: String, required: true, index: true })
-  clientState!: string;
+  @Prop({ type: String, default: null, index: true })
+  clientState?: string | null;
 
   /** Graph caps mailbox subscriptions at 72h; the renewal cron pushes this out. */
-  @Prop({ type: Date, required: true })
-  expiresAt!: Date;
+  @Prop({ type: Date, default: null })
+  expiresAt?: Date | null;
 
   /** Cursor for the catch-up sweep — how far the inbox has been re-read. */
   @Prop({ type: Date, default: null })

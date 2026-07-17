@@ -864,6 +864,14 @@ reply arrives → extract(subject, body) → token → DeliverMailReply(token, b
               → claim_mail_wait → (session, step, interrupt)
               → resume_turn(interrupt_id) → the step continues</code></pre>
       <p>
+        Two paths carry a reply home, and only one of them needs a public URL. Graph pushes a
+        notification to the webhook the moment a mail lands — that is the fast path, and it needs
+        <code>WORKY_MAIL_NOTIFICATION_URL</code>. A sweep also re-reads each watched mailbox every
+        few minutes and re-offers any token it finds, which needs nothing but a Graph token. So a
+        deployment with no public webhook still routes replies, minutes late rather than seconds,
+        and the two paths cannot double-deliver because claiming a wait is one-shot.
+      </p>
+      <p>
         <code>DeliverMailReply</code> exists because the webhook holds a token and nothing else —
         only worky can turn one into a session, and its registry is not readable from the API. It is
         <em>not</em> a second way to continue a plan: it resolves, then hands off to the same

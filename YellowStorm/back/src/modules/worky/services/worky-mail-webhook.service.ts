@@ -62,6 +62,7 @@ export class WorkyMailWebhookService {
     // clientState alone proves the caller knew the secret; check the id it
     // claims matches the one we issued for that secret.
     if (
+      !subscription.clientState ||
       !secretsMatch(subscription.clientState, notification.clientState ?? '') ||
       subscription.subscriptionId !== notification.subscriptionId
     ) {

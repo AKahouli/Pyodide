@@ -35,8 +35,10 @@ export class WorkyMailRenewalService {
     // Deliberately gated on nothing but expiry. The playbook renewal also
     // requires runtimeEnabled, which silently lets a subscription die whenever
     // that flag is off — the failure is invisible until a reply goes missing.
+    // Poll-only mailboxes have no subscription to renew — they are read by the
+    // catch-up sweep instead.
     const due = await this.subscriptionModel
-      .find({ expiresAt: { $lte: cutoff } })
+      .find({ subscriptionId: { $ne: null }, expiresAt: { $ne: null, $lte: cutoff } })
       .lean()
       .exec();
     if (due.length === 0) return;
@@ -44,6 +46,7 @@ export class WorkyMailRenewalService {
     this.logger.log('Renewing worky mail subscriptions', { count: due.length });
 
     for (const subscription of due) {
+      if (!subscription.subscriptionId) continue;  // poll-only; query already excludes these
       try {
         const renewed = await this.graphClient.renewSubscription(
           subscription.userId,
@@ -62,7 +65,7 @@ export class WorkyMailRenewalService {
         });
         // Past expiry Graph has dropped it anyway; clear the record so the next
         // turn creates a fresh one instead of renewing a corpse forever.
-        if (subscription.expiresAt.getTime() <= Date.now()) {
+        if ((subscription.expiresAt?.getTime() ?? 0) <= Date.now()) {
           await this.subscriptionModel.deleteOne({ _id: (subscription as any)._id }).exec();
           this.logger.warn('Dropped an expired mail subscription record', {
             userId: subscription.userId,
