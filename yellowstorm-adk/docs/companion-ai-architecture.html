@@ -907,8 +907,26 @@ reply         → claim → resume</code></pre>
         A reply that beats the parking finds an unbound row and is <em>not</em> claimable — being
         claimed would mark it matched and resume nothing, losing the reply for good. Closing that
         window is what the catch-up query is for. A fresh plan on the session cancels the previous
-        plan's waits: a reply to a superseded plan's mail has nowhere to go, and leaving the wait
-        open would hold a mailbox subscription (and its renewals) for work nobody is doing.
+        plan's waits, and so does StopSession: a reply to a superseded or stopped plan's mail has
+        nowhere to go, and leaving the wait open would hold a mailbox subscription (and its
+        renewals) for work nobody is doing.
+      </p>
+
+      <h3>When the reply never comes</h3>
+      <p>
+        People do not always answer. Nothing else notices: the step is parked on an interrupt no
+        arriving mail will ever match, so with no deadline the plan waits forever and the owner is
+        never told why. Every wait therefore carries an <code>expires_at</code>
+        (<code>MAIL_WAIT_TIMEOUT_HOURS</code>, 72h by default) and a sweep in the runtime lets the
+        expired ones down.
+      </p>
+      <p>
+        The let-down costs almost nothing, and that is the payoff for
+        <code>await_reply</code> sharing ask-the-user's machinery: no re-plan, no node re-run. The
+        step stays parked on the very same interrupt — only <em>who may answer it</em> changes. The
+        session starts pointing at that interrupt, so the owner's next chat message is routed
+        straight to the waiting step, and a line in the chat tells them it is their turn. The resume
+        path never cared where the answer came from.
       </p>
       <p>
         <code>claim_mail_wait</code> is a single atomic <code>UPDATE … WHERE status='waiting'

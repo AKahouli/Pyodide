@@ -244,6 +244,11 @@ class AgentOrchestratorServicer(pb_grpc.AgentOrchestratorServicer):
         if self._rm:
             try:
                 await self._rm.stop_incomplete(request.session_id)  # no step left 'running'
+                # Nothing of this session's is waiting on a reply any more. Left
+                # behind, the wait would keep its mailbox subscription renewing
+                # forever for work nobody is doing — and a late reply would try
+                # to resume a stopped plan.
+                await self._rm.cancel_mail_waits(request.session_id)
                 await self._rm.set_session_status(request.session_id, "completed")
             except Exception as e:
                 logger.warning("StopSession projection failed: %s", e)

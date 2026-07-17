@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
 from google.adk.agents import LlmAgent
@@ -152,7 +153,7 @@ def _extract_json(text: str) -> dict:
 class OrchestratorService:
     def __init__(self, runner_factory, read_model: Optional[ReadModel] = None,
                  *, planner_model: str, max_concurrency: int = 4,
-                 pool=None, schema: str = "public"):
+                 pool=None, schema: str = "public", mail_wait_timeout_hours: int = 72):
         """runner_factory(node, app_name) -> Runner (so session service / app wiring
         stays with the caller). read_model may be None (projection disabled).
         pool/schema are used to record set-and-forget long-running MCP tasks."""
@@ -162,6 +163,38 @@ class OrchestratorService:
         self._max_concurrency = max_concurrency
         self._pool = pool
         self._schema = schema
+        self._mail_wait_timeout_hours = mail_wait_timeout_hours
+
+    async def expire_mail_waits(self) -> int:
+        """Let down every step whose reply never came: the wait becomes an
+        ordinary question to the owner, on the same interrupt the step is already
+        parked on.
+
+        Nothing is re-planned and no node re-runs — the step is parked on a
+        `mail:` interrupt either way, and this only changes who may answer it and
+        tells the owner it is their turn. That reuse is why the fallback is
+        nearly free: the resume path does not care where the answer came from.
+        """
+        if self._rm is None:
+            return 0
+        expired = await self._rm.expire_mail_waits()
+        for wait in expired:
+            session_id, step_id = wait["session_id"], wait["step_id"]
+            reason = (f"no reply from {wait['expected_from']}"
+                      if wait.get("expected_from") else "no reply received")
+            logger.info("[worky] mail wait expired session=%s step=%s — asking the owner",
+                        session_id, step_id)
+            await self._project(self._rm.set_step_status(
+                session_id, step_id, "blocked", blocked_reason=reason,
+                interrupt_id=wait["interrupt_id"]))
+            await self._add_message(
+                session_id, "assistant",
+                f"I haven't had a reply ({reason}). Do you want to answer for them, "
+                f"or should I skip this step?")
+            # The step keeps its mail: interrupt, but the session now points at it
+            # so a chat reply is routed there — the owner can answer by hand.
+            await self._project(self._rm.set_waiting(session_id, wait["interrupt_id"]))
+        return len(expired)
 
     def _tools_for(self, connectors: Optional[List[dict]], session_id: str, user_id: str) -> List:
         """Materialize connectors into executor tools: the synchronous MCP action
@@ -558,11 +591,17 @@ class OrchestratorService:
             return
         awaiting = [s for s in plan.steps if s.kind == "await_reply"]
         await self._project(self._rm.cancel_mail_waits(session_id))
+        # Every wait gets a deadline. People do not always reply, and a step with
+        # no deadline waits forever: the plan never finishes and nobody is told
+        # why. On expiry the step asks the owner instead (see expire_mail_waits).
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=self._mail_wait_timeout_hours)
         for step in awaiting:
             token = mail_token.mint()
             await self._project(self._rm.register_mail_wait(
-                token, session_id=session_id, step_id=step.id, user_id=user_id))
-            logger.info("[worky] 7. mail wait registered session=%s step=%s", session_id, step.id)
+                token, session_id=session_id, step_id=step.id, user_id=user_id,
+                expires_at=expires_at))
+            logger.info("[worky] 7. mail wait registered session=%s step=%s expires=%s",
+                        session_id, step.id, expires_at.isoformat(timespec="seconds"))
 
     async def _apply_event(self, session_id: str, plan: Plan, ev, name_to_step: dict, started: set) -> None:
         """STEP 9 (per event) — one ADK node event → one step status → one row

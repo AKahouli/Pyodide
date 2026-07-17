@@ -102,7 +102,8 @@ async def test_get_session_not_found_sets_status():
 
 
 async def test_stop_session_cancels_running_turn():
-    rm = MagicMock(stop_incomplete=AsyncMock(), set_session_status=AsyncMock())
+    rm = MagicMock(stop_incomplete=AsyncMock(), cancel_mail_waits=AsyncMock(),
+                   set_session_status=AsyncMock())
     s = _servicer(rm=rm)
 
     async def forever():
@@ -113,6 +114,9 @@ async def test_stop_session_cancels_running_turn():
     assert resp.stopped is True
     assert task.cancelled() or task.cancelling()
     rm.set_session_status.assert_awaited_once()
+    # A stopped session waits on nothing: left behind, the wait would renew its
+    # mailbox subscription forever and a late reply would resume a dead plan.
+    rm.cancel_mail_waits.assert_awaited_once_with("s1")
 
 
 # --- DeliverMailReply -------------------------------------------------------

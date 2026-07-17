@@ -11,6 +11,7 @@ wait parked.
 import asyncio
 import os
 import sys
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -245,6 +246,43 @@ def test_a_plan_with_no_wait_builds_ordinary_tools():
     svc, _ = _service()
     plan = Plan(id="p", title="t", goal="g", steps=[Step(id="a", kind="execute")])
     assert svc._mail_stamping("s1", plan) is None
+
+
+# --- the reply that never comes ---------------------------------------------
+
+def test_an_unanswered_wait_becomes_a_question_to_the_owner():
+    """A step parked on mail is parked on an interrupt no arriving mail will ever
+    match once the wait expires — without this it waits forever and nobody is
+    told why."""
+    svc, rm = _service()
+    rm.expire_mail_waits = AsyncMock(return_value=[{
+        "token": "YW-x", "session_id": "s1", "step_id": "m", "user_id": "u1",
+        "interrupt_id": "mail:plan@1/m@1", "expected_from": "rabeb@example.com",
+    }])
+
+    assert asyncio.run(svc.expire_mail_waits()) == 1
+    # The session now points at that interrupt, so the owner's chat reply is
+    # routed to the parked step and answers it by hand.
+    rm.set_waiting.assert_awaited_once_with("s1", "mail:plan@1/m@1")
+    rm.set_step_status.assert_awaited_once()
+    assert rm.set_step_status.await_args.kwargs["blocked_reason"] == "no reply from rabeb@example.com"
+    # And the owner is actually told, rather than the plan going quiet.
+    assert "reply" in rm.add_message.await_args.args[3].lower()
+
+
+def test_nothing_expires_when_every_reply_arrived():
+    svc, rm = _service()
+    rm.expire_mail_waits = AsyncMock(return_value=[])
+    assert asyncio.run(svc.expire_mail_waits()) == 0
+    rm.set_waiting.assert_not_awaited()
+
+
+def test_registering_a_wait_always_sets_a_deadline():
+    svc, rm = _service()
+    asyncio.run(svc._project_plan("s1", _plan(), "u1"))
+    expires_at = rm.register_mail_wait.await_args.kwargs["expires_at"]
+    assert expires_at is not None, "a wait with no deadline waits forever"
+    assert expires_at > datetime.now(timezone.utc)
 
 
 def test_the_planner_is_told_when_to_await_a_reply():

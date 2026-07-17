@@ -5,6 +5,7 @@ the OrchestratorService + servicer, and (when enabled) runs the MCP task poller.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -26,6 +27,7 @@ class OrchestratorRuntime:
         self._s = settings or get_orchestrator_settings()
         self._pool: Optional[asyncpg.Pool] = None
         self._poller: Optional[MCPTaskPoller] = None
+        self._mail_sweep: Optional[asyncio.Task] = None
         self.servicer: Optional[AgentOrchestratorServicer] = None
 
     async def start(self) -> "OrchestratorRuntime":
@@ -53,9 +55,16 @@ class OrchestratorRuntime:
             runner_factory, read_model=rm,
             planner_model=s.ORCHESTRATOR_PLANNER_MODEL,
             max_concurrency=s.ORCHESTRATOR_MAX_CONCURRENCY,
-            pool=self._pool, schema=schema)
+            pool=self._pool, schema=schema,
+            mail_wait_timeout_hours=s.MAIL_WAIT_TIMEOUT_HOURS)
         self.servicer = AgentOrchestratorServicer(
             service, rm, default_model=s.ORCHESTRATOR_PLANNER_MODEL)
+
+        # Nothing else notices a reply that never comes: the step is parked on an
+        # interrupt no incoming mail will ever match, so without this sweep the
+        # plan waits forever and the owner is never told why.
+        self._mail_sweep = asyncio.create_task(
+            self._sweep_mail_waits(service, s.MAIL_WAIT_SWEEP_INTERVAL_S))
 
         if s.MCP_TASKS_ENABLED:
             async def _resume(row, outcome, text):
@@ -75,7 +84,28 @@ class OrchestratorRuntime:
                     schema, bool(self._poller))
         return self
 
+    @staticmethod
+    async def _sweep_mail_waits(service: OrchestratorService, interval_s: float) -> None:
+        """Periodically let down the steps whose reply never arrived."""
+        while True:
+            try:
+                await asyncio.sleep(interval_s)
+                expired = await service.expire_mail_waits()
+                if expired:
+                    logger.info("[orchestrator] %d mail wait(s) expired → asked the owner",
+                                expired)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # a bad sweep must not kill the loop for good
+                logger.exception("[orchestrator] mail wait sweep failed")
+
     async def stop(self) -> None:
+        if self._mail_sweep:
+            self._mail_sweep.cancel()
+            try:
+                await self._mail_sweep
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
         if self._poller:
             await self._poller.stop()
         if self._pool:

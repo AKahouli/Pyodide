@@ -36,6 +36,12 @@ class OrchestratorSettings(BaseSettings):
     MCP_TASK_POLL_INTERVAL_S: float = 5.0
     MCP_TASK_CLAIM_TIMEOUT_S: int = 300
 
+    # How long a step waits for an email reply before giving up and asking the
+    # owner instead. People do not always answer, and a step with no deadline
+    # waits forever — the plan never finishes and nobody is told why.
+    MAIL_WAIT_TIMEOUT_HOURS: int = 72
+    MAIL_WAIT_SWEEP_INTERVAL_S: float = 300.0
+
     # Only used to derive the read-model DSN when the explicit one is unset.
     DATABASE_URL: Optional[str] = None
 
