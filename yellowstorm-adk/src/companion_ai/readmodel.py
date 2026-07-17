@@ -105,10 +105,37 @@ class ReadModel:
             """, session_id, user_id, title, status)
 
     async def set_session_status(self, session_id: str, status: str) -> None:
+        """Set status and clear any pending interrupt — a non-waiting session is
+        not answerable. Use set_waiting() to mark a session waiting on input."""
         async with self._pool.acquire() as con:
             await con.execute(
-                f"UPDATE {_q(self._schema,'sessions')} SET status=$2, updated_at=now() WHERE id=$1",
+                f"UPDATE {_q(self._schema,'sessions')} "
+                f"SET status=$2, interrupt_id=NULL, updated_at=now() WHERE id=$1",
                 session_id, status)
+
+    async def stop_incomplete(self, session_id: str) -> None:
+        """On StopSession, move any non-terminal step + the plan to a terminal
+        state so a stopped session shows no work stuck 'running' on the board.
+        The session status itself is set to 'completed' by the caller."""
+        async with self._pool.acquire() as con:
+            await con.execute(
+                f"UPDATE {_q(self._schema,'plan_steps')} "
+                f"SET status='failed', blocked_reason='stopped by user', updated_at=now() "
+                f"WHERE session_id=$1 AND status NOT IN ('completed','failed')",
+                session_id)
+            await con.execute(
+                f"UPDATE {_q(self._schema,'plans')} SET status='completed', updated_at=now() "
+                f"WHERE session_id=$1 AND status NOT IN ('completed','failed')",
+                session_id)
+
+    async def pause_running_steps(self, session_id: str) -> None:
+        """On pause, reset in-flight (running) steps to pending so a continue
+        re-runs them from the start — pause is step-granular, not mid-step."""
+        async with self._pool.acquire() as con:
+            await con.execute(
+                f"UPDATE {_q(self._schema,'plan_steps')} SET status='pending', updated_at=now() "
+                f"WHERE session_id=$1 AND status='running'",
+                session_id)
 
     async def set_waiting(self, session_id: str, interrupt_id: Optional[str]) -> None:
         """Mark the session waiting on user input (interrupt_id set), or clear it

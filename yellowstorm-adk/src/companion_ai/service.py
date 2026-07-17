@@ -1,12 +1,19 @@
 """Orchestrator service — drives one turn: plan -> graph -> execute -> project.
 
-    RunTask ─► plan_turn():
-        1. planner LLM  → Plan{ steps + depends_on }
-        2. project plan + steps (pending) to the read model
-        3. to_workflow(plan, llm nodes)  → ADK Workflow
-        4. Runner(node=wf).run_async()   → ADK runs parallel/sequential
-        5. map node events → per-step status → project live to the read model
-        6. derive + project final plan/session status
+The numbered STEP comments below (and the "[worky] N." log lines) are one
+sequence covering a whole turn, from the moment the user's message arrives.
+Steps 1-4 live in grpc_server/orchestrator_servicer.py; 5-10 are here:
+
+    STEP 1  RunTask receives the user's message                 (servicer)
+    STEP 2  claim the idempotency key — run at most once        (servicer)
+    STEP 3  ack immediately, run the turn in the background     (servicer)
+    STEP 4  new turn, or the answer to a pending question?      (servicer)
+    STEP 5  planner LLM → Plan{ steps + depends_on }, or a direct reply
+    STEP 6  validate the DAG + assign parallel waves
+    STEP 7  project plan + steps (pending) to the read model
+    STEP 8  connectors → tools, to_workflow(plan) → ADK Workflow
+    STEP 9  Runner.run_async() → map node events → live step status
+    STEP 10 derive + project the final plan/session status, post the reply
 
 The planner is an LlmAgent asked to emit strict JSON; execution is the Workflow
 whose nodes are per-step LlmAgents. Event→step mapping uses node_info.path
@@ -17,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from typing import List, Optional
 
 from google.adk.agents import LlmAgent
@@ -29,27 +37,48 @@ from .readmodel import ReadModel
 
 logger = logging.getLogger(__name__)
 
-PLANNER_INSTRUCTION = """You are a planning agent. Break the user's request into a
-minimal set of concrete steps and their dependencies, so independent steps can run
-in parallel.
+PLANNER_INSTRUCTION = """You are a planning agent for a multi-agent assistant.
+First decide whether the user's message needs a PLAN or just a DIRECT REPLY.
 
-Return ONLY strict JSON, no prose, in exactly this shape:
+Return ONLY strict JSON, no prose.
+
+CASE A — trivial / conversational ONLY: greetings, small talk, thanks,
+acknowledgements, or a question you can answer purely from your own general
+knowledge with NO external or live data. DO NOT create a plan. Reply directly:
+{{"title": "", "goal": "", "answer": "<your direct reply to the user>", "steps": []}}
+
+Use CASE A only for genuine chit-chat. If the request needs current/live info, a
+web search, looking something up, fetching data, using a tool/connector, or
+producing any real deliverable — it is CASE B, even if it's one step. The
+executor agents HAVE tools (web search, connectors); never answer directly or
+refuse just because YOU cannot browse or lack live data — route it to an
+"execute" step instead.
+
+CASE B — a real task that needs work or several actions. Return a plan:
 {{
-  "title": "<short title>",
+  "title": "<short plan title>",
   "goal": "<one-sentence goal>",
+  "answer": "",
   "steps": [
-    {{"id": "s1", "kind": "execute", "description": "<what to do>", "depends_on": []}},
-    {{"id": "s2", "kind": "ask", "question": "<question for the user>", "depends_on": []}},
-    {{"id": "s3", "kind": "execute", "description": "<uses the answer>", "depends_on": ["s2"]}}
+    {{"id": "s1", "kind": "execute", "title": "<short label>", "description": "<full instruction>", "depends_on": []}},
+    {{"id": "s2", "kind": "ask", "title": "<short label>", "question": "<question for the user>", "description": "", "depends_on": ["s1"]}}
   ]
 }}
 
 Rules:
-- ids are short unique strings.
+- Prefer CASE A whenever one message answers the user. Most chit-chat and simple
+  questions do NOT need a plan — only plan when there is genuine multi-step work.
+- title: a SHORT, user-facing label (max ~6 words) shown on the UI card so a
+  person understands the step at a glance — e.g. "Search Bitcoin price", "Ask
+  which option to run", "Write the introduction". EVERY step needs a title,
+  including "ask" steps. Never "Step 1" and never the whole task restated.
+- description: the FULL instruction the executor agent will act on (1–2 clear
+  sentences). For "ask" steps leave it "" — the user-facing text goes in "question".
 - kind is "execute" (an agent does the work) or "ask" (pause and ask the USER a
-  question). Use "ask" ONLY when you genuinely need information from the user that
-  you cannot obtain otherwise; give it a "question". Most steps are "execute".
-- depends_on lists ids that MUST finish first; leave it [] for independent steps.
+  question). Use "ask" ONLY when you genuinely need input you cannot get
+  otherwise; give it a "question".
+- ids are short unique strings. depends_on lists ids that MUST finish first;
+  leave it [] for independent steps.
 - Prefer parallelism: only add a dependency when a step truly needs another's output.
 - No cycles."""
 
@@ -68,7 +97,8 @@ def _plan_from_snapshot(snap: dict) -> Plan:
     for row in snap["steps"]:
         deps = [d for d in (row.get("depends_on") or "").split(",") if d]
         steps.append(Step(
-            id=row["step_id"], description=row.get("description") or "",
+            id=row["step_id"], title=row.get("title") or "",
+            description=row.get("description") or "",
             kind=row.get("kind") or "execute", question=row.get("question"),
             depends_on=deps, status=Status(row["status"]),
             wave=row.get("wave") or 0, result=row.get("result")))
@@ -110,13 +140,19 @@ class OrchestratorService:
         self._schema = schema
 
     def _tools_for(self, connectors: Optional[List[dict]], session_id: str, user_id: str) -> List:
-        """Materialize connectors into executor tools: the synchronous MCP tools
-        plus, per connector, a fire-and-forget `schedule_*_task` tool for
-        long-running actions (records the handle in mcp_tasks for the poller)."""
+        """Materialize connectors into executor tools: the synchronous MCP action
+        tools plus, per connector, a fire-and-forget `schedule_*_task` tool for
+        long-running actions (records the handle in mcp_tasks for the poller).
+
+        Uses the app's proven `create_connector_tools` (per-action function tools
+        that open a one-shot MCP connection via call_mcp_tool) — NOT ADK's
+        McpToolset, whose session manager triggers Google-auth mTLS metadata
+        probes that stall and fail off-GCP."""
         connectors = connectors or []
-        from . import connectors as conn_mod
+        from src.smart_rag.tools.utilities.connector_tools import (
+            create_connector_tools, ConnectorToolContext)
         from . import long_running, mcp_tasks
-        tools = conn_mod.connectors_to_toolsets(connectors)
+        tools = create_connector_tools(connectors, ConnectorToolContext(session_id=session_id))
         for c in connectors:
             async def _record(task_id, action, args, _c=c):
                 if self._pool is not None:
@@ -135,33 +171,71 @@ class OrchestratorService:
         except Exception as e:  # never let projection break the run
             logger.warning("read-model projection failed: %s", e)
 
+    async def _add_message(self, session_id: str, role: str, content: str) -> None:
+        """Project one chat turn into `messages` (the client's conversation view)."""
+        if not content:
+            return
+        await self._project(self._rm and self._rm.add_message(
+            uuid.uuid4().hex, session_id, role, content))
+
+    @staticmethod
+    def _assistant_answer(plan: Plan) -> str:
+        """The chat reply for a completed plan: the results of its terminal steps
+        (the leaves nothing depends on), or all step results if there's no leaf."""
+        depended = {d for s in plan.steps for d in s.depends_on}
+        terminals = [s.result for s in plan.steps if s.id not in depended and s.result]
+        parts = terminals or [s.result for s in plan.steps if s.result]
+        return "\n\n".join(parts)
+
     async def plan_turn(self, *, session_id: str, user_id: str, message: str,
                         model: str, connectors: Optional[List[dict]] = None) -> Plan:
+        logger.info("[worky] 5. plan_turn ◄ session=%s model=%s connectors=%d",
+                    session_id, model, len(connectors or []))
         await self._project(self._rm and self._rm.ensure_session(session_id, user_id, None, "running"))
 
+        # STEP 5 — planner LLM → Plan. Zero steps means it chose a direct reply
+        # (chit-chat): answer and finish the turn here, no graph is ever built.
         plan = await self._make_plan(session_id, user_id, message)
+        logger.info("[worky] 5. planner LLM → Plan session=%s title=%r steps=%d",
+                    session_id, plan.title, len(plan.steps))
         if not plan.steps:
+            logger.info("[worky] 5. direct reply (no plan) → session=%s completed", session_id)
+            await self._add_message(session_id, "assistant", plan.answer or "")
             await self._project(self._rm and self._rm.set_session_status(session_id, "completed"))
             return plan
 
+        # STEP 6 — validate the DAG (a cyclic/dangling plan can never complete)
+        # and assign waves: steps sharing a wave are independent and run together.
         scheduler.validate(plan)
         scheduler.assign_waves(plan)
+        waves = max((s.wave for s in plan.steps), default=0) + 1
+        logger.info("[worky] 6. validate + assign_waves → %d wave(s) session=%s",
+                    waves, session_id)
+
+        # STEP 7 — project the plan and its pending steps, so the client can
+        # render the whole card before any step has run.
         await self._project_plan(session_id, plan)
 
-        # Build the executable graph and run it.
+        # STEP 8 — connectors → executor tools, plan → ADK Workflow.
         factory = nodes.make_llm_node_factory(
             model_name=model, goal=plan.goal,
             tools=self._tools_for(connectors, session_id, user_id))
         name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
                                max_concurrency=self._max_concurrency)
+        logger.info("[worky] 8. to_workflow → ADK Workflow %r (max_concurrency=%d) session=%s",
+                    wf.name, self._max_concurrency, session_id)
 
         runner = self._runner_factory(wf, f"orch_{session_id}")
         await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
 
+        # STEP 9 — run the graph; _drive maps node events to live step status.
+        logger.info("[worky] 9. Runner.run_async → executing session=%s", session_id)
         interrupt = await self._drive(
             runner, session_id, user_id, plan, name_to_step,
             types.Content(role="user", parts=[types.Part(text=message)]))
+
+        # STEP 10 — derive the final status and post the assistant reply.
         await self._finalize(session_id, plan, interrupt)
         return plan
 
@@ -169,9 +243,11 @@ class OrchestratorService:
                           model: str, connectors: Optional[List[dict]] = None) -> Plan:
         """Resume a turn blocked on ask-the-user with the user's `answer`.
 
-        Rebuilds the same workflow from the stored plan and resumes it via the
-        interrupt id; ADK replays completed nodes from the durable session and
-        re-runs the blocked one with the answer injected."""
+        Reached from STEP 4 when the session is waiting; skips planning (STEP
+        5-7 already happened on the original turn) and rejoins the sequence at
+        STEP 8 by rebuilding the same workflow from the stored plan. ADK replays
+        completed nodes from the durable session and re-runs the blocked one
+        with the answer injected."""
         if self._rm is None:
             raise RuntimeError("resume requires the read model")
         snap = await self._rm.snapshot(session_id)
@@ -179,6 +255,8 @@ class OrchestratorService:
         if not snap or not interrupt_id:
             raise RuntimeError(f"session {session_id} is not waiting on input")
 
+        # STEP 8 (resume) — same step ids + depends_on ⇒ same node names + edges,
+        # which is what lets the interrupt id from the earlier run still match.
         plan = _plan_from_snapshot(snap)
         factory = nodes.make_llm_node_factory(
             model_name=model, goal=plan.goal,
@@ -188,11 +266,59 @@ class OrchestratorService:
                                max_concurrency=self._max_concurrency)
         runner = self._runner_factory(wf, f"orch_{session_id}")
         await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
-        await self._project(self._rm.set_waiting(session_id, None))  # waiting -> running
+        # Keep the pending interrupt set while resuming so a correction that
+        # arrives mid-resume is still routed as the answer (last-answer-wins). It
+        # is cleared only when the turn finishes (set_session_status clears it, or
+        # _finalize re-blocks with a new interrupt).
 
+        # STEP 9 (resume) — same as a fresh turn, but the message carries the
+        # resume part instead of user text.
+        logger.info("[worky] 9. Runner.run_async → resuming session=%s interrupt=%s",
+                    session_id, interrupt_id)
         interrupt = await self._drive(
             runner, session_id, user_id, plan, name_to_step,
             types.Content(role="user", parts=[hitl.resume_part(interrupt_id, {"value": answer})]))
+
+        # STEP 10 — may block again if the plan has another ask step.
+        await self._finalize(session_id, plan, interrupt)
+        return plan
+
+    async def continue_turn(self, *, session_id: str, user_id: str,
+                            model: str, connectors: Optional[List[dict]] = None) -> Plan:
+        """Continue a PAUSED plan (PauseSession cancelled the in-flight turn).
+
+        Rebuilds the same workflow from the stored plan and re-drives it. ADK
+        replays already-completed nodes from the durable session and runs the
+        rest, so continue picks up where the pause left off. No answer is
+        injected — this is not an ask resume."""
+        if self._rm is None:
+            raise RuntimeError("continue requires the read model")
+        snap = await self._rm.snapshot(session_id)
+        if not snap:
+            raise RuntimeError(f"session {session_id} unknown; nothing to continue")
+
+        plan = _plan_from_snapshot(snap)
+        if all(s.is_done() for s in plan.steps):
+            plan.status = scheduler.derive_status(plan)
+            await self._project(self._rm.set_session_status(session_id, plan.status.value))
+            return plan
+
+        factory = nodes.make_llm_node_factory(
+            model_name=model, goal=plan.goal,
+            tools=self._tools_for(connectors, session_id, user_id))
+        name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
+        wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
+                               max_concurrency=self._max_concurrency)
+        runner = self._runner_factory(wf, f"orch_{session_id}")
+        await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
+        await self._project(self._rm.set_session_status(session_id, "running"))  # paused -> running
+
+        logger.info("[worky] 9. Runner.run_async → continuing paused plan session=%s", session_id)
+        # A benign message: completed nodes replay and won't re-run, so its text
+        # is irrelevant; the graph engine just proceeds with the pending steps.
+        interrupt = await self._drive(
+            runner, session_id, user_id, plan, name_to_step,
+            types.Content(role="user", parts=[types.Part(text="continue")]))
         await self._finalize(session_id, plan, interrupt)
         return plan
 
@@ -214,6 +340,8 @@ class OrchestratorService:
         return interrupt
 
     async def _finalize(self, session_id: str, plan: Plan, interrupt) -> None:
+        """STEP 10 — the turn ends one of two ways: blocked on a question (the
+        session parks with an interrupt id for a later resume), or done."""
         if interrupt is not None:
             interrupt_id, step_id = interrupt
             if step_id:
@@ -222,7 +350,11 @@ class OrchestratorService:
                 step.blocked_reason = "awaiting user input"
                 await self._project(self._rm and self._rm.set_step_status(
                     session_id, step_id, "blocked", blocked_reason="awaiting user input"))
+                # Surface the ask-the-user question in the chat.
+                await self._add_message(session_id, "assistant", step.question or step.description or "")
             plan.status = Status.BLOCKED
+            logger.info("[worky] 10. blocked on ask-user session=%s step=%s interrupt=%s",
+                        session_id, step_id, interrupt_id)
             await self._project(self._rm and self._rm.upsert_plan(
                 session_id, plan.id, plan.title, plan.goal, "blocked"))
             await self._project(self._rm and self._rm.set_waiting(session_id, interrupt_id))
@@ -232,6 +364,8 @@ class OrchestratorService:
             if not s.is_done():
                 s.status = Status.COMPLETED
         plan.status = scheduler.derive_status(plan)
+        logger.info("[worky] 10. derive final status session=%s → %s", session_id, plan.status.value)
+        await self._add_message(session_id, "assistant", self._assistant_answer(plan))
         await self._project(self._rm and self._rm.upsert_plan(
             session_id, plan.id, plan.title, plan.goal, plan.status.value))
         await self._project(self._rm and self._rm.set_session_status(
@@ -254,11 +388,13 @@ class OrchestratorService:
                     if getattr(p, "text", None):
                         text = p.text
         data = _extract_json(text)
-        steps = [Step(id=s["id"], description=s.get("description", ""),
+        steps = [Step(id=s["id"], title=s.get("title", ""),
+                      description=s.get("description", ""),
                       kind=s.get("kind", "execute"), question=s.get("question"),
                       depends_on=list(s.get("depends_on", [])))
                  for s in data.get("steps", [])]
-        return Plan(title=data.get("title", ""), goal=data.get("goal", ""), steps=steps)
+        return Plan(title=data.get("title", ""), goal=data.get("goal", ""),
+                    answer=data.get("answer") or None, steps=steps)
 
     def _build_planner_model(self):
         # Planner has no tools → plain model (no tool_choice/parallel_tool_calls,
@@ -269,11 +405,15 @@ class OrchestratorService:
         await self._project(self._rm and self._rm.upsert_plan(
             session_id, plan.id, plan.title, plan.goal, "running"))
         rows = [(s.id, i, s.wave, s.status.value, s.kind, s.question or "",
-                 s.description, ",".join(s.depends_on), s.agent or "")
+                 s.title or s.description or s.question or "",   # card label, never blank
+                 s.description or "",                            # full instruction / detail
+                 ",".join(s.depends_on), s.agent or "")
                 for i, s in enumerate(plan.steps)]
         await self._project(self._rm and self._rm.upsert_steps(session_id, rows))
 
     async def _apply_event(self, session_id: str, plan: Plan, ev, name_to_step: dict, started: set) -> None:
+        """STEP 9 (per event) — one ADK node event → one step status → one row
+        update the client sees live."""
         ni = getattr(ev, "node_info", None)
         if not ni or not getattr(ni, "path", None):
             return
@@ -287,6 +427,8 @@ class OrchestratorService:
         if step_id not in started:
             started.add(step_id)
             step.status = Status.RUNNING
+            logger.info("[worky] 9. step running session=%s step=%s wave=%d",
+                        session_id, step_id, step.wave)
             await self._project(self._rm and self._rm.set_step_status(
                 session_id, step_id, "running", agent=node))
         if is_output:
@@ -295,5 +437,7 @@ class OrchestratorService:
             if ev.content and ev.content.parts and getattr(ev.content.parts[0], "text", None):
                 text = ev.content.parts[0].text
             step.result = text
+            logger.info("[worky] 9. step completed session=%s step=%s (%d chars)",
+                        session_id, step_id, len(text))
             await self._project(self._rm and self._rm.set_step_status(
                 session_id, step_id, "completed", agent=node, result=text))

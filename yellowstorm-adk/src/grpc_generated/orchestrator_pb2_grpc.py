@@ -54,6 +54,11 @@ class AgentOrchestratorStub(object):
                 request_serializer=orchestrator__pb2.StopSessionRequest.SerializeToString,
                 response_deserializer=orchestrator__pb2.StopSessionResponse.FromString,
                 _registered_method=True)
+        self.PauseSession = channel.unary_unary(
+                '/yellowstorm.orchestrator.v1.AgentOrchestrator/PauseSession',
+                request_serializer=orchestrator__pb2.PauseSessionRequest.SerializeToString,
+                response_deserializer=orchestrator__pb2.PauseSessionResponse.FromString,
+                _registered_method=True)
 
 
 class AgentOrchestratorServicer(object):
@@ -83,7 +88,16 @@ class AgentOrchestratorServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def StopSession(self, request, context):
-        """Cancel a running/blocked session.
+        """Cancel a running/blocked session (terminal — cannot be continued).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PauseSession(self, request, context):
+        """Pause a running session: cancel the in-flight turn and keep the plan so it
+        can be continued later. Continue by sending RunTask on the same session_id
+        (worky re-drives the remaining steps). Unlike Stop, this is not terminal.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -111,6 +125,11 @@ def add_AgentOrchestratorServicer_to_server(servicer, server):
                     servicer.StopSession,
                     request_deserializer=orchestrator__pb2.StopSessionRequest.FromString,
                     response_serializer=orchestrator__pb2.StopSessionResponse.SerializeToString,
+            ),
+            'PauseSession': grpc.unary_unary_rpc_method_handler(
+                    servicer.PauseSession,
+                    request_deserializer=orchestrator__pb2.PauseSessionRequest.FromString,
+                    response_serializer=orchestrator__pb2.PauseSessionResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -221,6 +240,33 @@ class AgentOrchestrator(object):
             '/yellowstorm.orchestrator.v1.AgentOrchestrator/StopSession',
             orchestrator__pb2.StopSessionRequest.SerializeToString,
             orchestrator__pb2.StopSessionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PauseSession(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/yellowstorm.orchestrator.v1.AgentOrchestrator/PauseSession',
+            orchestrator__pb2.PauseSessionRequest.SerializeToString,
+            orchestrator__pb2.PauseSessionResponse.FromString,
             options,
             channel_credentials,
             insecure,

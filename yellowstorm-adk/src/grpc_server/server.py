@@ -163,7 +163,7 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
         logger.info("  - playbook_flow.PlaybookFlowRuntime/RunFromCheckpoint (streaming)")
     if orchestrator_runtime is not None:
         logger.info("  - yellowstorm.orchestrator.v1.AgentOrchestrator "
-                    "(CreateSession / RunTask / GetSession / StopSession)")
+                    "(CreateSession / RunTask / GetSession / StopSession / PauseSession)")
 
     # Keep the server running until terminated
     try:

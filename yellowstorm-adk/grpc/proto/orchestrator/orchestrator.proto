@@ -28,8 +28,13 @@ service AgentOrchestrator {
   // Steady-state progress comes from Electric, not this call.
   rpc GetSession (GetSessionRequest) returns (GetSessionResponse);
 
-  // Cancel a running/blocked session.
+  // Cancel a running/blocked session (terminal — cannot be continued).
   rpc StopSession (StopSessionRequest) returns (StopSessionResponse);
+
+  // Pause a running session: cancel the in-flight turn and keep the plan so it
+  // can be continued later. Continue by sending RunTask on the same session_id
+  // (worky re-drives the remaining steps). Unlike Stop, this is not terminal.
+  rpc PauseSession (PauseSessionRequest) returns (PauseSessionResponse);
 }
 
 // ===================== Commands =====================
@@ -69,6 +74,9 @@ message GetSessionResponse {
 
 message StopSessionRequest  { string user_id = 1; string session_id = 2; }
 message StopSessionResponse { bool stopped = 1; }
+
+message PauseSessionRequest  { string user_id = 1; string session_id = 2; }
+message PauseSessionResponse { bool paused = 1; }
 
 // ===================== Plan (the core UX object) =====================
 
