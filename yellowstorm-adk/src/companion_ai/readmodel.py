@@ -4,8 +4,13 @@ CQRS read side: the orchestrator projects the client-facing slice (session, plan
 per-step status, messages) here as it runs; the client reads it live via Electric.
 Row-per-step so parallel work shows as many independent row updates.
 
-Only these tables are published to Electric — ADK's own session tables and the
-mcp_tasks queue stay internal.
+"Internal" below means only that no client shape reads the table — Electric will
+serve ANY table in this database to anyone holding ELECTRIC_SECRET, so it is not
+an access control. Today the API is Electric's only consumer and re-emits over
+SSE, so nothing internal is reachable. If a client is ever pointed at Electric
+directly, the proxy in front of it must allowlist the client tables:
+`mail_waits` holds live routing tokens, and a token is enough to answer someone
+else's step.
 """
 from __future__ import annotations
 

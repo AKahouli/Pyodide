@@ -18,6 +18,30 @@ services:
       - .env
    entrypoint: bash -c "celery -A src.infrastructure.celery_app.celery_app worker --loglevel=info --queues=attribute_extraction --pool=threads --concurrency=4 -n attribute-extraction@%h"
 
+  # Local read model (worky's companion_ai). Optional: point
+  # ORCHESTRATOR_READMODEL_DSN + ELECTRIC_DATABASE_URL at the shared instance
+  # instead and this service is simply unused.
+  postgres:
+    image: postgres:16
+    container_name: yellowstorm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: companion_ai
+    # Electric replicates over the WAL, and the stock image ships wal_level=replica.
+    # Without logical it connects and then fails to create its replication slot.
+    command: ["postgres", "-c", "wal_level=logical"]
+    ports:
+      - "5432:5432"
+    volumes:
+      - worky-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d companion_ai"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   electric:
     image: electricsql/electric:latest
     container_name: yellowstorm-electric
@@ -27,3 +51,9 @@ services:
       ELECTRIC_SECRET: ${ELECTRIC_SECRET:-dev-only-change-me}
     ports:
       - "3100:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  worky-pgdata:
