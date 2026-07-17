@@ -836,6 +836,36 @@ resume  → next RunTask sees status=waiting → resume_turn
         a reply, each resumable independently and in any order.
         Covered by <code>tests/orchestrator/test_await_reply.py</code>.
       </p>
+
+      <h3>Finding the step a reply belongs to</h3>
+      <p>
+        A reply has to reach the one step waiting for it, out of every step in every session every
+        user has open. Nothing in the mail says so on its own: the connector's
+        <code>send_email</code> wraps Graph <code>POST /me/sendMail</code>, which answers
+        <code>202 Accepted</code> with an <em>empty body</em> — no message id, no
+        <code>conversationId</code>. There is nothing to correlate on after the fact, so the
+        correlation is planted on the way out: a random token, minted per wait, carried in two
+        places because either can be lost.
+      </p>
+      <pre><code>subject  "Which company? [YW-xxxx]"      survives Re:/Fwd:, but the sender may rewrite it
+body     &lt;span style="display:none"&gt;      survives reply-quoting, but the sender may trim it
+
+reply arrives → extract(subject, body) → token → mail_waits → (session, step, interrupt)
+              → RunTask(interrupt_id) → resume_turn → the step continues</code></pre>
+      <p>
+        The token is opaque and random rather than a signed encoding of
+        <code>(session_id, step_id)</code>: a <code>mail_waits</code> row has to exist regardless —
+        for expiry, de-duplication and the mailbox refcount — so the lookup happens either way, and
+        a random token needs no secret to store or rotate. The registry is the only truth, and
+        <code>(session_id, step_id)</code> is what it resolves to, unique across every open session.
+      </p>
+      <p>
+        <code>claim_mail_wait</code> is a single atomic <code>UPDATE … WHERE status='waiting'
+        RETURNING *</code>, the same claim-once shape as <code>run_idempotency</code>. Graph retries
+        any notification it thinks failed, so duplicate deliveries are routine, not an edge case —
+        a second resume would answer an already-answered question and run the plan on the same reply
+        twice.
+      </p>
     </section>
 
     <section id="readmodel">
@@ -858,6 +888,7 @@ resume  → next RunTask sees status=waiting → resume_turn
             <tr><td class="file">messages</td><td style="color:var(--completed)">yes</td><td>The conversation view — user turns and assistant replies.</td></tr>
             <tr><td class="file">run_idempotency</td><td style="color:var(--ink-faint)">no</td><td>Durable RunTask de-duplication. Internal.</td></tr>
             <tr><td class="file">mcp_tasks</td><td style="color:var(--ink-faint)">no</td><td>Queue of long-running MCP handles for the poller. Internal.</td></tr>
+            <tr><td class="file">mail_waits</td><td style="color:var(--ink-faint)">no</td><td>Which step is parked on which email reply, keyed by routing token. Internal.</td></tr>
           </tbody>
         </table>
       </div>

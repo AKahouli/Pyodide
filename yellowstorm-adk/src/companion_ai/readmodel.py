@@ -85,6 +85,31 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
                 PRIMARY KEY (session_id, idempotency_key)
             )""")
+        # Internal (not published to Electric): which step is waiting on which
+        # email reply. The token travels in the outbound mail and comes back on
+        # the reply; this is what turns it into (session, step, interrupt).
+        await con.execute(f"""
+            CREATE TABLE IF NOT EXISTS {_q(schema,'mail_waits')} (
+                token           TEXT PRIMARY KEY,
+                session_id      TEXT NOT NULL,
+                step_id         TEXT NOT NULL,
+                interrupt_id    TEXT NOT NULL,
+                user_id         TEXT NOT NULL,
+                mailbox_app_key TEXT,
+                expected_from   TEXT,
+                conversation_id TEXT,          -- recovered later; not known at send
+                status          TEXT NOT NULL DEFAULT 'waiting',  -- waiting|matched|expired|cancelled
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+                expires_at      TIMESTAMPTZ
+            )""")
+        # The sweeps ask "what is still waiting" (renewal, expiry, catch-up), and
+        # a session teardown asks "what is still waiting for me".
+        await con.execute(
+            f'CREATE INDEX IF NOT EXISTS mail_waits_waiting_idx ON {_q(schema,"mail_waits")} '
+            f'(status, expires_at)')
+        await con.execute(
+            f'CREATE INDEX IF NOT EXISTS mail_waits_session_idx ON {_q(schema,"mail_waits")} '
+            f'(session_id, status)')
 
 
 class ReadModel:
@@ -226,6 +251,60 @@ class ReadModel:
                 RETURNING run_id
             """, session_id, idempotency_key, run_id)
         return got is not None
+
+    async def register_mail_wait(self, token: str, *, session_id: str, step_id: str,
+                                 interrupt_id: str, user_id: str,
+                                 mailbox_app_key: Optional[str] = None,
+                                 expected_from: Optional[str] = None,
+                                 expires_at=None) -> None:
+        """Record that `step_id` is parked until a reply carrying `token` arrives."""
+        async with self._pool.acquire() as con:
+            await con.execute(f"""
+                INSERT INTO {_q(self._schema,'mail_waits')}
+                    (token,session_id,step_id,interrupt_id,user_id,mailbox_app_key,
+                     expected_from,expires_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                ON CONFLICT (token) DO NOTHING
+            """, token, session_id, step_id, interrupt_id, user_id, mailbox_app_key,
+                 expected_from, expires_at)
+
+    async def claim_mail_wait(self, token: str) -> Optional[dict]:
+        """Atomically claim the wait for `token`: the row if this delivery is the
+        first to match it, None if unknown, already matched, expired or cancelled.
+
+        Atomic because Graph retries a notification it thinks failed, and a
+        duplicate must not resume the step twice — the second resume would answer
+        an already-answered question and let the plan run on the reply twice.
+        Same claim-once shape as claim_run, and multi-replica safe.
+        """
+        async with self._pool.acquire() as con:
+            row = await con.fetchrow(f"""
+                UPDATE {_q(self._schema,'mail_waits')} SET status='matched'
+                WHERE token=$1 AND status='waiting'
+                RETURNING *
+            """, token)
+        return dict(row) if row else None
+
+    async def cancel_mail_waits(self, session_id: str) -> None:
+        """Drop this session's outstanding waits — it stopped or finished, so no
+        reply can be interesting any more. Without this a mailbox subscription is
+        kept alive (and renewed forever) for a session nobody is watching."""
+        async with self._pool.acquire() as con:
+            await con.execute(
+                f"UPDATE {_q(self._schema,'mail_waits')} SET status='cancelled' "
+                f"WHERE session_id=$1 AND status='waiting'",
+                session_id)
+
+    async def expire_mail_waits(self) -> List[dict]:
+        """Claim every wait past its expiry, returning them so the caller can let
+        the step down gently (ask the owner instead of hanging forever)."""
+        async with self._pool.acquire() as con:
+            rows = await con.fetch(f"""
+                UPDATE {_q(self._schema,'mail_waits')} SET status='expired'
+                WHERE status='waiting' AND expires_at IS NOT NULL AND expires_at <= now()
+                RETURNING *
+            """)
+        return [dict(r) for r in rows]
 
     async def snapshot(self, session_id: str) -> Optional[dict]:
         """Session + plan + ordered steps, for GetSession. None if unknown."""

@@ -10,6 +10,7 @@ import asyncio
 import os
 import sys
 import uuid
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -17,7 +18,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-from src.companion_ai import mcp_tasks, readmodel
+from src.companion_ai import mail_token, mcp_tasks, readmodel
 
 # One pool, one loop, for the whole module: the tests share a schema and run in
 # order, and a per-test loop would strand the pool's connections on a dead one.
@@ -146,6 +147,53 @@ async def test_outstanding_interrupts_are_tracked_per_step(pool):
     print("ok  read-model: interrupts tracked per step, cleared independently")
 
 
+async def test_a_reply_claims_its_wait_exactly_once(pool):
+    """Graph retries a notification it thinks failed, and duplicates are normal.
+    A second delivery must not resume the step again — that would answer an
+    answered question and run the plan on the same reply twice."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    token = mail_token.mint()
+    await rm.register_mail_wait(token, session_id="s1", step_id="m", user_id="u1",
+                                interrupt_id="mail:plan@1/m@1",
+                                expected_from="rabeb@example.com")
+
+    # Ten concurrent deliveries of the same notification; exactly one wins.
+    claims = await asyncio.gather(*[rm.claim_mail_wait(token) for _ in range(10)])
+    won = [c for c in claims if c is not None]
+    assert len(won) == 1, f"expected exactly one claim to win, got {len(won)}"
+    assert won[0]["session_id"] == "s1" and won[0]["step_id"] == "m"
+    assert won[0]["interrupt_id"] == "mail:plan@1/m@1"
+
+    assert await rm.claim_mail_wait(token) is None, "a matched wait must not re-claim"
+    assert await rm.claim_mail_wait("YW-nosuchtoken") is None, "unknown token must not resolve"
+    print("ok  mail wait: claimed exactly once under concurrent deliveries")
+
+
+async def test_waits_are_cancelled_and_expired_out_of_the_waiting_set(pool):
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    past = datetime.now(timezone.utc) - timedelta(days=1)
+    future = datetime.now(timezone.utc) + timedelta(days=1)
+
+    stale = mail_token.mint()
+    fresh = mail_token.mint()
+    await rm.register_mail_wait(stale, session_id="s2", step_id="m1", user_id="u",
+                                interrupt_id="mail:1", expires_at=past)
+    await rm.register_mail_wait(fresh, session_id="s2", step_id="m2", user_id="u",
+                                interrupt_id="mail:2", expires_at=future)
+
+    expired = await rm.expire_mail_waits()
+    assert [e["token"] for e in expired] == [stale], "only the past-due wait should expire"
+    assert await rm.claim_mail_wait(stale) is None, "an expired wait must not still resolve"
+    assert await rm.expire_mail_waits() == [], "expiry must not re-fire"
+
+    # Stopping the session drops what is left, so no subscription is renewed for it.
+    await rm.cancel_mail_waits("s2")
+    assert await rm.claim_mail_wait(fresh) is None, "a cancelled wait must not resolve"
+    print("ok  mail wait: expiry and cancellation remove it from the waiting set")
+
+
 async def main():
     pool = await _pool()
     if pool is None:
@@ -155,6 +203,8 @@ async def main():
         await test_requeue_and_fail(pool)
         await test_readmodel_roundtrip(pool)
         await test_outstanding_interrupts_are_tracked_per_step(pool)
+        await test_a_reply_claims_its_wait_exactly_once(pool)
+        await test_waits_are_cancelled_and_expired_out_of_the_waiting_set(pool)
         print("\nall postgres-layer tests passed")
     finally:
         async with pool.acquire() as con:
