@@ -850,8 +850,21 @@ resume  → next RunTask sees status=waiting → resume_turn
       <pre><code>subject  "Which company? [YW-xxxx]"      survives Re:/Fwd:, but the sender may rewrite it
 body     &lt;span style="display:none"&gt;      survives reply-quoting, but the sender may trim it
 
-reply arrives → extract(subject, body) → token → mail_waits → (session, step, interrupt)
-              → RunTask(interrupt_id) → resume_turn → the step continues</code></pre>
+reply arrives → extract(subject, body) → token → DeliverMailReply(token, body)
+              → claim_mail_wait → (session, step, interrupt)
+              → resume_turn(interrupt_id) → the step continues</code></pre>
+      <p>
+        <code>DeliverMailReply</code> exists because the webhook holds a token and nothing else —
+        only worky can turn one into a session, and its registry is not readable from the API. It is
+        <em>not</em> a second way to continue a plan: it resolves, then hands off to the same
+        <code>resume_turn</code> the RunTask path uses, so there is one continuation implementation
+        with two entrypoints. Like RunTask it acks immediately and resumes in the background — the
+        caller is answering Graph on a clock, and the resumed plan can run for minutes — and it
+        takes <code>user_id</code>/<code>session_id</code> from the wait row, never from the caller.
+        An unknown or already-claimed token is <code>delivered=false</code>, not an error: the
+        webhook must ack Graph either way, since a 5xx makes Graph retry and eventually kill the
+        subscription.
+      </p>
       <p>
         The token is opaque and random rather than a signed encoding of
         <code>(session_id, step_id)</code>: a <code>mail_waits</code> row has to exist regardless —

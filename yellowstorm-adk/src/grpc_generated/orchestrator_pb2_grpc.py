@@ -59,6 +59,11 @@ class AgentOrchestratorStub(object):
                 request_serializer=orchestrator__pb2.PauseSessionRequest.SerializeToString,
                 response_deserializer=orchestrator__pb2.PauseSessionResponse.FromString,
                 _registered_method=True)
+        self.DeliverMailReply = channel.unary_unary(
+                '/yellowstorm.orchestrator.v1.AgentOrchestrator/DeliverMailReply',
+                request_serializer=orchestrator__pb2.DeliverMailReplyRequest.SerializeToString,
+                response_deserializer=orchestrator__pb2.DeliverMailReplyResponse.FromString,
+                _registered_method=True)
 
 
 class AgentOrchestratorServicer(object):
@@ -103,6 +108,22 @@ class AgentOrchestratorServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def DeliverMailReply(self, request, context):
+        """Hand an email reply to the step waiting for it. The routing token travelled
+        in the outbound mail and came back on the reply; only worky can turn it into
+        a session/step/interrupt, so the caller passes the token and worky resolves
+        and resumes internally — it does NOT reimplement continuation, it delegates
+        to the same resume the RunTask path uses.
+
+        Claim-once: a token resolves for exactly one delivery. A duplicate (Graph
+        retries anything it thinks failed) returns delivered=false rather than
+        resuming the step a second time. Acks immediately like RunTask, so the
+        caller's webhook can answer Graph inside its timeout.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_AgentOrchestratorServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -130,6 +151,11 @@ def add_AgentOrchestratorServicer_to_server(servicer, server):
                     servicer.PauseSession,
                     request_deserializer=orchestrator__pb2.PauseSessionRequest.FromString,
                     response_serializer=orchestrator__pb2.PauseSessionResponse.SerializeToString,
+            ),
+            'DeliverMailReply': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeliverMailReply,
+                    request_deserializer=orchestrator__pb2.DeliverMailReplyRequest.FromString,
+                    response_serializer=orchestrator__pb2.DeliverMailReplyResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -267,6 +293,33 @@ class AgentOrchestrator(object):
             '/yellowstorm.orchestrator.v1.AgentOrchestrator/PauseSession',
             orchestrator__pb2.PauseSessionRequest.SerializeToString,
             orchestrator__pb2.PauseSessionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeliverMailReply(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/yellowstorm.orchestrator.v1.AgentOrchestrator/DeliverMailReply',
+            orchestrator__pb2.DeliverMailReplyRequest.SerializeToString,
+            orchestrator__pb2.DeliverMailReplyResponse.FromString,
             options,
             channel_credentials,
             insecure,

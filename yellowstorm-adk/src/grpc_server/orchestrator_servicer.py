@@ -269,3 +269,73 @@ class AgentOrchestratorServicer(pb_grpc.AgentOrchestratorServicer):
                 logger.warning("PauseSession projection failed: %s", e)
         logger.info("[worky] PauseSession (session=%s paused=%s)", request.session_id, paused)
         return pb.PauseSessionResponse(paused=paused)
+
+    async def DeliverMailReply(self, request: pb.DeliverMailReplyRequest,
+                               context) -> pb.DeliverMailReplyResponse:
+        """An email reply arrived for a parked step: resolve the routing token and
+        resume that step with the reply as its answer.
+
+        The caller (the mail webhook) holds a token and nothing else — only worky
+        can turn it into a session/step/interrupt. Continuation itself is not
+        reimplemented here: this resolves, then hands off to the same resume_turn
+        the RunTask path uses, so there is one continuation implementation.
+        """
+        if self._rm is None:
+            context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+            context.set_details("read model not configured")
+            return pb.DeliverMailReplyResponse(delivered=False)
+
+        # Claim before anything else: this is what makes a duplicate delivery a
+        # no-op instead of a second resume. Graph retries whatever it thinks
+        # failed, so this path is walked twice as a matter of course.
+        wait = await self._rm.claim_mail_wait(request.token)
+        if wait is None:
+            logger.info("[worky] DeliverMailReply ignored — token unknown, already "
+                        "delivered, expired or cancelled")
+            return pb.DeliverMailReplyResponse(delivered=False)
+
+        session_id, user_id = wait["session_id"], wait["user_id"]
+        logger.info("[worky] DeliverMailReply ◄ session=%s step=%s from=%s (%d chars)",
+                    session_id, wait["step_id"], request.reply_from or "?",
+                    len(request.reply_body))
+
+        # Ack immediately and resume in the background: the caller is answering a
+        # Graph webhook on a clock, and the resumed plan can run for minutes.
+        model = request.model or self._default_model
+        prev = self._running.get(session_id)
+        task = asyncio.create_task(self._resume_with_reply(request, wait, model, prev))
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
+        task.add_done_callback(self._forget_running(session_id))
+        self._running[session_id] = task
+        return pb.DeliverMailReplyResponse(
+            delivered=True, session_id=session_id, step_id=wait["step_id"])
+
+    async def _resume_with_reply(self, request: pb.DeliverMailReplyRequest, wait: dict,
+                                 model: str, prev: Optional[asyncio.Task] = None) -> None:
+        session_id = wait["session_id"]
+        try:
+            # Same last-answer-wins handshake as RunTask: never let two turns run
+            # on one session, or the reply races whatever is already in flight.
+            if prev is not None and not prev.done():
+                logger.info("[worky] superseding in-flight turn for mail reply (session=%s)",
+                            session_id)
+                prev.cancel()
+                try:
+                    await prev
+                except BaseException:  # noqa: BLE001 — prev's cancellation is expected
+                    pass
+            await self._svc.resume_turn(
+                session_id=session_id, user_id=wait["user_id"],
+                answer=request.reply_body, model=model,
+                connectors=_connectors_to_dicts(request.connectors),
+                interrupt_id=wait["interrupt_id"])
+            logger.info("[worky] DeliverMailReply turn done (session=%s step=%s)",
+                        session_id, wait["step_id"])
+        except asyncio.CancelledError:
+            logger.info("[worky] DeliverMailReply turn superseded/cancelled (session=%s)",
+                        session_id)
+            raise
+        except Exception:
+            logger.exception("[worky] DeliverMailReply turn failed (session=%s step=%s)",
+                             session_id, wait["step_id"])

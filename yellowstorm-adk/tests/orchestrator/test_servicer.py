@@ -113,3 +113,74 @@ async def test_stop_session_cancels_running_turn():
     assert resp.stopped is True
     assert task.cancelled() or task.cancelling()
     rm.set_session_status.assert_awaited_once()
+
+
+# --- DeliverMailReply -------------------------------------------------------
+
+_WAIT = {"session_id": "s1", "step_id": "m", "user_id": "u1",
+         "interrupt_id": "mail:plan_s1@1/m@1", "token": "YW-tok"}
+
+
+async def test_mail_reply_resumes_the_step_that_was_waiting():
+    rm = MagicMock(claim_mail_wait=AsyncMock(return_value=dict(_WAIT)))
+    service = MagicMock(resume_turn=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+
+    resp = await s.DeliverMailReply(pb.DeliverMailReplyRequest(
+        token="YW-tok", reply_body="I work at Yellow Systems.",
+        reply_from="rabeb@example.com", model="gpt"), _ctx())
+    await _drain(s)
+
+    assert (resp.delivered, resp.session_id, resp.step_id) == (True, "s1", "m")
+    service.resume_turn.assert_awaited_once()
+    kw = service.resume_turn.await_args.kwargs
+    # The reply answers THAT step, not whatever the session's chat interrupt is.
+    assert kw["interrupt_id"] == "mail:plan_s1@1/m@1"
+    assert kw["answer"] == "I work at Yellow Systems."
+    # Identity comes from the wait row, never from the caller.
+    assert (kw["session_id"], kw["user_id"]) == ("s1", "u1")
+
+
+async def test_a_duplicate_delivery_does_not_resume_the_step_twice():
+    """Graph retries anything it thinks failed, so this is routine. A second
+    resume would answer an answered question and run the plan on the reply
+    twice."""
+    rm = MagicMock(claim_mail_wait=AsyncMock(return_value=None))  # already claimed
+    service = MagicMock(resume_turn=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+
+    resp = await s.DeliverMailReply(pb.DeliverMailReplyRequest(
+        token="YW-tok", reply_body="again"), _ctx())
+    await _drain(s)
+
+    assert resp.delivered is False
+    service.resume_turn.assert_not_awaited()
+
+
+async def test_an_unknown_token_is_not_an_error():
+    """The webhook must ack Graph either way; a 5xx here makes Graph retry and
+    eventually kill the subscription."""
+    rm = MagicMock(claim_mail_wait=AsyncMock(return_value=None))
+    ctx = _ctx()
+    resp = await _servicer(rm=rm).DeliverMailReply(
+        pb.DeliverMailReplyRequest(token="YW-nope", reply_body="x"), ctx)
+    assert resp.delivered is False
+    ctx.set_code.assert_not_called()
+
+
+async def test_mail_reply_supersedes_an_in_flight_turn():
+    rm = MagicMock(claim_mail_wait=AsyncMock(return_value=dict(_WAIT)))
+    service = MagicMock(resume_turn=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+
+    async def forever():
+        await asyncio.sleep(60)
+    prev = asyncio.create_task(forever())
+    s._running["s1"] = prev
+
+    await s.DeliverMailReply(pb.DeliverMailReplyRequest(
+        token="YW-tok", reply_body="reply"), _ctx())
+    await _drain(s)
+
+    assert prev.cancelled(), "two turns must never run on one session"
+    service.resume_turn.assert_awaited_once()
