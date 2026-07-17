@@ -387,24 +387,35 @@ class OrchestratorService:
                 continue
             step = plan.step(step_id)
             step.status = Status.BLOCKED
-            step.blocked_reason = "awaiting user input"
+            step.blocked_reason = ("awaiting user input" if hitl.is_ask(interrupt_id)
+                                   else "awaiting email reply")
             await self._project(self._rm and self._rm.set_step_status(
-                session_id, step_id, "blocked", blocked_reason="awaiting user input",
+                session_id, step_id, "blocked", blocked_reason=step.blocked_reason,
                 interrupt_id=interrupt_id))
-            # Surface the ask-the-user question in the chat.
-            await self._add_message(session_id, "assistant", step.question or step.description or "")
+            if hitl.is_ask(interrupt_id):
+                # Surface the ask-the-user question in the chat. A mail wait has
+                # nothing to ask the owner — it is waiting on the outside world.
+                await self._add_message(session_id, "assistant",
+                                        step.question or step.description or "")
 
         outstanding = await self._outstanding(session_id, interrupts)
         if outstanding:
             plan.status = Status.BLOCKED
-            logger.info("[worky] 10. blocked on %d ask-user step(s) session=%s: %s",
+            logger.info("[worky] 10. blocked on %d step(s) session=%s: %s",
                         len(outstanding), session_id,
                         ", ".join(f"{s}→{i}" for i, s in outstanding))
             await self._project(self._rm and self._rm.upsert_plan(
                 session_id, plan.id, plan.title, plan.goal, "blocked"))
-            # sessions.interrupt_id carries the first for the chat surface; the
-            # per-step ids on plan_steps are the routing truth.
-            await self._project(self._rm and self._rm.set_waiting(session_id, outstanding[0][0]))
+            # Only a question the owner can actually answer puts the session in
+            # `waiting` with an interrupt id — that id is what a chat reply gets
+            # routed to, and routing a chat reply to a mail wait would answer a
+            # step whose reply never arrived. A session parked solely on mail is
+            # `blocked`: waiting on the world, not on you.
+            askable = next((i for i, _ in outstanding if hitl.is_ask(i)), None)
+            if askable:
+                await self._project(self._rm and self._rm.set_waiting(session_id, askable))
+            else:
+                await self._project(self._rm and self._rm.set_session_status(session_id, "blocked"))
             return
         # Normal completion — any node the workflow finished is completed.
         for s in plan.steps:

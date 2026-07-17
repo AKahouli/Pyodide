@@ -810,6 +810,32 @@ resume  → next RunTask sees status=waiting → resume_turn
         Covered by <code>tests/orchestrator/test_multi_interrupt.py</code>, which pins the
         no-re-emit behaviour so a future ADK change that starts re-emitting is caught.
       </p>
+
+      <h3>Waiting on the world: <code>await_reply</code></h3>
+      <p>
+        Not every answer comes from the person in the chat. An <code>await_reply</code> step parks
+        on exactly the same machinery, but only an incoming email reply resolves it — the mail
+        webhook calls <code>resume_turn</code> with the reply body as the answer, and the node
+        continues as if a human had typed it. The automatic path and the manual path are one code
+        path, which is what makes "the reply never came, so the owner answers by hand" work for
+        free.
+      </p>
+      <p>
+        The two kinds are told apart by the interrupt id prefix — <code>ask:</code> versus
+        <code>mail:</code> — and the distinction is load-bearing, not cosmetic. A chat message is
+        routed to <code>sessions.interrupt_id</code>, so if a mail wait were allowed to land there,
+        typing in the chat would answer a step whose reply had not arrived and the plan would run on
+        input the sender never sent. So only an <code>ask:</code> id is ever written to
+        <code>sessions.interrupt_id</code>. A session parked <em>solely</em> on mail is
+        <span class="hl">blocked</span> rather than <span class="hl">waiting</span>: it is waiting
+        on the world, not on you — and it posts nothing to the chat, because there is no question to
+        put there.
+      </p>
+      <p>
+        A session can hold both at once: one step asking the owner a question while another waits on
+        a reply, each resumable independently and in any order.
+        Covered by <code>tests/orchestrator/test_await_reply.py</code>.
+      </p>
     </section>
 
     <section id="readmodel">

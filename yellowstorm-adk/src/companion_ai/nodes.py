@@ -73,6 +73,11 @@ def make_llm_node_factory(
         # LLM tool call whose id is random each rerun).
         if step.kind == "ask":
             return hitl.make_ask_user_node(name, step.question or step.description or "Please provide input.")
+        # An "await_reply" step parks the same way, but only an incoming email
+        # reply can answer it — never the chat.
+        if step.kind == "await_reply":
+            return hitl.make_await_reply_node(
+                name, step.question or step.description or "Awaiting an email reply.")
         instruction = (
             instruction_for(step)
             if instruction_for is not None

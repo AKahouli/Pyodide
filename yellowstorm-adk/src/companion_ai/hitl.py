@@ -27,28 +27,64 @@ from google.adk.workflow.utils._workflow_hitl_utils import (
 )
 
 
+ASK = "ask"     # answerable by the person in the chat
+MAIL = "mail"   # answerable only by an incoming email reply
+
+
 def ask_user_interrupt_id(node_path: str) -> str:
-    return f"ask:{node_path}"
+    return f"{ASK}:{node_path}"
+
+
+def mail_reply_interrupt_id(node_path: str) -> str:
+    return f"{MAIL}:{node_path}"
+
+
+def is_ask(interrupt_id: str) -> bool:
+    """True if a person typing in the chat may answer this interrupt.
+
+    The prefix is what keeps the two kinds of wait apart. A session can hold both
+    at once (a question for the owner, plus a step waiting on an email reply), so
+    a chat message must never be routed to a `mail:` interrupt — it would answer
+    a step whose reply hasn't arrived and let the plan run on fabricated input."""
+    return interrupt_id.startswith(f"{ASK}:")
+
+
+def _make_blocking_node(name: str, message: str, *, prefix: str,
+                        state_key: str | None = None) -> FunctionNode:
+    """A node that parks the run until someone supplies `message`'s answer.
+
+    A FunctionNode, deliberately: its interrupt id derives from the node path, so
+    it is stable across replays and a resume still matches — an LLM tool-call id
+    is random on every rerun and never would."""
+    key = state_key or name
+
+    async def block(ctx: Context):
+        iid = f"{prefix}:{ctx.node_path}"
+        answer = ctx.resume_inputs.get(iid)
+        if answer is None:
+            return RequestInput(interrupt_id=iid, message=message)
+        # Normalize {"value": "..."} -> "..." so downstream steps get the text.
+        value = answer.get("value") if isinstance(answer, dict) and "value" in answer else answer
+        ctx.state[key] = value
+        return {key: value}
+
+    block.__name__ = name
+    return FunctionNode(func=block, name=name, rerun_on_resume=True)
 
 
 def make_ask_user_node(name: str, question: str, *, state_key: str | None = None) -> FunctionNode:
     """A node that blocks asking the user `question`. On resume it writes the
     answer to session state under `state_key` (default: the node name) and
     returns it so downstream steps can use it."""
-    key = state_key or name
+    return _make_blocking_node(name, question, prefix=ASK, state_key=state_key)
 
-    async def ask(ctx: Context):
-        iid = ask_user_interrupt_id(ctx.node_path)
-        answer = ctx.resume_inputs.get(iid)
-        if answer is None:
-            return RequestInput(interrupt_id=iid, message=question)
-        # Normalize {"value": "..."} -> "..." so downstream steps get the text.
-        value = answer.get("value") if isinstance(answer, dict) and "value" in answer else answer
-        ctx.state[key] = value
-        return {key: value}
 
-    ask.__name__ = name
-    return FunctionNode(func=ask, name=name, rerun_on_resume=True)
+def make_await_reply_node(name: str, expect: str, *, state_key: str | None = None) -> FunctionNode:
+    """A node that blocks until an email reply arrives, `expect` describing what
+    is awaited. Resumed out of band by the mail webhook, not by the chat; on
+    resume the reply body lands in session state under `state_key` (default: the
+    node name) so downstream steps read it exactly like an answered question."""
+    return _make_blocking_node(name, expect, prefix=MAIL, state_key=state_key)
 
 
 def interrupt_ids(event: Event) -> List[str]:
