@@ -191,6 +191,51 @@ export function useStopStream() {
   });
 }
 
+export function useStopTurn() {
+  const qc = useQueryClient();
+  return useMutation<
+    Awaited<ReturnType<typeof api.stopTurn>>,
+    Error,
+    { streamId: string }
+  >({
+    mutationFn: ({ streamId }) => api.stopTurn(streamId),
+    onSuccess: (_data, { streamId }) => {
+      qc.invalidateQueries({ queryKey: workyKeys.detail(streamId) });
+      qc.invalidateQueries({ queryKey: workyKeys.board(streamId) });
+    },
+  });
+}
+
+export function usePauseTurn() {
+  const qc = useQueryClient();
+  return useMutation<
+    Awaited<ReturnType<typeof api.pauseTurn>>,
+    Error,
+    { streamId: string }
+  >({
+    mutationFn: ({ streamId }) => api.pauseTurn(streamId),
+    onSuccess: (_data, { streamId }) => {
+      qc.invalidateQueries({ queryKey: workyKeys.detail(streamId) });
+      qc.invalidateQueries({ queryKey: workyKeys.board(streamId) });
+    },
+  });
+}
+
+export function useResumeTurn() {
+  const qc = useQueryClient();
+  return useMutation<
+    Awaited<ReturnType<typeof api.resumeTurn>>,
+    Error,
+    { streamId: string }
+  >({
+    mutationFn: ({ streamId }) => api.resumeTurn(streamId),
+    onSuccess: (_data, { streamId }) => {
+      qc.invalidateQueries({ queryKey: workyKeys.detail(streamId) });
+      qc.invalidateQueries({ queryKey: workyKeys.board(streamId) });
+    },
+  });
+}
+
 export function useDeleteStream() {
   const qc = useQueryClient();
   return useMutation<

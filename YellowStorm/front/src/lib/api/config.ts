@@ -572,6 +572,15 @@ export const API_ENDPOINTS = {
     streamPause: (id: string) => `/worky/streams/${id}/pause`,
     streamResume: (id: string) => `/worky/streams/${id}/resume`,
     streamStop: (id: string) => `/worky/streams/${id}`,
+    // Cancels the running orchestrator turn (StopSession RPC), vs streamStop
+    // which tears down the whole stream lifecycle.
+    streamStopTurn: (id: string) => `/worky/streams/${id}/stop`,
+    // Pauses the running orchestrator turn (PauseSession RPC); continue via a
+    // new message. ':id/pause' is the legacy stream pause, hence '-turn'.
+    streamPauseTurn: (id: string) => `/worky/streams/${id}/pause-turn`,
+    // Resumes a paused orchestrator session (continue via RunTask). ':id/resume'
+    // is the legacy stream resume, hence '-turn'.
+    streamResumeTurn: (id: string) => `/worky/streams/${id}/resume-turn`,
     streamDelete: (id: string) => `/worky/streams/${id}/delete`,
     respondInteraction: (id: string) => `/worky/interactions/${id}/respond`,
     taskById: (id: string) => `/worky/tasks/${id}`,
