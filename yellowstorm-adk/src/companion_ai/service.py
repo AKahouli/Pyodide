@@ -163,6 +163,44 @@ class OrchestratorService:
             tools.append(long_running.make_schedule_tool(c, on_started=_record))
         return tools
 
+    def _mail_stamping(self, session_id: str, plan: Plan):
+        """Give each send step the token of the step waiting on its reply.
+
+        The link is the plan's own edge: an await_reply step depends_on the step
+        that sends the mail it waits for. Nothing else in the plan needs to know,
+        and the executor LLM never sees the token — a marker it was merely asked
+        to include would be omitted eventually, and that step would wait forever.
+
+        Returns None when the plan has no await_reply step, so the ordinary case
+        builds the ordinary tools.
+        """
+        if self._rm is None:
+            return None
+        await_step_for: dict = {}
+        for s in plan.steps:
+            if s.kind == "await_reply":
+                for dep in s.depends_on:
+                    # First wins: a send step feeding two waits can only carry one
+                    # token, and its reply can only answer one of them.
+                    await_step_for.setdefault(dep, s.id)
+        if not await_step_for:
+            return None
+        rm = self._rm
+
+        def tools_for_step(step: Step, tools: List) -> List:
+            await_step_id = await_step_for.get(step.id)
+            if not await_step_id:
+                return tools
+
+            async def token_provider(_step_id=await_step_id):
+                return await rm.mail_token_for(session_id, _step_id)
+
+            return [nodes.stamp_send_email_tool(t, token_provider=token_provider)
+                    if nodes.is_send_email_tool(t) else t
+                    for t in tools]
+
+        return tools_for_step
+
     async def _project(self, coro):
         if self._rm is None:
             return
@@ -219,7 +257,8 @@ class OrchestratorService:
         # STEP 8 — connectors → executor tools, plan → ADK Workflow.
         factory = nodes.make_llm_node_factory(
             model_name=model, goal=plan.goal,
-            tools=self._tools_for(connectors, session_id, user_id))
+            tools=self._tools_for(connectors, session_id, user_id),
+            tools_for_step=self._mail_stamping(session_id, plan))
         name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
                                max_concurrency=self._max_concurrency)
@@ -274,7 +313,8 @@ class OrchestratorService:
         plan = _plan_from_snapshot(snap)
         factory = nodes.make_llm_node_factory(
             model_name=model, goal=plan.goal,
-            tools=self._tools_for(connectors, session_id, user_id))
+            tools=self._tools_for(connectors, session_id, user_id),
+            tools_for_step=self._mail_stamping(session_id, plan))
         name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
                                max_concurrency=self._max_concurrency)
@@ -319,7 +359,8 @@ class OrchestratorService:
 
         factory = nodes.make_llm_node_factory(
             model_name=model, goal=plan.goal,
-            tools=self._tools_for(connectors, session_id, user_id))
+            tools=self._tools_for(connectors, session_id, user_id),
+            tools_for_step=self._mail_stamping(session_id, plan))
         name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
                                max_concurrency=self._max_concurrency)

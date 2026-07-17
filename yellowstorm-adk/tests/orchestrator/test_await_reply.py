@@ -173,6 +173,99 @@ def test_an_ask_step_parking_binds_no_mail_wait():
     rm.bind_mail_wait_interrupt.assert_not_awaited()
 
 
+# --- stamping the token into the outbound mail ------------------------------
+
+def _fake_send_tool(sent: list):
+    """A stand-in for the microsoft365 send_email tool as create_connector_tools
+    builds it: a SearchToolADK whose func is named `{slug}_send_email` and whose
+    signature comes from the connector's parameterSchema."""
+    import inspect
+    from src.smart_rag.tools.search.tools import SearchToolADK
+
+    async def _connector_tool(**kwargs):
+        sent.append(kwargs)
+        return "sent"
+
+    _connector_tool.__name__ = "microsoft365_send_email"
+    params = [inspect.Parameter(n, inspect.Parameter.KEYWORD_ONLY, default=None)
+              for n in ("to_recipients", "subject", "body")]
+    _connector_tool.__signature__ = inspect.Signature(params)
+    _connector_tool.__annotations__ = {}
+    return SearchToolADK(_connector_tool, {"function": {"name": "microsoft365_send_email",
+                                                        "description": "Send an email.",
+                                                        "parameters": {}}})
+
+
+def test_the_send_tool_stamps_the_token_the_executor_never_sees():
+    sent = []
+    tool = _fake_send_tool(sent)
+    token = "YW-abcdefghijklmnop12"
+    wrapped = nodes.stamp_send_email_tool(tool, token_provider=AsyncMock(return_value=token))
+
+    asyncio.run(wrapped.func(to_recipients=["r@example.com"],
+                             subject="Which company?", body="<p>Hi</p>"))
+
+    assert len(sent) == 1
+    # Both carriers stamped, and the real tool got the stamped values.
+    assert sent[0]["subject"] == f"Which company? [{token}]"
+    assert token in sent[0]["body"] and "display:none" in sent[0]["body"]
+    assert sent[0]["to_recipients"] == ["r@example.com"]
+    # Transparent to the executor: same name, so the model sees the tool the
+    # connector published.
+    assert wrapped.func.__name__ == "microsoft365_send_email"
+
+
+def test_a_send_with_no_token_still_sends():
+    """Better a mail that lands unroutable than a step that refuses to run."""
+    sent = []
+    wrapped = nodes.stamp_send_email_tool(_fake_send_tool(sent),
+                                          token_provider=AsyncMock(return_value=None))
+    asyncio.run(wrapped.func(to_recipients=["r@example.com"], subject="Q", body="<p>Hi</p>"))
+    assert sent[0]["subject"] == "Q", "nothing to stamp, nothing stamped"
+
+
+def test_only_the_send_step_feeding_a_wait_gets_a_stamped_tool():
+    svc, rm = _service()
+    rm.mail_token_for = AsyncMock(return_value="YW-abcdefghijklmnop12")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="send", kind="execute", description="email her"),
+        Step(id="other", kind="execute", description="unrelated work"),
+        Step(id="wait", kind="await_reply", question="awaiting", depends_on=["send"]),
+    ])
+    tools_for_step = svc._mail_stamping("s1", plan)
+    base = [_fake_send_tool([])]
+
+    # The step whose mail is awaited: wrapped.
+    assert tools_for_step(plan.step("send"), base)[0] is not base[0]
+    # An unrelated step keeps the connector's own tool, even though it could send.
+    assert tools_for_step(plan.step("other"), base)[0] is base[0]
+
+
+def test_a_plan_with_no_wait_builds_ordinary_tools():
+    svc, _ = _service()
+    plan = Plan(id="p", title="t", goal="g", steps=[Step(id="a", kind="execute")])
+    assert svc._mail_stamping("s1", plan) is None
+
+
+def test_only_send_email_is_recognised_among_a_connectors_tools():
+    """A connector publishes ~19 actions; only send_email may be stamped."""
+    import inspect
+    from src.smart_rag.tools.search.tools import SearchToolADK
+
+    def _tool(name):
+        async def f(**kw):
+            return None
+        f.__name__ = name
+        f.__signature__ = inspect.Signature([])
+        f.__annotations__ = {}
+        return SearchToolADK(f, {"function": {"name": name, "description": "", "parameters": {}}})
+
+    assert nodes.is_send_email_tool(_tool("microsoft365_send_email"))
+    for other in ("microsoft365_send_teams_message", "microsoft365_search_documents",
+                  "microsoft365_create_meeting", "linkup_linkup_search"):
+        assert not nodes.is_send_email_tool(_tool(other)), other
+
+
 if __name__ == "__main__":
     test_await_reply_parks_then_resumes_with_the_reply_body()
     test_only_a_chat_answerable_interrupt_is_an_ask()

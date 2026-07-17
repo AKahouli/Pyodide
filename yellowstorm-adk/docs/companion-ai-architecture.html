@@ -884,6 +884,16 @@ send step     → stamps the token into subject + body
 await step    → parks → bind_mail_wait_interrupt → now deliverable
 reply         → claim → resume</code></pre>
       <p>
+        The stamping is deterministic, and that is the point. The send step is an LlmAgent calling
+        the connector's <code>send_email</code> like any other tool, so the obvious approach — tell
+        it to include a marker — fails open: the one time the model omits it, the reply routes
+        nowhere and the step waits forever. Instead the tool itself is wrapped for exactly the step
+        whose mail is awaited, keeping the connector's name, signature and schema, so the executor
+        sees the tool the connector published and never learns the token exists. Which step to wrap
+        comes from the plan's own edge: an <code>await_reply</code> step
+        <code>depends_on</code> the step that sends the mail it waits for.
+      </p>
+      <p>
         A reply that beats the parking finds an unbound row and is <em>not</em> claimable — being
         claimed would mark it matched and resume nothing, losing the reply for good. Closing that
         window is what the catch-up query is for. A fresh plan on the session cancels the previous
