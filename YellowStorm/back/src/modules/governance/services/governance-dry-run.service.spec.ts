@@ -17,20 +17,21 @@ describe('GovernanceDryRunService', () => {
 
   let lastCreatedDryRun: Record<string, unknown> | undefined;
 
-  function buildService(deployment: Record<string, unknown> | null, scopeAccessError?: Error, streamError?: Error) {
+  function buildService(deployment: Record<string, unknown> | null, scopeAccessError?: Error, streamError?: Error, revisionWorkspaceIds: string[] = [], revisionAgentIds: string[] = [agentId]) {
     lastCreatedDryRun = undefined;
     const deploymentModel = { findById: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(deployment) }) };
-    const revisionModel = { findById: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ _id: revisionId, agentId, workspaceIds: [] }) }) }) };
+    const revisionModel = { findById: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ _id: revisionId, agentId, allowedAgentIds: revisionAgentIds.map((id) => new Types.ObjectId(id)), workspaceIds: revisionWorkspaceIds.map((id) => new Types.ObjectId(id)) }) }) }) };
     const dryRunModel = {
       create: jest.fn().mockImplementation(async (payload) => {
         lastCreatedDryRun = { _id: { toString: () => 'dry-run-1' }, ...payload, save: jest.fn(), createdAt: new Date('2026-01-01T00:00:00Z'), updatedAt: new Date('2026-01-01T00:00:00Z') };
         return lastCreatedDryRun;
       }),
       find: jest.fn().mockReturnValue({ sort: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([]) }) }) }),
+      findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }) }),
     };
     const programService = { assertOwnedProgram: jest.fn().mockResolvedValue(undefined) };
     const accessService = { assertScopeAccess: jest.fn().mockImplementation(async () => { if (scopeAccessError) throw scopeAccessError; }) };
-    const conversationService = { create: jest.fn().mockResolvedValue({ id: conversationId }) };
+    const conversationService = { create: jest.fn().mockResolvedValue({ id: conversationId }), findById: jest.fn().mockResolvedValue({ id: conversationId, workspaces: [] }) };
     const messageService = {
       createUserMessage: jest.fn().mockResolvedValue({ id: userMessageId }),
       createAIPlaceholder: jest.fn().mockResolvedValue({ id: aiMessageId }),
@@ -75,13 +76,101 @@ describe('GovernanceDryRunService', () => {
   });
 
   it('tests the requested mapped agent instead of the revision primary agent', async () => {
-    const { service, messageService, streamService } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId });
     const otherAgentId = '507f1f77bcf86cd7994390ff';
+    const { service, messageService, streamService } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId }, undefined, undefined, [], [agentId, otherAgentId]);
 
     await service.create(actorId, actorEmail, deploymentId, { input: 'hello', agentId: otherAgentId });
 
     expect(messageService.createUserMessage).toHaveBeenCalledWith(expect.objectContaining({ agentIds: [otherAgentId] }));
     expect(streamService.startStream).toHaveBeenCalledWith(actorId, conversationId, aiMessageId, expect.objectContaining({ agentIds: [otherAgentId] }), expect.any(String), actorEmail);
+  });
+
+  it('records an explicit manual pass without creating a conversation or invoking the runtime', async () => {
+    const workspaceId = '507f1f77bcf86cd7994390f1';
+    const { service, conversationService, messageService, streamService, dryRunModel } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId }, undefined, undefined, [workspaceId]);
+
+    const result = await service.create(actorId, actorEmail, deploymentId, { executionMode: 'manual', workspaceIds: [workspaceId] });
+
+    expect(result.status).toBe('passed');
+    expect(result.executionMode).toBe('manual');
+    expect(conversationService.create).not.toHaveBeenCalled();
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+    expect(streamService.startStream).not.toHaveBeenCalled();
+    expect(dryRunModel.create).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'passed',
+      executionMode: 'manual',
+      testCases: [],
+      checks: expect.objectContaining({ executionMode: 'manual', workspaceIds: [workspaceId] }),
+    }));
+  });
+
+  it('rejects an agent outside the draft revision roster', async () => {
+    const { service } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId });
+
+    await expect(service.create(actorId, actorEmail, deploymentId, { input: 'hello', agentId: '507f1f77bcf86cd7994390ff' })).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR });
+  });
+
+  it('creates a conversation with only the selected draft workspaces', async () => {
+    const selectedWorkspaceId = '507f1f77bcf86cd7994390f1';
+    const otherWorkspaceId = '507f1f77bcf86cd7994390f2';
+    const { service, conversationService, dryRunModel } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId }, undefined, undefined, [selectedWorkspaceId, otherWorkspaceId]);
+
+    await service.create(actorId, actorEmail, deploymentId, { input: 'hello', workspaceIds: [selectedWorkspaceId] });
+
+    expect(conversationService.create).toHaveBeenCalledWith(actorId, { title: 'Governance dry run', workspaces: [selectedWorkspaceId] });
+    expect(dryRunModel.create).toHaveBeenCalledWith(expect.objectContaining({ checks: expect.objectContaining({ workspaceIds: [selectedWorkspaceId] }) }));
+  });
+
+  it('keeps the server-owned workspace selection when diagnostics are supplied', async () => {
+    const selectedWorkspaceId = '507f1f77bcf86cd7994390f1';
+    const { service, dryRunModel } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId }, undefined, undefined, [selectedWorkspaceId]);
+
+    await service.create(actorId, actorEmail, deploymentId, {
+      input: 'hello',
+      workspaceIds: [selectedWorkspaceId],
+      checks: { workspaceIds: ['507f1f77bcf86cd7994390f2'], clientNote: 'diagnostic' },
+    });
+
+    expect(dryRunModel.create).toHaveBeenCalledWith(expect.objectContaining({
+      checks: expect.objectContaining({
+        workspaceIds: [selectedWorkspaceId],
+        draftRevisionId: revisionId,
+        agentId,
+        clientNote: 'diagnostic',
+      }),
+    }));
+  });
+
+  it('rejects a selected workspace that is not in the draft revision', async () => {
+    const draftWorkspaceId = '507f1f77bcf86cd7994390f1';
+    const { service } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId }, undefined, undefined, [draftWorkspaceId]);
+
+    await expect(service.create(actorId, actorEmail, deploymentId, { input: 'hello', workspaceIds: ['507f1f77bcf86cd7994390f2'] })).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR });
+  });
+
+  it('continues only a dry-run conversation created for the same draft workspace selection', async () => {
+    const selectedWorkspaceId = '507f1f77bcf86cd7994390f1';
+    const { service, conversationService, dryRunModel, messageService } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId }, undefined, undefined, [selectedWorkspaceId]);
+    dryRunModel.findOne.mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ checks: { workspaceIds: [selectedWorkspaceId] } }),
+      }),
+    });
+    conversationService.findById.mockResolvedValue({ id: conversationId, workspaces: [selectedWorkspaceId] });
+
+    await service.create(actorId, actorEmail, deploymentId, { input: 'follow-up', conversationId, workspaceIds: [selectedWorkspaceId] });
+
+    expect(conversationService.create).not.toHaveBeenCalled();
+    expect(messageService.createUserMessage).toHaveBeenCalledWith(expect.objectContaining({ conversationId, content: 'follow-up' }));
+  });
+
+  it('rejects an unrelated or re-scoped conversation before it can receive a message', async () => {
+    const selectedWorkspaceId = '507f1f77bcf86cd7994390f1';
+    const { service, messageService } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId }, undefined, undefined, [selectedWorkspaceId]);
+
+    await expect(service.create(actorId, actorEmail, deploymentId, { input: 'follow-up', conversationId, workspaceIds: [selectedWorkspaceId] })).rejects.toMatchObject({ code: ErrorCode.VALIDATION_ERROR });
+
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
   });
 
   it('records failed dry-runs when runtime execution fails', async () => {

@@ -395,6 +395,15 @@ export enum ErrorCode {
   GOVERNANCE_DRY_RUN_NOT_FOUND = 'ERR_3660',
   GOVERNANCE_PUBLISH_BLOCKED = 'ERR_3670',
   GOVERNANCE_CHANNEL_NOT_READY = 'ERR_3671',
+  GOVERNED_CONVERSATION_NOT_FOUND = 'ERR_3680',
+  GOVERNED_SCOPE_ACCESS_REVOKED = 'ERR_3681',
+  GOVERNED_DEPLOYMENT_UNAVAILABLE = 'ERR_3682',
+  GOVERNED_REVISION_NOT_FOUND = 'ERR_3683',
+  GOVERNED_AGENT_NOT_ALLOWED = 'ERR_3684',
+  GOVERNED_MODEL_IMMUTABLE = 'ERR_3685',
+  GOVERNED_CONNECTOR_NOT_ALLOWED = 'ERR_3686',
+  GOVERNED_TEAM_NOT_ALLOWED = 'ERR_3687',
+  GOVERNED_CONVERSATION_RUNTIME_IMMUTABLE = 'ERR_3688',
 }
 
 export const ErrorMessages: Record<ErrorCode, string> = {
@@ -708,6 +717,15 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.GOVERNANCE_DRY_RUN_NOT_FOUND]: 'Governance dry-run not found.',
   [ErrorCode.GOVERNANCE_PUBLISH_BLOCKED]: 'Governance publication is blocked by readiness checks.',
   [ErrorCode.GOVERNANCE_CHANNEL_NOT_READY]: 'One or more governance channels are not ready.',
+  [ErrorCode.GOVERNED_CONVERSATION_NOT_FOUND]: 'Governed conversation not found.',
+  [ErrorCode.GOVERNED_SCOPE_ACCESS_REVOKED]: 'Your access to this governed assistant has been removed.',
+  [ErrorCode.GOVERNED_DEPLOYMENT_UNAVAILABLE]: 'This governed assistant is temporarily unavailable.',
+  [ErrorCode.GOVERNED_REVISION_NOT_FOUND]: 'The pinned governed revision no longer exists.',
+  [ErrorCode.GOVERNED_AGENT_NOT_ALLOWED]: 'That assistant is not part of the published scope.',
+  [ErrorCode.GOVERNED_MODEL_IMMUTABLE]: 'The model is fixed by the published scope.',
+  [ErrorCode.GOVERNED_CONNECTOR_NOT_ALLOWED]: 'Connectors are not available in governed conversations.',
+  [ErrorCode.GOVERNED_TEAM_NOT_ALLOWED]: 'Teams are not available in governed conversations.',
+  [ErrorCode.GOVERNED_CONVERSATION_RUNTIME_IMMUTABLE]: 'Governed conversation runtime settings cannot be changed.',
 
   [ErrorCode.CONNECTOR_NOT_FOUND]: 'Connector not found.',
   [ErrorCode.CONNECTOR_ALREADY_EXISTS]: 'A connector with this slug already exists.',

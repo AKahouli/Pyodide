@@ -1,7 +1,22 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
+import { GovernanceScopeAudienceMode } from '../domain/governance-scope-audience';
 
 export type GovernanceScopeDocument = HydratedDocument<GovernanceScope>;
+
+@Schema({ _id: false })
+export class GovernanceScopeAudienceSchemaClass {
+  @Prop({ type: String, enum: ['all_authenticated', 'restricted'], default: 'restricted' })
+  mode!: GovernanceScopeAudienceMode;
+
+  @Prop({ type: [Types.ObjectId], ref: 'User', default: [] })
+  userIds!: Types.ObjectId[];
+
+  @Prop({ type: [Types.ObjectId], ref: 'UserGroup', default: [] })
+  groupIds!: Types.ObjectId[];
+}
+
+const GovernanceScopeAudienceSchema = SchemaFactory.createForClass(GovernanceScopeAudienceSchemaClass);
 
 export type GovernanceScopeType =
   | 'organization'
@@ -37,6 +52,12 @@ export class GovernanceScope extends Document {
   @Prop({ type: [Types.ObjectId], ref: 'Agent', default: [], index: true })
   agentIds!: Types.ObjectId[];
 
+  @Prop({
+    type: GovernanceScopeAudienceSchema,
+    default: () => ({ mode: 'restricted', userIds: [], groupIds: [] }),
+  })
+  audience!: GovernanceScopeAudienceSchemaClass;
+
   @Prop({ type: Object, default: {} })
   metadata!: Record<string, unknown>;
 
@@ -48,6 +69,9 @@ export const GovernanceScopeSchema = SchemaFactory.createForClass(GovernanceScop
 
 GovernanceScopeSchema.index({ programId: 1, name: 1 }, { unique: true });
 GovernanceScopeSchema.index({ programId: 1, type: 1 });
+GovernanceScopeSchema.index({ 'audience.userIds': 1 });
+GovernanceScopeSchema.index({ 'audience.groupIds': 1 });
+GovernanceScopeSchema.index({ status: 1, 'audience.mode': 1 });
 
 GovernanceScopeSchema.set('toJSON', {
   virtuals: true,

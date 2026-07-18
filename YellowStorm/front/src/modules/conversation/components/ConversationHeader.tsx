@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ArrowLeft, Library, MoreHorizontal, Pencil, Share, Trash2, Users } from 'lucide-react';
+import { ArrowLeft, Library, MoreHorizontal, Pencil, Share, ShieldCheck, Trash2, Users } from 'lucide-react';
 import { useConversationStore, useCurrentConversation } from '../store';
 import { useTypewriter } from '../hooks/useTypewriter';
 import { RenameDialog } from './RenameDialog';
@@ -35,6 +35,7 @@ export function ConversationHeader() {
   if (!conversation) return null;
 
   const displayTitle = isTypewriting && typewriterText ? typewriterText : conversation.title;
+  const isGoverned = conversation.runtimeMode === 'governed';
 
   const handleShare = () => {
     setShareOpen(true);
@@ -55,7 +56,7 @@ export function ConversationHeader() {
         <Button variant='ghost' size='icon' onClick={() => navigate('/')} className='shrink-0'>
           <ArrowLeft className='h-4 w-4' />
         </Button>
-        <h1 className='flex-1 font-medium text-lg truncate'>{displayTitle}</h1>
+        <h1 className='flex flex-1 items-center gap-2 font-medium text-lg truncate'>{isGoverned && <ShieldCheck className='size-4 shrink-0 text-primary' aria-label={t('governedConversation.title')} />}{displayTitle}</h1>
 
         <div className='flex items-center gap-1'>
           {conversation.groupMeta?.isGroup && (
@@ -72,7 +73,7 @@ export function ConversationHeader() {
               </Tooltip>
             </TooltipProvider>
           )}
-          <TooltipProvider>
+          {!isGoverned && <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant='ghost' size='icon' onClick={() => setWorkspaceSheetOpen(true)} className='shrink-0'>
@@ -83,8 +84,8 @@ export function ConversationHeader() {
                 <p>{t('header.tooltips.workspaces')}</p>
               </TooltipContent>
             </Tooltip>
-          </TooltipProvider>
-          <TooltipProvider>
+          </TooltipProvider>}
+          {!isGoverned && <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant='ghost' size='icon' onClick={handleShare} className='shrink-0'>
@@ -95,7 +96,7 @@ export function ConversationHeader() {
                 <p>{t('header.tooltips.share')}</p>
               </TooltipContent>
             </Tooltip>
-          </TooltipProvider>
+          </TooltipProvider>}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant='ghost' size='icon' className='shrink-0'>
@@ -120,9 +121,9 @@ export function ConversationHeader() {
 
       <DeleteConversationDialog open={deleteOpen} onOpenChange={setDeleteOpen} onConfirm={handleDelete} title={conversation.title} />
 
-      <ShareDialog open={shareOpen} onOpenChange={setShareOpen} conversationId={conversation.id} conversationTitle={conversation.title} />
+      {!isGoverned && <ShareDialog open={shareOpen} onOpenChange={setShareOpen} conversationId={conversation.id} conversationTitle={conversation.title} />}
 
-      <WorkspaceManagerSheet open={workspaceSheetOpen} onOpenChange={setWorkspaceSheetOpen} conversationId={conversation.id} workspaceIds={conversation.workspaces || []} />
+      {!isGoverned && <WorkspaceManagerSheet open={workspaceSheetOpen} onOpenChange={setWorkspaceSheetOpen} conversationId={conversation.id} workspaceIds={conversation.workspaces || []} />}
 
       <CreateGroupConversationDialog open={groupDialogOpen} onOpenChange={setGroupDialogOpen} mode='manage' />
     </>

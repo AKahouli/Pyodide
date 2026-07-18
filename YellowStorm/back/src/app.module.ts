@@ -22,6 +22,7 @@ import whatsappConfig from './config/whatsapp.config';
 import workyConfig from './config/worky.config';
 import memoryCardsConfig from './config/memory-cards.config';
 import dataRoomConfig from './config/data-room.config';
+import governedConversationsConfig from './config/governed-conversations.config';
 
 // Global Modules
 import { LoggerModule } from './modules/logger';
@@ -78,7 +79,7 @@ import { WorkspaceArtifactModule } from './modules/workspace-artifact/workspace-
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig, memoryCardsConfig, dataRoomConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig, memoryCardsConfig, dataRoomConfig, governedConversationsConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,

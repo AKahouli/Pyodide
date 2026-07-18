@@ -25,6 +25,21 @@ export interface GovernanceScope {
   updatedAt: string;
 }
 
+export interface GovernanceScopeAudienceConfiguration {
+  mode: 'all_authenticated' | 'restricted';
+  users: GovernanceUserSearchResult[];
+  groups: Array<{ id: string; name: string; memberCount: number }>;
+  estimatedAuthorizedUserCount?: number;
+}
+
+export interface AvailableGovernedScope {
+  scopeId: string; programId: string; name: string; type: GovernanceScope['type']; description?: string;
+  deploymentId: string; publishedRevisionId: string; revisionNumber: number; publishedAt?: string;
+  primaryAgent: { id: string; name: string; description?: string };
+  agentCount: number; workspaceCount: number;
+  presentation: { icon?: string; accent?: string; shortLabel?: string };
+}
+
 export type GovernanceScopeAudience = 'public_facing' | 'internal_only';
 export type GovernanceScopeRiskLevel = 'standard' | 'high_risk';
 export type GovernanceScopeCompliance = 'none' | 'regulated';
@@ -234,12 +249,23 @@ export interface GovernanceDeploymentRevision {
   revisionNumber: number;
   status: 'draft' | 'dry_run' | 'approved' | 'published' | 'rejected';
   agentId: string;
+  allowedAgentIds: string[];
   workspaceIds: string[];
   sourceIds: string[];
   includedSourceIds: string[];
   excludedSourceIds: string[];
+  sourceSnapshot: Record<string, { title?: string; sourceType?: string; workspaceId?: string }>;
+  workspaceBindingSnapshot: Record<string, { workspaceId?: string; visibility?: string; ingestionMode?: string; defaults?: Record<string, unknown> }>;
+  configurationFingerprint?: string;
+  scopeSnapshot: Record<string, unknown>;
+  audienceSnapshot: Record<string, unknown>;
+  previousAudienceSnapshot: Record<string, unknown>;
+  ownershipSnapshot: Record<string, { scopeId?: string; userId?: string; groupId?: string; role?: GovernanceMembershipRole; status?: string }>;
+  guardrailSnapshot: Record<string, { name?: string; guardrails?: Record<string, unknown> }>;
   createdBy: string;
+  createdByUser?: { id: string; displayName: string; email: string };
   publishedBy?: string;
+  publishedByUser?: { id: string; displayName: string; email: string };
   publishedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -247,6 +273,7 @@ export interface GovernanceDeploymentRevision {
 
 export interface CreateGovernanceRevisionPayload {
   agentId: string;
+  allowedAgentIds?: string[];
   workspaceIds?: string[];
   sourceIds?: string[];
 }
@@ -260,6 +287,7 @@ export interface GovernanceDryRun {
   conversationId?: string;
   testerId: string;
   status: 'running' | 'passed' | 'failed' | 'needs_review';
+  executionMode?: 'conversation' | 'manual';
   testCases: Array<Record<string, unknown>>;
   checks: Record<string, unknown>;
   createdAt: string;
@@ -267,10 +295,12 @@ export interface GovernanceDryRun {
 }
 
 export interface CreateGovernanceDryRunPayload {
+  executionMode?: 'conversation' | 'manual';
   input?: string;
   simulatedChannel?: 'widget' | 'whatsapp' | 'telegram' | 'api';
   conversationId?: string;
   agentId?: string;
+  workspaceIds?: string[];
 }
 
 export interface GovernanceMetric {
@@ -281,6 +311,7 @@ export interface GovernanceMetric {
   channel?: string;
   type: string;
   value: number;
+  dimensions?: Record<string, string>;
   periodStart: string;
   periodEnd: string;
 }
@@ -296,7 +327,7 @@ export interface GovernanceScopeOverview {
     reviewBlockers: GovernanceReadinessCheck[];
   };
   agents: {
-    mappedAgents: Array<{ id: string; isPrimary: boolean }>;
+    mappedAgents: Array<{ id: string; name: string; isPrimary: boolean; isActive: boolean; isDefault: boolean }>;
     primaryAgentId?: string;
     missingAgent: boolean;
   };

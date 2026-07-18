@@ -20,9 +20,9 @@ describe('KnowledgeActionCenter', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('renders explainable health and executes governed decisions', () => {
-    render(<KnowledgeActionCenter programId='program-1' scopeId='scope-1' sourceNames={{ 'source-1': 'parkour.pdf' }} onOpenSource={mocks.openSource} />);
-    expect(screen.getByRole('heading', { name: 'knowledge.actionCenter.title' })).toBeInTheDocument();
-    const sourceGroup = screen.getByRole('button', { name: /parkour\.pdf/ });
+    render(<KnowledgeActionCenter programId='program-1' scopeId='scope-1' sources={[{ id: 'source-1', programId: 'program-1', scopeIds: ['scope-1'], workspaceId: 'workspace-1', visibility: 'scope_specific', title: 'parkour.pdf', sourceType: 'pdf', status: 'draft', tags: [], isArchived: false, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' }]} workspaceNames={{ 'workspace-1': 'Public guidance' }} onOpenSource={mocks.openSource} />);
+    expect(screen.getByRole('heading', { name: 'knowledge.actionCenter.workspaceTitle' })).toBeInTheDocument();
+    const sourceGroup = screen.getByRole('button', { name: /Public guidance/ });
     expect(screen.queryByText('Validity requires attention')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'knowledge.recommendation.apply.schedule_review' })).not.toBeInTheDocument();
     fireEvent.click(sourceGroup);

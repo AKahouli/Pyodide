@@ -15,6 +15,7 @@ import { GovernanceSourceEventService } from './governance-source-event.service'
 import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
 import { KnowledgeExtractionOrchestratorService } from '@modules/knowledge-intelligence/services/knowledge-extraction-orchestrator.service';
 import { TemporalCandidateRepositoryService } from '@modules/knowledge-intelligence/services/temporal-candidate-repository.service';
+import { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
 
 export interface GovernanceSourceResponse {
   id: string;
@@ -56,9 +57,10 @@ export class GovernanceSourceService {
     private readonly extractionJobs: KnowledgeExtractionOrchestratorService,
     private readonly temporalCandidates: TemporalCandidateRepositoryService,
     @InjectConnection() private readonly connection: Connection,
+    private readonly draftPreparation: GovernanceDraftPreparationService,
   ) {}
 
-  async create(ownerUserId: string, programId: string, dto: CreateGovernanceSourceDto): Promise<GovernanceSourceResponse> {
+  async create(ownerUserId: string, programId: string, dto: CreateGovernanceSourceDto, ownerEmail = ''): Promise<GovernanceSourceResponse> {
     await this.programService.assertOwnedProgram(ownerUserId, programId);
     await this.assertValidScopeSelection(programId, dto.visibility, dto.scopeIds ?? []);
     await this.assertSourceScopeAccess(ownerUserId, programId, dto.visibility, dto.scopeIds ?? []);
@@ -76,6 +78,8 @@ export class GovernanceSourceService {
       programId: new Types.ObjectId(programId),
       scopeIds: (dto.scopeIds ?? []).map((id) => new Types.ObjectId(id)),
     });
+    const affectedScopeIds = await this.resolveAffectedScopeIds(ownerUserId, programId, dto.visibility, dto.scopeIds ?? []);
+    await Promise.all(affectedScopeIds.map((scopeId) => this.draftPreparation.prepare(ownerUserId, ownerEmail, programId, scopeId)));
     return this.toResponse(source);
   }
 
@@ -91,13 +95,15 @@ export class GovernanceSourceService {
     return this.toResponse(source);
   }
 
-  async update(ownerUserId: string, programId: string, sourceId: string, dto: UpdateGovernanceSourceDto): Promise<GovernanceSourceResponse> {
+  async update(ownerUserId: string, programId: string, sourceId: string, dto: UpdateGovernanceSourceDto, ownerEmail = ''): Promise<GovernanceSourceResponse> {
     await this.programService.assertOwnedProgram(ownerUserId, programId);
     const source = await this.sourceModel.findOne({ _id: new Types.ObjectId(sourceId), programId: new Types.ObjectId(programId) }).exec();
     if (!source) throw new NotFoundException(ErrorCode.GOVERNANCE_SOURCE_NOT_FOUND);
     await this.assertSourceMutationAccess(ownerUserId, programId, source.visibility, source.scopeIds.map((id) => id.toString()));
     const visibility = dto.visibility ?? source.visibility;
     const scopeIds = dto.scopeIds ?? source.scopeIds.map((id) => id.toString());
+    const previousVisibility = source.visibility;
+    const previousScopeIds = source.scopeIds.map((id) => id.toString());
     await this.assertValidScopeSelection(programId, visibility, scopeIds);
     await this.assertSourceScopeAccess(ownerUserId, programId, visibility, scopeIds);
 
@@ -115,11 +121,16 @@ export class GovernanceSourceService {
     if (dto.tags !== undefined) source.tags = dto.tags;
     if (dto.metadata !== undefined) source.metadata = dto.metadata;
     if (dto.reviewFrequencyDays !== undefined) source.reviewFrequencyDays = dto.reviewFrequencyDays;
+    const affectedScopeIds = [...new Set([
+      ...(await this.resolveAffectedScopeIds(ownerUserId, programId, previousVisibility, previousScopeIds)),
+      ...(await this.resolveAffectedScopeIds(ownerUserId, programId, visibility, scopeIds)),
+    ])];
     await source.save();
+    await Promise.all(affectedScopeIds.map((scopeId) => this.draftPreparation.prepare(ownerUserId, ownerEmail, programId, scopeId)));
     return this.toResponse(source);
   }
 
-  async archive(ownerUserId: string, programId: string, sourceId: string, reason?: string): Promise<GovernanceSourceResponse> {
+  async archive(ownerUserId: string, programId: string, sourceId: string, reason?: string, ownerEmail = ''): Promise<GovernanceSourceResponse> {
     const source = await this.findMutableSource(ownerUserId, programId, sourceId);
     if (!source.isArchived) {
       source.isArchived = true;
@@ -128,11 +139,13 @@ export class GovernanceSourceService {
       source.archiveReason = reason;
       await source.save();
       await this.events.append({ programId, sourceId, actorId: ownerUserId, eventType: 'source.archived', reason });
+      const affectedScopeIds = await this.resolveAffectedScopeIds(ownerUserId, programId, source.visibility, source.scopeIds.map(String));
+      await Promise.all(affectedScopeIds.map((scopeId) => this.draftPreparation.prepare(ownerUserId, ownerEmail, programId, scopeId)));
     }
     return this.toResponse(source);
   }
 
-  async restore(ownerUserId: string, programId: string, sourceId: string): Promise<GovernanceSourceResponse> {
+  async restore(ownerUserId: string, programId: string, sourceId: string, ownerEmail = ''): Promise<GovernanceSourceResponse> {
     const source = await this.findMutableSource(ownerUserId, programId, sourceId);
     if (source.isArchived) {
       source.isArchived = false;
@@ -141,6 +154,8 @@ export class GovernanceSourceService {
       source.archiveReason = undefined;
       await source.save();
       await this.events.append({ programId, sourceId, actorId: ownerUserId, eventType: 'source.restored' });
+      const affectedScopeIds = await this.resolveAffectedScopeIds(ownerUserId, programId, source.visibility, source.scopeIds.map(String));
+      await Promise.all(affectedScopeIds.map((scopeId) => this.draftPreparation.prepare(ownerUserId, ownerEmail, programId, scopeId)));
     }
     return this.toResponse(source);
   }
@@ -235,6 +250,11 @@ export class GovernanceSourceService {
     if (scopeIds.length === 0) return;
     const count = await this.scopeService.countProgramScopes(programId, scopeIds);
     if (count !== new Set(scopeIds).size) throw new ConflictException(ErrorCode.GOVERNANCE_SOURCE_SCOPE_INVALID);
+  }
+
+  private async resolveAffectedScopeIds(ownerUserId: string, programId: string, visibility: string, scopeIds: string[]): Promise<string[]> {
+    if (visibility !== 'program_shared') return [...new Set(scopeIds)];
+    return (await this.scopeService.list(ownerUserId, programId)).map((scope) => scope.id);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

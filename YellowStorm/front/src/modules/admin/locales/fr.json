@@ -679,7 +679,7 @@
   "agentTypes.form.actions.create": "Créer le type d'agent",
   "agentTypes.form.validation.nameMin": "Le nom doit comporter au moins 2 caractères",
   "agentTypes.form.validation.nameMax": "Le nom doit comporter au plus 100 caractères",
-  "agentTypes.form.validation.namePattern": "Le nom doit contenir uniquement des lettres, chiffres et espaces",
+  "agentTypes.form.validation.namePattern": "Le nom doit contenir uniquement des lettres, chiffres, espaces et tirets",
   "agentTypes.form.validation.promptMax": "Le prompt par défaut doit comporter au plus 50000 caractères",
   "agentTypes.prompts.title": "Prompts par modèle – {{name}}",
   "agentTypes.prompts.description": "Configurez des prompts spécifiques à chaque modèle. Les modèles sans prompt dédié utiliseront le prompt par défaut.",

@@ -1,6 +1,9 @@
 import * as Joi from 'joi';
 
 export const configValidationSchema = Joi.object({
+  GOVERNED_CONVERSATIONS_ENABLED: Joi.boolean().default(false),
+  GOVERNANCE_SCOPE_AUDIENCE_ENABLED: Joi.boolean().default(false),
+  GOVERNED_SCOPE_CAROUSEL_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_GOVERNANCE_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_SOURCE_VERSIONING_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_WORKSPACE_EVENTS_ENABLED: Joi.boolean().default(false),

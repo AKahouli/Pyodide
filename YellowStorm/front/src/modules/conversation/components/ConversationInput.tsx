@@ -32,6 +32,7 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
   const inputDisabled = useInputDisabled();
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
   const currentConversation = useConversationStore((s) => s.currentConversation);
+  const governedMode = currentConversation?.runtimeMode === 'governed';
   const { status: usageStatus } = useUsage();
   const { t } = useModuleTranslation('conversation');
   const { user } = useAuth();
@@ -107,13 +108,13 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
         attachedFileIds: completedFileIds.length ? completedFileIds : undefined,
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
         deepSearchEnabled: deepSearchEnabled || undefined,
-        modelId: modelId || undefined,
+        modelId: governedMode ? undefined : (modelId || undefined),
         agentIds: agentIds?.length ? agentIds : undefined,
         memberIds: memberIds?.length ? memberIds : undefined,
         teamIds: teamIds?.length ? teamIds : undefined,
         parentMessageId: replyingToMessage?.id,
-        connectorRepo: connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined,
-        skillIds: useConversationStore.getState().selectedSkillIds.length
+        connectorRepo: governedMode ? undefined : (connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined),
+        skillIds: !governedMode && useConversationStore.getState().selectedSkillIds.length
           ? useConversationStore.getState().selectedSkillIds
           : undefined,
       });
@@ -200,6 +201,9 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
         members={membersToTag}
         autoMention={autoMention}
         showWorkspaceSelect={false}
+        showModelSelector
+        governedMode={governedMode}
+        enableTeamMentions={!governedMode}
         extraTools={
           <PromptInputButton
             type="button"
@@ -218,7 +222,7 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
           />
         }
       />
-      <SelectedConnectorRepo />
+      {!governedMode && <SelectedConnectorRepo />}
     </div>
   );
 }

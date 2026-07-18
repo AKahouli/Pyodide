@@ -233,5 +233,19 @@
   "stream.activity.sensitiveNotice": "Tool parameters can contain sensitive information.",
   "stream.activity.toolStatus.running": "Running",
   "stream.activity.toolStatus.completed": "Completed",
-  "stream.activity.toolStatus.failed": "Failed"
+  "stream.activity.toolStatus.failed": "Failed",
+  "governedScopes.title": "Trusted assistants available to you",
+  "governedScopes.description": "These assistants use approved agents and knowledge selected by your organization.",
+  "governedScopes.badge": "Governed",
+  "governedScopes.version": "Approved configuration · Version {{number}}",
+  "governedScopes.defaultDescription": "A trusted assistant configured and approved by your organization.",
+  "governedScopes.knowledgeCount": "{{count}} approved knowledge spaces",
+  "governedScopes.start": "Start conversation",
+  "governedScopes.starting": "Starting…",
+  "governedScopes.startError": "Could not start this conversation",
+  "governedScopes.error": "Trusted assistants are temporarily unavailable. Your regular chat is still ready.",
+  "governedScopes.retry": "Try again",
+  "governedConversation.title": "Governed conversation",
+  "governedConversation.version": "Approved configuration · Version {{number}}",
+  "governedConversation.description": "Assistants and knowledge are managed by your organization."
 }

@@ -6,26 +6,29 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { parseApiError } from '@/lib/api-error';
 import { showError } from '@/lib/notifications';
 import { ConversationContent } from '@/modules/conversation/components/ConversationContent';
-import { useConversationStore } from '@/modules/conversation/store';
+import { useConversationStore, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds } from '@/modules/conversation/store';
 import { useModuleTranslation } from '@/modules/localization';
 import { useCreateGovernanceDryRun } from '../query/hooks';
 import type { GovernanceDryRun } from '../types';
-import type { Agent } from '@/modules/agent';
+import type { MentionAgent } from '@/components/ai-elements/mention-popup';
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   deploymentId: string;
+  programId: string | null;
+  scopeId: string;
   conversationId?: string;
   agentId: string;
-  scopedAgents: Agent[];
+  scopedAgents: MentionAgent[];
   scopedWorkspaces: Array<{ id: string; name: string; documentCount: number }>;
+  initialWorkspaceIds: string[];
   onDryRunCreated: (dryRun: GovernanceDryRun) => void;
 }
 
-export function GovernanceDryRunConversationModal({ open, onOpenChange, deploymentId, conversationId, agentId, scopedAgents, scopedWorkspaces, onDryRunCreated }: Readonly<Props>): JSX.Element {
+export function GovernanceDryRunConversationModal({ open, onOpenChange, deploymentId, programId, scopeId, conversationId, agentId, scopedAgents, scopedWorkspaces, initialWorkspaceIds, onDryRunCreated }: Readonly<Props>): JSX.Element {
   const { t } = useModuleTranslation('governance');
-  const createDryRun = useCreateGovernanceDryRun(deploymentId);
+  const createDryRun = useCreateGovernanceDryRun(deploymentId, programId, scopeId);
   const setCurrentConversation = useConversationStore((state) => state.setCurrentConversation);
   const fetchMessages = useConversationStore((state) => state.fetchMessages);
   const clearMessages = useConversationStore((state) => state.clearMessages);
@@ -35,6 +38,10 @@ export function GovernanceDryRunConversationModal({ open, onOpenChange, deployme
   const [activeConversationId, setActiveConversationId] = useState(conversationId ?? null);
   const loadTokenRef = useRef(0);
   const wasOpenRef = useRef(false);
+  const previousWorkspaceIdsRef = useRef<string[]>([]);
+  const selectedWorkspaceIds = useSelectedWorkspaceIds();
+  const setSelectedWorkspaceIds = useSetSelectedWorkspaceIds();
+  const initialWorkspaceKey = initialWorkspaceIds.join('|');
 
   const resetConversationState = () => {
     loadTokenRef.current += 1;
@@ -61,31 +68,46 @@ export function GovernanceDryRunConversationModal({ open, onOpenChange, deployme
 
   useEffect(() => {
     if (open) {
-      wasOpenRef.current = true;
+      if (!wasOpenRef.current) {
+        previousWorkspaceIdsRef.current = selectedWorkspaceIds;
+        wasOpenRef.current = true;
+        setSelectedWorkspaceIds(initialWorkspaceIds);
+      }
       return;
     }
     if (!wasOpenRef.current) return;
     wasOpenRef.current = false;
+    setSelectedWorkspaceIds(previousWorkspaceIdsRef.current);
     resetConversationState();
-  }, [open]);
+  }, [initialWorkspaceIds, initialWorkspaceKey, open, selectedWorkspaceIds, setSelectedWorkspaceIds]);
 
   useEffect(() => () => {
-    if (wasOpenRef.current) resetConversationState();
-  }, []);
+    if (wasOpenRef.current) {
+      wasOpenRef.current = false;
+      setSelectedWorkspaceIds(previousWorkspaceIdsRef.current);
+      resetConversationState();
+    }
+  }, [setSelectedWorkspaceIds]);
 
-  const handleSubmit = (message: PromptInputMessage) => {
+  const handleSubmit = (message: PromptInputMessage, _modelId: string, mentionedAgentIds?: string[], _memberIds?: string[], selectedWorkspaceIds?: string[]) => {
     const text = message.text?.trim() ?? '';
     if (!text || !agentId) return;
+    const workspaceIds = selectedWorkspaceIds?.length ? selectedWorkspaceIds : scopedWorkspaces.map((workspace) => workspace.id);
+    const requestedAgentId = mentionedAgentIds?.find((mentionedAgentId) => scopedAgents.some((agent) => agent.id === mentionedAgentId)) ?? agentId;
     createDryRun.mutate(
-      { input: text, simulatedChannel: 'widget', conversationId: activeConversationId ?? undefined, agentId },
+      { input: text, simulatedChannel: 'widget', conversationId: activeConversationId ?? undefined, agentId: requestedAgentId, workspaceIds },
       {
         onSuccess: (dryRun) => {
+          setSelectedWorkspaceIds(workspaceIds);
           onDryRunCreated(dryRun);
           if (dryRun.conversationId) {
             setActiveConversationId(dryRun.conversationId);
           }
         },
-        onError: (error) => showError(t('dryRun.error'), { description: parseApiError(error).message }),
+        onError: (error) => {
+          setSelectedWorkspaceIds(workspaceIds);
+          showError(t('dryRun.error'), { description: parseApiError(error).message });
+        },
       },
     );
   };
@@ -113,7 +135,7 @@ export function GovernanceDryRunConversationModal({ open, onOpenChange, deployme
             </ChatConversation>
           )}
           <div className='shrink-0 border-t bg-background/80 p-4 backdrop-blur-xs'>
-            <Input onSubmit={handleSubmit} status={status} disabled={!agentId || isBusy} submitDisabled={!agentId || isBusy} placeholder={t('dryRun.inputPlaceholder')} mentionAgents={scopedAgents} enableTeamMentions={false} workspaceOptions={scopedWorkspaces} showWorkspaceSelect={true} />
+            <Input governedMode onSubmit={handleSubmit} status={status} disabled={!agentId || isBusy} submitDisabled={!agentId || isBusy} placeholder={t('dryRun.inputPlaceholder')} mentionAgents={scopedAgents} enableTeamMentions={false} workspaceOptions={scopedWorkspaces} showWorkspaceSelect={true} />
           </div>
         </div>
       </DialogContent>

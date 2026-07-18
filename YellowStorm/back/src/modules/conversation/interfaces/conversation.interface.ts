@@ -76,6 +76,16 @@ export interface ConversationResponse {
   updatedAt: string;
   groupMeta?: GroupConversationMeta;
   projectId?: string | null;
+  runtimeMode: 'standard' | 'governed';
+  governanceContext?: {
+    programId: string;
+    scopeId: string;
+    deploymentId: string;
+    revisionId: string;
+    revisionNumber: number;
+    pinnedAt: string;
+    runtimeDefinition: { primaryAgentId: string; allowedAgentIds: string[]; workspaceIds: string[] };
+  };
 }
 
 export interface PaginatedConversations {

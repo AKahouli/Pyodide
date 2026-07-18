@@ -38,8 +38,9 @@ describe('GovernanceScopeService delete authorization', () => {
     const publicationAttemptModel = { deleteMany: jest.fn().mockResolvedValue({}) };
     const userGroupService = { findGroupIdsForMember: jest.fn().mockResolvedValue(options.groupIds ?? []) };
     const auditLogService = { logSuccess: jest.fn() };
-    const service = new GovernanceScopeService(scopeModel as never, sourceModel as never, membershipModel as never, deploymentModel as never, revisionModel as never, dryRunModel as never, metricModel as never, publicationAttemptModel as never, programService as never, userGroupService as never, auditLogService as never);
-    return { service, scope, scopeModel, sourceModel, membershipModel, deploymentModel, revisionModel, dryRunModel, metricModel, publicationAttemptModel, userGroupService, auditLogService };
+    const draftPreparation = { prepare: jest.fn().mockResolvedValue(undefined) };
+    const service = new GovernanceScopeService(scopeModel as never, sourceModel as never, membershipModel as never, deploymentModel as never, revisionModel as never, dryRunModel as never, metricModel as never, publicationAttemptModel as never, programService as never, userGroupService as never, auditLogService as never, draftPreparation as never);
+    return { service, scope, scopeModel, sourceModel, membershipModel, deploymentModel, revisionModel, dryRunModel, metricModel, publicationAttemptModel, userGroupService, auditLogService, draftPreparation };
   }
 
   it('allows the program owner to delete a scope', async () => {
@@ -117,6 +118,14 @@ describe('GovernanceScopeService delete authorization', () => {
     await service.update(actorId, actorEmail, programId, scopeId, { metadata: { review: { status: 'in_review' } } });
 
     expect(scope.metadata).toEqual({ classification: { stage: 'pilot' }, review: { status: 'in_review' } });
+  });
+
+  it('does not prepare a draft when only the guardrail review timestamp changes', async () => {
+    const { service, draftPreparation } = buildService({ isOwner: true });
+
+    await service.update(actorId, actorEmail, programId, scopeId, { metadata: { guardrailsReviewedAt: '2026-07-17T12:00:00.000Z' } });
+
+    expect(draftPreparation.prepare).not.toHaveBeenCalled();
   });
 
   it('rejects direct approved review metadata writes', async () => {

@@ -73,6 +73,9 @@ export class ShareService {
         'Conversation not found',
       );
     }
+    if (conversation.runtimeMode === 'governed') {
+      throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN, 'Governed conversations cannot be shared');
+    }
 
     if (data.shareType === 'public') {
       return this.createPublicShare(userId, conversation, data);

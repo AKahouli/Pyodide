@@ -146,6 +146,30 @@ export function useDeleteGovernanceScope(programId: string | null) {
   });
 }
 
+export function useGovernanceScopeAudience(programId: string | null, scopeId: string | null) {
+  return useQuery({
+    queryKey: governanceQueryKeys.scopeAudience(programId ?? 'none', scopeId ?? 'none'),
+    queryFn: () => governanceApi.getScopeAudience(programId ?? '', scopeId ?? ''),
+    enabled: Boolean(programId && scopeId),
+  });
+}
+
+export function useUpdateGovernanceScopeAudience(programId: string | null, scopeId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Parameters<typeof governanceApi.updateScopeAudience>[2]) => governanceApi.updateScopeAudience(programId ?? '', scopeId ?? '', payload),
+    onSuccess: async () => {
+      if (programId && scopeId) await queryClient.invalidateQueries({ queryKey: governanceQueryKeys.scopeAudience(programId, scopeId) });
+      if (programId && scopeId) await queryClient.invalidateQueries({ queryKey: governanceQueryKeys.scopeOverview(programId, scopeId) });
+      await queryClient.invalidateQueries({ queryKey: governanceQueryKeys.availableScopes() });
+    },
+  });
+}
+
+export function useAvailableGovernedScopes(enabled = true) {
+  return useQuery({ queryKey: governanceQueryKeys.availableScopes(), queryFn: governanceApi.listAvailableScopes, enabled, retry: 1 });
+}
+
 export function useGovernanceSourceVersions(programId: string | null, sourceId: string | null) {
   return useQuery({ queryKey: governanceQueryKeys.sourceVersions(programId ?? 'none', sourceId ?? 'none'), queryFn: () => governanceApi.listSourceVersions(programId ?? '', sourceId ?? ''), enabled: Boolean(programId && sourceId) });
 }
@@ -188,7 +212,7 @@ export function useUpdateGovernanceWorkspaceBinding(programId: string | null) {
 
 export function useDeleteGovernanceWorkspaceBinding(programId: string | null) {
   const queryClient = useQueryClient();
-  return useMutation({ mutationFn: (bindingId: string) => governanceApi.deleteWorkspaceBinding(programId ?? '', bindingId), onSuccess: () => { if (programId) { void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.workspaceBindings(programId) }); void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.scopes(programId) }); } } });
+  return useMutation({ mutationFn: (bindingId: string) => governanceApi.deleteWorkspaceBinding(programId ?? '', bindingId), onSuccess: () => { if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.all }); } });
 }
 
 export function useReconcileGovernanceWorkspaceBinding(programId: string | null) {
@@ -214,7 +238,7 @@ export function useDeleteGovernanceSource(programId: string | null) {
   return useMutation({
     mutationFn: (sourceId: string) => governanceApi.deleteSource(programId ?? '', sourceId),
     onSuccess: () => {
-      if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.program(programId) });
+      if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.all });
     },
   });
 }
@@ -335,28 +359,30 @@ export function useCreateGovernanceRevision(deploymentId: string | null) {
   });
 }
 
-export function useCreateGovernanceDryRun(deploymentId: string | null) {
+export function useCreateGovernanceDryRun(deploymentId: string | null, programId?: string | null, scopeId?: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: CreateGovernanceDryRunPayload) => governanceApi.createDryRun(deploymentId ?? '', payload),
     onSuccess: () => {
       if (deploymentId) {
         void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.dryRuns(deploymentId) });
-        void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.all });
+        void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.readiness(deploymentId) });
       }
+      if (programId && scopeId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.scopeOverview(programId, scopeId) });
     },
   });
 }
 
-export function useMarkGovernanceDryRun(deploymentId: string | null) {
+export function useMarkGovernanceDryRun(deploymentId: string | null, programId?: string | null, scopeId?: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ dryRunId, status }: { dryRunId: string; status: GovernanceDryRun['status'] }) => governanceApi.markDryRun(dryRunId, status),
     onSuccess: () => {
       if (deploymentId) {
         void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.dryRuns(deploymentId) });
-        void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.all });
+        void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.readiness(deploymentId) });
       }
+      if (programId && scopeId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.scopeOverview(programId, scopeId) });
     },
   });
 }

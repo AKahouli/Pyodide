@@ -15,6 +15,7 @@ import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } fr
 import { GovernanceDryRun, GovernanceDryRunDocument } from '../schemas/governance-dry-run.schema';
 import { GovernanceMetric, GovernanceMetricDocument } from '../schemas/governance-metric.schema';
 import { GovernancePublicationAttempt, GovernancePublicationAttemptDocument } from '../schemas/governance-publication-attempt.schema';
+import { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
 
 export interface GovernanceScopeResponse {
   id: string;
@@ -51,6 +52,7 @@ export class GovernanceScopeService {
     private readonly programService: GovernanceProgramService,
     private readonly userGroupService: UserGroupService,
     private readonly auditLogService: AuditLogService,
+    private readonly draftPreparation: GovernanceDraftPreparationService,
   ) {}
 
   async create(ownerUserId: string, programId: string, dto: CreateGovernanceScopeDto): Promise<GovernanceScopeResponse> {
@@ -102,6 +104,8 @@ export class GovernanceScopeService {
       scope.metadata = this.mergeMetadata(scope.metadata, dto.metadata);
     }
     await scope.save();
+    const materialChange = dto.name !== undefined || dto.parentScopeId !== undefined || dto.type !== undefined || dto.status !== undefined || dto.agentIds !== undefined || dto.metadata?.classification !== undefined;
+    if (materialChange) await this.draftPreparation.prepare(ownerUserId, ownerEmail, programId, scopeId);
     return this.toResponse(scope);
   }
 

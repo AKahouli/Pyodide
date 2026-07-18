@@ -154,5 +154,14 @@
   "ERR_3653": "This governance deployment has no published revision.",
   "ERR_3660": "Governance dry-run not found.",
   "ERR_3670": "Governance publication is blocked by readiness checks.",
-  "ERR_3671": "One or more governance channels are not ready."
+  "ERR_3671": "One or more governance channels are not ready.",
+  "ERR_3680": "Governed conversation not found.",
+  "ERR_3681": "Your access to this governed assistant has been removed. This conversation is now read-only.",
+  "ERR_3682": "This governed assistant is temporarily unavailable.",
+  "ERR_3683": "The published version used by this conversation no longer exists.",
+  "ERR_3684": "That assistant is not approved for this governed conversation.",
+  "ERR_3685": "The model is controlled by the published scope.",
+  "ERR_3686": "Connectors and skills are not available in governed conversations.",
+  "ERR_3687": "Teams are not available in governed conversations.",
+  "ERR_3688": "Governed conversation settings cannot be changed."
 }

@@ -685,7 +685,7 @@
   "agentTypes.form.actions.create": "Create Agent Type",
   "agentTypes.form.validation.nameMin": "Name must be at least 2 characters",
   "agentTypes.form.validation.nameMax": "Name must be at most 100 characters",
-  "agentTypes.form.validation.namePattern": "Name must contain only letters, numbers, and spaces",
+  "agentTypes.form.validation.namePattern": "Name must contain only letters, numbers, spaces, and hyphens",
   "agentTypes.form.validation.promptMax": "Default prompt must be at most 50000 characters",
   "agentTypes.prompts.title": "Model Prompts – {{name}}",
   "agentTypes.prompts.description": "Configure model-specific prompts for this agent type. Models without a specific prompt will use the default prompt.",

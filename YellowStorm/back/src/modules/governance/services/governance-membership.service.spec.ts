@@ -9,7 +9,7 @@ describe('GovernanceMembershipService', () => {
   const groupId = '507f1f77bcf86cd799439014';
   const membershipId = '507f1f77bcf86cd799439016';
 
-  function buildService(duplicate?: Record<string, unknown>, memberships: Record<string, unknown>[] = [], isProgramOwner = true) {
+  function buildService(duplicate?: Record<string, unknown>, memberships: Record<string, unknown>[] = [], isProgramOwner = true, activeScopeIds: string[] = []) {
     const exec = jest.fn().mockResolvedValue(memberships);
     const lean = jest.fn().mockReturnValue({ exec });
     const sort = jest.fn().mockReturnValue({ lean });
@@ -25,7 +25,9 @@ describe('GovernanceMembershipService', () => {
     const scopeService = { findById: jest.fn().mockResolvedValue({}) };
     const userGroupService = { findById: jest.fn().mockResolvedValue({ id: groupId }), findGroupIdsForMember: jest.fn().mockResolvedValue([groupId]) };
     const auditLogService = { logSuccess: jest.fn() };
-    return { service: new GovernanceMembershipService(membershipModel as never, programService as never, scopeService as never, userGroupService as never, auditLogService as never), membershipModel, userGroupService, auditLogService };
+    const draftPreparationService = { prepare: jest.fn().mockResolvedValue(undefined) };
+    const scopeModel = { find: jest.fn().mockReturnValue({ select: () => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(activeScopeIds.map((id) => ({ _id: { toString: () => id } }))) }) }) }) };
+    return { service: new GovernanceMembershipService(membershipModel as never, scopeModel as never, programService as never, scopeService as never, userGroupService as never, auditLogService as never, draftPreparationService as never), membershipModel, userGroupService, auditLogService, draftPreparationService };
   }
 
   it('creates active memberships with role permissions', async () => {
@@ -79,6 +81,17 @@ describe('GovernanceMembershipService', () => {
     expect(userGroupService.findById).toHaveBeenCalledWith(actorId, groupId);
     expect(membership.groupId).toBe(groupId);
     expect(membership.userId).toBeUndefined();
+  });
+
+  it('prepares every active scope when a program-level ownership assignment changes', async () => {
+    const scopeIds = ['507f1f77bcf86cd799439015', '507f1f77bcf86cd799439017'];
+    const { service, draftPreparationService } = buildService(undefined, [], true, scopeIds);
+
+    await service.create(actorId, actorEmail, programId, { userId, role: 'program_admin' });
+
+    expect(draftPreparationService.prepare).toHaveBeenCalledTimes(2);
+    expect(draftPreparationService.prepare).toHaveBeenCalledWith(actorId, actorEmail, programId, scopeIds[0]);
+    expect(draftPreparationService.prepare).toHaveBeenCalledWith(actorId, actorEmail, programId, scopeIds[1]);
   });
 
   it('lists all memberships for program owners', async () => {

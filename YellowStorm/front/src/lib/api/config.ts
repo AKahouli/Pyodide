@@ -174,6 +174,7 @@ export const API_ENDPOINTS = {
   conversations: {
     list: '/conversations',
     create: '/conversations',
+    createGoverned: '/conversations/governed',
     byId: (id: string) => `/conversations/${id}`,
     join: (id: string) => `/conversations/${id}/join`,
     taggedAgents: (id: string) => `/conversations/${id}/tagged-agents`,
@@ -207,11 +208,13 @@ export const API_ENDPOINTS = {
     summary: '/experimental/analytics/summary',
   },
   governance: {
+    availableScopes: '/governance/me/available-scopes',
     programs: '/governance/programs',
     program: (programId: string) => `/governance/programs/${programId}`,
     scopes: (programId: string) => `/governance/programs/${programId}/scopes`,
     scope: (programId: string, scopeId: string) => `/governance/programs/${programId}/scopes/${scopeId}`,
     scopeOverview: (programId: string, scopeId: string) => `/governance/programs/${programId}/scopes/${scopeId}/overview`,
+    scopeAudience: (programId: string, scopeId: string) => `/governance/programs/${programId}/scopes/${scopeId}/audience`,
     sources: (programId: string) => `/governance/programs/${programId}/sources`,
     source: (programId: string, sourceId: string) => `/governance/programs/${programId}/sources/${sourceId}`,
     sourceVersions: (programId: string, sourceId: string) => `/governance/programs/${programId}/sources/${sourceId}/versions`,

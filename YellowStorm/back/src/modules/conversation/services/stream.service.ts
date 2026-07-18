@@ -57,6 +57,15 @@ interface StreamRequest {
   skillIds?: string[];
 }
 
+export interface StreamGovernanceOverride {
+  runtimeMode: 'governed';
+  primaryAgentId: string;
+  allowedAgentIds: string[];
+  workspaceIds: string[];
+  revisionId: string;
+  scopeId: string;
+}
+
 // Log every Nth chunk to avoid overwhelming logs
 const CHUNK_LOG_INTERVAL = 10;
 
@@ -526,6 +535,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     requestId?: string,
     userEmail: string = '',
     username?: string,
+    governanceOverride?: StreamGovernanceOverride,
   ): Promise<void> {
     const logOpts: LogOptions = { requestId };
 
@@ -642,9 +652,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       ? conversation.groupMeta.taggedAgents?.map((id) => id.toString()) || []
       : [];
 
+    const requestedGovernedAgentIds = governanceOverride
+      ? (request.agentIds?.length ? request.agentIds : [governanceOverride.primaryAgentId])
+      : undefined;
     const [workspaceContexts, agents] = await Promise.all([
       this.buildWorkspaceContexts(conversationId, logOpts, conversation),
-      this.agentService.buildAgentsForStream(
+      governanceOverride
+        ? this.agentService.buildGovernedAgentsForStream(userId, requestedGovernedAgentIds ?? [], governanceOverride.workspaceIds)
+        : this.agentService.buildAgentsForStream(
         userId,
         request.modelId,
         request.agentIds,

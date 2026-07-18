@@ -80,6 +80,8 @@ describe('MessageController.sendMessage sticky routing', () => {
       teamService as any,
       requestContext as any,
       logger as any,
+      { canonicalize: jest.fn() } as any,
+      { resolveRuntime: jest.fn(), assertRuntimeRequestAllowed: jest.fn(), resolveEffectiveAgents: jest.fn() } as any,
     );
   });
 
@@ -109,6 +111,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       'req-1',
       undefined,
       'Ada Lovelace',
+      undefined,
     );
   });
 
@@ -134,6 +137,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       'req-1',
       undefined,
       'Ada Lovelace',
+      undefined,
     );
   });
 

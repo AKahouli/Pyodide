@@ -10,6 +10,12 @@ export class CreateGovernanceRevisionDto {
   @IsOptional()
   @IsArray()
   @IsMongoId({ each: true })
+  allowedAgentIds?: string[];
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
   workspaceIds?: string[];
 
   @ApiPropertyOptional({ type: [String] })

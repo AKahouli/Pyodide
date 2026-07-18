@@ -18,19 +18,19 @@ describe('GovernanceChannelReadinessService', () => {
     expect(checks).toEqual([expect.objectContaining({ key: 'agent-1:widget_ready', status: 'passed' })]);
   });
 
-  it('marks missing channel integrations as blocking failures', async () => {
+  it('reports missing channel integrations as non-blocking warnings', async () => {
     telegramIntegrationService.getByAgentForUser.mockResolvedValue({ enabled: true, status: 'pending' });
 
     const checks = await service.buildChannelChecks('user-1', 'agent-1', { telegram: { enabled: true } });
 
-    expect(checks).toEqual([expect.objectContaining({ key: 'agent-1:telegram_ready', status: 'failed', severity: 'blocking' })]);
+    expect(checks).toEqual([expect.objectContaining({ key: 'agent-1:telegram_ready', status: 'warning', severity: 'warning' })]);
   });
 
   it('does not create readiness checks for disabled channels', async () => {
     await expect(service.buildChannelChecks('user-1', 'agent-1', { whatsapp: { enabled: false } })).resolves.toEqual([]);
   });
 
-  it('marks disabled whatsapp integrations as blocking failures', async () => {
+  it('reports disabled whatsapp integrations as non-blocking warnings', async () => {
     whatsappIntegrationService.getByAgentForUser.mockResolvedValue({
       enabled: false,
       status: 'CONNECTED',
@@ -41,7 +41,7 @@ describe('GovernanceChannelReadinessService', () => {
     });
 
     expect(checks).toEqual([
-      expect.objectContaining({ key: 'agent-1:whatsapp_ready', status: 'failed', severity: 'blocking' }),
+      expect.objectContaining({ key: 'agent-1:whatsapp_ready', status: 'warning', severity: 'warning' }),
     ]);
   });
 
