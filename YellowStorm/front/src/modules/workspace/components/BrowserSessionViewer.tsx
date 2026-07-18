@@ -23,27 +23,42 @@ export function BrowserSessionViewer({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const img = new Image();
-    img.onload = () => ctx.drawImage(img, 0, 0, VIEWPORT_W, VIEWPORT_H);
+    img.onload = () => {
+      // Match the canvas backing store to the actual frame size so the image is
+      // drawn 1:1 (no resampling blur) and coordinate mapping uses the real
+      // remote viewport — even if the backend viewport is reconfigured.
+      if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+      }
+      ctx.drawImage(img, 0, 0);
+    };
     img.src = frame;
   }, [frame]);
 
-  const coordsFrom = (e: React.MouseEvent) =>
-    toViewportCoords(e.clientX, e.clientY, canvasRef.current!.getBoundingClientRect(), VIEWPORT_W, VIEWPORT_H);
+  const coordsFrom = (e: React.MouseEvent) => {
+    const canvas = canvasRef.current!;
+    return toViewportCoords(e.clientX, e.clientY, canvas.getBoundingClientRect(), canvas.width, canvas.height);
+  };
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={VIEWPORT_W}
-      height={VIEWPORT_H}
-      tabIndex={0}
-      className='h-full w-full bg-white outline-none'
-      onMouseMove={(e) => { const { x, y } = coordsFrom(e); onInput({ kind: 'mouse', type: 'move', x, y }); }}
-      onMouseDown={(e) => { const { x, y } = coordsFrom(e); onInput({ kind: 'mouse', type: 'down', x, y, button: BTN[e.button] ?? 'left' }); }}
-      onMouseUp={(e) => { const { x, y } = coordsFrom(e); onInput({ kind: 'mouse', type: 'up', x, y, button: BTN[e.button] ?? 'left' }); }}
-      onWheel={(e) => { const { x, y } = coordsFrom(e); onInput({ kind: 'wheel', x, y, deltaX: e.deltaX, deltaY: e.deltaY }); }}
-      onContextMenu={(e) => e.preventDefault()}
-      onKeyDown={(e) => { e.preventDefault(); onInput({ kind: 'key', type: 'down', key: e.key, text: e.key.length === 1 ? e.key : undefined }); }}
-      onKeyUp={(e) => { e.preventDefault(); onInput({ kind: 'key', type: 'up', key: e.key }); }}
-    />
+    <div className='flex h-full w-full items-center justify-center'>
+      {/* max-w/max-h keep the canvas within the box; its intrinsic width/height
+          preserve the aspect ratio, so it letterboxes instead of stretching. */}
+      <canvas
+        ref={canvasRef}
+        width={VIEWPORT_W}
+        height={VIEWPORT_H}
+        tabIndex={0}
+        className='max-h-full max-w-full bg-white outline-none'
+        onMouseMove={(e) => { const { x, y } = coordsFrom(e); onInput({ kind: 'mouse', type: 'move', x, y }); }}
+        onMouseDown={(e) => { const { x, y } = coordsFrom(e); onInput({ kind: 'mouse', type: 'down', x, y, button: BTN[e.button] ?? 'left' }); }}
+        onMouseUp={(e) => { const { x, y } = coordsFrom(e); onInput({ kind: 'mouse', type: 'up', x, y, button: BTN[e.button] ?? 'left' }); }}
+        onWheel={(e) => { const { x, y } = coordsFrom(e); onInput({ kind: 'wheel', x, y, deltaX: e.deltaX, deltaY: e.deltaY }); }}
+        onContextMenu={(e) => e.preventDefault()}
+        onKeyDown={(e) => { e.preventDefault(); onInput({ kind: 'key', type: 'down', key: e.key, text: e.key.length === 1 ? e.key : undefined }); }}
+        onKeyUp={(e) => { e.preventDefault(); onInput({ kind: 'key', type: 'up', key: e.key }); }}
+      />
+    </div>
   );
 }

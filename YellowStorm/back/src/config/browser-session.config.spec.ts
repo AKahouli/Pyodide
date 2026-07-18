@@ -7,8 +7,8 @@ describe('browserSessionConfig', () => {
     expect(c.maxMs).toBe(1200000);
     expect(c.maxConcurrent).toBe(10);
     expect(c.viewportWidth).toBe(1280);
-    expect(c.viewportHeight).toBe(800);
-    expect(c.screencastQuality).toBe(60);
+    expect(c.viewportHeight).toBe(720);
+    expect(c.screencastQuality).toBe(80);
     expect(c.chromiumExecutablePath).toBe('');
   });
 

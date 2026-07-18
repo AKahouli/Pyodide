@@ -307,7 +307,7 @@ Ensure `CONVERSATION_GRPC_URL` (or env equivalent) points to a running ADK serve
 ```
 1. Authenticated user: POST /admin/agents/:agentId/widget-tokens
 2. Service creates UUID, stores SHA-256 hash, returns plain token once
-3. Front builds embed script with token + API URLs (see agent module README)
+3. Front builds a one-line CDN snippet (`<script src="{app}/widget-embed.js?token=…">`); API base is baked into `public/widget-embed.js` via `npm run emit:widget-embed` (agentId/name from `GET /widget/config`)
 ```
 
 ### New conversation (embed menu)
@@ -323,7 +323,7 @@ Ensure `CONVERSATION_GRPC_URL` (or env equivalent) points to a running ADK serve
 
 ## Operational Notes
 
-- **Regenerate snippet after template changes**: Embed JavaScript is generated in the frontend (`widget-template.ts`), not served as a static file from the API.
+- **Regenerate embed.js after template changes**: Run `npm run emit:widget-embed` in `YellowStorm/front` to refresh `public/widget-embed.js` (served by the YellowStorm web app/CDN). Customer pages that load that URL pick up the new runtime after front deploy (and after CDN/browser cache TTL). The Nest API does not host the embed script.
 - **Manager agent required**: Without a resolvable Manager for the agent owner, widget chat returns `stream_error` explaining the requirement.
 - **Empty replies**: Logged with `chunkCount`, `componentTypes`; client may receive `stream_error` after `stream_complete` with empty `reply`.
 - **In-memory SSE**: Streams are per Node process; sticky sessions or single instance assumed for SSE during development; production should account for load balancing (or accept reconnect + new message).

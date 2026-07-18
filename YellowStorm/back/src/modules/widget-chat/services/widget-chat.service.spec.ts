@@ -13,6 +13,7 @@ function createCitationService() {
     isAvailable: jest.fn().mockReturnValue(true),
     exists: jest.fn().mockResolvedValue(true),
     list: jest.fn().mockResolvedValue({ documents: [] }),
+    download: jest.fn().mockResolvedValue(Buffer.from('%PDF-1.4')),
   };
   const workspaceDocumentService = {
     generateReadUrl: jest.fn().mockResolvedValue('https://ceph.example/signed-url'),
@@ -188,5 +189,36 @@ describe('WidgetChatService.generateCitationUrl', () => {
     });
     expect(workspaceDocumentService.generateReadUrl).toHaveBeenCalledWith(resolvedPath);
     expect(result.downloadUrl).toBe('https://ceph.example/signed-url');
+  });
+});
+
+describe('WidgetChatService.getCitationFile', () => {
+  it('downloads citation bytes via documentService when path is allowed', async () => {
+    const { service, documentService, workspaceService } = createCitationService();
+
+    const result = await service.getCitationFile({
+      source: OBJECT_KEY,
+      fileName: 'report.pdf',
+      agentKnowledgeBaseIds: [WS_ID],
+    });
+
+    expect(workspaceService.getStorageContext).toHaveBeenCalledWith(WS_ID);
+    expect(documentService.download).toHaveBeenCalledWith(OBJECT_KEY);
+    expect(result.displayName).toBe('report.pdf');
+    expect(result.mimeType).toBe('application/pdf');
+    expect(result.buffer.toString()).toBe('%PDF-1.4');
+  });
+
+  it('throws when document storage is unavailable', async () => {
+    const { service, documentService } = createCitationService();
+    documentService.isAvailable.mockReturnValue(false);
+
+    await expect(
+      service.getCitationFile({
+        source: OBJECT_KEY,
+        fileName: 'report.pdf',
+        agentKnowledgeBaseIds: [WS_ID],
+      }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });
