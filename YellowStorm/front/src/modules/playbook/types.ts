@@ -745,13 +745,6 @@ export type PlaybookIntentDesignResponse = (
   lastTrace?: PlaybookIntentTraceEntry;
 };
 
-export interface PlaybookIntentResponse {
-  suggestions: PlaybookIntentSuggestion[];
-  model: string;
-  settings: EffectivePlaybookDesignSettings;
-  lastTrace?: PlaybookIntentTraceEntry;
-}
-
 export type PlaybookIntentTraceStage = 'intent.analyze' | 'intent.design_assessment';
 
 export interface PlaybookIntentTraceEntry {
@@ -769,9 +762,17 @@ export interface PlaybookIntentTraceResponse {
 }
 
 export interface PlaybookIntentConstructionStartResponse {
+  operationId?: string;
   constructionId: string;
   playbookId: string;
   baseDefinitionRevision: number;
+  origin?: 'designer' | 'mcp' | 'advisor';
+  target?: 'canonical' | 'advisor_preview';
+  disposition?: 'pending' | 'applying' | 'applied' | 'discarded' | 'reverted';
+  status?: Exclude<PlaybookIntentConstructionStatus, 'idle' | 'starting' | 'streaming'> | 'queued' | 'running';
+  lastSequence?: number;
+  committedRevision?: number | null;
+  advisorMode?: AdvisorRemediationMode;
 }
 
 export type PlaybookIntentConstructionStatus = 'idle' | 'starting' | 'streaming' | 'completed' | 'failed' | 'cancelled';
@@ -783,6 +784,7 @@ export type PlaybookIntentConstructionEvent =
   | { type: 'edge_delta'; constructionId: string; playbookId: string; sequence: number; createdAt: string; suggestion: PlaybookIntentSuggestion }
   | { type: 'data_binding_delta'; constructionId: string; playbookId: string; sequence: number; createdAt: string; suggestion: PlaybookIntentSuggestion }
   | { type: 'completed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; model: string; finalSuggestionCount: number }
+  | { type: 'cancelled'; constructionId: string; playbookId: string; sequence: number; createdAt: string; reason?: string }
   | { type: 'failed'; constructionId: string; playbookId: string; sequence: number; createdAt: string; message: string; recoverable: boolean }
   | { type: 'cancelled'; constructionId: string; playbookId: string; sequence: number; createdAt: string; reason?: string };
 
@@ -2160,6 +2162,8 @@ export interface UpdatePlaybookData {
   expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
+  assistantOperationId?: string;
+  assistantOperationTarget?: 'canonical' | 'advisor_preview';
   deepSearch?: boolean;
 }
 
@@ -2549,7 +2553,6 @@ export interface PlaybookActions {
   deleteOutputFormatTemplate: (playbookId: string, taskId: string) => Promise<{ removed: boolean }>;
   runAdvisorEvaluation: (executionId: string, taskId: string, iteration?: number) => Promise<void>;
   fetchAdvisorRemediations: (playbookId: string, executionId: string, taskId?: string) => Promise<AdvisorRemediationItem[]>;
-  previewAdvisorRemediation: (playbookId: string, data: AdvisorRemediationPreviewRequest) => Promise<AdvisorRemediationPreviewResponse>;
   previewAdvisorScriptReplacement: (playbookId: string, data: AdvisorScriptReplacementRequest) => Promise<AdvisorScriptReplacementPreviewResponse>;
   applyAdvisorScriptReplacement: (playbookId: string, data: AdvisorScriptReplacementApplyRequest) => Promise<{ targetTaskId: string; scriptHash: string; definitionRevision: number }>;
   reapplyOptimization: (playbookId: string, executionId: string, taskId: string, historyIndex: number, direction: 'after' | 'before') => Promise<Playbook>;
@@ -2588,7 +2591,6 @@ export interface PlaybookActions {
   designPlaybook: (playbookId: string, data: DesignPlaybookData) => Promise<void>;
   clearDesignMessages: (playbookId: string) => Promise<void>;
   assessPlaybookIntentDesign: (playbookId: string, data: RequestPlaybookIntentData) => Promise<PlaybookIntentDesignResponse>;
-  requestPlaybookIntent: (playbookId: string, data: RequestPlaybookIntentData) => Promise<PlaybookIntentResponse>;
   revertToSnapshot: (playbookId: string, messageId: string) => Promise<void>;
   setDesignerOpen: (open: boolean) => void;
   setCopilotMode: (mode: PlaybookCopilotMode) => void;
@@ -2980,6 +2982,8 @@ export interface SavePlaybookOptions {
   expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
+  assistantOperationId?: string;
+  assistantOperationTarget?: 'canonical' | 'advisor_preview';
   reason?: 'autosave' | 'manual' | 'route-leave';
 }
 

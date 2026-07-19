@@ -48,7 +48,7 @@ src/
 ├── contexts/               # React Context providers (not Zustand): Theme
 ├── providers/              # CombinedProvider (composes all app-wide providers)
 ├── hooks/                  # Cross-cutting hooks (use-mobile, useTheme)
-├── config/                 # Static app/menu config only (not secrets/runtime env)
+├── config/                 # Static app/menu config + shared runtime rollout feature flags (dataRoomFeatures, governedConversationFeatures)
 ├── lib/api/                # axios client, config, endpoint registry
 ├── lib/api-error.ts        # parseApiError / handleApiError
 ├── lib/use-api-action.ts   # generic async action hook
@@ -145,15 +145,28 @@ Zustand stores remain the UI/orchestration layer; they may read from the Query c
 
 Gated behind feature flags (e.g. `xstateExecutionEnabled`, `xstateAutosaveEnabled`).
 
-### Feature flags for staged migration
+### Feature flags — two layers
 
-When migrating a module's state layer, gate old and new paths with feature flags in `<module>/features.ts`. Flags are `const` booleans (compile-time eliminated by Vite tree-shaking in production). Example flags pattern from playbook:
+The frontend has two distinct feature-flag layers. Do not mix them.
+
+**Shared cross-module rollout flags** live in `src/config/` as frozen objects backed by `import.meta.env.VITE_*`:
+
+- `src/config/dataRoomFeatures.ts` exposes `VITE_DATA_ROOM_*` flags (e.g. `governanceEnabled`, `decisionFlowArtifactsEnabled`).
+- `src/config/governedConversationFeatures.ts` exposes governed-conversation rollout flags.
+
+These are consumed across module boundaries (e.g. `workspace` reads Data Room flags, `governance` reads governed-conversation flags). Treat them as cross-module contracts: changing a default or removing a flag requires tracing every consumer. They are **runtime values read at boot**, not compile-time constants — Vite does not tree-shake them away in production builds.
+
+**Module-local state-migration flags** live in `<module>/features.ts` (currently only `playbook`). These gate staged migrations between Zustand and TanStack Query / XState. They are also runtime-env-backed (`VITE_PLAYBOOK_* === 'true'`), despite earlier documentation describing them as compile-time `const` booleans — Vite does not eliminate them.
+
+When adding a flag: shared rollouts go in `src/config/<domain>Features.ts`; state-layer migrations go in `<module>/features.ts`. Declare the `VITE_*` env key in `src/vite-env.d.ts` and document it in the deployment env template.
+
+Example shared rollout pattern from `dataRoomFeatures.ts`:
 
 ```ts
-export const queryEnabled = true;
-export const queryMutationsEnabled = true;
-export const querySseEnabled = true;
-export const xstateExecutionEnabled = false; // still rolling out
+export const dataRoomFeatures = Object.freeze({
+  governanceEnabled: import.meta.env.VITE_DATA_ROOM_GOVERNANCE_ENABLED === 'true',
+  decisionFlowArtifactsEnabled: import.meta.env.VITE_DATA_ROOM_DECISION_FLOW_ARTIFACTS_ENABLED === 'true',
+});
 ```
 
 ### React Context (cross-cutting only)
@@ -264,7 +277,7 @@ Always go through `@/lib/notifications`: `showSuccess`, `showError`, `showWarnin
 
 ## 12. Streaming (SSE)
 
-Five streaming patterns coexist depending on module requirements:
+Six streaming patterns coexist depending on module requirements:
 
 ### Pattern 1: Singleton EventSource Service (conversation, notifications)
 
@@ -274,9 +287,15 @@ Legacy pattern: `ConversationStreamService` and `NotificationsService`. One `Eve
 
 `PlaybookStreamService` — one `EventSource` shared across tabs via `BroadcastChannel` with leader election. Leader owns the connection and broadcasts events to followers. Followers sync state via channel messages. Heartbeat, reconnect, and buffered step updates. SSE events dispatched into TanStack Query cache (when `querySseEnabled`) and optionally mirrored to Zustand.
 
-### Pattern 3: Per-Session Hook (conversation-v2)
+### Pattern 3: Singleton Per-User Multiplexed Stream (conversation-v2)
 
-`useStream()` hook — one `EventSource` per active session, scoped to component lifecycle. Closes on `done`/`error`. Consumes event `sequence` for gap detection and supports gap recovery by paging historical events. Zustand store is the state sink; no TanStack Query involvement.
+`ConversationV2StreamService` opens **one** `EventSource` per authenticated user to `/conversation-v2/stream`, kept alive for the whole app session. The connection hook (`useConversationV2StreamConnection`) is mounted **once at the app shell** (`RootGuard`), not per conversation page. The connection is intentionally decoupled from any single conversation view: it stays open across navigation so multiple conversations can stream at the same time and the user can switch between them freely.
+
+Events are tagged with their `sessionId`; the Zustand store renders the current session live and accumulates the rest in a background cache. Session pages hydrate background state and replay paged historical events for gap recovery. Heartbeat, backoff, and reconnect are handled in the service; token refresh reintegrates via the axios interceptor.
+
+- Mount the connection hook exactly once. Never open a second per-session `EventSource` from a page component.
+- Preserve the backend `sequence` cursor for gap detection and resume.
+- The Zustand store is the event sink; do not mix TanStack Query into this pipe.
 
 ### Pattern 4: Fetch + ReadableStream SSE (worky)
 
@@ -286,20 +305,32 @@ Legacy pattern: `ConversationStreamService` and `NotificationsService`. One `Eve
 
 `socket.io-client` is used for WhatsApp QR pairing flows in `agent`, `admin`, and `worky`. Do not use Socket.IO for generic app realtime until an event schema and backend gateway contract are agreed.
 
+### Pattern 6: Socket.IO Browser Session (workspace web import)
+
+`useBrowserSession` opens the `/browser-session` Socket.IO namespace (JWT handshake via the access token) to drive an interactive remote browser for workspace web import / indexing. The server emits JPEG `frame` events plus `navigated` / `blocked` / `closed`; the client emits `start` / `input` / `navigate`. `BrowserSessionViewer` draws frames 1:1 to a canvas and maps local input back to the remote viewport; `AddLinkDialog` collects visited URLs, asks the backend which are already indexed, and submits selected links with auto/deep-index settings.
+
+**Hard coordinate contract:** the client uses fixed `VIEWPORT_W = 1280` / `VIEWPORT_H = 720` (16:9) to match the backend Playwright viewport so input coordinates map correctly. Change both sides together — see backend §15.
+
+Ack messages use raw strings (`BUSY`, `BAD_REQUEST`, `NO_SESSION`), not the global error envelope; handle them in the hook, do not try to route them through `handleApiError`.
+
 ### Rules (all patterns)
 
 - Never open ad-hoc `new EventSource` in a component (use the module's service/hook)
 - Never hand-roll SSE parsing in a component; use the module stream helper (`conversation-v2/useStream`, `worky/stream/sse.ts`, or service singleton)
+- Never open ad-hoc `io()` Socket.IO connections in a component; use the module's hook (`useBrowserSession`, WhatsApp pairing hooks)
 - Token refresh integration mandatory where applicable
 - Always clean up on unmount / disconnect
 - Cap per-user connections (backend enforces, frontend handles eviction with `TOO_MANY_TABS`)
 - For ordered streams, preserve and store the backend `sequence` cursor so clients can resume without duplicate events.
+- For the browser-session Socket.IO namespace, keep the client viewport constants in sync with the backend (see Pattern 6).
 
 ---
 
 ## 13. Error Handling
 
 All API errors surface as `ApiError`: `{ code, message, statusCode, details?[] }`. Mirror backend in `src/lib/error-codes.ts`; add translations in `locales/.../errors.json`. Surfacing: toast (default, via `useApiAction` or `handleApiError`), or inline (`showErrorToast: false` + render in `<Alert>` / `<FormMessage>`). **Never** `console.error` user-actionable errors silently. Use `getErrorMessage(code)` so codes resolve to localised strings.
+
+**Error-code parity is mandatory and currently drifted.** The frontend `ErrorCode` enum in `src/lib/error-codes.ts` must mirror the backend enum in `back/src/modules/exceptions/constants/error-codes.ts`. Unknown backend codes are silently normalised to `ERR_1000` (`error-codes.ts`), so any unmapped code loses its specific message in the UI. When the backend adds a code, the same change must: (a) add it to `front/src/lib/error-codes.ts`, (b) add EN + FR messages to `front/src/modules/localization/locales/{en,fr}/errors.json`, (c) verify the code renders the expected message via `getErrorMessage(code)`. Known current drift includes `ERR_1009` (idempotency), extended chat codes (`ERR_1403`–`ERR_1420`), indexing/share codes (`ERR_1950`–`ERR_1960`), and `WIDGET_CITATION_NOT_FOUND` (`ERR_3409`) — fix when touching the relevant area.
 
 ---
 
@@ -347,6 +378,8 @@ Vitest + React Testing Library + `jest-dom`. Colocate tests: `X.test.tsx` next t
 
 Read env via `import.meta.env.VITE_*` only. Production uses **runtime injection**: literal placeholder `'MY_APP_VITE_API_URL'` in the build, replaced by `env.sh` at container start. New runtime-configurable values follow the same pattern. Never commit secrets — frontend has none.
 
+Every `VITE_*` key read in code must be declared in `src/vite-env.d.ts` and listed in the deployment env template. The current declarations only cover Playbook flags; Data Room (`VITE_DATA_ROOM_*`) and governed-conversation (`VITE_GOVERNED_CONVERSATION_*`) flags are read from `src/config/*Features.ts` but not yet declared — fix this when touching those files, do not replicate the drift.
+
 ---
 
 ## 18. Performance
@@ -368,9 +401,10 @@ Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise e
 | `virtua` | Long virtualised lists |
 | `ai` (Vercel AI SDK) + `@anthropic-ai/sdk` | LLM streaming UIs |
 | `streamdown`, `shiki`, `react-markdown` | Streaming/static markdown |
-| `socket.io-client` | WhatsApp QR pairing channels only |
 | `motion` | Animation — use instead of `framer-motion` |
-| `@embedpdf/react-pdf-viewer`, `@cyntler/react-doc-viewer`, `@novnc/novnc` | PDF/document/VNC viewers |
+| `@embedpdf/react-pdf-viewer`, `@cyntler/react-doc-viewer` | PDF/document viewers |
+| `@novnc/novnc` (`RFB`) | Live remote-browser viewer over a signed VNC URL (conversation-v2 `BrowserToolView`, `useVncSession`) — **not** a document viewer. `viewOnly` toggles takeover; `VM_UNAVAILABLE` falls back to a screenshot. Treat as a realtime session, not a static embed. |
+| `socket.io-client` | WhatsApp QR pairing channels **and** the `/browser-session` interactive web-import namespace (Pattern 6) |
 | `cmdk` | Command menu primitives |
 | `react-resizable-panels` | Split pane layouts |
 | `d3` | Custom visualisation where `recharts` is insufficient |
@@ -379,7 +413,41 @@ Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise e
 
 ---
 
-## 20. Pre-PR Checklist
+## 20. Module-Specific Patterns
+
+These patterns capture how specific modules extend or deviate from the base rules. Mirror the closest sibling when adding similar behavior.
+
+### 20.1 Governance (Query-first, no SSE)
+
+`governance` is TanStack Query-first with a separate UI-only Zustand store:
+
+- Query hooks live in a single `query/hooks.ts` file (not the `query/hooks/` directory), using `useQuery`, `useQueries`, mutations, structured query keys, and cache invalidation. Active reconciliation runs are polled at 1s — there is **no** governance SSE today.
+- UI selection state lives in `uiStore.ts` (devtools-enabled), separate from server state.
+- **Established exception to the barrel rule (§3):** `governance/index.ts` re-exports the API surface, every query hook, and all types (`export *`). When adding to governance, follow this expanded surface; do not retrofit the limited-surface rule without a planned refactor.
+- The legacy `conversation` module imports governance internals directly for its banner and carousel (`ConversationPage.tsx`, `NewConversationPage.tsx`). This cross-module internal import is a documented exception for governed-conversation integration — do not replicate the pattern for new integrations; expose a public surface on the consumer module instead.
+
+### 20.2 conversation-v2 UI patterns
+
+- Event types beyond messages include `step`, `tool`, `plan`, and `application_component` — discriminated unions in `conversationV2Stream.ts`.
+- `StepBlock` renders collapsible execution steps with their tool calls; `ToolCallCard` opens a mutually-exclusive right-panel detail view (only one tool detail visible at a time).
+- The current "thinking" UI is `ThinkingIndicator` (three-dot animation). `PulseProgress` is not the canonical CoT component.
+- Read-only shared conversations use a token route (`SharedConversationV2Page`) that fetches a snapshot and renders a `MessageList`. Deployed-app sharing UI exists (`ShareDeployDialog`, `DeployControls`) but is currently commented out in `RightPanel` — do not assume it is live.
+
+### 20.3 Widget embedding (administered from `agent`)
+
+There is no separate React widget app on the frontend. The widget is **generated vanilla-JS output** administered from the agent module:
+
+- `AgentDeploymentSection` issues a one-time widget token then calls `buildWidgetCdnSnippet()` to produce a `<script>` snippet. The CDN host is the current origin or `VITE_APP_URL`.
+- `agent/constants/widget-template.ts` is a standalone DOM/CSS/JS runtime that builds its own launcher/dialog markup. It uses the runtime placeholder `MY_APP_VITE_API_URL` (same pattern as the rest of the frontend).
+- When extending the widget runtime, remember it is **not** React: no hooks, no JSX, no module bundler assumptions beyond what the template emits. Test the generated snippet in isolation.
+
+### 20.4 Browser session viewer (workspace web import)
+
+`useBrowserSession` (Pattern 6) drives an interactive remote browser. `BrowserSessionViewer` paints JPEG frames to a canvas at 1:1 scale and maps local pointer/keyboard events back to the remote viewport. `AddLinkDialog` collects visited URLs, asks the backend which are already indexed, and submits selected links with auto/deep-index settings. The link API wrappers live under `workspace/api.ts` (`addLink`, `addLinks`, `checkUrls`). Do not introduce a second browser-session consumer — extend the workspace hook.
+
+---
+
+## 21. Pre-PR Checklist
 
 - [ ] Module anatomy followed (§3). Public surface exported via barrel only.
 - [ ] All user-facing strings in both `en.json` and `fr.json`, accessed via `useModuleTranslation`.
@@ -394,12 +462,17 @@ Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise e
 - [ ] `cn()` for className merging; variants via CVA.
 - [ ] Errors surfaced (toast or inline); error codes from `ErrorCode` enum.
 - [ ] Autosaved editors store editable data in one draft/form state object; no editable field is saved only through an ad-hoc dependency list.
+- [ ] Backend error codes mirrored in `src/lib/error-codes.ts` and EN + FR `errors.json` (see §13 parity rule).
+- [ ] Every `VITE_*` env key read in code is declared in `src/vite-env.d.ts` and listed in the deployment env template.
+- [ ] Shared rollout flags live in `src/config/*Features.ts`; module state-migration flags live in `<module>/features.ts` — not mixed.
+- [ ] If touching streaming: conversation-v2 connection hook mounted exactly once at the app shell; browser-session viewport constants match backend (Pattern 6).
+- [ ] If touching the widget template (`agent/constants/widget-template.ts`): changes must work as standalone vanilla JS, no React/JSX.
 - [ ] Tests colocated, `vi.mock` for axios client. `npm test` + `npm run build` pass.
 - [ ] Commit: `<type>(<scope>): <subject>` (conventional commit).
 
 ---
 
-## 21. Anti-Patterns
+## 22. Anti-Patterns
 
 - Creating a second axios instance or calling `fetch` directly for backend calls.
 - Importing `toast` from `sonner` instead of `@/lib/notifications`.
@@ -417,3 +490,12 @@ Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise e
 - Ad-hoc `new EventSource()` in a component instead of using the module's service/hook.
 - Ad-hoc `fetch` stream readers in components instead of using a module stream helper.
 - Adding a new state management library or pattern without first checking whether an existing pattern (Zustand, Query, XState) fits.
+- Treating `src/lib/error-codes.ts` as loosely aligned with backend instead of a strict mirror; or adding a backend code without updating EN + FR `errors.json` in the same change.
+- Reading a `VITE_*` env key in code without declaring it in `src/vite-env.d.ts`.
+- Mixing the two feature-flag layers: shared rollout flags must live in `src/config/*Features.ts`, module state-migration flags must live in `<module>/features.ts`.
+- Mounting the conversation-v2 stream connection hook anywhere other than the app shell, or opening a second per-session `EventSource` for v2.
+- Changing the browser-session client viewport constants without updating the backend Playwright viewport in the same change.
+- Assuming `PulseProgress` is the canonical CoT indicator — it is `ThinkingIndicator`.
+- Assuming deployed-app sharing UI is live — it is currently commented out in `conversation-v2/RightPanel`.
+- Treating the generated widget template as React; importing JSX/hooks into `agent/constants/widget-template.ts`.
+- Importing `@novnc/novnc` (`RFB`) as a static document viewer; it is a signed live-remote-browser session.

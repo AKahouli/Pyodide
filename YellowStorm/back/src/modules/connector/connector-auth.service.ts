@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../logger';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 import { UserService } from '../user/user.service';
@@ -13,6 +14,7 @@ export class ConnectorAuthServiceImpl implements ConnectorAuthService {
     private readonly credentialService: ConnectorCredentialService,
     private readonly userService: UserService,
     private readonly logger: LoggerService,
+    @Optional() private readonly configService?: ConfigService,
   ) {
     this.logger.setContext(ConnectorAuthServiceImpl.name);
   }
@@ -98,6 +100,16 @@ export class ConnectorAuthServiceImpl implements ConnectorAuthService {
 
     const config = connector.runtimeAuthConfig || {};
     const strategy = (config.strategy as string) || 'http_header_bearer';
+
+    if (connector.authSourceType === 'server_config') {
+      if (config.secretKey !== 'playbook_mcp_ingress') return empty;
+      const token = this.configService?.get<string>('playbook-flow.mcpIngressToken', '') ?? '';
+      if (!token) {
+        this.logger.warn('Playbook MCP ingress token is not configured');
+        return empty;
+      }
+      return { headers: { 'X-Playbook-MCP-Token': token }, env: {} };
+    }
 
     if (connector.authSourceType === 'connected_app') {
       const appKey = connector.connectedAppKey;

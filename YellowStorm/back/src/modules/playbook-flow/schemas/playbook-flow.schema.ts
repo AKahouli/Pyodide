@@ -182,6 +182,9 @@ export class Flow {
   @Prop({ required: true, type: String })
   ownerId!: string;
 
+  @Prop({ required: false, type: String })
+  assistantOperationId?: string | null;
+
   @Prop({ required: true, type: Number, default: 1 })
   schemaVersion!: number;
 
@@ -249,6 +252,14 @@ export class Flow {
 }
 
 export const FlowSchema = SchemaFactory.createForClass(Flow);
+FlowSchema.index(
+  { assistantOperationId: 1 },
+  {
+    name: 'assistantOperationId_unique_string',
+    unique: true,
+    partialFilterExpression: { assistantOperationId: { $type: 'string' } },
+  },
+);
 
 FlowSchema.index({ ownerId: 1, updatedAt: -1 });
 FlowSchema.index({ ownerId: 1, name: 1 }, { unique: true });

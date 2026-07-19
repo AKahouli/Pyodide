@@ -98,7 +98,6 @@ import {
   AgentTypesPage,
   DefaultAgentsPage,
   PlaybookPromptsPage,
-  PlaybookSettingsPage,
   WorkspaceSettingsPage,
   TeamAutoBuilderPage,
   PermissionGuard,
@@ -324,11 +323,7 @@ export const router = createHashRouter([
           { path: "system", element: <SystemPage /> },
           {
             path: 'playbook-settings',
-            element: (
-              <PermissionGuard permissions={['system.maintenance', 'system.*', '*']}>
-                <PlaybookSettingsPage />
-              </PermissionGuard>
-            ),
+            element: <Navigate to="/admin/playbook-prompts" replace />,
           },
           {
             path: 'workspace-settings',

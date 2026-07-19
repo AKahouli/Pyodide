@@ -1,8 +1,40 @@
-import { describe, expect, it } from 'vitest';
-import { buildIntentEdgeOptions, remapRouterConditionSourceNodes, resolveIntentNodeSemantics, shouldAutoLayoutAfterConstruction } from './PlaybookCanvasPage';
+import { describe, expect, it, vi } from 'vitest';
+import { buildIntentEdgeOptions, hydrateAssistantOperationHandoff, remapRouterConditionSourceNodes, resolveIntentNodeSemantics, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
+
+describe('shouldBlockCanvasMutationShortcut', () => {
+  it('blocks undo, redo, cut, and paste shortcuts during direct construction', () => {
+    for (const key of ['z', 'y', 'x', 'v']) {
+      expect(shouldBlockCanvasMutationShortcut({ key, ctrlKey: true, metaKey: false }, true)).toBe(true);
+    }
+    expect(shouldBlockCanvasMutationShortcut({ key: 'c', ctrlKey: true, metaKey: false }, true)).toBe(false);
+    expect(shouldBlockCanvasMutationShortcut({ key: 'z', ctrlKey: true, metaKey: false }, false)).toBe(false);
+  });
+});
+
+describe('hydrateAssistantOperationHandoff', () => {
+  it('surfaces status hydration failures without consuming the operation', async () => {
+    const consume = vi.fn();
+    await expect(hydrateAssistantOperationHandoff(
+      'playbook-1',
+      'operation-1',
+      vi.fn().mockRejectedValue(new Error('Operation unavailable')),
+      consume,
+    )).rejects.toThrow('Operation unavailable');
+    expect(consume).not.toHaveBeenCalled();
+  });
+
+  it('surfaces stream failures so the handoff URL can be retained', async () => {
+    await expect(hydrateAssistantOperationHandoff(
+      'playbook-1',
+      'operation-1',
+      vi.fn().mockResolvedValue({ operationId: 'operation-1', playbookId: 'playbook-1', baseDefinitionRevision: 4 }),
+      vi.fn().mockResolvedValue({ status: 'failed', error: 'Stream failed' }),
+    )).rejects.toThrow('Stream failed');
+  });
+});
 
 describe('buildCanvasJudgeStateMap', () => {
   it('prefers an evaluated iteration over a stale evaluating iteration for the same task', () => {

@@ -40,7 +40,8 @@ function getAdaptiveDebounceMs(params: {
   return Math.min(nextDelay, maxDelay);
 }
 
-export function useAutosave() {
+export function useAutosave(options?: { paused?: boolean }) {
+  const paused = options?.paused === true;
   const isDirty = useIsDirty();
   const isSaving = useIsSaving();
   const dirtyVersion = useDirtyVersion();
@@ -96,6 +97,10 @@ export function useAutosave() {
   }, [autosaveActor, clearTimer, lastAutosaveDurationMs, notifySaveFailure, saveCurrentPlaybook]);
 
   useEffect(() => {
+    if (paused) {
+      clearTimer();
+      return;
+    }
     if (!isDirty || dirtyVersion === 0) return;
 
     const now = Date.now();
@@ -127,6 +132,7 @@ export function useAutosave() {
     isDirty,
     isSaving,
     lastAutosaveDurationMs,
+    paused,
     setPendingAutosaveAfterCurrent,
   ]);
 

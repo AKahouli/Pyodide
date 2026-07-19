@@ -100,7 +100,8 @@ import {
   createIntentSuggestionBindingId,
   createIntentSuggestionNodeId,
 } from '../utils/intent-application-key';
-import { appendDesignMessage, cancelPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybookRepeatability, requestPlaybookNodeAdvisor, startPlaybookIntentConstruction, streamPlaybookIntentConstruction } from '../api';
+import { appendDesignMessage, cancelPlaybookIntentConstruction, discardPlaybookIntentConstruction, fetchPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybookRepeatability, requestPlaybookNodeAdvisor, startAdvisorRemediationConstruction, startPlaybookIntentConstruction, streamPlaybookIntentConstruction } from '../api';
+import { playbookFeatures } from '../features';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
 import type {
   PlaybookTask,
@@ -112,7 +113,9 @@ import type {
   PlaybookIntentImageInput,
   PlaybookIntentDesignResponse,
   PlaybookIntentConstructionStatus,
+  PlaybookIntentConstructionStartResponse,
   PlaybookIntentTraceResponse,
+  PlaybookUndoSnapshot,
   PlaybookTrigger,
   InterruptType,
   PlaybookIntentTaskDraft,
@@ -166,6 +169,28 @@ export function shouldAutoLayoutAfterConstruction(
   currentStatus: PlaybookIntentConstructionStatus,
 ): boolean {
   return previousStatus !== 'completed' && currentStatus === 'completed';
+}
+
+export function shouldBlockCanvasMutationShortcut(
+  event: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'key'>,
+  constructionActive: boolean,
+): boolean {
+  if (!constructionActive || (!event.ctrlKey && !event.metaKey)) return false;
+  return ['z', 'y', 'x', 'v'].includes(event.key.toLowerCase());
+}
+
+export async function hydrateAssistantOperationHandoff(
+  playbookId: string,
+  operationId: string,
+  fetchOperation: typeof fetchPlaybookIntentConstruction,
+  consumeOperation: (operation: PlaybookIntentConstructionStartResponse) => Promise<{ status: string; error?: string }>,
+): Promise<void> {
+  const operation = await fetchOperation(playbookId, operationId);
+  const result = await consumeOperation({
+    ...operation,
+    constructionId: operation.operationId ?? operation.constructionId,
+  });
+  if (result.status === 'failed') throw new Error(result.error || 'Assistant operation could not be loaded');
 }
 
 export function buildIntentEdgeOptions(
@@ -357,7 +382,6 @@ function PlaybookCanvasInner() {
     artifactKindMismatch,
   } = usePlaybookCanvas(triggerNodeActions);
 
-  const { saveNow, hasUnboundRequiredPorts, hasIncompleteBindings } = useAutosave();
   const saveCurrentPlaybook = usePlaybookStore((state) => state.saveCurrentPlaybook);
 
   const [editingTask, setEditingTask] = useState<PlaybookTask | null>(null);
@@ -402,31 +426,43 @@ function PlaybookCanvasInner() {
   const importPlaybookDefinition = usePlaybookStore((s) => s.importPlaybookDefinition);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(true);
   const assessPlaybookIntentDesign = usePlaybookStore((s) => s.assessPlaybookIntentDesign);
-  const requestPlaybookIntent = usePlaybookStore((s) => s.requestPlaybookIntent);
-  const previewAdvisorRemediation = usePlaybookStore((s) => s.previewAdvisorRemediation);
   const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
   const defaultAgents = useDefaultAgents();
-  const addIntentSuggestionHistoryEntry = usePlaybookStore((s) => s.addIntentSuggestionHistoryEntry);
   const intentHistory = useIntentSuggestionHistory(id);
   const [intentValue, setIntentValue] = useState('');
   const [intentSuggestions, setIntentSuggestions] = useState<PlaybookIntentSuggestion[]>([]);
   const [lastIntentSuggestions, setLastIntentSuggestions] = useState<PlaybookIntentSuggestion[]>([]);
   const [intentLoading, setIntentLoading] = useState(false);
   const [intentError, setIntentError] = useState('');
-  const [intentAutoApply, setIntentAutoApply] = useState(false);
   const [intentDesign, setIntentDesign] = useState<PlaybookIntentDesignResponse | null>(null);
   const [intentTraces, setIntentTraces] = useState<PlaybookIntentTraceResponse | null>(null);
   const [intentTracesLoading, setIntentTracesLoading] = useState(false);
-  const [constructionStatus, setConstructionStatus] = useState<PlaybookIntentConstructionStatus>('idle');
-  const [constructionProgress, setConstructionProgress] = useState('');
-  const [constructionId, setConstructionId] = useState<string | null>(null);
+  const constructionStatus = usePlaybookUiStore((s) => s.assistantConstructionStatus);
+  const constructionProgress = usePlaybookUiStore((s) => s.assistantConstructionProgress);
+  const constructionId = usePlaybookUiStore((s) => s.assistantConstructionId);
+  const setConstructionStatus = usePlaybookUiStore((s) => s.setAssistantConstructionStatus);
+  const setConstructionProgress = usePlaybookUiStore((s) => s.setAssistantConstructionProgress);
+  const setConstructionId = usePlaybookUiStore((s) => s.setAssistantConstructionId);
   const constructionAbortRef = useRef<AbortController | null>(null);
+  const consumedAssistantOperationRef = useRef<string | null>(null);
+  const constructionUndoCheckpointRef = useRef<{
+    undoStack: PlaybookUndoSnapshot[];
+    snapshot: PlaybookUndoSnapshot;
+  } | null>(null);
   const designerIntentRef = useRef('');
   const designerIntentImagesRef = useRef<PlaybookIntentImageInput[]>([]);
   const [designerSidebarWidth, setDesignerSidebarWidth] = useState(0);
-  const autoLayoutAfterGenerationRef = useRef<(() => void) | null>(null);
   const previousConstructionStatusRef = useRef<PlaybookIntentConstructionStatus>('idle');
   const autoIntentRef = useRef<string | null>(null);
+  const constructionActive = constructionStatus === 'starting' || constructionStatus === 'streaming';
+  const assistantOperationId = usePlaybookUiStore((s) => s.assistantOperationId);
+  const assistantOperationTarget = usePlaybookUiStore((s) => s.assistantOperationTarget);
+  const assistantPreviewStatus = usePlaybookUiStore((s) => s.assistantPreviewStatus);
+  const assistantBaseDefinitionRevision = usePlaybookUiStore((s) => s.assistantBaseDefinitionRevision);
+  const setAssistantOperation = usePlaybookUiStore((s) => s.setAssistantOperation);
+  const setAssistantPreviewStatus = usePlaybookUiStore((s) => s.setAssistantPreviewStatus);
+  const clearAssistantOperation = usePlaybookUiStore((s) => s.clearAssistantOperation);
+  const { saveNow, hasUnboundRequiredPorts, hasIncompleteBindings } = useAutosave({ paused: constructionActive || assistantPreviewStatus === 'ready' || assistantPreviewStatus === 'applying' || assistantPreviewStatus === 'discarding' });
 
   const [recentlyChangedNodeIds, setRecentlyChangedNodeIds] = useState<string[]>([]);
   const [recentlyChangedEdgeIds, setRecentlyChangedEdgeIds] = useState<string[]>([]);
@@ -762,6 +798,10 @@ function PlaybookCanvasInner() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const isMeta = e.metaKey || e.ctrlKey;
+      if (shouldBlockCanvasMutationShortcut(e, constructionActive)) {
+        e.preventDefault();
+        return;
+      }
       if (isMeta && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
         if (canUndo) undo();
@@ -801,7 +841,7 @@ function PlaybookCanvasInner() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [canUndo, canRedo, undo, redo, copySelection, cutSelection, pasteClipboard]);
+  }, [canUndo, canRedo, constructionActive, undo, redo, copySelection, cutSelection, pasteClipboard]);
 
   // Refresh usage indicator when execution ends, generation or design completes
   const prevIsGenerating = useRef(isGenerating);
@@ -1472,13 +1512,15 @@ function PlaybookCanvasInner() {
 
   const handleApplyIntentSuggestion = useCallback((
     suggestion: PlaybookIntentSuggestion,
-    options?: { replaceAll?: boolean; expectedDefinitionRevision?: number; save?: boolean; clearSuggestions?: boolean; focus?: boolean; applicationKey?: string; focusMode?: 'changed-area' | 'construction-frontier'; connectAnchors?: boolean },
+    options?: { replaceAll?: boolean; expectedDefinitionRevision?: number; save?: boolean; clearSuggestions?: boolean; focus?: boolean; applicationKey?: string; focusMode?: 'changed-area' | 'construction-frontier'; connectAnchors?: boolean; captureHistory?: boolean; confirmDeletes?: boolean },
   ) => {
     if (!playbook) return;
     const shouldSave = options?.save ?? true;
     const shouldClearSuggestions = options?.clearSuggestions ?? true;
     const shouldFocus = options?.focus ?? true;
     const shouldConnectAnchors = options?.connectAnchors ?? true;
+    const shouldCaptureHistory = options?.captureHistory ?? true;
+    const shouldConfirmDeletes = options?.confirmDeletes ?? true;
     const focusMode = options?.focusMode ?? 'changed-area';
     const suggestionApplicationKey = options?.applicationKey ?? createIntentSuggestionApplicationKey(playbook.id, suggestion);
     const latestPlaybook = usePlaybookStore.getState().currentPlaybook;
@@ -1696,7 +1738,7 @@ function PlaybookCanvasInner() {
 
     const commitGraph = (nextTasks: PlaybookTask[], nextEdges: Edge[], nextDataBindings: DataBinding[]) => {
       const layoutedTasks = autoLayoutTasks(nextTasks, flowEdgesToPlaybookEdges(nextEdges));
-      captureSnapshot();
+      if (shouldCaptureHistory) captureSnapshot();
       setNodes(tasksToNodes(layoutedTasks));
       setEdges(nextEdges);
       updateTasks(layoutedTasks);
@@ -1735,7 +1777,7 @@ function PlaybookCanvasInner() {
         }]
       : [];
 
-    if (suggestion.kind === 'workflow_plan' && suggestion.impact.nodesToDelete > 0 && !window.confirm(t('intentBar.confirmDeletePlan'))) {
+    if (shouldConfirmDeletes && suggestion.kind === 'workflow_plan' && suggestion.impact.nodesToDelete > 0 && !window.confirm(t('intentBar.confirmDeletePlan'))) {
       return;
     }
 
@@ -2718,38 +2760,142 @@ function PlaybookCanvasInner() {
     if (id && constructionId) {
       void cancelPlaybookIntentConstruction(id, constructionId);
     }
-    setConstructionStatus('cancelled');
     setConstructionProgress('');
-    setIntentLoading(false);
   }, [constructionId, id]);
+
+  const captureConstructionUndoCheckpoint = useCallback(() => {
+    const state = usePlaybookStore.getState();
+    const current = state.currentPlaybook;
+    if (!current) return;
+    const checkpoint = {
+      undoStack: structuredClone(state.undoStack),
+      snapshot: {
+        tasks: structuredClone(current.tasks),
+        edges: structuredClone(current.edges),
+        dataBindings: structuredClone(current.dataBindings ?? []),
+        name: current.name,
+        workspaces: [...current.workspaces],
+      },
+    };
+    constructionUndoCheckpointRef.current = checkpoint;
+    usePlaybookStore.setState({
+      undoStack: [...checkpoint.undoStack, checkpoint.snapshot],
+      redoStack: [],
+    });
+  }, []);
+
+  const stabilizeConstructionUndoCheckpoint = useCallback(() => {
+    const checkpoint = constructionUndoCheckpointRef.current;
+    if (!checkpoint) return;
+    usePlaybookStore.setState({
+      undoStack: [...checkpoint.undoStack, structuredClone(checkpoint.snapshot)],
+      redoStack: [],
+    });
+    constructionUndoCheckpointRef.current = null;
+  }, []);
+
+  const rollbackIntentConstruction = useCallback(() => {
+    const checkpoint = constructionUndoCheckpointRef.current;
+    if (!checkpoint) return;
+    usePlaybookStore.setState((state) => ({
+      currentPlaybook: state.currentPlaybook
+        ? {
+            ...state.currentPlaybook,
+            tasks: structuredClone(checkpoint.snapshot.tasks),
+            edges: structuredClone(checkpoint.snapshot.edges),
+            dataBindings: structuredClone(checkpoint.snapshot.dataBindings),
+            name: checkpoint.snapshot.name,
+            workspaces: [...checkpoint.snapshot.workspaces],
+          }
+        : null,
+      undoStack: structuredClone(checkpoint.undoStack),
+      redoStack: [],
+      isDirty: false,
+    }));
+    constructionUndoCheckpointRef.current = null;
+  }, []);
+
+  const finalizeIntentConstruction = useCallback(async (baseDefinitionRevision: number, operationId: string) => {
+    await saveCurrentPlaybook({
+      expectedDefinitionRevision: baseDefinitionRevision,
+      clientMutationId: `intent-construction-${operationId}`,
+      assistantOperationId: operationId,
+    });
+    const state = usePlaybookStore.getState();
+    if (state.isDirty || state.isSaving) {
+      throw new Error(t('intentBar.error'));
+    }
+    stabilizeConstructionUndoCheckpoint();
+  }, [saveCurrentPlaybook, stabilizeConstructionUndoCheckpoint, t]);
+
+  const markAdvisorPreviewReady = useCallback((operationId: string, baseDefinitionRevision: number) => {
+    setAssistantOperation({ id: operationId, target: 'advisor_preview', baseDefinitionRevision, status: 'ready' });
+  }, [setAssistantOperation]);
+
+  const applyAdvisorPreview = useCallback(async () => {
+    if (!assistantOperationId || assistantOperationTarget !== 'advisor_preview' || assistantBaseDefinitionRevision == null) return;
+    setAssistantPreviewStatus('applying');
+    try {
+      await saveCurrentPlaybook({
+        expectedDefinitionRevision: assistantBaseDefinitionRevision,
+        clientMutationId: `advisor-preview-${assistantOperationId}`,
+        assistantOperationId,
+        assistantOperationTarget: 'advisor_preview',
+      });
+      const state = usePlaybookStore.getState();
+      if (state.isDirty || state.isSaving) throw new Error(t('intentBar.error'));
+      stabilizeConstructionUndoCheckpoint();
+      clearAssistantOperation();
+      if (state.currentPlaybook?.id && state.currentPlaybook.id !== id) {
+        navigate(`/playbooks/${state.currentPlaybook.id}`, { replace: true });
+      }
+    } catch (error) {
+      setAssistantPreviewStatus('ready');
+      showError(error instanceof Error ? error.message : t('intentBar.error'));
+    }
+  }, [assistantBaseDefinitionRevision, assistantOperationId, assistantOperationTarget, clearAssistantOperation, id, navigate, saveCurrentPlaybook, setAssistantPreviewStatus, showError, stabilizeConstructionUndoCheckpoint, t]);
+
+  const discardAdvisorPreview = useCallback(async () => {
+    if (!id || !assistantOperationId || assistantOperationTarget !== 'advisor_preview') return;
+    setAssistantPreviewStatus('discarding');
+    try {
+      await discardPlaybookIntentConstruction(id, assistantOperationId);
+      rollbackIntentConstruction();
+      setConstructionStatus('cancelled');
+      setConstructionProgress('');
+      clearAssistantOperation();
+    } catch (error) {
+      setAssistantPreviewStatus('ready');
+      showError(error instanceof Error ? error.message : t('intentBar.error'));
+    }
+  }, [assistantOperationId, assistantOperationTarget, clearAssistantOperation, id, rollbackIntentConstruction, setAssistantPreviewStatus, showError, t]);
 
   const getCurrentDefinitionRevision = useCallback(() => {
     return usePlaybookStore.getState().currentPlaybook?.definitionRevision ?? (playbook?.definitionRevision ?? 0);
   }, [playbook?.definitionRevision]);
 
-  const { handleSubmitIntent, handleSubmitIntentText, handleForceGenerateIntentText, handleApplyAdvisorIntent } = usePlaybookIntentFlow({
+  const { handleSubmitIntent, handleSubmitIntentText, handleForceGenerateIntentText, handleApplyAdvisorIntent, consumePlaybookConstruction } = usePlaybookIntentFlow({
     id,
     playbook,
     selectedStepId,
     isDirty,
     intentValue,
-    intentAutoApply,
     intentDesign,
     selectStep,
     assessPlaybookIntentDesign,
-    requestPlaybookIntent,
     startPlaybookIntentConstruction,
     streamPlaybookIntentConstruction,
     saveNow,
-    saveConstruction: saveCurrentPlaybook,
+    captureConstructionSnapshot: captureConstructionUndoCheckpoint,
+    rollbackConstruction: rollbackIntentConstruction,
+    finalizeConstruction: finalizeIntentConstruction,
     handleApplyIntentSuggestion,
     setIntentLoading,
     setIntentError,
     setIntentDesign,
     setIntentSuggestions,
     setLastIntentSuggestions,
-    addIntentSuggestionHistoryEntry,
-    previewAdvisorRemediation,
+    startAdvisorRemediationConstruction,
     showError,
     showWarning,
     getCurrentDefinitionRevision,
@@ -2757,7 +2903,28 @@ function PlaybookCanvasInner() {
     setConstructionProgress,
     setConstructionId,
     constructionAbortRef,
+    realtimeConstructionEnabled: playbookFeatures.mcpAssistantEnabled,
+    setPreviewConstructionReady: markAdvisorPreviewReady,
   });
+
+  useEffect(() => {
+    const operationId = searchParams.get('assistantOperation');
+    if (!id || !playbook || !operationId || consumedAssistantOperationRef.current === operationId) return;
+    consumedAssistantOperationRef.current = operationId;
+    void hydrateAssistantOperationHandoff(id, operationId, fetchPlaybookIntentConstruction, consumePlaybookConstruction).then(() => {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete('assistantOperation');
+        return next;
+      }, { replace: true });
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : t('intentBar.error');
+      setConstructionStatus('failed');
+      setConstructionProgress('');
+      setIntentError(message);
+      showError(message);
+    });
+  }, [consumePlaybookConstruction, id, playbook, searchParams, setConstructionProgress, setConstructionStatus, setSearchParams, showError, t]);
 
   const handleSubmitIntentFromDesigner = useCallback(async (intentText: string, visibleUserQuery: string, images?: PlaybookIntentImageInput[]) => {
     designerIntentRef.current = intentText;
@@ -2896,18 +3063,12 @@ function PlaybookCanvasInner() {
   });
 
   useEffect(() => {
-    autoLayoutAfterGenerationRef.current = handleAutoLayout;
-  }, [handleAutoLayout]);
-
-  useEffect(() => {
     const previousStatus = previousConstructionStatusRef.current;
     previousConstructionStatusRef.current = constructionStatus;
     if (!shouldAutoLayoutAfterConstruction(previousStatus, constructionStatus)) {
       return;
     }
-    autoLayoutAfterGenerationRef.current?.();
-    // Re-fit the viewport once the new layout commits so the user sees the
-    // whole generated graph, not the last streamed node they were watching.
+    // Each streamed delta is already laid out; completion only reframes the final graph.
     let frameOne = 0;
     let frameTwo = 0;
     frameOne = window.requestAnimationFrame(() => {
@@ -3316,9 +3477,10 @@ function PlaybookCanvasInner() {
                   fitView
                   selectionOnDrag
                   selectionKeyCode="Shift"
-                  nodesDraggable={!isSaving}
-                  nodesConnectable={!isSaving}
-                  elementsSelectable={!isSaving}
+                  deleteKeyCode={constructionActive ? null : ['Backspace', 'Delete']}
+                  nodesDraggable={!isSaving && !constructionActive}
+                  nodesConnectable={!isSaving && !constructionActive}
+                  elementsSelectable={!isSaving && !constructionActive}
                   onDrop={handleCanvasDrop}
                   onDragOver={(e) => { e.preventDefault(); }}
                 >
@@ -3371,7 +3533,7 @@ function PlaybookCanvasInner() {
                   skillsOpen={skillSidebarOpen}
                   canUndo={canUndo}
                   canRedo={canRedo}
-                  disabled={isSaving}
+                  disabled={isSaving || constructionActive}
                   onDownloadAllResults={handleDownloadAllResults}
                   onToggleDataBindings={() => setDataBindingsVisible((current) => !current)}
                   dataBindingsVisible={dataBindingsVisible}
@@ -3405,16 +3567,19 @@ function PlaybookCanvasInner() {
               playbookId={id}
               intentDesign={intentDesign}
               intentLoading={intentLoading}
-              autoApply={intentAutoApply}
               history={intentHistory}
               constructionStatus={constructionStatus}
               intentTraces={intentTraces}
               intentTracesLoading={intentTracesLoading}
               onSubmitDesignIntent={handleSubmitIntentFromDesigner}
               onAnswerDesignIntent={handleAnswerIntentFromDesigner}
-              onAutoApplyChange={setIntentAutoApply}
-              onApplyHistorySuggestion={(suggestion) => handleApplyIntentSuggestion(suggestion, { replaceAll: true })}
+              onApplyHistorySuggestion={constructionActive
+                ? undefined
+                : (suggestion) => handleApplyIntentSuggestion(suggestion, { replaceAll: true })}
               onCancelConstruction={handleCancelIntentConstruction}
+              assistantPreviewStatus={assistantPreviewStatus}
+              onApplyAssistantPreview={() => { void applyAdvisorPreview(); }}
+              onDiscardAssistantPreview={() => { void discardAdvisorPreview(); }}
               onWidthChange={setDesignerSidebarWidth}
               onOpenIntentTraces={handleOpenIntentTraces}
             />

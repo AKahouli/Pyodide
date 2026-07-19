@@ -51,7 +51,7 @@ function buildSelectableModels(models: AdminModelResponse[], selectedModelId: st
   return [selectedModel, ...activeModels.filter((model) => model.id !== selectedModel.id)];
 }
 
-export function PlaybookSettingsPage() {
+export function PlaybookSettingsSection() {
   const { t } = useModuleTranslation('admin');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -166,11 +166,6 @@ export function PlaybookSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{t('playbookSettings.title')}</h1>
-        <p className="text-sm text-muted-foreground">{t('playbookSettings.description')}</p>
-      </div>
-
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

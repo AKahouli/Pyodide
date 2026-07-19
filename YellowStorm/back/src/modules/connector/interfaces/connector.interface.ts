@@ -59,6 +59,8 @@ export interface IConnectorResponse {
   actions: IConnectorActionResponse[];
   referencedSkillIds: string[];
   isActive: boolean;
+  isSystem?: boolean;
+  isHidden?: boolean;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;

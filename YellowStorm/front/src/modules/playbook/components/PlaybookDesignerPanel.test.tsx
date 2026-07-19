@@ -1,9 +1,9 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
-import type { DesignMessage, HitlFeedbackScope, InterruptType, Playbook, PlaybookExecution, PlaybookIntentDesignResponse, PlaybookIntentSuggestion } from '../types';
+import type { DesignMessage, HitlFeedbackScope, IntentSuggestionHistoryEntry, InterruptType, Playbook, PlaybookExecution, PlaybookIntentDesignResponse, PlaybookIntentSuggestion } from '../types';
 
 type StoreSnapshot = {
   currentPlaybook: Playbook | null;
@@ -22,6 +22,7 @@ type StoreSnapshot = {
 
 const createHitlBlockerMock = vi.fn();
 const updateNodeHitlPolicyMock = vi.fn();
+let isDesigning = false;
 
 const storeState: StoreSnapshot = {
   currentPlaybook: null,
@@ -101,7 +102,7 @@ vi.mock('../store', () => ({
   }),
   useDesignMessages: () => storeState.designMessages,
   useDesignMessagesLoading: () => false,
-  useIsDesigning: () => false,
+  useIsDesigning: () => isDesigning,
   useDesignerOpen: () => storeState.designerOpen,
   useCopilotMode: () => storeState.copilotMode,
   useCurrentExecution: () => storeState.currentExecution,
@@ -254,6 +255,7 @@ function createDeferred() {
 describe('PlaybookDesignerPanel HITL feedback scope', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    isDesigning = false;
     storeState.currentPlaybook = buildPlaybook();
     storeState.currentExecution = null;
     storeState.designMessages = [];
@@ -809,6 +811,47 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     const handle = container.querySelector('.cursor-ew-resize') as HTMLElement;
     const panel = handle.parentElement as HTMLElement;
     expect(panel.style.width).toBe('576px');
+    expect(panel.style.maxWidth).toBe('100vw');
+  });
+
+  it('contains keyboard interaction in the mobile Designer dialog', async () => {
+    const matchMediaSpy = vi.spyOn(window, 'matchMedia').mockImplementation(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }) as unknown as MediaQueryList);
+
+    const opener = document.createElement('button');
+    document.body.appendChild(opener);
+    opener.focus();
+    const { rerender } = render(<PlaybookDesignerPanel playbookId="playbook-1" />);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveClass('fixed', 'inset-0', 'sm:absolute');
+    expect(dialog).toHaveFocus();
+
+    const clientRectsSpy = vi.spyOn(HTMLElement.prototype, 'getClientRects').mockReturnValue([{} as DOMRect] as unknown as DOMRectList);
+    const controls = within(dialog).getAllByRole('button').filter((button) => !button.hasAttribute('disabled'));
+    const firstControl = controls[0];
+    const lastControl = controls[controls.length - 1];
+
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+    expect(lastControl).toHaveFocus();
+    fireEvent.keyDown(lastControl, { key: 'Tab' });
+    expect(firstControl).toHaveFocus();
+    fireEvent.keyDown(firstControl, { key: 'Tab', shiftKey: true });
+    expect(lastControl).toHaveFocus();
+
+    document.body.focus();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(storeState.setDesignerOpen).toHaveBeenCalledWith(false);
+    storeState.designerOpen = false;
+    rerender(<PlaybookDesignerPanel playbookId="playbook-1" />);
+    await waitFor(() => expect(opener).toHaveFocus());
+    opener.remove();
+    clientRectsSpy.mockRestore();
+    matchMediaSpy.mockRestore();
   });
 
   it('keeps multiline sidebar prompts when Alt+Enter is used', async () => {
@@ -883,15 +926,12 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     ]);
   });
 
-  it('renders sidebar auto-apply and history controls', async () => {
-    const onAutoApplyChange = vi.fn();
+  it('renders sidebar history controls without auto-apply', async () => {
     const onApplyHistorySuggestion = vi.fn();
     storeState.copilotMode = 'design';
 
     render(<PlaybookDesignerPanel
       playbookId="playbook-1"
-      autoApply={false}
-      onAutoApplyChange={onAutoApplyChange}
       onApplyHistorySuggestion={onApplyHistorySuggestion}
       history={[{
         id: 'history-1',
@@ -923,8 +963,7 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
       }]}
     />);
 
-    await userEvent.click(screen.getByRole('switch', { name: 'intentBar.actions.autoApply' }));
-    expect(onAutoApplyChange).toHaveBeenCalledWith(true);
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /intentBar.history.title/ }));
     await userEvent.click(screen.getByRole('button', { name: /Improve routing/ }));
     expect(onApplyHistorySuggestion).toHaveBeenCalledWith(expect.objectContaining({ id: 'suggestion-1' }));
@@ -964,5 +1003,84 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'intentBar.actions.stop' }));
     expect(onCancelConstruction).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the composer usable when the unrelated legacy design operation is stale', async () => {
+    const onSubmitDesignIntent = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    isDesigning = true;
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" onSubmitDesignIntent={onSubmitDesignIntent} />);
+
+    await user.type(screen.getByPlaceholderText('designer.inputPlaceholder'), 'Add a QA step');
+    await user.click(screen.getByRole('button', { name: 'designer.send' }));
+
+    expect(onSubmitDesignIntent).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the composer disabled during an active intent request', () => {
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel playbookId="playbook-1" intentLoading onSubmitDesignIntent={vi.fn()} />);
+
+    expect(screen.getByPlaceholderText('designer.inputPlaceholder')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'designer.send' })).toBeDisabled();
+  });
+
+  it('does not show an apply or discard gate after direct construction completes', () => {
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel
+      playbookId="playbook-1"
+      constructionStatus="completed"
+    />);
+
+    expect(screen.queryByRole('button', { name: 'intentBar.preview.apply' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'intentBar.preview.discard' })).not.toBeInTheDocument();
+  });
+
+  it('keeps explicit Apply and Discard for an Advisor preview', async () => {
+    const onApply = vi.fn();
+    const onDiscard = vi.fn();
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel
+      playbookId="playbook-1"
+      constructionStatus="completed"
+      assistantPreviewStatus="ready"
+      onApplyAssistantPreview={onApply}
+      onDiscardAssistantPreview={onDiscard}
+    />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'intentBar.preview.apply' }));
+    await userEvent.click(screen.getByRole('button', { name: 'intentBar.preview.discard' }));
+
+    expect(onApply).toHaveBeenCalledTimes(1);
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps only the stop action while direct construction is streaming', () => {
+    storeState.copilotMode = 'design';
+
+    render(<PlaybookDesignerPanel
+      playbookId="playbook-1"
+      constructionStatus="streaming"
+      onCancelConstruction={vi.fn()}
+      onApplyHistorySuggestion={vi.fn()}
+      history={[{
+        id: 'history-streaming',
+        playbookId: 'playbook-1',
+        playbookName: 'Test',
+        intent: 'Replace workflow',
+        appliedAt: Date.now(),
+        suggestion: { id: 'suggestion-streaming', kind: 'workflow_plan', changes: [], impact: {} },
+      } as unknown as IntentSuggestionHistoryEntry]}
+    />);
+
+    expect(screen.queryByRole('button', { name: 'intentBar.preview.apply' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'intentBar.preview.discard' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'intentBar.actions.stop' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /intentBar.history.title/ })).toBeDisabled();
   });
 });

@@ -242,6 +242,14 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_MAX_CONCURRENT_PER_PROVIDER: Joi.number().min(1).max(500).default(25),
   PLAYBOOK_MAX_CONCURRENT_PER_MODEL: Joi.number().min(1).max(500).default(10),
   PLAYBOOK_ASYNC_DESIGN_ENABLED: Joi.boolean().default(false),
+  PLAYBOOK_MCP_ASSISTANT_ENABLED: Joi.boolean().default(false),
+  PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),
+  PLAYBOOK_MCP_INGRESS_TOKEN: Joi.string().allow('').when('PLAYBOOK_MCP_CONNECTOR_RECONCILIATION_ENABLED', {
+    is: true,
+    then: Joi.string().min(16).required(),
+    otherwise: Joi.string().allow('').default(''),
+  }),
+  PLAYBOOK_MCP_CONNECTOR_RECONCILIATION_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_MAX_CONCURRENT_GLOBAL_DESIGN_OPERATIONS: Joi.number().min(1).max(100).default(10),
   PLAYBOOK_MAX_CONCURRENT_USER_DESIGN_OPERATIONS: Joi.number().min(1).max(50).default(3),
   // Telegram

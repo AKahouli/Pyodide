@@ -35,7 +35,6 @@ import type {
   OutputFormatTemplate,
   AdvisorRemediationItem,
   AdvisorRemediationPreviewRequest,
-  AdvisorRemediationPreviewResponse,
   AdvisorScriptReplacementApplyRequest,
   AdvisorScriptReplacementPreviewResponse,
   AdvisorScriptReplacementRequest,
@@ -45,7 +44,6 @@ import type {
   RepeatabilityTaskExecutionSummary,
   RequestPlaybookIntentData,
   PlaybookIntentDesignResponse,
-  PlaybookIntentResponse,
   PlaybookIntentTraceResponse,
   PlaybookIntentConstructionEvent,
   PlaybookIntentConstructionStartResponse,
@@ -82,7 +80,8 @@ import type {
   HitlFeedbackScope,
   HitlMemory,
   HitlPolicy,
- } from './types';
+} from './types';
+import { parsePlaybookConstructionSseBlock } from './utils/playbook-construction-sse';
 import {
   normalizePlaybook,
   taskToFlowNode,
@@ -1298,23 +1297,18 @@ export async function updatePlaybook(
 ): Promise<Playbook> {
   const body = buildPlaybookUpdateRequestBody(data);
 
-  const response = await apiClient.patch<ApiResponse<Playbook>>(
-    API_ENDPOINTS.playbooks.byId(id),
-    body,
-  );
+  const response = data.assistantOperationId
+    ? await apiClient.post<ApiResponse<Playbook>>(
+        data.assistantOperationTarget === 'advisor_preview'
+          ? API_ENDPOINTS.playbooks.intentConstructionApply(id, data.assistantOperationId)
+          : API_ENDPOINTS.playbooks.intentConstructionCommit(id, data.assistantOperationId),
+        body,
+      )
+    : await apiClient.patch<ApiResponse<Playbook>>(
+        API_ENDPOINTS.playbooks.byId(id),
+        body,
+      );
   return normalizePlaybook(response.data.data);
-}
-
-export async function requestPlaybookIntent(
-  playbookId: string,
-  data: RequestPlaybookIntentData,
-): Promise<PlaybookIntentResponse> {
-  const response = await apiClient.post<ApiResponse<PlaybookIntentResponse>>(
-    API_ENDPOINTS.playbooks.intent(playbookId),
-    data,
-    { timeout: 180000 },
-  );
-  return response.data.data;
 }
 
 export async function assessPlaybookIntentDesign(
@@ -1351,49 +1345,108 @@ export async function startPlaybookIntentConstruction(
   return response.data.data;
 }
 
+export async function fetchPlaybookIntentConstruction(playbookId: string, constructionId: string): Promise<PlaybookIntentConstructionStartResponse> {
+  const response = await apiClient.get<ApiResponse<PlaybookIntentConstructionStartResponse>>(
+    API_ENDPOINTS.playbooks.intentConstruction(playbookId, constructionId),
+  );
+  return response.data.data;
+}
+
+export async function startAdvisorRemediationConstruction(
+  playbookId: string,
+  data: AdvisorRemediationPreviewRequest & { selectedTaskId?: string; expectedDefinitionRevision: number },
+): Promise<PlaybookIntentConstructionStartResponse> {
+  const response = await apiClient.post<ApiResponse<PlaybookIntentConstructionStartResponse>>(
+    API_ENDPOINTS.playbooks.advisorRemediationConstructions(playbookId),
+    {
+      executionId: data.executionId,
+      selectedTaskId: data.selectedTaskId ?? data.targetTaskId,
+      mode: data.mode,
+      items: data.items,
+      expectedDefinitionRevision: data.expectedDefinitionRevision,
+    },
+  );
+  return response.data.data;
+}
+
+export async function discardPlaybookIntentConstruction(playbookId: string, constructionId: string): Promise<{ discarded: true }> {
+  const response = await apiClient.post<ApiResponse<{ discarded: true }>>(
+    API_ENDPOINTS.playbooks.intentConstructionDiscard(playbookId, constructionId),
+    {},
+  );
+  return response.data.data;
+}
+
+export async function revertPlaybookIntentConstruction(playbookId: string, constructionId: string): Promise<Playbook> {
+  const response = await apiClient.post<ApiResponse<Playbook>>(
+    API_ENDPOINTS.playbooks.intentConstructionRevert(playbookId, constructionId),
+    {},
+  );
+  return normalizePlaybook(response.data.data);
+}
+
+class ConstructionEventCallbackError extends Error {
+  constructor(readonly originalError: unknown) {
+    super('Construction event callback failed');
+  }
+}
+
 export async function streamPlaybookIntentConstruction(
   playbookId: string,
   constructionId: string,
   options: { after?: number; signal?: AbortSignal; onEvent: (event: PlaybookIntentConstructionEvent) => void },
 ): Promise<void> {
   const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
-  const params = options.after ? `?after=${encodeURIComponent(String(options.after))}` : '';
-  const response = await fetch(`${API_CONFIG.baseURL}${API_ENDPOINTS.playbooks.intentConstructionStream(playbookId, constructionId)}${params}`, {
-    method: 'GET',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    credentials: 'include',
-    signal: options.signal,
-  });
-  if (!response.ok || !response.body) throw new Error(`Request failed with status ${response.status}`);
+  let lastSequence = options.after ?? 0;
+  let attempts = 0;
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  const flushLine = (line: string) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
+  while (!options.signal?.aborted) {
+    const params = lastSequence > 0 ? `?after=${encodeURIComponent(String(lastSequence))}` : '';
     try {
-      options.onEvent(JSON.parse(trimmed) as PlaybookIntentConstructionEvent);
-    } catch (error) {
-      throw new Error(error instanceof Error ? `Invalid construction stream event: ${error.message}` : 'Invalid construction stream event');
-    }
-  };
+      const response = await fetch(`${API_CONFIG.baseURL}${API_ENDPOINTS.playbooks.intentConstructionStream(playbookId, constructionId)}${params}`, {
+        method: 'GET',
+        headers: token ? { Authorization: `Bearer ${token}`, 'Last-Event-ID': String(lastSequence) } : { 'Last-Event-ID': String(lastSequence) },
+        credentials: 'include',
+        signal: options.signal,
+      });
+      if (!response.ok || !response.body) throw new Error(`Request failed with status ${response.status}`);
 
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      lines.forEach(flushLine);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const flushBlock = (block: string) => {
+        const event = parsePlaybookConstructionSseBlock(block);
+        if (!event) return;
+        if (event.sequence <= lastSequence) return;
+        lastSequence = event.sequence;
+        try {
+          options.onEvent(event);
+        } catch (error) {
+          throw new ConstructionEventCallbackError(error);
+        }
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() ?? '';
+        blocks.forEach(flushBlock);
+      }
+      buffer += decoder.decode();
+      flushBlock(buffer);
+      return;
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      if (error instanceof ConstructionEventCallbackError) throw error.originalError;
+      attempts += 1;
+      if (attempts >= 3) {
+        throw new Error(error instanceof Error ? `Construction stream failed: ${error.message}` : 'Construction stream failed');
+      }
+      await new Promise((resolve) => setTimeout(resolve, attempts * 500));
     }
-  } catch (error) {
-    await reader.cancel().catch(() => undefined);
-    throw error;
   }
-  buffer += decoder.decode();
-  flushLine(buffer);
 }
 
 export async function cancelPlaybookIntentConstruction(playbookId: string, constructionId: string): Promise<{ cancelled: boolean }> {
@@ -1425,18 +1478,6 @@ export async function fetchAdvisorRemediations(
   const response = await apiClient.get<ApiResponse<AdvisorRemediationItem[]>>(
     `${API_ENDPOINTS.playbooks.byId(playbookId)}/executions/${executionId}/advisor-remediations`,
     { params },
-  );
-  return response.data.data;
-}
-
-export async function previewAdvisorRemediation(
-  playbookId: string,
-  data: AdvisorRemediationPreviewRequest,
-): Promise<AdvisorRemediationPreviewResponse> {
-  const response = await apiClient.post<ApiResponse<AdvisorRemediationPreviewResponse>>(
-    API_ENDPOINTS.playbooks.advisorRemediationPreview(playbookId),
-    data,
-    { timeout: 180000 },
   );
   return response.data.data;
 }

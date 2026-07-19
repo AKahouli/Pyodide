@@ -39,8 +39,20 @@ Before writing or reviewing code, read the guidelines for the affected area:
 
 Do not load unrelated guidelines.
 
+## Context Retrieval
+
+Use vault memory to establish durable feature context, then verify it against live repository sources before changing code.
+
+- Tier 0 tasks do not require vault retrieval unless risk or ambiguity appears.
+- Before Tier 2 or Tier 3 implementation, search the vault using task terms, likely feature slugs, modules or source paths, endpoint or contract names, and relevant error terms. Locate and read the owning canonical note when one exists before changing code.
+- For Tier 1 work, retrieve vault context when historical decisions, invariants, pitfalls, or cross-file behavior may affect correctness.
+- Prefer the owning feature, architecture, contract, decision, or convention note. Read `Agent Quick Context` first when present, then follow only directly relevant internal links.
+- Use Timeline notes only to locate canonical notes or recent routing context. Never treat a Timeline entry as the primary implementation specification.
+- After retrieval, inspect the affected code, schemas, protocols, tests, and both sides of changed boundaries. Resolve disagreement using the Source of Truth order above.
+
 ## Working Principles
 
+- Must ask me choose betwwen : finishing the work until the end without stopping unless you need to ask me for clarification OR Work step by step
 - State assumptions that affect correctness, scope, safety, or external contracts.
 - Ask only when an unresolved choice would materially change the result.
 - Implement the smallest correct change. Do not add speculative features or abstractions.
@@ -168,6 +180,8 @@ Use Obsidian memory selectively:
 
 Search before writing. Memory must be factual, concise, timestamped in UTC, and linked only when the link materially helps future work. Vault access always goes through Obsidian tools, never direct filesystem access.
 
+Canonical feature, architecture, contract, decision, and convention notes describe the current system and are the primary context for future coding. Full-tier maintenance must update at least one owning canonical note before any optional Timeline entry. Light-tier maintenance updates an existing owning canonical note and does not update Timeline. Timeline is a concise routing index and must not be the sole output of Full-tier maintenance.
+
 ## Completion
 
 The final response states:
@@ -176,4 +190,3 @@ The final response states:
 - Verification performed and its outcome.
 - Gate results or why a gate was skipped/blocked.
 - Remaining risks or follow-up work, if any.
-

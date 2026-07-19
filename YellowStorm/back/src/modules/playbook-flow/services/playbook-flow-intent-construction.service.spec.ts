@@ -20,6 +20,50 @@ describe('PlaybookFlowIntentConstructionService', () => {
     expect(chunks).toEqual(['tail content']);
   });
 
+  it.each([
+    { omitTemperature: true, expectedTemperature: undefined },
+    { omitTemperature: false, expectedTemperature: 0.2 },
+  ])('uses model temperature capability during streamed construction', async ({ omitTemperature, expectedTemperature }) => {
+    jest.useFakeTimers();
+    const service = createService();
+    const context = {
+      selectedNodeId: null,
+      effectiveSettings: { useDeterministicBlueprintBuilder: true },
+      limits: { maxWorkflowPlanChanges: 500, maxInputPorts: 4, maxOutputPorts: 4, maxIteratorBodySteps: 12, maxIteratorBodyEdges: 50 },
+      validationContext: {},
+      availableDesignCatalog: { availableSkills: [], availableConnectors: [], availableConnectorActions: [], availableWorkspaces: [] },
+      nodeTemplates: [],
+      httpClient: { post: jest.fn().mockResolvedValue({ data: [] }) },
+      flow: {},
+      model: 'azure/gpt-5.6-luna',
+      omitTemperature,
+      systemPrompt: '',
+      userPrompt: '',
+      userMessageContent: '',
+      promptVariables: {},
+    };
+    const job = {
+      id: 'construction-temperature',
+      flowId: 'flow-1',
+      ownerId: 'owner-1',
+      status: 'queued',
+      baseDefinitionRevision: 1,
+      events: [],
+      abortController: new AbortController(),
+      waiters: new Set<() => void>(),
+    };
+
+    try {
+      await (service as any).run(job, { intent: 'Build workflow' }, context);
+
+      const payload = context.httpClient.post.mock.calls[0][1];
+      if (expectedTemperature === undefined) expect(payload).not.toHaveProperty('temperature');
+      else expect(payload).toHaveProperty('temperature', expectedTemperature);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   describe('blueprint path', () => {
     function makeContext(useBlueprint: boolean) {
       const validationContext = {

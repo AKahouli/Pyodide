@@ -395,7 +395,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       label: deepSearch ? t('floatingToolbar.deepSearchDisable') : t('floatingToolbar.deepSearchEnable'),
       icon: Search,
       onClick: onToggleDeepSearch,
-      disabled: false,
+      disabled,
       active: deepSearch,
       activeClassName: deepSearch
         ? 'bg-amber-500/15 text-amber-600 hover:bg-amber-500/20 border-amber-500/40'
@@ -407,7 +407,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       label: t('toolbar.removeAllTasks'),
       icon: Trash2,
       onClick: onRemoveAllTasks,
-      disabled: taskCount === 0,
+      disabled: disabled || taskCount === 0,
       hidden: !onRemoveAllTasks,
     },
     {
@@ -571,6 +571,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
                 aria-label={collapsed ? action.label : undefined}
                 title={collapsed ? action.label : undefined}
                 aria-pressed={action.active ? 'true' : undefined}
+                data-playbook-designer-trigger={action.key === 'designer' ? true : undefined}
               >
                 <Icon className="h-4 w-4 shrink-0" />
                 {!collapsed && <span className="ml-2 truncate">{action.label}</span>}
