@@ -273,7 +273,16 @@ export type PlaybookIntentWorkflowChange =
     targetIteratorNodeRef?: string | null;
     targetPort: string;
     sourceKind: 'constant';
-    constantValue: ResolvedDesignResourceBindingValue;
+    constantValue: unknown;
+  }
+  | {
+    type: 'create_data_binding';
+    targetTaskId: string | null;
+    targetNodeRef: string | null;
+    targetIteratorNodeRef?: string | null;
+    targetPort: string;
+    sourceKind: 'state';
+    statePath: string;
   }
   | {
     type: 'delete_data_binding';
@@ -1269,13 +1278,14 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
         return null;
       }
 
-      if (change.sourceKind === 'constant') {
+      if (change.sourceKind === 'constant' || change.sourceKind === 'state') {
         if (change.targetTaskId && ctx.existingTaskIds.has(change.targetTaskId)) {
           const inputPorts = ctx.inputPortsByTaskId.get(change.targetTaskId);
           if (inputPorts && change.targetPort && !inputPorts.has(change.targetPort)) {
             return null;
           }
         }
+        if (change.sourceKind === 'state' && !change.statePath.trim()) return null;
         return change;
       }
 

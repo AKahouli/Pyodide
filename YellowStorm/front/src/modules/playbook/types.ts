@@ -473,6 +473,13 @@ export interface PlaybookIntentDiagnostic {
   message: string;
   repairable?: boolean;
   metadata?: Record<string, unknown>;
+  reviewTarget?: {
+    kind: 'workflow' | 'node' | 'port';
+    nodeRef?: string;
+    nodeLabel?: string;
+    portId?: string;
+  };
+  resolutionCode?: 'review_constant' | 'review_data_binding' | 'review_port' | 'review_connection' | 'review_router' | 'review_repair' | 'review_node' | 'review_workflow';
 }
 
 export interface PlaybookIntentTaskDraft {
@@ -613,7 +620,16 @@ export type PlaybookIntentWorkflowChange =
       targetIteratorNodeRef?: string | null;
       targetPort: string;
       sourceKind: 'constant';
-      constantValue: ResolvedDesignResourceBindingValue;
+      constantValue: unknown;
+    }
+  | {
+      type: 'create_data_binding';
+      targetTaskId: string | null;
+      targetNodeRef: string | null;
+      targetIteratorNodeRef?: string | null;
+      targetPort: string;
+      sourceKind: 'state';
+      statePath: string;
     }
   | {
       type: 'delete_data_binding';

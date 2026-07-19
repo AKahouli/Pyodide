@@ -383,6 +383,28 @@ describe('PlaybookIntentGraphBindingResolverService', () => {
     expect(result.changes).toEqual([expect.objectContaining({ type: 'create_data_binding', sourceKind: 'constant' })]);
   });
 
+  it('keeps valid state bindings without resolving a source node', () => {
+    const result = service.resolveWorkflowChanges({
+      context: makeContext({
+        existingTaskIds: ['target'],
+        inputPortsByTaskId: [['target', [['scenario', 'data']]]],
+      }),
+      deletedTaskIds: new Set(),
+      changes: [{
+        type: 'create_data_binding',
+        sourceKind: 'state',
+        targetTaskId: 'target',
+        targetNodeRef: null,
+        targetPort: 'scenario',
+        statePath: 'inputs._item',
+      }],
+    });
+
+    expect(result.changes).toEqual([
+      expect.objectContaining({ type: 'create_data_binding', sourceKind: 'state', statePath: 'inputs._item' }),
+    ]);
+  });
+
   it('uses ports from newly created node refs', () => {
     const result = service.resolveWorkflowChanges({
       context: makeContext(),

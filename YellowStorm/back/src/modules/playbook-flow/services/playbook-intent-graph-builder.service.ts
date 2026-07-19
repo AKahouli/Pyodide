@@ -744,7 +744,8 @@ export class PlaybookIntentGraphBuilderService {
       this.recordDiagnostic(diagnostics, 'builder_binding_unknown_target', `${binding.targetRef}.${binding.targetPort}`);
       return null;
     }
-    if (binding.sourceKind === 'constant' && binding.constantValue) {
+    if (binding.sourceKind === 'constant' && binding.constantValue !== undefined) {
+      const resourceValue = this.asResolvedResourceConstant(binding.constantValue);
       return {
         type: 'create_data_binding',
         targetTaskId: target.taskId,
@@ -752,11 +753,20 @@ export class PlaybookIntentGraphBuilderService {
         ...(target.iteratorNodeRef ? { targetIteratorNodeRef: target.iteratorNodeRef } : {}),
         targetPort: binding.targetPort,
         sourceKind: 'constant',
-        constantValue: {
-          ...binding.constantValue,
-          question: '',
-          label: binding.constantValue.label || '',
-        },
+        constantValue: resourceValue
+          ? { ...resourceValue, question: '', label: resourceValue.label || '' }
+          : binding.constantValue,
+      };
+    }
+    if (binding.sourceKind === 'state' && binding.statePath) {
+      return {
+        type: 'create_data_binding',
+        targetTaskId: target.taskId,
+        targetNodeRef: target.nodeRef,
+        ...(target.iteratorNodeRef ? { targetIteratorNodeRef: target.iteratorNodeRef } : {}),
+        targetPort: binding.targetPort,
+        sourceKind: 'state',
+        statePath: binding.statePath,
       };
     }
     if (!binding.sourceRef || !binding.sourcePort) {
@@ -801,6 +811,12 @@ export class PlaybookIntentGraphBuilderService {
     };
     if (explicitEdgeKeys.has(this.blueprintEdgeKey(link))) return null;
     return this.buildCreateEdgeChange(link, options, diagnostics);
+  }
+
+  private asResolvedResourceConstant(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const resource = value as Record<string, unknown>;
+    return resource.kind === 'workspace' || resource.kind === 'document' ? resource : null;
   }
 
   private findBlueprintEndpointNode(ref: string, iteratorRef: string | null, options: BuildOptions): BlueprintEndpointNode | null {

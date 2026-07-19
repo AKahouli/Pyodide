@@ -183,6 +183,11 @@ describe('useAutosave', () => {
 
     expect(storeState.saveCurrentPlaybook).not.toHaveBeenCalled();
     expect(result.current.hasIncompleteBindings).toBe(true);
+    expect(result.current.validationIssues).toEqual([expect.objectContaining({
+      taskId: 'target-1',
+      portId: 'prompt',
+      reason: 'missing_node_output',
+    })]);
   });
 
   it('still autosaves while bindings are incomplete', () => {
@@ -246,6 +251,11 @@ describe('useAutosave', () => {
     expect(storeState.saveCurrentPlaybook).toHaveBeenCalledTimes(1);
     expect(storeState.saveCurrentPlaybook).toHaveBeenCalledWith({ reason: 'autosave' });
     expect(result.current.hasUnboundRequiredPorts).toBe(true);
+    expect(result.current.validationIssues).toEqual([expect.objectContaining({
+      taskId: 'task-1',
+      portId: 'prompt',
+      reason: 'missing_required_binding',
+    })]);
   });
 
   it('reports autosave conflicts to the autosave actor', async () => {

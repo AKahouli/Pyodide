@@ -148,7 +148,7 @@ vi.mock('./InputFilesPopover', () => ({
 }));
 
 vi.mock('./PortLabel', () => ({
-  PortLabel: ({ name }: { name: string }) => <span>{name}</span>,
+  PortLabel: ({ name, warning }: { name: string; warning?: boolean }) => <span data-warning={warning ? 'true' : 'false'}>{name}</span>,
 }));
 
 describe('PlaybookNode', () => {
@@ -175,6 +175,51 @@ describe('PlaybookNode', () => {
     };
     storeState.executionCache = {};
     storeState.selectedStepId = null;
+  });
+
+  it('keeps the required-port warning when its binding is incomplete', () => {
+    storeState.currentPlaybook = {
+      id: 'playbook-1',
+      tasks: [],
+      dataBindings: [{
+        id: 'binding-1',
+        targetNode: 'node-1',
+        targetPort: 'prompt',
+        sourceKind: 'constant',
+        constantValue: { text: '' },
+      }],
+    };
+
+    render(
+      <PlaybookNode
+        {...({
+          id: 'node-1',
+          selected: false,
+          data: {
+            id: 'node-1',
+            title: 'Prepare report',
+            description: '',
+            assignedAgentId: null,
+            executionOrder: 0,
+            positionX: 0,
+            positionY: 0,
+            interruptBefore: false,
+            interruptAfter: false,
+            allowClarification: false,
+            clarificationPrompt: '',
+            maxClarifications: 0,
+            inputKeys: [],
+            outputKey: '',
+            notifyOnComplete: false,
+            notifyEmails: [],
+            inputPorts: [{ id: 'prompt', name: 'Prompt', artifactKind: 'text', required: true }],
+            outputPorts: [],
+          },
+        } as any)}
+      />,
+    );
+
+    expect(screen.getByText('Prompt')).toHaveAttribute('data-warning', 'true');
   });
 
   it('binds a dropped workspace to the only compatible text input', () => {

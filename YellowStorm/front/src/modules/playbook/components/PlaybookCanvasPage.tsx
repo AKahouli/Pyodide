@@ -114,6 +114,7 @@ import type {
   PlaybookIntentDesignResponse,
   PlaybookIntentConstructionStatus,
   PlaybookIntentConstructionStartResponse,
+  PlaybookIntentDiagnostic,
   PlaybookIntentTraceResponse,
   PlaybookUndoSnapshot,
   PlaybookTrigger,
@@ -145,6 +146,7 @@ import {
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { usePlaybookIntentFlow } from '../utils/playbook-intent-flow';
 import { getUnboundRequiredPortsForTaskIds } from '../utils/required-port-validation';
+import type { PlaybookValidationIssue } from '../utils/required-port-validation';
 import {
   buildCanvasJudgeStateMap,
   buildCanvasStepStatusMap,
@@ -222,6 +224,27 @@ export function remapRouterConditionSourceNodes(task: PlaybookTask, childRefs: M
     return { ...condition, sourceNode };
   });
   return changed ? { ...task, routerConfig: { ...task.routerConfig!, conditions: nextConditions } } : task;
+}
+
+export function resolveDiagnosticNodeId(
+  diagnostic: PlaybookIntentDiagnostic,
+  constructionId: string | null,
+  tasks: PlaybookTask[],
+): string | null {
+  const target = diagnostic.reviewTarget;
+  if (!target?.nodeRef) return null;
+  if (constructionId) {
+    const separator = target.nodeRef.indexOf('.');
+    const logicalKey = separator > 0
+      ? `${target.nodeRef.slice(0, separator)}:iterator:${target.nodeRef.slice(separator + 1)}`
+      : target.nodeRef;
+    const generatedId = createIntentSuggestionNodeId(`intent-construction-${constructionId}`, logicalKey);
+    if (tasks.some((task) => task.id === generatedId)) return generatedId;
+  }
+  const matchingLabel = target.nodeLabel
+    ? tasks.filter((task) => task.title === target.nodeLabel)
+    : [];
+  return matchingLabel.length === 1 ? matchingLabel[0].id : null;
 }
 
 export function resolveIntentNodeSemantics(
@@ -438,6 +461,7 @@ function PlaybookCanvasInner() {
   const [lastIntentSuggestions, setLastIntentSuggestions] = useState<PlaybookIntentSuggestion[]>([]);
   const [intentLoading, setIntentLoading] = useState(false);
   const [intentError, setIntentError] = useState('');
+  const [constructionDiagnostics, setConstructionDiagnostics] = useState<PlaybookIntentDiagnostic[]>([]);
   const [intentDesign, setIntentDesign] = useState<PlaybookIntentDesignResponse | null>(null);
   const [intentTraces, setIntentTraces] = useState<PlaybookIntentTraceResponse | null>(null);
   const [intentTracesLoading, setIntentTracesLoading] = useState(false);
@@ -466,7 +490,7 @@ function PlaybookCanvasInner() {
   const setAssistantOperation = usePlaybookUiStore((s) => s.setAssistantOperation);
   const setAssistantPreviewStatus = usePlaybookUiStore((s) => s.setAssistantPreviewStatus);
   const clearAssistantOperation = usePlaybookUiStore((s) => s.clearAssistantOperation);
-  const { saveNow, hasUnboundRequiredPorts, hasIncompleteBindings } = useAutosave({ paused: constructionActive || assistantPreviewStatus === 'ready' || assistantPreviewStatus === 'applying' || assistantPreviewStatus === 'discarding' });
+  const { saveNow, validationIssues } = useAutosave({ paused: constructionActive || assistantPreviewStatus === 'ready' || assistantPreviewStatus === 'applying' || assistantPreviewStatus === 'discarding' });
 
   const [recentlyChangedNodeIds, setRecentlyChangedNodeIds] = useState<string[]>([]);
   const [recentlyChangedEdgeIds, setRecentlyChangedEdgeIds] = useState<string[]>([]);
@@ -1514,6 +1538,35 @@ function PlaybookCanvasInner() {
     scheduleChangeFeedbackCleanup();
   }, [designerSidebarWidth, reactFlow, scheduleChangeFeedbackCleanup]);
 
+  const handleValidationIssueSelect = useCallback((issue: PlaybookValidationIssue) => {
+    if (!playbook?.tasks.some((task) => task.id === issue.taskId)) return;
+    setNodes((currentNodes) => currentNodes.map((node) => ({
+      ...node,
+      selected: node.id === issue.taskId,
+    })));
+    selectStep(issue.taskId);
+    const fitIssueNode = () => {
+      void reactFlow.fitView({
+        nodes: [{ id: issue.taskId }],
+        padding: 0.35,
+        duration: 650,
+        maxZoom: 1.08,
+      });
+    };
+    if (window.matchMedia('(max-width: 1023px)').matches) {
+      setExecutionPanelCollapsed(true);
+      setExecutionPanelOpen(false);
+      setDesignerOpen(false);
+      window.requestAnimationFrame(() => window.requestAnimationFrame(fitIssueNode));
+      return;
+    }
+    if (designerSidebarWidth > 0 && window.matchMedia('(min-width: 640px)').matches) {
+      focusConstructionNode(playbook.tasks, issue.taskId);
+      return;
+    }
+    fitIssueNode();
+  }, [designerSidebarWidth, focusConstructionNode, playbook, reactFlow, selectStep, setDesignerOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setNodes]);
+
   const handleApplyIntentSuggestion = useCallback((
     suggestion: PlaybookIntentSuggestion,
     options?: { replaceAll?: boolean; expectedDefinitionRevision?: number; save?: boolean; clearSuggestions?: boolean; focus?: boolean; applicationKey?: string; focusMode?: 'changed-area' | 'construction-frontier'; connectAnchors?: boolean; captureHistory?: boolean; confirmDeletes?: boolean },
@@ -2238,6 +2291,37 @@ function PlaybookCanvasInner() {
 
     };
 
+    const upsertStateBinding = (
+      resolvedTargetId: string,
+      targetPort: string,
+      statePath: string,
+    ) => {
+      const targetTask = nextTasks.find((task) => task.id === resolvedTargetId);
+      const targetInputPort = targetTask?.inputPorts?.find((port) => port.id === targetPort);
+      if (!targetTask || !targetInputPort || !statePath) return;
+
+      nextDataBindings = nextDataBindings.filter(
+        (binding) => !(binding.targetNode === resolvedTargetId && binding.targetPort === targetPort),
+      );
+      nextDataBindings = [
+        ...nextDataBindings,
+        {
+          id: createIntentSuggestionBindingId(
+            suggestionApplicationKey,
+            resolvedTargetId,
+            targetPort,
+            'state',
+            statePath,
+            'current',
+          ),
+          targetNode: resolvedTargetId,
+          targetPort,
+          sourceKind: 'state',
+          statePath,
+        },
+      ];
+    };
+
     const removeNodeOutputBinding = (
       resolvedTargetId: string,
       targetPort: string,
@@ -2374,13 +2458,14 @@ function PlaybookCanvasInner() {
       targetNodeRef: string | null,
       targetPort: string,
       targetIteratorNodeRef?: string | null,
-      sourceKind?: 'node-output' | 'constant',
+      sourceKind?: 'node-output' | 'constant' | 'state',
       sourceTaskId?: string | null,
       sourceNodeRef?: string | null,
       sourcePort?: string | null,
       sourceIteratorNodeRef?: string | null,
       iteration?: 'current' | 'previous',
       constantValue?: unknown,
+      statePath?: string,
     ) => {
       const resolvedTargetId = resolveScopedTaskReference(targetTaskId, targetNodeRef, targetIteratorNodeRef);
       if (!resolvedTargetId || !targetPort) return;
@@ -2401,6 +2486,10 @@ function PlaybookCanvasInner() {
 
       if (sourceKind === 'constant') {
         upsertConstantBinding(resolvedTargetId, targetPort, constantValue);
+        return;
+      }
+      if (sourceKind === 'state') {
+        upsertStateBinding(resolvedTargetId, targetPort, statePath || '');
         return;
       }
 
@@ -2675,6 +2764,22 @@ function PlaybookCanvasInner() {
             undefined,
             change.constantValue,
           );
+        } else if (change.sourceKind === 'state') {
+          applyDataBindingChange(
+            'create_data_binding',
+            change.targetTaskId,
+            change.targetNodeRef,
+            change.targetPort,
+            change.targetIteratorNodeRef,
+            change.sourceKind,
+            null,
+            null,
+            null,
+            null,
+            undefined,
+            undefined,
+            change.statePath,
+          );
         } else {
           applyDataBindingChange(
             'create_data_binding',
@@ -2723,6 +2828,8 @@ function PlaybookCanvasInner() {
         deleteTaskAndBridgeEdges(change.targetTaskId);
       }
     }
+
+    nextTasks = nextTasks.map((task) => remapRouterConditionSourceNodes(task, createdNodeRefs));
 
     reconcileRequiredNodeOutputBindings();
     reconcileUnboundRequiredInputsByPort();
@@ -2878,6 +2985,13 @@ function PlaybookCanvasInner() {
     return usePlaybookStore.getState().currentPlaybook?.definitionRevision ?? (playbook?.definitionRevision ?? 0);
   }, [playbook?.definitionRevision]);
 
+  const handleReviewConstructionDiagnostic = useCallback((diagnostic: PlaybookIntentDiagnostic) => {
+    const nodeId = resolveDiagnosticNodeId(diagnostic, constructionId, playbook?.tasks || []);
+    if (!nodeId || !playbook) return;
+    selectStep(nodeId);
+    focusConstructionNode(playbook.tasks, nodeId);
+  }, [constructionId, focusConstructionNode, playbook, selectStep]);
+
   const { handleSubmitIntent, handleSubmitIntentText, handleForceGenerateIntentText, handleApplyAdvisorIntent, consumePlaybookConstruction } = usePlaybookIntentFlow({
     id,
     playbook,
@@ -2906,6 +3020,7 @@ function PlaybookCanvasInner() {
     setConstructionStatus,
     setConstructionProgress,
     setConstructionId,
+    setConstructionDiagnostics,
     constructionAbortRef,
     realtimeConstructionEnabled: playbookFeatures.mcpAssistantEnabled,
     setPreviewConstructionReady: markAdvisorPreviewReady,
@@ -3393,7 +3508,8 @@ function PlaybookCanvasInner() {
             hasActiveExecution={hasActiveExecution}
             isStopping={isStopping}
             canRun={(playbook.tasks.length > 0 || (playbook.nodes?.length || 0) > 0) && (playbook.workspaces?.length || 0) > 0 && !hasActiveExecution && !isSaving && !isDirty}
-            hasValidationIssues={hasUnboundRequiredPorts || hasIncompleteBindings}
+            validationIssues={validationIssues}
+            onValidationIssueSelect={handleValidationIssueSelect}
             nodeReflectionEnabled={nodeReflectionEnabled}
             onNodeReflectionChange={handleNodeReflectionChange}
             advisorAutopilotEnabled={advisorAutopilotEnabled}
@@ -3618,6 +3734,7 @@ function PlaybookCanvasInner() {
               intentLoading={intentLoading}
               history={intentHistory}
               constructionStatus={constructionStatus}
+              constructionDiagnostics={constructionDiagnostics}
               intentTraces={intentTraces}
               intentTracesLoading={intentTracesLoading}
               onSubmitDesignIntent={handleSubmitIntentFromDesigner}
@@ -3626,6 +3743,7 @@ function PlaybookCanvasInner() {
                 ? undefined
                 : (suggestion) => handleApplyIntentSuggestion(suggestion, { replaceAll: true })}
               onCancelConstruction={handleCancelIntentConstruction}
+              onReviewConstructionDiagnostic={handleReviewConstructionDiagnostic}
               assistantPreviewStatus={assistantPreviewStatus}
               onApplyAssistantPreview={() => { void applyAdvisorPreview(); }}
               onDiscardAssistantPreview={() => { void discardAdvisorPreview(); }}

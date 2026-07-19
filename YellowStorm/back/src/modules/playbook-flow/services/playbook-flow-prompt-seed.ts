@@ -62,16 +62,19 @@ For data-to-text transitions, add/use a conversion node, e.g. enriched_leads:dat
 Never bind two sources to the same target input port; merge nodes need one input port per source.
 # Links, Bindings, Constants
 Use links for execution order and dependencies.
-Use bindings only when the target consumes a source output or selected constant resource.
+Use bindings only when the target consumes a source output, a JSON literal constant, or a selected resource.
 A port-aware link must have exactly one matching node-output binding.
 Pure control-flow links have no port ids and no fake bindings.
 Every required input must have a matching binding, a constant binding, or a riskFlag explaining why unresolved.
+String constants target text/code ports; JSON arrays and objects target data ports.
 Document constants target document ports; workspace constants target data/resource ports, not text ports.
 If text is needed from a workspace/document, add a collector/extractor step first.
 # Iterator Rules
 Iterator parent input "items" is only for the collection being iterated and is usually data.
 For collection input: targetRef=iterator ref, targetInputPortId=items, no targetIteratorRef.
 For child step input: targetIteratorRef=iterator ref, targetRef=child step ref.
+To pass the current item to a child, bind sourceKind=node-output, sourceRef=iterator ref, sourcePort=items to that scoped child input. The compiler maps this shorthand to the current iteration item.
+Iterator output "results" is runtime-owned; use it only as a source for downstream bindings, never as a binding target.
 For child output to outside: sourceIteratorRef=iterator ref, sourceRef=child step ref.
 Never set sourceIteratorRef equal to sourceRef or targetIteratorRef equal to targetRef.
 Iterator body edges stay inside iteratorBody only.
@@ -190,7 +193,7 @@ Context: {selected_task_context}
   {
     key: 'design.max_description_length', title: 'Max description length', category: 'design',
     description: 'Maximum allowed length for descriptions (numeric string in systemTemplate).',
-    systemTemplate: '20000', userTemplate: '', enabled: true, isBuiltIn: true, version: 1,
+    systemTemplate: '40000', userTemplate: '', enabled: true, isBuiltIn: true, version: 1,
   },
   {
     key: 'task.system', title: 'Task system prompt', category: 'task',

@@ -3,11 +3,11 @@
  * Saves playbook canvas changes after adaptive inactivity windows.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { parseApiError } from '@/lib/api-error';
 import { ErrorCode } from '@/lib/error-codes';
 import { usePlaybookStore, useIsDirty, useIsSaving, useDirtyVersion } from '../store';
-import { getUnboundRequiredPorts, hasIncompleteDataBindings } from '../utils/required-port-validation';
+import { getPlaybookValidationIssues } from '../utils/required-port-validation';
 import { playbookFeatures } from '../features';
 import { useAutosaveActor } from '../machines/autosave/useAutosaveActor';
 
@@ -50,16 +50,15 @@ export function useAutosave(options?: { paused?: boolean }) {
   const setPendingAutosaveAfterCurrent = usePlaybookStore((s) => s.setPendingAutosaveAfterCurrent);
   const lastAutosaveDurationMs = usePlaybookStore((s) => s.lastAutosaveDurationMs);
   const autosaveBackoffUntil = usePlaybookStore((s) => s.autosaveBackoffUntil);
-  const hasUnboundRequiredPorts = usePlaybookStore((s) => {
-    const playbook = s.currentPlaybook;
-    if (!playbook) return false;
-    return getUnboundRequiredPorts(playbook.tasks, playbook.dataBindings ?? []).length > 0;
-  });
-  const hasIncompleteBindings = usePlaybookStore((s) => {
-    const playbook = s.currentPlaybook;
-    if (!playbook) return false;
-    return hasIncompleteDataBindings(playbook.dataBindings ?? []);
-  });
+  const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
+  const validationIssues = useMemo(
+    () => currentPlaybook
+      ? getPlaybookValidationIssues(currentPlaybook.tasks, currentPlaybook.dataBindings ?? [])
+      : [],
+    [currentPlaybook],
+  );
+  const hasUnboundRequiredPorts = validationIssues.some((issue) => issue.reason === 'missing_required_binding');
+  const hasIncompleteBindings = validationIssues.some((issue) => issue.reason !== 'missing_required_binding');
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastDirtyAtRef = useRef<number | null>(null);
@@ -164,5 +163,5 @@ export function useAutosave(options?: { paused?: boolean }) {
     saveCurrentPlaybook,
   ]);
 
-  return { saveNow, isDirty, isSaving, hasUnboundRequiredPorts, hasIncompleteBindings };
+  return { saveNow, isDirty, isSaving, hasUnboundRequiredPorts, hasIncompleteBindings, validationIssues };
 }

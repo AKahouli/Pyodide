@@ -277,12 +277,13 @@ export function PlaybookDataFlowSection({
   );
 
   const createBinding = useCallback(
-    (portId: string, sourceKind: DataBindingSourceKind) => {
+    (portId: string, sourceKind: DataBindingSourceKind, initialValue?: Partial<DataBinding>) => {
       const next: DataBinding = {
         id: `db-${crypto.randomUUID().slice(0, 8)}`,
         targetNode: targetNodeId ?? '',
         targetPort: portId,
         sourceKind,
+        ...initialValue,
       };
       updateDataBindings([...allBindings, next]);
     },
@@ -601,7 +602,7 @@ interface SourceCellProps {
     artifactKind: ArtifactKind;
   }>;
   allTasks: PlaybookTask[];
-  onCreateBinding: (portId: string, sourceKind: DataBindingSourceKind) => void;
+  onCreateBinding: (portId: string, sourceKind: DataBindingSourceKind, initialValue?: Partial<DataBinding>) => void;
   onUpdateBinding: (id: string, patch: Partial<DataBinding>) => void;
   onRemoveBinding: (id: string) => void;
   onConnectToNodeOutput: (portId: string, sourceTaskId: string, sourcePortId: string) => void;
@@ -746,7 +747,7 @@ interface SourcePickerProps {
   binding: DataBinding | null;
   allTasks: PlaybookTask[];
   onConnect: (portId: string, sourceTaskId: string, sourcePortId: string) => void;
-  onCreateBinding: (portId: string, sourceKind: DataBindingSourceKind) => void;
+  onCreateBinding: (portId: string, sourceKind: DataBindingSourceKind, initialValue?: Partial<DataBinding>) => void;
   onUpdateBinding: (id: string, patch: Partial<DataBinding>) => void;
   onClose: () => void;
   t: TFunction;
@@ -795,7 +796,9 @@ function SourcePicker({
       };
       onUpdateBinding(binding.id, patch);
     } else {
-      onCreateBinding(inputPort.id, 'constant');
+      onCreateBinding(inputPort.id, 'constant', {
+        constantValue: constantValue ? { text: constantValue } : undefined,
+      });
     }
     onClose();
   };
@@ -813,7 +816,7 @@ function SourcePicker({
       };
       onUpdateBinding(binding.id, patch);
     } else {
-      onCreateBinding(inputPort.id, 'expression');
+      onCreateBinding(inputPort.id, 'expression', { expression: expressionValue || undefined });
     }
     onClose();
   };
@@ -832,7 +835,9 @@ function SourcePicker({
       };
       onUpdateBinding(binding.id, patch);
     } else {
-      onCreateBinding(inputPort.id, kind);
+      onCreateBinding(inputPort.id, kind, kind === 'trigger'
+        ? { triggerPath: pathValue || undefined }
+        : { statePath: pathValue || undefined });
     }
     onClose();
   };

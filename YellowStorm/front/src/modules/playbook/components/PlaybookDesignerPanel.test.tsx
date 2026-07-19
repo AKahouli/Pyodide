@@ -1040,6 +1040,31 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     expect(screen.queryByRole('button', { name: 'intentBar.preview.discard' })).not.toBeInTheDocument();
   });
 
+  it('shows actionable generated-workflow diagnostics and reviews the affected node', async () => {
+    const onReview = vi.fn();
+    storeState.copilotMode = 'design';
+    const diagnostic = {
+      severity: 'warning' as const,
+      stage: 'repair' as const,
+      code: 'repair_template_required_port_added',
+      itemId: 'prepare_report',
+      message: 'repair_template_required_port_added',
+      reviewTarget: { kind: 'port' as const, nodeRef: 'prepare_report', nodeLabel: 'Prepare report', portId: 'context' },
+      resolutionCode: 'review_port' as const,
+    };
+
+    render(<PlaybookDesignerPanel
+      playbookId="playbook-1"
+      constructionDiagnostics={[diagnostic]}
+      onReviewConstructionDiagnostic={onReview}
+    />);
+
+    expect(screen.getByText('Prepare report / context')).toBeInTheDocument();
+    expect(screen.getByText('intentBar.diagnostics.resolution.review_port')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /intentBar.diagnostics.reviewNode/ }));
+    expect(onReview).toHaveBeenCalledWith(diagnostic);
+  });
+
   it('keeps explicit Apply and Discard for an Advisor preview', async () => {
     const onApply = vi.fn();
     const onDiscard = vi.fn();

@@ -22,7 +22,7 @@ import {
 import { useAutosave } from '../hooks/useAutosave';
 import { useIsDirty } from '../store';
 import { createHitlBlocker, updateNodeHitlPolicy } from '../api';
-import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, IntentSuggestionHistoryEntry, InterruptType, PlaybookIntentClarificationResource, PlaybookIntentConstructionStatus, PlaybookIntentDesignResponse, PlaybookIntentImageInput, PlaybookIntentSuggestion, PlaybookIntentTraceResponse } from '../types';
+import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, IntentSuggestionHistoryEntry, InterruptType, PlaybookIntentClarificationResource, PlaybookIntentConstructionStatus, PlaybookIntentDesignResponse, PlaybookIntentDiagnostic, PlaybookIntentImageInput, PlaybookIntentSuggestion, PlaybookIntentTraceResponse } from '../types';
 import { PlaybookClarificationResourcePicker } from './PlaybookClarificationResourcePicker';
 import { IntentTraceModal } from './IntentTraceModal';
 
@@ -32,12 +32,14 @@ interface Props {
   intentLoading?: boolean;
   history?: IntentSuggestionHistoryEntry[];
   constructionStatus?: PlaybookIntentConstructionStatus;
+  constructionDiagnostics?: PlaybookIntentDiagnostic[];
   intentTraces?: PlaybookIntentTraceResponse | null;
   intentTracesLoading?: boolean;
   onSubmitDesignIntent?: (intentText: string, visibleUserQuery: string, images?: PlaybookIntentImageInput[]) => Promise<void> | void;
   onAnswerDesignIntent?: (answerText?: string) => Promise<void> | void;
   onApplyHistorySuggestion?: (suggestion: PlaybookIntentSuggestion) => void;
   onCancelConstruction?: () => void;
+  onReviewConstructionDiagnostic?: (diagnostic: PlaybookIntentDiagnostic) => void;
   assistantPreviewStatus?: 'idle' | 'streaming' | 'ready' | 'applying' | 'discarding';
   onApplyAssistantPreview?: () => void;
   onDiscardAssistantPreview?: () => void;
@@ -258,12 +260,14 @@ export function PlaybookDesignerPanel({
   intentLoading = false,
   history = [],
   constructionStatus = 'idle',
+  constructionDiagnostics = [],
   intentTraces = null,
   intentTracesLoading = false,
   onSubmitDesignIntent,
   onAnswerDesignIntent,
   onApplyHistorySuggestion,
   onCancelConstruction,
+  onReviewConstructionDiagnostic,
   assistantPreviewStatus = 'idle',
   onApplyAssistantPreview,
   onDiscardAssistantPreview,
@@ -1338,6 +1342,46 @@ export function PlaybookDesignerPanel({
           className={`border-t px-3 py-3 shrink-0 space-y-2 transition-shadow ${isAwaitingDesignAnswer ? 'animate-pulse ring-2 ring-primary/40' : ''}`}
           onSubmit={handleSubmitDesign}
         >
+          {constructionDiagnostics.length > 0 && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3" aria-label={t('intentBar.diagnostics.title')}>
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 text-amber-600" />
+                <p className="text-sm font-medium">{t('intentBar.diagnostics.title')}</p>
+                <Badge variant="outline" className="ml-auto text-[10px]">{constructionDiagnostics.length}</Badge>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{t('intentBar.diagnostics.description')}</p>
+              <div className="mt-2 max-h-48 space-y-2 overflow-y-auto">
+                {constructionDiagnostics.map((diagnostic) => {
+                  const target = diagnostic.reviewTarget;
+                  const location = target?.nodeLabel || target?.nodeRef || diagnostic.itemId || t('intentBar.diagnostics.workflow');
+                  return (
+                    <div key={[diagnostic.stage, diagnostic.code, diagnostic.itemId, diagnostic.path].join(':')} className="rounded-md border bg-background/70 p-2 text-xs">
+                      <div className="flex items-start gap-2">
+                        <Badge variant={diagnostic.severity === 'error' ? 'destructive' : 'secondary'} className="text-[10px]">
+                          {t(`intentBar.diagnostics.severity.${diagnostic.severity}`)}
+                        </Badge>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-foreground">
+                            {location}{target?.portId ? ` / ${target.portId}` : ''}
+                          </p>
+                          <p className="mt-1 text-muted-foreground">
+                            {t(`intentBar.diagnostics.resolution.${diagnostic.resolutionCode || 'review_workflow'}`)}
+                          </p>
+                          <p className="mt-1 font-mono text-[10px] text-muted-foreground">{diagnostic.code}</p>
+                        </div>
+                        {target?.nodeRef && onReviewConstructionDiagnostic ? (
+                          <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 px-2 text-xs" onClick={() => onReviewConstructionDiagnostic(diagnostic)}>
+                            <Eye className="mr-1 h-3.5 w-3.5" />
+                            {t('intentBar.diagnostics.reviewNode')}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {assistantPreviewStatus !== 'idle' && (
             <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
               <p className="text-sm font-medium">{t('intentBar.preview.title')}</p>

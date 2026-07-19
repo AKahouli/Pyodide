@@ -7,6 +7,7 @@ import type {
   PlaybookIntentConstructionStartResponse,
   PlaybookIntentConstructionStatus,
   PlaybookIntentDesignResponse,
+  PlaybookIntentDiagnostic,
   PlaybookIntentSuggestion,
 } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
@@ -40,6 +41,7 @@ interface PlaybookIntentFlowDeps {
   setConstructionStatus?: (status: PlaybookIntentConstructionStatus) => void;
   setConstructionProgress?: (message: string) => void;
   setConstructionId?: (constructionId: string | null) => void;
+  setConstructionDiagnostics?: (diagnostics: PlaybookIntentDiagnostic[]) => void;
   constructionAbortRef?: MutableRefObject<AbortController | null>;
   realtimeConstructionEnabled?: boolean;
 }
@@ -57,6 +59,22 @@ export type IntentSubmitResult = {
   status: 'completed' | 'failed' | 'needs_clarification' | 'skipped';
   error?: string;
 };
+
+export function mergeConstructionDiagnostics(
+  current: PlaybookIntentDiagnostic[],
+  suggestion: PlaybookIntentSuggestion,
+): PlaybookIntentDiagnostic[] {
+  if (suggestion.kind !== 'workflow_plan') return current;
+  const diagnostics = suggestion.diagnostics || suggestion.validationDiagnostics || [];
+  const merged = new Map(current.map((diagnostic) => [diagnosticKey(diagnostic), diagnostic]));
+  diagnostics.forEach((diagnostic) => merged.set(diagnosticKey(diagnostic), diagnostic));
+  return [...merged.values()];
+}
+
+function diagnosticKey(diagnostic: PlaybookIntentDiagnostic): string {
+  const target = diagnostic.reviewTarget;
+  return [diagnostic.stage, diagnostic.code, diagnostic.itemId || '', diagnostic.path || '', target?.nodeRef || '', target?.portId || ''].join(':');
+}
 
 export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookIntentFlowApi {
   const {
@@ -87,6 +105,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     setConstructionStatus,
     setConstructionProgress,
     setConstructionId,
+    setConstructionDiagnostics,
     constructionAbortRef,
     realtimeConstructionEnabled = true,
     setPreviewConstructionReady,
@@ -115,6 +134,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     constructionAbortRef.current = abortController;
     setConstructionStatus?.('starting');
     setConstructionProgress?.(t('intentBar.construction.starting'));
+    setConstructionDiagnostics?.([]);
 
     let expectedDefinitionRevision = existingConstruction?.baseDefinitionRevision ?? playbook.definitionRevision;
     if (!existingConstruction && isDirty) {
@@ -144,6 +164,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     let completed = false;
     let lastSequence = 0;
     const appliedKeys = new Set<string>();
+    let constructionDiagnostics: PlaybookIntentDiagnostic[] = [];
     try {
       await streamPlaybookIntentConstruction(id, construction.constructionId, {
         signal: abortController.signal,
@@ -155,6 +176,8 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
           if (event.type === 'started') baseDefinitionRevision = event.baseDefinitionRevision;
           if (event.type === 'progress') setConstructionProgress?.(event.message);
           if (event.type === 'node_delta' || event.type === 'edge_delta' || event.type === 'data_binding_delta') {
+            constructionDiagnostics = mergeConstructionDiagnostics(constructionDiagnostics, event.suggestion);
+            setConstructionDiagnostics?.(constructionDiagnostics);
             if (construction.target === 'advisor_preview' && construction.advisorMode === 'optimize-step' && (
               event.suggestion.kind !== 'single_change'
               || event.suggestion.operationType !== 'update_node'
@@ -220,7 +243,7 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     setConstructionStatus?.('completed');
     setConstructionProgress?.(t('intentBar.construction.completed'));
     return appliedDelta ? 'applied' as const : 'empty' as const;
-  }, [captureConstructionSnapshot, constructionAbortRef, finalizeConstruction, getCurrentDefinitionRevision, handleApplyIntentSuggestion, id, isDirty, playbook, rollbackConstruction, saveNow, setConstructionId, setConstructionProgress, setConstructionStatus, setPreviewConstructionReady, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, t]);
+  }, [captureConstructionSnapshot, constructionAbortRef, finalizeConstruction, getCurrentDefinitionRevision, handleApplyIntentSuggestion, id, isDirty, playbook, rollbackConstruction, saveNow, setConstructionDiagnostics, setConstructionId, setConstructionProgress, setConstructionStatus, setPreviewConstructionReady, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, t]);
 
   const consumePlaybookConstruction = useCallback(async (construction: PlaybookIntentConstructionStartResponse): Promise<IntentSubmitResult> => {
     setIntentLoading(true);

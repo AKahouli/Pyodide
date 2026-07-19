@@ -1,4 +1,22 @@
-import type { PlaybookTask, DataBinding } from '../types';
+import type { ArtifactKind, PlaybookTask, DataBinding } from '../types';
+
+export type PlaybookValidationReason =
+  | 'missing_required_binding'
+  | 'missing_node_output'
+  | 'missing_trigger_path'
+  | 'missing_state_path'
+  | 'missing_constant_value'
+  | 'missing_expression';
+
+export interface PlaybookValidationIssue {
+  id: string;
+  taskId: string;
+  taskName: string;
+  portId: string;
+  portName: string;
+  artifactKind?: ArtifactKind;
+  reason: PlaybookValidationReason;
+}
 
 export interface UnboundPort {
   taskId: string;
@@ -33,6 +51,62 @@ export function isDataBindingResolved(binding: DataBinding): boolean {
 
 export function hasIncompleteDataBindings(dataBindings: DataBinding[]): boolean {
   return dataBindings.some((binding) => !isDataBindingResolved(binding));
+}
+
+function getIncompleteBindingReason(binding: DataBinding): PlaybookValidationReason {
+  switch (binding.sourceKind) {
+    case 'node-output': return 'missing_node_output';
+    case 'trigger': return 'missing_trigger_path';
+    case 'state': return 'missing_state_path';
+    case 'constant': return 'missing_constant_value';
+    case 'expression': return 'missing_expression';
+    default: return 'missing_required_binding';
+  }
+}
+
+export function getPlaybookValidationIssues(
+  tasks: PlaybookTask[],
+  dataBindings: DataBinding[],
+): PlaybookValidationIssue[] {
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const issues: PlaybookValidationIssue[] = [];
+  const representedTargets = new Set<string>();
+
+  for (const binding of dataBindings) {
+    if (isDataBindingResolved(binding)) continue;
+    const task = taskById.get(binding.targetNode);
+    const port = task?.inputPorts?.find((candidate) => candidate.id === binding.targetPort);
+    const targetKey = `${binding.targetNode}:${binding.targetPort}`;
+    if (representedTargets.has(targetKey)) continue;
+    representedTargets.add(targetKey);
+    issues.push({
+      id: `binding:${binding.id}`,
+      taskId: binding.targetNode,
+      taskName: task?.title || binding.targetNode,
+      portId: binding.targetPort,
+      portName: port?.name || binding.targetPort,
+      artifactKind: port?.artifactKind,
+      reason: getIncompleteBindingReason(binding),
+    });
+  }
+
+  for (const unboundPort of getUnboundRequiredPorts(tasks, dataBindings)) {
+    const targetKey = `${unboundPort.taskId}:${unboundPort.portId}`;
+    if (representedTargets.has(targetKey)) continue;
+    const task = taskById.get(unboundPort.taskId);
+    const port = task?.inputPorts?.find((candidate) => candidate.id === unboundPort.portId);
+    issues.push({
+      id: `required:${targetKey}`,
+      taskId: unboundPort.taskId,
+      taskName: task?.title || unboundPort.taskId,
+      portId: unboundPort.portId,
+      portName: unboundPort.portName,
+      artifactKind: port?.artifactKind,
+      reason: 'missing_required_binding',
+    });
+  }
+
+  return issues;
 }
 
 export function getUnboundRequiredPorts(

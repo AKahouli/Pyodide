@@ -33,6 +33,16 @@ const defaultProps = {
   onNodeReflectionChange: vi.fn(),
 };
 
+const validationIssue = {
+  id: 'required:task-1:context',
+  taskId: 'task-1',
+  taskName: 'Prepare report',
+  portId: 'context',
+  portName: 'Report context',
+  artifactKind: 'text' as const,
+  reason: 'missing_required_binding' as const,
+};
+
 describe('PlaybookToolbar', () => {
   it('renders all toolbar buttons', () => {
     render(<PlaybookToolbar {...defaultProps} />);
@@ -74,11 +84,26 @@ describe('PlaybookToolbar', () => {
     expect(screen.getByText('toolbar.save')).toBeInTheDocument();
   });
 
-  it('shows validation state and disables save when validation issues exist', () => {
-    render(<PlaybookToolbar {...defaultProps} isDirty={true} hasValidationIssues />);
-    expect(screen.getByText('toolbar.validationIssues')).toBeInTheDocument();
-    const saveButton = screen.getByText('toolbar.validationIssues').closest('button');
-    expect(saveButton).toBeDisabled();
+  it('opens actionable validation details and selects the affected issue', async () => {
+    const onValidationIssueSelect = vi.fn();
+    render(
+      <PlaybookToolbar
+        {...defaultProps}
+        isDirty={true}
+        validationIssues={[validationIssue]}
+        onValidationIssueSelect={onValidationIssueSelect}
+      />,
+    );
+
+    const trigger = screen.getByText('toolbar.validationIssuesCount').closest('button');
+    expect(trigger).toBeEnabled();
+    await userEvent.click(trigger!);
+    expect(screen.getByText('Prepare report')).toBeInTheDocument();
+    expect(screen.getByText('toolbar.validation.reason.missing_required_binding')).toBeInTheDocument();
+    expect(screen.getByText('toolbar.validation.resolution.missing_required_binding')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText('Prepare report'));
+    expect(onValidationIssueSelect).toHaveBeenCalledWith(validationIssue);
   });
 
   it('shows saving label and disables when saving', () => {

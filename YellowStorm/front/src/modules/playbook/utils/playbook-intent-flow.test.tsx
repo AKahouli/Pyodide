@@ -1,6 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { usePlaybookIntentFlow } from './playbook-intent-flow';
+import { mergeConstructionDiagnostics, usePlaybookIntentFlow } from './playbook-intent-flow';
 import type { AdvisorRemediationPreviewResponse, Playbook, PlaybookIntentSuggestion } from '../types';
 
 vi.mock('@/modules/localization', () => ({
@@ -96,6 +96,26 @@ const additiveWorkflowSuggestion: PlaybookIntentSuggestion = {
   }],
   isDirectIntentFallback: false,
 };
+
+describe('mergeConstructionDiagnostics', () => {
+  it('deduplicates cumulative diagnostics while preserving actionable targets', () => {
+    const diagnostic = {
+      severity: 'warning' as const,
+      stage: 'repair' as const,
+      code: 'repair_template_required_port_added',
+      itemId: 'prepare_report',
+      message: 'repair_template_required_port_added',
+      reviewTarget: { kind: 'node' as const, nodeRef: 'prepare_report', nodeLabel: 'Prepare report' },
+      resolutionCode: 'review_port' as const,
+    };
+    const suggestion = {
+      ...additiveWorkflowSuggestion,
+      diagnostics: [diagnostic],
+    };
+
+    expect(mergeConstructionDiagnostics([diagnostic], suggestion)).toEqual([diagnostic]);
+  });
+});
 
 describe('usePlaybookIntentFlow advisor remediation', () => {
   it('uses design assessment before manual-mode generation', async () => {

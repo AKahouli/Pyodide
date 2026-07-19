@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildIntentEdgeOptions, hydrateAssistantOperationHandoff, remapRouterConditionSourceNodes, resolveIntentNodeSemantics, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldUsePlaybookAgentAssistant } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, hydrateAssistantOperationHandoff, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldUsePlaybookAgentAssistant } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
@@ -264,7 +264,7 @@ describe('resolveIntentNodeSemantics', () => {
 });
 
 describe('remapRouterConditionSourceNodes', () => {
-  it('rewrites iterator child router condition source refs to generated node ids', () => {
+  it('rewrites blueprint router condition source refs to generated node ids', () => {
     const task = {
       id: 'router-id',
       routerConfig: {
@@ -281,5 +281,21 @@ describe('remapRouterConditionSourceNodes', () => {
 
     expect(remapped.routerConfig.conditions[0].sourceNode).toBe('intent-node-extract');
     expect(remapped.routerConfig.conditions[1].sourceNode).toBe('external-node');
+  });
+});
+
+describe('resolveDiagnosticNodeId', () => {
+  it('resolves a generated node ref using the construction application key', () => {
+    const task = { id: 'intent-node-prepare', title: 'Prepare report' } as any;
+    const diagnostic = {
+      severity: 'warning',
+      stage: 'repair',
+      code: 'repair',
+      message: 'repair',
+      reviewTarget: { kind: 'node', nodeRef: 'prepare_report', nodeLabel: 'Prepare report' },
+    } as any;
+    const expectedId = resolveDiagnosticNodeId(diagnostic, null, [task]);
+
+    expect(expectedId).toBe('intent-node-prepare');
   });
 });
