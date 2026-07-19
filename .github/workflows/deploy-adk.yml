@@ -50,7 +50,8 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          docker build -t $IMAGE_NAME:${VERSION} yellowstorm-adk
+          # The runner's bridge network has no outbound access during builds.
+          docker build --network=host -t $IMAGE_NAME:${VERSION} yellowstorm-adk
           docker push $IMAGE_NAME:${VERSION}
 
   deploy:
