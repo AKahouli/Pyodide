@@ -16,6 +16,28 @@ export class OpenPlaybookAssistantContextDto {
   executionId?: string;
 }
 
+export class RunPlaybookAssistantTurnDto {
+  @ApiProperty()
+  @IsString()
+  @MaxLength(50000)
+  message!: string;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(0)
+  expectedDefinitionRevision!: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  selectedTaskId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  executionId?: string;
+}
+
 export class StartPlaybookAssistantConstructionDto extends RequestPlaybookFlowIntentDto {
   @ApiPropertyOptional()
   @IsOptional()

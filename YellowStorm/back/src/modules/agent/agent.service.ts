@@ -1586,6 +1586,15 @@ export class AgentService {
     }
   }
 
+  async findActiveDefaultAgentIdBySlug(slug: string): Promise<string | null> {
+    const agent = await this.agentModel
+      .findOne({ slug, isDefault: true, isActive: true })
+      .select('_id')
+      .lean()
+      .exec();
+    return agent?._id.toString() ?? null;
+  }
+
   private toResponse(
     doc: AgentDocument | Record<string, unknown>,
     agentTypeDoc?: { id: string; name: string },

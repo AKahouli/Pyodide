@@ -9,6 +9,7 @@ import {
   getPlaybookTriggers,
   getExecution,
   runAdvisorEvaluation,
+  runPlaybookAssistantTurn,
   getPlaybookRepeatability,
   getTaskRepeatability,
   sanitizePlaybookUpdate,
@@ -1231,6 +1232,26 @@ describe('executePlaybook', () => {
 });
 
 describe('design message API', () => {
+  it('runs a dedicated Playbook assistant turn with revision context', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.post.mockResolvedValueOnce({
+      data: { data: { answer: 'Two tasks.', operation: null } },
+    });
+
+    const result = await runPlaybookAssistantTurn('playbook-1', {
+      message: 'How many tasks?',
+      expectedDefinitionRevision: 7,
+      selectedTaskId: 'task-1',
+    });
+
+    expect(apiClientMock.post).toHaveBeenCalledWith('/playbooks/playbook-1/assistant/turns', {
+      message: 'How many tasks?',
+      expectedDefinitionRevision: 7,
+      selectedTaskId: 'task-1',
+    }, { timeout: 180000 });
+    expect(result).toEqual({ answer: 'Two tasks.', operation: null });
+  });
+
   it('appends a designer sidebar interaction', async () => {
     apiClientMock.post.mockReset();
     apiClientMock.post.mockResolvedValueOnce({

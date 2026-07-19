@@ -100,7 +100,7 @@ import {
   createIntentSuggestionBindingId,
   createIntentSuggestionNodeId,
 } from '../utils/intent-application-key';
-import { appendDesignMessage, cancelPlaybookIntentConstruction, discardPlaybookIntentConstruction, fetchPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybookRepeatability, requestPlaybookNodeAdvisor, startAdvisorRemediationConstruction, startPlaybookIntentConstruction, streamPlaybookIntentConstruction } from '../api';
+import { appendDesignMessage, cancelPlaybookIntentConstruction, discardPlaybookIntentConstruction, fetchPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybookRepeatability, requestPlaybookNodeAdvisor, runPlaybookAssistantTurn, startAdvisorRemediationConstruction, startPlaybookIntentConstruction, streamPlaybookIntentConstruction } from '../api';
 import { playbookFeatures } from '../features';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
 import type {
@@ -169,6 +169,10 @@ export function shouldAutoLayoutAfterConstruction(
   currentStatus: PlaybookIntentConstructionStatus,
 ): boolean {
   return previousStatus !== 'completed' && currentStatus === 'completed';
+}
+
+export function shouldUsePlaybookAgentAssistant(enabled: boolean, images?: PlaybookIntentImageInput[]): boolean {
+  return enabled && !images?.length;
 }
 
 export function shouldBlockCanvasMutationShortcut(
@@ -2929,6 +2933,51 @@ function PlaybookCanvasInner() {
   const handleSubmitIntentFromDesigner = useCallback(async (intentText: string, visibleUserQuery: string, images?: PlaybookIntentImageInput[]) => {
     designerIntentRef.current = intentText;
     designerIntentImagesRef.current = images ?? [];
+    if (shouldUsePlaybookAgentAssistant(playbookFeatures.agentAssistantEnabled, images) && id && playbook) {
+      setIntentLoading(true);
+      setIntentError('');
+      try {
+        if (isDirty) await saveNow();
+        const response = await runPlaybookAssistantTurn(id, {
+          message: intentText,
+          expectedDefinitionRevision: getCurrentDefinitionRevision(),
+          ...(selectedStepId && playbook.tasks.some((task) => task.id === selectedStepId)
+            ? { selectedTaskId: selectedStepId }
+            : {}),
+          ...(currentExecution?.playbookId === id ? { executionId: currentExecution.id } : {}),
+        });
+        const constructionResult = response.operation
+          ? await consumePlaybookConstruction({
+              ...response.operation,
+              constructionId: response.operation.constructionId ?? response.operation.operationId!,
+            })
+          : { status: 'completed' as const };
+        const failed = constructionResult.status === 'failed';
+        await appendDesignMessage(id, {
+          userQuery: visibleUserQuery,
+          aiSummary: failed ? (constructionResult.error || response.answer) : response.answer,
+          status: failed ? 'failed' : 'completed',
+          error: failed ? (constructionResult.error || response.answer) : null,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : t('designer.intentFailedSummary');
+        setIntentError(message);
+        showError(message);
+        try {
+          await appendDesignMessage(id, {
+            userQuery: visibleUserQuery,
+            aiSummary: message,
+            status: 'failed',
+            error: message,
+          });
+        } catch (historyError) {
+          console.error('Failed to save Designer Assistant failure', historyError);
+        }
+      } finally {
+        setIntentLoading(false);
+      }
+      return;
+    }
     const result = await handleSubmitIntentText(intentText, images);
     if (!id || result.status === 'skipped') return;
     try {
@@ -2947,7 +2996,7 @@ function PlaybookCanvasInner() {
       console.error('Failed to save Designer Assistant chat history', error);
       showWarning(t('designer.intentSaveFailed'));
     }
-  }, [handleSubmitIntentText, id, refreshIntentTraces, t]);
+  }, [consumePlaybookConstruction, currentExecution, getCurrentDefinitionRevision, handleSubmitIntentText, id, isDirty, playbook, refreshIntentTraces, saveNow, selectedStepId, showError, t]);
 
   const handleAnswerIntentFromDesigner = useCallback(async (answerText?: string) => {
     const result = await handleForceGenerateIntentText(designerIntentRef.current, answerText, designerIntentImagesRef.current);

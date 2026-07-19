@@ -94,6 +94,13 @@ def test_connector_tool_injects_bound_workspace_name(monkeypatch: pytest.MonkeyP
     assert "external_ids" not in captured["params"]
 
 
+def test_connector_tool_name_matches_nest_runtime_contract() -> None:
+    tool = _first_connector_tool({"type": "object", "properties": {}})
+
+    assert tool.name == "connector_connector-1_search"
+    assert tool.custom_schema["name"] == "connector_connector-1_search"
+
+
 def test_connector_tool_binds_generic_params_as_workspace_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

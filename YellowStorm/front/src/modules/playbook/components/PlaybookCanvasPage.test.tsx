@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildIntentEdgeOptions, hydrateAssistantOperationHandoff, remapRouterConditionSourceNodes, resolveIntentNodeSemantics, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, hydrateAssistantOperationHandoff, remapRouterConditionSourceNodes, resolveIntentNodeSemantics, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldUsePlaybookAgentAssistant } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
@@ -11,6 +11,14 @@ describe('shouldBlockCanvasMutationShortcut', () => {
     }
     expect(shouldBlockCanvasMutationShortcut({ key: 'c', ctrlKey: true, metaKey: false }, true)).toBe(false);
     expect(shouldBlockCanvasMutationShortcut({ key: 'z', ctrlKey: true, metaKey: false }, false)).toBe(false);
+  });
+});
+
+describe('shouldUsePlaybookAgentAssistant', () => {
+  it('uses the dedicated agent for flagged text turns only', () => {
+    expect(shouldUsePlaybookAgentAssistant(true)).toBe(true);
+    expect(shouldUsePlaybookAgentAssistant(false)).toBe(false);
+    expect(shouldUsePlaybookAgentAssistant(true, [{ mediaType: 'image/png', data: 'encoded' }])).toBe(false);
   });
 });
 

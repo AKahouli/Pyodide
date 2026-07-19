@@ -775,6 +775,18 @@ export interface PlaybookIntentConstructionStartResponse {
   advisorMode?: AdvisorRemediationMode;
 }
 
+export interface PlaybookAssistantTurnRequest {
+  message: string;
+  expectedDefinitionRevision: number;
+  selectedTaskId?: string;
+  executionId?: string;
+}
+
+export interface PlaybookAssistantTurnResponse {
+  answer: string;
+  operation: PlaybookIntentConstructionStartResponse | null;
+}
+
 export type PlaybookIntentConstructionStatus = 'idle' | 'starting' | 'streaming' | 'completed' | 'failed' | 'cancelled';
 
 export type PlaybookIntentConstructionEvent =

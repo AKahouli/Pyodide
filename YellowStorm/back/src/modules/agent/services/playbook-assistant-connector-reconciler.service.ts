@@ -34,8 +34,9 @@ const PLAYBOOK_MCP_ACTIONS = [
 ];
 const PLAYBOOK_MCP_INSTRUCTION = `
 [Playbook MCP]
-When a request concerns an existing Playbook, call open_playbook_context before other Playbook tools and use only IDs and revisions returned by the tools. Read tools never mutate. Construction tools create an operation for the Playbook canvas; do not claim that a workflow was saved until the operation reports completion. Never use Playbook tools to answer, approve, reject, or resume runtime human-in-the-loop interrupts; direct the user to the existing Playbook runtime HITL panel.
+You are the Playbook AI Workflow Assistant embedded in the Playbook Designer. Use only the Playbook MCP tools. For an existing Playbook, call open_playbook_context before other tools and use only IDs and revisions returned by tools. Answer read questions without mutation. Start at most one construction operation per user turn. Construction tools create an operation for the Playbook canvas; do not claim that a workflow was saved until the operation reports completion. Never answer, approve, reject, disable, or resume runtime human-in-the-loop interrupts; direct the user to the existing Playbook runtime HITL panel.
 `.trim();
+export const PLAYBOOK_ASSISTANT_AGENT_SLUG = 'playbook-ai-workflow-assistant';
 
 @Injectable()
 export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit {
@@ -71,8 +72,8 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
       return;
     }
 
-    const agent = monoAgents[0];
-    const actingUserId = agent.createdBy.toString();
+    const sourceAgent = monoAgents[0];
+    const actingUserId = sourceAgent.createdBy.toString();
     const inspection = await this.connectorService.inspectMcp(
       'streamable_http',
       this.config.mcpServerUrl,
@@ -97,27 +98,63 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
       this.config.mcpServerUrl,
     );
     const connectorId = new Types.ObjectId(connector.id);
-    const selections = (agent.connectorActionSelections ?? [])
-      .filter((selection) => selection.connector.toString() !== connector.id);
-    selections.push({ connector: connectorId, actionKeys: PLAYBOOK_MCP_ACTIONS });
-    const instruction = agent.instruction?.includes('[Playbook MCP]')
-      ? agent.instruction
-      : `${agent.instruction?.trim() ?? ''}\n\n${PLAYBOOK_MCP_INSTRUCTION}`.trim();
+    const assistantType = await this.agentTypeService.findOrCreateBySlug('playbook_assistant', {
+      name: 'Playbook Assistant',
+      defaultPrompt: '',
+      isActive: true,
+    });
+    const dedicatedAgent = await this.agentModel.findOneAndUpdate(
+      { slug: PLAYBOOK_ASSISTANT_AGENT_SLUG, isDefault: true },
+      {
+        $set: {
+          name: 'Playbook AI Workflow Assistant',
+          agentType: new Types.ObjectId(assistantType.id),
+          role: 'Design, inspect, and optimize the current Playbook through Playbook MCP.',
+          description: 'System-managed assistant for the Playbook Designer.',
+          llmModel: sourceAgent.llmModel,
+          temperature: 0,
+          instruction: PLAYBOOK_MCP_INSTRUCTION,
+          ignorePrePrompt: true,
+          knowledgeBases: [],
+          tools: [],
+          skills: [],
+          disabledSkills: [],
+          connectors: [connectorId],
+          connectorActionSelections: [{ connector: connectorId, actionKeys: PLAYBOOK_MCP_ACTIONS }],
+          enable_temporary_child_agents: false,
+          isActive: true,
+          isDefault: true,
+          isDefaultForType: true,
+        },
+        $setOnInsert: { createdBy: sourceAgent.createdBy },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: false },
+    ).exec();
+    const dedicatedAgentId = dedicatedAgent.id;
     await this.agentModel.updateMany(
-      { _id: { $ne: agent.id }, connectors: connectorId },
+      { _id: { $ne: dedicatedAgentId }, connectors: connectorId },
       { $pull: { connectors: connectorId, connectorActionSelections: { connector: connectorId } } },
     ).exec();
-    await this.agentModel.updateOne(
-      { _id: agent.id, isDefault: true, isActive: true },
-      {
-        $addToSet: { connectors: connectorId },
-        $set: { connectorActionSelections: selections, instruction },
-      },
-    ).exec();
-    this.logger.log(`Playbook MCP system connector attached to default mono-agent agentId=${agent.id}`);
+    const agentsWithLegacyInstruction = await this.agentModel.find({
+      _id: { $ne: dedicatedAgentId },
+      instruction: { $regex: '\\[Playbook MCP\\]' },
+    }).select('_id instruction').lean().exec();
+    if (agentsWithLegacyInstruction.length > 0) {
+      await this.agentModel.bulkWrite(agentsWithLegacyInstruction.map((agent) => ({
+        updateOne: {
+          filter: { _id: agent._id },
+          update: { $set: { instruction: this.removePlaybookInstruction(agent.instruction ?? '') } },
+        },
+      })));
+    }
+    this.logger.log(`Playbook MCP system connector attached exclusively to dedicated assistant agentId=${dedicatedAgentId}`);
   }
 
   private canonicalSlug(value: string): string {
     return (value || '').toLowerCase().replace(/[-_\s]+/g, '_');
+  }
+
+  private removePlaybookInstruction(value: string): string {
+    return value.replace(/\n*\[Playbook MCP\][\s\S]*$/m, '').trim();
   }
 }

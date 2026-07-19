@@ -3,7 +3,7 @@ import { ConfigType } from '@nestjs/config';
 import playbookFlowConfig from '@config/playbook-flow.config';
 import { ConflictException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { AnalyzeTaskOptimizationDto, AnalyzeWorkflowOptimizationDto, RunPlaybookFromStepDto, StartAdvisorRemediationConstructionDto, StartPlaybookAssistantConstructionDto } from '../dto/playbook-assistant.dto';
+import { AnalyzeTaskOptimizationDto, AnalyzeWorkflowOptimizationDto, RunPlaybookAssistantTurnDto, RunPlaybookFromStepDto, StartAdvisorRemediationConstructionDto, StartPlaybookAssistantConstructionDto } from '../dto/playbook-assistant.dto';
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execution.dto';
 import type { PlaybookTaskOptimizationResult } from '../interfaces/playbook-assistant.interface';
@@ -15,6 +15,10 @@ import { PlaybookAssistantContextService } from './playbook-assistant-context.se
 import { PlaybookFlowService } from '../services/playbook-flow.service';
 import { PlaybookFlowExecutionService } from '../services/playbook-flow-execution.service';
 import { PlaybookFlowReplayService } from '../services/playbook-flow-replay.service';
+import { AgentService } from '@modules/agent/agent.service';
+import { AgentTaskExecutionService, type AgentTaskToolResult } from '@modules/agent/services/agent-task-execution.service';
+import { PLAYBOOK_ASSISTANT_AGENT_SLUG } from '@modules/agent/services/playbook-assistant-connector-reconciler.service';
+import { randomUUID } from 'crypto';
 
 const DEFAULT_OPTIMIZATION_DIMENSIONS = ['clarity', 'agent', 'tools', 'inputs', 'outputs', 'bindings', 'cost', 'latency', 'determinism'];
 
@@ -29,12 +33,55 @@ export class PlaybookAssistantService {
     private readonly flowService: PlaybookFlowService,
     private readonly executionService: PlaybookFlowExecutionService,
     private readonly replayService: PlaybookFlowReplayService,
+    private readonly agentService: AgentService,
+    private readonly agentTaskExecutionService: AgentTaskExecutionService,
   ) {}
 
   assertEnabled(): void {
     if (!this.config.mcpAssistantEnabled) {
       throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Playbook MCP assistant is disabled');
     }
+  }
+
+  async runTurn(playbookId: string, userId: string, dto: RunPlaybookAssistantTurnDto) {
+    this.assertEnabled();
+    const flow = await this.accessService.findAccessibleFlow(playbookId, userId, 'write');
+    const definitionRevision = flow.definitionRevision ?? 0;
+    this.assertRevision(definitionRevision, dto.expectedDefinitionRevision);
+    const agentId = await this.agentService.findActiveDefaultAgentIdBySlug(PLAYBOOK_ASSISTANT_AGENT_SLUG);
+    if (!agentId) {
+      throw new ServiceUnavailableException(ErrorCode.AGENT_UNAVAILABLE, 'The Playbook AI Workflow Assistant is unavailable');
+    }
+    const trustedContext = [
+      `Current Playbook ID: ${playbookId}`,
+      `Current definition revision: ${definitionRevision}`,
+      dto.selectedTaskId ? `Selected task ID: ${dto.selectedTaskId}` : 'Selected task ID: none',
+      dto.executionId ? `Current execution ID: ${dto.executionId}` : 'Current execution ID: none',
+    ].join('\n');
+    const result = await this.agentTaskExecutionService.runSingleAgentTask({
+      userId,
+      agentId,
+      query: `${trustedContext}\n\n<user_request>\n${dto.message.trim()}\n</user_request>`,
+      attachedFiles: [],
+      correlationId: `playbook-assistant:${randomUUID()}`,
+    });
+    const constructionResults = result.toolResults.filter((toolResult) => this.isConstructionToolResult(toolResult));
+    if (constructionResults.length > 1) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'The assistant started more than one construction operation in a single turn.');
+    }
+    let operation: (Awaited<ReturnType<PlaybookFlowIntentConstructionService['getStatus']>> & { constructionId: string }) | null = null;
+    if (constructionResults.length === 1) {
+      const operationId = this.findOperationId(constructionResults[0].result);
+      if (!operationId) {
+        throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'The assistant construction result did not include an operation identifier');
+      }
+      const status = await this.constructionService.getStatus(playbookId, userId, operationId);
+      operation = { ...status, constructionId: status.operationId };
+    }
+    return {
+      answer: result.text.trim() || (operation ? 'The requested Playbook construction is ready in the canvas.' : 'The Playbook assistant completed the request.'),
+      operation,
+    };
   }
 
   async startConstruction(playbookId: string, userId: string, dto: StartPlaybookAssistantConstructionDto) {
@@ -248,5 +295,42 @@ export class PlaybookAssistantService {
       status: 'planning' as const,
       eventStreamPath: `/api/v1/playbooks/${encodeURIComponent(result.playbookId)}/intent-constructions/${encodeURIComponent(result.constructionId)}/stream`,
     };
+  }
+
+  private isConstructionToolResult(toolResult: AgentTaskToolResult): boolean {
+    if (toolResult.status !== 'completed') return false;
+    return [
+      'start_playbook_construction',
+      'start_advisor_remediation_construction',
+      'start_workflow_optimization',
+    ].some((action) => toolResult.name === action || toolResult.name.endsWith(`_${action}`));
+  }
+
+  private findOperationId(value: unknown, depth = 0): string | null {
+    if (depth > 4 || value == null) return null;
+    if (typeof value === 'string') {
+      try {
+        return this.findOperationId(JSON.parse(value), depth + 1);
+      } catch {
+        return null;
+      }
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const operationId = this.findOperationId(item, depth + 1);
+        if (operationId) return operationId;
+      }
+      return null;
+    }
+    if (typeof value !== 'object') return null;
+    const record = value as Record<string, unknown>;
+    for (const key of ['operationId', 'operation_id', 'constructionId', 'construction_id']) {
+      if (typeof record[key] === 'string' && record[key]) return record[key];
+    }
+    for (const key of ['result', 'data', 'structuredContent', 'structured_content']) {
+      const operationId = this.findOperationId(record[key], depth + 1);
+      if (operationId) return operationId;
+    }
+    return null;
   }
 }

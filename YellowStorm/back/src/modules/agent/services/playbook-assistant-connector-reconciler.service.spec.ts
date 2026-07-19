@@ -2,18 +2,21 @@ import { Types } from 'mongoose';
 import { PlaybookAssistantConnectorReconcilerService } from './playbook-assistant-connector-reconciler.service';
 
 describe('PlaybookAssistantConnectorReconcilerService', () => {
-  it('attaches the hidden system connector only to the single default mono-agent', async () => {
+  it('attaches the hidden system connector only to the dedicated Playbook assistant', async () => {
     const connectorId = new Types.ObjectId().toString();
     const agent = {
       id: new Types.ObjectId().toString(),
       createdBy: new Types.ObjectId(),
       connectorActionSelections: [],
     };
-    const updateExec = jest.fn().mockResolvedValue({});
+    const dedicatedAgentId = new Types.ObjectId().toString();
     const agentModel = {
-      find: jest.fn().mockReturnValue({ limit: () => ({ exec: async () => [agent] }) }),
+      find: jest.fn()
+        .mockReturnValueOnce({ limit: () => ({ exec: async () => [agent] }) })
+        .mockReturnValueOnce({ select: () => ({ lean: () => ({ exec: async () => [] }) }) }),
+      findOneAndUpdate: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ id: dedicatedAgentId }) }),
       updateMany: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({}) }),
-      updateOne: jest.fn().mockReturnValue({ exec: updateExec }),
+      bulkWrite: jest.fn(),
     };
     const connectorService = {
       reconcilePlaybookMcpSystemConnector: jest.fn().mockResolvedValue({ id: connectorId }),
@@ -36,7 +39,10 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
         mcpServerUrl: 'http://playbook-mcp:8025/mcp',
       } as any,
       agentModel as any,
-      { findAllActive: jest.fn().mockResolvedValue([{ id: new Types.ObjectId().toString(), slug: 'mono-agent' }]) } as any,
+      {
+        findAllActive: jest.fn().mockResolvedValue([{ id: new Types.ObjectId().toString(), slug: 'mono-agent' }]),
+        findOrCreateBySlug: jest.fn().mockResolvedValue({ id: new Types.ObjectId().toString(), slug: 'playbook_assistant' }),
+      } as any,
       connectorService as any,
     );
 
@@ -46,19 +52,19 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
       agent.createdBy.toString(),
       'http://playbook-mcp:8025/mcp',
     );
-    expect(agentModel.updateOne).toHaveBeenCalledWith(
-      { _id: agent.id, isDefault: true, isActive: true },
+    expect(agentModel.findOneAndUpdate).toHaveBeenCalledWith(
+      { slug: 'playbook-ai-workflow-assistant', isDefault: true },
       expect.objectContaining({
-        $addToSet: { connectors: new Types.ObjectId(connectorId) },
         $set: expect.objectContaining({
+          connectors: [new Types.ObjectId(connectorId)],
           connectorActionSelections: [expect.objectContaining({ actionKeys: expect.arrayContaining(['start_playbook_construction']) })],
           instruction: expect.stringContaining('[Playbook MCP]'),
         }),
       }),
+      { upsert: true, new: true, setDefaultsOnInsert: false },
     );
-    expect(updateExec).toHaveBeenCalled();
     expect(agentModel.updateMany).toHaveBeenCalledWith(
-      { _id: { $ne: agent.id }, connectors: new Types.ObjectId(connectorId) },
+      { _id: { $ne: dedicatedAgentId }, connectors: new Types.ObjectId(connectorId) },
       { $pull: { connectors: new Types.ObjectId(connectorId), connectorActionSelections: { connector: new Types.ObjectId(connectorId) } } },
     );
   });
@@ -66,7 +72,7 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
   it('fails closed when more than one default mono-agent exists', async () => {
     const agentModel = {
       find: jest.fn().mockReturnValue({ limit: () => ({ exec: async () => [{}, {}] }) }),
-      updateOne: jest.fn(),
+      findOneAndUpdate: jest.fn(),
     };
     const connectorService = { reconcilePlaybookMcpSystemConnector: jest.fn(), inspectMcp: jest.fn() };
     const service = new PlaybookAssistantConnectorReconcilerService(
@@ -79,6 +85,6 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
     await service.onModuleInit();
 
     expect(connectorService.reconcilePlaybookMcpSystemConnector).not.toHaveBeenCalled();
-    expect(agentModel.updateOne).not.toHaveBeenCalled();
+    expect(agentModel.findOneAndUpdate).not.toHaveBeenCalled();
   });
 });

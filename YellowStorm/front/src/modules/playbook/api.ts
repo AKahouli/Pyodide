@@ -47,6 +47,8 @@ import type {
   PlaybookIntentTraceResponse,
   PlaybookIntentConstructionEvent,
   PlaybookIntentConstructionStartResponse,
+  PlaybookAssistantTurnRequest,
+  PlaybookAssistantTurnResponse,
   RequestPlaybookNodeAdvisorData,
   PlaybookNodeAdvisorResponse,
   Flow,
@@ -1341,6 +1343,18 @@ export async function startPlaybookIntentConstruction(
     API_ENDPOINTS.playbooks.intentConstructions(playbookId),
     data,
     options?.signal ? { signal: options.signal } : undefined,
+  );
+  return response.data.data;
+}
+
+export async function runPlaybookAssistantTurn(
+  playbookId: string,
+  data: PlaybookAssistantTurnRequest,
+): Promise<PlaybookAssistantTurnResponse> {
+  const response = await apiClient.post<ApiResponse<PlaybookAssistantTurnResponse>>(
+    API_ENDPOINTS.playbooks.assistantTurns(playbookId),
+    data,
+    { timeout: 180000 },
   );
   return response.data.data;
 }

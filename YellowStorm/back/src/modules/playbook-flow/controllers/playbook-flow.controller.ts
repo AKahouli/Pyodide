@@ -22,7 +22,7 @@ import playbookFlowConfig from '@config/playbook-flow.config';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { PlaybookAssistantService } from '../assistant/playbook-assistant.service';
-import { StartAdvisorRemediationConstructionDto } from '../dto/playbook-assistant.dto';
+import { RunPlaybookAssistantTurnDto, StartAdvisorRemediationConstructionDto } from '../dto/playbook-assistant.dto';
 
 @ApiTags('Playbook Flows')
 @ApiBearerAuth()
@@ -423,6 +423,17 @@ export class PlaybookFlowController {
     @Body() body: CancelIntentConstructionDto,
   ) {
     return this.playbookFlowIntentConstructionService.cancel(id, userId, constructionId, body?.reason);
+  }
+
+  @Post(':id/assistant/turns')
+  @ApiOperation({ summary: 'Run a Playbook Designer turn through the dedicated MCP assistant' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async runAssistantTurn(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: RunPlaybookAssistantTurnDto,
+  ) {
+    return this.playbookAssistantService.runTurn(id, userId, dto);
   }
 
   @Post(':id/advisor-remediation-constructions')

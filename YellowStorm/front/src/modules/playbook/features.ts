@@ -14,4 +14,8 @@ export const playbookFeatures = {
     import.meta.env.VITE_PLAYBOOK_MCP_ASSISTANT_ENABLED,
     'MY_APP_VITE_PLAYBOOK_MCP_ASSISTANT_ENABLED',
   ),
+  agentAssistantEnabled: resolvePlaybookFeatureFlag(
+    import.meta.env.VITE_PLAYBOOK_AGENT_ASSISTANT_ENABLED,
+    'MY_APP_VITE_PLAYBOOK_AGENT_ASSISTANT_ENABLED',
+  ),
 } as const;
