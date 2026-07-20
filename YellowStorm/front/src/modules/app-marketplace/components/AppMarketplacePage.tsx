@@ -1,8 +1,12 @@
 import { useEffect } from 'react';
-import { Store } from 'lucide-react';
+import { Loader2, Store, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
+import { useAppMarketplaceFilters } from '../hooks/useAppMarketplaceFilters';
 import { useAppMarketplaceStore } from '../store';
-import { DeployedAppCard } from './DeployedAppCard';
+import { AppMarketplaceFilters } from './hub/AppMarketplaceFilters';
+import { AppMarketplaceGrid } from './hub/AppMarketplaceGrid';
+import { AppMarketplaceOverview } from './hub/AppMarketplaceOverview';
 
 export function AppMarketplacePage() {
   const { t } = useModuleTranslation('app-marketplace');
@@ -10,46 +14,92 @@ export function AppMarketplacePage() {
   const loading = useAppMarketplaceStore((s) => s.loading);
   const error = useAppMarketplaceStore((s) => s.error);
   const fetchApps = useAppMarketplaceStore((s) => s.fetchApps);
+  const filters = useAppMarketplaceFilters(apps);
 
   useEffect(() => {
     fetchApps();
   }, [fetchApps]);
 
+  const showInitialLoader = loading && apps.length === 0;
+  const showGlobalEmpty = !loading && !error && apps.length === 0;
+
   return (
-    <div className='flex size-full flex-col'>
-      <div className='shrink-0 border-b px-6 py-5'>
-        <div className='flex items-center gap-3'>
-          <div className='flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10'>
-            <Store className='h-5 w-5 text-primary' />
-          </div>
-          <div>
-            <h1 className='text-xl font-semibold'>{t('page.title')}</h1>
-            <p className='text-sm text-muted-foreground'>{t('page.description')}</p>
+    <div className='flex h-full w-full flex-col bg-background'>
+      <header className='relative border-b border-border/60 px-6 pb-6 pt-8 sm:px-10 sm:pb-8 sm:pt-10'>
+        <div className='mx-auto flex max-w-6xl flex-wrap items-end justify-between gap-6'>
+          <div className='min-w-0'>
+            <div className='mb-3 inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground'>
+              <Store className='h-3 w-3' />
+              {t('button.label')}
+            </div>
+            <h1 className='text-3xl font-semibold tracking-tight sm:text-4xl'>{t('page.title')}</h1>
+            <p className='mt-2 max-w-xl text-sm text-muted-foreground'>{t('page.description')}</p>
           </div>
         </div>
-      </div>
+      </header>
 
-      <div className='flex-1 overflow-y-auto p-6'>
-        {loading && apps.length === 0 ? (
-          <div className='flex items-center justify-center py-20'>
-            <div className='h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent' />
-          </div>
-        ) : error ? (
-          <div className='flex flex-col items-center justify-center py-20 text-muted-foreground'>
-            <p>{t('page.error')}</p>
-          </div>
-        ) : apps.length === 0 ? (
-          <div className='flex flex-col items-center justify-center py-20 text-muted-foreground'>
-            <Store className='mb-3 h-12 w-12 opacity-40' />
-            <p>{t('page.empty')}</p>
-          </div>
-        ) : (
-          <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
-            {apps.map((app) => (
-              <DeployedAppCard key={app.sessionId} app={app} />
-            ))}
-          </div>
-        )}
+      <div className='flex-1 overflow-y-auto'>
+        <div className='mx-auto max-w-6xl space-y-8 px-6 py-8 sm:px-10'>
+          {error ? (
+            <div className='flex flex-col items-center justify-center py-20 text-muted-foreground'>
+              <p>{t('page.error')}</p>
+            </div>
+          ) : showInitialLoader ? (
+            <div className='flex items-center justify-center py-24'>
+              <Loader2 className='h-6 w-6 animate-spin text-muted-foreground' />
+            </div>
+          ) : showGlobalEmpty ? (
+            <div className='flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border/70 py-20 text-center'>
+              <div className='flex h-12 w-12 items-center justify-center rounded-full bg-muted/60'>
+                <Store className='h-5 w-5 text-muted-foreground' />
+              </div>
+              <p className='max-w-sm text-sm text-muted-foreground'>{t('page.empty')}</p>
+            </div>
+          ) : (
+            <>
+              <AppMarketplaceOverview
+                activeOwner={filters.filters.owner}
+                ownedCount={filters.ownedCount}
+                sharedCount={filters.sharedCount}
+                onSelectOwner={filters.setOwner}
+              />
+
+              <AppMarketplaceFilters
+                searchInput={filters.searchInput}
+                onSearchChange={filters.setSearchInput}
+                owner={filters.filters.owner}
+                onOwnerChange={filters.setOwner}
+                sort={filters.filters.sort}
+                onSortChange={filters.setSort}
+                view={filters.filters.view}
+                onViewChange={filters.setView}
+                hasActiveFilters={filters.hasActiveFilters}
+                onClearAll={filters.clearAll}
+              />
+
+              {filters.isEmpty ? (
+                <div className='flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border/70 py-20 text-center'>
+                  <div className='flex h-12 w-12 items-center justify-center rounded-full bg-muted/60'>
+                    <Store className='h-5 w-5 text-muted-foreground' />
+                  </div>
+                  <p className='max-w-sm text-sm text-muted-foreground'>
+                    {t('hub.filters.noResults')}
+                  </p>
+                  <Button variant='outline' size='sm' onClick={filters.clearAll}>
+                    <X className='mr-1.5 h-3.5 w-3.5' />
+                    {t('hub.filters.clear')}
+                  </Button>
+                </div>
+              ) : (
+                <AppMarketplaceGrid
+                  groups={filters.filteredGroups}
+                  view={filters.filters.view}
+                  showSections={filters.filters.owner === 'all'}
+                />
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

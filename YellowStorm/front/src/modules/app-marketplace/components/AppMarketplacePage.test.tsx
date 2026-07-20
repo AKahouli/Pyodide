@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { DeployedApp } from '../types';
 
@@ -48,6 +49,16 @@ const sharedApps: DeployedApp[] = [
   },
 ];
 
+const mixedApps: DeployedApp[] = [...mockApps, ...sharedApps];
+
+function renderPage(initialRoute = '/') {
+  return render(
+    <MemoryRouter initialEntries={[initialRoute]}>
+      <AppMarketplacePage />
+    </MemoryRouter>,
+  );
+}
+
 describe('AppMarketplacePage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -57,7 +68,7 @@ describe('AppMarketplacePage', () => {
   it('renders the deployed apps returned by the API', async () => {
     listDeployedAppsMock.mockResolvedValueOnce(mockApps);
 
-    render(<AppMarketplacePage />);
+    renderPage();
 
     expect(await screen.findByText('Generated app')).toBeInTheDocument();
     expect(screen.getByText('https://apps.example/app-1')).toBeInTheDocument();
@@ -67,7 +78,7 @@ describe('AppMarketplacePage', () => {
     listDeployedAppsMock.mockResolvedValueOnce(mockApps);
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
 
-    render(<AppMarketplacePage />);
+    renderPage();
     fireEvent.click(await screen.findByRole('button', { name: /card\.open/i }));
 
     expect(openSpy).toHaveBeenCalledWith('https://apps.example/app-1', '_blank', 'noreferrer');
@@ -77,7 +88,7 @@ describe('AppMarketplacePage', () => {
   it('navigates to the associated conversation', async () => {
     listDeployedAppsMock.mockResolvedValueOnce(mockApps);
 
-    render(<AppMarketplacePage />);
+    renderPage();
     fireEvent.click(await screen.findByRole('button', { name: /card\.conversation/i }));
 
     expect(navigateMock).toHaveBeenCalledWith('/conversation-v2/session-1');
@@ -86,7 +97,7 @@ describe('AppMarketplacePage', () => {
   it('removes a card after delete confirmation', async () => {
     listDeployedAppsMock.mockResolvedValueOnce(mockApps);
     removeAppMock.mockResolvedValueOnce(undefined);
-    render(<AppMarketplacePage />);
+    renderPage();
 
     fireEvent.click(await screen.findByRole('button', { name: /card\.delete/i }));
     const dialog = await screen.findByRole('alertdialog');
@@ -99,7 +110,7 @@ describe('AppMarketplacePage', () => {
   it('hides conversation and share actions for shared apps', async () => {
     listDeployedAppsMock.mockResolvedValueOnce(sharedApps);
 
-    render(<AppMarketplacePage />);
+    renderPage();
 
     expect(await screen.findByText('Shared app')).toBeInTheDocument();
     expect(screen.getByText(/card\.shared/)).toBeInTheDocument();
@@ -110,7 +121,7 @@ describe('AppMarketplacePage', () => {
   it('opens the share dialog from the card', async () => {
     listDeployedAppsMock.mockResolvedValueOnce(mockApps);
 
-    render(<AppMarketplacePage />);
+    renderPage();
     fireEvent.click(await screen.findByRole('button', { name: /card\.share/i }));
 
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
@@ -119,8 +130,36 @@ describe('AppMarketplacePage', () => {
   it('shows the empty state when no app is deployed', async () => {
     listDeployedAppsMock.mockResolvedValueOnce([]);
 
-    render(<AppMarketplacePage />);
+    renderPage();
 
     expect(await screen.findByText(/page\.empty/)).toBeInTheDocument();
+  });
+
+  it('shows overview counts for personal and shared apps', async () => {
+    listDeployedAppsMock.mockResolvedValueOnce(mixedApps);
+
+    renderPage();
+
+    await screen.findByText('Generated app');
+    const counts = screen.getAllByText('1', { selector: '.text-4xl' });
+    expect(counts).toHaveLength(2);
+  });
+
+  it('filters apps by search query from URL', async () => {
+    listDeployedAppsMock.mockResolvedValueOnce(mixedApps);
+
+    renderPage('/?q=Shared');
+
+    expect(await screen.findByText('Shared app')).toBeInTheDocument();
+    expect(screen.queryByText('Generated app')).not.toBeInTheDocument();
+  });
+
+  it('filters apps to shared only from URL owner param', async () => {
+    listDeployedAppsMock.mockResolvedValueOnce(mixedApps);
+
+    renderPage('/?owner=shared');
+
+    expect(await screen.findByText('Shared app')).toBeInTheDocument();
+    expect(screen.queryByText('Generated app')).not.toBeInTheDocument();
   });
 });

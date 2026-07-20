@@ -9,6 +9,36 @@
     "empty": "No deployed apps yet. Publish an app from a conversation to see it here.",
     "error": "Failed to load your deployed apps."
   },
+  "hub": {
+    "overview": {
+      "eyebrow": "Overview",
+      "personal": "Personal",
+      "shared": "Shared with me"
+    },
+    "filters": {
+      "searchPlaceholder": "Search apps...",
+      "ownerAll": "All",
+      "ownerMine": "Mine",
+      "ownerShared": "Shared with me",
+      "clear": "Clear filters",
+      "noResults": "No apps match your filters."
+    },
+    "sort": {
+      "label": "Sort",
+      "deployed": "Recently deployed",
+      "name": "Name (A–Z)"
+    },
+    "view": {
+      "grid": "Grid",
+      "list": "List"
+    },
+    "sections": {
+      "personal": "Personal",
+      "shared": "Shared with me",
+      "appsCount": "{{count}} apps",
+      "singleApp": "1 app"
+    }
+  },
   "card": {
     "untitled": "Untitled app",
     "deployedAt": "Deployed {{date}}",

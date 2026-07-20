@@ -9,6 +9,36 @@
     "empty": "Aucune application déployée pour le moment. Publiez une application depuis une conversation pour la voir ici.",
     "error": "Impossible de charger vos applications déployées."
   },
+  "hub": {
+    "overview": {
+      "eyebrow": "Vue d'ensemble",
+      "personal": "Personnelles",
+      "shared": "Partagées avec moi"
+    },
+    "filters": {
+      "searchPlaceholder": "Rechercher des applications...",
+      "ownerAll": "Toutes",
+      "ownerMine": "Les miennes",
+      "ownerShared": "Partagées avec moi",
+      "clear": "Effacer les filtres",
+      "noResults": "Aucune application ne correspond à vos filtres."
+    },
+    "sort": {
+      "label": "Trier",
+      "deployed": "Récemment déployées",
+      "name": "Nom (A–Z)"
+    },
+    "view": {
+      "grid": "Grille",
+      "list": "Liste"
+    },
+    "sections": {
+      "personal": "Personnelles",
+      "shared": "Partagées avec moi",
+      "appsCount": "{{count}} applications",
+      "singleApp": "1 application"
+    }
+  },
   "card": {
     "untitled": "Application sans titre",
     "deployedAt": "Déployée le {{date}}",
