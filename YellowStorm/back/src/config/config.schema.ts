@@ -183,6 +183,11 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_V2_GRPC_TLS_CA_CERT_PATH: Joi.string().optional(),
   CONVERSATION_V2_GRPC_TLS_SERVER_NAME_OVERRIDE: Joi.string().optional(),
   CONVERSATION_V2_GRPC_REQUIRE_TLS: Joi.boolean().default(false),
+  APP_BUILDER_DEPLOY_BASE_URL: Joi.string().uri().optional(),
+  APP_BUILDER_DEPLOY_TOKEN: Joi.string().min(1).optional(),
+  APP_BUILDER_DEPLOY_TIMEOUT_MS: Joi.number().min(30_000).default(600_000),
+  APP_BUILDER_DEPLOY_INITIAL_STATUS_DELAY_MS: Joi.number().min(0).default(20_000),
+  APP_BUILDER_DEPLOY_STATUS_POLL_INTERVAL_MS: Joi.number().min(1_000).default(15_000),
 
   // LiteLLM
   LITELLM_API_URL: Joi.string().uri().optional(),

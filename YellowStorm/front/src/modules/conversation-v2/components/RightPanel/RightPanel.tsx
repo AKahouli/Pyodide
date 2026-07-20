@@ -6,7 +6,7 @@ import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
 import { ToolDetailDispatch } from './tool-views/ToolDetailDispatch';
 import { ApplicationComponentView } from './ApplicationComponentView';
-// import { DeployControls } from './DeployControls'; // Publish hidden until deploy works
+import { DeployControls } from './DeployControls';
 
 export function RightPanel() {
   const { t } = useConversationV2Translation();
@@ -18,6 +18,7 @@ export function RightPanel() {
     jumpToLive,
     streaming,
     applicationComponent,
+    lastDeployedAt,
     setRightPanelView,
   } = useConversationV2Store(
     useShallow((s) => ({
@@ -28,6 +29,7 @@ export function RightPanel() {
       jumpToLive: s.jumpToLive,
       streaming: s.streaming,
       applicationComponent: s.applicationComponent,
+      lastDeployedAt: s.lastDeployedAt,
       setRightPanelView: s.setRightPanelView,
     })),
   );
@@ -75,8 +77,7 @@ export function RightPanel() {
           </span>
         )}
         <div className='flex shrink-0 items-center gap-1'>
-          {/* Publish button temporarily hidden — deploy isn't working yet.
-              Restore <DeployControls /> (and its import) once it does. */}
+          {hasPreview && <DeployControls />}
           <Button variant='ghost' size='icon-sm' aria-label={t('rightPanel.close')} onClick={close}>
             <XIcon className='size-4' />
           </Button>
@@ -87,7 +88,7 @@ export function RightPanel() {
           // Key on the URL so a newly-pushed preview remounts the iframe on the
           // new address (WebPreview reads defaultUrl only on mount).
           <ApplicationComponentView
-            key={applicationComponent!.url}
+            key={`${applicationComponent!.url}:${lastDeployedAt ?? ''}`}
             url={applicationComponent!.url}
             title={applicationComponent!.title}
           />
