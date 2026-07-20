@@ -36,6 +36,7 @@ export function useBrowserSession() {
   const [status, setStatus] = useState<BrowserSessionStatus>('idle');
   const [frame, setFrame] = useState<string | null>(null);
   const [currentUrl, setCurrentUrl] = useState<string | null>(null);
+  const [rootUrl, setRootUrl] = useState<string | null>(null);
   const [pages, setPages] = useState<CollectedPage[]>([]);
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
 
@@ -44,7 +45,7 @@ export function useBrowserSession() {
     if (!token) { setStatus('error'); return; }
     setStatus('connecting');
     seenRef.current = new Set();
-    setPages([]); setFrame(null); setBlockedNotice(null); setCurrentUrl(url);
+    setPages([]); setFrame(null); setBlockedNotice(null); setCurrentUrl(url); setRootUrl(url);
 
     const socket = io(`${getSocketBaseUrl()}/browser-session`, {
       auth: { token }, transports: ['websocket', 'polling'],
@@ -82,5 +83,5 @@ export function useBrowserSession() {
     setStatus('idle');
   }, []);
 
-  return { status, frame, currentUrl, pages, blockedNotice, start, sendInput, navigate, stop };
+  return { status, frame, currentUrl, rootUrl, pages, blockedNotice, start, sendInput, navigate, stop };
 }

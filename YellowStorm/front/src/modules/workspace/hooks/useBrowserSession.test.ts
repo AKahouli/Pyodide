@@ -72,4 +72,14 @@ describe('useBrowserSession', () => {
     act(() => { result.current.start('https://ok.example'); });
     await waitFor(() => expect(result.current.status).toBe('busy'));
   });
+
+  it('retains the session root url across navigations', async () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.start('https://root.example/start'); });
+    await waitFor(() => expect(result.current.status).toBe('live'));
+    expect(result.current.rootUrl).toBe('https://root.example/start');
+    act(() => { handlers['navigated']({ url: 'https://root.example/other', title: 'Other' }); });
+    expect(result.current.currentUrl).toBe('https://root.example/other');
+    expect(result.current.rootUrl).toBe('https://root.example/start');
+  });
 });
