@@ -59,6 +59,8 @@ describe('ConversationV2SessionService', () => {
         title: 'Generated app',
         deployedUrl: 'https://apps.example/app-1',
         lastDeployedAt: '2026-07-17T10:00:00.000Z',
+        source: 'owned',
+        shareId: null,
       },
     ]);
     expect(find).toHaveBeenCalledWith({

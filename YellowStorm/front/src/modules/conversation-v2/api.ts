@@ -160,12 +160,14 @@ export const conversationV2Api = {
     });
     return res.data.data;
   },
-  /** Email the deployed app URL to the given recipients. Returns how many were sent. */
-  async shareDeployedApp(sessionId: string, emails: string[]): Promise<{ sent: number }> {
-    const res = await apiClient.post<ApiResponse<{ sent: number }>>(
-      `/conversation-v2/sessions/${sessionId}/share-deploy`,
-      { emails },
-    );
+  /** Email the deployed app to recipients and grant Marketplace access. */
+  async shareDeployedApp(
+    sessionId: string,
+    emails: string[],
+  ): Promise<{ sent: number; notFound: string[]; skippedSelf: string[] }> {
+    const res = await apiClient.post<
+      ApiResponse<{ sent: number; notFound: string[]; skippedSelf: string[] }>
+    >(`/conversation-v2/sessions/${sessionId}/share-deploy`, { emails });
     return res.data.data;
   },
   async listWorkspaceDocuments(

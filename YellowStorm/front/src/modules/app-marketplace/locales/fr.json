@@ -5,21 +5,27 @@
   },
   "page": {
     "title": "Marché d'apps",
-    "description": "Vos applications déployées",
+    "description": "Vos applications déployées et partagées",
     "empty": "Aucune application déployée pour le moment. Publiez une application depuis une conversation pour la voir ici.",
     "error": "Impossible de charger vos applications déployées."
   },
   "card": {
     "untitled": "Application sans titre",
     "deployedAt": "Déployée le {{date}}",
+    "shared": "Partagée avec vous",
     "open": "Ouvrir l'application",
     "conversation": "Accéder à la conversation",
     "share": "Partager",
     "delete": "Supprimer",
     "deleteTitle": "Retirer l'application du Marketplace ?",
     "deleteDescription": "La conversation et l'application hébergée seront conservées. Une nouvelle publication l'ajoutera de nouveau au Marketplace.",
+    "unshare": "Retirer",
+    "unshareTitle": "Retirer l'application partagée ?",
+    "unshareDescription": "Cela retire uniquement l'application de votre Marketplace. La conversation du propriétaire reste privée.",
     "cancel": "Annuler",
     "deleteSuccess": "Application retirée du Marketplace.",
-    "deleteError": "Impossible de retirer l'application."
+    "deleteError": "Impossible de retirer l'application.",
+    "unshareSuccess": "Application partagée retirée de votre Marketplace.",
+    "unshareError": "Impossible de retirer l'application partagée."
   }
 }

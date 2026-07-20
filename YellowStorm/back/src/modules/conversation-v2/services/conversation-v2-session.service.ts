@@ -27,6 +27,8 @@ export interface DeployedAppSummary {
   title: string;
   deployedUrl: string;
   lastDeployedAt: string | null;
+  source: 'owned' | 'shared';
+  shareId: string | null;
 }
 
 @Injectable()
@@ -118,6 +120,8 @@ export class ConversationV2SessionService {
         '',
       deployedUrl: doc.deployedUrl as string,
       lastDeployedAt: doc.lastDeployedAt ? new Date(doc.lastDeployedAt).toISOString() : null,
+      source: 'owned' as const,
+      shareId: null,
     }));
   }
 

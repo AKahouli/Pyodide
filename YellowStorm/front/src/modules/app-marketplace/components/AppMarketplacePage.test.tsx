@@ -32,6 +32,19 @@ const mockApps: DeployedApp[] = [
     title: 'Generated app',
     deployedUrl: 'https://apps.example/app-1',
     lastDeployedAt: '2026-07-17T10:00:00.000Z',
+    source: 'owned',
+    shareId: null,
+  },
+];
+
+const sharedApps: DeployedApp[] = [
+  {
+    sessionId: 'session-2',
+    title: 'Shared app',
+    deployedUrl: 'https://apps.example/app-2',
+    lastDeployedAt: '2026-07-16T10:00:00.000Z',
+    source: 'shared',
+    shareId: 'share-2',
   },
 ];
 
@@ -81,6 +94,17 @@ describe('AppMarketplacePage', () => {
 
     await waitFor(() => expect(screen.queryByText('Generated app')).not.toBeInTheDocument());
     expect(removeAppMock).toHaveBeenCalledWith('session-1');
+  });
+
+  it('hides conversation and share actions for shared apps', async () => {
+    listDeployedAppsMock.mockResolvedValueOnce(sharedApps);
+
+    render(<AppMarketplacePage />);
+
+    expect(await screen.findByText('Shared app')).toBeInTheDocument();
+    expect(screen.getByText(/card\.shared/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /card\.conversation/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /card\.share/i })).not.toBeInTheDocument();
   });
 
   it('opens the share dialog from the card', async () => {
