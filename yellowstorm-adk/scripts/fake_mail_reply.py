@@ -26,8 +26,8 @@ import asyncpg
 import grpc
 
 from src.companion_ai.config import get_orchestrator_settings
-from src.grpc_generated import orchestrator_pb2 as pb
-from src.grpc_generated import orchestrator_pb2_grpc as pb_grpc
+from src.grpc_generated import companion_ai_pb2 as pb
+from src.grpc_generated import companion_ai_pb2_grpc as pb_grpc
 
 
 async def waits_for(session_id: str) -> list[dict]:

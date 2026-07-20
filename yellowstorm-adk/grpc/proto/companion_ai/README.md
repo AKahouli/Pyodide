@@ -5,7 +5,7 @@ reads over ElectricSQL. Single datastore — **Postgres only** (no Mongo).
 
 ## Surface
 
-### Write side — gRPC (`orchestrator.proto`)
+### Write side — gRPC (`companion_ai.proto`)
 
 | RPC | Purpose |
 |-----|---------|
@@ -14,9 +14,8 @@ reads over ElectricSQL. Single datastore — **Postgres only** (no Mongo).
 | `GetSession` | one-shot snapshot (title, status, current plan) for initial load |
 | `StopSession` | cancel a running/blocked session |
 
-`RunTask` is unary and fire-and-forget. It carries `idempotency_key` — the server
-runs a given key **at most once per session**, so a client retry never
-double-starts a turn.
+`RunTask` is unary and fire-and-forget; the caller does not wait for the turn
+itself, only the ack.
 
 ### Read side — ElectricSQL (the live UI)
 
@@ -66,7 +65,7 @@ content variants (tools are MCP-driven). Add back only if a real need appears.
 ## Generate the stubs
 
 ```bash
-python grpc/proto/orchestrator/generate.py   # → src/grpc_generated/orchestrator_pb2*.py
+python grpc/proto/companion_ai/generate.py   # → src/grpc_generated/companion_ai_pb2*.py
 ```
 
 Generate with the project's pinned `grpcio-tools` so the output matches the

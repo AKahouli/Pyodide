@@ -2,10 +2,9 @@
 
 The numbered STEP comments below (and the "[worky] N." log lines) are one
 sequence covering a whole turn, from the moment the user's message arrives.
-Steps 1-4 live in grpc_server/companion_ai_servicer.py; 5-10 are here:
+Steps 1, 3-4 live in grpc_server/companion_ai_servicer.py; 5-10 are here:
 
     STEP 1  RunTask receives the user's message                 (servicer)
-    STEP 2  claim the idempotency key — run at most once        (servicer)
     STEP 3  ack immediately, run the turn in the background     (servicer)
     STEP 4  new turn, or the answer to a pending question?      (servicer)
     STEP 5  planner LLM → Plan{ steps + depends_on }, or a direct reply

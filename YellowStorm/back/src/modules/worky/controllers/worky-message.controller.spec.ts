@@ -56,12 +56,7 @@ describe('WorkyMessageController', () => {
 
     expect(planning.appendOwnerMessage).toHaveBeenCalledWith('user-1', 'stream-1', { content: 'hi' });
     expect(streamService.ensureKickoffContext).toHaveBeenCalledWith('stream-1', 'user-1');
-    expect(orchestrator.runTask).toHaveBeenCalledWith(
-      'user-1',
-      'sess-xyz',
-      'hi',
-      expect.objectContaining({ idempotencyKey: 'm1' }),
-    );
+    expect(orchestrator.runTask).toHaveBeenCalledWith('user-1', 'sess-xyz', 'hi', expect.any(Object));
     expect(res).toEqual({ id: 'm1', content: 'hi', createdAt: 'now', turnStarted: true });
   });
 

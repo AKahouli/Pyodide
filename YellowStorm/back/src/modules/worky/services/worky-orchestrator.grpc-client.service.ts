@@ -83,14 +83,14 @@ export class WorkyOrchestratorGrpcClientService
 
   private resolveProtoPath(): string {
     const candidatePaths = [
-      path.join(__dirname, '..', 'proto', 'orchestrator.proto'),
-      path.resolve(process.cwd(), 'dist', 'modules', 'worky', 'proto', 'orchestrator.proto'),
-      path.resolve(process.cwd(), 'src', 'modules', 'worky', 'proto', 'orchestrator.proto'),
+      path.join(__dirname, '..', 'proto', 'companion_ai.proto'),
+      path.resolve(process.cwd(), 'dist', 'modules', 'worky', 'proto', 'companion_ai.proto'),
+      path.resolve(process.cwd(), 'src', 'modules', 'worky', 'proto', 'companion_ai.proto'),
     ];
 
     const existingPath = candidatePaths.find((candidatePath) => fs.existsSync(candidatePath));
     if (!existingPath) {
-      throw new Error(`orchestrator.proto not found in expected locations: ${candidatePaths.join(', ')}`);
+      throw new Error(`companion_ai.proto not found in expected locations: ${candidatePaths.join(', ')}`);
     }
 
     return existingPath;
@@ -163,14 +163,12 @@ export class WorkyOrchestratorGrpcClientService
       model?: string;
       skills?: unknown[];
       connectors?: unknown[];
-      idempotencyKey: string;
     },
   ): Promise<{ sessionId: string; accepted: boolean; runId: string }> {
     const request: Record<string, unknown> = {
       user_id: userId,
       session_id: sessionId,
       message,
-      idempotency_key: opts.idempotencyKey,
     };
     if (opts.model) request.model = opts.model;
     if (opts.skills?.length) request.skills = opts.skills;

@@ -122,13 +122,13 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
     # Agent Orchestrator (parallel multi-agent) — always registered.
     orchestrator_runtime = None
     try:
-        from src.grpc_generated import orchestrator_pb2_grpc as orch_grpc
+        from src.grpc_generated import companion_ai_pb2_grpc as orch_grpc
         from src.companion_ai.bootstrap import OrchestratorRuntime
 
         orchestrator_runtime = await OrchestratorRuntime().start()
         orch_grpc.add_CompanionAiServicer_to_server(
             orchestrator_runtime.servicer, server)
-        from src.grpc_generated import orchestrator_pb2 as orch_pb
+        from src.grpc_generated import companion_ai_pb2 as orch_pb
         svc = orch_pb.DESCRIPTOR.services_by_name["CompanionAi"]
         logger.info("[gRPC] CompanionAiServicer registered: %s [%s]",
                     svc.full_name,

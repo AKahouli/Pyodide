@@ -1,8 +1,8 @@
 """CompanionAiServicer tests with a mocked service + read model.
 
 Covers the write-side logic that isn't otherwise CI-tested: RunTask routing
-(new turn vs resume), durable idempotency gating, GetSession snapshot mapping,
-and StopSession cancellation. No ADK/DB/LLM.
+(new turn vs resume), GetSession snapshot mapping, and StopSession
+cancellation. No ADK/DB/LLM.
 """
 import asyncio
 import os
@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from unittest.mock import AsyncMock, MagicMock
 
-from src.grpc_generated import orchestrator_pb2 as pb
+from src.grpc_generated import companion_ai_pb2 as pb
 from src.grpc_server.companion_ai_servicer import CompanionAiServicer
 
 
@@ -40,24 +40,11 @@ async def test_create_session_returns_id_and_projects():
     rm.ensure_session.assert_awaited_once()
 
 
-async def test_runtask_duplicate_idempotency_rejected():
-    rm = MagicMock(claim_run=AsyncMock(return_value=False))  # duplicate
+async def test_runtask_accepts_and_runs_plan():
+    rm = MagicMock(snapshot=AsyncMock(return_value={"session": {"status": "running", "interrupt_id": None}}))
     service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock())
     s = _servicer(rm=rm, service=service)
-    resp = await s.RunTask(pb.RunRequest(user_id="u", session_id="s1",
-                                         message="m", idempotency_key="k1"), _ctx())
-    assert resp.accepted is False
-    await _drain(s)
-    service.plan_turn.assert_not_awaited()   # duplicate never runs a turn
-
-
-async def test_runtask_first_time_accepts_and_runs_plan():
-    rm = MagicMock(claim_run=AsyncMock(return_value=True),
-                   snapshot=AsyncMock(return_value={"session": {"status": "running", "interrupt_id": None}}))
-    service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock())
-    s = _servicer(rm=rm, service=service)
-    resp = await s.RunTask(pb.RunRequest(user_id="u", session_id="s1",
-                                         message="hi", idempotency_key="k1"), _ctx())
+    resp = await s.RunTask(pb.RunRequest(user_id="u", session_id="s1", message="hi"), _ctx())
     assert resp.accepted is True and resp.run_id
     await _drain(s)
     service.plan_turn.assert_awaited_once()

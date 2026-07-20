@@ -80,16 +80,6 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 content    TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )""")
-        # Internal (not published to Electric): durable RunTask idempotency so a
-        # retried command runs at most once per session, across restarts/replicas.
-        await con.execute(f"""
-            CREATE TABLE IF NOT EXISTS {_q(schema,'run_idempotency')} (
-                session_id      TEXT NOT NULL,
-                idempotency_key TEXT NOT NULL,
-                run_id          TEXT NOT NULL,
-                created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-                PRIMARY KEY (session_id, idempotency_key)
-            )""")
         # Internal (not published to Electric): which step is waiting on which
         # email reply. The token travels in the outbound mail and comes back on
         # the reply; this is what turns it into (session, step, interrupt).
@@ -251,18 +241,6 @@ class ReadModel:
                 VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING
             """, message_id, session_id, role, content)
 
-    async def claim_run(self, session_id: str, idempotency_key: str, run_id: str) -> bool:
-        """Atomically claim an idempotency key. True if this is the first time the
-        key is seen (proceed), False if a duplicate (skip). Multi-replica safe."""
-        async with self._pool.acquire() as con:
-            got = await con.fetchval(f"""
-                INSERT INTO {_q(self._schema,'run_idempotency')} (session_id,idempotency_key,run_id)
-                VALUES ($1,$2,$3)
-                ON CONFLICT (session_id,idempotency_key) DO NOTHING
-                RETURNING run_id
-            """, session_id, idempotency_key, run_id)
-        return got is not None
-
     async def register_mail_wait(self, token: str, *, session_id: str, step_id: str,
                                  user_id: str, interrupt_id: Optional[str] = None,
                                  mailbox_app_key: Optional[str] = None,
@@ -309,7 +287,8 @@ class ReadModel:
         Atomic because Graph retries a notification it thinks failed, and a
         duplicate must not resume the step twice — the second resume would answer
         an already-answered question and let the plan run on the reply twice.
-        Same claim-once shape as claim_run, and multi-replica safe.
+        A single `UPDATE ... RETURNING`, so this holds across restarts and
+        multiple replicas.
         """
         async with self._pool.acquire() as con:
             row = await con.fetchrow(f"""

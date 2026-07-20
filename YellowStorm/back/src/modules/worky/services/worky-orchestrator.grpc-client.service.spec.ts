@@ -75,14 +75,13 @@ describe('WorkyOrchestratorGrpcClientService', () => {
   });
 
   describe('runTask', () => {
-    it('calls RunTask with snake_case fields incl. idempotency_key and resolves the mapped response', async () => {
+    it('calls RunTask with snake_case fields and resolves the mapped response', async () => {
       mockGrpcClient.RunTask.mockImplementation((_req, _md, _opts, cb) =>
         cb(null, { session_id: 'sess-1', accepted: true, run_id: 'run-1' }),
       );
 
       const result = await service.runTask('user-1', 'sess-1', 'do the thing', {
         model: 'anthropic/claude-sonnet-4-5',
-        idempotencyKey: 'idem-1',
       });
 
       expect(result).toEqual({ sessionId: 'sess-1', accepted: true, runId: 'run-1' });
@@ -92,7 +91,6 @@ describe('WorkyOrchestratorGrpcClientService', () => {
         session_id: 'sess-1',
         message: 'do the thing',
         model: 'anthropic/claude-sonnet-4-5',
-        idempotency_key: 'idem-1',
       });
       expect(md).toBeDefined();
       expect(opts).toHaveProperty('deadline');
@@ -103,23 +101,20 @@ describe('WorkyOrchestratorGrpcClientService', () => {
         cb(null, { session_id: 'sess-1', accepted: true, run_id: 'run-1' }),
       );
 
-      await service.runTask('user-1', 'sess-1', 'do the thing', {
-        idempotencyKey: 'idem-1',
-      });
+      await service.runTask('user-1', 'sess-1', 'do the thing', {});
 
       const [req] = mockGrpcClient.RunTask.mock.calls[0];
       expect(req).toEqual({
         user_id: 'user-1',
         session_id: 'sess-1',
         message: 'do the thing',
-        idempotency_key: 'idem-1',
       });
     });
 
     it('rejects when RunTask errors', async () => {
       mockGrpcClient.RunTask.mockImplementation((_req, _md, _opts, cb) => cb(new Error('boom')));
       await expect(
-        service.runTask('user-1', 'sess-1', 'm', { idempotencyKey: 'idem-1' }),
+        service.runTask('user-1', 'sess-1', 'm', {}),
       ).rejects.toThrow('boom');
     });
   });

@@ -23,7 +23,6 @@ numbered `[worky] N.` log lines in the code trace one turn end-to-end:
 
 ```
 STEP 1  RunTask receives the user's message              (companion_ai_servicer.py)
-STEP 2  claim the idempotency key — run at most once     (companion_ai_servicer.py)
 STEP 3  ack immediately, run the turn in the background   (companion_ai_servicer.py)
 STEP 4  new turn, or the answer to a pending question?    (companion_ai_servicer.py)
 STEP 5  planner LLM → Plan{ steps + depends_on }, or a direct reply   (service.py)

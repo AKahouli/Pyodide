@@ -65,13 +65,11 @@ export class WorkyMessageController {
       aiSid: aiSessionId,
       model,
       contentLength: dto.content?.length,
-      idempotencyKey: saved.id,
       connectorCount: connectors.length,
     });
     void this.orchestrator
       .runTask(user._id.toString(), aiSessionId, dto.content, {
         model,
-        idempotencyKey: saved.id,
         connectors,
       })
       .catch((err) =>
@@ -162,7 +160,6 @@ export class WorkyMessageController {
     void this.orchestrator
       .runTask(user._id.toString(), aiSessionId, '', {
         model,
-        idempotencyKey: `resume-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
         connectors,
       })
       .catch((err) =>

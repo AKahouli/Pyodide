@@ -4,7 +4,7 @@ Write side only (CQRS): RunTask runs the turn in the background and acks; the
 client reads live progress from ElectricSQL. GetSession returns a one-shot
 snapshot for initial load.
 
-This is where a turn begins: STEP 1-4 below are the first four of the ten-step
+This is where a turn begins: STEP 1, 3, 4 below are part of the ten-step
 sequence documented in companion_ai/service.py; STEP 5-10 continue there.
 """
 from __future__ import annotations
@@ -17,8 +17,8 @@ from typing import Dict, Optional, Set
 
 import grpc
 
-from src.grpc_generated import orchestrator_pb2 as pb
-from src.grpc_generated import orchestrator_pb2_grpc as pb_grpc
+from src.grpc_generated import companion_ai_pb2 as pb
+from src.grpc_generated import companion_ai_pb2_grpc as pb_grpc
 from src.companion_ai.readmodel import ReadModel
 from src.companion_ai.service import OrchestratorService
 
@@ -55,7 +55,7 @@ def _describe_request(request) -> str:
     ]
     return (
         f"user_id={request.user_id!r} session_id={request.session_id!r} "
-        f"model={request.model!r} idempotency_key={request.idempotency_key!r} "
+        f"model={request.model!r} "
         f"message={request.message!r} skills={skills} connectors={connectors}"
     )
 
@@ -115,17 +115,6 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         # this one request; the RPC itself only ever returns an ack.
         run_id = uuid.uuid4().hex
         logger.info("[worky] 1. RunTask ◄ incoming request: %s", _describe_request(request))
-
-        # STEP 2 — claim the idempotency key so a retried command runs at most
-        # once per session. Durable (Postgres) so it holds across restarts and
-        # multiple replicas.
-        if request.idempotency_key and self._rm is not None:
-            first = await self._rm.claim_run(
-                request.session_id, request.idempotency_key, run_id)
-            if not first:
-                logger.info("[worky] 2. duplicate idempotency_key ignored (session=%s)",
-                            request.session_id)
-                return pb.RunResponse(session_id=request.session_id, accepted=False, run_id=run_id)
 
         # STEP 3 — ack now, run the turn in the background. The client watches
         # progress arrive in the read model, not on this call. Last-answer-wins:

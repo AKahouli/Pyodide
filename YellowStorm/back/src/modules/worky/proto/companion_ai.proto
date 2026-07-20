@@ -55,6 +55,8 @@ message CreateSessionRequest  { string user_id = 1; }
 message CreateSessionResponse { string session_id = 1; }
 
 message RunRequest {
+  reserved 7;
+  reserved "idempotency_key";
   string user_id    = 1;
   string session_id = 2;
   string message    = 3;
@@ -63,15 +65,12 @@ message RunRequest {
   // Per-user MCP servers exposed as tools; auth already resolved upstream.
   // These are also the source of long-running MCP tasks.
   repeated ConnectorBinding connectors = 6;
-  // Dedupe retried commands: the server runs a given key at most once per
-  // session. REQUIRED in production so a client retry can't double-start a turn.
-  string idempotency_key = 7;
 }
 
 message RunResponse {
   string session_id = 1;
   bool   accepted   = 2;
-  // Id of this turn (for tracing / correlating with the idempotency_key).
+  // Id of this turn (for tracing / correlating with server logs).
   string run_id     = 3;
 }
 
