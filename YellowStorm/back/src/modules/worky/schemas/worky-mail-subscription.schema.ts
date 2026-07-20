@@ -48,6 +48,15 @@ export class WorkyMailSubscription extends Document {
   @Prop({ type: Date, default: null })
   expiresAt?: Date | null;
 
+  /**
+   * Where Graph was told to deliver. Kept so a changed URL forces a new
+   * subscription: dev tunnels hand out a fresh hostname on every restart, and a
+   * subscription pointing at yesterday's URL fails silently — Graph keeps
+   * posting into the void and nothing ever arrives.
+   */
+  @Prop({ type: String, default: null })
+  notificationUrl?: string | null;
+
   /** Cursor for the catch-up sweep — how far the inbox has been re-read. */
   @Prop({ type: Date, default: null })
   lastSweptAt?: Date | null;

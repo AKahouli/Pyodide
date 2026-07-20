@@ -63,20 +63,35 @@ export class WorkyMailSubscriptionService {
    */
   async ensureForUser(userId: string): Promise<void> {
     const existing = await this.subscriptionModel.findOne({ userId }).lean().exec();
+    const notificationUrl = this.notificationUrl;
     const live =
       existing?.subscriptionId &&
       existing.expiresAt &&
-      existing.expiresAt.getTime() > Date.now() + RENEWAL_WINDOW_MS;
+      existing.expiresAt.getTime() > Date.now() + RENEWAL_WINDOW_MS &&
+      // A subscription pointing somewhere we no longer answer is worse than
+      // none: Graph keeps delivering into the void and nothing ever arrives.
+      // Dev tunnels change hostname on every restart, so this is routine.
+      existing.notificationUrl === notificationUrl;
     if (live) return;
-
-    const notificationUrl = this.notificationUrl;
+    if (existing?.subscriptionId && existing.notificationUrl !== notificationUrl) {
+      this.logger.log('Notification URL changed — replacing the mail subscription', {
+        userId, from: existing.notificationUrl, to: notificationUrl,
+      });
+      // Drop the old one at Graph's end so it stops posting to a dead URL.
+      try {
+        await this.graphClient.deleteSubscription(
+          userId, existing.mailboxAppKey, existing.subscriptionId);
+      } catch {
+        // Already gone, or unreachable — either way we are replacing it.
+      }
+    }
     if (!notificationUrl) {
       // Poll-only: record the mailbox so the catch-up sweep can read it.
       const { appKey } = await this.tokenService.getM365ValidToken(
         userId, existing?.mailboxAppKey ?? 'microsoft');
       await this.subscriptionModel.updateOne(
         { userId, mailboxAppKey: appKey },
-        { $setOnInsert: { subscriptionId: null, clientState: null, expiresAt: null } },
+        { $set: { subscriptionId: null, clientState: null, expiresAt: null, notificationUrl: null } },
         { upsert: true },
       );
       this.logger.log(
@@ -105,6 +120,7 @@ export class WorkyMailSubscriptionService {
           subscriptionId: subscription.id as string,
           clientState,
           expiresAt: new Date(subscription.expirationDateTime as string),
+          notificationUrl,
         },
       },
       { upsert: true },

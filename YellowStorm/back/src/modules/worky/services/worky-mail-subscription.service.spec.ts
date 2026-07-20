@@ -52,7 +52,9 @@ describe('WorkyMailSubscriptionService', () => {
       expect(graphClient.createInboxSubscription).not.toHaveBeenCalled();
       expect(updateOne).toHaveBeenCalledWith(
         { userId: 'u1', mailboxAppKey: 'microsoft' },
-        { $setOnInsert: { subscriptionId: null, clientState: null, expiresAt: null } },
+        // $set, not $setOnInsert: a mailbox dropping back to poll-only must
+        // clear its stale subscription/URL, not keep pointing at a dead one.
+        { $set: { subscriptionId: null, clientState: null, expiresAt: null, notificationUrl: null } },
         { upsert: true },
       );
       expect(service.pushEnabled).toBe(false);
@@ -90,9 +92,39 @@ describe('WorkyMailSubscriptionService', () => {
       const { service, graphClient } = build({
         userId: 'u1', mailboxAppKey: 'microsoft', subscriptionId: 'sub-1',
         expiresAt: new Date(Date.now() + 48 * 3600_000),
+        notificationUrl: 'https://public.example/worky/mail/webhook',
       });
       await service.ensureForUser('u1');
       expect(graphClient.createInboxSubscription).not.toHaveBeenCalled();
+    });
+
+    it('replaces a subscription pointing at a stale URL', async () => {
+      // Dev tunnels hand out a new hostname on every restart. A subscription
+      // aimed at yesterday's URL fails silently — Graph keeps delivering into
+      // the void — which looks exactly like the feature being broken.
+      const { service, graphClient } = build({
+        userId: 'u1', mailboxAppKey: 'microsoft', subscriptionId: 'sub-old',
+        expiresAt: new Date(Date.now() + 48 * 3600_000),
+        notificationUrl: 'https://yesterdays-tunnel.example/worky/mail/webhook',
+      });
+      await service.ensureForUser('u1');
+
+      // The dead one is dropped at Graph's end rather than left posting nowhere.
+      expect(graphClient.deleteSubscription).toHaveBeenCalledWith('u1', 'microsoft', 'sub-old');
+      expect(graphClient.createInboxSubscription).toHaveBeenCalled();
+      expect(graphClient.createInboxSubscription.mock.calls[0][2])
+        .toBe('https://public.example/worky/mail/webhook');
+    });
+
+    it('replaces even when Graph will not delete the old one', async () => {
+      const { service, graphClient } = build({
+        userId: 'u1', mailboxAppKey: 'microsoft', subscriptionId: 'sub-old',
+        expiresAt: new Date(Date.now() + 48 * 3600_000),
+        notificationUrl: 'https://gone.example/worky/mail/webhook',
+      });
+      graphClient.deleteSubscription.mockRejectedValueOnce(new Error('404 already gone'));
+      await service.ensureForUser('u1');
+      expect(graphClient.createInboxSubscription).toHaveBeenCalled();
     });
 
     it('re-subscribes before expiry rather than racing the deadline', async () => {
