@@ -126,11 +126,11 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
         from src.companion_ai.bootstrap import OrchestratorRuntime
 
         orchestrator_runtime = await OrchestratorRuntime().start()
-        orch_grpc.add_AgentOrchestratorServicer_to_server(
+        orch_grpc.add_CompanionAiServicer_to_server(
             orchestrator_runtime.servicer, server)
         from src.grpc_generated import orchestrator_pb2 as orch_pb
-        svc = orch_pb.DESCRIPTOR.services_by_name["AgentOrchestrator"]
-        logger.info("[gRPC] AgentOrchestratorServicer registered: %s [%s]",
+        svc = orch_pb.DESCRIPTOR.services_by_name["CompanionAi"]
+        logger.info("[gRPC] CompanionAiServicer registered: %s [%s]",
                     svc.full_name,
                     ", ".join(m.name for m in svc.methods))
     except Exception as e:
@@ -162,7 +162,7 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
         logger.info("  - playbook_flow.PlaybookFlowRuntime/ResumeFromStep (unary)")
         logger.info("  - playbook_flow.PlaybookFlowRuntime/RunFromCheckpoint (streaming)")
     if orchestrator_runtime is not None:
-        logger.info("  - yellowstorm.orchestrator.v1.AgentOrchestrator "
+        logger.info("  - yellowstorm.orchestrator.v1.CompanionAi "
                     "(CreateSession / RunTask / GetSession / StopSession / PauseSession"
                     " / DeliverMailReply)")
 

@@ -2,7 +2,7 @@
 
 The numbered STEP comments below (and the "[worky] N." log lines) are one
 sequence covering a whole turn, from the moment the user's message arrives.
-Steps 1-4 live in grpc_server/orchestrator_servicer.py; 5-10 are here:
+Steps 1-4 live in grpc_server/companion_ai_servicer.py; 5-10 are here:
 
     STEP 1  RunTask receives the user's message                 (servicer)
     STEP 2  claim the idempotency key — run at most once        (servicer)
@@ -90,7 +90,7 @@ Rules:
   It is ALWAYS a separate step from the send, and it MUST depends_on the step
   that sends the mail — that link is how the reply finds its way back. Its
   "question" says what is awaited and from whom (e.g. "Awaiting a reply from
-  rabeb@example.com about her company"). Steps that need the answer depend on
+  x@example.com about her company"). Steps that need the answer depend on
   the await_reply step, not on the send step.
   Do NOT use it for mail you send that needs no answer (a notification, a
   report), and do NOT use it to wait for anything other than an email reply.
@@ -99,11 +99,11 @@ Rules:
 - Prefer parallelism: only add a dependency when a step truly needs another's output.
 - No cycles.
 
-Example — "email rabeb asking which company she works for, then report on it":
-{{"title": "Company report", "goal": "Report on the company Rabeb works for", "answer": "",
+Example — "email x asking which company she works for, then report on it":
+{{"title": "Company report", "goal": "Report on the company x works for", "answer": "",
   "steps": [
-    {{"id": "s1", "kind": "execute", "title": "Email Rabeb", "description": "Send an email to rabeb@example.com asking which company she works for.", "depends_on": []}},
-    {{"id": "s2", "kind": "await_reply", "title": "Await her reply", "question": "Awaiting a reply from rabeb@example.com naming her company", "description": "", "depends_on": ["s1"]}},
+    {{"id": "s1", "kind": "execute", "title": "Email x", "description": "Send an email to x@example.com asking which company she works for.", "depends_on": []}},
+    {{"id": "s2", "kind": "await_reply", "title": "Await her reply", "question": "Awaiting a reply from x@example.com naming her company", "description": "", "depends_on": ["s1"]}},
     {{"id": "s3", "kind": "execute", "title": "Research the company", "description": "Research the company named in the reply and write a short report.", "depends_on": ["s2"]}}
   ]}}"""
 
@@ -332,7 +332,7 @@ class OrchestratorService:
         # visible to every node in the graph, unconditionally (contents.py:
         # `if not invocation_branch or not event.branch: return True`). That is
         # exactly how a step with a clean, single-purpose instruction ("search
-        # Apple news") still saw the whole original request ("...email Rabeb...
+        # Apple news") still saw the whole original request ("...email x...
         # search Tesla AND Apple...") and, some of the time, acted on parts of
         # it that were never its job — proven in production: the step still
         # sent its own unstamped copy of an email meant for a different step

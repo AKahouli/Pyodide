@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class AgentOrchestratorStub(object):
+class CompanionAiStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -35,38 +35,38 @@ class AgentOrchestratorStub(object):
             channel: A grpc.Channel.
         """
         self.CreateSession = channel.unary_unary(
-                '/yellowstorm.orchestrator.v1.AgentOrchestrator/CreateSession',
+                '/yellowstorm.orchestrator.v1.CompanionAi/CreateSession',
                 request_serializer=orchestrator__pb2.CreateSessionRequest.SerializeToString,
                 response_deserializer=orchestrator__pb2.CreateSessionResponse.FromString,
                 _registered_method=True)
         self.RunTask = channel.unary_unary(
-                '/yellowstorm.orchestrator.v1.AgentOrchestrator/RunTask',
+                '/yellowstorm.orchestrator.v1.CompanionAi/RunTask',
                 request_serializer=orchestrator__pb2.RunRequest.SerializeToString,
                 response_deserializer=orchestrator__pb2.RunResponse.FromString,
                 _registered_method=True)
         self.GetSession = channel.unary_unary(
-                '/yellowstorm.orchestrator.v1.AgentOrchestrator/GetSession',
+                '/yellowstorm.orchestrator.v1.CompanionAi/GetSession',
                 request_serializer=orchestrator__pb2.GetSessionRequest.SerializeToString,
                 response_deserializer=orchestrator__pb2.GetSessionResponse.FromString,
                 _registered_method=True)
         self.StopSession = channel.unary_unary(
-                '/yellowstorm.orchestrator.v1.AgentOrchestrator/StopSession',
+                '/yellowstorm.orchestrator.v1.CompanionAi/StopSession',
                 request_serializer=orchestrator__pb2.StopSessionRequest.SerializeToString,
                 response_deserializer=orchestrator__pb2.StopSessionResponse.FromString,
                 _registered_method=True)
         self.PauseSession = channel.unary_unary(
-                '/yellowstorm.orchestrator.v1.AgentOrchestrator/PauseSession',
+                '/yellowstorm.orchestrator.v1.CompanionAi/PauseSession',
                 request_serializer=orchestrator__pb2.PauseSessionRequest.SerializeToString,
                 response_deserializer=orchestrator__pb2.PauseSessionResponse.FromString,
                 _registered_method=True)
         self.DeliverMailReply = channel.unary_unary(
-                '/yellowstorm.orchestrator.v1.AgentOrchestrator/DeliverMailReply',
+                '/yellowstorm.orchestrator.v1.CompanionAi/DeliverMailReply',
                 request_serializer=orchestrator__pb2.DeliverMailReplyRequest.SerializeToString,
                 response_deserializer=orchestrator__pb2.DeliverMailReplyResponse.FromString,
                 _registered_method=True)
 
 
-class AgentOrchestratorServicer(object):
+class CompanionAiServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def CreateSession(self, request, context):
@@ -125,7 +125,7 @@ class AgentOrchestratorServicer(object):
         raise NotImplementedError('Method not implemented!')
 
 
-def add_AgentOrchestratorServicer_to_server(servicer, server):
+def add_CompanionAiServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'CreateSession': grpc.unary_unary_rpc_method_handler(
                     servicer.CreateSession,
@@ -159,13 +159,13 @@ def add_AgentOrchestratorServicer_to_server(servicer, server):
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'yellowstorm.orchestrator.v1.AgentOrchestrator', rpc_method_handlers)
+            'yellowstorm.orchestrator.v1.CompanionAi', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('yellowstorm.orchestrator.v1.AgentOrchestrator', rpc_method_handlers)
+    server.add_registered_method_handlers('yellowstorm.orchestrator.v1.CompanionAi', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
-class AgentOrchestrator(object):
+class CompanionAi(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
@@ -182,7 +182,7 @@ class AgentOrchestrator(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/yellowstorm.orchestrator.v1.AgentOrchestrator/CreateSession',
+            '/yellowstorm.orchestrator.v1.CompanionAi/CreateSession',
             orchestrator__pb2.CreateSessionRequest.SerializeToString,
             orchestrator__pb2.CreateSessionResponse.FromString,
             options,
@@ -209,7 +209,7 @@ class AgentOrchestrator(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/yellowstorm.orchestrator.v1.AgentOrchestrator/RunTask',
+            '/yellowstorm.orchestrator.v1.CompanionAi/RunTask',
             orchestrator__pb2.RunRequest.SerializeToString,
             orchestrator__pb2.RunResponse.FromString,
             options,
@@ -236,7 +236,7 @@ class AgentOrchestrator(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/yellowstorm.orchestrator.v1.AgentOrchestrator/GetSession',
+            '/yellowstorm.orchestrator.v1.CompanionAi/GetSession',
             orchestrator__pb2.GetSessionRequest.SerializeToString,
             orchestrator__pb2.GetSessionResponse.FromString,
             options,
@@ -263,7 +263,7 @@ class AgentOrchestrator(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/yellowstorm.orchestrator.v1.AgentOrchestrator/StopSession',
+            '/yellowstorm.orchestrator.v1.CompanionAi/StopSession',
             orchestrator__pb2.StopSessionRequest.SerializeToString,
             orchestrator__pb2.StopSessionResponse.FromString,
             options,
@@ -290,7 +290,7 @@ class AgentOrchestrator(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/yellowstorm.orchestrator.v1.AgentOrchestrator/PauseSession',
+            '/yellowstorm.orchestrator.v1.CompanionAi/PauseSession',
             orchestrator__pb2.PauseSessionRequest.SerializeToString,
             orchestrator__pb2.PauseSessionResponse.FromString,
             options,
@@ -317,7 +317,7 @@ class AgentOrchestrator(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/yellowstorm.orchestrator.v1.AgentOrchestrator/DeliverMailReply',
+            '/yellowstorm.orchestrator.v1.CompanionAi/DeliverMailReply',
             orchestrator__pb2.DeliverMailReplyRequest.SerializeToString,
             orchestrator__pb2.DeliverMailReplyResponse.FromString,
             options,

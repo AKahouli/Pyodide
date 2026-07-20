@@ -48,7 +48,7 @@ export class WorkyOrchestratorGrpcClientService
       (msg) => this.logger.warn(msg),
       WORKY_ORCHESTRATOR_GRPC_SECURITY_NS,
     );
-    this.client = new proto.yellowstorm.orchestrator.v1.AgentOrchestrator(
+    this.client = new proto.yellowstorm.orchestrator.v1.CompanionAi(
       url,
       credentials,
       {

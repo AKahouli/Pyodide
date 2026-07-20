@@ -1,4 +1,4 @@
-"""AgentOrchestratorServicer tests with a mocked service + read model.
+"""CompanionAiServicer tests with a mocked service + read model.
 
 Covers the write-side logic that isn't otherwise CI-tested: RunTask routing
 (new turn vs resume), durable idempotency gating, GetSession snapshot mapping,
@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from unittest.mock import AsyncMock, MagicMock
 
 from src.grpc_generated import orchestrator_pb2 as pb
-from src.grpc_server.orchestrator_servicer import AgentOrchestratorServicer
+from src.grpc_server.companion_ai_servicer import CompanionAiServicer
 
 
 def _ctx():
@@ -24,7 +24,7 @@ def _ctx():
 
 
 def _servicer(rm=None, service=None):
-    return AgentOrchestratorServicer(service or MagicMock(), rm, default_model="m")
+    return CompanionAiServicer(service or MagicMock(), rm, default_model="m")
 
 
 async def _drain(servicer):

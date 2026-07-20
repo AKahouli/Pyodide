@@ -60,7 +60,7 @@ async def deliver(token: str, reply: str, sender: str) -> None:
     metadata = [("x-api-key", api_key)] if api_key else []
 
     async with grpc.aio.insecure_channel(target) as channel:
-        stub = pb_grpc.AgentOrchestratorStub(channel)
+        stub = pb_grpc.CompanionAiStub(channel)
         resp = await stub.DeliverMailReply(
             pb.DeliverMailReplyRequest(token=token, reply_body=reply, reply_from=sender),
             metadata=metadata)

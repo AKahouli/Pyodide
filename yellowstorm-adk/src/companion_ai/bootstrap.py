@@ -13,7 +13,7 @@ import asyncpg
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
 
-from src.grpc_server.orchestrator_servicer import AgentOrchestratorServicer
+from src.grpc_server.companion_ai_servicer import CompanionAiServicer
 from src.companion_ai import mcp_tasks, readmodel
 from src.companion_ai.config import OrchestratorSettings, get_orchestrator_settings
 from src.companion_ai.poller import MCPTaskPoller
@@ -28,7 +28,7 @@ class OrchestratorRuntime:
         self._pool: Optional[asyncpg.Pool] = None
         self._poller: Optional[MCPTaskPoller] = None
         self._mail_sweep: Optional[asyncio.Task] = None
-        self.servicer: Optional[AgentOrchestratorServicer] = None
+        self.servicer: Optional[CompanionAiServicer] = None
 
     async def start(self) -> "OrchestratorRuntime":
         s = self._s
@@ -57,7 +57,7 @@ class OrchestratorRuntime:
             max_concurrency=s.ORCHESTRATOR_MAX_CONCURRENCY,
             pool=self._pool, schema=schema,
             mail_wait_timeout_hours=s.MAIL_WAIT_TIMEOUT_HOURS)
-        self.servicer = AgentOrchestratorServicer(
+        self.servicer = CompanionAiServicer(
             service, rm, default_model=s.ORCHESTRATOR_PLANNER_MODEL)
 
         # Nothing else notices a reply that never comes: the step is parked on an

@@ -1,4 +1,4 @@
-"""AgentOrchestrator gRPC servicer — maps the 4 RPCs onto OrchestratorService.
+"""CompanionAi gRPC servicer — maps the 4 RPCs onto OrchestratorService.
 
 Write side only (CQRS): RunTask runs the turn in the background and acks; the
 client reads live progress from ElectricSQL. GetSession returns a one-shot
@@ -92,7 +92,7 @@ def _connectors_to_dicts(connectors) -> list:
     return out
 
 
-class AgentOrchestratorServicer(pb_grpc.AgentOrchestratorServicer):
+class CompanionAiServicer(pb_grpc.CompanionAiServicer):
     def __init__(self, service: OrchestratorService, read_model: Optional[ReadModel] = None,
                  *, default_model: str = "gpt-5.4-mini"):
         self._svc = service

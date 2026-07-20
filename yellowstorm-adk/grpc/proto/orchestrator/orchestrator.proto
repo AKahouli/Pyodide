@@ -16,7 +16,7 @@ syntax = "proto3";
 //   RunTask on the same session_id.
 package yellowstorm.orchestrator.v1;
 
-service AgentOrchestrator {
+service CompanionAi {
   // Create an empty session for a user. Returns its id.
   rpc CreateSession (CreateSessionRequest) returns (CreateSessionResponse);
 

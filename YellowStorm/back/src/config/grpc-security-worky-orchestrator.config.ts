@@ -1,7 +1,7 @@
 import { registerAs } from '@nestjs/config';
 
 /**
- * Config namespace for the worky AgentOrchestrator gRPC security. This client
+ * Config namespace for the worky CompanionAi gRPC security. This client
  * dials a **different** service than conversation-v2 (a dedicated worky API),
  * so it has its own cert, key and TLS mode — sourced from dedicated
  * `WORKY_ORCHESTRATOR_GRPC_*` env vars, kept separate from `grpcSecurityV2` and
