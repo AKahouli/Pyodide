@@ -161,6 +161,7 @@ describe('PlaybookFlowIntentConstructionService', () => {
     });
 
     it('emits blueprint workflow plans as progressive cumulative deltas', async () => {
+      jest.useFakeTimers();
       const service = createService();
       const job = {
         id: 'construction-1',
@@ -186,19 +187,25 @@ describe('PlaybookFlowIntentConstructionService', () => {
         ],
       };
 
-      await (service as any).emitSuggestions(job, [suggestion]);
+      try {
+        const emitPromise = (service as any).emitSuggestions(job, [suggestion]);
+        await jest.runAllTimersAsync();
+        await emitPromise;
 
-      const deltaEvents = (job.events as any[]).filter((event: any) => event.type.endsWith('_delta'));
-      expect(deltaEvents).toHaveLength(4);
-      expect(deltaEvents.map((event: any) => event.type)).toEqual([
-        'node_delta',
-        'node_delta',
-        'edge_delta',
-        'data_binding_delta',
-      ]);
-      expect(deltaEvents.map((event: any) => event.suggestion.changes.length)).toEqual([1, 2, 3, 4]);
-      expect(deltaEvents[3].suggestion.changes.some((change: any) => change.type === 'create_data_binding')).toBe(true);
-      expect(deltaEvents.some((event: any) => event.suggestion.id === 'intent-fallback' || event.suggestion.isDirectIntentFallback)).toBe(false);
+        const deltaEvents = (job.events as any[]).filter((event: any) => event.type.endsWith('_delta'));
+        expect(deltaEvents).toHaveLength(4);
+        expect(deltaEvents.map((event: any) => event.type)).toEqual([
+          'node_delta',
+          'node_delta',
+          'edge_delta',
+          'data_binding_delta',
+        ]);
+        expect(deltaEvents.map((event: any) => event.suggestion.changes.length)).toEqual([1, 2, 3, 4]);
+        expect(deltaEvents[3].suggestion.changes.some((change: any) => change.type === 'create_data_binding')).toBe(true);
+        expect(deltaEvents.some((event: any) => event.suggestion.id === 'intent-fallback' || event.suggestion.isDirectIntentFallback)).toBe(false);
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('returns no suggestions when the raw payload has no blueprint shape', () => {
