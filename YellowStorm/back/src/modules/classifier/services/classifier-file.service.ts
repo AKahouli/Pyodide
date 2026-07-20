@@ -274,6 +274,8 @@ export class ClassifierFileService {
         : (doc.lastIndexedAt as string | undefined) ?? undefined,
       type: (doc.type as 'doc' | 'url') ?? 'doc',
       sourceUrl: (doc.sourceUrl as string | undefined) ?? undefined,
+      sourceRootUrl: (doc.metadata?.sourceRootUrl as string | undefined) ?? undefined,
+      normalizedSourceRootUrl: (doc.metadata?.normalizedSourceRootUrl as string | undefined) ?? undefined,
       status: (doc.status as IClassifierFileResponse['status']) ?? 'completed',
     };
   }

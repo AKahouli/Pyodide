@@ -28,6 +28,10 @@ export interface IClassifierFileResponse {
   lastIndexedAt?: string;
   type: 'doc' | 'url';
   sourceUrl?: string;
+  /** Browse-session start URL this url-doc was indexed from (workspace grouping). */
+  sourceRootUrl?: string;
+  /** Normalized form of sourceRootUrl, used as the workspace grouping key. */
+  normalizedSourceRootUrl?: string;
   status: 'pending' | 'uploading' | 'processing' | 'completed' | 'failed';
 }
 
