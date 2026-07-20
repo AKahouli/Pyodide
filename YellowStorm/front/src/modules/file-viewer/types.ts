@@ -41,6 +41,8 @@ export interface FileOpenOptions {
   highlightBBox?: HighlightBBox;
   /** Whether to open as floating window or sidebar panel */
   displayMode?: DisplayMode;
+  /** Whether clicking the floating backdrop closes the viewer */
+  closeOnOutsideClick?: boolean;
   /** Spreadsheet-specific navigation (sheet + row highlighting) */
   spreadsheet?: SpreadsheetNavigationOptions;
 }

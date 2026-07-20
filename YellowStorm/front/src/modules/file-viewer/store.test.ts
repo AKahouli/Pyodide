@@ -16,6 +16,7 @@ describe('file-viewer store', () => {
       tabs: [],
       activeTabId: null,
       pendingNavigation: null,
+      closeOnOutsideClick: false,
       position: { x: 0, y: 0 },
       size: { width: 900, height: 650 },
       minimizedPosition: { x: 50, y: 50 },
@@ -45,6 +46,14 @@ describe('file-viewer store', () => {
       highlightBBox: [10, 20, 30, 40],
       spreadsheet: undefined,
     });
+  });
+
+  it('enables outside-click dismissal only when requested', () => {
+    useFileViewerStore.getState().openFileFromUrl('https://example.test/a.pdf', 'a.pdf', 'application/pdf', {
+      closeOnOutsideClick: true,
+    });
+
+    expect(useFileViewerStore.getState().closeOnOutsideClick).toBe(true);
   });
 
   it('closes last tab and closes viewer', () => {

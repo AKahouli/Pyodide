@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Copy, ExternalLink, Globe, Loader2, RefreshCw, Rocket, Share2 } from 'lucide-react';
-import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { showError, showSuccess } from '@/lib/notifications';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,6 +22,7 @@ export function DeployControls() {
   const { t } = useConversationV2Translation();
   const deployStatus = useConversationV2Store((s) => s.deployStatus);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
+  const sessionId = useConversationV2Store((s) => s.sessionId);
   const deploy = useConversationV2Store((s) => s.deploy);
   const [shareOpen, setShareOpen] = useState(false);
 
@@ -35,9 +36,9 @@ export function DeployControls() {
   const handleDeploy = async () => {
     try {
       await deploy();
-      toast.success(t('toasts.deploy.success'));
+      showSuccess(t('toasts.deploy.success'));
     } catch {
-      toast.error(t('toasts.deploy.error'));
+      showError(t('toasts.deploy.error'));
     }
   };
 
@@ -45,9 +46,9 @@ export function DeployControls() {
     if (!deployedUrl) return;
     try {
       await navigator.clipboard.writeText(deployedUrl);
-      toast.success(t('toasts.deploy.copied'));
+      showSuccess(t('toasts.deploy.copied'));
     } catch {
-      toast.error(t('toasts.deploy.copyError'));
+      showError(t('toasts.deploy.copyError'));
     }
   };
 
@@ -97,7 +98,14 @@ export function DeployControls() {
         </Button>
       )}
 
-      {hasUrl && <ShareDeployDialog open={shareOpen} onOpenChange={setShareOpen} />}
+      {hasUrl && sessionId && (
+        <ShareDeployDialog
+          sessionId={sessionId}
+          deployedUrl={deployedUrl!}
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+        />
+      )}
 
       <Button
         variant={isDeployed ? 'outline' : 'default'}
@@ -105,6 +113,7 @@ export function DeployControls() {
         onClick={handleDeploy}
         disabled={isDeploying}
         className='shrink-0 gap-1.5'
+        aria-label={isDeploying ? t('deploy.publishing') : undefined}
       >
         {isDeploying ? (
           <Loader2 className='h-4 w-4 animate-spin' />
@@ -113,7 +122,7 @@ export function DeployControls() {
         ) : (
           <Rocket className='h-4 w-4' />
         )}
-        {isDeploying ? t('deploy.publishing') : isDeployed ? t('deploy.update') : t('deploy.publish')}
+        {!isDeploying && (isDeployed ? t('deploy.update') : t('deploy.publish'))}
       </Button>
     </>
   );

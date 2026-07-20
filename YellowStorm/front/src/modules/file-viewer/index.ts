@@ -4,7 +4,7 @@
  */
 
 import { useFileViewerStore } from './store';
-import type { DisplayMode, HighlightBBox, SpreadsheetNavigationOptions } from './types';
+import type { FileOpenOptions } from './types';
 
 export { FileFloatingWindow, FileViewerSidebar } from './components';
 export { useFileViewerStore, useFileViewerMode, useFileViewerDisplayMode } from './store';
@@ -43,13 +43,7 @@ export function openFileViewerFromUrl(
   url: string,
   fileName: string,
   mimeType: string,
-  options?: {
-    displayMode?: DisplayMode;
-    page?: number;
-    highlightText?: string;
-    highlightBBox?: HighlightBBox;
-    spreadsheet?: SpreadsheetNavigationOptions;
-  },
+  options?: FileOpenOptions,
 ) {
   return useFileViewerStore.getState().openFileFromUrl(url, fileName, mimeType, options);
 }

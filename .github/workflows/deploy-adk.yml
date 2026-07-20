@@ -50,7 +50,8 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          # The runner's bridge network has no outbound access during builds.
+          # --network=host: the runner's bridge network has no outbound access
+          # (apt-get inside build containers times out), while the host does.
           docker build --network=host -t $IMAGE_NAME:${VERSION} yellowstorm-adk
           docker push $IMAGE_NAME:${VERSION}
 

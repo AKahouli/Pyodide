@@ -23,13 +23,10 @@ export function ConversationPage() {
 
   const isGroup = !!currentConversation?.groupMeta?.isGroup;
 
-  // Auto-switch to floating when leaving conversation page
+  // Conversation previews belong to this page and must not follow the user elsewhere.
   useEffect(() => {
     return () => {
-      const state = useFileViewerStore.getState();
-      if (state.displayMode === 'sidebar' && state.mode !== 'closed') {
-        state.setDisplayMode('floating');
-      }
+      useFileViewerStore.getState().closeViewer();
     };
   }, []);
 
