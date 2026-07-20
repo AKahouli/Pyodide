@@ -50,6 +50,14 @@ describe('useBrowserSession', () => {
     expect(result.current.pages.map((p) => p.title)).toEqual(['A', 'B']);
   });
 
+  it('stores the clicked link text on the collected page', async () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.start('https://ok.example'); });
+    await waitFor(() => expect(result.current.status).toBe('live'));
+    act(() => { handlers['navigated']({ url: 'https://ok.example/a', title: 'A', linkText: 'About Us' }); });
+    expect(result.current.pages[0].linkText).toBe('About Us');
+  });
+
   it('surfaces a blocked notice', async () => {
     const { result } = renderHook(() => useBrowserSession());
     act(() => { result.current.start('https://ok.example'); });

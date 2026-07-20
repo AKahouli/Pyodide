@@ -15,7 +15,7 @@ export type InputEvent =
 export type NavAction =
   | { kind: 'goto'; url: string } | { kind: 'back' } | { kind: 'forward' } | { kind: 'reload' };
 
-export interface CollectedPage { url: string; title: string; }
+export interface CollectedPage { url: string; title: string; linkText?: string; }
 export type BrowserSessionStatus = 'idle' | 'connecting' | 'live' | 'busy' | 'error';
 
 export function normalizeUrl(url: string): string {
@@ -57,7 +57,7 @@ export function useBrowserSession() {
       const key = normalizeUrl(p.url);
       if (seenRef.current.has(key)) return;
       seenRef.current.add(key);
-      setPages((prev) => [...prev, { url: p.url, title: p.title || p.url }]);
+      setPages((prev) => [...prev, { url: p.url, title: p.title || '', linkText: p.linkText }]);
     });
     socket.on('blocked', (p: { url: string; reason: string }) =>
       setBlockedNotice(`Navigation bloquée (${p.url}) : ${p.reason}`));
