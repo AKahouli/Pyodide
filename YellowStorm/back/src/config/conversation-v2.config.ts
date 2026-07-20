@@ -54,4 +54,16 @@ export default registerAs('conversationV2', () => ({
   ),
   appBuilderDeployBaseUrl: process.env.APP_BUILDER_DEPLOY_BASE_URL,
   appBuilderDeployToken: process.env.APP_BUILDER_DEPLOY_TOKEN,
+  appBuilderDeployTimeoutMs: Number.parseInt(
+    process.env.APP_BUILDER_DEPLOY_TIMEOUT_MS || `${10 * 60 * 1000}`,
+    10,
+  ),
+  appBuilderDeployInitialStatusDelayMs: Number.parseInt(
+    process.env.APP_BUILDER_DEPLOY_INITIAL_STATUS_DELAY_MS || '20000',
+    10,
+  ),
+  appBuilderDeployStatusPollIntervalMs: Number.parseInt(
+    process.env.APP_BUILDER_DEPLOY_STATUS_POLL_INTERVAL_MS || '15000',
+    10,
+  ),
 }));

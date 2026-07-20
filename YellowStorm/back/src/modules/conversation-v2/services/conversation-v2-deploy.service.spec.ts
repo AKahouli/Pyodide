@@ -3,20 +3,26 @@ import { ConfigService } from '@nestjs/config';
 import { ConversationV2DeployService } from './conversation-v2-deploy.service';
 
 describe('ConversationV2DeployService', () => {
+  const configValues: Record<string, string | number | undefined> = {
+    'conversationV2.appBuilderDeployBaseUrl': 'https://builder.example/',
+    'conversationV2.appBuilderDeployToken': 'deploy-token',
+    'conversationV2.appBuilderDeployTimeoutMs': 600_000,
+    'conversationV2.appBuilderDeployInitialStatusDelayMs': 20_000,
+    'conversationV2.appBuilderDeployStatusPollIntervalMs': 15_000,
+  };
   const config = {
-    get: jest.fn((key: string) => {
-      if (key === 'conversationV2.appBuilderDeployBaseUrl') {
-        return 'https://builder.example/';
-      }
-      if (key === 'conversationV2.appBuilderDeployToken') return 'deploy-token';
-      return undefined;
-    }),
+    get: jest.fn((key: string) => configValues[key]),
   };
   let service: ConversationV2DeployService;
 
   beforeEach(() => {
     jest.restoreAllMocks();
     config.get.mockClear();
+    configValues['conversationV2.appBuilderDeployBaseUrl'] = 'https://builder.example/';
+    configValues['conversationV2.appBuilderDeployToken'] = 'deploy-token';
+    configValues['conversationV2.appBuilderDeployTimeoutMs'] = 600_000;
+    configValues['conversationV2.appBuilderDeployInitialStatusDelayMs'] = 20_000;
+    configValues['conversationV2.appBuilderDeployStatusPollIntervalMs'] = 15_000;
     service = new ConversationV2DeployService(config as unknown as ConfigService);
   });
 
@@ -128,7 +134,8 @@ describe('ConversationV2DeployService', () => {
     );
   });
 
-  it('stops polling after the global three-minute deployment deadline', async () => {
+  it('stops polling after the configured deployment deadline', async () => {
+    configValues['conversationV2.appBuilderDeployTimeoutMs'] = 180_000;
     jest.useFakeTimers();
     const fetchMock = jest
       .spyOn(global, 'fetch')
@@ -159,23 +166,12 @@ describe('ConversationV2DeployService', () => {
     );
   });
 
-  it('falls back to the built-in endpoint when configuration is missing', async () => {
-    config.get.mockReturnValue(undefined);
-    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValueOnce(
-      jsonResponse({
-        status: 'deployed',
-        app_id: 'conversation-1',
-        url: 'https://apps.example/app-1',
-      }),
-    );
+  it('rejects when deployment configuration is missing', async () => {
+    configValues['conversationV2.appBuilderDeployBaseUrl'] = undefined;
+    configValues['conversationV2.appBuilderDeployToken'] = undefined;
 
-    await expect(service.deploy('user-1', 'conversation-1')).resolves.toEqual({
-      appId: 'conversation-1',
-      url: 'https://apps.example/app-1',
-    });
-    expect(fetchMock).toHaveBeenCalledWith(
-      new URL('https://sandbox-v2.yellowsys.org/app/deploy'),
-      expect.anything(),
+    await expect(service.deploy('user-1', 'conversation-1')).rejects.toThrow(
+      'Deployment service is not configured',
     );
   });
 });
