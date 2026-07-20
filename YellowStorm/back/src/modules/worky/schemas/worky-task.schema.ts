@@ -48,6 +48,16 @@ export class WorkyTask extends Document {
   @Prop({ type: String, default: null })
   blockedReason?: string | null;
 
+  /** plan_steps.wave (Electric source) — parallel wave index; steps sharing a
+   *  wave ran concurrently. Null for tasks not from the orchestrator's plan. */
+  @Prop({ type: Number, default: null })
+  wave?: number | null;
+
+  /** plan_steps.depends_on (Electric source), split into step_ids — NOT Mongo
+   *  ids, unlike the legacy `dependsOn` field below. */
+  @Prop({ type: [String], default: [] })
+  dependsOnStepIds!: string[];
+
   @Prop({ type: String, required: true, trim: true, minlength: 1, maxlength: 200 })
   title!: string;
 

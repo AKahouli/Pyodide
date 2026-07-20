@@ -103,6 +103,11 @@ export function mapPlanStep(row: PgPlanStepRow, streamId: string): { set: Record
       executionState: laneToExecState(lane),
       result: row.result ?? null,
       blockedReason: row.blocked_reason ?? null,
+      wave: typeof row.wave === 'number' ? row.wave : null,
+      dependsOnStepIds: (row.depends_on ?? '')
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean),
     },
     event: {
       type: terminal ? 'task.completed' : 'task.updated',

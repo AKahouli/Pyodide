@@ -157,6 +157,25 @@ describe('worky-electric.mapper', () => {
       expect(set).toMatchObject({ title: 'Step 3' });
     });
 
+    it('splits depends_on into dependsOnStepIds and passes wave through', () => {
+      const { set } = mapPlanStep(
+        {
+          session_id: 's', step_id: 'step-3', ordinal: 2, status: 'pending',
+          description: 'd', wave: 1, depends_on: 's1,s2',
+        },
+        'stream-1',
+      );
+      expect(set).toMatchObject({ wave: 1, dependsOnStepIds: ['s1', 's2'] });
+    });
+
+    it('defaults wave to null and dependsOnStepIds to [] when absent', () => {
+      const { set } = mapPlanStep(
+        { session_id: 's', step_id: 'step-1', ordinal: 0, status: 'pending', description: 'd' },
+        'stream-1',
+      );
+      expect(set).toMatchObject({ wave: null, dependsOnStepIds: [] });
+    });
+
     it('maps an unknown status to lane backlog / executionState not_started', () => {
       const { set } = mapPlanStep(
         { session_id: 's', step_id: 'step-1', ordinal: 1, status: 'some_weird_status', description: 'd' },

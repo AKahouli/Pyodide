@@ -8,7 +8,7 @@
  *   step/plan : pending · running · blocked · completed · failed
  *   session   : the above + waiting · paused
  */
-import type { WorkyBoardLane, WorkyTask, WorkyStreamStatus } from './types';
+import type { WorkyBoardLane, WorkyStreamStatus, WorkyTask } from './types';
 
 export type OrchStepStatus = 'pending' | 'running' | 'blocked' | 'completed' | 'failed';
 export type OrchSessionStatus = OrchStepStatus | 'waiting' | 'paused';

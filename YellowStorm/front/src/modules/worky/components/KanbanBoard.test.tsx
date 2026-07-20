@@ -50,6 +50,7 @@ function TestProviders({ children }: { children: React.ReactNode }): JSX.Element
 
 const baseTask = {
   streamId: 'stream-1',
+  externalId: null,
   description: '',
   planningStatus: 'confirmed' as const,
   executionState: 'not_started',
@@ -58,6 +59,8 @@ const baseTask = {
   assigneeId: null,
   actionCategory: 'internal_analysis' as const,
   dependsOn: [],
+  wave: null,
+  dependsOnStepIds: [],
   blockerReason: null,
   result: null,
   blockedReason: null,
