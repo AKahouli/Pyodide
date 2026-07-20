@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - TDD: write the failing test first, watch it fail, implement minimally, watch it pass, commit.
-- Conventional commits: `<type>(<scope>): <subject>`. End commit messages with the `Co-Authored-By` trailer used in this repo.
+- Conventional commits: `<type>(<scope>): <subject>`. No `Co-Authored-By` trailer.
 - Colocated tests (`X.spec.ts` backend, `X.test.ts(x)` frontend).
 - No hardcoded user-facing strings added; sidebar labels come from page data (aria-labels are dynamic data, allowed).
 - Backend TS has no DOM lib — never reference `document`/`window`/DOM types in backend `.ts` bodies; inject browser code as a **string** script.
