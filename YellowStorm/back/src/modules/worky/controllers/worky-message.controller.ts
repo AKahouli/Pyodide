@@ -20,9 +20,7 @@ import { UserDocument } from '../../user/schemas/user.schema';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../../authorization/constants/permissions';
 import { LoggerService } from '../../logger';
-import { ModelsService } from '../../models/models.service';
-import { ConnectorService } from '../../connector/connector.service';
-import { WorkyMailSubscriptionService } from '../services/worky-mail-subscription.service';
+import { WorkyTurnContextService } from '../services/worky-turn-context.service';
 
 @ApiTags('Worky')
 @ApiBearerAuth()
@@ -33,9 +31,7 @@ export class WorkyMessageController {
     private readonly planning: WorkyPlanningService,
     private readonly streamService: WorkyStreamService,
     private readonly orchestrator: WorkyOrchestratorGrpcClientService,
-    private readonly models: ModelsService,
-    private readonly connectorService: ConnectorService,
-    private readonly mailSubscriptions: WorkyMailSubscriptionService,
+    private readonly turnContext: WorkyTurnContextService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(WorkyMessageController.name);
@@ -57,10 +53,10 @@ export class WorkyMessageController {
       user._id.toString(),
     );
     // Manager model + per-user connectors (shared with the resume path).
-    const model = await this.resolveManagerModel(
+    const model = await this.turnContext.resolveManagerModel(
       dto.managerModelId?.trim() || managerModelId || null,
     );
-    const connectors = await this.resolveWorkyConnectors(user._id.toString());
+    const connectors = await this.turnContext.resolveConnectors(user._id.toString());
     // Fire-and-forget kickoff. The manager writes task/message rows into
     // its Postgres; the Electric consumer mirrors them into Mongo and
     // re-emits over the SSE channel `/worky/streams/{id}/events`.
@@ -161,8 +157,8 @@ export class WorkyMessageController {
     const aiSessionId = stream?.aiSessionId;
     if (!aiSessionId) return { resumed: false }; // nothing to resume
 
-    const model = await this.resolveManagerModel(stream.managerModelId ?? null);
-    const connectors = await this.resolveWorkyConnectors(user._id.toString());
+    const model = await this.turnContext.resolveManagerModel(stream.managerModelId ?? null);
+    const connectors = await this.turnContext.resolveConnectors(user._id.toString());
     void this.orchestrator
       .runTask(user._id.toString(), aiSessionId, '', {
         model,
@@ -176,55 +172,5 @@ export class WorkyMessageController {
         }),
       );
     return { resumed: true };
-  }
-
-  /** Manager model priority: given value → admin default. Returns undefined only
-   *  if no model resolves (RunTask treats model as optional). */
-  private async resolveManagerModel(preferred: string | null): Promise<string | undefined> {
-    let model = preferred || null;
-    if (!model) {
-      model = this.models.getModelIdentifier(await this.models.getDefaultModel()) || null;
-    }
-    return model ?? undefined;
-  }
-
-  /** Per-user connectors worky needs (code-interpreter, linkup, microsoft365).
-   *  Auth resolved by ConnectorService; failures are non-fatal (send none). */
-  private async resolveWorkyConnectors(userId: string): Promise<unknown[]> {
-    const WORKY_CONNECTOR_SLUGS = ['code-interpreter', 'linkup', 'microsoft365'];
-    try {
-      const found = (
-        await Promise.all(WORKY_CONNECTOR_SLUGS.map((slug) => this.connectorService.findBySlug(slug)))
-      ).filter(Boolean);
-      if (found.length) {
-        if (found.some((c) => c!.slug === 'microsoft365')) this.ensureMailSubscription(userId);
-        return await this.connectorService.findByIdsForGrpc(
-          found.map((c) => c!.id),
-          userId,
-        );
-      }
-    } catch (err) {
-      this.logger.warn('[worky-orchestrator] connector resolution failed; sending none', {
-        error: (err as Error).message,
-      });
-    }
-    return [];
-  }
-
-  /**
-   * A turn that can send mail is a turn whose mail may be replied to, so the
-   * mailbox needs a live Graph subscription before the reply arrives — the
-   * subscription cannot be created retroactively once the mail is out.
-   *
-   * Fire-and-forget: the user is waiting on their message, and a subscription
-   * problem must not fail the turn. The cost of it failing is a reply that never
-   * routes, which the wait's own expiry already handles.
-   */
-  private ensureMailSubscription(userId: string): void {
-    void this.mailSubscriptions.ensureForUser(userId).catch((err) => {
-      this.logger.warn('[worky-orchestrator] mail subscription unavailable', {
-        error: (err as Error).message,
-      });
-    });
   }
 }

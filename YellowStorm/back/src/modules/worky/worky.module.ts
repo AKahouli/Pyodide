@@ -97,6 +97,7 @@ import {
   WorkyMailSubscriptionSchema,
 } from './schemas/worky-mail-subscription.schema';
 import { WorkyMailSubscriptionService } from './services/worky-mail-subscription.service';
+import { WorkyTurnContextService } from './services/worky-turn-context.service';
 import { WorkyMailWebhookService } from './services/worky-mail-webhook.service';
 import { WorkyMailRenewalService } from './services/worky-mail-renewal.service';
 import { WorkyMailCatchupService } from './services/worky-mail-catchup.service';
@@ -244,6 +245,7 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyOrchestratorGrpcClientService,
     PlaybookFlowMailGraphClientService,
     WorkyMailSubscriptionService,
+    WorkyTurnContextService,
     WorkyMailWebhookService,
     WorkyMailRenewalService,
     WorkyMailCatchupService,

@@ -32,14 +32,18 @@ function build(messages: Array<Record<string, unknown>>, delivered = true) {
       .fn()
       .mockResolvedValue({ delivered, sessionId: 's1', stepId: 'wait' }),
   };
+  const turnContext = {
+    resolveManagerModel: jest.fn().mockResolvedValue('openai/gpt-4o-mini'),
+    resolveConnectors: jest.fn().mockResolvedValue([{ connector_id: 'c1' }]),
+  };
   const logger = {
     setContext: jest.fn(), log: jest.fn(), warn: jest.fn(),
     error: jest.fn(), debug: jest.fn(),
   };
   const service = new WorkyMailCatchupService(
-    subscriptionModel as any, graphClient as any, orchestrator as any, logger as any,
+    subscriptionModel as any, graphClient as any, orchestrator as any, turnContext as any, logger as any,
   );
-  return { service, subscriptionModel, graphClient, orchestrator, logger, updateOne };
+  return { service, subscriptionModel, graphClient, orchestrator, turnContext, logger, updateOne };
 }
 
 describe('WorkyMailCatchupService', () => {
@@ -50,11 +54,43 @@ describe('WorkyMailCatchupService', () => {
     const { service, orchestrator } = build([mail(`Re: Which company? [${TOKEN}]`)]);
     await service.sweep();
 
-    expect(orchestrator.deliverMailReply).toHaveBeenCalledWith({
-      token: TOKEN,
-      replyBody: 'Yellow Systems.',
-      replyFrom: 'rabeb@example.com',
-    });
+    expect(orchestrator.deliverMailReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: TOKEN,
+        replyBody: 'Yellow Systems.',
+        replyFrom: 'rabeb@example.com',
+      }),
+    );
+  });
+
+  it('resolves real connectors and a model for the mailbox owner, not none', async () => {
+    // Same bug as the webhook path: without this, resume_turn rebuilds every
+    // not-yet-run step with ZERO tools -- a step needing one silently
+    // fabricates a "done" result instead of actually acting.
+    const { service, turnContext, orchestrator } = build([mail(`Re: Q [${TOKEN}]`)]);
+    await service.sweep();
+
+    expect(turnContext.resolveConnectors).toHaveBeenCalledWith(SUB.userId);
+    expect(orchestrator.deliverMailReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'openai/gpt-4o-mini',
+        connectors: [{ connector_id: 'c1' }],
+      }),
+    );
+  });
+
+  it('resolves connectors only once per sweep, even with several matching messages', async () => {
+    const { service, turnContext } = build([
+      mail(`Re: A [${TOKEN}]`), mail(`Re: B [${TOKEN}2]`),
+    ]);
+    await service.sweep();
+    expect(turnContext.resolveConnectors).toHaveBeenCalledTimes(1);
+  });
+
+  it('never resolves connectors when no swept mail carries a token', async () => {
+    const { service, turnContext } = build([mail('Lunch?')]);
+    await service.sweep();
+    expect(turnContext.resolveConnectors).not.toHaveBeenCalled();
   });
 
   it('re-offers tokens already delivered without complaining', async () => {

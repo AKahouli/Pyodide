@@ -44,14 +44,18 @@ function build(overrides: {
       stepId: 'wait',
     }),
   };
+  const turnContext = {
+    resolveManagerModel: jest.fn().mockResolvedValue('openai/gpt-4o-mini'),
+    resolveConnectors: jest.fn().mockResolvedValue([{ connector_id: 'c1' }]),
+  };
   const logger = {
     setContext: jest.fn(), log: jest.fn(), warn: jest.fn(),
     error: jest.fn(), debug: jest.fn(),
   };
   const service = new WorkyMailWebhookService(
-    subscriptions as any, graphClient as any, orchestrator as any, logger as any,
+    subscriptions as any, graphClient as any, orchestrator as any, turnContext as any, logger as any,
   );
-  return { service, subscriptions, graphClient, orchestrator, logger };
+  return { service, subscriptions, graphClient, orchestrator, turnContext, logger };
 }
 
 const notification = (over: Record<string, unknown> = {}) => ({
@@ -70,11 +74,31 @@ describe('WorkyMailWebhookService', () => {
     const result = await service.handleNotifications(notification());
 
     expect(result).toEqual({ handled: 1 });
-    expect(orchestrator.deliverMailReply).toHaveBeenCalledWith({
-      token: TOKEN,
-      replyBody: 'Yellow Systems.',
-      replyFrom: 'rabeb@example.com',
-    });
+    expect(orchestrator.deliverMailReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: TOKEN,
+        replyBody: 'Yellow Systems.',
+        replyFrom: 'rabeb@example.com',
+      }),
+    );
+  });
+
+  it('resolves real connectors and a model for the subscription owner, not none', async () => {
+    // The bug this pins: DeliverMailReply was called with no connectors at
+    // all, so resume_turn rebuilt every not-yet-run step with ZERO tools. A
+    // step needing none (writing a report) looked fine; a step that needed
+    // one (sending mail onward) silently fabricated a "done" result and never
+    // called it -- completed, but nothing was ever sent.
+    const { service, turnContext, orchestrator } = build({});
+    await service.handleNotifications(notification());
+
+    expect(turnContext.resolveConnectors).toHaveBeenCalledWith(SUBSCRIPTION.userId);
+    expect(orchestrator.deliverMailReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'openai/gpt-4o-mini',
+        connectors: [{ connector_id: 'c1' }],
+      }),
+    );
   });
 
   it('ignores mail that carries no token — the usual case', async () => {

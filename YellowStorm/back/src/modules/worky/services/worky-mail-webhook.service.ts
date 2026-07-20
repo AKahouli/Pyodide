@@ -4,6 +4,7 @@ import { LoggerService } from '@modules/logger';
 import { PlaybookFlowMailGraphClientService } from '@modules/playbook-flow/services/playbook-flow-mail-graph-client.service';
 import { WorkyMailSubscriptionService } from './worky-mail-subscription.service';
 import { WorkyOrchestratorGrpcClientService } from './worky-orchestrator.grpc-client.service';
+import { WorkyTurnContextService } from './worky-turn-context.service';
 import { extractMailToken } from './worky-mail-token';
 
 interface GraphNotification {
@@ -35,6 +36,7 @@ export class WorkyMailWebhookService {
     private readonly subscriptions: WorkyMailSubscriptionService,
     private readonly graphClient: PlaybookFlowMailGraphClientService,
     private readonly orchestrator: WorkyOrchestratorGrpcClientService,
+    private readonly turnContext: WorkyTurnContextService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('WorkyMailWebhook');
@@ -88,12 +90,23 @@ export class WorkyMailWebhookService {
     const replyFrom =
       (((message.from as Record<string, any>)?.emailAddress?.address as string) ?? '').trim();
 
+    // Without these the resumed plan rebuilds every not-yet-run step with NO
+    // tools at all: a step needing none (writing a report) looks fine, but a
+    // step that needed one (sending that report onward) silently fabricates a
+    // "done" result and never calls the real tool -- completed, nothing sent.
+    const [model, connectors] = await Promise.all([
+      this.turnContext.resolveManagerModel(null),
+      this.turnContext.resolveConnectors(subscription.userId),
+    ]);
+
     // worky owns the token->step mapping and resolves it; a duplicate delivery
     // (Graph retries whatever it thinks failed) comes back delivered=false.
     const result = await this.orchestrator.deliverMailReply({
       token,
       replyBody: replyText,
       replyFrom,
+      model,
+      connectors,
     });
 
     if (result.delivered) {
