@@ -64,3 +64,18 @@ it('sends the clicked link text as each page name', async () => {
     ),
   );
 });
+
+it('auto-starts browsing when opened with autoStart and a valid url', () => {
+  session.status = 'idle';
+  render(<AddLinkDialog open autoStart initialUrl='https://ok.example/services' onOpenChange={vi.fn()} workspaceId='w1' />);
+  expect(session.start).toHaveBeenCalledWith('https://ok.example/services');
+  // browse phase — the input-phase URL field is gone
+  expect(screen.queryByPlaceholderText('https://exemple.com')).not.toBeInTheDocument();
+});
+
+it('does not auto-start with an empty url (stays on the input phase)', () => {
+  session.status = 'idle';
+  render(<AddLinkDialog open autoStart initialUrl='' onOpenChange={vi.fn()} workspaceId='w1' />);
+  expect(session.start).not.toHaveBeenCalled();
+  expect(screen.getByPlaceholderText('https://exemple.com')).toBeInTheDocument();
+});

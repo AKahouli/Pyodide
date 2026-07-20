@@ -23,12 +23,13 @@ function isValidUrl(value: string): boolean {
 }
 
 export function AddLinkDialog({
-  open, onOpenChange, workspaceId, initialUrl = '',
+  open, onOpenChange, workspaceId, initialUrl = '', autoStart = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   workspaceId: string;
   initialUrl?: string;
+  autoStart?: boolean;
 }) {
   const addPageLinks = useWorkspaceStore((s) => s.addPageLinks);
   const documentsCache = useWorkspaceStore((s) => s.documents);
@@ -44,11 +45,19 @@ export function AddLinkDialog({
 
   useEffect(() => {
     if (open) {
-      // An already-active session (e.g. carried over from a prior open) should
-      // drop the user straight into the browse phase instead of forcing a
-      // redundant "input" step.
-      setPhase(session.status === 'idle' ? 'input' : 'browse');
-      setUrl(initialUrl); setError(null); setBusy(false); setSelected(new Set());
+      if (autoStart && isValidUrl(initialUrl)) {
+        // Opened from an existing group: skip the input step and browse the
+        // root URL directly so the user can index more pages immediately.
+        setUrl(initialUrl); setError(null); setBusy(false); setSelected(new Set());
+        session.start(initialUrl.trim());
+        setPhase('browse');
+      } else {
+        // An already-active session (e.g. carried over from a prior open) should
+        // drop the user straight into the browse phase instead of forcing a
+        // redundant "input" step.
+        setPhase(session.status === 'idle' ? 'input' : 'browse');
+        setUrl(initialUrl); setError(null); setBusy(false); setSelected(new Set());
+      }
     } else {
       session.stop();
     }
