@@ -8,6 +8,7 @@ import {
   Param,
   Post,
   Put,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -25,6 +26,8 @@ import {
   TelegramLinkCodeResponseDto,
 } from '../dto/telegram-integration-response.dto';
 import { TelegramLinkCodeService } from '../services/telegram-link-code.service';
+import { AgentPermissionGuard } from '@modules/agent/guards/agent-permission.guard';
+import { RequireAgentPermission } from '@modules/agent/decorators/require-agent-permission.decorator';
 
 @ApiTags('Agent Telegram Integration')
 @ApiBearerAuth()
@@ -36,6 +39,8 @@ export class TelegramIntegrationController {
   ) {}
 
   @Get()
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('read')
   @ApiOperation({ summary: 'Get Telegram integration settings for an agent' })
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
   @ApiResponse({ status: 200, type: TelegramIntegrationResponseDto })
@@ -47,6 +52,8 @@ export class TelegramIntegrationController {
   }
 
   @Put()
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @ApiOperation({ summary: 'Create or update Telegram integration settings for an agent' })
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
   @ApiResponse({ status: 200, type: TelegramIntegrationResponseDto })
@@ -59,6 +66,8 @@ export class TelegramIntegrationController {
   }
 
   @Post('webhook/register')
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @ApiOperation({ summary: 'Register Telegram webhook for this agent integration' })
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
   @HttpCode(HttpStatus.OK)
@@ -71,6 +80,8 @@ export class TelegramIntegrationController {
   }
 
   @Post('link-code')
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @ApiOperation({ summary: 'Generate a short-lived Telegram link code for /start <code>' })
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
   @ApiResponse({ status: 200, type: TelegramLinkCodeResponseDto })
@@ -86,6 +97,8 @@ export class TelegramIntegrationController {
   }
 
   @Delete()
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete Telegram integration settings for this agent' })
   @ApiParam({ name: 'agentId', description: 'Agent ID' })

@@ -27,6 +27,7 @@ import { StreamGatewayService } from './services/stream-gateway.service';
 import { ShareService } from './services/share.service';
 import { ReportService } from './services/report.service';
 import { ComposerSuggestionsService } from './services/composer-suggestions.service';
+import { ChoiceInteractionService } from './services/choice-interaction.service';
 
 // Guards
 import { ConversationOwnerGuard } from './guards/conversation-owner.guard';
@@ -45,6 +46,7 @@ import { AgentTypeModule } from '../agent-type/agent-type.module';
 import { SkillModule } from '../skill/skill.module';
 import { EmailModule } from '../email/email.module';
 import conversationConfig from '../../config/conversation.config';
+import { GovernanceRuntimeModule } from '../governance/governance-runtime.module';
 
 @Module({
   imports: [
@@ -63,11 +65,12 @@ import conversationConfig from '../../config/conversation.config';
     ModelsModule,
     LoggerModule,
     UsageModule,
-    AgentModule,
+    forwardRef(() => AgentModule),
     TeamModule,
     AgentTypeModule,
     SkillModule,
     EmailModule,
+    GovernanceRuntimeModule,
   ],
   controllers: [
     StreamController,  // Must be before ConversationController to avoid route conflict with :id param
@@ -86,6 +89,7 @@ import conversationConfig from '../../config/conversation.config';
     ShareService,
     ReportService,
     ComposerSuggestionsService,
+    ChoiceInteractionService,
     ConversationOwnerGuard,
     SseAuthGuard,
   ],

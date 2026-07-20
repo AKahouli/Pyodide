@@ -22,6 +22,7 @@ import { WorkspaceUploadSettingsService } from '../system/workspace-upload-setti
 import {
   DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS,
 } from '../system/constants/workspace-upload-settings.constants';
+import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
 
 const WS_ID = '507f1f77bcf86cd799439011';
 const USER_ID = '507f191e810c19729de860ea';
@@ -81,6 +82,14 @@ describe('WorkspaceDocumentService.createFromAiArtifact', () => {
             warn: jest.fn(),
             error: jest.fn(),
             debug: jest.fn(),
+          },
+        },
+        {
+          provide: WorkspaceArtifactCleanupService,
+          useValue: {
+            countBySource: jest.fn().mockResolvedValue(0),
+            deleteBySource: jest.fn().mockResolvedValue(undefined),
+            deleteAllByWorkspace: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],
@@ -182,6 +191,14 @@ describe('WorkspaceDocumentService upload validation', () => {
             debug: jest.fn(),
           },
         },
+        {
+          provide: WorkspaceArtifactCleanupService,
+          useValue: {
+            countBySource: jest.fn().mockResolvedValue(0),
+            deleteBySource: jest.fn().mockResolvedValue(undefined),
+            deleteAllByWorkspace: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
@@ -262,6 +279,14 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
             warn: jest.fn(),
             error: jest.fn(),
             debug: jest.fn(),
+          },
+        },
+        {
+          provide: WorkspaceArtifactCleanupService,
+          useValue: {
+            countBySource: jest.fn().mockResolvedValue(0),
+            deleteBySource: jest.fn().mockResolvedValue(undefined),
+            deleteAllByWorkspace: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],
@@ -359,6 +384,14 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
             warn: jest.fn(),
             error: jest.fn(),
             debug: jest.fn(),
+          },
+        },
+        {
+          provide: WorkspaceArtifactCleanupService,
+          useValue: {
+            countBySource: jest.fn().mockResolvedValue(0),
+            deleteBySource: jest.fn().mockResolvedValue(undefined),
+            deleteAllByWorkspace: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],
@@ -505,6 +538,14 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
             warn: jest.fn(),
             error: jest.fn(),
             debug: jest.fn(),
+          },
+        },
+        {
+          provide: WorkspaceArtifactCleanupService,
+          useValue: {
+            countBySource: jest.fn().mockResolvedValue(0),
+            deleteBySource: jest.fn().mockResolvedValue(undefined),
+            deleteAllByWorkspace: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],
@@ -727,6 +768,14 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
             warn: jest.fn(),
             error: jest.fn(),
             debug: jest.fn(),
+          },
+        },
+        {
+          provide: WorkspaceArtifactCleanupService,
+          useValue: {
+            countBySource: jest.fn().mockResolvedValue(0),
+            deleteBySource: jest.fn().mockResolvedValue(undefined),
+            deleteAllByWorkspace: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],

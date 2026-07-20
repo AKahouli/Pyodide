@@ -49,7 +49,6 @@ import type {
   UpsertPlaybookScheduleData,
   ToolBinding,
   RequestPlaybookIntentData,
-  AdvisorRemediationPreviewRequest,
   AdvisorScriptReplacementApplyRequest,
   AdvisorScriptReplacementRequest,
   IntentSuggestionHistoryEntry,
@@ -749,6 +748,8 @@ function buildSavePayload(playbook: Playbook, options?: {
   expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
+  assistantOperationId?: string;
+  assistantOperationTarget?: 'canonical' | 'advisor_preview';
 }): UpdatePlaybookData {
   return {
     name: playbook.name,
@@ -767,6 +768,8 @@ function buildSavePayload(playbook: Playbook, options?: {
     expectedDefinitionRevision: options?.expectedDefinitionRevision,
     expectedUpdatedAt: options?.expectedUpdatedAt,
     clientMutationId: options?.clientMutationId,
+    assistantOperationId: options?.assistantOperationId,
+    assistantOperationTarget: options?.assistantOperationTarget,
   };
 }
 
@@ -1563,6 +1566,7 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         const previousRequestBody = get().lastSavedRequestBodyByPlaybookId[id];
         const expectedDefinitionRevision = effectiveData.expectedDefinitionRevision;
         const deltaPatch = deltaAutosaveAvailableInSession
+          && !effectiveData.assistantOperationId
           && previousRequestBody
           && expectedDefinitionRevision !== undefined
           ? api.buildPlaybookDeltaPatch(previousRequestBody, requestBody, {
@@ -4489,16 +4493,8 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         }
       },
 
-      requestPlaybookIntent: async (playbookId: string, data: RequestPlaybookIntentData) => {
-        return api.requestPlaybookIntent(playbookId, data);
-      },
-
       assessPlaybookIntentDesign: async (playbookId: string, data: RequestPlaybookIntentData) => {
         return api.assessPlaybookIntentDesign(playbookId, data);
-      },
-
-      previewAdvisorRemediation: async (playbookId: string, data: AdvisorRemediationPreviewRequest) => {
-        return api.previewAdvisorRemediation(playbookId, data);
       },
 
       previewAdvisorScriptReplacement: async (playbookId: string, data: AdvisorScriptReplacementRequest) => {

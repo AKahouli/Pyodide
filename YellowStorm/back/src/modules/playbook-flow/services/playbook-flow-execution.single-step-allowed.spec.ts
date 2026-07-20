@@ -181,13 +181,26 @@ describe('single-step execution allowed paths', () => {
       { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
       {
         findOne: jest.fn().mockResolvedValue({
-          nodes: [{ id: 'task-1', kind: 'step', metadata: {} }],
+          nodes: [
+            { id: 'task-1', kind: 'step', metadata: {} },
+            { id: 'task-2', kind: 'step', metadata: {}, input: { ports: [{ id: 'input-data', required: true }] } },
+          ],
           controlEdges: [],
           dataBindings: [],
           settings: {},
         }),
       } as any,
-      { buildSnapshot: jest.fn().mockReturnValue({ settings: {}, nodes: [{ id: 'task-1', kind: 'step' }], controlEdges: [], dataBindings: [] }) } as any,
+      {
+        buildSnapshot: jest.fn().mockReturnValue({
+          settings: {},
+          nodes: [
+            { id: 'task-1', kind: 'step' },
+            { id: 'task-2', kind: 'step', input: { ports: [{ id: 'input-data', required: true }] } },
+          ],
+          controlEdges: [],
+          dataBindings: [],
+        }),
+      } as any,
       { validate: jest.fn() } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
@@ -216,5 +229,11 @@ describe('single-step execution allowed paths', () => {
         dataBindings: [],
       }),
     }));
+    expect((service as any).validatorService.validate).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.any(Array),
+      expect.any(Array),
+      { requiredBindingNodeIds: ['task-1'] },
+    );
   });
 });

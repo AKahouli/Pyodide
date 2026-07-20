@@ -30,6 +30,11 @@ export async function createConversation(data?: { title?: string; workspaces?: s
   return response.data.data;
 }
 
+export async function createGovernedConversation(scopeId: string, requestId: string): Promise<Conversation> {
+  const response = await apiClient.post<ApiResponse<Conversation>>(API_ENDPOINTS.conversations.createGoverned, { scopeId, requestId });
+  return response.data.data;
+}
+
 export async function fetchConversation(id: string): Promise<Conversation> {
   const response = await apiClient.get<ApiResponse<Conversation>>(API_ENDPOINTS.conversations.byId(id));
   return response.data.data;

@@ -12,6 +12,12 @@ import { MaintenanceGuard } from './guards/maintenance.guard';
 import { SystemSetting, SystemSettingSchema } from './schemas/system-setting.schema';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { User, UserSchema } from '../user/schemas/user.schema';
+import { ConnectorModule } from '../connector/connector.module';
+import { WorkspaceEvidenceSearchSettingsService } from './workspace-evidence-search-settings.service';
+import { AdminWorkspaceEvidenceSearchSettingsController } from './controllers/admin-workspace-evidence-search-settings.controller';
+import { AgentModule } from '../agent/agent.module';
+import { WorkspaceTransformationSettingsService } from './workspace-transformation-settings.service';
+import { AdminWorkspaceTransformationSettingsController } from './controllers/admin-workspace-transformation-settings.controller';
 
 @Global() // Make SystemService available globally for the guard
 @Module({
@@ -32,20 +38,26 @@ import { User, UserSchema } from '../user/schemas/user.schema';
       inject: [ConfigService],
     }),
     forwardRef(() => AuthorizationModule),
+    ConnectorModule,
+    AgentModule,
   ],
   controllers: [
     SystemController,
     AdminWorkspaceUploadSettingsController,
     WorkspaceUploadSettingsController,
+    AdminWorkspaceEvidenceSearchSettingsController,
+    AdminWorkspaceTransformationSettingsController,
   ],
   providers: [
     SystemService,
     WorkspaceUploadSettingsService,
+    WorkspaceEvidenceSearchSettingsService,
+    WorkspaceTransformationSettingsService,
     {
       provide: APP_GUARD,
       useClass: MaintenanceGuard,
     },
   ],
-  exports: [SystemService, WorkspaceUploadSettingsService],
+  exports: [SystemService, WorkspaceUploadSettingsService, WorkspaceEvidenceSearchSettingsService, WorkspaceTransformationSettingsService],
 })
 export class SystemModule {}

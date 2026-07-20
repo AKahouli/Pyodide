@@ -10,6 +10,7 @@ import { Shimmer } from '@/components/ai-elements/shimmer';
 import { useFileViewerStore, FileViewerSidebar } from '@/modules/file-viewer';
 import { useModuleTranslation } from '@/modules/localization';
 import { GroupConversationPage } from './GroupConversationPage';
+import { GovernedConversationBanner } from '@/modules/governance/components/consumer/GovernedConversationBanner';
 
 export function ConversationPage() {
   const { id } = useParams<{ id: string }>();
@@ -87,6 +88,7 @@ export function ConversationPage() {
     <div className='relative flex flex-1 min-h-0 w-full'>
       <div className='flex flex-col flex-1 min-w-0 max-w-4xl mx-auto'>
         <ConversationHeader />
+        <GovernedConversationBanner conversation={currentConversation} />
         <ConversationContent />
         <ConversationInput conversationId={id!} />
         <StreamErrorDialog />

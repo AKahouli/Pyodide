@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import grpc
 import asyncio
-import uuid
 import json
+import uuid
 import base64
 import os
 import mimetypes
@@ -1670,6 +1670,7 @@ class ChatbotServicer(
                 metadata=chatbot_pb2.Metadata(
                     message_id=metadata.get("message_id", ""),
                     agent_id=metadata.get("agent_id", ""),
+                    guardrail_decision_json=self._guardrail_decision_json(metadata),
                 ),
                 usage=chatbot_pb2.Usage(
                     input_tokens=usage_data.get("input_tokens", 0),
@@ -1702,6 +1703,7 @@ class ChatbotServicer(
                 metadata=chatbot_pb2.Metadata(
                     message_id=metadata.get("message_id", ""),
                     agent_id=metadata.get("agent_id", ""),
+                    guardrail_decision_json=self._guardrail_decision_json(metadata),
                 ),
             )
         else:
@@ -1723,8 +1725,20 @@ class ChatbotServicer(
                 metadata=chatbot_pb2.Metadata(
                     message_id=chunk_dict.get("message_id", ""),
                     agent_id=chunk_dict.get("agent_id", ""),
+                    guardrail_decision_json=self._guardrail_decision_json(chunk_dict),
                 ),
             )
+
+    @staticmethod
+    def _guardrail_decision_json(payload: Dict[str, Any]) -> str:
+        decision = payload.get("guardrail_decision")
+        if not decision:
+            return ""
+        try:
+            return json.dumps(decision, ensure_ascii=False, default=str)
+        except (TypeError, ValueError) as exc:
+            logger.warning(f"[GUARDRAIL] Failed to serialize guardrail decision metadata: {exc}")
+            return ""
 
     def _build_component(
         self, component_id: str, component_type: str, component_data: Dict[str, Any]
@@ -1812,6 +1826,50 @@ class ChatbotServicer(
                 nameKey=component_data.get("nameKey", ""),
                 zAxisKey=component_data.get("zAxisKey", ""),
             )
+        elif component_type == "choice":
+            options = [
+                chatbot_pb2.ChoiceOption(
+                    id=item.get("id", ""),
+                    label=item.get("label", ""),
+                    submit_text=item.get("submitText", ""),
+                    value=item.get("value", ""),
+                    description=item.get("description", ""),
+                    disabled=bool(item.get("disabled", False)),
+                    url=item.get("url", ""),
+                )
+                for item in component_data.get("options", [])
+                if isinstance(item, dict)
+            ]
+            choice = chatbot_pb2.ChoiceComponent(
+                schema_version=component_data.get("schemaVersion", 1),
+                question_id=component_data.get("questionId", ""),
+                prompt=component_data.get("prompt", ""),
+                description=component_data.get("description", ""),
+                presentation=component_data.get("presentation", "quick_replies"),
+                selection_mode=component_data.get("selectionMode", "single"),
+                submit_behavior=component_data.get("submitBehavior", "immediate"),
+                options=options,
+                dismissible=bool(component_data.get("dismissible", False)),
+                fallback_text=component_data.get("fallbackText", ""),
+                status=component_data.get("status", "ready"),
+            )
+            other = component_data.get("otherOption")
+            if isinstance(other, dict):
+                choice.other_option.CopyFrom(chatbot_pb2.ChoiceOtherOption(
+                    enabled=bool(other.get("enabled", False)), label=other.get("label", ""),
+                    placeholder=other.get("placeholder", ""), max_length=other.get("maxLength", 500),
+                ))
+            labels = component_data.get("labels")
+            if isinstance(labels, dict):
+                choice.labels.CopyFrom(chatbot_pb2.ChoiceLabels(
+                    submit=labels.get("submit", ""), dismiss=labels.get("dismiss", ""), other=labels.get("other", ""),
+                ))
+            progress = component_data.get("progress")
+            if isinstance(progress, dict):
+                choice.progress.CopyFrom(chatbot_pb2.ChoiceProgress(
+                    current=progress.get("current", 0), total=progress.get("total", 0), label=progress.get("label", ""),
+                ))
+            component_kwargs["choice"] = choice
         elif component_type == "task":
             # Build TaskComponent with items array
             items = []
@@ -1855,6 +1913,9 @@ class ChatbotServicer(
             params = component_data.get("params")
             if params:
                 tool_info.params = params
+            result_json = component_data.get("result_json")
+            if result_json:
+                tool_info.result_json = result_json
             component_kwargs["tool_info"] = tool_info
         elif component_type == "web_preview":
             component_kwargs["web_preview"] = chatbot_pb2.WebPreviewComponent(

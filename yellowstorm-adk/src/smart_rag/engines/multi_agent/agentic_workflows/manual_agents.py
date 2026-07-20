@@ -125,6 +125,7 @@ async def handle_agents_provided_workflow(
                 chunk=guarded.text,
                 message_id=session_id,
                 content_type="text",
+                guardrail_decision=guarded.decision_metadata(),
             ))
             await q.put(None)
             return

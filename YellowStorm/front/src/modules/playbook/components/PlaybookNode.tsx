@@ -30,6 +30,7 @@ import type { Agent } from '@/modules/agent/types';
 import type { SkillDropPayload } from './SkillSidebar';
 import { usePlaybookStore } from '../store';
 import { cn } from '@/lib/utils';
+import { isDataBindingResolved } from '../utils/required-port-validation';
 import { PORT_COLORS } from '../utils/port-colors';
 import { migrateTask } from '../hooks/helpers/node-serializer';
 import { getEffectiveNodeType } from '../utils/node-type';
@@ -413,7 +414,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     const portIds = new Set<string>();
     for (const port of inputPorts) {
       if (!port.required) continue;
-      if (!dataBindings.some((b) => b.targetNode === id && b.targetPort === port.id)) {
+      if (!dataBindings.some((b) => b.targetNode === id && b.targetPort === port.id && isDataBindingResolved(b))) {
         portIds.add(port.id);
       }
     }
@@ -648,7 +649,11 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     const resourceArtifactKind = getResourceArtifactKind(payload);
     let portId = resolveHitPortId();
 
-    if (!portId) {
+    if (resourceKind === 'document' && nodeDataActions?.updateNodeData) {
+      const newPort = createCompatibleInputPort(payload.name || payload.id, resourceArtifactKind);
+      nodeDataActions.updateNodeData(id, { inputPorts: [...inputPorts, newPort] });
+      portId = newPort.id;
+    } else if (!portId) {
       const compatiblePorts = inputPorts.filter((port) => port.artifactKind === resourceArtifactKind);
       if (compatiblePorts.length === 1) {
         portId = compatiblePorts[0].id;

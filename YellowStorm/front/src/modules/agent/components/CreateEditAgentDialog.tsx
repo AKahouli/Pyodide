@@ -53,6 +53,7 @@ import { getAdminGuardrailsSettings } from '@/modules/admin/api';
 import type { AdminGuardrailsSettings } from '@/modules/admin/types';
 import { scrollToFirstError } from "@/lib/form-utils";
 import { useModuleTranslation } from "@/modules/localization";
+import { mergeWidgetSettings } from '../constants/widget-default-settings';
 
 type LegacyPromptInjectionGuardrails = Partial<UserAgentFormValues['guardrails']['promptInjection']> & {
   classifierPrompt?: string;
@@ -105,6 +106,7 @@ interface CreateEditAgentDialogProps {
   initialTab?: AgentFormTab;
   onSave: (data: UserAgentFormValues) => void;
   saving: boolean;
+  readOnly?: boolean;
 }
 
 export function CreateEditAgentDialog({
@@ -114,6 +116,7 @@ export function CreateEditAgentDialog({
   initialTab = 'identity',
   onSave,
   saving,
+  readOnly = false,
 }: CreateEditAgentDialogProps) {
   const agentTypes = useAgentTypes();
   const models = useModels();
@@ -181,7 +184,11 @@ export function CreateEditAgentDialog({
             enable_temporary_child_agents: agent.enable_temporary_child_agents ?? false,
             max_temporary_child_agents: agent.max_temporary_child_agents ?? 4,
             guardrails: normalizeGuardrails(agent.guardrails),
-            deploymentSettings: agent.deploymentSettings ?? defaultFormValues.deploymentSettings,
+            deploymentSettings: {
+              ...defaultFormValues.deploymentSettings,
+              ...agent.deploymentSettings,
+              widget: mergeWidgetSettings(agent.deploymentSettings?.widget),
+            },
           });
         } else {
           reset(defaultFormValues);
@@ -273,7 +280,7 @@ export function CreateEditAgentDialog({
           </div>
         ) : (
           <form
-            onSubmit={handleSubmit(onSave, scrollToFirstError)}
+            onSubmit={readOnly ? (event) => event.preventDefault() : handleSubmit(onSave, scrollToFirstError)}
             className="flex flex-col min-h-0 flex-1"
           >
             <Tabs defaultValue={initialTab} className="flex-1 min-h-0 flex flex-col">
@@ -299,6 +306,7 @@ export function CreateEditAgentDialog({
                 </div>
               </TooltipProvider>
               <ScrollArea className="flex-1 min-h-0 mt-4">
+                <fieldset disabled={readOnly} className="contents">
                 <div className="pr-4">
                   {/* Identity Tab */}
                   <TabsContent value="identity" forceMount className="mt-0 data-[state=inactive]:hidden">
@@ -606,20 +614,23 @@ export function CreateEditAgentDialog({
                       agentName={watchedName}
                       value={watchedDeploymentSettings}
                       onChange={(next) => setValue('deploymentSettings', next, { shouldDirty: true, shouldValidate: true })}
+                      readOnly={readOnly}
                     />
-                    <AgentTelegramIntegrationSection agentId={agent?.id ?? null} />
+                    <AgentTelegramIntegrationSection agentId={agent?.id ?? null} readOnly={readOnly} />
                     <AgentWhatsAppIntegrationSection
                       agentId={agent?.id ?? null}
                       agentName={watchedName || agent?.name}
+                      readOnly={readOnly}
                     />
                   </div>
                 </TabsContent>
 
                   {/* Evaluation Tab */}
                   <TabsContent value="evaluation" forceMount className="mt-0 data-[state=inactive]:hidden">
-                    <EvaluationTab agent={agent} />
+                    <EvaluationTab agent={agent} readOnly={readOnly} />
                   </TabsContent>
                 </div>
+                </fieldset>
               </ScrollArea>
             </Tabs>
 
@@ -632,7 +643,7 @@ export function CreateEditAgentDialog({
               >
                 {t('createEdit.actions.cancel')}
               </Button>
-              <Button type="submit" disabled={saving}>
+              {!readOnly && <Button type="submit" disabled={saving}>
                 {saving ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -643,7 +654,7 @@ export function CreateEditAgentDialog({
                 ) : (
                   t('createEdit.actions.createAgent')
                 )}
-              </Button>
+              </Button>}
             </DialogFooter>
           </form>
         )}

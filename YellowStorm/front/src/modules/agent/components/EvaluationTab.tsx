@@ -23,9 +23,10 @@ import type { Agent } from '../types';
 
 interface EvaluationTabProps {
   readonly agent: Agent | null;
+  readonly readOnly?: boolean;
 }
 
-export function EvaluationTab({ agent }: EvaluationTabProps) {
+export function EvaluationTab({ agent, readOnly = false }: EvaluationTabProps) {
   const { t } = useModuleTranslation('agent');
 
   // Store Hooks
@@ -105,6 +106,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
 
   // Scenario Management
   const handleCreateScenario = () => {
+    if (readOnly) return;
     setScenarioForm({ name: '', numRuns: 1, mode: 'non_strict', agentId: agent?.id });
     setIsEditingScenario(false);
     setIsScenarioInlineOpen(true);
@@ -112,12 +114,14 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
 
   const handleEditScenario = (sc: Scenario, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (readOnly) return;
     setScenarioForm(sc);
     setIsEditingScenario(true);
     setIsScenarioInlineOpen(true);
   };
 
   const handleDeleteScenario = async (id: string, e: React.MouseEvent) => {
+    if (readOnly) return;
     try {
       await storeDeleteScenario(id);
       if (activeScenario?.id === id) {
@@ -130,6 +134,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
   };
 
   const handleSaveScenario = async () => {
+    if (readOnly) return;
     if (!scenarioForm.name || !agent) return;
     if (!selectedDatasetId) {
       toast.error('Veuillez sélectionner un dataset avant de sauvegarder le scénario.');
@@ -164,11 +169,13 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
 
   // Manual Dataset Methods
   const handleAddManualRow = () => {
+    if (readOnly) return;
     setManualItems([...manualItems, { question: '', reference_answer: '' }]);
     setSelectedDatasetId(''); // Unselect saved dataset when editing manual
   };
 
   const handleUpdateManualRow = (index: number, field: keyof DatasetItem, value: string) => {
+    if (readOnly) return;
     setManualItems((prev) => {
       const next = [...prev];
       if (next[index]) {
@@ -181,11 +188,13 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
   };
 
   const handleRemoveManualRow = (index: number) => {
+    if (readOnly) return;
     setManualItems((prev) => prev.filter((_, i) => i !== index));
     if (selectedDatasetId) setSelectedDatasetId('');
   };
 
   const handleSaveManualDataset = async () => {
+    if (readOnly) return;
     if (!manualDatasetName || manualItems.length === 0) {
       toast.error('Veuillez entrer un nom et au moins une ligne.');
       return;
@@ -208,6 +217,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
 
   // File Upload
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (readOnly) return;
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -251,6 +261,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
 
   // Launch
   const handleResumeEvaluation = (existingEval: Evaluation) => {
+    if (readOnly) return;
     if (!existingEval.datasetId) {
       toast.error("Impossible de reprendre cette ancienne évaluation. L'identifiant du dataset n'a pas été sauvegardé à l'époque. Veuillez en lancer une nouvelle.");
       return;
@@ -267,6 +278,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
   };
 
   const handleLaunch = () => {
+    if (readOnly) return;
     if (!agent || !selectedDatasetId) {
       toast.error('Select a dataset first');
       return;
@@ -286,6 +298,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
 
   const handleDeleteEval = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (readOnly) return;
     try {
       await storeDeleteEvaluation(id);
     } catch (error) {

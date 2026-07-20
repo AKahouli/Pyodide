@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsEnum, IsOptional, IsObject } from 'class-validator';
+import { IsString, IsEnum, IsOptional } from 'class-validator';
 import { DATA_BINDING_SOURCE_KINDS } from '../constants/reserved-labels';
 
 export class DataBindingDto {
@@ -46,7 +46,6 @@ export class DataBindingDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsObject()
   constantValue?: unknown;
 
   @ApiPropertyOptional()

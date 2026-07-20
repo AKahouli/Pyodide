@@ -168,3 +168,51 @@ class TestDelegationFactoryHelperExtended:
             )
         assert agent is not None
         assert toolkit is None
+
+    def test_create_standard_agent_passes_configured_render_chart_to_factory(self):
+        helper = MagicMock()
+        agent_factory = MagicMock()
+        agent_factory.create_agent.return_value = MagicMock(tools=[])
+        agent_config = _agent_config()
+        agent_config["tools"] = [{"name": "render_chart"}]
+        with patch(
+            "src.smart_rag.agents.factories.delegation_factory_helper.prepare_agent_data",
+            return_value=([], [], "prompt", ["b1"], "vs", "bot"),
+        ):
+            create_standard_agent_with_tools(
+                helper, agent_factory, _config(), agent_config, ["render_chart"],
+                "prompt", "1", "ChartAgent", "bot", False,
+            )
+        assert agent_factory.create_agent.call_args.kwargs["render_chart_tool"] is True
+
+    def test_create_standard_agent_does_not_pass_disabled_render_chart_to_factory(self):
+        helper = MagicMock()
+        agent_factory = MagicMock()
+        agent_factory.create_agent.return_value = MagicMock(tools=[])
+        agent_config = _agent_config()
+        agent_config["tools"] = [{"name": "render_chart", "enabled": False}]
+        with patch(
+            "src.smart_rag.agents.factories.delegation_factory_helper.prepare_agent_data",
+            return_value=([], [], "prompt", ["b1"], "vs", "bot"),
+        ):
+            create_standard_agent_with_tools(
+                helper, agent_factory, _config(), agent_config, ["render_chart"],
+                "prompt", "1", "ChartAgent", "bot", False,
+            )
+        assert agent_factory.create_agent.call_args.kwargs["render_chart_tool"] is False
+
+    def test_create_search_agent_does_not_pass_disabled_render_chart_to_factory(self):
+        helper = MagicMock()
+        agent_factory = MagicMock()
+        agent_factory.create_search_agent.return_value = (MagicMock(tools=[]), MagicMock(), "instr")
+        agent_config = _agent_config(with_search=True)
+        agent_config["tools"].append({"name": "render_chart", "enabled": False})
+        with patch(
+            "src.smart_rag.agents.factories.delegation_factory_helper.prepare_agent_data",
+            return_value=([], [], "prompt", ["b1"], "vs", "bot"),
+        ):
+            create_search_agent_with_tools(
+                helper, agent_factory, _config(), agent_config, ["search", "render_chart"],
+                "prompt", "1", "SearchAgent", "bot", False,
+            )
+        assert agent_factory.create_search_agent.call_args.kwargs["render_chart_tool"] is False

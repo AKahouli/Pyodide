@@ -97,6 +97,18 @@ class TestSimpleCompletionService:
         assert call_kwargs["temperature"] == 0.7
 
     @pytest.mark.asyncio
+    async def test_create_completion_omits_explicit_null_temperature(self, simple_completion_service, mock_openai_client):
+        """A null legacy HTTP value must omit the LiteLLM request parameter."""
+        await simple_completion_service.create_completion(
+            message="Hello",
+            model="azure/gpt-5.4-mini",
+            temperature=None,
+        )
+
+        call_kwargs = mock_openai_client.chat.completions.create.call_args.kwargs
+        assert "temperature" not in call_kwargs
+
+    @pytest.mark.asyncio
     async def test_create_completion_without_max_tokens(self, simple_completion_service, mock_openai_client):
         """Test completion without max_tokens parameter."""
         message = "Test message"

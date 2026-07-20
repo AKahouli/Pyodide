@@ -28,7 +28,7 @@ interface CachedStreamingState {
  * Used both by the buffer flush callback (current conversation) and by direct
  * cache updates (background conversations).
  */
-function applyChunksToComponents(
+export function applyChunksToComponents(
   components: StreamingComponent[],
   chunks: Array<{ action: 'add' | 'update' | 'delete'; component: StreamingComponent }>,
 ): StreamingComponent[] {
@@ -216,6 +216,9 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
   switch (type) {
     case 'text':
     case 'reasoning': {
+      if (incoming.guardrailDecision) {
+        return { ...existing, ...incoming };
+      }
       // Append content for streaming text types
       const existingContent = (existing.content as string) || '';
       const newContent = (incoming.content as string) || '';
@@ -245,6 +248,16 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
     case 'chainOfThought':
       // Charts and other structured components replace the full payload on update.
       return { ...incoming };
+    case 'toolInfo':
+      // Terminal tool updates only include status. Retain the arguments from
+      // the initial event so the live debug pane matches persisted history.
+      return {
+        ...existing,
+        ...incoming,
+        title: (incoming.title as string) || (existing.title as string) || '',
+        status: (incoming.status as string) || (existing.status as string) || 'running',
+        params: (incoming.params as string) || (existing.params as string) || '',
+      };
     case 'chart': {
       // For charts, data is an object with properties (title, data, config, etc.)
       // and chartData is the actual array of data points
@@ -337,6 +350,7 @@ interface ConversationState {
 
   // Send state
   isAwaitingFirstChunk: boolean;
+  awaitingConversationId: string | null;
   optimisticMessages: Message[];
 
   // SSE connection state
@@ -491,6 +505,7 @@ export const useConversationStore = create<ConversationState>()(
       isStreaming: false,
 
       isAwaitingFirstChunk: false,
+      awaitingConversationId: null,
       optimisticMessages: [],
 
       sseStatus: 'disconnected' as SSEConnectionStatus,
@@ -836,8 +851,9 @@ export const useConversationStore = create<ConversationState>()(
               streamingMessageId: cachedState.streamingMessageId || null,
               streamingQuestionMessageId: cachedState.streamingQuestionMessageId,
               streamingComponents: cachedState.streamingComponents,
-              isAwaitingFirstChunk: cachedState.isAwaitingFirstChunk,
-              streamingStateCache: newCache,
+                isAwaitingFirstChunk: cachedState.isAwaitingFirstChunk,
+                awaitingConversationId: cachedState.isAwaitingFirstChunk ? conversationId : null,
+                streamingStateCache: newCache,
             });
           }
         } catch (err) {
@@ -899,6 +915,7 @@ export const useConversationStore = create<ConversationState>()(
         // Optimistic add
         set((s) => ({
           isAwaitingFirstChunk: !payload.memberIds?.length,
+          awaitingConversationId: !payload.memberIds?.length ? conversationId : null,
           optimisticMessages: [...s.optimisticMessages, optimisticMsg],
         }));
 
@@ -944,6 +961,7 @@ export const useConversationStore = create<ConversationState>()(
           const apiError = parseApiError(err);
           set((s) => ({
             isAwaitingFirstChunk: false,
+            awaitingConversationId: null,
             optimisticMessages: s.optimisticMessages.filter((m) => m.id !== tempId),
           }));
 
@@ -986,13 +1004,13 @@ export const useConversationStore = create<ConversationState>()(
         const found = state.messages.find((m) => m.id === messageId);
         const questionMsgId = found?.questionMessageId || null;
 
-        set({ isAwaitingFirstChunk: true, streamingQuestionMessageId: questionMsgId });
+        set({ isAwaitingFirstChunk: true, awaitingConversationId: conversationId, streamingQuestionMessageId: questionMsgId });
         try {
           await api.regenerateMessage(conversationId, messageId);
           // Streaming will handle the new response via SSE
         } catch (err) {
           const apiError = parseApiError(err);
-          set({ isAwaitingFirstChunk: false, streamingQuestionMessageId: null });
+          set({ isAwaitingFirstChunk: false, awaitingConversationId: null, streamingQuestionMessageId: null });
 
           // Handle MODEL_INACTIVE error - refresh models and clear selection
           if (apiError.code === ErrorCode.MODEL_INACTIVE) {
@@ -1113,7 +1131,10 @@ export const useConversationStore = create<ConversationState>()(
             streamingComponents: [],
             isAwaitingFirstChunk: false,
           });
-          set({ streamingStateCache: newCache });
+          set({
+            streamingStateCache: newCache,
+            ...(state.awaitingConversationId === event.conversationId ? { isAwaitingFirstChunk: false, awaitingConversationId: null } : {}),
+          });
           return;
         }
 
@@ -1127,6 +1148,7 @@ export const useConversationStore = create<ConversationState>()(
             const nextState: Partial<ConversationState> = { streamingComponents: components };
             if (components.length > 0 && s.isAwaitingFirstChunk) {
               nextState.isAwaitingFirstChunk = false; // hide loader once chunks are renderable
+              nextState.awaitingConversationId = null;
             }
             return nextState;
           });
@@ -1171,7 +1193,19 @@ export const useConversationStore = create<ConversationState>()(
           // Background conversation — clean cache, message is now persisted in DB
           const newCache = new Map(get().streamingStateCache);
           newCache.delete(event.conversationId);
-          set({ streamingStateCache: newCache });
+          const clearCompletedStream = state.streamingConversationId === event.conversationId || state.awaitingConversationId === event.conversationId;
+          set({
+            streamingStateCache: newCache,
+            ...(clearCompletedStream ? {
+              isStreaming: false,
+              streamingConversationId: null,
+              streamingMessageId: null,
+              streamingQuestionMessageId: null,
+              streamingComponents: [],
+              isAwaitingFirstChunk: false,
+              awaitingConversationId: null,
+            } : {}),
+          });
           // Refresh conversations list to update sidebar order
           get().fetchConversations({ reset: true });
           return;
@@ -1232,6 +1266,7 @@ export const useConversationStore = create<ConversationState>()(
               streamingQuestionMessageId: null,
               streamingComponents: [],
               isAwaitingFirstChunk: false,
+              awaitingConversationId: null,
               streamingStateCache: cleanedCache,
             };
           });
@@ -1255,6 +1290,7 @@ export const useConversationStore = create<ConversationState>()(
             streamingQuestionMessageId: null,
             streamingComponents: [],
             isAwaitingFirstChunk: false,
+            awaitingConversationId: null,
             streamingStateCache: cleanedCache,
           });
         }
@@ -1267,7 +1303,19 @@ export const useConversationStore = create<ConversationState>()(
           // Background conversation — clean cache
           const newCache = new Map(get().streamingStateCache);
           newCache.delete(event.conversationId);
-          set({ streamingStateCache: newCache });
+          const clearFailedStream = state.streamingConversationId === event.conversationId || state.awaitingConversationId === event.conversationId;
+          set({
+            streamingStateCache: newCache,
+            ...(clearFailedStream ? {
+              isStreaming: false,
+              streamingConversationId: null,
+              streamingMessageId: null,
+              streamingQuestionMessageId: null,
+              streamingComponents: [],
+              isAwaitingFirstChunk: false,
+              awaitingConversationId: null,
+            } : {}),
+          });
           return;
         }
 
@@ -1290,6 +1338,7 @@ export const useConversationStore = create<ConversationState>()(
             streamingQuestionMessageId: null,
             streamingComponents: [],
             isAwaitingFirstChunk: false,
+            awaitingConversationId: null,
             streamingStateCache: cleanedCache,
           });
         } else {
@@ -1301,6 +1350,7 @@ export const useConversationStore = create<ConversationState>()(
             streamingQuestionMessageId: null,
             streamingComponents: [],
             isAwaitingFirstChunk: false,
+            awaitingConversationId: null,
             streamingStateCache: cleanedCache,
           });
         }
@@ -1570,7 +1620,7 @@ export const useConversationStore = create<ConversationState>()(
 
       clearMessages: () => {
         const state = get();
-        const convId = state.streamingConversationId || state.currentConversationId;
+        const convId = state.streamingConversationId || state.awaitingConversationId || state.currentConversationId;
 
         // Save streaming/awaiting state to cache before clearing
         if (convId && (state.isStreaming || state.isAwaitingFirstChunk)) {
@@ -1600,6 +1650,7 @@ export const useConversationStore = create<ConversationState>()(
           streamingQuestionMessageId: null,
           streamingComponents: [],
           isAwaitingFirstChunk: false,
+          awaitingConversationId: null,
           optimisticMessages: [],
           branchCache: new Map(),
           activeBranches: new Map(),
@@ -1633,6 +1684,7 @@ export const useConversationStore = create<ConversationState>()(
           streamingQuestionMessageId: null,
           streamingComponents: [],
           isAwaitingFirstChunk: false,
+          awaitingConversationId: null,
           optimisticMessages: [],
           branchCache: new Map(),
           activeBranches: new Map(),
@@ -1796,6 +1848,7 @@ export const useAllMessages = () =>
   );
 
 export const useIsAwaitingFirstChunk = () => useConversationStore((s) => s.isAwaitingFirstChunk);
+export const useAwaitingConversationId = () => useConversationStore((s) => s.awaitingConversationId);
 
 export const useCriticalError = () => useConversationStore((s) => s.criticalError);
 

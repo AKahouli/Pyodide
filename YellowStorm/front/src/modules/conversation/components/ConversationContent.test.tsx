@@ -19,13 +19,14 @@ vi.mock('./MessageActions', () => ({ MessageActions: () => <div>message-actions<
 vi.mock('./UserMessageActions', () => ({ UserMessageActions: () => <div>user-actions</div> }));
 vi.mock('./EditableUserMessage', () => ({ EditableUserMessage: () => <div>editable-message</div> }));
 vi.mock('./BranchNavigation', () => ({ BranchNavigation: () => <div>branch-nav</div> }));
-vi.mock('./LoadingIndicator', () => ({ LoadingIndicator: () => <div>loading-indicator</div> }));
+vi.mock('./LoadingIndicator', () => ({ LoadingIndicator: ({ activity }: { activity: string }) => <div>loading-{activity}</div> }));
 vi.mock('./MessageAttachments', () => ({ MessageAttachments: () => <div>attachments</div> }));
 
 const storeState = {
   isStreaming: false,
   streamingComponents: [],
-  streamingConversationId: null,
+  streamingConversationId: null as string | null,
+  awaitingConversationId: null as string | null,
   loadMoreMessages: vi.fn(),
   messagesLoading: false,
   currentConversationId: 'conv-1',
@@ -33,10 +34,13 @@ const storeState = {
   branchCache: new Map(),
 };
 
+let isAwaitingFirstChunk = false;
+
 vi.mock('../store', () => ({
   useConversationStore: (selector: (state: typeof storeState) => unknown) => selector(storeState),
   useDisplayMessages: () => [],
-  useIsAwaitingFirstChunk: () => false,
+  useIsAwaitingFirstChunk: () => isAwaitingFirstChunk,
+  useAwaitingConversationId: () => storeState.awaitingConversationId,
   useMessagesHasMore: () => false,
   useMessagesLoadingOlder: () => false,
   useBranchCache: () => new Map(),
@@ -48,5 +52,23 @@ describe('ConversationContent', () => {
   it('renders empty state when there are no messages', () => {
     render(<ConversationContent />);
     expect(screen.getByText('empty-state')).toBeInTheDocument();
+  });
+
+  it('shows activity before the first stream chunk arrives', () => {
+    isAwaitingFirstChunk = true;
+    storeState.awaitingConversationId = 'conv-1';
+    render(<ConversationContent />);
+    expect(screen.getByText('loading-thinking')).toBeInTheDocument();
+    isAwaitingFirstChunk = false;
+    storeState.awaitingConversationId = null;
+  });
+
+  it('does not show activity while another conversation awaits its first chunk', () => {
+    isAwaitingFirstChunk = true;
+    storeState.awaitingConversationId = 'conv-2';
+    render(<ConversationContent />);
+    expect(screen.queryByText('loading-thinking')).not.toBeInTheDocument();
+    isAwaitingFirstChunk = false;
+    storeState.awaitingConversationId = null;
   });
 });

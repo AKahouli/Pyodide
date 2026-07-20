@@ -40,7 +40,7 @@ RUN apt-get -o Acquire::Retries=3 update && \
 
 RUN useradd -ms /bin/bash azureuser \
     && chown -R azureuser /usr/src/app
-    
+
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/modules/conversation/proto ./dist/modules/conversation/proto
 COPY --from=build /app/src/modules/conversation-v2/proto ./dist/modules/conversation-v2/proto

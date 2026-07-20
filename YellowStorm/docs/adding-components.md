@@ -35,6 +35,8 @@ This guide explains how to add new component types to the AI message system. Com
 | `front/src/components/ai-elements/ai-message-content.tsx` | Frontend part types and renderer |
 | `back/mock-grpc-server.js` | Mock server for testing |
 
+`choice` is the reference for an atomic interactive component: validate model output in ADK, mirror the additive proto oneof field in both repositories, normalize untrusted data in NestJS, and make public renderers consume only that normalized shape. Interactive components submit ordinary user messages and must never interpret tool-provided IDs or values as executable actions.
+
 ---
 
 ## Step-by-Step Guide

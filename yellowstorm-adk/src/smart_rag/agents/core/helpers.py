@@ -184,7 +184,7 @@ class AgentHelper:
 
 
     @staticmethod
-    def get_temperature_from_agents(agents: List, fallback_temperature: float = 0.1) -> float:
+    def get_temperature_from_agents(agents: List, fallback_temperature: float = 0.1) -> float | None:
         """Extract temperature from agents list if a manager agent exists.
 
         Searches for an agent with agent_type="manager" in the agents list and returns
@@ -205,6 +205,9 @@ class AgentHelper:
             agent_dict = DocumentHelpers.agent_to_dict(agent)
             if agent_dict.get('agent_type') == 'manager':
                 agent_params = agent_dict.get('agent_params', {})
+                if isinstance(agent_params, dict) and agent_params.get('omit_temperature') == 'true':
+                    logger.info(f"Found manager agent: {agent_dict.get('name')}. Omitting temperature.")
+                    return None
                 if isinstance(agent_params, dict) and 'temperature' in agent_params:
                     temperature = agent_params.get('temperature')
                     logger.info(f"Found manager agent: {agent_dict.get('name')}. Using temperature: {temperature}")

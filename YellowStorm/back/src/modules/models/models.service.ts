@@ -77,7 +77,7 @@ export class ModelsService implements OnApplicationBootstrap {
     }
 
     // Ingest ALL model types (chat, embedding, image_generation, etc.).
-    // Classification is no longer filtered here — the `type` field is set from
+    // Classification is no longer filtered here — the `types` field is set from
     // LiteLLM's mode for new models and managed by the admin afterwards.
     this.logger.log('Fetched models from LiteLLM response', {
       context: 'ModelsService',
@@ -196,7 +196,7 @@ export class ModelsService implements OnApplicationBootstrap {
   async findAll(activeOnly: boolean = true, chatOnly: boolean = true): Promise<ModelsListResponse> {
     const query: Record<string, unknown> = {};
     if (activeOnly) query.isActive = true;
-    if (chatOnly) query.type = 'chat';
+    if (chatOnly) query.$or = [{ types: 'chat' }, { type: 'chat' }];
 
     const models = await this.aiModelModel
       .find(query)
@@ -224,23 +224,35 @@ export class ModelsService implements OnApplicationBootstrap {
    * Check if a model exists and is active.
    * Returns the model if valid, null if not found, throws if inactive.
    */
-  async validateModelActive(id: string): Promise<{ valid: boolean; model: ModelResponse | null; inactive: boolean }> {
+  async validateModelActive(
+    id: string,
+    requiredType?: string,
+  ): Promise<{ valid: boolean; model: ModelResponse | null; inactive: boolean; unsupported: boolean }> {
     const model = await this.aiModelModel.findOne({ modelId: id }).lean().exec();
 
     if (!model) {
-      return { valid: false, model: null, inactive: false };
+      return { valid: false, model: null, inactive: false, unsupported: false };
     }
 
     if (!model.isActive) {
-      return { valid: false, model: this.toModelResponse(model), inactive: true };
+      return { valid: false, model: this.toModelResponse(model), inactive: true, unsupported: false };
     }
 
-    return { valid: true, model: this.toModelResponse(model), inactive: false };
+    const response = this.toModelResponse(model);
+    if (requiredType && !response.types.includes(requiredType)) {
+      return { valid: false, model: response, inactive: false, unsupported: true };
+    }
+
+    return { valid: true, model: response, inactive: false, unsupported: false };
   }
 
   async findByChef(chefSlug: string): Promise<ModelsListResponse> {
     const models = await this.aiModelModel
-      .find({ chefSlug: chefSlug.toLowerCase(), isActive: true, type: 'chat' })
+      .find({
+        chefSlug: chefSlug.toLowerCase(),
+        isActive: true,
+        $or: [{ types: 'chat' }, { type: 'chat' }],
+      })
       .sort({ name: 1 })
       .lean()
       .exec();
@@ -272,6 +284,7 @@ export class ModelsService implements OnApplicationBootstrap {
       // leave empty so the admin can set it. Only applied to NEW models — a
       // re-sync never overwrites an existing model's type (admin choice wins).
       type: entry.model_info?.mode || '',
+      types: entry.model_info?.mode ? [entry.model_info.mode] : [],
     };
   }
 
@@ -319,12 +332,19 @@ export class ModelsService implements OnApplicationBootstrap {
 
   async updateModel(
     id: string,
-    data: Partial<{ name: string; chef: string; chefSlug: string; providers: string[]; type: string; isActive: boolean }>,
+    data: Partial<{ name: string; chef: string; chefSlug: string; providers: string[]; type: string; types: string[]; isActive: boolean; omitTemperature: boolean }>,
   ): Promise<ModelResponse | null> {
+    const update = { ...data };
+    if (update.types) {
+      update.type = update.types[0] || '';
+    } else if (update.type !== undefined) {
+      update.types = update.type ? [update.type] : [];
+    }
+
     const model = await this.aiModelModel
       .findOneAndUpdate(
         { modelId: id },
-        { $set: data },
+        { $set: update },
         { new: true },
       )
       .lean()
@@ -337,7 +357,7 @@ export class ModelsService implements OnApplicationBootstrap {
     this.logger.log('Model updated', {
       context: 'ModelsService',
       modelId: id,
-      changes: Object.keys(data),
+      changes: Object.keys(update),
     });
 
     return this.toModelResponse(model);
@@ -345,7 +365,11 @@ export class ModelsService implements OnApplicationBootstrap {
 
   async setDefaultModel(id: string): Promise<ModelResponse | null> {
     // First, verify the model exists
-    const model = await this.aiModelModel.findOne({ modelId: id }).lean().exec();
+    const model = await this.aiModelModel.findOne({
+      modelId: id,
+      isActive: true,
+      $or: [{ types: 'chat' }, { type: 'chat' }],
+    }).lean().exec();
     if (!model) {
       return null;
     }
@@ -398,7 +422,11 @@ export class ModelsService implements OnApplicationBootstrap {
 
   async getDefaultModel(): Promise<ModelResponse | null> {
     const model = await this.aiModelModel
-      .findOne({ isDefault: true })
+      .findOne({
+        isDefault: true,
+        isActive: true,
+        $or: [{ types: 'chat' }, { type: 'chat' }],
+      })
       .lean()
       .exec();
 
@@ -407,7 +435,10 @@ export class ModelsService implements OnApplicationBootstrap {
 
   async getGuardrailsClassifierModel(): Promise<ModelResponse | null> {
     const model = await this.aiModelModel
-      .findOne({ type: 'guardrails_classifier', isActive: true })
+      .findOne({
+        isActive: true,
+        $or: [{ types: 'guardrails_classifier' }, { type: 'guardrails_classifier' }],
+      })
       .sort({ updatedAt: -1 })
       .lean()
       .exec();
@@ -423,6 +454,11 @@ export class ModelsService implements OnApplicationBootstrap {
     // Handle both Mongoose document and lean object
     const doc = model as Record<string, unknown>;
 
+    const legacyType = (doc.type as string) || '';
+    const types = Array.isArray(doc.types)
+      ? doc.types.filter((type): type is string => typeof type === 'string' && type.length > 0)
+      : legacyType ? [legacyType] : [];
+
     return {
       id: doc.modelId as string,
       name: doc.name as string,
@@ -430,9 +466,11 @@ export class ModelsService implements OnApplicationBootstrap {
       chefSlug: doc.chefSlug as string,
       litellmModel: (doc.litellmModel as string) || '',
       providers: doc.providers as string[],
-      type: (doc.type as string) || '',
+      type: types[0] || legacyType,
+      types,
       isActive: doc.isActive as boolean,
       isDefault: (doc.isDefault as boolean) || false,
+      omitTemperature: (doc.omitTemperature as boolean) || false,
     };
   }
 }

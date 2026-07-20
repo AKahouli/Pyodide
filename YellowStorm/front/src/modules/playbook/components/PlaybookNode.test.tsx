@@ -148,7 +148,7 @@ vi.mock('./InputFilesPopover', () => ({
 }));
 
 vi.mock('./PortLabel', () => ({
-  PortLabel: ({ name }: { name: string }) => <span>{name}</span>,
+  PortLabel: ({ name, warning }: { name: string; warning?: boolean }) => <span data-warning={warning ? 'true' : 'false'}>{name}</span>,
 }));
 
 describe('PlaybookNode', () => {
@@ -175,6 +175,51 @@ describe('PlaybookNode', () => {
     };
     storeState.executionCache = {};
     storeState.selectedStepId = null;
+  });
+
+  it('keeps the required-port warning when its binding is incomplete', () => {
+    storeState.currentPlaybook = {
+      id: 'playbook-1',
+      tasks: [],
+      dataBindings: [{
+        id: 'binding-1',
+        targetNode: 'node-1',
+        targetPort: 'prompt',
+        sourceKind: 'constant',
+        constantValue: { text: '' },
+      }],
+    };
+
+    render(
+      <PlaybookNode
+        {...({
+          id: 'node-1',
+          selected: false,
+          data: {
+            id: 'node-1',
+            title: 'Prepare report',
+            description: '',
+            assignedAgentId: null,
+            executionOrder: 0,
+            positionX: 0,
+            positionY: 0,
+            interruptBefore: false,
+            interruptAfter: false,
+            allowClarification: false,
+            clarificationPrompt: '',
+            maxClarifications: 0,
+            inputKeys: [],
+            outputKey: '',
+            notifyOnComplete: false,
+            notifyEmails: [],
+            inputPorts: [{ id: 'prompt', name: 'Prompt', artifactKind: 'text', required: true }],
+            outputPorts: [],
+          },
+        } as any)}
+      />,
+    );
+
+    expect(screen.getByText('Prompt')).toHaveAttribute('data-warning', 'true');
   });
 
   it('binds a dropped workspace to the only compatible text input', () => {
@@ -236,6 +281,75 @@ describe('PlaybookNode', () => {
       workspaceName: 'Workspace',
       content: 'ws-1',
     }));
+  });
+
+  it('creates a dedicated input port for every dropped document', () => {
+    const updateNodeData = vi.fn();
+    const payload = {
+      type: 'document',
+      kind: 'document',
+      id: 'doc-3',
+      name: 'Third document.pdf',
+      metadata: {
+        filepath: '/documents/third-document.pdf',
+        mimeType: 'application/pdf',
+      },
+    };
+
+    const { container } = render(
+      <NodeDataActionsContext.Provider value={{ updateNodeData }}>
+        <PlaybookNode
+          {...({
+            id: 'node-1',
+            selected: false,
+            data: {
+              id: 'node-1',
+              title: 'Analyze documents',
+              description: 'Analyze all source documents',
+              assignedAgentId: 'agent-1',
+              executionOrder: 0,
+              positionX: 0,
+              positionY: 0,
+              interruptBefore: false,
+              interruptAfter: false,
+              allowClarification: false,
+              clarificationPrompt: '',
+              maxClarifications: 0,
+              inputKeys: [],
+              outputKey: '',
+              enabled: true,
+              notifyOnComplete: false,
+              notifyEmails: [],
+              inputFiles: [],
+              taskType: 'generic',
+              inputPorts: [
+                { id: 'input-doc-1', name: 'First document', artifactKind: 'document', required: false },
+                { id: 'input-doc-2', name: 'Second document', artifactKind: 'document', required: false },
+              ],
+              outputPorts: [],
+            },
+          } as any)}
+        />
+      </NodeDataActionsContext.Provider>,
+    );
+
+    fireEvent.drop(container.firstChild as Element, {
+      clientY: 0,
+      dataTransfer: {
+        getData: (type: string) => (type === 'application/json' ? JSON.stringify(payload) : ''),
+        dropEffect: 'copy',
+      },
+    });
+
+    const createdPort = updateNodeData.mock.calls[0][1].inputPorts[2];
+    expect(createdPort).toEqual(expect.objectContaining({
+      name: 'Third document.pdf',
+      artifactKind: 'document',
+    }));
+    expect(storeState.addInputFileToTask).toHaveBeenCalledWith('node-1', {
+      ...payload,
+      portId: createdPort.id,
+    });
   });
 
   it('renders a constant document binding label on the input port', () => {

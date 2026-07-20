@@ -49,6 +49,21 @@ class TestLLMFactory:
         assert result == mock_llm
         mock_litellm.assert_called_once()
 
+    @pytest.mark.parametrize(
+        "factory_method",
+        [
+            "create_parallel_tool_calls_llm",
+            "create_no_parallel_tool_calls_llm",
+            "create_no_tool_calls_llm",
+        ],
+    )
+    @patch('google.adk.models.lite_llm.LiteLlm')
+    def test_omits_temperature_when_explicitly_none(self, mock_litellm, factory_method):
+        """An explicit omission must not become LiteLLM's legacy 0.0 default."""
+        getattr(LLMFactory(), factory_method)("test-model", temperature=None)
+
+        assert "temperature" not in mock_litellm.call_args.kwargs
+
     def test_create_parallel_tool_calls_llm_normalizes_gpt5_temperature(self, monkeypatch):
         """GPT-5 model groups reject temperature values other than 1."""
         mock_litellm = MagicMock()

@@ -26,4 +26,9 @@ export class InspectMcpDto {
   @IsOptional()
   @IsObject()
   runtimeAuthConfig?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'Existing connector used to resolve credential-backed authentication' })
+  @IsOptional()
+  @IsString()
+  connectorId?: string;
 }

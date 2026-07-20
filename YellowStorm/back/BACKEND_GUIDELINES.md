@@ -40,7 +40,7 @@ back/src/
 └── modules/                    # Feature modules (auth, conversation-v2, playbook-flow, worky, …)
 ```
 
-Current modules include: `agent`, `agent-type`, `analytics`, `auth`, `auth-provider`, `authorization`, `chat-completion`, `classifier`, `connected-app`, `connector`, `conversation`, `conversation-v2`, `database`, `document`, `email`, `evaluation`, `exceptions`, `governance`, `guardrails`, `health`, `indexing`, `logger`, `memory-cards`, `models`, `notifications`, `playbook-flow`, `project`, `rate-limiter`, `request-context`, `response`, `skill`, `system`, `team`, `telegram`, `tool`, `usage`, `user`, `user-group`, `whatsapp`, `widget-chat`, `workspace`, `worky`. Use the actual module name `playbook-flow`; do not create a parallel `playbook` module.
+Current modules include: `agent`, `agent-type`, `analytics`, `auth`, `auth-provider`, `authorization`, `browser-session`, `chat-completion`, `classifier`, `connected-app`, `connector`, `conversation`, `conversation-v2`, `database`, `document`, `email`, `evaluation`, `exceptions`, `governance`, `guardrails`, `health`, `indexing`, `integration-events`, `knowledge-intelligence`, `logger`, `memory-cards`, `models`, `notifications`, `playbook-flow`, `project`, `rate-limiter`, `request-context`, `response`, `skill`, `system`, `team`, `telegram`, `tool`, `usage`, `user`, `user-group`, `whatsapp`, `widget-chat`, `workspace`, `workspace-artifact`, `workspace-web-import`, `worky`. Use the actual module name `playbook-flow`; do not create a parallel `playbook` module. `workspace-web-import` is currently a scaffolding stub (empty `dto/`, `interfaces/`, `schemas/`); do not assume it has runtime behavior until it is implemented.
 
 **Path aliases** (`@/*`, `@modules/*`, `@common/*`, `@config/*`) — **never** `../../../`:
 
@@ -110,7 +110,7 @@ Or `ConfigService` for one-off values. **Never** read `process.env` directly in 
 
 All env vars go through Joi validation in `src/config/config.schema.ts`. The app refuses to boot with missing required vars. Production requires `JWT_SECRET`, `ENCRYPTION_KEY`, `MONGODB_URI`, storage + email secrets.
 
-**Existing config namespaces:** `app`, `auth`, `jwt`, `database`, `email`, `storage`, `logging`, `health`, `notifications`, `workspace`, `indexing`, `conversation`, `conversation-v2`, `litellm`, `playbook-flow`, `telegram`, `microsoft`, `a2aAdmin`, `grpcSecurity`, `grpcSecurityV2`, `whatsapp`, `worky`, `memoryCards`.
+**Existing config namespaces:** `app`, `auth`, `jwt`, `database`, `email`, `storage`, `logging`, `health`, `notifications`, `workspace`, `indexing`, `conversation`, `conversation-v2`, `litellm`, `playbook-flow`, `telegram`, `microsoft`, `a2aAdmin`, `grpcSecurity`, `grpcSecurityV2`, `whatsapp`, `worky`, `memoryCards`, `browserSession`, `dataRoom`, `governedConversations`.
 
 Keep `src/config/*.config.ts`, `src/config/config.schema.ts`, `src/config/index.ts`, and `ConfigModule.forRoot({ load: [...] })` in sync. A config namespace loaded in `app.module.ts` but not exported from `src/config/index.ts` is a drift smell; a file exported but not loaded is likely dead code.
 
@@ -119,6 +119,12 @@ The **playbook-flow** config (`src/config/playbook-flow.config.ts`) is the most 
 gRPC TLS/security is split by runtime: `grpcSecurity` covers shared services such as conversation v1, a2a-admin, and playbook-flow; `grpcSecurityV2` covers conversation-v2/Manus. Keep API keys, TLS mode, CA paths, and server-name overrides in the matching namespace.
 
 All config keys read in services must be declared in the corresponding `<name>.config.ts`. If you find a service reading a key that is not in the config file (e.g. `playbook-flow.maxSseConnections`), add it — do not rely on fallback defaults.
+
+**Load lifecycle:** most namespaces are root-loaded in `app.module.ts`. A small number are feature-loaded inside the owning module's imports (currently `browserSession` in `browser-session.module.ts`). When introducing a namespace, decide explicitly whether it must be available app-wide (root-load) or only when the owning module is registered (feature-load), and document that choice at the registration site so consumers do not assume availability when the feature module is absent.
+
+**Namespace parity (load + Joi + export):** every loaded namespace must satisfy all three: (a) every env-derived key it reads must be present in `config.schema.ts` Joi validation, (b) it must be exported from `src/config/index.ts`, (c) it must be loaded exactly once. Existing drift (`browserSession` reads env keys without Joi entries; `governedConversationsConfig` and `browserSessionConfig` are not re-exported from the barrel) must be fixed when the surrounding area is touched — do not replicate the drift elsewhere.
+
+`dataRoom` and `governedConversations` are rollout-gate namespaces consumed across module boundaries (governance, workspace, knowledge-intelligence). Treat their flags as cross-module contracts: changing a flag's default or removing it requires tracing every consumer, not just the owning module.
 
 ---
 
@@ -162,7 +168,7 @@ Live in `src/modules/exceptions/constants/error-codes.ts`; frontend mirrors in `
 |-------|---------|
 | `ERR_1000` | Internal error |
 | `ERR_1001` | Validation error |
-| `ERR_1002`–`ERR_1009` | Generic HTTP (404, 401, 403, 409, 400, 429, 503, 410) |
+| `ERR_1002`–`ERR_1009` | Generic HTTP (404, 401, 403, 409, 400, 429, 503, 410, idempotency mismatch) |
 | `ERR_1100`–`ERR_11xx` | Auth |
 | `ERR_1200`–`ERR_12xx` | User |
 | `ERR_1300`–`ERR_13xx` | Agent |
@@ -171,7 +177,7 @@ Live in `src/modules/exceptions/constants/error-codes.ts`; frontend mirrors in `
 | `ERR_1600`–`ERR_16xx` | System |
 | `ERR_1700`–`ERR_17xx` | Usage / plan |
 | `ERR_1800`–`ERR_18xx` | Notification |
-| `ERR_1900`–`ERR_19xx` | Workspace |
+| `ERR_1900`–`ERR_1970` | Workspace (incl. workspace-artifact / derived-document codes `ERR_1961`–`ERR_1970`, and indexing/share codes `ERR_1950`–`ERR_1960`) |
 | `ERR_2000`–`ERR_20xx` | Models |
 | `ERR_2100`–`ERR_21xx` | Authorization / RBAC |
 | `ERR_2200`–`ERR_22xx` | Tool / skill |
@@ -187,9 +193,9 @@ Live in `src/modules/exceptions/constants/error-codes.ts`; frontend mirrors in `
 | `ERR_3210`–`ERR_3222` | WhatsApp |
 | `ERR_3300`–`ERR_3313` | Team |
 | `ERR_3350`–`ERR_3351` | User group |
-| `ERR_3400`–`ERR_3408` | Widget chat |
+| `ERR_3400`–`ERR_3409` | Widget chat (incl. citation not found) |
 | `ERR_3500`–`ERR_3530` | Worky |
-| `ERR_3600`–`ERR_3671` | Governance |
+| `ERR_3600`–`ERR_3688` | Governance (incl. governed-conversation codes `ERR_3680`–`ERR_3688`) |
 
 Adding a code: pick the right range, add to backend enum, mirror it in `front/src/lib/error-codes.ts`, and add EN+FR messages in frontend `errors.json`. Frontend drift is easy to miss because unknown backend codes still reach the UI as generic errors.
 
@@ -216,6 +222,8 @@ Query: `?page=1&limit=10` (shared `PaginationDto`). Response wraps items + `pagi
 
 **Secrets:** bcrypt (rounds from `AUTH_BCRYPT_ROUNDS`, default 12). Never log tokens, hashes, cookies, or include secrets in responses/Swagger.
 
+**Widget public-API family (separate from JWT):** `widget-chat` exposes a second, public, non-JWT API family for embedded and integration consumers. Widget tokens are agent-bound, optionally expiring, optionally origin-allowlisted, and are stored **only as SHA-256 hashes** — never log, return, or persist the plaintext token after the one-time creation response. Auth is enforced by `WidgetTokenGuard`, not `JwtAuthGuard`; routes are `@Public()` and may declare a deployment mode (`embed` vs REST integration) that determines whether the consumer receives manual SSE or a synchronous JSON response. There is also a separate synchronous external REST contract at `POST /integrations/agents/:agentId/messages` whose token's agent must equal the route's `:agentId`. When adding widget routes, reuse `WidgetTokenGuard` and the existing deployment-mode shapes rather than introducing a third auth model.
+
 ---
 
 ## 9. Mongoose & Schemas
@@ -228,6 +236,10 @@ Query: `?page=1&limit=10` (shared `PaginationDto`). Response wraps items + `pagi
 **Queries:** Prefer `.select()` projection over full documents. Use `.lean()` on read-heavy endpoints. Compound indexes for paginated queries. **Never** leak internal Mongo fields through the API.
 
 **Persisted editable fields:** when adding a field users can edit, update every persistence/contract layer in one change: Mongoose schema defaults, create/update DTO validation, service mapping/serialization, public interfaces, frontend types, and any autosaved editor payload. Missing any layer causes silent data loss in autosaved UIs.
+
+**Revision-based optimistic concurrency:** documents that multiple workers or users may mutate concurrently (e.g. `workspace-artifact`, `governance-deployment-revision`) carry a monotonic `revision` (or equivalent) counter. Update payloads must include `expectedRevision`; the service atomically increments it and rejects mismatches. Pair this with a unique compound index on the logical identity (e.g. `(programId, workspaceId)` for governance bindings, `(workspaceId, artifactType)` for artifacts). Do not use bare `findOneAndUpdate` for documents that have a revision field — always filter on the expected revision.
+
+**Embedded lease state machine:** long-running generation/extraction jobs embed the lease sub-document directly on the job document (`leaseToken`, `expiresAt`, `attempt`, `retryCount`, `engineVersion`). Workers claim by atomic filter on `leaseToken == null OR expiresAt < $now`, then write results back only if their `leaseToken` still matches; long runs must extend `expiresAt` via heartbeat. Unique job identity is a compound key (e.g. `(sourceVersionId, jobType, inputHash, engineVersion)` for knowledge-extraction jobs). Do not introduce an external queue for these workers without documenting why Mongo-embedded leases are insufficient.
 
 ---
 
@@ -328,6 +340,20 @@ Current SSE endpoints and pipes use these serving patterns:
 - `compression()` middleware is incompatible with SSE (buffering breaks streaming). It is disabled in `main.ts` — do not re-enable without verifying all SSE endpoints.
 
 Worky governance is backend-owned. The runtime calls back through `POST /worky/internal/streams/{id}/governance/check`; resolution uses stream override, workspace policy, then default level. Every governance evaluation must write an audit event.
+
+### Socket.IO namespace: `/browser-session` (browser-session module)
+
+The second sanctioned Socket.IO usage (alongside WhatsApp pairing). JWT handshake via `socket.request`, one in-memory session per socket, events `start` / `input` / `navigate` (client → server) and `frame` / `navigated` / `blocked` / `closed` (server → client). Runtime is a Playwright/CDP relay: `Page.screencastFrame` emits base64 JPEG frames that the gateway forwards as `frame` events; input/navigation events are replayed to Playwright. Sessions expire on idle/max timers and are destroyed on socket disconnect.
+
+**Hard cross-boundary invariant:** the configured 1280×720 (16:9) viewport must match the frontend `VIEWPORT_W/H` constants in `front/src/modules/workspace/hooks/useBrowserSession.ts` so streamed input coordinates map correctly. Change both sides in the same change set.
+
+**Ack protocol uses raw strings, not the global error envelope:** `BUSY`, `BAD_REQUEST`, `NO_SESSION`, etc. Any new ack string must be added to the frontend consumer in the same change.
+
+**Security controls are mandatory, not optional:** URL safety is checked before launch and before every navigation; routed main-document requests are validated; popups are closed and downloads cancelled. Do not bypass these checks when extending the engine — surface new unsafe patterns through the existing guard points.
+
+### Widget manual SSE (widget-chat module)
+
+`GET /widget/stream` is a `@Public()` manual SSE endpoint (no `@Sse()` decorator), authenticated by query token via `WidgetTokenGuard`. The controller writes warmup padding, disables Nagle (`socket.setNoDelay(true)`), sets SSE headers, and emits `stream_start`, `stream_chunk`, `stream_complete`, `stream_error`, plus heartbeat. Mirror this exact event set when extending; do not introduce a second widget stream shape.
 
 ---
 
@@ -439,7 +465,48 @@ Conversation-v2 sessions are backend-owned: Mongo `_id` is the wire `sessionId`,
 
 ---
 
-## 24. Pre-PR Checklist
+## 24. Advanced Architectural Patterns
+
+These are cross-module patterns that have their own conventions beyond the per-section rules above. Add to them only after reading the existing implementation; they encode load-bearing invariants.
+
+### 24.1 Integration Events (Transactional Outbox)
+
+`integration-events` implements a MongoDB transactional-outbox for cross-module domain events.
+
+- **Envelope:** immutable event documents carry `eventId`, `aggregateType`/`aggregateId`, `eventName`, `payload`, `correlationId`/`causationId`, a global `deliveryState`, per-handler `deliveryRecords[]` keyed by `handlerKey`, and `retryMetadata`. See `integration-events/schemas/integration-event.schema.ts`.
+- **Versioned contracts:** producers record events against named, versioned contracts (e.g. `workspace.document.created.v1`, `workspace.document.updated.v1`) under `integration-events/contracts/`. The `v1` suffix is a wire contract — bumping it requires a new contract file and parallel consumer registration; never edit a published contract in a breaking way.
+- **Emission is feature-gated:** producers must check the relevant `dataRoom.*` flag before recording (e.g. `workspace.document.*.v1` is gated on `dataRoom.workspaceEventsEnabled`). Outbox dispatch itself is gated on `dataRoom.outboxDispatchEnabled`.
+- **Dispatch:** a single `@Interval()` dispatcher (every 5s, only when enabled) acquires a distributed lock, selects due events, and fans them out to registered handlers. Stale locks are recovered after 120s.
+- **Handler registration:** consumers implement the handler interface and register a `handlerKey` (e.g. `governance.workspace-events.v1`) via `OnModuleInit`. The handler-key string is the routing contract — keep it stable.
+- **Delivery semantics:** at-least-once, idempotency-oriented. Handlers must be idempotent on `(eventId, handlerKey)`. Failed deliveries use exponential backoff and eventually move to a dead-letter status.
+
+When adding a new producer: add the versioned contract, gate emission on a `dataRoom` flag, and update `config.schema.ts` if a new flag is introduced. When adding a new consumer: register a stable `handlerKey`, document idempotency key, and verify ordering expectations against the producer.
+
+### 24.2 Governance Framework
+
+`governance` is a large Mongo-backed domain spanning programs, hierarchical scopes/audiences, source/version lifecycle, memberships, deployments/revisions, dry-runs, metrics, workspace bindings/reconciliation, and governed conversations. It depends on `authorization`, `conversation`, `widget-chat`, `whatsapp`, `telegram`, `user-group`, `connector`, `indexing`, `integration-events`, and `knowledge-intelligence`.
+
+- **Consumes integration events** through the handler in `governance/integration/workspace-governance-event.handler.ts`. It applies ordering and idempotency checks before materialising workspace documents into governed sources/versions, and conditionally queues knowledge-extraction work.
+- **Temporal intelligence worker** is feature-gated, polls every 5s, validates workspace content/indexing identity before and after evidence search, and writes temporal-candidate records.
+- **Persistence uses domain-specific uniqueness/idempotency indexes:** source-event deduplication, one binding per `(program, workspace)`, and version/revision uniqueness. When adding a new governance collection, declare the uniqueness invariant as a compound index next to the schema, not in the service.
+- **Governance reconciliation** is exposed to the frontend via polling (currently 1s) on the reconciliation Query — there is no governance SSE today. If you add one, follow §15.
+- **Governed conversations** are a rollout-gated integration between governance and the conversation module; their enablement flows through the `governedConversations` config namespace and the frontend `governedConversationFeatures` shared flag.
+
+### 24.3 Workspace Artifacts and Async Generation
+
+`workspace-artifact` is a Mongo collection (`workspace_artifacts`) holding workspace-nested artifacts with source references, JSON payload, `revision`-based optimistic concurrency (see §9), and an embedded generation lease/retry state machine.
+
+- **REST contract:** queue/create, configuration, retry, clone, update (requires `expectedRevision`), delete — under `/api/v1/workspaces/:workspaceId/artifacts`.
+- **Decision-flow generation worker** is an asynchronous, cron-polled worker. It downloads PDF source bytes from existing object storage via the document module, extracts selected-page text with `pdf-parse`, submits an LLM task through `AgentTaskExecutionService`, validates JSON output, and commits results only if the lease token still matches. Do not run this kind of worker without the lease check.
+- **Source bytes are read from object storage through the document module** — do not duplicate upload/storage ownership in the artifact module.
+
+### 24.4 Knowledge Intelligence
+
+`knowledge-intelligence` provides reusable Mongo repositories plus a durable, Mongo-embedded extraction-job queue (see §9's lease pattern). Identity is `(sourceVersionId, jobType, inputHash, engineVersion)` — changing any of these fields creates a new job; do not mutate identity on an existing job. Engine version bumps intentionally re-run extraction; gate behind a feature flag if cost is a concern.
+
+---
+
+## 25. Pre-PR Checklist
 
 - [ ] Controller has `@ApiTags` + `@ApiBearerAuth` (unless `@Public`).
 - [ ] DTOs decorated with `class-validator` + `@ApiProperty`.
@@ -454,6 +521,12 @@ Conversation-v2 sessions are backend-owned: Mongo `_id` is the wire `sessionId`,
 - [ ] Backend error codes mirrored in `front/src/lib/error-codes.ts` and EN+FR error locales.
 - [ ] Ordered SSE/event streams expose cursor semantics and frontend resume/gap handling.
 - [ ] Persisted editable fields are present in schema, DTO, serializer/interface, and frontend type/editor payload.
+- [ ] Config namespace: env keys in Joi `config.schema.ts`, exported from `src/config/index.ts`, load lifecycle (root vs feature) documented.
+- [ ] If adding a `dataRoom`/`governedConversations` flag: every cross-module consumer traced and updated.
+- [ ] If emitting integration events: versioned contract under `integration-events/contracts/`, emission gated on the right `dataRoom` flag, consumer `handlerKey` stable and idempotency key documented.
+- [ ] If adding a long-running worker: lease sub-document present, heartbeat/expiry extension in place, identity compound index unique, stale-lock recovery verified.
+- [ ] If touching `browser-session`: viewport (1280×720) matches frontend constants; new ack strings added to the frontend consumer; URL/popup/download safety checks still enforced.
+- [ ] If adding widget routes: reuse `WidgetTokenGuard`, no plaintext token logged/returned/persisted, deployment-mode shape preserved.
 - [ ] No `console.log`; structured logs via `LoggerService`.
 - [ ] Public endpoints rate-limited.
 - [ ] Swagger annotations sufficient to reproduce the call from `/docs`.
@@ -461,7 +534,7 @@ Conversation-v2 sessions are backend-owned: Mongo `_id` is the wire `sessionId`,
 
 ---
 
-## 25. Anti-Patterns
+## 26. Anti-Patterns
 
 - Throwing raw `Error` or `HttpException` without `ErrorCode`.
 - Reading `process.env` inside services/controllers.
@@ -482,3 +555,10 @@ Conversation-v2 sessions are backend-owned: Mongo `_id` is the wire `sessionId`,
 - Adding a new proto file without adding it to `package.json`'s `postbuild` copy step.
 - Adding a `google.protobuf.Struct` field without wrapping the value in `toGrpcStruct()`. The silent wire drop is invisible on the Python side.
 - Using `@nestjs/terminus` without verifying it matches the custom health history pattern.
+- Adding a config namespace without Joi-validating its env keys and exporting it from `src/config/index.ts`.
+- Emitting an integration event without a versioned contract file, without gating on the matching `dataRoom` flag, or with a handler that is not idempotent on `(eventId, handlerKey)`.
+- Running a lease-based worker without extending `expiresAt` on long runs or without checking `leaseToken` before writing results back.
+- Using bare `findOneAndUpdate` on a document that has a `revision` field, instead of filtering on `expectedRevision`.
+- Changing the browser-session viewport on one side without updating the frontend `VIEWPORT_W/H` constants in the same change.
+- Introducing a third widget auth model instead of reusing `WidgetTokenGuard`, or logging/returning a plaintext widget token after creation.
+- Editing a published `*.v1` integration-event contract in a breaking way instead of publishing a `*.v2` contract and a parallel consumer.

@@ -39,6 +39,8 @@ import { FlowMailEventLedger, FlowMailEventLedgerSchema } from './schemas/playbo
 import { FlowIdempotencyRecord, FlowIdempotencyRecordSchema } from './schemas/playbook-flow-idempotency-record.schema';
 import { FlowExecutionLease, FlowExecutionLeaseSchema } from './schemas/playbook-flow-execution-lease.schema';
 import { FlowHitlMemory, FlowHitlMemorySchema } from './schemas/playbook-flow-hitl-memory.schema';
+import { PlaybookAssistantOperation, PlaybookAssistantOperationSchema } from './schemas/playbook-assistant-operation.schema';
+import { PlaybookAssistantRevision, PlaybookAssistantRevisionSchema } from './schemas/playbook-assistant-revision.schema';
 
 import { PlaybookFlowController } from './controllers/playbook-flow.controller';
 import { PlaybookFlowExecutionController } from './controllers/playbook-flow-execution.controller';
@@ -55,6 +57,7 @@ import { PlaybookFlowPromptTemplateController } from './controllers/playbook-flo
 import { PlaybookFlowSettingsController } from './controllers/playbook-flow-settings.controller';
 import { PlaybookFlowHitlController } from './controllers/playbook-flow-hitl.controller';
 import { PlaybookShareController } from './controllers/playbook-share.controller';
+import { PlaybookAssistantInternalController } from './controllers/playbook-assistant-internal.controller';
 
 import { PlaybookFlowService } from './services/playbook-flow.service';
 import { PlaybookShareService } from './services/playbook-share.service';
@@ -140,6 +143,9 @@ import { PlaybookExecutionStreamFinalizerService } from './execution/runtime/pla
 import { PlaybookDesignRequestBuilderService } from './design/playbook-design-request-builder.service';
 import { PlaybookDesignResultApplierService } from './design/playbook-design-result-applier.service';
 import { PlaybookDesignSummaryService } from './design/playbook-design-summary.service';
+import { PlaybookAssistantContextService } from './assistant/playbook-assistant-context.service';
+import { PlaybookAssistantService } from './assistant/playbook-assistant.service';
+import { PlaybookAssistantOperationService } from './assistant/playbook-assistant-operation.service';
 
 @Module({
   imports: [
@@ -163,6 +169,8 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
       { name: FlowIdempotencyRecord.name, schema: FlowIdempotencyRecordSchema },
       { name: FlowExecutionLease.name, schema: FlowExecutionLeaseSchema },
       { name: FlowHitlMemory.name, schema: FlowHitlMemorySchema },
+      { name: PlaybookAssistantOperation.name, schema: PlaybookAssistantOperationSchema },
+      { name: PlaybookAssistantRevision.name, schema: PlaybookAssistantRevisionSchema },
       { name: Workspace.name, schema: WorkspaceSchema },
       { name: WorkspaceSetting.name, schema: WorkspaceSettingSchema },
     ]),
@@ -195,6 +203,7 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     PlaybookFlowSettingsController,
     PlaybookFlowHitlController,
     PlaybookShareController,
+    PlaybookAssistantInternalController,
   ],
   providers: [
     PlaybookFlowService,
@@ -281,6 +290,9 @@ import { PlaybookDesignSummaryService } from './design/playbook-design-summary.s
     PlaybookFlowHitlPromptService,
     PlaybookFlowReplaySemanticJudgeService,
     PlaybookFlowReplayPostRunEvaluationService,
+    PlaybookAssistantContextService,
+    PlaybookAssistantService,
+    PlaybookAssistantOperationService,
   ],
   exports: [
     PlaybookFlowService,

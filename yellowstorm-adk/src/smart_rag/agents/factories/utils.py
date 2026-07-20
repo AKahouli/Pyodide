@@ -20,7 +20,6 @@ def create_enhanced_prompt(tool_provider, agent_repository, agent_config: Dict[s
 
     base_prompt = (agent_config['prompt'] +
                    tool_provider.get_tools_description(tools_with_configs) )
-
     # Add source reference requirements for non-HTML agents when search agents exist in team
     is_html_agent = agent_config.get('html', False)
 

@@ -25,8 +25,8 @@ export interface AgentContext {
 }
 
 interface RequestWithAgentContext {
-  user: { _id: Types.ObjectId };
-  params: { id?: string };
+  user: { _id: Types.ObjectId; permissions?: string[] };
+  params: { id?: string; agentId?: string };
   agentContext?: AgentContext;
 }
 
@@ -52,7 +52,7 @@ export class AgentPermissionGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest<RequestWithAgentContext>();
     const userId = request.user._id.toString();
-    const agentId = request.params.id;
+    const agentId = request.params.id ?? request.params.agentId;
 
     if (!agentId || !Types.ObjectId.isValid(agentId)) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
@@ -69,6 +69,28 @@ export class AgentPermissionGuard implements CanActivate {
     }
 
     const isOwner = agent.createdBy.toString() === userId;
+
+    if (agent.isDefault) {
+      if (requiredPermission === 'owner') {
+        throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_SHARE_FORBIDDEN);
+      }
+
+      const permissions = request.user.permissions ?? [];
+      const canManage = permissions.some(
+        (permission) => permission === '*' || permission === 'agents.*' || permission === 'agents.update',
+      );
+
+      if (requiredPermission !== 'read' && !canManage) {
+        throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY);
+      }
+
+      request.agentContext = {
+        agent: agent as AgentDocument,
+        isOwner: false,
+        permission: requiredPermission === 'read' ? 'read' : 'owner',
+      };
+      return true;
+    }
 
     if (isOwner) {
       request.agentContext = {

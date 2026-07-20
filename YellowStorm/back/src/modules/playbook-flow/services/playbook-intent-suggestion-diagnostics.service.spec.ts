@@ -53,6 +53,33 @@ describe('PlaybookIntentSuggestionDiagnosticsService', () => {
     expect(enriched.repairSummary).toBe('Added router output port excel_file.');
   });
 
+  it('adds actionable node and port review guidance to diagnostics', () => {
+    const enriched = service.enrichWorkflowPlan(workflowPlan({
+      changes: [{
+        type: 'create_node',
+        nodeRef: 'prepare_report',
+        anchor: { mode: 'append', targetTaskId: null, nodeRef: null },
+        task: {
+          title: 'Prepare report',
+          description: '',
+          inputPorts: [{ id: 'context', artifactKind: 'text', required: true }],
+        },
+      }],
+    }), {}, [{
+      severity: 'warning',
+      stage: 'repair',
+      code: 'repair_template_required_port_added',
+      itemId: 'prepare_report',
+      path: 'nodes.0.inputPorts.context',
+      message: 'Added missing required template port context.',
+    }]);
+
+    expect(enriched.diagnostics?.[0]).toEqual(expect.objectContaining({
+      reviewTarget: { kind: 'port', nodeRef: 'prepare_report', nodeLabel: 'Prepare report', portId: 'context' },
+      resolutionCode: 'review_port',
+    }));
+  });
+
   it('keeps suggestions with final validation diagnostics apply-ready', () => {
     const enriched = service.enrichWorkflowPlan(workflowPlan({
       changes: [{

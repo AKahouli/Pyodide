@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getUnboundRequiredPorts,
   getUnboundRequiredPortsForTaskIds,
+  getPlaybookValidationIssues,
   hasIncompleteDataBindings,
   isDataBindingResolved,
 } from './required-port-validation';
@@ -143,5 +144,44 @@ describe('required-port-validation', () => {
       sourceKind: 'constant',
       constantValue: { text: '   ' },
     })).toBe(false);
+  });
+
+  it('describes the affected task and required port', () => {
+    const tasks = [makeTask({
+      id: 'target-1',
+      title: 'Prepare report',
+      inputPorts: [{ id: 'context', name: 'Report context', artifactKind: 'text', required: true }],
+    })];
+
+    expect(getPlaybookValidationIssues(tasks, [])).toEqual([{
+      id: 'required:target-1:context',
+      taskId: 'target-1',
+      taskName: 'Prepare report',
+      portId: 'context',
+      portName: 'Report context',
+      artifactKind: 'text',
+      reason: 'missing_required_binding',
+    }]);
+  });
+
+  it('reports an incomplete binding once with a specific resolution reason', () => {
+    const tasks = [makeTask({
+      id: 'target-1',
+      title: 'Prepare report',
+      inputPorts: [{ id: 'context', name: 'Report context', artifactKind: 'text', required: true }],
+    })];
+
+    expect(getPlaybookValidationIssues(tasks, [{
+      id: 'binding-1',
+      targetNode: 'target-1',
+      targetPort: 'context',
+      sourceKind: 'constant',
+      constantValue: { text: '' },
+    }])).toEqual([expect.objectContaining({
+      id: 'binding:binding-1',
+      taskId: 'target-1',
+      portId: 'context',
+      reason: 'missing_constant_value',
+    })]);
   });
 });

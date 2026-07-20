@@ -135,6 +135,19 @@ export class PlaywrightBrowserEngine implements BrowserEngine {
     const context = await browser.newContext({ viewport: { width: this.width, height: this.height } });
     const page = await context.newPage();
 
+    // Browser sessions are for visual navigation only. Downloads and popup
+    // windows are outside that contract and increase the attack surface.
+    context.on('page', (popup) => {
+      if (popup !== page) {
+        this.logger.warn('Blocked browser-session popup', { url: popup.url() });
+        void popup.close().catch(() => undefined);
+      }
+    });
+    context.on('download', (download) => {
+      this.logger.warn('Blocked browser-session download', { url: download.url(), filename: download.suggestedFilename() });
+      void download.cancel().catch(() => undefined);
+    });
+
     // SSRF: abort any top-level document navigation to a disallowed host.
     // Registered on the context (not the page) so it also covers popups/new
     // tabs opened via window.open() / target="_blank", which page-scoped

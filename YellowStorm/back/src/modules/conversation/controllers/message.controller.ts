@@ -28,6 +28,8 @@ import { RequestContextService } from '../../request-context';
 import { LoggerService } from '../../logger';
 import { UserDocument } from '../../user/schemas/user.schema';
 import { resolveStickyAgentRouting } from '../utils/sticky-agent-routing';
+import { ChoiceInteractionService } from '../services/choice-interaction.service';
+import { GovernedConversationRuntimeService } from '../../governance/services/governed-conversation-runtime.service';
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -41,6 +43,8 @@ export class MessageController {
     private readonly teamService: TeamService,
     private readonly requestContext: RequestContextService,
     private readonly logger: LoggerService,
+    private readonly choiceInteractionService: ChoiceInteractionService,
+    private readonly governedRuntimeService: GovernedConversationRuntimeService,
   ) {
     this.logger.setContext('MessageController');
   }
@@ -82,14 +86,6 @@ export class MessageController {
   ) {
     const requestId = this.requestContext.getRequestId();
 
-    // DEBUG: Log user object to verify email is present
-    this.logger.log('[DEBUG] User object received', {
-      userId: user._id,
-      email: user.email,
-      hasEmail: !!user.email,
-      userKeys: Object.keys(user),
-    });
-
     this.logger.log('Request received', {
       conversationId,
       contentLength: dto.content.length,
@@ -109,9 +105,15 @@ export class MessageController {
       );
     }
 
-    // Validate model is active
-    if (dto.modelId) {
-      const modelValidation = await this.modelsService.validateModelActive(dto.modelId);
+    const conversation = await this.conversationService.getConversationDocument(conversationId);
+    const governedRuntime = conversation.runtimeMode === 'governed'
+      ? await this.governedRuntimeService.resolveRuntime(user._id.toString(), conversation)
+      : undefined;
+    if (governedRuntime) this.governedRuntimeService.assertRuntimeRequestAllowed(governedRuntime, dto);
+
+    // Validate model is active for standard conversations only.
+    if (!governedRuntime && dto.modelId) {
+      const modelValidation = await this.modelsService.validateModelActive(dto.modelId, 'chat');
       if (!modelValidation.valid) {
         if (modelValidation.inactive) {
           this.logger.warn('Attempted to use inactive model', {
@@ -119,6 +121,12 @@ export class MessageController {
             modelId: dto.modelId,
           });
           throw new BadRequestException(ErrorCode.MODEL_INACTIVE);
+        } else if (modelValidation.unsupported) {
+          this.logger.warn('Attempted to use a non-chat model for conversation', {
+            conversationId,
+            modelId: dto.modelId,
+          });
+          throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Selected model does not support chat.');
         } else {
           this.logger.warn('Attempted to use unknown model', {
             conversationId,
@@ -139,7 +147,6 @@ export class MessageController {
     }
 
     // Check if this is the first message (for name generation)
-    const conversation = await this.conversationService.getConversationDocument(conversationId);
     const isFirstMessage = conversation.isFirstMessage;
 
     // Mark as not first message anymore (do this before creating message to avoid race conditions)
@@ -157,8 +164,9 @@ export class MessageController {
 
     // Mentions replace sticky taggedAgentIds; untagged AI turns reuse them.
     // Member-only turns never reuse sticky (avoid stamping agents on human pings).
-    const mentionedAgentIds =
-      (await this.resolveAgentIds(
+    const mentionedAgentIds = governedRuntime
+      ? this.governedRuntimeService.resolveEffectiveAgents(governedRuntime, dto.agentIds)
+      : (await this.resolveAgentIds(
         user._id.toString(),
         dto.agentIds,
         dto.teamIds,
@@ -180,11 +188,15 @@ export class MessageController {
       );
     }
 
+    const canonicalChoice = dto.interaction
+      ? await this.choiceInteractionService.canonicalize(conversationId, dto.interaction)
+      : undefined;
+
     // Create user message
     const userMessage = await this.messageService.createUserMessage({
       conversationId,
       senderId: user._id.toString(),
-      content: dto.content,
+      content: canonicalChoice?.content ?? dto.content,
       attachedFileIds: dto.attachedFileIds,
       webSearchEnabled: dto.webSearchEnabled,
       modelId: dto.modelId,
@@ -192,6 +204,7 @@ export class MessageController {
       memberIds: dto.memberIds,
       requestId,
       parentMessageId: dto.parentMessageId,
+      interaction: canonicalChoice?.interaction,
     });
 
     // Fire and forget - generate conversation name asynchronously on first message
@@ -199,7 +212,7 @@ export class MessageController {
       this.streamService.generateConversationNameAsync(
         user._id.toString(),
         conversationId,
-        dto.content,
+        canonicalChoice?.content ?? dto.content,
         dto.modelId,
         user.email,
       );
@@ -233,7 +246,7 @@ export class MessageController {
       // Start streaming (non-blocking)
       this.streamService
         .startStream(user._id.toString(), conversationId, aiMessage.id, {
-          content: dto.content,
+          content: canonicalChoice?.content ?? dto.content,
           attachedFileIds: dto.attachedFileIds,
           webSearchEnabled: dto.webSearchEnabled,
           deepSearchEnabled: dto.deepSearchEnabled,
@@ -241,7 +254,14 @@ export class MessageController {
           agentIds: effectiveAgentIds,
           connectorRepo: dto.connectorRepo,
           skillIds: dto.skillIds,
-        }, requestId, undefined, this.resolveDisplayName(user))
+        }, requestId, undefined, this.resolveDisplayName(user), governedRuntime ? {
+          runtimeMode: 'governed',
+          primaryAgentId: governedRuntime.primaryAgentId,
+          allowedAgentIds: governedRuntime.allowedAgentIds,
+          workspaceIds: governedRuntime.workspaceIds,
+          revisionId: governedRuntime.revisionId,
+          scopeId: governedRuntime.scopeId,
+        } : undefined)
         .catch((err) => {
           this.logger.error('Stream start failed', {
             conversationId,

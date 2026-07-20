@@ -22,6 +22,7 @@ from src.smart_rag.infrastructure.monitoring import TraceRecorder
 from src.smart_rag.infrastructure.processing import PromptProcessor
 from src.smart_rag.messaging import MessageTransformer, StreamingFormatter
 from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_dict
+from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from src.flow_engine.runtime.artifact_routing import infer_artifact_kind
 from src.logger.logging import get_logger
 from src.guardrails.prompt_injection_guardrail import PromptInjectionGuardrail
@@ -40,6 +41,37 @@ def _is_locate_answer_citations_tool(tool_name: str) -> bool:
 
 def _registers_connector_citations(tool_name: str) -> bool:
     return _is_locate_answer_citations_tool(tool_name)
+
+
+def _normalize_structured_sources(value: Any) -> List[Dict[str, str]]:
+    """Keep only direct, URL-backed sources that are safe for a public UI."""
+    if not isinstance(value, list):
+        return []
+
+    sources: List[Dict[str, str]] = []
+    seen_urls = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+
+        raw_url = item.get("url")
+        if not isinstance(raw_url, str):
+            continue
+        url = raw_url.strip()
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            continue
+
+        dedupe_key = url
+        if dedupe_key in seen_urls:
+            continue
+        seen_urls.add(dedupe_key)
+
+        raw_title = item.get("title")
+        title = raw_title.strip() if isinstance(raw_title, str) else ""
+        sources.append({"title": title or parsed.netloc, "url": url})
+
+    return sources
 
 
 def _loggable_structured_response(tool_name: str, response: Any) -> Any:
@@ -207,7 +239,7 @@ class AgentRunner:
             logger.error(
                 f"🔴 Exception occurred during session initialization for agent {agent.name}: {str(e)}"
             )
-            return None, [], {}, []
+            raise
 
         mcp_tools_used = []  # Track which specific MCPs actually get used during execution
         if image_input:
@@ -276,7 +308,7 @@ class AgentRunner:
 
         except Exception as e:
             logger.error(f"🔴 Exception occurred in agent {agent.name}: {str(e)}")
-            return None, [], {}, []
+            raise
 
     async def _run_standard_agent(
         self,
@@ -332,6 +364,8 @@ class AgentRunner:
         cot_steps = []                    # ordered list of tool title strings
         cot_component_id = str(uuid.uuid4())
         cot_sent = False
+        pending_tool_components_by_call_id: Dict[str, str] = {}
+        pending_tool_components_by_name: Dict[str, List[str]] = {}
 
         runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
 
@@ -360,6 +394,7 @@ class AgentRunner:
                     if (
                         agent_type != "html"
                         and part.text
+                        and getattr(part, "thought", False) is not True
                         and not event.is_final_response()
                         and not has_multiple_parts
                     ):
@@ -485,6 +520,28 @@ class AgentRunner:
                                 tool_name=func_name,
                                 args=dict(part.function_call.args),
                                 status="requested",
+                            )
+
+                        if q:
+                            tool_args = dict(part.function_call.args or {})
+                            raw_call_id = getattr(part.function_call, "id", None)
+                            call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else str(uuid.uuid4())
+                            tool_component_id = f"tool-{call_id}"
+                            pending_tool_components_by_call_id[call_id] = tool_component_id
+                            pending_tool_components_by_name.setdefault(func_name, []).append(tool_component_id)
+                            await q.put(
+                                self.streaming_formatter.format_component_event(
+                                    agent_id=agent_id,
+                                    component_type="tool_info",
+                                    component_data={
+                                        "title": func_name,
+                                        "status": "running",
+                                        "params": json.dumps(tool_args, default=str, sort_keys=True),
+                                    },
+                                    message_id=session_id,
+                                    component_id=tool_component_id,
+                                    action="add",
+                                )
                             )
 
                         # Chain-of-thought: append this tool title as a step
@@ -647,6 +704,62 @@ class AgentRunner:
                         # Check if this is a DataViz generate_ui tool response
                         func_name = part.function_response.name
 
+                        if q:
+                            raw_call_id = getattr(part.function_response, "id", None)
+                            response_call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else None
+                            tool_component_id = pending_tool_components_by_call_id.pop(response_call_id, None) if response_call_id else None
+                            if tool_component_id:
+                                pending_for_name = pending_tool_components_by_name.get(func_name, [])
+                                if tool_component_id in pending_for_name:
+                                    pending_for_name.remove(tool_component_id)
+                            else:
+                                pending_for_name = pending_tool_components_by_name.get(func_name, [])
+                                tool_component_id = pending_for_name.pop(0) if pending_for_name else None
+                                if tool_component_id:
+                                    for call_id, pending_component_id in list(pending_tool_components_by_call_id.items()):
+                                        if pending_component_id == tool_component_id:
+                                            pending_tool_components_by_call_id.pop(call_id)
+                                            break
+
+                            if tool_component_id:
+                                result_json = ""
+                                try:
+                                    candidate_result_json = json.dumps(
+                                        part.function_response.response,
+                                        default=str,
+                                        separators=(",", ":"),
+                                    )
+                                    if len(candidate_result_json.encode("utf-8")) <= 65536:
+                                        result_json = candidate_result_json
+                                except (TypeError, ValueError):
+                                    logger.warning(
+                                        "tool_result_serialization_failed tool=%s",
+                                        func_name,
+                                    )
+                                await q.put(
+                                    self.streaming_formatter.format_component_event(
+                                        agent_id=agent_id,
+                                        component_type="tool_info",
+                                        component_data={
+                                            "title": func_name,
+                                            "status": "completed" if success else "failed",
+                                            **({"result_json": result_json} if result_json else {}),
+                                        },
+                                        message_id=session_id,
+                                        component_id=tool_component_id,
+                                        action="update",
+                                    )
+                                )
+
+                        if q and await self._handle_ui_tool_response(
+                            func_name,
+                            part.function_response,
+                            agent_id,
+                            session_id,
+                            q,
+                        ):
+                            continue
+
                         response_payload = part.function_response.response
                         if q and isinstance(response_payload, dict) and response_payload.get("ceph_path"):
                             ceph_path = response_payload.get("ceph_path", "")
@@ -747,20 +860,13 @@ class AgentRunner:
                                 q,
                             )
 
-                        # Check if this is a render_chart tool response
-                        if func_name == "render_chart" and q:
-                            await self._handle_render_chart_response(
-                                part.function_response,
-                                agent_id,
-                                session_id,
-                                q,
-                            )
 
                 if event.is_final_response() and event.content and event.content.parts:
                     final_text_for_citations = "".join(
                         (part.text or "")
                         for part in event.content.parts
                         if getattr(part, "text", None)
+                        and getattr(part, "thought", False) is not True
                     )
                     logger.info(
                         "[STREAM END] final_text_length=%s buffered_length=%s final_text_preview=%s",
@@ -827,6 +933,7 @@ class AgentRunner:
 
                     final_result = await self._handle_final_response(
                         event,
+                        agent_id,
                         agent_name,
                         toolkit,
                         task_order,
@@ -834,6 +941,7 @@ class AgentRunner:
                         session_id,
                         citation_mapping,
                         agent_config,
+                        accumulated_text,
                     )
                     if accumulated_text != "":
                         recorder.record_chunk(accumulated_text)
@@ -852,11 +960,7 @@ class AgentRunner:
                         generated_files,
                     )
 
-            execution_summary = recorder.get_execution_summary()
-            generated_files = await self._extract_generated_files(
-                session_helper, user_id, session_id
-            )
-            return (None, mcp_tools_used, execution_summary, generated_files)
+            raise RuntimeError("Agent stream ended without a final response")
 
         except (asyncio.CancelledError, GeneratorExit):
             should_close_stream = False
@@ -867,11 +971,7 @@ class AgentRunner:
 
             logger.error(f"🔴 Full traceback: {traceback.format_exc()}")
             recorder.record_error(e)
-            execution_summary = recorder.get_execution_summary()
-            generated_files = await self._extract_generated_files(
-                session_helper, user_id, session_id
-            )
-            return (None, mcp_tools_used, execution_summary, generated_files)
+            raise
         finally:
             aclose = getattr(stream, "aclose", None)
             if should_close_stream and aclose is not None:
@@ -1045,6 +1145,7 @@ class AgentRunner:
     async def _handle_final_response(
         self,
         event,
+        agent_id,
         agent_name,
         toolkit,
         task_order,
@@ -1052,15 +1153,15 @@ class AgentRunner:
         session_id,
         citation_mapping: Optional[Dict[str, str]] = None,
         agent_config: Optional[dict] = None,
+        streamed_text: str = "",
     ):
         """Handle final response from agent."""
-        # Safely handle empty parts list
-        if not event.content.parts:
-            event_text = ""
-        else:
-            event_text = (
-                event.content.parts[0].text if event.content.parts[0].text else ""
-            )
+        event_text = "".join(
+            (part.text or "")
+            for part in event.content.parts
+            if getattr(part, "text", None)
+            and getattr(part, "thought", False) is not True
+        )
 
         # OLD LOGIC: Sending all sources at the end - DISABLED
         # Sources are now sent dynamically as citations are detected during streaming
@@ -1119,6 +1220,24 @@ class AgentRunner:
             text=event_text,
             agent_config=agent_config or {},
         )
+
+        should_emit_final = bool(guarded.text) and (
+            guarded.blocked
+            or guarded.sanitized
+            or guarded.text != streamed_text
+        )
+        if q and should_emit_final:
+            if self.streaming_formatter.component_tracker:
+                self.streaming_formatter.component_tracker.finish_component(agent_id)
+            await q.put(self.streaming_formatter.format_streaming_event(
+                agent_id=agent_id,
+                agent_name=agent_name,
+                agent_type="agent",
+                chunk=guarded.text,
+                message_id=session_id,
+                content_type="final_response",
+                guardrail_decision=guarded.decision_metadata(),
+            ))
 
         return guarded.text
 
@@ -1350,26 +1469,25 @@ class AgentRunner:
 
             response_data = function_response.response
 
-            # Check if response has sources
-            if isinstance(response_data, dict) and "sources" in response_data:
-                sources = response_data.get("sources", [])
-
-                if sources:
-                    # Stream sources as sources component
-                    sources_chunk = self.streaming_formatter.format_component_event(
-                        agent_id=agent_id,
-                        component_type="sources",
-                        component_data={"sources": sources},
-                        message_id=session_id,
-                    )
-                    await q.put(sources_chunk)
-                    logger.info(
-                        f"[WEB SEARCH] Successfully streamed {len(sources)} web sources to queue"
-                    )
-            else:
+            if not isinstance(response_data, dict):
                 logger.debug(
                     f"[WEB SEARCH] No sources found in response or response is not dict. Type: {type(response_data)}"
                 )
+                return
+
+            sources = _normalize_structured_sources(response_data.get("sources"))
+            if not sources:
+                logger.debug("[WEB SEARCH] No valid URL-backed sources to stream")
+                return
+
+            sources_chunk = self.streaming_formatter.format_component_event(
+                agent_id=agent_id,
+                component_type="sources",
+                component_data={"sources": sources},
+                message_id=session_id,
+            )
+            await q.put(sources_chunk)
+            logger.info(f"[WEB SEARCH] Streamed {len(sources)} web sources to queue")
 
         except Exception as e:
             logger.error(
@@ -1427,10 +1545,10 @@ class AgentRunner:
                     tool_name,
                 )
 
-            sources = response_data.get("sources", [])
-            if _is_locate_answer_citations_tool(tool_name) and isinstance(sources, list) and sources:
+            sources = _normalize_structured_sources(response_data.get("sources"))
+            if sources:
                 logger.info(
-                    "[STRUCTURED TOOL RESPONSE] tool=%s streaming_sources_count=%s",
+                    "[STRUCTURED TOOL RESPONSE] tool=%s valid_sources_count=%s",
                     tool_name,
                     len(sources),
                 )
@@ -1443,11 +1561,8 @@ class AgentRunner:
                 await q.put(sources_chunk)
             else:
                 logger.info(
-                    "[STRUCTURED TOOL RESPONSE] tool=%s no_sources_to_stream keys=%s",
+                    "[STRUCTURED TOOL RESPONSE] tool=%s no_valid_sources",
                     tool_name,
-                    sorted(response_data.keys())
-                    if _is_locate_answer_citations_tool(tool_name)
-                    else [],
                 )
         except Exception as e:
             logger.error(
@@ -1516,66 +1631,31 @@ class AgentRunner:
                 exc_info=True,
             )
 
-    async def _handle_render_chart_response(
-        self, function_response, agent_id, session_id, q
-    ):
-        """Emit a chart component when a sub-agent calls render_chart."""
-        try:
-            response_data = coerce_to_dict(
-                getattr(function_response, "response", None)
-            )
-            call_id = getattr(function_response, "id", None) or str(uuid.uuid4())
-
-            if not response_data:
-                logger.warning(
-                    "[CHART] render_chart response empty or un-coercible; raw type=%s",
-                    type(getattr(function_response, "response", None)).__name__,
-                )
-                return
-
-            if response_data.get("error"):
-                logger.warning(
-                    "[CHART] render_chart tool returned error: %s",
-                    response_data.get("details"),
-                )
-                return
-
-            logger.info(
-                "[CHART] emitting render_chart component_id=%s kind=%s data_len=%s",
-                call_id,
-                response_data.get("kind"),
-                len(response_data.get("chartData") or []),
-            )
-
-            chart_chunk = self.streaming_formatter.format_component_event(
+    async def _handle_ui_tool_response(
+        self, tool_name: str, function_response: Any, agent_id: str, session_id: str, q: asyncio.Queue[dict]
+    ) -> bool:
+        """Convert registered native UI-tool responses into atomic components."""
+        definition = UI_TOOL_COMPONENT_REGISTRY.get(tool_name)
+        if definition is None:
+            return False
+        response = coerce_to_dict(getattr(function_response, "response", None))
+        normalized = definition.normalize_response(response) if response else None
+        if normalized is None:
+            logger.warning("[UI TOOL] rejected response tool=%s", tool_name)
+            return True
+        component_id = getattr(function_response, "id", None) or str(uuid.uuid4())
+        await q.put(
+            self.streaming_formatter.format_component_event(
                 agent_id=agent_id,
-                component_type="chart",
-                component_data={
-                    "title": response_data.get("title", ""),
-                    "chartData": response_data.get("chartData", []),
-                    "config": response_data.get("config", {}),
-                    "xAxisKey": response_data.get("xAxisKey", ""),
-                    "yAxisKey": response_data.get("yAxisKey", ""),
-                    "nameKey": response_data.get("nameKey", ""),
-                    "zAxisKey": response_data.get("zAxisKey", ""),
-                    "series": response_data.get("series", []),
-                    "kind": response_data.get("kind", "bar"),
-                    "stacked": response_data.get("stacked", False),
-                    "layout": response_data.get("layout", "horizontal"),
-                    "innerRadius": response_data.get("innerRadius", 0),
-                    "showLegend": response_data.get("showLegend", True),
-                    "showGrid": response_data.get("showGrid", True),
-                },
+                component_type=definition.component_type,
+                component_data=normalized,
                 message_id=session_id,
+                component_id=component_id,
                 action="add",
-                component_id=call_id,
             )
-            await q.put(chart_chunk)
-        except Exception as e:
-            logger.error(
-                f"[CHART] Error handling render_chart response: {str(e)}",
-                exc_info=True,
-            )
+        )
+        logger.info("[UI TOOL] emitted component tool=%s component_id=%s", tool_name, component_id)
+        return True
 
     def _find_source_by_reference(
         self,

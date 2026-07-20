@@ -27,13 +27,19 @@ export class AiModel extends Document {
   providers!: string[]; // e.g., ["azure"]
 
   @Prop({ default: '', index: true })
-  type!: string; // Classification: chat | embedding | image_generation | ... ('' = unclassified, set by admin)
+  type!: string; // Legacy primary classification; mirrors the first value in types.
+
+  @Prop({ type: [String], default: [], index: true })
+  types!: string[]; // Classifications: chat | embedding | image_generation | ...
 
   @Prop({ default: true })
   isActive!: boolean; // Can disable models
 
   @Prop({ default: false })
   isDefault!: boolean; // Only one model can be default at a time
+
+  @Prop({ default: false })
+  omitTemperature!: boolean; // Do not forward temperature for providers that reject it
 
   createdAt!: Date;
   updatedAt!: Date;
@@ -44,6 +50,7 @@ export const AiModelSchema = SchemaFactory.createForClass(AiModel);
 // Indexes
 AiModelSchema.index({ chefSlug: 1, isActive: 1 });
 AiModelSchema.index({ type: 1, isActive: 1 });
+AiModelSchema.index({ types: 1, isActive: 1 });
 AiModelSchema.index({ isActive: 1 });
 AiModelSchema.index({ isDefault: 1 });
 

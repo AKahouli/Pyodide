@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { componentsToMarkdown, formatTimingMs, getStreamErrorMessage, mapComponentsToContentParts } from './utils';
+import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, mapComponentsToContentParts, mapConversationComponentsToContentParts, normalizeChoiceComponentData } from './utils';
 
 describe('conversation utils', () => {
   it('formats timing values', () => {
     expect(formatTimingMs(undefined)).toBe('--');
     expect(formatTimingMs(550)).toBe('550ms');
     expect(formatTimingMs(1500)).toBe('1.5s');
+  });
+
+  it('preserves choice list fields for the interactive renderer', () => {
+    const choice = normalizeChoiceComponentData({ schemaVersion: 1, questionId: 'q1', prompt: 'Pick', presentation: 'list', selectionMode: 'multiple', submitBehavior: 'immediate', status: 'ready', labels: { submit: 'Continue' }, progress: { current: 1, total: 2 }, otherOption: { enabled: true, label: 'Other', maxLength: 100 }, options: [{ id: 'a', label: 'A', submitText: 'Choose A' }, { id: 'b', label: 'B', submitText: 'Choose B' }] });
+    expect(choice).toMatchObject({ submitBehavior: 'explicit', labels: { submit: 'Continue' }, progress: { current: 1, total: 2 }, otherOption: { enabled: true } });
   });
 
   it('maps components and attaches citation to parent text', () => {
@@ -63,6 +68,25 @@ describe('conversation utils', () => {
 
     expect(markdown).toContain('Hi');
     expect(markdown).toContain('```ts');
+  });
+
+  it('excludes internal execution payloads from conversation content and copies', () => {
+    const components = [
+      { type: 'reasoning', data: { content: 'Internal system instructions' } },
+      { type: 'toolInfo', data: { title: 'activate_skill', params: '{"secret":"value"}' } },
+      { type: 'chainOfThought', data: { steps: ['Internal step'] } },
+      { type: 'text', data: { content: 'Public answer' } },
+      { type: 'unknown', data: { content: 'Unexpected payload' } },
+    ] as never;
+
+    expect(mapConversationComponentsToContentParts(components)).toEqual([{ type: 'text', content: 'Public answer' }]);
+    expect(componentsToMarkdown(components)).toBe('Public answer');
+  });
+
+  it('uses generic activity states without exposing tool details', () => {
+    expect(getConversationStreamActivity([])).toBe('thinking');
+    expect(getConversationStreamActivity([{ type: 'toolInfo', data: { title: 'activate_skill' } }] as never)).toBe('usingTools');
+    expect(getConversationStreamActivity([{ type: 'text', data: { content: 'Public answer' } }] as never)).toBe('responding');
   });
 
   it('maps snake_case sandbox and artifact component fields', () => {

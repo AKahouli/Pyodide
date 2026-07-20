@@ -12,11 +12,13 @@ interface MentionPopupProps {
   onClose: () => void;
   filter: string;
   anchorPosition: { top: number; left: number };
-  agents: Agent[];
-  sharedAgents?: Agent[];
+  agents: MentionAgent[];
+  sharedAgents?: MentionAgent[];
   members?: Array<{ id: string; name: string }>;
   teams?: Array<{ id: string; name: string; agentCount?: number }>;
 }
+
+export type MentionAgent = Pick<Agent, 'id' | 'name' | 'isActive' | 'isDefault'> & { agentType?: { name?: string } };
 
 export function MentionPopup({ open, onSelect, onClose, filter, anchorPosition, agents, sharedAgents, members, teams }: MentionPopupProps) {
   const containerRef = useRef<HTMLDivElement>(null);

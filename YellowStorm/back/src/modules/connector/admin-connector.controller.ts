@@ -10,6 +10,7 @@ import {
   Post,
   Query,
   Req,
+  Inject,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -39,6 +40,7 @@ import { RateLimit } from '@modules/rate-limiter';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { ConnectorAdminAuthService } from './services/connector-admin-auth.service';
+import { ConnectorAuthService } from './interfaces/connector-auth.interface';
 
 @ApiTags('Admin Connectors')
 @ApiBearerAuth()
@@ -49,6 +51,8 @@ export class AdminConnectorController {
     private readonly connectorService: ConnectorService,
     private readonly auditLogService: AuditLogService,
     private readonly connectorAdminAuthService: ConnectorAdminAuthService,
+    @Inject('ConnectorAuthService')
+    private readonly connectorAuthService: ConnectorAuthService,
   ) {}
 
   @Get()
@@ -96,19 +100,52 @@ export class AdminConnectorController {
     @Body() body: InspectMcpDto,
     @CurrentUser() user: UserDocument,
   ): Promise<IMcpInspectResult> {
-    const resolvedToken = body.connectedAppKey
+    const resolvedToken = body.connectedAppKey && !body.connectorId
       ? await this.connectorAdminAuthService.getValidToken(user._id.toString(), body.connectedAppKey)
+      : undefined;
+    const connector = body.connectorId
+      ? await this.connectorService.findById(body.connectorId)
+      : undefined;
+    const resolvedAuth = connector
+      ? await this.connectorAuthService.resolveRuntimeAuth(user._id.toString(), {
+          authSourceType: connector.authSourceType,
+          connectedAppKey: connector.connectedAppKey,
+          runtimeAuthConfig: body.runtimeAuthConfig ?? connector.runtimeAuthConfig,
+          connectorId: connector.id,
+        })
+      : undefined;
+    const draftStaticHeaders = !connector
+      ? this.resolveDraftStaticHeaders(body.runtimeAuthConfig)
       : undefined;
 
     return this.connectorService.inspectMcp(
-      body.transportType,
-      body.serverUrl,
-      body.serverConfig,
+      connector?.mcpTransportType ?? body.transportType,
+      connector?.mcpServerUrl ?? body.serverUrl,
+      connector?.mcpServerConfig ?? body.serverConfig,
       undefined,
       undefined,
       body.runtimeAuthConfig,
       resolvedToken,
+      resolvedAuth?.headers ?? draftStaticHeaders,
     );
+  }
+
+  private resolveDraftStaticHeaders(runtimeAuthConfig?: Record<string, unknown>): Record<string, string> | undefined {
+    if (runtimeAuthConfig?.strategy !== 'http_header_bearer') {
+      return undefined;
+    }
+
+    const headerValue = typeof runtimeAuthConfig.headerPrefix === 'string'
+      ? runtimeAuthConfig.headerPrefix.trim()
+      : '';
+    if (!headerValue) {
+      return undefined;
+    }
+
+    const headerName = typeof runtimeAuthConfig.headerName === 'string' && runtimeAuthConfig.headerName.trim()
+      ? runtimeAuthConfig.headerName
+      : 'Authorization';
+    return { [headerName]: headerValue };
   }
 
   @Post('import-mcp')

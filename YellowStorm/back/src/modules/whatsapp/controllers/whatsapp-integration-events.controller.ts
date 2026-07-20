@@ -1,4 +1,4 @@
-import { Controller, MessageEvent, Param, Sse } from '@nestjs/common';
+import { Controller, MessageEvent, Param, Sse, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { finalize, of, Subject } from 'rxjs';
 import type { Observable } from 'rxjs';
@@ -7,6 +7,8 @@ import { UserDocument } from '@modules/user/schemas/user.schema';
 import { WhatsAppConnectionService } from '../services/whatsapp-connection.service';
 import { WhatsAppIntegrationSseService } from '../services/whatsapp-integration-sse.service';
 import { WhatsAppIntegrationService } from '../services/whatsapp-integration.service';
+import { AgentPermissionGuard } from '@modules/agent/guards/agent-permission.guard';
+import { RequireAgentPermission } from '@modules/agent/decorators/require-agent-permission.decorator';
 
 @ApiTags('Agent WhatsApp Integration')
 @ApiBearerAuth()
@@ -23,6 +25,8 @@ export class WhatsAppIntegrationEventsController {
    * Auto-recovery is triggered only by POST /auto-recover when the frontend sees FAILED.
    */
   @Sse('events')
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('read')
   @ApiOperation({ summary: 'SSE — live WhatsApp integration status for an agent' })
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
   stream(

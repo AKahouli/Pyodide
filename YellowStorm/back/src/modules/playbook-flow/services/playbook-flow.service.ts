@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -27,7 +27,7 @@ import { DEFAULT_HITL_POLICY } from '../schemas/playbook-flow-hitl.schema';
 import { PlaybookShareService } from './playbook-share.service';
 
 @Injectable()
-export class PlaybookFlowService {
+export class PlaybookFlowService implements OnModuleInit {
   private readonly logger = new Logger(PlaybookFlowService.name);
 
   private stableStringify(value: unknown, seen = new WeakSet<object>()): string {
@@ -207,6 +207,24 @@ export class PlaybookFlowService {
     private readonly playbookShareService: PlaybookShareService,
   ) {}
 
+  async onModuleInit(): Promise<void> {
+    await this.flowModel.updateMany(
+      { assistantOperationId: { $type: 'null' } },
+      { $unset: { assistantOperationId: 1 } },
+    ).exec();
+    const indexes = await this.flowModel.collection.indexes();
+    const legacyIndex = indexes.find((index) => index.name === 'assistantOperationId_1' && !index.partialFilterExpression);
+    if (legacyIndex?.name) await this.flowModel.collection.dropIndex(legacyIndex.name);
+    await this.flowModel.collection.createIndex(
+      { assistantOperationId: 1 },
+      {
+        name: 'assistantOperationId_unique_string',
+        unique: true,
+        partialFilterExpression: { assistantOperationId: { $type: 'string' } },
+      },
+    );
+  }
+
   private buildDefaultHitlPolicy(): Record<string, unknown> {
     if (this.configService.get<boolean>('playbook-flow.smartHitlDefaultEnabled', true)) {
       return { ...DEFAULT_HITL_POLICY };
@@ -218,7 +236,7 @@ export class PlaybookFlowService {
     return [];
   }
 
-  async create(ownerId: string, dto: CreatePlaybookFlowDto): Promise<IFlowResponse> {
+  async create(ownerId: string, dto: CreatePlaybookFlowDto, options?: { assistantOperationId?: string }): Promise<IFlowResponse> {
     const nodes = dto.nodes || [];
     const controlEdges = dto.controlEdges || [];
     const dataBindings = dto.dataBindings || [];
@@ -232,6 +250,7 @@ export class PlaybookFlowService {
 
     const flow = new this.flowModel({
       ownerId,
+      ...(options?.assistantOperationId ? { assistantOperationId: options.assistantOperationId } : {}),
       schemaVersion: 1,
       name: resolvedName,
       description: dto.description,
@@ -264,6 +283,12 @@ export class PlaybookFlowService {
       }
       throw err;
     }
+  }
+
+  async findByAssistantOperationId(ownerId: string, assistantOperationId: string): Promise<IFlowResponse | null> {
+    const flow = await this.flowModel.findOne({ ownerId, assistantOperationId }).exec();
+    if (!flow) return null;
+    return this.responseAssembler.toBaseFlowResponse(flow);
   }
 
   async findAll(ownerId: string, query: PlaybookFlowQueryDto): Promise<IFlowListResponse> {
@@ -388,7 +413,12 @@ export class PlaybookFlowService {
     return this.responseAssembler.toBaseFlowResponse(flow);
   }
 
-  async update(flowId: string, ownerId: string, dto: UpdatePlaybookFlowDto): Promise<IFlowResponse> {
+  async update(
+    flowId: string,
+    ownerId: string,
+    dto: UpdatePlaybookFlowDto,
+    validationOptions: { allowUnboundRequiredPorts?: boolean; allowIncompleteNodeOutputBindings?: boolean } = {},
+  ): Promise<IFlowResponse> {
     const startedAt = Date.now();
     const idempotencyKey = dto.clientMutationId
       ? this.buildSaveIdempotencyKey(flowId, dto.clientMutationId)
@@ -479,7 +509,7 @@ export class PlaybookFlowService {
       existing.nodes as any,
       existing.controlEdges as any,
       existing.dataBindings as any,
-      { allowDraftRouters: true },
+      { allowDraftRouters: true, ...validationOptions },
     );
 
     if (idempotencyKey) {

@@ -45,6 +45,7 @@ import { GroupChatButton } from './components/GroupChatButton';
 import { SelectedConnectorRepo } from './components/SelectedConnectorRepo';
 import { ComposerSuggestionChips } from './components/ComposerSuggestionChips';
 import { PlaybooksCarousel } from '@/modules/playbook/components/playbook-swiper';
+import { GovernedScopesCarousel } from '@/modules/governance/components/consumer/GovernedScopesCarousel';
 import { conversationV2Api } from '@/modules/conversation-v2/api';
 import { useConversationV2PointersStore, useConversationV2Store } from '@/modules/conversation-v2/store';
 import { writeSelectedModelForSession } from '@/modules/conversation-v2/selectedModelStorage';
@@ -280,6 +281,7 @@ export function NewConversationPage() {
                   accept={accept}
                   maxFiles={5}
                   showWorkspaceSelect={true}
+                  showModelSelector
                   belowTextarea={
                     <ComposerSuggestionChips
                       fetchDisabled={inputDisabled || isLimitExceeded || isUploading || isSending}
@@ -297,6 +299,7 @@ export function NewConversationPage() {
         <div className='w-full max-w-7xl px-4'>
           <PlaybooksCarousel />
         </div>
+        {mode === 'chat' && <div className='mt-6 w-full max-w-7xl px-4'><GovernedScopesCarousel /></div>}
       </div>
     </>
   );

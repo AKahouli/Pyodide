@@ -2,8 +2,10 @@ import { useCallback, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { AUTH_STORAGE_KEYS, getSocketBaseUrl } from '@/lib/api/config';
 
+// 16:9 remote viewport. Must stay in sync with the backend `browserSession`
+// viewport config (BROWSER_SESSION_VIEWPORT_W/H) so input coordinates line up.
 export const VIEWPORT_W = 1280;
-export const VIEWPORT_H = 800;
+export const VIEWPORT_H = 720;
 
 export type MouseButton = 'left' | 'right' | 'middle';
 export type InputEvent =

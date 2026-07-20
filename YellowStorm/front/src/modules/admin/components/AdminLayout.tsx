@@ -15,7 +15,7 @@ export function AdminLayout() {
     <div className="h-screen w-screen">
       <SidebarProvider>
         <AdminSidebar />
-        <SidebarInset className="bg-transparent ">
+        <SidebarInset className="min-w-0 bg-transparent">
           <header className="flex h-14 shrink-0 items-center gap-2 px-4 md:hidden">
             <SidebarTriggerMobile />
             <span className="font-medium">{t('layout.header')}</span>

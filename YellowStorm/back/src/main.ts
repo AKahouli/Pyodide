@@ -96,6 +96,7 @@ async function bootstrap() {
       'X-Request-ID',
       'Cache-Control',
       'Connection',
+      'Last-Event-ID',
     ],
     exposedHeaders: ['Set-Cookie'],
     preflightContinue: false,

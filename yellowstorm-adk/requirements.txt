@@ -22,10 +22,10 @@ pytest-asyncio==1.2.0
 pytest-mock==3.15.0
 pydantic>=2,<3
 pydantic-settings>=2,<3
-mem0ai==0.1.118
+mem0ai==1.0.11
 azure-search-documents==11.5.2
 azure-identity==1.15.0
-qdrant-client>=1.7.0
+qdrant-client==1.17.0
 langcodes==3.4.0
 langdetect==1.0.8
 tiktoken==0.7.0
@@ -41,9 +41,9 @@ neo4j==6.0.3
 pandas==2.3.3
 bcrypt==3.2.2
 beautifulsoup4==4.14.3
-grpcio==1.71.2
-grpcio-tools==1.71.2
-qdrant_client==1.17.0
+grpcio==1.80.0
+grpcio-tools==1.80.0
+protobuf>=6.31.1,<7.0.0
 langgraph==1.0.1
 langgraph-checkpoint==3.0.1
 langgraph-checkpoint-sqlite==3.0.3

@@ -147,5 +147,14 @@
   "ERR_3653": "Ce déploiement de gouvernance n'a pas de révision publiée.",
   "ERR_3660": "Test à blanc de gouvernance introuvable.",
   "ERR_3670": "La publication de gouvernance est bloquée par les contrôles de préparation.",
-  "ERR_3671": "Un ou plusieurs canaux de gouvernance ne sont pas prêts."
+  "ERR_3671": "Un ou plusieurs canaux de gouvernance ne sont pas prêts.",
+  "ERR_3680": "Conversation gouvernée introuvable.",
+  "ERR_3681": "Votre accès à cet assistant gouverné a été retiré. Cette conversation est désormais en lecture seule.",
+  "ERR_3682": "Cet assistant gouverné est temporairement indisponible.",
+  "ERR_3683": "La version publiée utilisée par cette conversation n’existe plus.",
+  "ERR_3684": "Cet assistant n’est pas approuvé pour cette conversation gouvernée.",
+  "ERR_3685": "Le modèle est contrôlé par le périmètre publié.",
+  "ERR_3686": "Les connecteurs et compétences ne sont pas disponibles dans les conversations gouvernées.",
+  "ERR_3687": "Les équipes ne sont pas disponibles dans les conversations gouvernées.",
+  "ERR_3688": "Les paramètres d’une conversation gouvernée ne peuvent pas être modifiés."
 }

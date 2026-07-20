@@ -7,6 +7,7 @@ import { usePan } from '@embedpdf/plugin-pan/react';
 import { ChevronLeft, ChevronRight, Download, Hand, MousePointer2, Printer, ZoomIn, ZoomOut } from 'lucide-react';
 import { toast } from 'sonner';
 import { useModuleTranslation } from '@/modules/localization';
+import { useFileViewerStore } from '@/modules/file-viewer/store';
 
 type ViewerToolbarProps = Readonly<{ documentId: string }>;
 
@@ -18,6 +19,7 @@ export function ViewerToolbar({ documentId }: ViewerToolbarProps) {
   const { provides: exportScope } = useExport(documentId);
   const { provides: pan, isPanning } = usePan(documentId);
   const { t } = useModuleTranslation('file-viewer');
+  const updatePdfState = useFileViewerStore((store) => store.updatePdfState);
 
   useEffect(() => {
     if (state.currentPage) {
@@ -26,6 +28,9 @@ export function ViewerToolbar({ documentId }: ViewerToolbarProps) {
   }, [state.currentPage]);
 
   const totalPages = state.totalPages || 1;
+  useEffect(() => {
+    updatePdfState(documentId, state.currentPage || 1, totalPages);
+  }, [documentId, state.currentPage, totalPages, updatePdfState]);
   const zoomPercent = useMemo(() => {
     const currentZoom = zoomState.currentZoomLevel || 1;
     return `${Math.round(currentZoom * 100)}%`;

@@ -21,6 +21,7 @@ export enum ConnectorAuthSourceType {
   CONNECTED_APP = 'connected_app',
   CREDENTIAL = 'credential',
   NONE = 'none',
+  SERVER_CONFIG = 'server_config',
 }
 
 export enum RuntimeAuthStrategy {
@@ -94,7 +95,7 @@ export const ConnectorActionSchema = SchemaFactory.createForClass(ConnectorActio
   collection: 'connectors',
 })
 export class Connector extends Document {
-  @Prop({ required: true, trim: true, minlength: 1, maxlength: 64, index: true })
+  @Prop({ required: true, trim: true, minlength: 1, maxlength: 64 })
   slug!: string;
 
   @Prop({ required: true, trim: true, minlength: 1, maxlength: 128 })
@@ -151,6 +152,12 @@ export class Connector extends Document {
   @Prop({ default: true, index: true })
   isActive!: boolean;
 
+  @Prop({ default: false, index: true })
+  isSystem!: boolean;
+
+  @Prop({ default: false, index: true })
+  isHidden!: boolean;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   createdBy!: Types.ObjectId;
 
@@ -162,6 +169,7 @@ export const ConnectorSchema = SchemaFactory.createForClass(Connector);
 
 ConnectorSchema.index({ slug: 1, createdBy: 1 }, { unique: true });
 ConnectorSchema.index({ isActive: 1, createdBy: 1 });
+ConnectorSchema.index({ slug: 1 }, { unique: true, partialFilterExpression: { isSystem: true } });
 
 ConnectorSchema.set('toJSON', {
   virtuals: true,

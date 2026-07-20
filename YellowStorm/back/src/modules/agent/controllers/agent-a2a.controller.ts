@@ -4,6 +4,8 @@ import {
   Param,
   HttpCode,
   HttpStatus,
+  UseGuards,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -15,6 +17,8 @@ import {
 import { A2APublishService } from '../services/a2a-publish.service';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { UserDocument } from '../../user/schemas/user.schema';
+import { AgentPermissionGuard, AgentContext } from '../guards/agent-permission.guard';
+import { RequireAgentPermission } from '../decorators/require-agent-permission.decorator';
 import {
   PublishAgentResult,
   RevokeAgentResult,
@@ -28,6 +32,8 @@ export class AgentA2AController {
   constructor(private readonly a2aPublishService: A2APublishService) {}
 
   @Post('publish')
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Publish a personal agent over the A2A protocol' })
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
@@ -37,11 +43,14 @@ export class AgentA2AController {
   async publish(
     @CurrentUser() user: UserDocument,
     @Param('agentId') agentId: string,
+    @Req() request: { agentContext: AgentContext },
   ): Promise<PublishAgentResult> {
-    return this.a2aPublishService.publish(user._id.toString(), agentId);
+    return this.a2aPublishService.publish(user._id.toString(), agentId, true);
   }
 
   @Post('rotate-key')
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Rotate the A2A API key for a published agent' })
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
@@ -50,11 +59,14 @@ export class AgentA2AController {
   async rotateKey(
     @CurrentUser() user: UserDocument,
     @Param('agentId') agentId: string,
+    @Req() request: { agentContext: AgentContext },
   ): Promise<RotateKeyResult> {
-    return this.a2aPublishService.rotateKey(user._id.toString(), agentId);
+    return this.a2aPublishService.rotateKey(user._id.toString(), agentId, true);
   }
 
   @Post('revoke')
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Revoke a published A2A agent' })
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
@@ -63,7 +75,8 @@ export class AgentA2AController {
   async revoke(
     @CurrentUser() user: UserDocument,
     @Param('agentId') agentId: string,
+    @Req() request: { agentContext: AgentContext },
   ): Promise<RevokeAgentResult> {
-    return this.a2aPublishService.revokeAgent(user._id.toString(), agentId);
+    return this.a2aPublishService.revokeAgent(user._id.toString(), agentId, true);
   }
 }
