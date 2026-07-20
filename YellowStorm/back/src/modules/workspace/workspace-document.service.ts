@@ -703,7 +703,7 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     userId: string,
     urls: string[],
-    options?: { deepSearch?: boolean; autoIndex?: boolean },
+    options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string },
   ): Promise<DocumentResponse[]> {
     // Nominal size of 0: the converted PDF's size is unknown until conversion
     // runs, but we can still reject early if the workspace is already over
@@ -735,6 +735,12 @@ export class WorkspaceDocumentService {
           deepSearchRequested: String(Boolean(options?.deepSearch)),
           autoIndexRequested: String(options?.autoIndex !== false),
           normalizedSourceUrl: normalizeWorkspaceUrl(url),
+          ...(options?.sourceRootUrl
+            ? {
+                sourceRootUrl: options.sourceRootUrl,
+                normalizedSourceRootUrl: normalizeWorkspaceUrl(options.sourceRootUrl),
+              }
+            : {}),
         },
         // The collection enforces a unique index on `path`. A link has no blob
         // yet at creation, so assign a unique placeholder (mirroring the folder

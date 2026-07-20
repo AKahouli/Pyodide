@@ -14,4 +14,8 @@ export class AddLinksDto {
   @IsOptional()
   @IsBoolean()
   autoIndex?: boolean;
+
+  @IsOptional()
+  @IsUrl({ require_protocol: true })
+  sourceRootUrl?: string;
 }

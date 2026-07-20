@@ -19,6 +19,7 @@ import { IndexingService } from '../indexing/indexing.service';
 import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
 import { LoggerService } from '../logger';
 import { WorkspaceUploadSettingsService } from '../system/workspace-upload-settings.service';
+import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
 import {
   DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS,
 } from '../system/constants/workspace-upload-settings.constants';
@@ -293,7 +294,7 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
 
 describe('WorkspaceDocumentService url document (addLink)', () => {
   let service: WorkspaceDocumentService;
-  let documentModel: { create: jest.Mock; findByIdAndUpdate: jest.Mock };
+  let documentModel: { create: jest.Mock; findByIdAndUpdate: jest.Mock; exists: jest.Mock };
   let workspaceService: {
     getStorageContext: jest.Mock;
     checkStorageQuota: jest.Mock;
@@ -305,8 +306,18 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
 
   beforeEach(async () => {
     documentModel = {
-      create: jest.fn().mockResolvedValue({}),
+      // Echo the create() argument back (it already carries a real ObjectId
+      // _id/workspaceId/createdBy set by the service), so mapToResponse()
+      // has real values to read instead of crashing on an empty object.
+      // A real Mongoose model stamps createdAt/updatedAt on insert; fill
+      // those in here since this plain-object mock doesn't.
+      create: jest.fn().mockImplementation(async (doc: any) => ({
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...doc,
+      })),
       findByIdAndUpdate: jest.fn().mockResolvedValue({}),
+      exists: jest.fn().mockReturnValue({ lean: () => Promise.resolve(null) }),
     };
     workspaceService = {
       getStorageContext: jest.fn().mockResolvedValue({ ownerUserId: USER_ID, storagePrefix: 'ws' }),
@@ -361,6 +372,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
             debug: jest.fn(),
           },
         },
+        { provide: WorkspaceArtifactCleanupService, useValue: {} },
       ],
     }).compile();
 
@@ -464,6 +476,21 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     // returning), so flush pending microtasks before asserting both ran.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect((service as any).convertAndStore).toHaveBeenCalledTimes(2);
+  });
+
+  it('addLinks persists sourceRootUrl and its normalized form in metadata', async () => {
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.com/x'], { sourceRootUrl: 'https://a.com/services' });
+    const createArg = documentModel.create.mock.calls[0][0];
+    expect(createArg.metadata.sourceRootUrl).toBe('https://a.com/services');
+    expect(createArg.metadata.normalizedSourceRootUrl).toBe('https://a.com/services');
+  });
+
+  it('addLinks omits sourceRootUrl metadata when none is provided', async () => {
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.com/x']);
+    const createArg = documentModel.create.mock.calls[0][0];
+    expect(createArg.metadata.sourceRootUrl).toBeUndefined();
   });
 });
 
