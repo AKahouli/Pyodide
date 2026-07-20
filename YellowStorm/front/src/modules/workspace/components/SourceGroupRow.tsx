@@ -7,13 +7,14 @@ import { IndexingStatusDot } from './IndexingStatusDot';
 
 /** Inline collapsible group of indexed pages sharing a browse-session start URL. */
 export function SourceGroupRow({
-  label, rootUrl, count, status, defaultOpen = false, children,
+  label, rootUrl, count, status, defaultOpen = false, onOpenInNavigator, children,
 }: {
   label: string;
   rootUrl: string;
   count: number;
   status?: IndexingStatus;
   defaultOpen?: boolean;
+  onOpenInNavigator?: (url: string) => void;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -24,6 +25,7 @@ export function SourceGroupRow({
         aria-label={label}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
+        onDoubleClick={() => onOpenInNavigator?.(rootUrl)}
         className='flex w-full items-center gap-2 border-b px-2 py-1.5 text-left text-sm'
       >
         <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
