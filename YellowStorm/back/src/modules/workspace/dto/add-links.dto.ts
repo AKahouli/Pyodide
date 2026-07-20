@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsBoolean, IsOptional, IsUrl } from 'class-validator';
+import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsBoolean, IsObject, IsOptional, IsUrl } from 'class-validator';
 
 export class AddLinksDto {
   @IsArray()
@@ -18,4 +18,9 @@ export class AddLinksDto {
   @IsOptional()
   @IsUrl({ require_protocol: true })
   sourceRootUrl?: string;
+
+  /** Optional display name per URL (the clicked link/button text), keyed by url. */
+  @IsOptional()
+  @IsObject()
+  names?: Record<string, string>;
 }

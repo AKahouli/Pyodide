@@ -23,3 +23,20 @@ describe('AddLinksDto sourceRootUrl', () => {
     expect(errors.some((e) => e.property === 'sourceRootUrl')).toBe(true);
   });
 });
+
+describe('AddLinksDto names', () => {
+  it('accepts a names map', async () => {
+    const errors = await errorsFor({ urls: ['https://a.com/x'], names: { 'https://a.com/x': 'Home' } });
+    expect(errors).toHaveLength(0);
+  });
+
+  it('allows names to be omitted', async () => {
+    const errors = await errorsFor({ urls: ['https://a.com/x'] });
+    expect(errors).toHaveLength(0);
+  });
+
+  it('rejects a non-object names value', async () => {
+    const errors = await errorsFor({ urls: ['https://a.com/x'], names: 'nope' });
+    expect(errors.some((e) => e.property === 'names')).toBe(true);
+  });
+});

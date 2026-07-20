@@ -703,7 +703,7 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     userId: string,
     urls: string[],
-    options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string },
+    options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string; names?: Record<string, string> },
   ): Promise<DocumentResponse[]> {
     // Nominal size of 0: the converted PDF's size is unknown until conversion
     // runs, but we can still reject early if the workspace is already over
@@ -720,7 +720,11 @@ export class WorkspaceDocumentService {
     const created: Array<{ response: DocumentResponse; id: string; url: string; name: string }> =
       [];
     for (const url of urls) {
-      const filename = this.deriveFilenameFromUrl(url);
+      // Prefer the clicked link/button text (the same label shown in the browse
+      // sidebar) as the document name; fall back to the URL-derived filename when
+      // the page carried no link text.
+      const providedName = options?.names?.[url]?.replace(/\s+/g, ' ').trim();
+      const filename = providedName ? providedName.slice(0, 200) : this.deriveFilenameFromUrl(url);
       const effectiveName = await this.resolveUniqueOriginalName(workspaceId, filename);
       const documentId = new Types.ObjectId();
 

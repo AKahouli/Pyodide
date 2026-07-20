@@ -492,6 +492,22 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     const createArg = documentModel.create.mock.calls[0][0];
     expect(createArg.metadata.sourceRootUrl).toBeUndefined();
   });
+
+  it('addLinks names the document from the provided link text when present', async () => {
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.com/services'], {
+      names: { 'https://a.com/services': '  Our   Services  ' },
+    });
+    const createArg = documentModel.create.mock.calls[0][0];
+    expect(createArg.originalName).toBe('Our Services');
+  });
+
+  it('addLinks falls back to the url-derived name when no link text is provided', async () => {
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.com/services']);
+    const createArg = documentModel.create.mock.calls[0][0];
+    expect(createArg.originalName).toBe('services.pdf');
+  });
 });
 
 describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachable)', () => {
