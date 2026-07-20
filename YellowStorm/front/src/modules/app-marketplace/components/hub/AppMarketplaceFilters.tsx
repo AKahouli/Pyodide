@@ -67,7 +67,7 @@ export function AppMarketplaceFilters({
       <div className='h-5 w-px bg-border/60' />
 
       <Select value={owner} onValueChange={(v) => onOwnerChange(v as AppOwnershipFilter)}>
-        <SelectTrigger className='h-9 w-[170px] border-transparent bg-transparent shadow-none hover:bg-accent/50'>
+        <SelectTrigger className='h-9 w-[200px] border-transparent bg-transparent shadow-none hover:bg-accent/50'>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -78,8 +78,8 @@ export function AppMarketplaceFilters({
       </Select>
 
       <Select value={sort} onValueChange={(v) => onSortChange(v as AppSortKey)}>
-        <SelectTrigger className='h-9 w-[190px] border-transparent bg-transparent shadow-none hover:bg-accent/50'>
-          <span className='text-muted-foreground'>{t('hub.sort.label')}:</span>
+        <SelectTrigger className='h-9 w-[260px] gap-1.5 border-transparent bg-transparent shadow-none hover:bg-accent/50 [&>span]:line-clamp-1'>
+          <span className='shrink-0 text-muted-foreground'>{t('hub.sort.label')}:</span>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
