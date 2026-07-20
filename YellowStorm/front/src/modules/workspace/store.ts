@@ -301,7 +301,7 @@ interface WorkspaceActions {
   setFileFolderAssignment: (fileId: string, folderId: string | null) => Promise<void>;
   uploadPageFiles: (files: File[], options?: { autoIndex?: boolean; deepSearch?: boolean }) => Promise<void>;
   addPageLink: (workspaceId: string, url: string, options?: { deepSearch?: boolean; autoIndex?: boolean }) => Promise<void>;
-  addPageLinks: (workspaceId: string, urls: string[], options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string }) => Promise<void>;
+  addPageLinks: (workspaceId: string, urls: string[], options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string; names?: Record<string, string> }) => Promise<void>;
   runClassification: (input: StartClassificationRunInput) => Promise<void>;
   pollClassificationRun: (runId: string) => Promise<void>;
 

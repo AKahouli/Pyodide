@@ -110,10 +110,19 @@ export function AddLinkDialog({
     if (busy || chosen.length === 0) return;
     setBusy(true);
     try {
+      // Carry each page's display name (the clicked link/button text, same as the
+      // sidebar) so indexed docs are named after the link rather than the URL.
+      const names: Record<string, string> = {};
+      for (const page of session.pages) {
+        if (!chosen.includes(page.url)) continue;
+        const name = (page.linkText || page.title || '').replace(/\s+/g, ' ').trim();
+        if (name) names[page.url] = name;
+      }
       await addPageLinks(workspaceId, chosen, {
         deepSearch: readDeepSearchIndexationValue(),
         autoIndex: readAutoIndexationValue(),
         sourceRootUrl: session.rootUrl ?? undefined,
+        names,
       });
       toast.success(`${chosen.length} page(s) ajoutée(s) · conversion en cours`);
       onOpenChange(false);
