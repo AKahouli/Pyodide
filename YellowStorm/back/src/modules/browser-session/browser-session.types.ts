@@ -14,6 +14,8 @@ export type InputEvent =
 export interface NavigatedEvent {
   url: string;
   title: string;
+  /** Text of the link/button clicked to reach this page, when the navigation was click-driven. */
+  linkText?: string;
 }
 
 /** One live browser page, abstracted so the service is testable without Chromium. */

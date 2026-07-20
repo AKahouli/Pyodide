@@ -28,17 +28,63 @@ export async function isNavigationRequestBlocked(
   }
 }
 
+/**
+ * Pair a recorded click with a navigation: return the label iff the click was
+ * recorded within `ttlMs` of `now`. Clock-agnostic (operates on numbers) so it
+ * is unit-testable without a real browser or timers.
+ */
+export function resolveClickLabel(
+  lastClick: { label: string; at: number } | undefined,
+  now: number,
+  ttlMs: number,
+): string | undefined {
+  if (!lastClick) return undefined;
+  if (now - lastClick.at > ttlMs) return undefined;
+  return lastClick.label;
+}
+
+/**
+ * Injected into every page (as a string so backend TS never type-checks DOM
+ * globals). A capture-phase click listener walks up to the nearest link/button,
+ * extracts a clean label (visible text → aria-label → title → image alt), and
+ * reports it to the backend binding. Read-only: never calls preventDefault.
+ */
+const CLICK_CAPTURE_SCRIPT = `
+(() => {
+  const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
+  document.addEventListener('click', (e) => {
+    let node = e.target;
+    let found = null;
+    while (node && node !== document.body) {
+      const tag = node.tagName ? node.tagName.toLowerCase() : '';
+      const role = node.getAttribute ? node.getAttribute('role') : null;
+      if (tag === 'a' || tag === 'button' || role === 'link' || role === 'button' || (node.hasAttribute && node.hasAttribute('onclick'))) { found = node; break; }
+      node = node.parentElement;
+    }
+    if (!found) return;
+    let label = clean(found.innerText);
+    if (!label) label = clean(found.getAttribute('aria-label'));
+    if (!label) label = clean(found.getAttribute('title'));
+    if (!label) { const img = found.querySelector('img[alt]'); if (img) label = clean(img.getAttribute('alt')); }
+    if (label && typeof window.__ysRecordClick === 'function') window.__ysRecordClick(label);
+  }, true);
+})();
+`;
+
 const KEY_TO_BUTTON = { left: 'left', right: 'right', middle: 'middle' } as const;
 
 class PlaywrightSession implements EngineSession {
   private frameCb?: (f: string) => void;
   private navCb?: (n: NavigatedEvent) => void;
   private lastNav: NavigatedEvent | undefined;
+  private lastClick: { label: string; at: number } | undefined;
 
   constructor(
     private readonly context: BrowserContext,
     private readonly page: Page,
     private readonly cdp: CDPSession,
+    private readonly ttlMs: number,
+    private readonly now: () => number,
   ) {
     this.cdp.on('Page.screencastFrame', async (evt: { data: string; sessionId: number }) => {
       this.frameCb?.(evt.data);
@@ -48,7 +94,11 @@ class PlaywrightSession implements EngineSession {
     });
     this.page.on('framenavigated', async (frame) => {
       if (frame !== this.page.mainFrame()) return; // main frame only
-      const nav = { url: frame.url(), title: await this.page.title().catch(() => '') };
+      // Read + consume the pending click label synchronously (before any await)
+      // so concurrent navigations can't double-consume it. Single-use.
+      const linkText = resolveClickLabel(this.lastClick, this.now(), this.ttlMs);
+      this.lastClick = undefined;
+      const nav: NavigatedEvent = { url: frame.url(), title: await this.page.title().catch(() => ''), linkText };
       this.lastNav = nav;
       this.navCb?.(nav);
     });
@@ -59,6 +109,10 @@ class PlaywrightSession implements EngineSession {
   onNavigated(cb: (n: NavigatedEvent) => void) {
     this.navCb = cb;
     if (this.lastNav) cb(this.lastNav);
+  }
+
+  recordClick(label: string): void {
+    this.lastClick = { label, at: this.now() };
   }
 
   async dispatchInput(e: InputEvent): Promise<void> {
@@ -80,6 +134,7 @@ class PlaywrightSession implements EngineSession {
   }
 
   async navigate(a: NavAction): Promise<void> {
+    this.lastClick = undefined; // explicit navigation must not inherit a click label
     if (a.kind === 'goto') await this.page.goto(a.url, { waitUntil: 'domcontentloaded' }).catch(() => {});
     else if (a.kind === 'back') await this.page.goBack().catch(() => {});
     else if (a.kind === 'forward') await this.page.goForward().catch(() => {});
@@ -100,6 +155,7 @@ export class PlaywrightBrowserEngine implements BrowserEngine {
   private readonly height: number;
   private readonly quality: number;
   private readonly chromiumExecutablePath: string;
+  private readonly clickLabelTtlMs: number;
 
   constructor(
     config: ConfigService,
@@ -109,12 +165,13 @@ export class PlaywrightBrowserEngine implements BrowserEngine {
     this.logger.setContext(PlaywrightBrowserEngine.name);
     const c = config.get('browserSession') as {
       viewportWidth: number; viewportHeight: number; screencastQuality: number;
-      chromiumExecutablePath: string;
+      chromiumExecutablePath: string; clickLabelTtlMs: number;
     };
     this.width = c.viewportWidth;
     this.height = c.viewportHeight;
     this.quality = c.screencastQuality;
     this.chromiumExecutablePath = c.chromiumExecutablePath;
+    this.clickLabelTtlMs = c.clickLabelTtlMs;
   }
 
   private async ensureBrowser(): Promise<Browser> {
@@ -161,7 +218,14 @@ export class PlaywrightBrowserEngine implements BrowserEngine {
     });
 
     const cdp = await context.newCDPSession(page);
-    const session = new PlaywrightSession(context, page, cdp);
+    const session = new PlaywrightSession(context, page, cdp, this.clickLabelTtlMs, () => performance.now());
+
+    // Name visited pages after the clicked link/button text (see resolveClickLabel):
+    // the in-page listener reports the label, we pair it with the next navigation.
+    await context.exposeBinding('__ysRecordClick', (_source, label: string) => {
+      if (typeof label === 'string') session.recordClick(label);
+    });
+    await context.addInitScript(CLICK_CAPTURE_SCRIPT);
 
     await page.goto(startUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
     await cdp.send('Page.startScreencast', {
