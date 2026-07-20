@@ -22,10 +22,14 @@ logger = logging.getLogger(__name__)
 
 EXECUTOR_INSTRUCTION = """You are an execution agent working on ONE step of a larger plan.
 
-Overall goal (context only): {goal}
-
-Your task — do exactly this and nothing else:
+Do exactly this and nothing else:
 {description}
+
+You are not told the plan's wider goal or its other steps, on purpose — the
+planner already wrote your task above as a complete, standalone instruction,
+and every other step in this plan has the SAME toolset you do (including
+things like sending email). Reaching for one of those tools because it looks
+useful for the overall task is another step's job, not yours.
 
 Use the available tools when needed. For a LONG-RUNNING action (e.g. setting a
 reminder for hours, scheduling a delayed job), call the `schedule_*_task` tool so
@@ -100,13 +104,20 @@ def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Option
 def make_llm_node_factory(
     *,
     model_name: str,
-    goal: str,
     tools: Optional[List] = None,
     temperature: float = 0.0,
     instruction_for: Optional[Callable[[Step], str]] = None,
     tools_for_step: Optional[Callable[[Step, List], List]] = None,
 ) -> NodeFactory:
     """Build a NodeFactory that creates one LlmAgent per step.
+
+    Deliberately no plan-wide goal is threaded through to executors — only the
+    planner/orchestrator holds the whole plan. Every step shares one full
+    toolset, so a step told the whole goal (and every other step's job) has
+    both the motive and the means to reach for a tool that isn't its own,
+    which is exactly how one step ends up sending an email or re-running a
+    search another step already owns. Each step's `description` is written by
+    the planner to be a complete, standalone instruction on its own.
 
     tools: ADK tools available to every executor (e.g. the request's MCP
     connectors materialized as tools). `instruction_for` overrides the default
@@ -132,9 +143,12 @@ def make_llm_node_factory(
         instruction = (
             instruction_for(step)
             if instruction_for is not None
-            else EXECUTOR_INSTRUCTION.format(goal=goal, description=step.description)
+            else EXECUTOR_INSTRUCTION.format(description=step.description)
         )
         step_tools = tools_for_step(step, shared_tools) if tools_for_step else shared_tools
+        tool_names = [getattr(getattr(t, "func", None), "__name__", "?") for t in step_tools]
+        logger.info("[worky] 8. step=%s executor context:\n--- instruction ---\n%s\n"
+                    "--- tools (%d) ---\n%s", step.id, instruction, len(tool_names), tool_names)
         return LlmAgent(
             name=name,
             model=build_llm(model_name, with_tools=bool(step_tools), temperature=temperature),

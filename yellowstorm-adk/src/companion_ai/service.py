@@ -313,7 +313,7 @@ class OrchestratorService:
 
         # STEP 8 — connectors → executor tools, plan → ADK Workflow.
         factory = nodes.make_llm_node_factory(
-            model_name=model, goal=plan.goal,
+            model_name=model,
             tools=self._tools_for(connectors, session_id, user_id),
             tools_for_step=self._mail_stamping(session_id, plan))
         name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
@@ -326,10 +326,25 @@ class OrchestratorService:
         await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
 
         # STEP 9 — run the graph; _drive maps node events to live step status.
+        #
+        # Deliberately NOT the user's real message. It would be recorded as a
+        # session event with no branch — and ADK makes an unbranched event
+        # visible to every node in the graph, unconditionally (contents.py:
+        # `if not invocation_branch or not event.branch: return True`). That is
+        # exactly how a step with a clean, single-purpose instruction ("search
+        # Apple news") still saw the whole original request ("...email Rabeb...
+        # search Tesla AND Apple...") and, some of the time, acted on parts of
+        # it that were never its job — proven in production: the step still
+        # sent its own unstamped copy of an email meant for a different step
+        # entirely. No step's instruction depends on this trigger's content
+        # (each already carries its own complete description); the durable
+        # session persists it for the LIFETIME of the plan, so a leaky trigger
+        # here also leaks into every later resume. continue_turn already uses
+        # a benign trigger for the same reason.
         logger.info("[worky] 9. Runner.run_async → executing session=%s", session_id)
         interrupt = await self._drive(
             runner, session_id, user_id, plan, name_to_step,
-            types.Content(role="user", parts=[types.Part(text=message)]))
+            types.Content(role="user", parts=[types.Part(text="run the plan")]))
 
         # STEP 10 — derive the final status and post the assistant reply.
         await self._finalize(session_id, plan, interrupt)
@@ -369,7 +384,7 @@ class OrchestratorService:
         # which is what lets the interrupt id from the earlier run still match.
         plan = _plan_from_snapshot(snap)
         factory = nodes.make_llm_node_factory(
-            model_name=model, goal=plan.goal,
+            model_name=model,
             tools=self._tools_for(connectors, session_id, user_id),
             tools_for_step=self._mail_stamping(session_id, plan))
         name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
@@ -415,7 +430,7 @@ class OrchestratorService:
             return plan
 
         factory = nodes.make_llm_node_factory(
-            model_name=model, goal=plan.goal,
+            model_name=model,
             tools=self._tools_for(connectors, session_id, user_id),
             tools_for_step=self._mail_stamping(session_id, plan))
         name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
@@ -614,6 +629,18 @@ class OrchestratorService:
         if not step_id:
             return
         step = plan.step(step_id)
+        # Which step called which tool, with what args — logged here (not at the
+        # MCP call site) because that log line carries no step id, and during a
+        # parallel wave several steps' calls interleave: log order alone cannot
+        # tell you which step made a given call. This can.
+        for part in (ev.content.parts if ev.content else []):
+            fc = getattr(part, "function_call", None)
+            if fc is not None:
+                logger.info("[worky] 9. step=%s tool_call name=%s args=%s",
+                            step_id, fc.name, dict(fc.args or {}))
+            fr = getattr(part, "function_response", None)
+            if fr is not None:
+                logger.info("[worky] 9. step=%s tool_response name=%s", step_id, fr.name)
         # First event for a node → running; its output event → completed.
         is_output = bool(getattr(ni, "output_for", None)) and ni.path in ni.output_for
         if step_id not in started:

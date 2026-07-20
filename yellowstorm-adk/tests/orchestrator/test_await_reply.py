@@ -61,9 +61,35 @@ def test_only_a_chat_answerable_interrupt_is_an_ask():
 
 
 def test_the_node_factory_builds_await_reply_from_the_step_kind():
-    factory = nodes.make_llm_node_factory(model_name="x", goal="g", tools=[])
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[])
     step = Step(id="a", kind="await_reply", question="Awaiting a reply")
     assert factory(step, "a").name == "a"
+
+
+def test_an_executor_never_sees_the_plan_wide_goal_or_another_steps_task():
+    """Every executor shares one full toolset, so a step told the whole goal
+    (and every other step's job) has both motive and means to reach for a tool
+    that is not its own -- proven in production: search steps that read a goal
+    mentioning "email Rabeb" sent their own unstamped copy alongside the real
+    sender. Only the planner/orchestrator holds the whole plan; each step gets
+    just its own description."""
+    plan = Plan(id="p", title="t", goal="Email Rabeb, then research her employer", steps=[
+        Step(id="a", kind="execute", description="Send an email to rabeb@example.com."),
+        Step(id="b", kind="execute", description="Search the web for Tesla news."),
+    ])
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[])
+
+    for step in plan.steps:
+        agent = factory(step, step.id)
+        assert step.description in agent.instruction
+        assert plan.goal not in agent.instruction
+        other = next(s for s in plan.steps if s.id != step.id)
+        assert other.description not in agent.instruction
+
+
+def test_the_instruction_template_carries_no_goal_placeholder():
+    """A returning {goal} placeholder would put the leak straight back."""
+    assert "{goal}" not in nodes.EXECUTOR_INSTRUCTION
 
 
 # --- the routing decision in _finalize --------------------------------------
@@ -323,6 +349,8 @@ if __name__ == "__main__":
     test_await_reply_parks_then_resumes_with_the_reply_body()
     test_only_a_chat_answerable_interrupt_is_an_ask()
     test_the_node_factory_builds_await_reply_from_the_step_kind()
+    test_an_executor_never_sees_the_plan_wide_goal_or_another_steps_task()
+    test_the_instruction_template_carries_no_goal_placeholder()
     test_a_mail_wait_never_becomes_the_sessions_chat_interrupt()
     test_an_ask_alongside_a_mail_wait_is_the_one_the_chat_answers()
     test_a_plan_parked_only_on_mail_does_not_complete()
