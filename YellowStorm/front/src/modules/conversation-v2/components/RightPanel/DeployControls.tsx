@@ -22,6 +22,7 @@ export function DeployControls() {
   const { t } = useConversationV2Translation();
   const deployStatus = useConversationV2Store((s) => s.deployStatus);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
+  const sessionId = useConversationV2Store((s) => s.sessionId);
   const deploy = useConversationV2Store((s) => s.deploy);
   const [shareOpen, setShareOpen] = useState(false);
 
@@ -97,7 +98,14 @@ export function DeployControls() {
         </Button>
       )}
 
-      {hasUrl && <ShareDeployDialog open={shareOpen} onOpenChange={setShareOpen} />}
+      {hasUrl && sessionId && (
+        <ShareDeployDialog
+          sessionId={sessionId}
+          deployedUrl={deployedUrl!}
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+        />
+      )}
 
       <Button
         variant={isDeployed ? 'outline' : 'default'}

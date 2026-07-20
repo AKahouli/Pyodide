@@ -83,6 +83,15 @@ describe('AppMarketplacePage', () => {
     expect(removeAppMock).toHaveBeenCalledWith('session-1');
   });
 
+  it('opens the share dialog from the card', async () => {
+    listDeployedAppsMock.mockResolvedValueOnce(mockApps);
+
+    render(<AppMarketplacePage />);
+    fireEvent.click(await screen.findByRole('button', { name: /card\.share/i }));
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
   it('shows the empty state when no app is deployed', async () => {
     listDeployedAppsMock.mockResolvedValueOnce([]);
 

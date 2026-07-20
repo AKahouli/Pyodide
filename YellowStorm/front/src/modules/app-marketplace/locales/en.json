@@ -14,6 +14,7 @@
     "deployedAt": "Deployed {{date}}",
     "open": "Open the application",
     "conversation": "Go to the conversation",
+    "share": "Share",
     "delete": "Delete",
     "deleteTitle": "Remove app from Marketplace?",
     "deleteDescription": "The conversation and hosted app will be kept. Publishing again will add it back to Marketplace.",

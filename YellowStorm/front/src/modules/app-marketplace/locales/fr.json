@@ -14,6 +14,7 @@
     "deployedAt": "Déployée le {{date}}",
     "open": "Ouvrir l'application",
     "conversation": "Accéder à la conversation",
+    "share": "Partager",
     "delete": "Supprimer",
     "deleteTitle": "Retirer l'application du Marketplace ?",
     "deleteDescription": "La conversation et l'application hébergée seront conservées. Une nouvelle publication l'ajoutera de nouveau au Marketplace.",
