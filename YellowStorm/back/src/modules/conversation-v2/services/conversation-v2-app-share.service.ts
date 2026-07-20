@@ -150,6 +150,8 @@ export class ConversationV2AppShareService {
       throw new BadRequestException('You cannot share an app with yourself');
     }
 
+    await this.sendInviteEmail({ to: email, title: params.title, deployedUrl: params.deployedUrl });
+
     const share = await this.model.findOneAndUpdate(
       {
         sessionId: new Types.ObjectId(params.sessionId),
@@ -170,7 +172,6 @@ export class ConversationV2AppShareService {
       { upsert: true, new: true },
     );
 
-    await this.sendInviteEmail({ to: email, title: params.title, deployedUrl: params.deployedUrl });
     await this.notifyRecipient(recipient._id.toString(), params.title);
 
     return { shareId: share._id.toString(), recipientEmail: email };

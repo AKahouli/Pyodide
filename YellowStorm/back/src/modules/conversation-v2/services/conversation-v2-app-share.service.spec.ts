@@ -5,6 +5,7 @@ import { Types } from 'mongoose';
 import { UserService } from '@modules/user/user.service';
 import { EmailService } from '@modules/email';
 import { NotificationsService } from '@modules/notifications/notifications.service';
+import { ServiceUnavailableException } from '@modules/exceptions';
 import { ConversationV2AppShare } from '../schemas/conversation-v2-app-share.schema';
 import { ConversationV2AppShareService } from './conversation-v2-app-share.service';
 
@@ -72,6 +73,29 @@ describe('ConversationV2AppShareService', () => {
       notFound: [],
       skippedSelf: [],
     });
+    expect(findOneAndUpdate).toHaveBeenCalled();
+    expect(email.send.mock.invocationCallOrder[0]).toBeLessThan(
+      findOneAndUpdate.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('shareByEmails does not persist share when email delivery fails', async () => {
+    const recipientId = new Types.ObjectId();
+    users.findByEmail.mockResolvedValueOnce({ _id: recipientId });
+    email.send.mockResolvedValueOnce({ success: false });
+
+    await expect(
+      svc.shareByEmails({
+        ownerId: new Types.ObjectId().toString(),
+        sessionId: new Types.ObjectId().toString(),
+        emails: ['colleague@example.com'],
+        title: 'Generated app',
+        deployedUrl: 'https://apps.example/a',
+        lastDeployedAt: null,
+      }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    expect(findOneAndUpdate).not.toHaveBeenCalled();
   });
 
   it('shareByEmails collects unknown recipients', async () => {
