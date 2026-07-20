@@ -21,6 +21,8 @@ import * as pageApi from '../page-api';
 import type { Workspace, WorkspaceArtifact, WorkspaceFile, WorkspaceFolder, WorkspaceRole } from '../types';
 import { WorkspaceArtifactRow } from './WorkspaceArtifactRow';
 import { IndexingStatusDot } from './IndexingStatusDot';
+import { groupBySourceRoot } from '../lib/source-groups';
+import { SourceGroupRow } from './SourceGroupRow';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
 import { useDeepSearchIndexation } from '../hooks/useDeepSearchIndexation';
 import { formatFileSize } from '../utils';
@@ -231,6 +233,23 @@ export function WorkspacePage() {
       .filter((f) => !q || f.name.toLowerCase().includes(q) || artifacts.some((artifact) => artifact.primarySource.documentId === f.id && artifact.name.toLowerCase().includes(q)));
   }, [files, artifacts, activeWorkspaceId, currentFolderId, search]);
 
+  const renderFileRow = (file: WorkspaceFile) => {
+    const query = search.trim().toLowerCase();
+    const sourceMatches = file.name.toLowerCase().includes(query);
+    const allLinkedArtifacts = artifacts.filter((artifact) => artifact.primarySource.documentId === file.id);
+    const linkedArtifacts = allLinkedArtifacts.filter((artifact) => !query || sourceMatches || artifact.name.toLowerCase().includes(query));
+    return (
+      <FileRow
+        key={file.id}
+        file={file}
+        artifacts={linkedArtifacts}
+        totalArtifactCount={allLinkedArtifacts.length}
+        forceExpanded={!!query && !sourceMatches && linkedArtifacts.length > 0}
+        onMove={() => setMapFile(file)}
+      />
+    );
+  };
+
   const handleDropOnFolder = useCallback(
     (targetFolder: WorkspaceFolder, payload: DragPayload) => {
       if (!canWrite) return;
@@ -414,15 +433,21 @@ export function WorkspacePage() {
               {visibleFiles.length > 0 && (
                 <section>
                   <SectionHeader title='Fichiers' count={visibleFiles.length} icon={<FileIcon className='h-3.5 w-3.5' />} />
-                  <div className='space-y-1'>
-                    {visibleFiles.map((file) => {
-                      const query = search.trim().toLowerCase();
-                      const sourceMatches = file.name.toLowerCase().includes(query);
-                      const allLinkedArtifacts = artifacts.filter((artifact) => artifact.primarySource.documentId === file.id);
-                      const linkedArtifacts = allLinkedArtifacts.filter((artifact) => !query || sourceMatches || artifact.name.toLowerCase().includes(query));
-                      return <FileRow key={file.id} file={file} artifacts={linkedArtifacts} totalArtifactCount={allLinkedArtifacts.length} forceExpanded={!!query && !sourceMatches && linkedArtifacts.length > 0} onMove={() => setMapFile(file)} />;
-                    })}
-                  </div>
+                  {currentFolderId ? (
+                    <div className='space-y-1'>{visibleFiles.map(renderFileRow)}</div>
+                  ) : (() => {
+                    const { groups, loose } = groupBySourceRoot(visibleFiles);
+                    return (
+                      <div className='space-y-1'>
+                        {groups.map((group) => (
+                          <SourceGroupRow key={group.key} label={group.label} rootUrl={group.rootUrl} count={group.files.length} status={group.status}>
+                            {group.files.map(renderFileRow)}
+                          </SourceGroupRow>
+                        ))}
+                        {loose.map(renderFileRow)}
+                      </div>
+                    );
+                  })()}
                 </section>
               )}
             </div>
