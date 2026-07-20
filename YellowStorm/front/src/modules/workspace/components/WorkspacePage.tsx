@@ -433,7 +433,10 @@ export function WorkspacePage() {
               {visibleFiles.length > 0 && (
                 <section>
                   <SectionHeader title='Fichiers' count={visibleFiles.length} icon={<FileIcon className='h-3.5 w-3.5' />} />
-                  {currentFolderId ? (
+                  {/* Group only at the workspace root with no active search. While a
+                      search is active, render flat so matching pages surface directly
+                      instead of being hidden inside a collapsed start-URL group. */}
+                  {currentFolderId || search.trim() ? (
                     <div className='space-y-1'>{visibleFiles.map(renderFileRow)}</div>
                   ) : (() => {
                     const { groups, loose } = groupBySourceRoot(visibleFiles);
