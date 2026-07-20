@@ -154,6 +154,7 @@ interface WorkspaceState {
   workspaceCreatedCallback: ((workspace: Workspace) => void) | null;
   isCreateTemplateModalOpen: boolean;
   isSettingsModalOpen: boolean;
+  addLinkDialog: { open: boolean; initialUrl: string; autoStart: boolean };
   createModalStep: 1 | 2;
   createTemplateModalStep: 1 | 2;
   isMobileSidebarOpen: boolean;
@@ -204,6 +205,8 @@ interface WorkspaceActions {
   closeCreateTemplateModal: () => void;
   openSettingsModal: (workspace?: Workspace) => void;
   closeSettingsModal: () => void;
+  openAddLink: (options?: { url?: string; autoStart?: boolean }) => void;
+  closeAddLink: () => void;
   setCreateModalStep: (step: 1 | 2) => void;
   setCreateTemplateModalStep: (step: 1 | 2) => void;
   toggleMobileSidebar: () => void;
@@ -366,6 +369,7 @@ const initialState: WorkspaceState = {
   workspaceCreatedCallback: null,
   isCreateTemplateModalOpen: false,
   isSettingsModalOpen: false,
+  addLinkDialog: { open: false, initialUrl: '', autoStart: false },
   createModalStep: 1,
   createTemplateModalStep: 1,
   isMobileSidebarOpen: true,
@@ -477,6 +481,12 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           settingsTargetWorkspace: null,
           currentWorkspaceSettings: null,
         }),
+
+      openAddLink: (options) =>
+        set({ addLinkDialog: { open: true, initialUrl: options?.url ?? '', autoStart: options?.autoStart ?? false } }),
+
+      closeAddLink: () =>
+        set({ addLinkDialog: { open: false, initialUrl: '', autoStart: false } }),
 
       setCreateModalStep: (step) => set({ createModalStep: step }),
       setCreateTemplateModalStep: (step) => set({ createTemplateModalStep: step }),

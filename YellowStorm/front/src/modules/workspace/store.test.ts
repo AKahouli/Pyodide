@@ -160,4 +160,17 @@ describe('workspace store', () => {
     expect(state.selectedWorkspace?.name).toBe('Workspace One Updated');
     expect(state.workspaces.get(1)?.[0]?.name).toBe('Workspace One Updated');
   });
+
+  it('openAddLink opens the dialog with url and autoStart, closeAddLink resets it', () => {
+    act(() => { useWorkspaceStore.getState().openAddLink({ url: 'https://ex.com/services', autoStart: true }); });
+    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: true, initialUrl: 'https://ex.com/services', autoStart: true });
+    act(() => { useWorkspaceStore.getState().closeAddLink(); });
+    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: false, initialUrl: '', autoStart: false });
+  });
+
+  it('openAddLink defaults to an empty url and no autoStart', () => {
+    act(() => { useWorkspaceStore.getState().openAddLink(); });
+    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: true, initialUrl: '', autoStart: false });
+    act(() => { useWorkspaceStore.getState().closeAddLink(); });
+  });
 });
