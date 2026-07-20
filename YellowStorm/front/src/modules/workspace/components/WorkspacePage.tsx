@@ -100,6 +100,7 @@ export function WorkspacePage() {
   const setFileFolderAssignment = useWorkspaceStore((s) => s.setFileFolderAssignment);
   const refreshPageData = useWorkspaceStore((s) => s.refreshPageData);
   const refreshWorkspaceArtifacts = useWorkspaceStore((s) => s.refreshWorkspaceArtifacts);
+  const openAddLink = useWorkspaceStore((s) => s.openAddLink);
 
   useEffect(() => {
     if (routeWorkspaceId && routeWorkspaceId !== selectedWorkspaceId) {
@@ -443,7 +444,7 @@ export function WorkspacePage() {
                     return (
                       <div className='space-y-1'>
                         {groups.map((group) => (
-                          <SourceGroupRow key={group.key} label={group.label} rootUrl={group.rootUrl} count={group.files.length} status={group.status}>
+                          <SourceGroupRow key={group.key} label={group.label} rootUrl={group.rootUrl} count={group.files.length} status={group.status} onOpenInNavigator={(url) => openAddLink({ url, autoStart: true })}>
                             {group.files.map(renderFileRow)}
                           </SourceGroupRow>
                         ))}
