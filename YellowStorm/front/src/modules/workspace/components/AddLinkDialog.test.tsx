@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 const session = {
   status: 'idle' as string, frame: null as string | null, currentUrl: null as string | null,
+  rootUrl: null as string | null,
   pages: [] as Array<{ url: string; title: string }>, blockedNotice: null as string | null,
   start: vi.fn(), sendInput: vi.fn(), navigate: vi.fn(), stop: vi.fn(),
 };
@@ -20,7 +21,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 import { AddLinkDialog } from './AddLinkDialog';
 
 beforeEach(() => {
-  session.status = 'idle'; session.pages = []; addPageLinks.mockClear();
+  session.status = 'idle'; session.pages = []; session.rootUrl = null; addPageLinks.mockClear();
   session.start.mockClear();
 });
 
@@ -31,12 +32,18 @@ it('starts a browse session from the entered url', () => {
   expect(session.start).toHaveBeenCalledWith('https://ok.example');
 });
 
-it('indexes the selected pages', async () => {
+it('indexes the selected pages under the session root url', async () => {
   session.status = 'live';
+  session.rootUrl = 'https://ok.example/start';
   session.pages = [{ url: 'https://ok.example/a', title: 'A' }, { url: 'https://ok.example/b', title: 'B' }];
   const onOpenChange = vi.fn();
   render(<AddLinkDialog open onOpenChange={onOpenChange} workspaceId='w1' />);
-  // both selected by default → index
   fireEvent.click(screen.getByRole('button', { name: /Indexer/ }));
-  await waitFor(() => expect(addPageLinks).toHaveBeenCalledWith('w1', ['https://ok.example/a', 'https://ok.example/b']));
+  await waitFor(() =>
+    expect(addPageLinks).toHaveBeenCalledWith(
+      'w1',
+      ['https://ok.example/a', 'https://ok.example/b'],
+      expect.objectContaining({ sourceRootUrl: 'https://ok.example/start' }),
+    ),
+  );
 });

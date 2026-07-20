@@ -155,6 +155,10 @@ export interface WorkspaceFile {
   type?: 'doc' | 'url';
   /** Original website URL when type === 'url'. */
   sourceUrl?: string;
+  /** Browse-session start URL this url-doc was indexed from (workspace grouping). */
+  sourceRootUrl?: string;
+  /** Normalized form of sourceRootUrl, used as the workspace grouping key. */
+  normalizedSourceRootUrl?: string;
   /** Upload/processing lifecycle status (url links are 'processing' while converting). */
   status?: DocumentStatus;
 }

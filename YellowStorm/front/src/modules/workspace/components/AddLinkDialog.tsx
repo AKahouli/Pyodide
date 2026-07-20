@@ -110,7 +110,11 @@ export function AddLinkDialog({
     if (busy || chosen.length === 0) return;
     setBusy(true);
     try {
-      await addPageLinks(workspaceId, chosen, { deepSearch: readDeepSearchIndexationValue(), autoIndex: readAutoIndexationValue() });
+      await addPageLinks(workspaceId, chosen, {
+        deepSearch: readDeepSearchIndexationValue(),
+        autoIndex: readAutoIndexationValue(),
+        sourceRootUrl: session.rootUrl ?? undefined,
+      });
       toast.success(`${chosen.length} page(s) ajoutée(s) · conversion en cours`);
       onOpenChange(false);
     } catch {
