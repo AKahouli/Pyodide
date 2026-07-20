@@ -9,7 +9,14 @@ import type { FileOpenOptions } from './types';
 export { FileFloatingWindow, FileViewerSidebar } from './components';
 export { useFileViewerStore, useFileViewerMode, useFileViewerDisplayMode } from './store';
 export { isViewableFile, isViewableFilename, getMimeTypeFromFilename, PptxRenderer } from './renderers';
-export type { FileTab, FileOpenOptions, ViewerMode, DisplayMode, HighlightBBox } from './types';
+export type {
+  FileTab,
+  FileOpenOptions,
+  ViewerMode,
+  DisplayMode,
+  HighlightBBox,
+  SpreadsheetNavigationOptions,
+} from './types';
 
 /**
  * Open a workspace document in the file viewer. `path` is the document's
@@ -23,14 +30,7 @@ export function openFileViewer(
   path: string,
   fileName: string,
   mimeType: string,
-  options?: {
-    page?: number;
-    highlightText?: string;
-    highlightBBox?: HighlightBBox;
-    displayMode?: DisplayMode;
-    spreadsheet?: SpreadsheetNavigationOptions;
-    canWriteWorkspace?: boolean;
-  },
+  options?: FileOpenOptions,
 ) {
   return useFileViewerStore.getState().openFile(workspaceId, docId, path, fileName, mimeType, options);
 }
