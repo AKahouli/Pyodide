@@ -1,4 +1,4 @@
-import { isNavigationRequestBlocked, resolveClickLabel } from './playwright-browser-engine';
+import { isNavigationRequestBlocked, resolveClickLabel, sanitizeClickLabel } from './playwright-browser-engine';
 
 describe('isNavigationRequestBlocked', () => {
   const safe = async (u: string) => { if (u.includes('169.254')) throw new Error('blocked'); };
@@ -27,5 +27,21 @@ describe('resolveClickLabel', () => {
 
   it('returns undefined when there is no recorded click', () => {
     expect(resolveClickLabel(undefined, 3000, 5000)).toBeUndefined();
+  });
+});
+
+describe('sanitizeClickLabel', () => {
+  it('collapses whitespace and trims', () => {
+    expect(sanitizeClickLabel('  Our   Services \n')).toBe('Our Services');
+  });
+
+  it('caps the label at 120 characters', () => {
+    expect(sanitizeClickLabel('x'.repeat(500))).toHaveLength(120);
+  });
+
+  it('returns undefined for whitespace-only or non-string input', () => {
+    expect(sanitizeClickLabel('   ')).toBeUndefined();
+    expect(sanitizeClickLabel(undefined)).toBeUndefined();
+    expect(sanitizeClickLabel(12345)).toBeUndefined();
   });
 });

@@ -44,6 +44,20 @@ export function resolveClickLabel(
 }
 
 /**
+ * Normalize a raw click label reported through the exposed binding. The binding
+ * is directly callable from arbitrary page JS, so we re-apply the same clean+cap
+ * the in-page script uses (collapse whitespace, trim, cap at 120 chars) instead
+ * of trusting the page to have done it — an unbounded page-controlled string
+ * must never reach the client. Returns undefined for empty/non-string input so a
+ * blank label never displaces the title/URL fallback.
+ */
+export function sanitizeClickLabel(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const clean = raw.replace(/\s+/g, ' ').trim().slice(0, 120);
+  return clean || undefined;
+}
+
+/**
  * Injected into every page (as a string so backend TS never type-checks DOM
  * globals). A capture-phase click listener walks up to the nearest link/button,
  * extracts a clean label (visible text → aria-label → title → image alt), and
@@ -223,7 +237,8 @@ export class PlaywrightBrowserEngine implements BrowserEngine {
     // Name visited pages after the clicked link/button text (see resolveClickLabel):
     // the in-page listener reports the label, we pair it with the next navigation.
     await context.exposeBinding('__ysRecordClick', (_source, label: string) => {
-      if (typeof label === 'string') session.recordClick(label);
+      const clean = sanitizeClickLabel(label);
+      if (clean) session.recordClick(clean);
     });
     await context.addInitScript(CLICK_CAPTURE_SCRIPT);
 
