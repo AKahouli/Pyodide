@@ -8,6 +8,8 @@ export interface TrieNode {
   segment: string;
   /** Set when a collected page lives exactly at this path (a selectable leaf/branch). */
   url?: string;
+  /** Preferred leaf display name (clicked link text → page title); falls back to `segment` when absent. */
+  label?: string;
   children: TrieNode[];
 }
 
@@ -56,7 +58,11 @@ export function buildTrie(pages: CollectedPage[]): TrieNode[] {
       }
       node = child;
     }
-    if (!node.url) node.url = p.url;
+    if (!node.url) {
+      node.url = p.url;
+      const label = (p.linkText || p.title || '').replace(/\s+/g, ' ').trim();
+      if (label) node.label = label;
+    }
   }
   return roots;
 }
@@ -80,6 +86,7 @@ function TrieRows({
         const hasChildren = node.children.length > 0;
         const isCollapsed = collapsed.has(key);
         const already = node.url ? indexedUrls.has(normalizeUrl(node.url)) : false;
+        const displayName = node.label ?? node.segment;
         return (
           <li key={node.segment}>
             <div className='flex items-center gap-1 border-b py-1 pr-2 text-sm'>
@@ -99,13 +106,13 @@ function TrieRows({
               {node.url ? (
                 <>
                   <Checkbox
-                    aria-label={node.segment}
+                    aria-label={displayName}
                     checked={selected.has(node.url)}
                     disabled={already}
                     onCheckedChange={() => onToggle(node.url as string)}
                   />
                   <div className='min-w-0 flex-1'>
-                    <div className='truncate font-medium' title={node.segment}>{node.segment}</div>
+                    <div className='truncate font-medium' title={displayName}>{displayName}</div>
                     <div className='truncate text-[11px] text-muted-foreground' title={node.url}>{node.url}</div>
                     {already && <span className='text-[10px] text-muted-foreground'>Déjà indexée</span>}
                   </div>

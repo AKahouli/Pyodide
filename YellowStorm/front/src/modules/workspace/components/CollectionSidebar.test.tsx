@@ -26,6 +26,25 @@ describe('buildTrie', () => {
     expect(a.url).toBe('https://ex.com/a'); // selectable page
     expect(a.children.map((n) => n.segment)).toEqual(['b']); // and a category
   });
+
+  it('names a visited-page leaf after the clicked link text when present', () => {
+    const roots = buildTrie([{ url: 'https://ex.com/a/b', title: 'B Title', linkText: 'Our Services' }]);
+    const a = roots[0].children.find((n) => n.segment === 'a')!;
+    const b = a.children.find((n) => n.segment === 'b')!;
+    expect(b.label).toBe('Our Services');
+  });
+
+  it('falls back to the page title when there is no link text', () => {
+    const roots = buildTrie([{ url: 'https://ex.com/a/b', title: 'B Title' }]);
+    const b = roots[0].children[0].children[0];
+    expect(b.label).toBe('B Title');
+  });
+
+  it('leaves label undefined (URL-segment fallback) when neither link text nor title exist', () => {
+    const roots = buildTrie([{ url: 'https://ex.com/a/b', title: '' }]);
+    const b = roots[0].children[0].children[0];
+    expect(b.label).toBeUndefined();
+  });
 });
 
 it('renders the path hierarchy: host + shared segment as categories, leaves selectable', () => {
@@ -49,6 +68,22 @@ it('renders the path hierarchy: host + shared segment as categories, leaves sele
   expect(screen.getByLabelText('b')).toBeInTheDocument(); // leaf page (title = last segment)
   expect(screen.getByLabelText('c')).toBeInTheDocument();
   expect(screen.getByLabelText('x')).toBeInTheDocument();
+});
+
+it('shows the clicked link text as the leaf name, keeping the URL segment as its category', () => {
+  render(
+    <CollectionSidebar
+      pages={[{ url: 'https://ex.com/services/pricing', title: 'Pricing', linkText: 'See Pricing' }]}
+      selected={new Set()}
+      indexedUrls={new Set()}
+      onToggle={vi.fn()}
+      onDelete={vi.fn()}
+      onSelectAll={vi.fn()}
+      onSelectNone={vi.fn()}
+    />,
+  );
+  expect(screen.getByText('services')).toBeInTheDocument(); // category = URL segment
+  expect(screen.getByLabelText('See Pricing')).toBeInTheDocument(); // leaf = clicked text
 });
 
 it('toggles and deletes a leaf by its page name', () => {
