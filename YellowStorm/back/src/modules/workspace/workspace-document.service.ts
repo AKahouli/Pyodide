@@ -58,6 +58,7 @@ import { normalizeWorkspaceUrl } from './services/url-normalization';
 import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
 import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
 import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
+import { WebsiteCrawlerService } from './services/website-crawler.service';
 
 @Injectable()
 export class WorkspaceDocumentService {
@@ -84,6 +85,7 @@ export class WorkspaceDocumentService {
     private readonly urlToPdfClient: UrlToPdfClientService,
     private readonly logger: LoggerService,
     private readonly workspaceArtifacts: WorkspaceArtifactCleanupService,
+    private readonly websiteCrawler: WebsiteCrawlerService,
     @Optional() private readonly outbox?: IntegrationEventOutboxService,
   ) {
     this.logger.setContext('WorkspaceDocumentService');
@@ -816,6 +818,24 @@ export class WorkspaceDocumentService {
         };
       }),
     };
+  }
+
+  /**
+   * Crawl a seed URL and return the discovered pages that live UNDER the seed's
+   * path (so "Explore" on /docs yields /docs/*; a root seed yields the whole site).
+   */
+  async crawlSite(_workspaceId: string, url: string): Promise<{ pages: Array<{ url: string; title?: string }>; truncated: boolean }> {
+    const { pages, truncated } = await this.websiteCrawler.crawl(url);
+    let seedPath = '/';
+    try { seedPath = new URL(url).pathname.replace(/\/+$/, '') || '/'; } catch { /* keep '/' */ }
+    const underSeed = (candidate: string): boolean => {
+      try {
+        const p = new URL(candidate).pathname;
+        if (seedPath === '/') return true;
+        return p === seedPath || p.startsWith(`${seedPath}/`);
+      } catch { return false; }
+    };
+    return { pages: pages.filter((p) => underSeed(p.url)), truncated };
   }
 
   private async recordWorkspaceEvent(eventType: string, document: WorkspaceDocumentDoc): Promise<void> {

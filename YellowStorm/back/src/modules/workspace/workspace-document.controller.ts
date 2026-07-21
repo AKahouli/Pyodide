@@ -47,6 +47,7 @@ import { BulkDeleteDocumentsDto } from './dto/bulk-delete-documents.dto';
 import { AddLinkDto } from './dto/add-link.dto';
 import { AddLinksDto } from './dto/add-links.dto';
 import { CheckUrlsDto } from './dto/check-urls.dto';
+import { CrawlUrlDto } from './dto/crawl-url.dto';
 
 @ApiTags('Workspace Documents')
 @Controller('workspaces/:workspaceId/documents')
@@ -151,6 +152,17 @@ export class WorkspaceDocumentController {
   @ApiOperation({ summary: 'Check URL duplicates across the complete workspace' })
   async checkUrls(@Param('workspaceId') workspaceId: string, @Body() body: CheckUrlsDto) {
     return this.workspaceDocumentService.checkUrls(workspaceId, body.urls);
+  }
+
+  @Post('crawl')
+  @UseGuards(WritePermissionGuard)
+  @ApiOperation({ summary: 'Crawl a link and return sublinks under its path' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  async crawl(
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: CrawlUrlDto,
+  ) {
+    return this.workspaceDocumentService.crawlSite(workspaceId, body.url);
   }
 
   /**

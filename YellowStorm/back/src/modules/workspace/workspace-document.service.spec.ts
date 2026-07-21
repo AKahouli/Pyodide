@@ -20,6 +20,7 @@ import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
 import { LoggerService } from '../logger';
 import { WorkspaceUploadSettingsService } from '../system/workspace-upload-settings.service';
 import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
+import { WebsiteCrawlerService } from './services/website-crawler.service';
 import {
   DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS,
 } from '../system/constants/workspace-upload-settings.constants';
@@ -373,6 +374,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
           },
         },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: {} },
       ],
     }).compile();
 
@@ -519,6 +521,24 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     const second = documentModel.create.mock.calls[1][0];
     expect(first.metadata.sourceRootUrl).toBe('https://a.com/services'); // session root
     expect(second.metadata.sourceRootUrl).toBe('https://manual.org/p'); // self-rooted
+  });
+
+  it('crawlSite returns only pages under the seed path', async () => {
+    (service as any).websiteCrawler = {
+      crawl: jest.fn().mockResolvedValue({ pages: [{ url: 'https://a.com/docs/x' }, { url: 'https://a.com/pricing' }], truncated: false }),
+    };
+    const res = await service.crawlSite(WS_ID, 'https://a.com/docs');
+    expect(res.pages.map((p) => p.url)).toEqual(['https://a.com/docs/x']);
+    expect(res.truncated).toBe(false);
+  });
+
+  it('crawlSite (root seed) keeps all pages', async () => {
+    (service as any).websiteCrawler = {
+      crawl: jest.fn().mockResolvedValue({ pages: [{ url: 'https://a.com/docs/x' }, { url: 'https://a.com/pricing' }], truncated: true }),
+    };
+    const res = await service.crawlSite(WS_ID, 'https://a.com');
+    expect(res.pages).toHaveLength(2);
+    expect(res.truncated).toBe(true);
   });
 });
 
