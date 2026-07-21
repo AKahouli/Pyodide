@@ -792,3 +792,12 @@ export async function checkUrls(workspaceId: string, urls: string[]): Promise<{ 
   const response = await apiClient.post<ApiResponse<{ results: Array<{ url: string; normalizedUrl: string; exists: boolean }> }>>(API_ENDPOINTS.workspaceDocuments.checkUrls(workspaceId), { urls });
   return response.data.data;
 }
+
+/** Crawl a link and return the sublinks under its path. */
+export async function crawlUrl(workspaceId: string, url: string): Promise<{ pages: Array<{ url: string; title?: string }>; truncated: boolean }> {
+  const response = await apiClient.post<ApiResponse<{ pages: Array<{ url: string; title?: string }>; truncated: boolean }>>(
+    API_ENDPOINTS.workspaceDocuments.crawl(workspaceId),
+    { url },
+  );
+  return response.data.data;
+}
