@@ -94,6 +94,24 @@ describe('ConversationV2StreamService', () => {
     expect(pushed[1].data.role).toBe('assistant');
   });
 
+  it('ignores heartbeat events — no persistence, no push, but still resets the idle timer', async () => {
+    await service.startStream('u1', 's1', { message: 'hi' });
+
+    chat$.next({ type: 'heartbeat', payload: { event_id: 'h1', timestamp: 1 } } as ConversationV2Event);
+    await flush();
+
+    // only the optimistic user-message echo went out — the heartbeat produced nothing
+    const pushed = gateway.sendToUser.mock.calls.map((c) => c[1]);
+    expect(pushed.map((e) => e.type)).toEqual(['message']);
+    expect(eventStore.append).toHaveBeenCalledTimes(1); // just the user message
+    expect(service.isStreaming('u1', 's1')).toBe(true); // turn is still alive
+
+    chat$.next({ type: 'done', payload: { event_id: 'd1', timestamp: 1 } } as ConversationV2Event);
+    chat$.complete();
+    await flush();
+    expect(service.isStreaming('u1', 's1')).toBe(false);
+  });
+
   it('marks the conversation as streaming until the gRPC stream completes', async () => {
     await service.startStream('u1', 's1', { message: 'hi' });
     expect(service.isStreaming('u1', 's1')).toBe(true);

@@ -288,6 +288,10 @@ export class ConversationV2StreamService implements OnModuleDestroy {
       .subscribe({
         next: (event) => {
           resetIdle();
+          // Pure liveness ping — a slow step (e.g. a tool call) is still in
+          // flight upstream. Nothing to persist or push; resetting the idle
+          // timer above is the entire point.
+          if (event.type === 'heartbeat') return;
           pending = pending.then(() =>
             this.processEvent(userId, sessionId, event, req.model, systemWorkspaceId, {
               done: () => undefined,

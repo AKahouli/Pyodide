@@ -75,6 +75,7 @@ interface RawProtoEvent {
   wait?: Record<string, never>;
   error?: { error: string };
   application_component?: { url: string; title?: string };
+  heartbeat?: Record<string, never>;
 }
 
 @Injectable()
@@ -496,6 +497,8 @@ export class ConversationV2GrpcClientService
         return { type: 'done', payload: base };
       case 'wait':
         return { type: 'wait', payload: base };
+      case 'heartbeat':
+        return { type: 'heartbeat', payload: base };
       case 'error':
         return { type: 'error', payload: { ...base, error: raw.error!.error } };
       case 'application_component':
