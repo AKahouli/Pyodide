@@ -80,9 +80,19 @@ class OrchestratorRuntime:
                 claim_timeout_s=s.MCP_TASK_CLAIM_TIMEOUT_S)
             await self._poller.start()
 
-        logger.info("[orchestrator] runtime started (schema=%s, poller=%s)",
-                    schema, bool(self._poller))
+        logger.info("[orchestrator] runtime started (%s)", self.describe())
         return self
+
+    def describe(self) -> str:
+        """One-line operational summary for startup/registration logs — schema,
+        planner model, and the config that varies silently across environments
+        (mail-wait timeout, whether the MCP task poller is actually running)."""
+        s = self._s
+        return (f"schema={s.ORCHESTRATOR_READMODEL_SCHEMA} "
+                f"planner={s.ORCHESTRATOR_PLANNER_MODEL} "
+                f"max_concurrency={s.ORCHESTRATOR_MAX_CONCURRENCY} "
+                f"mail_wait_timeout={s.MAIL_WAIT_TIMEOUT_HOURS}h "
+                f"mcp_tasks={'on' if self._poller else 'off'}")
 
     @staticmethod
     async def _sweep_mail_waits(service: OrchestratorService, interval_s: float) -> None:
