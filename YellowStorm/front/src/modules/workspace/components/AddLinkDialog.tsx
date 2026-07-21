@@ -103,7 +103,7 @@ export function AddLinkDialog({
     setSelected((prev) => { const n = new Set(prev); n.has(u) ? n.delete(u) : n.add(u); return n; });
   const remove = (u: string) =>
     setSelected((prev) => { const n = new Set(prev); n.delete(u); return n; });
-  const selectableUrls = () => session.pages.map((p) => p.url);
+  const selectableUrls = () => session.pages.map((p) => p.url).filter((u) => !indexedUrls.has(normalizeUrl(u)));
   const selectAll = () => setSelected(new Set(selectableUrls()));
   const selectNone = () => setSelected(new Set());
 
