@@ -51,6 +51,8 @@ import type {
   WorkspaceArtifact,
 } from './types';
 
+export type SeedPage = { url: string; name?: string; indexingStatus?: string };
+
 /**
  * Extract user-friendly error message from API error
  * Uses error code mapping when available, falls back to error message
@@ -154,7 +156,7 @@ interface WorkspaceState {
   workspaceCreatedCallback: ((workspace: Workspace) => void) | null;
   isCreateTemplateModalOpen: boolean;
   isSettingsModalOpen: boolean;
-  addLinkDialog: { open: boolean; initialUrl: string; autoStart: boolean };
+  addLinkDialog: { open: boolean; initialUrl: string; autoStart: boolean; seed: SeedPage[] };
   createModalStep: 1 | 2;
   createTemplateModalStep: 1 | 2;
   isMobileSidebarOpen: boolean;
@@ -205,7 +207,7 @@ interface WorkspaceActions {
   closeCreateTemplateModal: () => void;
   openSettingsModal: (workspace?: Workspace) => void;
   closeSettingsModal: () => void;
-  openAddLink: (options?: { url?: string; autoStart?: boolean }) => void;
+  openAddLink: (options?: { url?: string; autoStart?: boolean; seed?: SeedPage[] }) => void;
   closeAddLink: () => void;
   setCreateModalStep: (step: 1 | 2) => void;
   setCreateTemplateModalStep: (step: 1 | 2) => void;
@@ -369,7 +371,7 @@ const initialState: WorkspaceState = {
   workspaceCreatedCallback: null,
   isCreateTemplateModalOpen: false,
   isSettingsModalOpen: false,
-  addLinkDialog: { open: false, initialUrl: '', autoStart: false },
+  addLinkDialog: { open: false, initialUrl: '', autoStart: false, seed: [] },
   createModalStep: 1,
   createTemplateModalStep: 1,
   isMobileSidebarOpen: true,
@@ -483,10 +485,10 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         }),
 
       openAddLink: (options) =>
-        set({ addLinkDialog: { open: true, initialUrl: options?.url ?? '', autoStart: options?.autoStart ?? false } }),
+        set({ addLinkDialog: { open: true, initialUrl: options?.url ?? '', autoStart: options?.autoStart ?? false, seed: options?.seed ?? [] } }),
 
       closeAddLink: () =>
-        set({ addLinkDialog: { open: false, initialUrl: '', autoStart: false } }),
+        set({ addLinkDialog: { open: false, initialUrl: '', autoStart: false, seed: [] } }),
 
       setCreateModalStep: (step) => set({ createModalStep: step }),
       setCreateTemplateModalStep: (step) => set({ createTemplateModalStep: step }),

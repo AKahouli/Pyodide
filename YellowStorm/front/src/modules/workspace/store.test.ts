@@ -187,6 +187,20 @@ describe('workspace store', () => {
     act(() => { useWorkspaceStore.getState().closeAddLink(); });
   });
 
+  it('openAddLink carries a seed and closeAddLink clears it', () => {
+    const seed = [{ url: 'https://a.com/x', name: 'X', indexingStatus: 'ready' }];
+    act(() => { useWorkspaceStore.getState().openAddLink({ url: 'https://a.com', autoStart: true, seed }); });
+    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: true, initialUrl: 'https://a.com', autoStart: true, seed });
+    act(() => { useWorkspaceStore.getState().closeAddLink(); });
+    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: false, initialUrl: '', autoStart: false, seed: [] });
+  });
+
+  it('openAddLink defaults seed to empty', () => {
+    act(() => { useWorkspaceStore.getState().openAddLink(); });
+    expect(useWorkspaceStore.getState().addLinkDialog.seed).toEqual([]);
+    act(() => { useWorkspaceStore.getState().closeAddLink(); });
+  });
+
   it('addPageLinks assigns new links to the current folder', async () => {
     workspaceApiMock.addLinks.mockResolvedValue([{ id: 'd1' }, { id: 'd2' }]);
     useWorkspaceStore.setState({ selectedWorkspaceId: 'w1', pageCurrentFolderId: 'folder1' });
