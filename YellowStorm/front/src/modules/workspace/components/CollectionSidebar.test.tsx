@@ -145,3 +145,35 @@ it('disables a leaf already indexed in the workspace', () => {
   );
   expect(screen.getByLabelText('b')).toBeDisabled();
 });
+
+const baseProps = {
+  selected: new Set<string>(), indexedUrls: new Set<string>(),
+  onToggle: vi.fn(), onDelete: vi.fn(), onSelectAll: vi.fn(), onSelectNone: vi.fn(),
+};
+
+it('add row calls onAdd with the url and name', () => {
+  const onAdd = vi.fn().mockReturnValue(true);
+  render(<CollectionSidebar pages={[]} {...baseProps} onAdd={onAdd} onEdit={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText('URL du lien'), { target: { value: 'https://x.com/p' } });
+  fireEvent.change(screen.getByLabelText('Nom du lien'), { target: { value: 'My Page' } });
+  fireEvent.click(screen.getByLabelText('Ajouter le lien'));
+  expect(onAdd).toHaveBeenCalledWith('https://x.com/p', 'My Page');
+});
+
+it('shows feedback when onAdd rejects', () => {
+  const onAdd = vi.fn().mockReturnValue(false);
+  render(<CollectionSidebar pages={[]} {...baseProps} onAdd={onAdd} onEdit={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText('URL du lien'), { target: { value: 'https://x.com/p' } });
+  fireEvent.click(screen.getByLabelText('Ajouter le lien'));
+  expect(screen.getByText(/invalide ou déjà/i)).toBeInTheDocument();
+});
+
+it('editing a leaf via the pencil popover calls onEdit', () => {
+  const onEdit = vi.fn().mockReturnValue(true);
+  render(<CollectionSidebar pages={[{ url: 'https://ex.com/a', title: '', linkText: 'A' }]} {...baseProps} onAdd={vi.fn()} onEdit={onEdit} />);
+  fireEvent.click(screen.getByLabelText('edit https://ex.com/a'));
+  fireEvent.change(screen.getByLabelText('Nom du lien à éditer'), { target: { value: 'B' } });
+  fireEvent.change(screen.getByLabelText('URL du lien à éditer'), { target: { value: 'https://ex.com/b' } });
+  fireEvent.click(screen.getByText('Enregistrer'));
+  expect(onEdit).toHaveBeenCalledWith('https://ex.com/a', { url: 'https://ex.com/b', name: 'B' });
+});
