@@ -103,7 +103,8 @@ function EditLeafPopover({ node, onEdit }: { node: TrieNode; onEdit: (oldUrl: st
     setOpen(o);
   };
   const save = () => {
-    const ok = onEdit(node.url as string, { url: url.trim(), name });
+    if (!url.trim()) { setError('URL invalide ou déjà dans la liste.'); return; }
+    const ok = onEdit(node.url as string, { url: url.trim(), name: name.trim() });
     if (ok) setOpen(false);
     else setError('URL invalide ou déjà dans la liste.');
   };
