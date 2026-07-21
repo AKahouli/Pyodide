@@ -164,7 +164,7 @@ export function WorkspacePage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editFolder, setEditFolder] = useState<WorkspaceFolder | null>(null);
   const [moveFolderTarget, setMoveFolderTarget] = useState<WorkspaceFolder | null>(null);
-  const [mapFile, setMapFile] = useState<WorkspaceFile | null>(null);
+  const [moveTarget, setMoveTarget] = useState<{ files: WorkspaceFile[]; title: string } | null>(null);
   const [classifyOpen, setClassifyOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
@@ -246,7 +246,7 @@ export function WorkspacePage() {
         artifacts={linkedArtifacts}
         totalArtifactCount={allLinkedArtifacts.length}
         forceExpanded={!!query && !sourceMatches && linkedArtifacts.length > 0}
-        onMove={() => setMapFile(file)}
+        onMove={() => setMoveTarget({ files: [file], title: file.name })}
       />
     );
   };
@@ -462,7 +462,7 @@ export function WorkspacePage() {
       <CreateFolderDialog open={createOpen} onOpenChange={setCreateOpen} parentId={currentFolderId} />
       <EditFolderDialog open={!!editFolder} onOpenChange={(o) => !o && setEditFolder(null)} folder={editFolder} />
       <MoveFolderDialog open={!!moveFolderTarget} onOpenChange={(o) => !o && setMoveFolderTarget(null)} folder={moveFolderTarget} />
-      <MoveFileDialog open={!!mapFile} onOpenChange={(o) => !o && setMapFile(null)} file={mapFile} />
+      <MoveFileDialog open={!!moveTarget} onOpenChange={(o) => !o && setMoveTarget(null)} files={moveTarget?.files ?? []} title={moveTarget?.title ?? ''} />
       <ClassifyDialog open={classifyOpen} onOpenChange={setClassifyOpen} />
       <RulesDialog open={rulesOpen} onOpenChange={setRulesOpen} />
       <CommunityGraphPanel open={graphOpen} onOpenChange={setGraphOpen} workspaceId={selectedWorkspaceId} />
