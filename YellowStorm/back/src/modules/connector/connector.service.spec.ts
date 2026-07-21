@@ -756,6 +756,7 @@ describe('ConnectorService findByIdsForGrpc', () => {
       mcp_server_url: 'https://mcp-m365.example/',
       auth_headers: { Authorization: 'Bearer TOKEN', 'X-User-Email': 'a@b.c' },
       auth_env: {},
+      mcp_server_config_json: '{}',
       actions: [
         {
           action_key: 'search_files',
@@ -810,5 +811,32 @@ describe('ConnectorService findByIdsForGrpc', () => {
     const bindings = await service.findByIdsForGrpc([doc._id.toString()], 'user-1');
     expect(bindings).toEqual([]);
     expect(auth.resolveRuntimeAuth).not.toHaveBeenCalled();
+  });
+
+  it('forwards mcpServerConfig (e.g. the linkup/code-interpreter gateway auth header) as a JSON string', async () => {
+    // Regression test: worky's gRPC servicer parses mcp_server_config_json to
+    // recover this connector's own MCP-gateway auth (separate from the
+    // per-user auth_headers above). A typed protobuf Struct silently
+    // serializes to {} over @grpc/proto-loader, so this has to travel as a
+    // string -- dropping this field means every linkup/code-interpreter call
+    // goes out unauthenticated (401) instead of failing loudly.
+    const doc = {
+      _id: new Types.ObjectId(),
+      name: 'Linkup',
+      authSourceType: 'none',
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://linkup-mcp.example/',
+      mcpServerConfig: { headers: { Authorization: 'Bearer GATEWAY_TOKEN' } },
+      actions: [{ key: 'search', label: 'Search', isEnabled: true }],
+      isActive: true,
+    };
+    const auth = { resolveRuntimeAuth: jest.fn(), resolveDynamicHeaders: jest.fn().mockResolvedValue({}) };
+    const service = buildService(doc, auth);
+
+    const [binding] = await service.findByIdsForGrpc([doc._id.toString()], 'user-1');
+
+    expect(binding.mcp_server_config_json).toBe(
+      JSON.stringify({ headers: { Authorization: 'Bearer GATEWAY_TOKEN' } }),
+    );
   });
 });
