@@ -22,6 +22,15 @@ function isValidUrl(value: string): boolean {
   } catch { return false; }
 }
 
+/** Move a selection entry from oldUrl to newUrl (no-op if oldUrl wasn't selected). */
+export function migrateSelection(selected: Set<string>, oldUrl: string, newUrl: string): Set<string> {
+  if (!selected.has(oldUrl)) return selected;
+  const next = new Set(selected);
+  next.delete(oldUrl);
+  next.add(newUrl);
+  return next;
+}
+
 export function AddLinkDialog({
   open, onOpenChange, workspaceId, initialUrl = '', autoStart = false,
 }: {
@@ -214,13 +223,7 @@ export function AddLinkDialog({
               onEdit={(oldUrl, patch) => {
                 const ok = session.updatePage(oldUrl, patch);
                 if (ok && patch.url && patch.url !== oldUrl) {
-                  setSelected((prev) => {
-                    if (!prev.has(oldUrl)) return prev;
-                    const next = new Set(prev);
-                    next.delete(oldUrl);
-                    next.add(patch.url as string);
-                    return next;
-                  });
+                  setSelected((prev) => migrateSelection(prev, oldUrl, patch.url as string));
                 }
                 return ok;
               }}

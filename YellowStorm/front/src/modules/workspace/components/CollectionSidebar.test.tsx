@@ -177,3 +177,10 @@ it('editing a leaf via the pencil popover calls onEdit', () => {
   fireEvent.click(screen.getByText('Enregistrer'));
   expect(onEdit).toHaveBeenCalledWith('https://ex.com/a', { url: 'https://ex.com/b', name: 'B' });
 });
+
+it('renders a pencil only on page leaves, not category-only nodes', () => {
+  // 'https://ex.com/a/b' makes a category node 'a' (no url) and a leaf 'b' (has url).
+  render(<CollectionSidebar pages={[{ url: 'https://ex.com/a/b', title: '', linkText: 'B' }]} {...baseProps} onAdd={vi.fn()} onEdit={vi.fn()} />);
+  expect(screen.getByLabelText('edit https://ex.com/a/b')).toBeInTheDocument(); // leaf editable
+  expect(screen.getAllByLabelText(/^edit /)).toHaveLength(1); // exactly one pencil → category 'a' has none
+});

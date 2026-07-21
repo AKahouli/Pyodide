@@ -19,7 +19,23 @@ vi.mock('../store', () => ({
 }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import { AddLinkDialog } from './AddLinkDialog';
+import { AddLinkDialog, migrateSelection } from './AddLinkDialog';
+
+describe('migrateSelection', () => {
+  it('moves the selection from the old url to the new url', () => {
+    const result = migrateSelection(new Set(['https://a.com/x', 'https://b.com/y']), 'https://a.com/x', 'https://a.com/z');
+    expect(result.has('https://a.com/x')).toBe(false);
+    expect(result.has('https://a.com/z')).toBe(true);
+    expect(result.has('https://b.com/y')).toBe(true);
+  });
+
+  it('leaves the set unchanged (same reference) when the old url was not selected', () => {
+    const input = new Set(['https://b.com/y']);
+    const result = migrateSelection(input, 'https://a.com/x', 'https://a.com/z');
+    expect(result).toBe(input);
+    expect(result.has('https://a.com/z')).toBe(false);
+  });
+});
 
 beforeEach(() => {
   session.status = 'idle'; session.pages = []; session.rootUrl = null; addPageLinks.mockClear();
