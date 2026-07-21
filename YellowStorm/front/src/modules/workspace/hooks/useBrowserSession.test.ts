@@ -82,4 +82,29 @@ describe('useBrowserSession', () => {
     expect(result.current.currentUrl).toBe('https://root.example/other');
     expect(result.current.rootUrl).toBe('https://root.example/start');
   });
+
+  it('addManualPage adds a manual page and rejects invalid/duplicate urls', () => {
+    const { result } = renderHook(() => useBrowserSession());
+    let ok!: boolean;
+    act(() => { ok = result.current.addManualPage('https://other.org/docs', '  My  Docs '); });
+    expect(ok).toBe(true);
+    expect(result.current.pages.at(-1)).toMatchObject({ url: 'https://other.org/docs', linkText: 'My Docs', manual: true });
+    act(() => { ok = result.current.addManualPage('https://other.org/docs'); }); // duplicate
+    expect(ok).toBe(false);
+    act(() => { ok = result.current.addManualPage('not a url'); }); // invalid
+    expect(ok).toBe(false);
+    expect(result.current.pages).toHaveLength(1);
+  });
+
+  it('updatePage edits name and url and rejects collisions', () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.addManualPage('https://a.com/x', 'X'); });
+    act(() => { result.current.addManualPage('https://b.com/y', 'Y'); });
+    let ok!: boolean;
+    act(() => { ok = result.current.updatePage('https://a.com/x', { name: 'New Name', url: 'https://a.com/z' }); });
+    expect(ok).toBe(true);
+    expect(result.current.pages.find((p) => p.url === 'https://a.com/z')).toMatchObject({ linkText: 'New Name', url: 'https://a.com/z' });
+    act(() => { ok = result.current.updatePage('https://a.com/z', { url: 'https://b.com/y' }); }); // collides with Y
+    expect(ok).toBe(false);
+  });
 });

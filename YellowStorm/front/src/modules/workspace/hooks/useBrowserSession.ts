@@ -15,7 +15,7 @@ export type InputEvent =
 export type NavAction =
   | { kind: 'goto'; url: string } | { kind: 'back' } | { kind: 'forward' } | { kind: 'reload' };
 
-export interface CollectedPage { url: string; title: string; linkText?: string; }
+export interface CollectedPage { url: string; title: string; linkText?: string; manual?: boolean; }
 export type BrowserSessionStatus = 'idle' | 'connecting' | 'live' | 'busy' | 'error';
 
 export function normalizeUrl(url: string): string {
@@ -27,6 +27,15 @@ export function normalizeUrl(url: string): string {
     return s;
   } catch {
     return url;
+  }
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value.trim());
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
   }
 }
 
@@ -83,5 +92,41 @@ export function useBrowserSession() {
     setStatus('idle');
   }, []);
 
-  return { status, frame, currentUrl, rootUrl, pages, blockedNotice, start, sendInput, navigate, stop };
+  const addManualPage = useCallback((url: string, name?: string): boolean => {
+    if (!isHttpUrl(url)) return false;
+    const key = normalizeUrl(url);
+    if (seenRef.current.has(key)) return false;
+    seenRef.current.add(key);
+    const linkText = name?.replace(/\s+/g, ' ').trim() || undefined;
+    setPages((prev) => [...prev, { url: url.trim(), title: '', linkText, manual: true }]);
+    return true;
+  }, []);
+
+  const updatePage = useCallback((oldUrl: string, patch: { url?: string; name?: string }): boolean => {
+    const oldKey = normalizeUrl(oldUrl);
+    if (!seenRef.current.has(oldKey)) return false; // no such page
+    let newUrl: string | undefined;
+    if (patch.url !== undefined && patch.url !== oldUrl) {
+      if (!isHttpUrl(patch.url)) return false;
+      const newKey = normalizeUrl(patch.url);
+      if (newKey !== oldKey && seenRef.current.has(newKey)) return false; // collides with another page
+      newUrl = patch.url.trim();
+      seenRef.current.delete(oldKey);
+      seenRef.current.add(newKey);
+    }
+    setPages((prev) =>
+      prev.map((p) =>
+        p.url === oldUrl
+          ? {
+              ...p,
+              ...(newUrl !== undefined ? { url: newUrl } : {}),
+              ...(patch.name !== undefined ? { linkText: patch.name.replace(/\s+/g, ' ').trim() || undefined } : {}),
+            }
+          : p,
+      ),
+    );
+    return true;
+  }, []);
+
+  return { status, frame, currentUrl, rootUrl, pages, blockedNotice, start, sendInput, navigate, stop, addManualPage, updatePage };
 }
