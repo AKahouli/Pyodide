@@ -675,30 +675,11 @@ def create_langchain_tools(
     mcp_tools.extend(platform_tools)
 
     tool_configs = agent_config.get("tools", [])
-
-    # If agent has no native tools, return only connector MCP tools
-    if not tool_configs:
-        logger.info(
-            "Created LangChain tools for playbook agent (connectors only)",
-            agent=agent_config.get("name"),
-            tool_count=len(mcp_tools),
-            tool_names=[t.name for t in mcp_tools],
-        )
-        return mcp_tools, collector
+    tools: List[StructuredTool] = list(mcp_tools)
 
     tool_names = {
         t["name"] for t in tool_configs if isinstance(t, dict) and t.get("name")
     }
-    if not tool_names:
-        logger.info(
-            "Created LangChain tools for playbook agent (connectors only, empty tool configs)",
-            agent=agent_config.get("name"),
-            tool_count=len(mcp_tools),
-            tool_names=[t.name for t in mcp_tools],
-        )
-        return mcp_tools, collector
-
-    tools: List[StructuredTool] = list(mcp_tools)
 
     # Merge workspace context into agent brain data
     workspace_names, brain_documents = _merge_brain_data(agent_config, workspace_context)
@@ -1669,34 +1650,16 @@ def _create_plan_tool() -> StructuredTool:
 class DeepSearchInput(BaseModel):
     query: str = Field(description="The search query string.")
     workspace_id: str = Field(description="The workspace ID to search in.")
-    top_k: int = Field(default=5, description="Maximum number of results to return.")
 
 
 def _create_deep_search_tool() -> Optional[StructuredTool]:
-    """Create a deep search tool that calls the MCP indexation server."""
-    from src.config.settings import get_settings
-
-    app_settings = get_settings()
-
-    mcp_url = getattr(app_settings, "COMMUNITY_GRAPH_MCP_URL", None) or getattr(app_settings, "VECTORSTORE_MCP_URL", None)
-    if not mcp_url:
-        logger.warning("VECTORSTORE_MCP_URL not configured, skipping deep search tool")
-        return None
-
-    async def _deep_search(query: str, workspace_id: str, top_k: int = 5) -> str:
-        from src.flow_engine.mcp import call_mcp_tool
+    """Create the relevant-document tool for compatible non-preflight callers."""
+    async def _deep_search(query: str, workspace_id: str) -> str:
+        from src.flow_engine.deep_search import search_relevant_documents
 
         try:
-            result = await call_mcp_tool(
-                "streamable_http",
-                mcp_url,
-                {"headers": {"X-Deep-Search": "true"}},
-                "search_relevant_documents",
-                {"query": query, "workspace_id": workspace_id, "top_k": top_k},
-            )
-            if isinstance(result, dict):
-                return json.dumps(result, ensure_ascii=False)
-            return str(result)
+            result = await search_relevant_documents(query, workspace_id)
+            return json.dumps(result, ensure_ascii=False)
         except Exception as e:
             logger.error("deep_search_tool_failed", error=str(e))
             return f"Deep search failed: {str(e)}"
@@ -1872,7 +1835,6 @@ def _create_connector_mcp_tools(
                 ae: Dict[str, str] = binding_auth_env,
                 _uid: Optional[str] = user_id,
                 _wi: Optional[List[str]] = workspace_ids,
-                _fn: Optional[List[str]] = file_names,
                 sid: str = session_id,
                 wsp: List[str] = list(workspace_paths or []),
             ) -> StructuredTool:
@@ -1898,21 +1860,19 @@ def _create_connector_mcp_tools(
 
                         merged_params = {**fp, **params}
                         merged_params.pop("user_id", None)
+                        for filename_param in ("file_name", "file_names"):
+                            if params.get(filename_param) in (None, "", []):
+                                merged_params.pop(filename_param, None)
 
                         effective_auth_headers = dict(ah)
                         if tt == "streamable_http":
-                            # Always override workspace_name / file_name with known-good
-                            # values so LLM-guessed or fixed_params values can't reach the backend.
-                            if _fn:
-                                effective_auth_headers["file_name"] = json.dumps(_fn) if len(_fn) > 1 else _fn[0]
-                                merged_params["file_name"] = _fn[0] if len(_fn) == 1 else _fn
-                            else:
-                                llm_file_name = merged_params.get("file_name")
-                                if isinstance(llm_file_name, str) and llm_file_name.strip() and llm_file_name != "*":
-                                    effective_auth_headers["file_name"] = llm_file_name
-                                else:
-                                    merged_params.pop("file_name", None)
-                                    effective_auth_headers.pop("file_name", None)
+                            # Filenames are model-visible context, not runtime scope.
+                            # Let each MCP action's schema, instructions, and docstring
+                            # determine whether the model sends file_name/file_names.
+                            # In particular, do not add a dropped/deep-search filename
+                            # to actions whose schema does not accept one.
+                            effective_auth_headers.pop("file_name", None)
+                            effective_auth_headers.pop("file_names", None)
                             if _wi:
                                 effective_auth_headers["workspace_id"] = json.dumps(_wi) if len(_wi) > 1 else _wi[0]
                                 effective_auth_headers["Workspace-Id"] = ",".join(_wi)
@@ -1924,8 +1884,7 @@ def _create_connector_mcp_tools(
                             if wsp:
                                 effective_auth_headers["x-workspace-paths"] = ",".join(wsp)
                             logger.info(
-                                "playbook_connector_mcp_context_headers file_name=%s workspace_id=%s",
-                                effective_auth_headers.get("file_name"),
+                                "playbook_connector_mcp_context_headers workspace_id=%s",
                                 effective_auth_headers.get("workspace_id"),
                             )
 

@@ -63,11 +63,11 @@ class SimpleCompletionService:
             request_params = {
                 "model": model,
                 "messages": messages,
-                "temperature": normalize_temperature_for_model(model, temperature),
             }
 
-            if temperature is not None:
-                request_params["temperature"] = temperature
+            normalized_temperature = normalize_temperature_for_model(model, temperature)
+            if normalized_temperature is not None:
+                request_params["temperature"] = normalized_temperature
 
             # Add optional parameters if provided
             if max_tokens:

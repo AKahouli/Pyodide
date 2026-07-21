@@ -150,7 +150,12 @@ class Settings(BaseSettings):
     # Vectorstores API (document indexing)
     VECTORSTORES_API_URL: Optional[str] = None
 
-    # Community graph MCP (deep search via mcp-indexation)
+    # Community graph services (deep search document pre-filter)
+    COMMUNITY_GRAPH_URL: Optional[str] = None
+    MCP_API_KEY_DEEP_SEARCH: Optional[str] = None
+    DEEP_SEARCH_TIMEOUT_SECONDS: float = 30.0
+
+    # Legacy MCP endpoint retained for non-playbook callers.
     COMMUNITY_GRAPH_MCP_URL: Optional[str] = None
 
     # Image upload limits

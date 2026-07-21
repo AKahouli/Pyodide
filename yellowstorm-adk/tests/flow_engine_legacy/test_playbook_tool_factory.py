@@ -1192,3 +1192,104 @@ def test_connector_mcp_tool_definition_exposes_params_when_schema_is_missing() -
     definition = _tool_to_openai_definition(search_tool)
 
     assert definition["function"]["parameters"]["properties"]["params"]["type"] == "object"
+
+
+def test_connector_mcp_tool_leaves_available_filenames_for_model_to_choose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["params"] = args[4]
+        captured["auth_headers"] = kwargs.get("auth_headers")
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+
+    tools = _create_connector_mcp_tools(
+        [
+            {
+                "connector_id": "connector-1",
+                "connector_name": "Workspace MCP",
+                "connector_slug": "workspace",
+                "mcp_transport_type": "streamable_http",
+                "mcp_server_url": "https://example.com/mcp",
+                "fixed_params": {"file_name": "Stale-fixed.pdf"},
+                "auth_headers": {"file_name": "Stale-header.pdf"},
+                "actions": [
+                    {
+                        "action_key": "locate_citations",
+                        "parameter_schema": {
+                            "type": "object",
+                            "properties": {
+                                "workspace_id": {"type": "string"},
+                                "citation": {"type": "string"},
+                            },
+                            "required": ["workspace_id", "citation"],
+                        },
+                    }
+                ],
+            }
+        ],
+        ToolResultCollector(),
+        workspace_ids=["workspace-1"],
+        file_names=["Dragged.pdf", "Deep-search.pdf"],
+    )
+
+    tool = next(item for item in tools if item.name == "workspace_locate_citations")
+    result = asyncio.run(
+        tool.ainvoke({"workspace_id": "workspace-1", "citation": "[1]"})
+    )
+
+    assert result == {"text": "ok"}
+    assert captured["params"] == {
+        "workspace_id": "workspace-1",
+        "citation": "[1]",
+    }
+    assert "file_name" not in captured["auth_headers"]
+    assert "file_names" not in captured["auth_headers"]
+
+
+def test_connector_mcp_tool_preserves_filename_selected_by_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["params"] = args[4]
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+
+    tools = _create_connector_mcp_tools(
+        [
+            {
+                "connector_id": "connector-1",
+                "connector_name": "Workspace MCP",
+                "connector_slug": "workspace",
+                "mcp_transport_type": "streamable_http",
+                "mcp_server_url": "https://example.com/mcp",
+                "actions": [
+                    {
+                        "action_key": "search_file",
+                        "parameter_schema": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string"},
+                                "file_name": {"type": "string"},
+                            },
+                            "required": ["query", "file_name"],
+                        },
+                    }
+                ],
+            }
+        ],
+        ToolResultCollector(),
+        workspace_ids=["workspace-1"],
+        file_names=["Dragged.pdf", "Deep-search.pdf"],
+    )
+
+    tool = next(item for item in tools if item.name == "workspace_search_file")
+    asyncio.run(tool.ainvoke({"query": "penalties", "file_name": "Deep-search.pdf"}))
+
+    assert captured["params"]["file_name"] == "Deep-search.pdf"
