@@ -196,3 +196,12 @@ it('renders a pencil only on page leaves, not category-only nodes', () => {
   expect(screen.getByLabelText('edit https://ex.com/a/b')).toBeInTheDocument(); // leaf editable
   expect(screen.getAllByLabelText(/^edit /)).toHaveLength(1); // exactly one pencil → category 'a' has none
 });
+
+it('calls onExplore with the leaf url and shows a spinner while exploring', () => {
+  const onExplore = vi.fn();
+  const { rerender } = render(<CollectionSidebar pages={[{ url: 'https://ex.com/a', title: '', linkText: 'A' }]} {...baseProps} onAdd={vi.fn()} onEdit={vi.fn()} onExplore={onExplore} exploring={new Set()} />);
+  fireEvent.click(screen.getByLabelText('explore https://ex.com/a'));
+  expect(onExplore).toHaveBeenCalledWith('https://ex.com/a');
+  rerender(<CollectionSidebar pages={[{ url: 'https://ex.com/a', title: '', linkText: 'A' }]} {...baseProps} onAdd={vi.fn()} onEdit={vi.fn()} onExplore={onExplore} exploring={new Set(['https://ex.com/a'])} />);
+  expect(screen.getByLabelText('explore https://ex.com/a')).toBeDisabled();
+});

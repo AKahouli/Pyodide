@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ChevronRight, Compass, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -140,7 +140,7 @@ function EditLeafPopover({ node, onEdit }: { node: TrieNode; onEdit: (oldUrl: st
 }
 
 function TrieRows({
-  nodes, parentKey, selected, indexedUrls, collapsed, onToggleCollapse, onToggle, onDelete, onEdit,
+  nodes, parentKey, selected, indexedUrls, collapsed, onToggleCollapse, onToggle, onDelete, onEdit, onExplore, exploring,
 }: {
   nodes: TrieNode[];
   parentKey: string;
@@ -151,6 +151,8 @@ function TrieRows({
   onToggle: (url: string) => void;
   onDelete: (url: string) => void;
   onEdit?: (oldUrl: string, patch: { url?: string; name?: string }) => boolean;
+  onExplore?: (url: string) => void;
+  exploring?: Set<string>;
 }) {
   return (
     <ul className='m-0 list-none p-0'>
@@ -190,6 +192,17 @@ function TrieRows({
                     <div className='truncate text-[11px] text-muted-foreground' title={node.url}>{node.url}</div>
                     {already && <span className='text-[10px] text-muted-foreground'>Déjà indexée</span>}
                   </div>
+                  {onExplore && (
+                    <button
+                      type='button'
+                      aria-label={`explore ${node.url}`}
+                      disabled={exploring?.has(node.url as string)}
+                      onClick={() => onExplore(node.url as string)}
+                      className='shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50'
+                    >
+                      {exploring?.has(node.url as string) ? <Loader2 className='h-4 w-4 animate-spin' /> : <Compass className='h-4 w-4' />}
+                    </button>
+                  )}
                   {onEdit && <EditLeafPopover node={node} onEdit={onEdit} />}
                   <button
                     type='button'
@@ -224,6 +237,8 @@ function TrieRows({
                   onToggle={onToggle}
                   onDelete={onDelete}
                   onEdit={onEdit}
+                  onExplore={onExplore}
+                  exploring={exploring}
                 />
               </div>
             )}
@@ -235,7 +250,7 @@ function TrieRows({
 }
 
 export function CollectionSidebar({
-  pages, selected, indexedUrls, onToggle, onDelete, onSelectAll, onSelectNone, onAdd, onEdit,
+  pages, selected, indexedUrls, onToggle, onDelete, onSelectAll, onSelectNone, onAdd, onEdit, onExplore, exploring,
 }: {
   pages: CollectedPage[];
   selected: Set<string>;
@@ -246,6 +261,8 @@ export function CollectionSidebar({
   onSelectNone: () => void;
   onAdd?: (url: string, name?: string) => boolean;
   onEdit?: (oldUrl: string, patch: { url?: string; name?: string }) => boolean;
+  onExplore?: (url: string) => void;
+  exploring?: Set<string>;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const onToggleCollapse = useCallback(
@@ -283,6 +300,8 @@ export function CollectionSidebar({
             onToggle={onToggle}
             onDelete={onDelete}
             onEdit={onEdit}
+            onExplore={onExplore}
+            exploring={exploring}
           />
         )}
       </div>
