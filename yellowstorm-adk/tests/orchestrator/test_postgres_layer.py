@@ -155,7 +155,7 @@ async def test_a_reply_claims_its_wait_exactly_once(pool):
     await readmodel.init_schema(pool, SCHEMA)
     token = mail_token.mint()
     await rm.register_mail_wait(token, session_id="s1", step_id="m", user_id="u1",
-                                expected_from="rabeb@example.com")
+                                expected_from="x@example.com")
     await rm.bind_mail_wait_interrupt("s1", "m", "mail:plan@1/m@1")
 
     # Ten concurrent deliveries of the same notification; exactly one wins.
