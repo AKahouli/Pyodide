@@ -16,7 +16,7 @@ export function createAgentTypeFormSchema(t: Translator) {
       .string()
       .min(2, t("agentTypes.form.validation.nameMin"))
       .max(100, t("agentTypes.form.validation.nameMax"))
-      .regex(/^[a-zA-Z0-9 ]+$/, t("agentTypes.form.validation.namePattern")),
+      .regex(/^[a-zA-Z0-9 -]+$/, t("agentTypes.form.validation.namePattern")),
     defaultPrompt: z
       .string()
       .max(50000, t("agentTypes.form.validation.promptMax"))

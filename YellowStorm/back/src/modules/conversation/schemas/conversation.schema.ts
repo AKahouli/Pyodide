@@ -2,12 +2,35 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
 
 export type ConversationDocument = HydratedDocument<Conversation>;
+export type ConversationRuntimeMode = 'standard' | 'governed';
+
+@Schema({ _id: false })
+export class ConversationGovernanceContext {
+  @Prop({ type: Types.ObjectId, ref: 'GovernanceProgram', required: true }) programId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'GovernanceScope', required: true }) scopeId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'GovernanceDeployment', required: true }) deploymentId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'GovernanceDeploymentRevision', required: true }) revisionId!: Types.ObjectId;
+  @Prop({ required: true }) revisionNumber!: number;
+  @Prop({ required: true }) pinnedAt!: Date;
+  @Prop({ type: Object, required: true })
+  runtimeDefinition!: { primaryAgentId: string; allowedAgentIds: string[]; workspaceIds: string[] };
+}
+
+const ConversationGovernanceContextSchema = SchemaFactory.createForClass(ConversationGovernanceContext);
 
 @Schema({
   timestamps: true,
   collection: 'conversations',
 })
 export class Conversation extends Document {
+  @Prop({ type: String, enum: ['standard', 'governed'], default: 'standard', index: true })
+  runtimeMode!: ConversationRuntimeMode;
+
+  @Prop({ type: ConversationGovernanceContextSchema })
+  governanceContext?: ConversationGovernanceContext;
+
+  @Prop({ type: String })
+  governedCreationRequestId?: string;
   @Prop({ type: String, trim: true, maxlength: 200, default: 'New Conversation' })
   title!: string;
 
@@ -109,6 +132,7 @@ ConversationSchema.index({ createdBy: 1, lastMessageAt: -1 });
 ConversationSchema.index({ createdBy: 1, isArchived: 1, lastMessageAt: -1 });
 ConversationSchema.index({ createdBy: 1, createdAt: -1 });
 ConversationSchema.index({ createdBy: 1, projectId: 1, lastMessageAt: -1 });
+ConversationSchema.index({ createdBy: 1, governedCreationRequestId: 1 }, { unique: true, partialFilterExpression: { governedCreationRequestId: { $exists: true, $type: 'string' } } });
 
 // JSON transform
 ConversationSchema.set('toJSON', {

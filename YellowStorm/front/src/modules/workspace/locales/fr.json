@@ -386,6 +386,7 @@
   "upload.item.pending": "En attente",
   "upload.item.uploading": "En cours",
   "select.noWorkspaces": "Aucun workspace disponible",
+  "select.triggerLabel": "Sélectionner des espaces de travail",
   "select.ownGroup": "Mes workspaces",
   "select.sharedGroup": "Partagés avec moi",
   "select.sharedBy": "Partagé par {{name}}",

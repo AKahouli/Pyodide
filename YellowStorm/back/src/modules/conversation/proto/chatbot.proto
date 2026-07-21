@@ -258,6 +258,7 @@ message ToolInfoComponent {
     string title = 1;            // Tool name / label
     string status = 2;           // running | completed | failed
     optional string params = 3;  // JSON object of tool-call arguments {name: value}; omitted when empty
+    optional string result_json = 4; // Bounded structured tool result for trusted backend consumers
 }
 
 enum ChartKind {

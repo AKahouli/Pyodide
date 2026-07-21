@@ -23,6 +23,8 @@ import type {
   UpdateGovernanceProgramPayload,
   UpdateGovernanceScopePayload,
   UpdateGovernanceSourcePayload,
+  GovernanceScopeAudienceConfiguration,
+  AvailableGovernedScope,
 } from './types';
 
 export const governanceApi = {
@@ -91,6 +93,21 @@ export const governanceApi = {
 
   async deleteSource(programId: string, sourceId: string): Promise<void> {
     await apiClient.delete(API_ENDPOINTS.governance.source(programId, sourceId));
+  },
+
+  async getScopeAudience(programId: string, scopeId: string): Promise<GovernanceScopeAudienceConfiguration> {
+    const res = await apiClient.get(API_ENDPOINTS.governance.scopeAudience(programId, scopeId));
+    return res.data.data;
+  },
+
+  async updateScopeAudience(programId: string, scopeId: string, payload: { mode: GovernanceScopeAudienceConfiguration['mode']; userIds: string[]; groupIds: string[] }): Promise<GovernanceScopeAudienceConfiguration> {
+    const res = await apiClient.patch(API_ENDPOINTS.governance.scopeAudience(programId, scopeId), payload);
+    return res.data.data;
+  },
+
+  async listAvailableScopes(): Promise<AvailableGovernedScope[]> {
+    const res = await apiClient.get(API_ENDPOINTS.governance.availableScopes);
+    return res.data.data;
   },
 
   async createWorkspaceBinding(programId: string, payload: import('./types').CreateGovernanceWorkspaceBindingPayload): Promise<import('./types').GovernanceWorkspaceBinding> {

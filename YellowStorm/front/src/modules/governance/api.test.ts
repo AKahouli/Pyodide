@@ -29,10 +29,12 @@ describe('governanceApi', () => {
 
     await governanceApi.createRevision('deployment-1', { agentId: 'agent-1' });
     await governanceApi.createDryRun('deployment-1', { input: 'test', simulatedChannel: 'api' });
+    await governanceApi.createDryRun('deployment-1', { executionMode: 'manual' });
     await governanceApi.publishDeployment('deployment-1');
 
     expect(mocks.post).toHaveBeenCalledWith('/governance/deployments/deployment-1/revisions', { agentId: 'agent-1' });
     expect(mocks.post).toHaveBeenCalledWith('/governance/deployments/deployment-1/dry-runs', { input: 'test', simulatedChannel: 'api' });
+    expect(mocks.post).toHaveBeenCalledWith('/governance/deployments/deployment-1/dry-runs', { executionMode: 'manual' });
     expect(mocks.post).toHaveBeenCalledWith('/governance/deployments/deployment-1/publish', {});
   });
 

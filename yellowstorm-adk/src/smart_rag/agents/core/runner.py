@@ -239,7 +239,7 @@ class AgentRunner:
             logger.error(
                 f"🔴 Exception occurred during session initialization for agent {agent.name}: {str(e)}"
             )
-            return None, [], {}, []
+            raise
 
         mcp_tools_used = []  # Track which specific MCPs actually get used during execution
         if image_input:
@@ -308,7 +308,7 @@ class AgentRunner:
 
         except Exception as e:
             logger.error(f"🔴 Exception occurred in agent {agent.name}: {str(e)}")
-            return None, [], {}, []
+            raise
 
     async def _run_standard_agent(
         self,
@@ -394,6 +394,7 @@ class AgentRunner:
                     if (
                         agent_type != "html"
                         and part.text
+                        and getattr(part, "thought", False) is not True
                         and not event.is_final_response()
                         and not has_multiple_parts
                     ):
@@ -721,6 +722,20 @@ class AgentRunner:
                                             break
 
                             if tool_component_id:
+                                result_json = ""
+                                try:
+                                    candidate_result_json = json.dumps(
+                                        part.function_response.response,
+                                        default=str,
+                                        separators=(",", ":"),
+                                    )
+                                    if len(candidate_result_json.encode("utf-8")) <= 65536:
+                                        result_json = candidate_result_json
+                                except (TypeError, ValueError):
+                                    logger.warning(
+                                        "tool_result_serialization_failed tool=%s",
+                                        func_name,
+                                    )
                                 await q.put(
                                     self.streaming_formatter.format_component_event(
                                         agent_id=agent_id,
@@ -728,6 +743,7 @@ class AgentRunner:
                                         component_data={
                                             "title": func_name,
                                             "status": "completed" if success else "failed",
+                                            **({"result_json": result_json} if result_json else {}),
                                         },
                                         message_id=session_id,
                                         component_id=tool_component_id,
@@ -850,6 +866,7 @@ class AgentRunner:
                         (part.text or "")
                         for part in event.content.parts
                         if getattr(part, "text", None)
+                        and getattr(part, "thought", False) is not True
                     )
                     logger.info(
                         "[STREAM END] final_text_length=%s buffered_length=%s final_text_preview=%s",
@@ -924,6 +941,7 @@ class AgentRunner:
                         session_id,
                         citation_mapping,
                         agent_config,
+                        accumulated_text,
                     )
                     if accumulated_text != "":
                         recorder.record_chunk(accumulated_text)
@@ -942,11 +960,7 @@ class AgentRunner:
                         generated_files,
                     )
 
-            execution_summary = recorder.get_execution_summary()
-            generated_files = await self._extract_generated_files(
-                session_helper, user_id, session_id
-            )
-            return (None, mcp_tools_used, execution_summary, generated_files)
+            raise RuntimeError("Agent stream ended without a final response")
 
         except (asyncio.CancelledError, GeneratorExit):
             should_close_stream = False
@@ -957,11 +971,7 @@ class AgentRunner:
 
             logger.error(f"🔴 Full traceback: {traceback.format_exc()}")
             recorder.record_error(e)
-            execution_summary = recorder.get_execution_summary()
-            generated_files = await self._extract_generated_files(
-                session_helper, user_id, session_id
-            )
-            return (None, mcp_tools_used, execution_summary, generated_files)
+            raise
         finally:
             aclose = getattr(stream, "aclose", None)
             if should_close_stream and aclose is not None:
@@ -1143,15 +1153,15 @@ class AgentRunner:
         session_id,
         citation_mapping: Optional[Dict[str, str]] = None,
         agent_config: Optional[dict] = None,
+        streamed_text: str = "",
     ):
         """Handle final response from agent."""
-        # Safely handle empty parts list
-        if not event.content.parts:
-            event_text = ""
-        else:
-            event_text = (
-                event.content.parts[0].text if event.content.parts[0].text else ""
-            )
+        event_text = "".join(
+            (part.text or "")
+            for part in event.content.parts
+            if getattr(part, "text", None)
+            and getattr(part, "thought", False) is not True
+        )
 
         # OLD LOGIC: Sending all sources at the end - DISABLED
         # Sources are now sent dynamically as citations are detected during streaming
@@ -1211,7 +1221,14 @@ class AgentRunner:
             agent_config=agent_config or {},
         )
 
-        if q and (guarded.blocked or guarded.sanitized):
+        should_emit_final = bool(guarded.text) and (
+            guarded.blocked
+            or guarded.sanitized
+            or guarded.text != streamed_text
+        )
+        if q and should_emit_final:
+            if self.streaming_formatter.component_tracker:
+                self.streaming_formatter.component_tracker.finish_component(agent_id)
             await q.put(self.streaming_formatter.format_streaming_event(
                 agent_id=agent_id,
                 agent_name=agent_name,

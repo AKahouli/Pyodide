@@ -22,3 +22,5 @@ export { PermanentlyDeleteGovernanceSourceDto } from './permanently-delete-gover
 export { DecideTemporalCandidateDto } from './decide-temporal-candidate.dto';
 export { KnowledgeListQueryDto } from './knowledge-list-query.dto';
 export { KnowledgeDecisionDto, MetadataCandidateDecisionDto } from './knowledge-decision.dto';
+export { UpdateGovernanceScopeAudienceDto } from './update-governance-scope-audience.dto';
+export { CreateGovernedConversationDto } from './create-governed-conversation.dto';

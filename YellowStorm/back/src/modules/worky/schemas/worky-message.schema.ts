@@ -16,6 +16,10 @@ export class WorkyMessage extends Document {
   @Prop({ type: Types.ObjectId, ref: 'WorkyStream', required: true, index: true })
   streamId!: Types.ObjectId;
 
+  /** The manager's Postgres `messages.id` (Electric source). Idempotent upsert key; null for non-manager messages. */
+  @Prop({ type: String, default: null })
+  externalId?: string | null;
+
   @Prop({
     type: String,
     enum: ['owner', 'manager', 'system'],
@@ -39,6 +43,11 @@ export class WorkyMessage extends Document {
 export const WorkyMessageSchema = SchemaFactory.createForClass(WorkyMessage);
 
 WorkyMessageSchema.index({ streamId: 1, createdAt: 1 });
+
+WorkyMessageSchema.index(
+  { streamId: 1, externalId: 1 },
+  { unique: true, partialFilterExpression: { externalId: { $type: 'string' } } },
+);
 
 WorkyMessageSchema.set('toJSON', {
   virtuals: true,

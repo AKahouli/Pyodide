@@ -46,6 +46,7 @@ import { AgentTypeModule } from '../agent-type/agent-type.module';
 import { SkillModule } from '../skill/skill.module';
 import { EmailModule } from '../email/email.module';
 import conversationConfig from '../../config/conversation.config';
+import { GovernanceRuntimeModule } from '../governance/governance-runtime.module';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import conversationConfig from '../../config/conversation.config';
     AgentTypeModule,
     SkillModule,
     EmailModule,
+    GovernanceRuntimeModule,
   ],
   controllers: [
     StreamController,  // Must be before ConversationController to avoid route conflict with :id param

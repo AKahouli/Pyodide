@@ -1035,8 +1035,8 @@ def create_connector_tools(
             if not action_key:
                 continue
 
-            slug = re.sub(r"[^a-z0-9-]", "", connector_slug.lower())[:24] or "connector"
-            tool_name = f"{slug}_{action_key}".lower()[:64]
+            # NestJS advertises connector actions with this exact runtime name.
+            tool_name = f"connector_{connector_id}_{action_key}"
             description = str(
                 action.get("description")
                 or f"Connector action '{action_key}' from {connector_name}"

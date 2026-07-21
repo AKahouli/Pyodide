@@ -295,6 +295,47 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].name).toBe('Mono Agent Instance');
   });
 
+  it('uses the selected model for an untagged mono-agent request', async () => {
+    const { service, modelsService, agentTypeService } = createService();
+    const monoAgent: IAgentForStream = {
+      id: 'mono-agent', name: 'Mono Agent', agentTypeName: 'Mono Agent', agentTypeSlug: 'mono-agent',
+      agentTypeId: 'type-mono', role: 'Role', description: '', temperature: 0, model: 'native-model',
+      instruction: '', ignorePrePrompt: false, knowledgeBases: [], toolIds: [], guardrails: defaultGuardrails,
+      connectorIds: [], connectorActionSelections: [], skillIds: [], disabledSkillIds: [], agentTypeSkillIds: [],
+      enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: true, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([]);
+    jest.spyOn(service as any, 'resolveDefaultMonoAgent').mockResolvedValue(monoAgent);
+    modelsService.findById.mockImplementation(async (id: string) => ({ id, omitTemperature: false }));
+
+    const result = await service.buildAgentsForStream(userId, 'selected-model');
+
+    expect(agentTypeService.resolvePromptsInBatch).toHaveBeenCalledWith([
+      { agentTypeId: 'type-mono', modelId: 'selected-model' },
+    ]);
+    expect(result[0].chatbot.model).toBe('selected-model');
+  });
+
+  it('preserves a tagged agent\'s native model over the selected model', async () => {
+    const { service, modelsService, agentTypeService } = createService();
+    const taggedAgent: IAgentForStream = {
+      id: 'tagged-agent', name: 'Tagged Agent', agentTypeName: 'Worker', agentTypeSlug: 'worker',
+      agentTypeId: 'type-worker', role: 'Role', description: '', temperature: 0, model: 'native-model',
+      instruction: '', ignorePrePrompt: false, knowledgeBases: [], toolIds: [], guardrails: defaultGuardrails,
+      connectorIds: [], connectorActionSelections: [], skillIds: [], disabledSkillIds: [], agentTypeSkillIds: [],
+      enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: false, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([taggedAgent]);
+    modelsService.findById.mockImplementation(async (id: string) => ({ id, omitTemperature: false }));
+
+    const result = await service.buildAgentsForStream(userId, 'selected-model', ['tagged-agent']);
+
+    expect(agentTypeService.resolvePromptsInBatch).toHaveBeenCalledWith([
+      { agentTypeId: 'type-worker', modelId: 'native-model' },
+    ]);
+    expect(result[0].chatbot.model).toBe('native-model');
+  });
+
   it('routes through a single agent when no agent is tagged, even if no "mono-agent" type is configured', async () => {
     const { service, agentTypeService } = createService();
 

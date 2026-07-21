@@ -18,6 +18,16 @@ import json
 logger = get_logger("api.smart_rag.agents.factories.delegation_factory_helper")
 
 
+def _resolve_temperature(agent_params: Dict[str, Any]) -> Optional[float]:
+    if agent_params.get("omit_temperature") == "true":
+        return None
+    try:
+        return float(agent_params.get("temperature", 0.0))
+    except (TypeError, ValueError):
+        logger.warning("invalid_agent_temperature value=%r defaulting=0.0", agent_params.get("temperature"))
+        return 0.0
+
+
 def _is_tool_enabled(tools_config: List[Any], tool_name: str) -> bool:
     for tool in tools_config:
         if isinstance(tool, str):
@@ -443,7 +453,7 @@ def create_search_agent_with_tools(
     )
 
     agent_params = agent_config.get("agent_params") or {}
-    temp = None if agent_params.get("omit_temperature") == "true" else agent_params.get("temperature", 0.0)
+    temp = _resolve_temperature(agent_params)
     if agent_config.get("agent_type") == "visualizer":
         max_tokens = (
             agent_config.get("agent_params").get("max_tokens", 30000)
@@ -593,7 +603,7 @@ def create_standard_agent_with_tools(
 ) -> Any:
     """Create standard agent with configured tools."""
     agent_params = agent_config.get("agent_params") or {}
-    temp = None if agent_params.get("omit_temperature") == "true" else agent_params.get("temperature", 0.0)
+    temp = _resolve_temperature(agent_params)
     if agent_config.get("agent_type") == "visualizer":
         max_tokens = (
             agent_config.get("agent_params").get("max_tokens", 30000)

@@ -3,7 +3,7 @@ import { ChevronDown, ChevronLeft, Copy, MoreHorizontal, ShieldCheck, Trash2 } f
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { parseApiError } from '@/lib/api-error';
 import { showError } from '@/lib/notifications';
@@ -25,6 +25,8 @@ export function GovernancePage(): JSX.Element {
   const deleteProgram = useDeleteGovernanceProgram();
   const [programDialogOpen, setProgramDialogOpen] = useState(false);
   const [programName, setProgramName] = useState('');
+  const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
+  const [scopeName, setScopeName] = useState('');
   const [initialScopeTab, setInitialScopeTab] = useState<TabKey>('overview');
   const createScope = useCreateGovernanceScope(selectedProgramId);
 
@@ -51,11 +53,21 @@ export function GovernancePage(): JSX.Element {
     setSelectedScopeId(scopeId);
   };
 
-  const handleCreateScope = () => {
+  const handleCreateScope = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     if (!selectedProgramId) return;
+    const name = scopeName.trim();
+    if (!name) return;
     createScope.mutate(
-      { name: t('scopes.newDefaultName'), type: 'municipality' },
-      { onSuccess: (scope) => handleSelectScope(scope.id, 'overview'), onError: (error) => showError(t('scopes.createError'), { description: parseApiError(error).message }) },
+      { name, type: 'municipality' },
+      {
+        onSuccess: (scope) => {
+          setScopeName('');
+          setScopeDialogOpen(false);
+          handleSelectScope(scope.id, 'overview');
+        },
+        onError: (error) => showError(t('scopes.createError'), { description: parseApiError(error).message }),
+      },
     );
   };
 
@@ -130,10 +142,10 @@ export function GovernancePage(): JSX.Element {
             <button type='button' onClick={() => setSelectedScopeId(null)} className='inline-flex w-fit items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-sm text-muted-foreground transition hover:text-foreground'>
               <ChevronLeft className='h-4 w-4' />{t('cockpit.back')}
             </button>
-            <GovernanceScopeLifecycleShell programId={selectedProgramId} initialTab={initialScopeTab} />
+            <GovernanceScopeLifecycleShell programId={selectedProgramId} initialTab={initialScopeTab} onActiveTabChange={setInitialScopeTab} />
           </>
         ) : (
-          <GovernanceCockpit programId={selectedProgramId} onSelectScope={handleSelectScope} onCreateScope={handleCreateScope} />
+          <GovernanceCockpit programId={selectedProgramId} onSelectScope={handleSelectScope} onCreateScope={() => setScopeDialogOpen(true)} />
         )}
       </div>
 
@@ -149,6 +161,24 @@ export function GovernancePage(): JSX.Element {
             </div>
             <DialogFooter>
               <Button type='submit' disabled={createProgram.isPending}>{t('programs.create')}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={scopeDialogOpen} onOpenChange={setScopeDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('scopes.create')}</DialogTitle>
+            <DialogDescription>{t('scopes.createDescription')}</DialogDescription>
+          </DialogHeader>
+          <form className='grid gap-3' onSubmit={handleCreateScope}>
+            <div className='grid gap-1.5'>
+              <label className='text-sm font-medium' htmlFor='governance-scope-name'>{t('scopes.nameLabel')}</label>
+              <Input id='governance-scope-name' name='scopeName' autoFocus value={scopeName} onChange={(event) => setScopeName(event.target.value)} placeholder={t('scopes.namePlaceholder')} />
+            </div>
+            <DialogFooter>
+              <Button type='submit' disabled={!scopeName.trim() || createScope.isPending}>{t('scopes.create')}</Button>
             </DialogFooter>
           </form>
         </DialogContent>

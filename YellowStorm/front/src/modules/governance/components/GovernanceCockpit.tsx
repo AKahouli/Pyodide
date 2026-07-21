@@ -74,8 +74,8 @@ export function GovernanceCockpit({ programId, onSelectScope, onCreateScope }: R
   const attentionItems = overviews.flatMap((overview) =>
     overview.readiness.blockers.filter((blocker) => isVisibleAttentionItem(blocker.key)).map((blocker) => {
       const tab = tabForAttentionItem(blocker.targetType, blocker.key);
-      const labelKey = actionLabelKeys[blocker.key] ?? actionLabelKeys.channel_ready;
-      const helpKey = actionHelpKeys[blocker.key] ?? actionHelpKeys.channel_ready;
+      const labelKey = actionLabelKeys[blocker.key];
+      const helpKey = actionHelpKeys[blocker.key];
       return {
         scopeId: overview.scope.id,
         scopeName: overview.scope.name,

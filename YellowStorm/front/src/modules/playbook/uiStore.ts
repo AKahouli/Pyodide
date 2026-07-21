@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 
-import type { PlaybookCopilotMode, PlaybookPageMode } from './types';
+import type { PlaybookCopilotMode, PlaybookIntentConstructionStatus, PlaybookPageMode } from './types';
 
 const EXEC_PANEL_KEY = 'ys_playbook_exec_panel';
 const WORKSPACE_EXPLORER_KEY = 'ys_workspace_explorer_open';
@@ -35,6 +35,13 @@ export interface PlaybookUiState {
   nodeEditorOpen: boolean;
   graphPanelOpen: boolean;
   pageMode: PlaybookPageMode;
+  assistantOperationId: string | null;
+  assistantOperationTarget: 'canonical' | 'advisor_preview' | null;
+  assistantPreviewStatus: 'idle' | 'streaming' | 'ready' | 'applying' | 'discarding';
+  assistantBaseDefinitionRevision: number | null;
+  assistantConstructionId: string | null;
+  assistantConstructionStatus: PlaybookIntentConstructionStatus;
+  assistantConstructionProgress: string;
 }
 
 export interface PlaybookUiActions {
@@ -50,6 +57,12 @@ export interface PlaybookUiActions {
   setSkillSidebarOpen: (open: boolean) => void;
   setNodeEditorOpen: (open: boolean) => void;
   setGraphPanelOpen: (open: boolean) => void;
+  setAssistantOperation: (operation: { id: string; target: 'canonical' | 'advisor_preview'; baseDefinitionRevision: number; status: 'streaming' | 'ready' }) => void;
+  setAssistantPreviewStatus: (status: PlaybookUiState['assistantPreviewStatus']) => void;
+  clearAssistantOperation: () => void;
+  setAssistantConstructionId: (id: string | null) => void;
+  setAssistantConstructionStatus: (status: PlaybookIntentConstructionStatus) => void;
+  setAssistantConstructionProgress: (progress: string) => void;
   reset: () => void;
 }
 
@@ -68,6 +81,13 @@ export const initialPlaybookUiState: PlaybookUiState = {
   nodeEditorOpen: false,
   graphPanelOpen: false,
   pageMode: 'design',
+  assistantOperationId: null,
+  assistantOperationTarget: null,
+  assistantPreviewStatus: 'idle',
+  assistantBaseDefinitionRevision: null,
+  assistantConstructionId: null,
+  assistantConstructionStatus: 'idle',
+  assistantConstructionProgress: '',
 };
 
 export const usePlaybookUiStore = create<PlaybookUiStore>()(
@@ -114,6 +134,22 @@ export const usePlaybookUiStore = create<PlaybookUiStore>()(
         ? { nodeEditorOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, skillSidebarOpen: false, executionPanelOpen: false }
         : { nodeEditorOpen: false }),
       setGraphPanelOpen: (open) => set({ graphPanelOpen: open }),
+      setAssistantOperation: (operation) => set({
+        assistantOperationId: operation.id,
+        assistantOperationTarget: operation.target,
+        assistantBaseDefinitionRevision: operation.baseDefinitionRevision,
+        assistantPreviewStatus: operation.status,
+      }),
+      setAssistantPreviewStatus: (status) => set({ assistantPreviewStatus: status }),
+      clearAssistantOperation: () => set({
+        assistantOperationId: null,
+        assistantOperationTarget: null,
+        assistantPreviewStatus: 'idle',
+        assistantBaseDefinitionRevision: null,
+      }),
+      setAssistantConstructionId: (id) => set({ assistantConstructionId: id }),
+      setAssistantConstructionStatus: (status) => set({ assistantConstructionStatus: status }),
+      setAssistantConstructionProgress: (progress) => set({ assistantConstructionProgress: progress }),
       reset: () => set({
         ...initialPlaybookUiState,
         executionPanelOpen: readBooleanPreference(EXEC_PANEL_KEY),

@@ -1913,6 +1913,9 @@ class ChatbotServicer(
             params = component_data.get("params")
             if params:
                 tool_info.params = params
+            result_json = component_data.get("result_json")
+            if result_json:
+                tool_info.result_json = result_json
             component_kwargs["tool_info"] = tool_info
         elif component_type == "web_preview":
             component_kwargs["web_preview"] = chatbot_pb2.WebPreviewComponent(

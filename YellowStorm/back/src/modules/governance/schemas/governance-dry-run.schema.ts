@@ -26,6 +26,9 @@ export class GovernanceDryRun extends Document {
   @Prop({ type: String, enum: ['running', 'passed', 'failed', 'needs_review'], default: 'running', index: true })
   status!: 'running' | 'passed' | 'failed' | 'needs_review';
 
+  @Prop({ type: String, enum: ['conversation', 'manual'], default: 'conversation', index: true })
+  executionMode!: 'conversation' | 'manual';
+
   @Prop({ type: [Object], default: [] })
   testCases!: Array<Record<string, unknown>>;
 

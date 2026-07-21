@@ -30,6 +30,9 @@ export class GovernanceDeployment extends Document {
   @Prop({ type: Types.ObjectId, ref: 'GovernanceDeploymentRevision' })
   currentPublishedRevisionId?: Types.ObjectId;
 
+  @Prop({ type: Number, default: 0 })
+  revisionSequence!: number;
+
   @Prop({ type: Object, default: {} })
   channels!: GovernanceChannels;
 

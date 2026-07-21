@@ -142,16 +142,15 @@ class TestAgentRunner:
         mock_session_helper.init_session = AsyncMock(side_effect=Exception("Test error"))
         mock_queue = AsyncMock()
 
-        result = await runner.run_agent_tool(
-            agent=mock_agent,
-            message="Test message",
-            session_helper=mock_session_helper,
-            user_id="test_user",
-            q=mock_queue,
-            agent_id="agent_123"
-        )
-
-        assert result == (None, [], {}, [])
+        with pytest.raises(TypeError):
+            await runner.run_agent_tool(
+                agent=mock_agent,
+                message="Test message",
+                session_helper=mock_session_helper,
+                user_id="test_user",
+                q=mock_queue,
+                agent_id="agent_123"
+            )
 
     @pytest.mark.asyncio
     async def test_run_standard_agent_success(self):
@@ -413,7 +412,11 @@ class TestAgentRunner:
                 {
                     "agent_id": "agent_123",
                     "component_type": "tool_info",
-                    "component_data": {"title": "test_function", "status": "completed"},
+                    "component_data": {
+                        "title": "test_function",
+                        "status": "completed",
+                        "result_json": "{}",
+                    },
                     "message_id": "session_123",
                     "component_id": "tool-call-1",
                     "action": "update",
@@ -557,9 +560,8 @@ class TestAgentRunner:
             )
 
         assert result == "Final response text"
-        # Sources are no longer sent in _handle_final_response (logic is commented out);
-        # they are sent as citation components during streaming instead.
-        mock_queue.put.assert_not_called()
+        # Sources are sent dynamically; the terminal-only model answer is emitted here.
+        mock_queue.put.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_handle_final_response_report_writer(self):
@@ -602,9 +604,8 @@ class TestAgentRunner:
             )
 
         assert result == "Report content"
-        # Sources are no longer sent in _handle_final_response (logic is commented out);
-        # the ReportWriterAgent empty-sources event is no longer emitted here.
-        mock_queue.put.assert_not_called()
+        # The terminal-only model answer is emitted even though no sources are present.
+        mock_queue.put.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_handle_final_response_empty_parts(self):
@@ -639,6 +640,62 @@ class TestAgentRunner:
             )
 
         assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_handle_final_response_excludes_thought_parts(self):
+        runner = AgentRunner(MagicMock(), MagicMock(), MagicMock(), MagicMock())
+        mock_event = MagicMock()
+        mock_event.content.parts = [
+            types.Part(text="Internal reasoning. ", thought=True),
+            types.Part(text="Visible "),
+            types.Part(text="answer"),
+        ]
+
+        with patch.object(
+            runner,
+            '_replace_diagram_references_during_streaming',
+            new_callable=AsyncMock,
+            return_value="Visible answer",
+        ) as mock_replace:
+            result = await runner._handle_final_response(
+                event=mock_event,
+                agent_id="agent_123",
+                agent_name="TestAgent",
+                toolkit=None,
+                task_order="1",
+                q=None,
+                session_id="session_123",
+            )
+
+        assert result == "Visible answer"
+        mock_replace.assert_awaited_once_with("Visible answer", "session_123")
+
+    @pytest.mark.asyncio
+    async def test_handle_final_response_does_not_reemit_streamed_text(self):
+        runner = AgentRunner(MagicMock(), MagicMock(), MagicMock(), MagicMock())
+        mock_event = MagicMock()
+        mock_event.content.parts = [types.Part(text="Visible answer")]
+        mock_queue = AsyncMock()
+
+        with patch.object(
+            runner,
+            '_replace_diagram_references_during_streaming',
+            new_callable=AsyncMock,
+            return_value="Visible answer",
+        ):
+            result = await runner._handle_final_response(
+                event=mock_event,
+                agent_id="agent_123",
+                agent_name="TestAgent",
+                toolkit=None,
+                task_order="1",
+                q=mock_queue,
+                session_id="session_123",
+                streamed_text="Visible answer",
+            )
+
+        assert result == "Visible answer"
+        mock_queue.put.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_handle_structured_tool_response_streams_sources_component_for_any_tool(self):
@@ -1131,24 +1188,21 @@ class TestAgentRunner:
         mock_queue = AsyncMock()
         mock_content = types.Content(role="user", parts=[types.Part(text="test")])
 
-        result = await runner._run_standard_agent(
-            agent=mock_agent,
-            agent_name="TestAgent",
-            agent_type="agent",
-            session_helper=mock_session_helper,
-            user_id="test_user",
-            session_id="session_123",
-            content=mock_content,
-            q=mock_queue,
-            task_order="1",
-            toolkit=None,
-            mcp_tools_used=[],
-            agent_id="agent_123"
-        )
-
-        assert result[0] is None
-        assert result[1] == []
-        assert isinstance(result[2], dict)
+        with pytest.raises(TypeError):
+            await runner._run_standard_agent(
+                agent=mock_agent,
+                agent_name="TestAgent",
+                agent_type="agent",
+                session_helper=mock_session_helper,
+                user_id="test_user",
+                session_id="session_123",
+                content=mock_content,
+                q=mock_queue,
+                task_order="1",
+                toolkit=None,
+                mcp_tools_used=[],
+                agent_id="agent_123"
+            )
 
     @pytest.mark.asyncio
     async def test_run_html_agent_exception(self):

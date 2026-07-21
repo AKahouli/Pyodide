@@ -118,21 +118,13 @@ export interface PlaybookIntentBlueprintBinding {
   targetRef: string;
   targetIteratorRef?: string | null;
   targetPort: string;
-  sourceKind: 'node-output' | 'constant';
+  sourceKind: 'node-output' | 'constant' | 'state';
   sourceRef?: string | null;
   sourceIteratorRef?: string | null;
   sourcePort?: string | null;
   iteration?: 'current' | 'previous';
-  constantValue?: {
-    kind: 'workspace' | 'document';
-    id: string;
-    workspaceId: string;
-    documentId?: string;
-    workspaceName?: string;
-    path?: string;
-    mimeType?: string;
-    label?: string;
-  };
+  statePath?: string;
+  constantValue?: unknown;
 }
 
 export interface PlaybookIntentBlueprint {

@@ -133,6 +133,26 @@ describe('useAutosave', () => {
     expect(storeState.saveCurrentPlaybook).toHaveBeenCalledTimes(1);
   });
 
+  it('does not autosave streamed changes while paused and resumes afterwards', () => {
+    storeState.isDirty = true;
+    storeState.dirtyVersion = 1;
+    const { rerender } = renderHook(
+      ({ paused }) => useAutosave({ paused }),
+      { initialProps: { paused: true } },
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(storeState.saveCurrentPlaybook).not.toHaveBeenCalled();
+
+    rerender({ paused: false });
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(storeState.saveCurrentPlaybook).toHaveBeenCalledTimes(1);
+  });
+
   it('marks a trailing autosave when edits happen during an in-flight save', () => {
     const { rerender } = renderHook(() => useAutosave());
     storeState.isDirty = true;
@@ -163,6 +183,11 @@ describe('useAutosave', () => {
 
     expect(storeState.saveCurrentPlaybook).not.toHaveBeenCalled();
     expect(result.current.hasIncompleteBindings).toBe(true);
+    expect(result.current.validationIssues).toEqual([expect.objectContaining({
+      taskId: 'target-1',
+      portId: 'prompt',
+      reason: 'missing_node_output',
+    })]);
   });
 
   it('still autosaves while bindings are incomplete', () => {
@@ -226,6 +251,11 @@ describe('useAutosave', () => {
     expect(storeState.saveCurrentPlaybook).toHaveBeenCalledTimes(1);
     expect(storeState.saveCurrentPlaybook).toHaveBeenCalledWith({ reason: 'autosave' });
     expect(result.current.hasUnboundRequiredPorts).toBe(true);
+    expect(result.current.validationIssues).toEqual([expect.objectContaining({
+      taskId: 'task-1',
+      portId: 'prompt',
+      reason: 'missing_required_binding',
+    })]);
   });
 
   it('reports autosave conflicts to the autosave actor', async () => {

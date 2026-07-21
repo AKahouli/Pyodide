@@ -174,6 +174,7 @@ export const API_ENDPOINTS = {
   conversations: {
     list: '/conversations',
     create: '/conversations',
+    createGoverned: '/conversations/governed',
     byId: (id: string) => `/conversations/${id}`,
     join: (id: string) => `/conversations/${id}/join`,
     taggedAgents: (id: string) => `/conversations/${id}/tagged-agents`,
@@ -207,11 +208,13 @@ export const API_ENDPOINTS = {
     summary: '/experimental/analytics/summary',
   },
   governance: {
+    availableScopes: '/governance/me/available-scopes',
     programs: '/governance/programs',
     program: (programId: string) => `/governance/programs/${programId}`,
     scopes: (programId: string) => `/governance/programs/${programId}/scopes`,
     scope: (programId: string, scopeId: string) => `/governance/programs/${programId}/scopes/${scopeId}`,
     scopeOverview: (programId: string, scopeId: string) => `/governance/programs/${programId}/scopes/${scopeId}/overview`,
+    scopeAudience: (programId: string, scopeId: string) => `/governance/programs/${programId}/scopes/${scopeId}/audience`,
     sources: (programId: string) => `/governance/programs/${programId}/sources`,
     source: (programId: string, sourceId: string) => `/governance/programs/${programId}/sources/${sourceId}`,
     sourceVersions: (programId: string, sourceId: string) => `/governance/programs/${programId}/sources/${sourceId}/versions`,
@@ -440,13 +443,18 @@ export const API_ENDPOINTS = {
     deleteReplay: (id: string, taskId: string, replayId: string) => `/playbooks/${id}/tasks/${taskId}/replays/${replayId}`,
     grabOutputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     outputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
-    intent: (id: string) => `/playbooks/${id}/intent`,
     intentDesign: (id: string) => `/playbooks/${id}/intent-design`,
+    assistantTurns: (id: string) => `/playbooks/${id}/assistant/turns`,
     intentTraces: (id: string) => `/playbooks/${id}/intent-traces`,
     intentConstructions: (id: string) => `/playbooks/${id}/intent-constructions`,
+    intentConstruction: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}`,
     intentConstructionStream: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/stream`,
+    intentConstructionCommit: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/commit`,
+    intentConstructionApply: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/apply`,
+    intentConstructionDiscard: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/discard`,
+    intentConstructionRevert: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/revert`,
     cancelIntentConstruction: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}/cancel`,
-    advisorRemediationPreview: (id: string) => `/playbooks/${id}/advisor-remediations/preview`,
+    advisorRemediationConstructions: (id: string) => `/playbooks/${id}/advisor-remediation-constructions`,
     advisorScriptPreview: (id: string) => `/playbooks/${id}/advisor-remediations/script-preview`,
     advisorScriptApply: (id: string) => `/playbooks/${id}/advisor-remediations/script-apply`,
     nodeAdvisor: (id: string, taskId: string) => `/playbooks/${id}/nodes/${taskId}/advisor`,
@@ -608,6 +616,15 @@ export const API_ENDPOINTS = {
     streamPause: (id: string) => `/worky/streams/${id}/pause`,
     streamResume: (id: string) => `/worky/streams/${id}/resume`,
     streamStop: (id: string) => `/worky/streams/${id}`,
+    // Cancels the running orchestrator turn (StopSession RPC), vs streamStop
+    // which tears down the whole stream lifecycle.
+    streamStopTurn: (id: string) => `/worky/streams/${id}/stop`,
+    // Pauses the running orchestrator turn (PauseSession RPC); continue via a
+    // new message. ':id/pause' is the legacy stream pause, hence '-turn'.
+    streamPauseTurn: (id: string) => `/worky/streams/${id}/pause-turn`,
+    // Resumes a paused orchestrator session (continue via RunTask). ':id/resume'
+    // is the legacy stream resume, hence '-turn'.
+    streamResumeTurn: (id: string) => `/worky/streams/${id}/resume-turn`,
     streamDelete: (id: string) => `/worky/streams/${id}/delete`,
     respondInteraction: (id: string) => `/worky/interactions/${id}/respond`,
     taskById: (id: string) => `/worky/tasks/${id}`,

@@ -1,8 +1,48 @@
-import { describe, expect, it } from 'vitest';
-import { buildIntentEdgeOptions, remapRouterConditionSourceNodes, resolveIntentNodeSemantics, shouldAutoLayoutAfterConstruction } from './PlaybookCanvasPage';
+import { describe, expect, it, vi } from 'vitest';
+import { buildIntentEdgeOptions, hydrateAssistantOperationHandoff, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldUsePlaybookAgentAssistant } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
+
+describe('shouldBlockCanvasMutationShortcut', () => {
+  it('blocks undo, redo, cut, and paste shortcuts during direct construction', () => {
+    for (const key of ['z', 'y', 'x', 'v']) {
+      expect(shouldBlockCanvasMutationShortcut({ key, ctrlKey: true, metaKey: false }, true)).toBe(true);
+    }
+    expect(shouldBlockCanvasMutationShortcut({ key: 'c', ctrlKey: true, metaKey: false }, true)).toBe(false);
+    expect(shouldBlockCanvasMutationShortcut({ key: 'z', ctrlKey: true, metaKey: false }, false)).toBe(false);
+  });
+});
+
+describe('shouldUsePlaybookAgentAssistant', () => {
+  it('uses the dedicated agent for flagged text turns only', () => {
+    expect(shouldUsePlaybookAgentAssistant(true)).toBe(true);
+    expect(shouldUsePlaybookAgentAssistant(false)).toBe(false);
+    expect(shouldUsePlaybookAgentAssistant(true, [{ mediaType: 'image/png', data: 'encoded' }])).toBe(false);
+  });
+});
+
+describe('hydrateAssistantOperationHandoff', () => {
+  it('surfaces status hydration failures without consuming the operation', async () => {
+    const consume = vi.fn();
+    await expect(hydrateAssistantOperationHandoff(
+      'playbook-1',
+      'operation-1',
+      vi.fn().mockRejectedValue(new Error('Operation unavailable')),
+      consume,
+    )).rejects.toThrow('Operation unavailable');
+    expect(consume).not.toHaveBeenCalled();
+  });
+
+  it('surfaces stream failures so the handoff URL can be retained', async () => {
+    await expect(hydrateAssistantOperationHandoff(
+      'playbook-1',
+      'operation-1',
+      vi.fn().mockResolvedValue({ operationId: 'operation-1', playbookId: 'playbook-1', baseDefinitionRevision: 4 }),
+      vi.fn().mockResolvedValue({ status: 'failed', error: 'Stream failed' }),
+    )).rejects.toThrow('Stream failed');
+  });
+});
 
 describe('buildCanvasJudgeStateMap', () => {
   it('prefers an evaluated iteration over a stale evaluating iteration for the same task', () => {
@@ -224,7 +264,7 @@ describe('resolveIntentNodeSemantics', () => {
 });
 
 describe('remapRouterConditionSourceNodes', () => {
-  it('rewrites iterator child router condition source refs to generated node ids', () => {
+  it('rewrites blueprint router condition source refs to generated node ids', () => {
     const task = {
       id: 'router-id',
       routerConfig: {
@@ -241,5 +281,21 @@ describe('remapRouterConditionSourceNodes', () => {
 
     expect(remapped.routerConfig.conditions[0].sourceNode).toBe('intent-node-extract');
     expect(remapped.routerConfig.conditions[1].sourceNode).toBe('external-node');
+  });
+});
+
+describe('resolveDiagnosticNodeId', () => {
+  it('resolves a generated node ref using the construction application key', () => {
+    const task = { id: 'intent-node-prepare', title: 'Prepare report' } as any;
+    const diagnostic = {
+      severity: 'warning',
+      stage: 'repair',
+      code: 'repair',
+      message: 'repair',
+      reviewTarget: { kind: 'node', nodeRef: 'prepare_report', nodeLabel: 'Prepare report' },
+    } as any;
+    const expectedId = resolveDiagnosticNodeId(diagnostic, null, [task]);
+
+    expect(expectedId).toBe('intent-node-prepare');
   });
 });

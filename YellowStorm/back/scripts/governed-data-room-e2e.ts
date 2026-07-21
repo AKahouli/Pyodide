@@ -42,6 +42,8 @@ async function run(): Promise<void> {
       sources as never,
       versions as never,
       new GovernanceSourceFromWorkspaceFactory(),
+      { extract: async () => undefined } as never,
+      { getForWorkspace: async () => undefined } as never,
     );
     const indexingAttemptId = `${runId}:attempt-1`;
     const payload = { workspaceId: workspaceId.toString(), documentId: document._id.toString(), documentType: 'doc' as const, originalName: document.originalName, mimeType: document.mimeType, contentHash: document.contentHash, documentStatus: document.status, indexingStatus: document.indexingStatus, indexingAttemptId };

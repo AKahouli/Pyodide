@@ -736,12 +736,19 @@ export class AgentService {
       managerName: selectedManager?.name,
     });
 
+    // A chat-level model selection is the default only for untagged mono-agent
+    // requests. Explicitly routed agents retain their configured model.
+    const effectiveModelIdForAgent = (agent: IAgentForStream): string =>
+      pingedAgents.length === 0
+        ? fallbackModelId || agent.model || ''
+        : agent.model || fallbackModelId || '';
+
     // Batch-resolve prompts: collect all (agentTypeId, modelId) pairs
     const promptPairs = filteredAgents
       .filter((a) => !a.ignorePrePrompt && a.agentTypeId)
       .map((a) => ({
         agentTypeId: a.agentTypeId,
-        modelId: a.model || fallbackModelId || '',
+        modelId: effectiveModelIdForAgent(a),
       }));
 
     // Single batch query to AgentTypeService
@@ -758,7 +765,7 @@ export class AgentService {
     // Batch-fetch all unique model IDs to resolve full LiteLLM model identifiers
     const allModelIds = [...new Set(
       filteredAgents
-        .map((a) => a.model || fallbackModelId)
+        .map(effectiveModelIdForAgent)
         .filter(Boolean) as string[],
     )];
     const modelMap = new Map<string, { model: string; omitTemperature: boolean }>();
@@ -821,7 +828,7 @@ export class AgentService {
         toolNames: agentTools.map((t) => t.name),
       });
 
-      const effectiveModelId = agent.model || fallbackModelId || '';
+      const effectiveModelId = effectiveModelIdForAgent(agent);
       const resolvedModel = modelMap.get(effectiveModelId);
       const proxyModel = resolvedModel?.model || effectiveModelId;
       const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
@@ -1104,6 +1111,20 @@ export class AgentService {
     });
 
     return grpcAgents;
+  }
+
+  /** Trusted governed-runtime path: exact published roster with pinned knowledge. */
+  async buildGovernedAgentsForStream(userId: string, agentIds: string[], workspaceIds: string[], fallbackModelId?: string): Promise<IGrpcAgent[]> {
+    const requestedIds = [...new Set(agentIds)];
+    const agents = await this.buildGrpcAgentsForPlaybook(userId, requestedIds, fallbackModelId);
+    const builtIds = new Set(agents.map((agent) => agent.id));
+    if (requestedIds.some((id) => !builtIds.has(id))) {
+      throw new NotFoundException(ErrorCode.AGENT_NOT_FOUND, 'One or more published assistants are unavailable');
+    }
+    return agents.map((agent) => ({
+      ...agent,
+      brain_context: workspaceIds.map((workspaceId) => ({ workspace_id: workspaceId, workspace_documents: [] })),
+    }));
   }
 
   async buildGrpcConnectorRuntimeForPlaybook(
@@ -1563,6 +1584,15 @@ export class AgentService {
     if (!agent) {
       throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected decision-flow agent must be an active default agent');
     }
+  }
+
+  async findActiveDefaultAgentIdBySlug(slug: string): Promise<string | null> {
+    const agent = await this.agentModel
+      .findOne({ slug, isDefault: true, isActive: true })
+      .select('_id')
+      .lean()
+      .exec();
+    return agent?._id.toString() ?? null;
   }
 
   private toResponse(

@@ -2,25 +2,16 @@ import { AlertTriangle, Check, Circle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
+import { governedConversationFeatures } from '@/config/governedConversationFeatures';
 import type { GovernanceScopeOverview } from '@/modules/governance';
 import { useGovernanceCheckLabel } from '../useGovernanceCheckLabel';
 import { ReadinessRing } from './ReadinessRing';
-import type { TabKey } from './GovernanceScopeWorkspace';
-
-const checkTabKeys: Record<string, TabKey> = {
-  scope_active: 'overview',
-  agents_mapped: 'agents',
-  knowledge_mapped: 'knowledge',
-  ownership_assigned: 'ownership',
-  guardrails_reviewed: 'guardrails',
-  draft_revision: 'testPublish',
-  dry_run_passed: 'testPublish',
-  channel_ready: 'agents',
-};
+import { findNextReadinessCheck, sortReadinessChecks, tabForReadinessCheck, type TabKey } from './scope-readiness';
 
 const actionLabelKeys: Partial<Record<string, string>> = {
   agents_mapped: 'scopeShell.readiness.actions.mapAgents',
   knowledge_mapped: 'scopeShell.readiness.actions.mapKnowledge',
+  audience_configured: 'scopeShell.readiness.actions.configureAudience',
   ownership_assigned: 'scopeShell.readiness.actions.assignOwnership',
   guardrails_reviewed: 'scopeShell.readiness.actions.reviewGuardrails',
   draft_revision: 'scopeShell.readiness.actions.createDraft',
@@ -32,6 +23,7 @@ const actionLabelKeys: Partial<Record<string, string>> = {
 const actionHelpKeys: Partial<Record<string, string>> = {
   agents_mapped: 'scopeShell.readiness.help.mapAgents',
   knowledge_mapped: 'scopeShell.readiness.help.mapKnowledge',
+  audience_configured: 'scopeShell.readiness.help.configureAudience',
   ownership_assigned: 'scopeShell.readiness.help.assignOwnership',
   guardrails_reviewed: 'scopeShell.readiness.help.reviewGuardrails',
   draft_revision: 'scopeShell.readiness.help.createDraft',
@@ -41,13 +33,11 @@ const actionHelpKeys: Partial<Record<string, string>> = {
 };
 
 function isUserVisibleCheck(key: string): boolean {
-  return !key.startsWith('source_') && !key.startsWith('deployment_') && key !== 'draft_revision_publishable';
+  return !key.startsWith('source_') && !key.startsWith('deployment_') && key !== 'draft_revision_publishable' && (governedConversationFeatures.conversationsEnabled || key !== 'audience_configured');
 }
 
 function tabForCheck(key: string): TabKey {
-  if (key.startsWith('source_')) return 'knowledge';
-  if (key.startsWith('channel_') || /^[^:]+:[^:]+_ready$/.test(key)) return 'agents';
-  return checkTabKeys[key] ?? 'overview';
+  return tabForReadinessCheck({ key, targetType: key.startsWith('source_') ? 'source' : key.startsWith('channel_') || /^[^:]+:[^:]+_ready$/.test(key) ? 'channel' : undefined });
 }
 
 interface Props {
@@ -67,13 +57,13 @@ export function GovernanceReadinessPanel({ overview, onNavigateTab }: Readonly<P
     );
   }
 
-  const visibleBlockers = overview.readiness.blockers.filter((check) => isUserVisibleCheck(check.key));
-  const visibleWarnings = overview.readiness.warnings.filter((check) => isUserVisibleCheck(check.key));
-  const nextAction = visibleBlockers[0] ?? visibleWarnings[0];
-  const nextActionLabel = nextAction ? t((actionLabelKeys[nextAction.key] ?? actionLabelKeys.channel_ready ?? 'scopeShell.readiness.actions.configureChannel') as never) : undefined;
-  const nextActionHelp = nextAction ? t((actionHelpKeys[nextAction.key] ?? actionHelpKeys.channel_ready ?? 'scopeShell.readiness.help.configureChannel') as never) : undefined;
+  const visibleBlockers = sortReadinessChecks(overview.readiness.blockers.filter((check) => isUserVisibleCheck(check.key)));
+  const visibleWarnings = sortReadinessChecks(overview.readiness.warnings.filter((check) => isUserVisibleCheck(check.key)));
+  const checks = sortReadinessChecks(overview.readiness.checks.filter((check) => isUserVisibleCheck(check.key)));
+  const nextAction = findNextReadinessCheck(checks);
+  const nextActionLabel = nextAction ? (actionLabelKeys[nextAction.key] ? t(actionLabelKeys[nextAction.key] as never) : translateBlocker(nextAction.key, nextAction.label)) : undefined;
+  const nextActionHelp = nextAction ? (actionHelpKeys[nextAction.key] ? t(actionHelpKeys[nextAction.key] as never) : translateBlocker(nextAction.key, nextAction.label)) : undefined;
   const nextActionTab = nextAction ? tabForCheck(nextAction.key) : undefined;
-  const checks = overview.readiness.checks.filter((check) => isUserVisibleCheck(check.key));
   const firstPendingIndex = checks.findIndex((check) => check.status !== 'passed');
   const visibleStatus = visibleBlockers.length ? 'blocked' : visibleWarnings.length ? 'warning' : 'ready';
 

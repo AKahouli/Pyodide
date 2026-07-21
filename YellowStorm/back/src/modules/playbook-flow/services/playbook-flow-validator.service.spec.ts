@@ -375,6 +375,16 @@ describe('PlaybookFlowValidatorService', () => {
     }).toThrow('Required port target-node.prompt has no data binding');
   });
 
+  it('limits required port validation to the selected node scope', () => {
+    expect(() => {
+      service.validate(buildNodes() as any, [] as any, [] as any, { requiredBindingNodeIds: ['source-node'] });
+    }).not.toThrow();
+
+    expect(() => {
+      service.validate(buildNodes() as any, [] as any, [] as any, { requiredBindingNodeIds: ['target-node'] });
+    }).toThrow('Required port target-node.prompt has no data binding');
+  });
+
   it('accepts unbound required ports when draft autosave validation allows them', () => {
     expect(() => {
       service.validate(buildNodes() as any, [] as any, [] as any, { allowUnboundRequiredPorts: true });

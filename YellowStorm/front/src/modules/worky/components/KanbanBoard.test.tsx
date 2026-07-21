@@ -50,6 +50,7 @@ function TestProviders({ children }: { children: React.ReactNode }): JSX.Element
 
 const baseTask = {
   streamId: 'stream-1',
+  externalId: null,
   description: '',
   planningStatus: 'confirmed' as const,
   executionState: 'not_started',
@@ -58,7 +59,11 @@ const baseTask = {
   assigneeId: null,
   actionCategory: 'internal_analysis' as const,
   dependsOn: [],
+  wave: null,
+  dependsOnStepIds: [],
   blockerReason: null,
+  result: null,
+  blockedReason: null,
   theoreticalDeadlineAt: null,
   startedAt: null,
   completedAt: null,
@@ -86,6 +91,7 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
         ready: [{ ...baseTask, id: 'task-1', title: 'First task', lane: 'ready' }],
         running: [],
         review: [],
+        failed: [],
         blocked: [],
         done: [],
       },
@@ -142,6 +148,7 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
         ready: [{ ...baseTask, id: 'task-1', title: 'First task', lane: 'ready' }],
         running: [],
         review: [],
+        failed: [],
         blocked: [],
         done: [],
       },
@@ -164,8 +171,9 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
     const runningLane = screen.getByTestId('worky-lane-running');
     expect(runningLane.getAttribute('data-empty')).toBe('true');
 
-    const readyLane = screen.getByTestId('worky-lane-ready');
-    expect(readyLane.getAttribute('data-empty')).toBe('false');
+    // 'ready' tasks are aggregated into the orchestrator 'pending' column.
+    const pendingLane = screen.getByTestId('worky-lane-pending');
+    expect(pendingLane.getAttribute('data-empty')).toBe('false');
   });
 
   it('moves a dragged task card into any visible lane', async () => {
@@ -176,6 +184,7 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
         ready: [{ ...baseTask, id: 'task-1', title: 'Move me', lane: 'ready' }],
         running: [],
         review: [],
+        failed: [],
         blocked: [],
         done: [],
       },
@@ -197,8 +206,9 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
 
     const dataTransfer = createDataTransfer();
     fireEvent.dragStart(screen.getByText('Move me').closest('button')!, { dataTransfer });
-    fireEvent.dragOver(screen.getByTestId('worky-lane-done'), { dataTransfer });
-    fireEvent.drop(screen.getByTestId('worky-lane-done'), { dataTransfer });
+    // Drop onto the orchestrator 'completed' column → legacy 'done' lane move.
+    fireEvent.dragOver(screen.getByTestId('worky-lane-completed'), { dataTransfer });
+    fireEvent.drop(screen.getByTestId('worky-lane-completed'), { dataTransfer });
 
     await waitFor(() => {
       expect(moveTask).toHaveBeenCalledWith({

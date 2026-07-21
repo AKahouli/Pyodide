@@ -95,7 +95,7 @@ export class GovernanceSourceController {
     @Param('programId') programId: string,
     @Body() dto: CreateGovernanceSourceDto,
   ): Promise<GovernanceSourceResponse> {
-    return this.sourceService.create(user._id.toString(), programId, dto);
+    return this.sourceService.create(user._id.toString(), programId, dto, user.email);
   }
 
   @Get(':sourceId')
@@ -119,7 +119,7 @@ export class GovernanceSourceController {
     @Param('sourceId') sourceId: string,
     @Body() dto: UpdateGovernanceSourceDto,
   ): Promise<GovernanceSourceResponse> {
-    return this.sourceService.update(user._id.toString(), programId, sourceId, dto);
+    return this.sourceService.update(user._id.toString(), programId, sourceId, dto, user.email);
   }
 
   @Delete(':sourceId')
@@ -131,19 +131,19 @@ export class GovernanceSourceController {
     @Param('programId') programId: string,
     @Param('sourceId') sourceId: string,
   ): Promise<void> {
-    await this.sourceService.archive(user._id.toString(), programId, sourceId);
+    await this.sourceService.archive(user._id.toString(), programId, sourceId, undefined, user.email);
   }
 
   @Post(':sourceId/archive')
   @RequirePermissions([Permissions.GOVERNANCE_SOURCES_EDIT, Permissions.GOVERNANCE_ALL], 'any')
   async archiveSource(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('sourceId') sourceId: string, @Body() dto: ArchiveGovernanceSourceDto): Promise<GovernanceSourceResponse> {
-    return this.sourceService.archive(user._id.toString(), programId, sourceId, dto.reason);
+    return this.sourceService.archive(user._id.toString(), programId, sourceId, dto.reason, user.email);
   }
 
   @Post(':sourceId/restore')
   @RequirePermissions([Permissions.GOVERNANCE_SOURCES_EDIT, Permissions.GOVERNANCE_ALL], 'any')
   async restoreSource(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('sourceId') sourceId: string): Promise<GovernanceSourceResponse> {
-    return this.sourceService.restore(user._id.toString(), programId, sourceId);
+    return this.sourceService.restore(user._id.toString(), programId, sourceId, user.email);
   }
 
   @Delete(':sourceId/permanent')

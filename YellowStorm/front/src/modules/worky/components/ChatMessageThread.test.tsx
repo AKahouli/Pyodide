@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { vi } from 'vitest';
 import { LocalizationProvider } from '@/modules/localization';
 import { ChatMessageThread } from './ChatMessageThread';
-import { useWorkyMessages, useWorkyAssistantText, useWorkyStore } from '../store';
+import { useWorkyMessages, useWorkyStore } from '../store';
 
 vi.mock('./ChatClarificationCard', () => ({
   ChatClarificationCard: ({
@@ -16,7 +16,6 @@ vi.mock('./ChatClarificationCard', () => ({
 
 vi.mock('../store', () => ({
   useWorkyMessages: vi.fn(),
-  useWorkyAssistantText: vi.fn(),
   useWorkyStore: vi.fn(),
 }));
 
@@ -39,7 +38,6 @@ function TestProviders({ children }: { children: ReactNode }): JSX.Element {
 }
 
 const mockedUseMessages = useWorkyMessages as unknown as ReturnType<typeof vi.fn>;
-const mockedUseAssistantText = useWorkyAssistantText as unknown as ReturnType<typeof vi.fn>;
 const mockedUseStore = useWorkyStore as unknown as ReturnType<typeof vi.fn>;
 
 describe('ChatMessageThread', () => {
@@ -53,7 +51,6 @@ describe('ChatMessageThread', () => {
 
   it('renders the empty state when no messages are present', () => {
     mockedUseMessages.mockReturnValue([]);
-    mockedUseAssistantText.mockReturnValue('');
 
     render(
       <TestProviders>
@@ -82,7 +79,6 @@ describe('ChatMessageThread', () => {
         createdAt: '2026-06-21T10:31:00.000Z',
       },
     ]);
-    mockedUseAssistantText.mockReturnValue('');
 
     render(
       <TestProviders>
@@ -107,7 +103,7 @@ describe('ChatMessageThread', () => {
     expect(screen.getByText('12:31')).toBeInTheDocument();
   });
 
-  it('appends a streaming bullet at the end of the list when the manager is mid-turn', () => {
+  it('renders the manager reply in full from persisted messages once message.appended arrives, with no partial-token streaming bubble', () => {
     mockedUseMessages.mockReturnValue([
       {
         id: 'm1',
@@ -116,8 +112,17 @@ describe('ChatMessageThread', () => {
         planDeltaRef: null,
         createdAt: '2026-06-21T10:30:00.000Z',
       },
+      {
+        id: 'm2',
+        role: 'manager',
+        content: 'Here is the complete reply, delivered as one row.',
+        planDeltaRef: null,
+        createdAt: '2026-06-21T10:30:05.000Z',
+      },
     ]);
-    mockedUseAssistantText.mockReturnValue('Drafting the next step…');
+    // `streaming` may still be true here (e.g. set optimistically by the
+    // composer) — it must not resurrect a partial-token bubble now that
+    // manager replies arrive as complete `message.appended` rows.
     mockedUseStore.mockImplementation(
       (selector: (s: { streaming: boolean; pendingClarifications: [] }) => unknown) =>
         selector({ streaming: true, pendingClarifications: [] }),
@@ -129,8 +134,11 @@ describe('ChatMessageThread', () => {
       </TestProviders>,
     );
 
-    expect(screen.getByTestId('worky-message-streaming')).toBeInTheDocument();
-    expect(screen.getByText('Drafting the next step…')).toBeInTheDocument();
+    expect(screen.getByTestId('worky-message-manager')).toBeInTheDocument();
+    expect(
+      screen.getByText('Here is the complete reply, delivered as one row.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId('worky-message-streaming')).not.toBeInTheDocument();
   });
 
   it('renders clarifications inline after the owner message that triggered them', () => {
@@ -150,7 +158,6 @@ describe('ChatMessageThread', () => {
         createdAt: '2026-06-21T10:05:00.000Z',
       },
     ]);
-    mockedUseAssistantText.mockReturnValue('');
     const pendingClarifications = [
       {
         id: 'c1',

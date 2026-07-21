@@ -500,8 +500,8 @@ export class PlaybookIntentBlueprintParserService {
       seenKeys.add(key);
 
       if (sourceKind === 'constant') {
-        const constantValue = this.parseConstantValue(raw.constantValue, diagnostics, key);
-        if (!constantValue) continue;
+        const constantValue = this.parseConstantValue(raw.constantValue, targetPorts.get(targetPort)?.artifactKind, diagnostics, key);
+        if (constantValue === undefined) continue;
         accepted.push({
           targetRef,
           ...(targetIteratorRef ? { targetIteratorRef } : {}),
@@ -525,6 +525,26 @@ export class PlaybookIntentBlueprintParserService {
       }
       const sourceCatalogRef = sourceIteratorRef ? this.scopedRef(sourceIteratorRef, sourceRef) : sourceRef;
       const sourcePorts = outputsByRef.get(sourceCatalogRef);
+      const isIteratorCurrentItem = sourceRef === targetIteratorRef
+        && sourcePort === 'items'
+        && iteratorStepsByRef.get(sourceRef)?.has(targetRef) === true
+        && inputsByRef.get(sourceRef)?.has(sourcePort) === true;
+      if (isIteratorCurrentItem) {
+        const itemKind = inputsByRef.get(sourceRef)?.get(sourcePort)?.artifactKind;
+        const targetKind = targetPorts.get(targetPort)?.artifactKind;
+        if (itemKind && targetKind && itemKind !== targetKind) {
+          this.recordDiagnostic(diagnostics, 'blueprint_binding_artifact_mismatch', `${sourceRef}.${sourcePort}->${key}`);
+          continue;
+        }
+        accepted.push({
+          targetRef,
+          targetIteratorRef,
+          targetPort,
+          sourceKind: 'state',
+          statePath: 'inputs._item',
+        });
+        continue;
+      }
       if (!sourcePorts?.has(sourcePort)) {
         this.recordDiagnostic(diagnostics, 'blueprint_binding_unknown_source_port', `${sourceRef}.${sourcePort}->${key}`);
         continue;
@@ -587,20 +607,35 @@ export class PlaybookIntentBlueprintParserService {
 
   private parseConstantValue(
     value: unknown,
+    targetArtifactKind: PlaybookIntentBlueprintPort['artifactKind'] | undefined,
     diagnostics: PlaybookIntentDiagnostic[],
     key: string,
-  ): PlaybookIntentBlueprintBinding['constantValue'] | null {
-    if (!value || typeof value !== 'object') {
+  ): unknown | undefined {
+    if (value === null || value === undefined) {
       this.recordDiagnostic(diagnostics, 'blueprint_binding_invalid_constant', key);
-      return null;
+      return undefined;
     }
-    const raw = value as Record<string, unknown>;
+    const raw = this.asRecord(value);
+    if (!raw) {
+      const literalMatchesPort = targetArtifactKind === 'data'
+        || ((targetArtifactKind === 'text' || targetArtifactKind === 'code') && typeof value === 'string');
+      if (!literalMatchesPort) {
+        this.recordDiagnostic(diagnostics, 'blueprint_binding_invalid_constant', key);
+        return undefined;
+      }
+      return value;
+    }
     const kind = this.asString(raw.kind);
+    if (kind !== 'workspace' && kind !== 'document') {
+      if (targetArtifactKind === 'data' || targetArtifactKind === 'dashboard') return value;
+      this.recordDiagnostic(diagnostics, 'blueprint_binding_invalid_constant', key);
+      return undefined;
+    }
     const id = this.asString(raw.id);
     const workspaceId = this.asString(raw.workspaceId) || (kind === 'workspace' ? id : '');
-    if ((kind !== 'workspace' && kind !== 'document') || !id || !workspaceId) {
+    if (!id || !workspaceId) {
       this.recordDiagnostic(diagnostics, 'blueprint_binding_invalid_constant', key);
-      return null;
+      return undefined;
     }
     return {
       kind,
