@@ -437,14 +437,14 @@ export function WorkspacePage() {
                   {/* Group only at the workspace root with no active search. While a
                       search is active, render flat so matching pages surface directly
                       instead of being hidden inside a collapsed start-URL group. */}
-                  {currentFolderId || search.trim() ? (
+                  {search.trim() ? (
                     <div className='space-y-1'>{visibleFiles.map(renderFileRow)}</div>
                   ) : (() => {
                     const { groups, loose } = groupBySourceRoot(visibleFiles);
                     return (
                       <div className='space-y-1'>
                         {groups.map((group) => (
-                          <SourceGroupRow key={group.key} label={group.label} rootUrl={group.rootUrl} count={group.files.length} status={group.status} onOpenInNavigator={(url) => openAddLink({ url, autoStart: true })}>
+                          <SourceGroupRow key={group.key} label={group.label} rootUrl={group.rootUrl} count={group.files.length} status={group.status} onOpenInNavigator={(url) => openAddLink({ url, autoStart: true })} onMove={() => setMoveTarget({ files: group.files, title: group.label })}>
                             {group.files.map(renderFileRow)}
                           </SourceGroupRow>
                         ))}
