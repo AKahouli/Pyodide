@@ -4,7 +4,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 const session = {
   status: 'idle' as string, frame: null as string | null, currentUrl: null as string | null,
   rootUrl: null as string | null,
-  pages: [] as Array<{ url: string; title: string; linkText?: string; manual?: boolean }>, blockedNotice: null as string | null,
+  pages: [] as Array<{ url: string; title: string; linkText?: string; manual?: boolean; indexingStatus?: string }>, blockedNotice: null as string | null,
   start: vi.fn(), sendInput: vi.fn(), navigate: vi.fn(), stop: vi.fn(),
   addManualPage: vi.fn().mockReturnValue(true), updatePage: vi.fn().mockReturnValue(true),
 };
@@ -13,10 +13,11 @@ vi.mock('../hooks/useBrowserSession', async () => {
   return { ...actual, useBrowserSession: () => session };
 });
 let documentsCache: unknown = [];
+let addLinkSeed: Array<{ url: string; name?: string; indexingStatus?: string }> = [];
 const addPageLinks = vi.fn().mockResolvedValue(undefined);
 vi.mock('../store', () => ({
   useWorkspaceStore: (sel: (s: unknown) => unknown) =>
-    sel({ addPageLinks, documents: documentsCache }),
+    sel({ addPageLinks, documents: documentsCache, addLinkDialog: { seed: addLinkSeed } }),
 }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -42,6 +43,7 @@ beforeEach(() => {
   session.status = 'idle'; session.pages = []; session.rootUrl = null; addPageLinks.mockClear();
   session.start.mockClear();
   documentsCache = [];
+  addLinkSeed = [];
 });
 
 it('starts a browse session from the entered url', () => {
@@ -105,7 +107,7 @@ it('sends a roots map with manual links self-rooted', async () => {
 it('auto-starts browsing when opened with autoStart and a valid url', () => {
   session.status = 'idle';
   render(<AddLinkDialog open autoStart initialUrl='https://ok.example/services' onOpenChange={vi.fn()} workspaceId='w1' />);
-  expect(session.start).toHaveBeenCalledWith('https://ok.example/services');
+  expect(session.start).toHaveBeenCalledWith('https://ok.example/services', []);
   // browse phase — the input-phase URL field is gone
   expect(screen.queryByPlaceholderText('https://exemple.com')).not.toBeInTheDocument();
 });
@@ -115,6 +117,22 @@ it('does not auto-start with an empty url (stays on the input phase)', () => {
   render(<AddLinkDialog open autoStart initialUrl='' onOpenChange={vi.fn()} workspaceId='w1' />);
   expect(session.start).not.toHaveBeenCalled();
   expect(screen.getByPlaceholderText('https://exemple.com')).toBeInTheDocument();
+});
+
+it('seeds already-indexed pages and excludes them from indexing', async () => {
+  session.status = 'live';
+  session.rootUrl = 'https://ok.example';
+  addLinkSeed = [{ url: 'https://ok.example/a', name: 'A', indexingStatus: 'ready' }];
+  // the session (seeded via start) reports the seeded page plus a new browsed one
+  session.pages = [
+    { url: 'https://ok.example/a', title: '', linkText: 'A', indexingStatus: 'ready' },
+    { url: 'https://ok.example/b', title: 'B' },
+  ];
+  render(<AddLinkDialog open autoStart initialUrl='https://ok.example' onOpenChange={vi.fn()} workspaceId='w1' />);
+  fireEvent.click(screen.getByRole('button', { name: /Indexer/ }));
+  await waitFor(() =>
+    expect(addPageLinks).toHaveBeenCalledWith('w1', ['https://ok.example/b'], expect.anything()),
+  );
 });
 
 it('indexes an already-indexed url (clean slate allows duplicates)', async () => {

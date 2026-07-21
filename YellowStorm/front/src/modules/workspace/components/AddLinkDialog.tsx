@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, ArrowRight, Loader2, RotateCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -8,7 +8,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { useWorkspaceStore } from '../store';
-import { useBrowserSession } from '../hooks/useBrowserSession';
+import { useBrowserSession, normalizeUrl, type CollectedPage } from '../hooks/useBrowserSession';
 import { readAutoIndexationValue } from '../hooks/useAutoIndexation';
 import { readDeepSearchIndexationValue } from '../hooks/useDeepSearchIndexation';
 import { BrowserSessionViewer } from './BrowserSessionViewer';
@@ -40,6 +40,7 @@ export function AddLinkDialog({
   autoStart?: boolean;
 }) {
   const addPageLinks = useWorkspaceStore((s) => s.addPageLinks);
+  const seed = useWorkspaceStore((s) => s.addLinkDialog.seed);
   const session = useBrowserSession();
 
   const [phase, setPhase] = useState<'input' | 'browse'>('input');
@@ -49,13 +50,23 @@ export function AddLinkDialog({
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  const indexedUrls = useMemo(() => new Set(seed.map((s) => normalizeUrl(s.url))), [seed]);
+
   useEffect(() => {
     if (open) {
       if (autoStart && isValidUrl(initialUrl)) {
         // Opened from an existing group: skip the input step and browse the
         // root URL directly so the user can index more pages immediately.
         setUrl(initialUrl); setError(null); setBusy(false); setSelected(new Set());
-        session.start(initialUrl.trim());
+        session.start(
+          initialUrl.trim(),
+          seed.map((s) => ({
+            url: s.url,
+            title: '',
+            linkText: s.name,
+            indexingStatus: s.indexingStatus as CollectedPage['indexingStatus'],
+          })),
+        );
         setPhase('browse');
       } else {
         // An already-active session (e.g. carried over from a prior open) should
@@ -70,14 +81,14 @@ export function AddLinkDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialUrl]);
 
-  // Auto-select each newly collected page.
+  // Auto-select each newly collected page (never the already-indexed seed).
   useEffect(() => {
     setSelected((prev) => {
       const next = new Set(prev);
-      session.pages.forEach((p) => next.add(p.url));
+      session.pages.forEach((p) => { if (!indexedUrls.has(normalizeUrl(p.url))) next.add(p.url); });
       return next;
     });
-  }, [session.pages]);
+  }, [session.pages, indexedUrls]);
 
   useEffect(() => { if (session.currentUrl) setAddressBar(session.currentUrl); }, [session.currentUrl]);
 
@@ -98,7 +109,7 @@ export function AddLinkDialog({
 
   const chosen = session.pages
     .map((p) => p.url)
-    .filter((u) => selected.has(u));
+    .filter((u) => selected.has(u) && !indexedUrls.has(normalizeUrl(u)));
 
   const handleIndex = async () => {
     if (busy || chosen.length === 0) return;
@@ -190,7 +201,7 @@ export function AddLinkDialog({
             <CollectionSidebar
               pages={session.pages}
               selected={selected}
-              indexedUrls={new Set()}
+              indexedUrls={indexedUrls}
               onToggle={toggle}
               onDelete={remove}
               onSelectAll={selectAll}
