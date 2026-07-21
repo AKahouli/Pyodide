@@ -119,4 +119,13 @@ describe('useBrowserSession', () => {
     act(() => { ok = result.current.updatePage('https://a.com/z', { url: 'https://b.com/y' }); }); // collides with Y
     expect(ok).toBe(false);
   });
+
+  it('addPages batch-adds new pages and dedups already-seen ones', () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.addManualPage('https://a.com/x'); });
+    let added!: number;
+    act(() => { added = result.current.addPages([{ url: 'https://a.com/x', title: '' }, { url: 'https://a.com/y', title: 'Y' }]); });
+    expect(added).toBe(1); // x already seen, y new
+    expect(result.current.pages.map((p) => p.url)).toContain('https://a.com/y');
+  });
 });

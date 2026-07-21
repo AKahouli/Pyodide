@@ -129,5 +129,16 @@ export function useBrowserSession() {
     return true;
   }, []);
 
-  return { status, frame, currentUrl, rootUrl, pages, blockedNotice, start, sendInput, navigate, stop, addManualPage, updatePage };
+  const addPages = useCallback((incoming: CollectedPage[]): number => {
+    const fresh = incoming.filter((p) => {
+      const key = normalizeUrl(p.url);
+      if (seenRef.current.has(key)) return false;
+      seenRef.current.add(key);
+      return true;
+    });
+    if (fresh.length > 0) setPages((prev) => [...prev, ...fresh]);
+    return fresh.length;
+  }, []);
+
+  return { status, frame, currentUrl, rootUrl, pages, blockedNotice, start, sendInput, navigate, stop, addManualPage, updatePage, addPages };
 }
