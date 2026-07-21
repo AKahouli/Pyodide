@@ -1982,7 +1982,13 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       },
 
       addPageLinks: async (workspaceId, urls, options) => {
-        await workspaceApi.addLinks(workspaceId, urls, options);
+        const targetFolderId = get().pageCurrentFolderId;
+        const docs = await workspaceApi.addLinks(workspaceId, urls, options);
+        if (targetFolderId && docs.length > 0) {
+          await Promise.allSettled(
+            docs.map((doc) => pageApi.assignFileToFolder(workspaceId, doc.id, targetFolderId)),
+          );
+        }
         await get().refreshPageData();
       },
 
