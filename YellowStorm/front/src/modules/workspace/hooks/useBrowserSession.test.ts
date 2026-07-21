@@ -96,6 +96,18 @@ describe('useBrowserSession', () => {
     expect(result.current.pages).toHaveLength(1);
   });
 
+  it('start seeds the collection and dedups a later navigation to a seeded url', async () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.start('https://root.example', [{ url: 'https://root.example/a', title: '', indexingStatus: 'ready' }]); });
+    await waitFor(() => expect(result.current.status).toBe('live'));
+    expect(result.current.pages).toHaveLength(1);
+    expect(result.current.pages[0]).toMatchObject({ url: 'https://root.example/a', indexingStatus: 'ready' });
+    act(() => { handlers['navigated']({ url: 'https://root.example/a', title: 'A' }); }); // same as seeded → deduped
+    expect(result.current.pages).toHaveLength(1);
+    act(() => { handlers['navigated']({ url: 'https://root.example/b', title: 'B' }); }); // new → added
+    expect(result.current.pages).toHaveLength(2);
+  });
+
   it('updatePage edits name and url and rejects collisions', () => {
     const { result } = renderHook(() => useBrowserSession());
     act(() => { result.current.addManualPage('https://a.com/x', 'X'); });

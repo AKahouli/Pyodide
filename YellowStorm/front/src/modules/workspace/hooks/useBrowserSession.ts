@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { AUTH_STORAGE_KEYS, getSocketBaseUrl } from '@/lib/api/config';
+import type { IndexingStatus } from '../types';
 
 // 16:9 remote viewport. Must stay in sync with the backend `browserSession`
 // viewport config (BROWSER_SESSION_VIEWPORT_W/H) so input coordinates line up.
@@ -15,7 +16,7 @@ export type InputEvent =
 export type NavAction =
   | { kind: 'goto'; url: string } | { kind: 'back' } | { kind: 'forward' } | { kind: 'reload' };
 
-export interface CollectedPage { url: string; title: string; linkText?: string; manual?: boolean; }
+export interface CollectedPage { url: string; title: string; linkText?: string; manual?: boolean; indexingStatus?: IndexingStatus; }
 export type BrowserSessionStatus = 'idle' | 'connecting' | 'live' | 'busy' | 'error';
 
 export function normalizeUrl(url: string): string {
@@ -49,12 +50,12 @@ export function useBrowserSession() {
   const [pages, setPages] = useState<CollectedPage[]>([]);
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
 
-  const start = useCallback((url: string) => {
+  const start = useCallback((url: string, seed: CollectedPage[] = []) => {
     const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
     if (!token) { setStatus('error'); return; }
     setStatus('connecting');
-    seenRef.current = new Set();
-    setPages([]); setFrame(null); setBlockedNotice(null); setCurrentUrl(url); setRootUrl(url);
+    seenRef.current = new Set(seed.map((p) => normalizeUrl(p.url)));
+    setPages(seed); setFrame(null); setBlockedNotice(null); setCurrentUrl(url); setRootUrl(url);
 
     const socket = io(`${getSocketBaseUrl()}/browser-session`, {
       auth: { token }, transports: ['websocket', 'polling'],
