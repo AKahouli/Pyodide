@@ -525,10 +525,10 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
 
   it('crawlSite returns only pages under the seed path', async () => {
     (service as any).websiteCrawler = {
-      crawl: jest.fn().mockResolvedValue({ pages: [{ url: 'https://a.com/docs/x' }, { url: 'https://a.com/pricing' }], truncated: false }),
+      crawl: jest.fn().mockResolvedValue({ pages: [{ url: 'https://a.com/docs/x' }, { url: 'https://a.com/pricing' }, { url: 'https://a.com/docsfoo/y' }], truncated: false }),
     };
     const res = await service.crawlSite(WS_ID, 'https://a.com/docs');
-    expect(res.pages.map((p) => p.url)).toEqual(['https://a.com/docs/x']);
+    expect(res.pages.map((p) => p.url)).toEqual(['https://a.com/docs/x']); // /pricing and the /docsfoo prefix-collision are excluded
     expect(res.truncated).toBe(false);
   });
 

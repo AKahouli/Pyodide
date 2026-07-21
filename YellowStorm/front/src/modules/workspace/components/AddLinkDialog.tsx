@@ -118,7 +118,7 @@ export function AddLinkDialog({
     try {
       const { pages, truncated } = await crawlUrl(workspaceId, exploreUrl);
       const added = session.addPages(pages.map((p) => ({ url: p.url, title: p.title ?? '' })));
-      toast.success(`${added} page(s) trouvée(s)${truncated ? ' (limite atteinte)' : ''}`);
+      toast.success(added === 0 ? 'Aucune nouvelle page trouvée.' : `${added} page(s) trouvée(s)${truncated ? ' (limite atteinte)' : ''}`);
     } catch {
       toast.error("L'exploration a échoué.");
     } finally {
