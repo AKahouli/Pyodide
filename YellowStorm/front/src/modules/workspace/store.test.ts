@@ -176,14 +176,14 @@ describe('workspace store', () => {
 
   it('openAddLink opens the dialog with url and autoStart, closeAddLink resets it', () => {
     act(() => { useWorkspaceStore.getState().openAddLink({ url: 'https://ex.com/services', autoStart: true }); });
-    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: true, initialUrl: 'https://ex.com/services', autoStart: true });
+    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: true, initialUrl: 'https://ex.com/services', autoStart: true, seed: [] });
     act(() => { useWorkspaceStore.getState().closeAddLink(); });
-    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: false, initialUrl: '', autoStart: false });
+    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: false, initialUrl: '', autoStart: false, seed: [] });
   });
 
   it('openAddLink defaults to an empty url and no autoStart', () => {
     act(() => { useWorkspaceStore.getState().openAddLink(); });
-    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: true, initialUrl: '', autoStart: false });
+    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: true, initialUrl: '', autoStart: false, seed: [] });
     act(() => { useWorkspaceStore.getState().closeAddLink(); });
   });
 
