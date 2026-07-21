@@ -8,6 +8,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { useWorkspaceStore } from '../store';
+import { crawlUrl } from '../api';
 import { useBrowserSession, normalizeUrl, type CollectedPage } from '../hooks/useBrowserSession';
 import { readAutoIndexationValue } from '../hooks/useAutoIndexation';
 import { readDeepSearchIndexationValue } from '../hooks/useDeepSearchIndexation';
@@ -49,6 +50,7 @@ export function AddLinkDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [exploring, setExploring] = useState<Set<string>>(new Set());
 
   const indexedUrls = useMemo(() => new Set(seed.map((s) => normalizeUrl(s.url))), [seed]);
 
@@ -110,6 +112,19 @@ export function AddLinkDialog({
   const chosen = session.pages
     .map((p) => p.url)
     .filter((u) => selected.has(u) && !indexedUrls.has(normalizeUrl(u)));
+
+  const handleExplore = async (exploreUrl: string) => {
+    setExploring((p) => new Set(p).add(exploreUrl));
+    try {
+      const { pages, truncated } = await crawlUrl(workspaceId, exploreUrl);
+      const added = session.addPages(pages.map((p) => ({ url: p.url, title: p.title ?? '' })));
+      toast.success(`${added} page(s) trouvée(s)${truncated ? ' (limite atteinte)' : ''}`);
+    } catch {
+      toast.error("L'exploration a échoué.");
+    } finally {
+      setExploring((p) => { const n = new Set(p); n.delete(exploreUrl); return n; });
+    }
+  };
 
   const handleIndex = async () => {
     if (busy || chosen.length === 0) return;
@@ -214,6 +229,8 @@ export function AddLinkDialog({
                 }
                 return ok;
               }}
+              onExplore={handleExplore}
+              exploring={exploring}
             />
           </div>
         )}

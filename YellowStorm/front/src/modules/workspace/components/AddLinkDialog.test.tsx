@@ -7,11 +7,16 @@ const session = {
   pages: [] as Array<{ url: string; title: string; linkText?: string; manual?: boolean; indexingStatus?: string }>, blockedNotice: null as string | null,
   start: vi.fn(), sendInput: vi.fn(), navigate: vi.fn(), stop: vi.fn(),
   addManualPage: vi.fn().mockReturnValue(true), updatePage: vi.fn().mockReturnValue(true),
+  addPages: vi.fn().mockReturnValue(2),
 };
 vi.mock('../hooks/useBrowserSession', async () => {
   const actual = await vi.importActual<typeof import('../hooks/useBrowserSession')>('../hooks/useBrowserSession');
   return { ...actual, useBrowserSession: () => session };
 });
+const { crawlUrlMock } = vi.hoisted(() => ({
+  crawlUrlMock: vi.fn().mockResolvedValue({ pages: [{ url: 'https://ok.example/docs/a' }], truncated: false }),
+}));
+vi.mock('../api', () => ({ crawlUrl: crawlUrlMock }));
 let documentsCache: unknown = [];
 let addLinkSeed: Array<{ url: string; name?: string; indexingStatus?: string }> = [];
 const addPageLinks = vi.fn().mockResolvedValue(undefined);
@@ -133,6 +138,15 @@ it('seeds already-indexed pages and excludes them from indexing', async () => {
   await waitFor(() =>
     expect(addPageLinks).toHaveBeenCalledWith('w1', ['https://ok.example/b'], expect.anything()),
   );
+});
+
+it('explores a link and adds the discovered pages', async () => {
+  session.status = 'live';
+  session.pages = [{ url: 'https://ok.example/docs', title: 'Docs' }];
+  render(<AddLinkDialog open onOpenChange={vi.fn()} workspaceId='w1' />);
+  fireEvent.click(screen.getByLabelText('explore https://ok.example/docs'));
+  await waitFor(() => expect(crawlUrlMock).toHaveBeenCalledWith('w1', 'https://ok.example/docs'));
+  await waitFor(() => expect(session.addPages).toHaveBeenCalled());
 });
 
 it('indexes an already-indexed url (clean slate allows duplicates)', async () => {
