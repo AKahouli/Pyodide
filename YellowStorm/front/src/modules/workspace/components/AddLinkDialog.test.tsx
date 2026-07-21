@@ -4,8 +4,9 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 const session = {
   status: 'idle' as string, frame: null as string | null, currentUrl: null as string | null,
   rootUrl: null as string | null,
-  pages: [] as Array<{ url: string; title: string; linkText?: string }>, blockedNotice: null as string | null,
+  pages: [] as Array<{ url: string; title: string; linkText?: string; manual?: boolean }>, blockedNotice: null as string | null,
   start: vi.fn(), sendInput: vi.fn(), navigate: vi.fn(), stop: vi.fn(),
+  addManualPage: vi.fn().mockReturnValue(true), updatePage: vi.fn().mockReturnValue(true),
 };
 vi.mock('../hooks/useBrowserSession', async () => {
   const actual = await vi.importActual<typeof import('../hooks/useBrowserSession')>('../hooks/useBrowserSession');
@@ -61,6 +62,24 @@ it('sends the clicked link text as each page name', async () => {
       'w1',
       ['https://ok.example/a', 'https://ok.example/b'],
       expect.objectContaining({ names: { 'https://ok.example/a': 'About Us', 'https://ok.example/b': 'B Title' } }),
+    ),
+  );
+});
+
+it('sends a roots map with manual links self-rooted', async () => {
+  session.status = 'live';
+  session.rootUrl = 'https://ok.example/start';
+  session.pages = [
+    { url: 'https://ok.example/a', title: 'A' },
+    { url: 'https://manual.org/p', title: '', linkText: 'Manual', manual: true },
+  ];
+  render(<AddLinkDialog open onOpenChange={vi.fn()} workspaceId='w1' />);
+  fireEvent.click(screen.getByRole('button', { name: /Indexer/ }));
+  await waitFor(() =>
+    expect(addPageLinks).toHaveBeenCalledWith(
+      'w1',
+      ['https://ok.example/a', 'https://manual.org/p'],
+      expect.objectContaining({ roots: { 'https://manual.org/p': 'https://manual.org/p' } }),
     ),
   );
 });

@@ -127,11 +127,17 @@ export function AddLinkDialog({
         const name = (page.linkText || page.title || '').replace(/\s+/g, ' ').trim();
         if (name) names[page.url] = name;
       }
+      const roots: Record<string, string> = {};
+      for (const page of session.pages) {
+        if (!chosen.includes(page.url)) continue;
+        if (page.manual) roots[page.url] = page.url;
+      }
       await addPageLinks(workspaceId, chosen, {
         deepSearch: readDeepSearchIndexationValue(),
         autoIndex: readAutoIndexationValue(),
         sourceRootUrl: session.rootUrl ?? undefined,
         names,
+        roots,
       });
       toast.success(`${chosen.length} page(s) ajoutée(s) · conversion en cours`);
       onOpenChange(false);
@@ -204,6 +210,20 @@ export function AddLinkDialog({
               onDelete={remove}
               onSelectAll={selectAll}
               onSelectNone={selectNone}
+              onAdd={(url, name) => session.addManualPage(url, name)}
+              onEdit={(oldUrl, patch) => {
+                const ok = session.updatePage(oldUrl, patch);
+                if (ok && patch.url && patch.url !== oldUrl) {
+                  setSelected((prev) => {
+                    if (!prev.has(oldUrl)) return prev;
+                    const next = new Set(prev);
+                    next.delete(oldUrl);
+                    next.add(patch.url as string);
+                    return next;
+                  });
+                }
+                return ok;
+              }}
             />
           </div>
         )}
