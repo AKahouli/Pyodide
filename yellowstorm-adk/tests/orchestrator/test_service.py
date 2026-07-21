@@ -78,7 +78,7 @@ def test_plan_turn_never_gives_the_workflow_the_users_real_message():
     service._make_plan = AsyncMock(return_value=plan)
     service._drive = AsyncMock(return_value=[])
 
-    secret_message = "email rabeb@example.com asking which company she works for"
+    secret_message = "email x@example.com asking which company she works for"
     asyncio.run(service.plan_turn(session_id="s1", user_id="u1",
                                   message=secret_message, model="m"))
 

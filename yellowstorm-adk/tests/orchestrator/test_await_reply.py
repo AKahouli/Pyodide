@@ -28,7 +28,7 @@ from src.companion_ai.service import OrchestratorService
 # --- the node primitive, on the real ADK engine -----------------------------
 
 async def _roundtrip():
-    node = hitl.make_await_reply_node("await_reply", "Awaiting a reply from rabeb@example.com")
+    node = hitl.make_await_reply_node("await_reply", "Awaiting a reply from x@example.com")
     wf = Workflow(name="mail_test", edges=[(START, node)])
     r = InMemoryRunner(node=wf, app_name="m")
     await r.session_service.create_session(app_name="m", user_id="u", session_id="s")
@@ -74,7 +74,7 @@ def test_an_executor_never_sees_the_plan_wide_goal_or_another_steps_task():
     sender. Only the planner/orchestrator holds the whole plan; each step gets
     just its own description."""
     plan = Plan(id="p", title="t", goal="Email Rabeb, then research her employer", steps=[
-        Step(id="a", kind="execute", description="Send an email to rabeb@example.com."),
+        Step(id="a", kind="execute", description="Send an email to x@example.com."),
         Step(id="b", kind="execute", description="Search the web for Tesla news."),
     ])
     factory = nodes.make_llm_node_factory(model_name="x", tools=[])
@@ -283,7 +283,7 @@ def test_an_unanswered_wait_becomes_a_question_to_the_owner():
     svc, rm = _service()
     rm.expire_mail_waits = AsyncMock(return_value=[{
         "token": "YW-x", "session_id": "s1", "step_id": "m", "user_id": "u1",
-        "interrupt_id": "mail:plan@1/m@1", "expected_from": "rabeb@example.com",
+        "interrupt_id": "mail:plan@1/m@1", "expected_from": "x@example.com",
     }])
 
     assert asyncio.run(svc.expire_mail_waits()) == 1
@@ -291,7 +291,7 @@ def test_an_unanswered_wait_becomes_a_question_to_the_owner():
     # routed to the parked step and answers it by hand.
     rm.set_waiting.assert_awaited_once_with("s1", "mail:plan@1/m@1")
     rm.set_step_status.assert_awaited_once()
-    assert rm.set_step_status.await_args.kwargs["blocked_reason"] == "no reply from rabeb@example.com"
+    assert rm.set_step_status.await_args.kwargs["blocked_reason"] == "no reply from x@example.com"
     # And the owner is actually told, rather than the plan going quiet.
     assert "reply" in rm.add_message.await_args.args[3].lower()
 

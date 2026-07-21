@@ -119,7 +119,7 @@ async def test_mail_reply_resumes_the_step_that_was_waiting():
 
     resp = await s.DeliverMailReply(pb.DeliverMailReplyRequest(
         token="YW-tok", reply_body="I work at Yellow Systems.",
-        reply_from="rabeb@example.com", model="gpt"), _ctx())
+        reply_from="x@example.com", model="gpt"), _ctx())
     await _drain(s)
 
     assert (resp.delivered, resp.session_id, resp.step_id) == (True, "s1", "m")
