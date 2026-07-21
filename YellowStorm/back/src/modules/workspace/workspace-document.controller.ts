@@ -143,7 +143,7 @@ export class WorkspaceDocumentController {
       workspaceId,
       user._id.toString(),
       body.urls,
-      { deepSearch: body.deepSearch, autoIndex: body.autoIndex, sourceRootUrl: body.sourceRootUrl, names: body.names },
+      { deepSearch: body.deepSearch, autoIndex: body.autoIndex, sourceRootUrl: body.sourceRootUrl, names: body.names, roots: body.roots },
     );
   }
 

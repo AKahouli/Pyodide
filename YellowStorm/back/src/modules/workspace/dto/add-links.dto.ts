@@ -23,4 +23,9 @@ export class AddLinksDto {
   @IsOptional()
   @IsObject()
   names?: Record<string, string>;
+
+  /** Optional per-URL source-root override (manual links root themselves), keyed by url. */
+  @IsOptional()
+  @IsObject()
+  roots?: Record<string, string>;
 }

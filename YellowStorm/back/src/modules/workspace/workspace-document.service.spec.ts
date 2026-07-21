@@ -508,6 +508,18 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     const createArg = documentModel.create.mock.calls[0][0];
     expect(createArg.originalName).toBe('services.pdf');
   });
+
+  it('addLinks roots a manual link to its own url via the roots override', async () => {
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.com/x', 'https://manual.org/p'], {
+      sourceRootUrl: 'https://a.com/services',
+      roots: { 'https://manual.org/p': 'https://manual.org/p' },
+    });
+    const first = documentModel.create.mock.calls[0][0];
+    const second = documentModel.create.mock.calls[1][0];
+    expect(first.metadata.sourceRootUrl).toBe('https://a.com/services'); // session root
+    expect(second.metadata.sourceRootUrl).toBe('https://manual.org/p'); // self-rooted
+  });
 });
 
 describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachable)', () => {

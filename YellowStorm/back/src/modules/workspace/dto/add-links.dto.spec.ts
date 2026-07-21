@@ -40,3 +40,20 @@ describe('AddLinksDto names', () => {
     expect(errors.some((e) => e.property === 'names')).toBe(true);
   });
 });
+
+describe('AddLinksDto roots', () => {
+  it('accepts a roots map', async () => {
+    const errors = await errorsFor({ urls: ['https://a.com/x'], roots: { 'https://a.com/x': 'https://a.com/x' } });
+    expect(errors).toHaveLength(0);
+  });
+
+  it('allows roots to be omitted', async () => {
+    const errors = await errorsFor({ urls: ['https://a.com/x'] });
+    expect(errors).toHaveLength(0);
+  });
+
+  it('rejects a non-object roots value', async () => {
+    const errors = await errorsFor({ urls: ['https://a.com/x'], roots: 'nope' });
+    expect(errors.some((e) => e.property === 'roots')).toBe(true);
+  });
+});
