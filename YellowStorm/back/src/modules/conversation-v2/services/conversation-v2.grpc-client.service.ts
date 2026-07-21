@@ -271,6 +271,29 @@ export class ConversationV2GrpcClientService
     });
   }
 
+  async worky(
+    userId: string,
+    sessionId: string,
+    message: string,
+    opts: { model?: string; skills?: unknown[]; connectors?: unknown[] } = {},
+  ): Promise<{ sessionId: string; accepted: boolean }> {
+    const request: Record<string, unknown> = { user_id: userId, session_id: sessionId, message };
+    if (opts.model) request.model = opts.model;
+    if (opts.skills?.length) request.skills = opts.skills;
+    if (opts.connectors?.length) request.connectors = opts.connectors;
+    return new Promise((resolve, reject) => {
+      this.client.Worky(
+        request,
+        createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
+        this.unaryDeadline,
+        (err: grpc.ServiceError | null, response: { session_id: string; accepted: boolean }) => {
+          if (err) return reject(err);
+          resolve({ sessionId: response.session_id, accepted: !!response.accepted });
+        },
+      );
+    });
+  }
+
   async getVncSignedUrl(
     userId: string,
     sessionId: string,

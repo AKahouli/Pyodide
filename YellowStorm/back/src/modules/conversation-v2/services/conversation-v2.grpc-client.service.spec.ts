@@ -134,4 +134,28 @@ describe('ConversationV2GrpcClientService', () => {
     sub.unsubscribe();
     expect(fakeStream.cancel).toHaveBeenCalled();
   });
+
+  describe('worky', () => {
+    it('calls Worky with positional metadata + deadline and resolves accepted', async () => {
+      const Worky = jest.fn((_req, _md, _opts, cb) =>
+        cb(null, { session_id: 'sess-1', accepted: true }),
+      );
+      (service as any).client = { Worky };
+
+      const result = await service.worky('user-1', 'sess-1', 'do the thing', {
+        model: 'anthropic/claude-sonnet-4-5',
+      });
+
+      expect(result).toEqual({ sessionId: 'sess-1', accepted: true });
+      const [req, md, opts] = Worky.mock.calls[0];
+      expect(req).toMatchObject({ user_id: 'user-1', session_id: 'sess-1', message: 'do the thing', model: 'anthropic/claude-sonnet-4-5' });
+      expect(md).toBeDefined();            // grpc.Metadata, passed positionally
+      expect(opts).toHaveProperty('deadline');
+    });
+
+    it('rejects when Worky errors', async () => {
+      (service as any).client = { Worky: (_r: any, _m: any, _o: any, cb: any) => cb(new Error('boom')) };
+      await expect(service.worky('u', 's', 'm')).rejects.toThrow('boom');
+    });
+  });
 });

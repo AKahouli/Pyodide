@@ -35,6 +35,7 @@ import { WorkyScheduledEvent } from '../schemas/worky-scheduled-event.schema';
 import { WorkyTask } from '../schemas/worky-task.schema';
 import { WorkyTaskResult } from '../schemas/worky-task-result.schema';
 import { WorkyTrace } from '../schemas/worky-trace.schema';
+import { WorkyOrchestratorGrpcClientService } from './worky-orchestrator.grpc-client.service';
 
 const ARTIFACT_WORKSPACE_NAME_PREFIX = 'Worky';
 const STREAM_AGENT_NAME_PREFIX = 'Worky Manager';
@@ -66,6 +67,7 @@ export class WorkyStreamService implements OnModuleInit {
     private readonly workspaceDocuments: WorkspaceDocumentService,
     private readonly config: ConfigService,
     private readonly logger: LoggerService,
+    private readonly orchestrator: WorkyOrchestratorGrpcClientService,
   ) {
     this.logger.setContext(WorkyStreamService.name);
   }
@@ -111,6 +113,10 @@ export class WorkyStreamService implements OnModuleInit {
         : artifactWorkspace.createdBy,
       artifactWorkspaceId: artifactWorkspace._id,
       managerAgentId: managerAgent._id,
+      // aiSessionId is intentionally omitted here (defaults to null via the
+      // schema). The orchestrator session is created lazily on first
+      // message send — see `ensureKickoffContext` — so stream creation no
+      // longer depends on manager/gRPC availability.
       // Per-stream model selection starts unset; resolved at
       // planning / execution time by `WorkyPlanningService` using
       // the per-turn override → stream field → admin default chain.
@@ -141,6 +147,49 @@ export class WorkyStreamService implements OnModuleInit {
     });
 
     return this.toResponse(stream);
+  }
+
+  /**
+   * Used by `WorkyMessageController` to kick off the manager over gRPC:
+   * returns both the orchestrator session id and the stream's
+   * persistent manager model selection (if any), so the caller can
+   * resolve the per-turn override → stream field → admin default chain
+   * without a second round-trip.
+   *
+   * Lazily creates the orchestrator session on first use if the stream
+   * doesn't have one yet (`aiSessionId: null`) — either because it was
+   * created before this design change, or because eager creation was
+   * removed from `create()`. This decouples stream creation from manager
+   * availability and self-heals pre-existing streams.
+   */
+  async ensureKickoffContext(
+    streamId: string,
+    userId: string,
+  ): Promise<{ aiSessionId: string; managerModelId: string | null }> {
+    const doc = await this.streamModel
+      .findById(streamId)
+      .lean<{ aiSessionId?: string | null; managerModelId?: string | null }>()
+      .exec();
+    if (!doc) {
+      throw new NotFoundException(ErrorCode.WORKY_STREAM_NOT_FOUND, 'Worky stream not found.');
+    }
+    let aiSessionId = doc.aiSessionId ?? null;
+    if (!aiSessionId) {
+      aiSessionId = await this.orchestrator.createSession(userId);
+      await this.streamModel.updateOne({ _id: streamId }, { $set: { aiSessionId } }).exec();
+    }
+    return { aiSessionId, managerModelId: doc.managerModelId ?? null };
+  }
+
+  async findByAiSessionId(
+    aiSessionId: string,
+  ): Promise<{ streamId: string; ownerUserId: string } | null> {
+    const doc = await this.streamModel
+      .findOne({ aiSessionId })
+      .lean<{ _id: unknown; ownerUserId: unknown }>()
+      .exec();
+    if (!doc) return null;
+    return { streamId: String(doc._id), ownerUserId: String(doc.ownerUserId) };
   }
 
   async delete(userId: string, streamId: string): Promise<{ ok: true; deletedWorkspaceId: string | null }> {

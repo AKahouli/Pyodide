@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { StreamSidebar } from './StreamSidebar';
 import { StreamHeader } from './StreamHeader';
 import { KanbanBoard } from './KanbanBoard';
+import { WorkyGraphBoard } from './WorkyGraphBoard';
 import { OrchestratorPanel } from './OrchestratorPanel';
 import { PlanDeltaToast } from './PlanDeltaToast';
 import { StreamControls } from './StreamControls';
@@ -25,6 +26,7 @@ import {
   useWorkyWhatsAppIntegration,
 } from '../query/hooks';
 import { isWhatsAppConnected } from '@/lib/whatsapp-integration-utils';
+import { cn } from '@/lib/utils';
 import type { WorkyEvent, WorkyMessage, WorkyPendingClarification, WorkyTask } from '../types';
 
 function summarizeDelta(event: WorkyEvent, fallback: string): string {
@@ -47,7 +49,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const setMessages = useWorkyStore((s) => s.setMessages);
   const setPendingClarifications = useWorkyStore((s) => s.setPendingClarifications);
   const appendMessage = useWorkyStore((s) => s.appendMessage);
-  const appendAssistantToken = useWorkyStore((s) => s.appendAssistantToken);
   const resetAssistantText = useWorkyStore((s) => s.resetAssistantText);
   const setStreaming = useWorkyStore((s) => s.setStreaming);
   const setLastDeltaToast = useWorkyStore((s) => s.setLastDeltaToast);
@@ -59,6 +60,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const streamQuery = useStream(streamId);
   const updateStream = useUpdateStream();
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
+  const [boardView, setBoardView] = useState<'status' | 'graph'>('status');
   const [approvalFor, setApprovalFor] = useState<WorkyPendingClarification | null>(null);
   const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
   const whatsappQuery = useWorkyWhatsAppIntegration(streamId);
@@ -97,12 +99,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           };
           if (m.id) appendMessage(m);
           if (m.role === 'manager') resetAssistantText();
-          break;
-        }
-        case 'assistant_token': {
-          setStreaming(true);
-          const text = String((event.data as { text?: string }).text ?? '');
-          if (text) appendAssistantToken(text);
           break;
         }
         case 'plan.delta.applied': {
@@ -229,7 +225,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   }, [
     streamId,
     appendMessage,
-    appendAssistantToken,
     qc,
     resetAssistantText,
     setLastDeltaToast,
@@ -276,6 +271,31 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
                 controlState={streamQuery.data.controlState}
               />
             </div>
+            <div
+              role='tablist'
+              aria-label={tWorky('kanban.view.status')}
+              className='grid shrink-0 grid-cols-2 rounded-md border border-border/60 bg-muted/20 p-0.5 text-xs'
+              data-testid='worky-board-view-toggle'
+            >
+              {(['status', 'graph'] as const).map((view) => (
+                <button
+                  key={view}
+                  type='button'
+                  role='tab'
+                  aria-selected={boardView === view}
+                  data-testid={`worky-board-view-${view}`}
+                  onClick={() => setBoardView(view)}
+                  className={cn(
+                    'rounded px-2 py-1 font-medium transition-colors',
+                    boardView === view
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {tWorky(`kanban.view.${view}`)}
+                </button>
+              ))}
+            </div>
             <Button
               type='button'
               size='sm'
@@ -290,7 +310,11 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
             </Button>
           </div>
         ) : null}
-        <KanbanBoard streamId={streamId} onTaskClick={setSelectedTask} />
+        {boardView === 'graph' ? (
+          <WorkyGraphBoard onTaskClick={setSelectedTask} />
+        ) : (
+          <KanbanBoard streamId={streamId} onTaskClick={setSelectedTask} />
+        )}
       </main>
       <OrchestratorPanel
         streamId={streamId}

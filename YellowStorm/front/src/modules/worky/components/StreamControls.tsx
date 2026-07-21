@@ -5,6 +5,9 @@ import {
   usePauseStream,
   useResumeStream,
   useStopStream,
+  useStopTurn,
+  usePauseTurn,
+  useResumeTurn,
 } from '../query/hooks';
 import type { WorkyControlState, WorkyStreamStatus } from '../types';
 
@@ -33,6 +36,9 @@ export function StreamControls({
   const pauseStream = usePauseStream();
   const resumeStream = useResumeStream();
   const stopStream = useStopStream();
+  const stopTurn = useStopTurn();
+  const pauseTurn = usePauseTurn();
+  const resumeTurn = useResumeTurn();
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,12 +65,21 @@ export function StreamControls({
   };
 
   const handlePause = () => {
+    // Pause the in-flight Manager turn (PauseSession RPC) and the stream
+    // lifecycle. The RPC pause is best-effort — a turn may not be running.
+    void pauseTurn.mutateAsync({ streamId }).catch(() => undefined);
     void pauseStream.mutateAsync({ streamId });
   };
   const handleResume = () => {
+    // Continue the paused orchestrator turn (RunTask → continue_turn) and the
+    // stream lifecycle. RPC resume is best-effort — nothing may be paused.
+    void resumeTurn.mutateAsync({ streamId }).catch(() => undefined);
     void resumeStream.mutateAsync({ streamId });
   };
   const handleStop = () => {
+    // Cancel the in-flight Manager turn (StopSession RPC) and tear down the
+    // stream lifecycle. The RPC stop is best-effort — a turn may not be running.
+    void stopTurn.mutateAsync({ streamId }).catch(() => undefined);
     void stopStream.mutateAsync({ streamId });
   };
 
@@ -83,7 +98,7 @@ export function StreamControls({
           type='button'
           className='rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium disabled:opacity-50'
           onClick={handlePause}
-          disabled={pauseStream.isPending}
+          disabled={pauseStream.isPending || pauseTurn.isPending}
         >
           {tWorky('controls.pause')}
         </button>
@@ -91,7 +106,7 @@ export function StreamControls({
           type='button'
           className='rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium disabled:opacity-50'
           onClick={handleResume}
-          disabled={resumeStream.isPending}
+          disabled={resumeStream.isPending || resumeTurn.isPending}
         >
           {tWorky('controls.resume')}
         </button>
@@ -99,7 +114,7 @@ export function StreamControls({
           type='button'
           className='rounded-md border border-destructive/40 bg-background px-3 py-1.5 text-xs font-medium text-destructive disabled:opacity-50'
           onClick={handleStop}
-          disabled={stopStream.isPending}
+          disabled={stopStream.isPending || stopTurn.isPending}
         >
           {tWorky('controls.stop')}
         </button>

@@ -36,6 +36,7 @@ export type WorkyBoardLane =
   | 'running'
   | 'review'
   | 'blocked'
+  | 'failed'
   | 'done';
 
 export type WorkyAssigneeType = 'ephemeral_ai_agent' | 'human_agent' | 'unassigned';
@@ -141,6 +142,8 @@ export interface WorkyMessage {
 export interface WorkyTask {
   id: string;
   streamId: string;
+  /** plan_steps.step_id (Electric source) — what `dependsOnStepIds` entries refer to. */
+  externalId: string | null;
   title: string;
   description: string;
   lane: WorkyBoardLane;
@@ -151,7 +154,16 @@ export interface WorkyTask {
   assigneeId: string | null;
   actionCategory: WorkyActionCategory;
   dependsOn: string[];
+  /** Parallel wave index (plan_steps.wave via Electric); null outside a plan. */
+  wave: number | null;
+  /** step_ids this step depends on (plan_steps.depends_on via Electric) — match
+   *  against other tasks' `externalId`, not their `id`. */
+  dependsOnStepIds: string[];
   blockerReason: string | null;
+  /** The step's output / manager answer (plan_steps.result via Electric). */
+  result: string | null;
+  /** Why the step is blocked (plan_steps.blocked_reason via Electric). */
+  blockedReason: string | null;
   theoreticalDeadlineAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
