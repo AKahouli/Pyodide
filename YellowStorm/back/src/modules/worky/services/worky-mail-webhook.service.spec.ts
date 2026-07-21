@@ -14,7 +14,7 @@ function mailWith(subject: string, body: string) {
     subject,
     body: { content: body },
     bodyPreview: 'Yellow Systems.',
-    from: { emailAddress: { address: 'rabeb@example.com' } },
+    from: { emailAddress: { address: 'x@example.com' } },
   };
 }
 
@@ -78,7 +78,7 @@ describe('WorkyMailWebhookService', () => {
       expect.objectContaining({
         token: TOKEN,
         replyBody: 'Yellow Systems.',
-        replyFrom: 'rabeb@example.com',
+        replyFrom: 'x@example.com',
       }),
     );
   });

@@ -9,7 +9,7 @@ const SUB = {
   lastSweptAt: new Date('2026-07-17T10:00:00Z'),
 };
 
-function mail(subject: string, from = 'rabeb@example.com') {
+function mail(subject: string, from = 'x@example.com') {
   return {
     subject,
     body: { content: '<p>Yellow Systems.</p>' },
@@ -58,7 +58,7 @@ describe('WorkyMailCatchupService', () => {
       expect.objectContaining({
         token: TOKEN,
         replyBody: 'Yellow Systems.',
-        replyFrom: 'rabeb@example.com',
+        replyFrom: 'x@example.com',
       }),
     );
   });
