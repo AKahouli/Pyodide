@@ -4,6 +4,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { normalizeUrl, type CollectedPage } from '../hooks/useBrowserSession';
+import type { IndexingStatus } from '../types';
+import { IndexingStatusDot } from './IndexingStatusDot';
 
 export interface TrieNode {
   /** Display name for this level: the host at the root, otherwise a path segment. */
@@ -12,6 +14,8 @@ export interface TrieNode {
   url?: string;
   /** Preferred leaf display name (clicked link text → page title); falls back to `segment` when absent. */
   label?: string;
+  /** Vectorstore indexing status for a seeded (already-indexed) page; drives a status dot. */
+  indexingStatus?: IndexingStatus;
   children: TrieNode[];
 }
 
@@ -64,6 +68,7 @@ export function buildTrie(pages: CollectedPage[]): TrieNode[] {
       node.url = p.url;
       const label = (p.linkText || p.title || '').replace(/\s+/g, ' ').trim();
       if (label) node.label = label;
+      if (p.indexingStatus) node.indexingStatus = p.indexingStatus;
     }
   }
   return roots;
@@ -173,6 +178,7 @@ function TrieRows({
 
               {node.url ? (
                 <>
+                  {node.indexingStatus && <IndexingStatusDot status={node.indexingStatus} />}
                   <Checkbox
                     aria-label={displayName}
                     checked={selected.has(node.url)}

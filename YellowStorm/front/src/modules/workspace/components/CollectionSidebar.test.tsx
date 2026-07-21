@@ -45,6 +45,11 @@ describe('buildTrie', () => {
     const b = roots[0].children[0].children[0];
     expect(b.label).toBeUndefined();
   });
+
+  it('carries indexingStatus onto the leaf node', () => {
+    const roots = buildTrie([{ url: 'https://ex.com/a', title: '', indexingStatus: 'ready' }]);
+    expect(roots[0].children[0].indexingStatus).toBe('ready');
+  });
 });
 
 it('renders the path hierarchy: host + shared segment as categories, leaves selectable', () => {
@@ -150,6 +155,13 @@ const baseProps = {
   selected: new Set<string>(), indexedUrls: new Set<string>(),
   onToggle: vi.fn(), onDelete: vi.fn(), onSelectAll: vi.fn(), onSelectNone: vi.fn(),
 };
+
+it('renders a status dot for a page with an indexing status and none without', () => {
+  const { rerender } = render(<CollectionSidebar pages={[{ url: 'https://ex.com/a', title: '', linkText: 'A', indexingStatus: 'ready' }]} {...baseProps} onAdd={vi.fn()} onEdit={vi.fn()} />);
+  expect(screen.getByRole('img', { name: 'Indexé' })).toBeInTheDocument();
+  rerender(<CollectionSidebar pages={[{ url: 'https://ex.com/a', title: '', linkText: 'A' }]} {...baseProps} onAdd={vi.fn()} onEdit={vi.fn()} />);
+  expect(screen.queryByRole('img', { name: 'Indexé' })).not.toBeInTheDocument();
+});
 
 it('add row calls onAdd with the url and name', () => {
   const onAdd = vi.fn().mockReturnValue(true);
