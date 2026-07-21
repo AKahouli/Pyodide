@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight, Loader2, RotateCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -8,10 +8,9 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { useWorkspaceStore } from '../store';
-import { useBrowserSession, normalizeUrl } from '../hooks/useBrowserSession';
+import { useBrowserSession } from '../hooks/useBrowserSession';
 import { readAutoIndexationValue } from '../hooks/useAutoIndexation';
 import { readDeepSearchIndexationValue } from '../hooks/useDeepSearchIndexation';
-import { checkUrls } from '../api';
 import { BrowserSessionViewer } from './BrowserSessionViewer';
 import { CollectionSidebar } from './CollectionSidebar';
 
@@ -41,7 +40,6 @@ export function AddLinkDialog({
   autoStart?: boolean;
 }) {
   const addPageLinks = useWorkspaceStore((s) => s.addPageLinks);
-  const documentsCache = useWorkspaceStore((s) => s.documents);
   const session = useBrowserSession();
 
   const [phase, setPhase] = useState<'input' | 'browse'>('input');
@@ -50,7 +48,6 @@ export function AddLinkDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [serverIndexedUrls, setServerIndexedUrls] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (open) {
@@ -84,27 +81,6 @@ export function AddLinkDialog({
 
   useEffect(() => { if (session.currentUrl) setAddressBar(session.currentUrl); }, [session.currentUrl]);
 
-  // `documents` in the store is a paginated cache (Map<page, WorkspaceDocument[]>),
-  // not a flat array — flatten it defensively (tests may pass a plain array/[]).
-  const indexedUrls = useMemo(() => {
-    const all = documentsCache instanceof Map ? Array.from(documentsCache.values()).flat() : [];
-    return new Set([
-      ...all.filter((d) => d?.sourceUrl).map((d) => normalizeUrl(d.sourceUrl as string)),
-      ...serverIndexedUrls,
-    ]);
-  }, [documentsCache, serverIndexedUrls]);
-
-  useEffect(() => {
-    const urls = session.pages.map((page) => page.url);
-    if (urls.length === 0) return;
-    const timer = window.setTimeout(() => {
-      void checkUrls(workspaceId, urls).then((response) => {
-        setServerIndexedUrls(new Set(response.results.filter((result) => result.exists).map((result) => normalizeUrl(result.normalizedUrl))));
-      }).catch(() => undefined);
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [workspaceId, session.pages]);
-
   const handleStart = () => {
     setError(null);
     if (!isValidUrl(url)) { setError('Veuillez saisir une URL valide (http:// ou https://).'); return; }
@@ -116,13 +92,13 @@ export function AddLinkDialog({
     setSelected((prev) => { const n = new Set(prev); n.has(u) ? n.delete(u) : n.add(u); return n; });
   const remove = (u: string) =>
     setSelected((prev) => { const n = new Set(prev); n.delete(u); return n; });
-  const selectableUrls = () => session.pages.filter((p) => !indexedUrls.has(normalizeUrl(p.url))).map((p) => p.url);
+  const selectableUrls = () => session.pages.map((p) => p.url);
   const selectAll = () => setSelected(new Set(selectableUrls()));
   const selectNone = () => setSelected(new Set());
 
   const chosen = session.pages
     .map((p) => p.url)
-    .filter((u) => selected.has(u) && !indexedUrls.has(normalizeUrl(u)));
+    .filter((u) => selected.has(u));
 
   const handleIndex = async () => {
     if (busy || chosen.length === 0) return;
@@ -214,7 +190,7 @@ export function AddLinkDialog({
             <CollectionSidebar
               pages={session.pages}
               selected={selected}
-              indexedUrls={indexedUrls}
+              indexedUrls={new Set()}
               onToggle={toggle}
               onDelete={remove}
               onSelectAll={selectAll}

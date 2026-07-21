@@ -12,10 +12,11 @@ vi.mock('../hooks/useBrowserSession', async () => {
   const actual = await vi.importActual<typeof import('../hooks/useBrowserSession')>('../hooks/useBrowserSession');
   return { ...actual, useBrowserSession: () => session };
 });
+let documentsCache: unknown = [];
 const addPageLinks = vi.fn().mockResolvedValue(undefined);
 vi.mock('../store', () => ({
   useWorkspaceStore: (sel: (s: unknown) => unknown) =>
-    sel({ addPageLinks, documents: [] }),
+    sel({ addPageLinks, documents: documentsCache }),
 }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -40,6 +41,7 @@ describe('migrateSelection', () => {
 beforeEach(() => {
   session.status = 'idle'; session.pages = []; session.rootUrl = null; addPageLinks.mockClear();
   session.start.mockClear();
+  documentsCache = [];
 });
 
 it('starts a browse session from the entered url', () => {
@@ -113,4 +115,17 @@ it('does not auto-start with an empty url (stays on the input phase)', () => {
   render(<AddLinkDialog open autoStart initialUrl='' onOpenChange={vi.fn()} workspaceId='w1' />);
   expect(session.start).not.toHaveBeenCalled();
   expect(screen.getByPlaceholderText('https://exemple.com')).toBeInTheDocument();
+});
+
+it('indexes an already-indexed url (clean slate allows duplicates)', async () => {
+  session.status = 'live';
+  session.rootUrl = 'https://ok.example/start';
+  session.pages = [{ url: 'https://ok.example/a', title: 'A' }];
+  // Simulate the page already existing in the workspace cache — old behavior filtered it out.
+  documentsCache = new Map([[1, [{ id: 'd1', sourceUrl: 'https://ok.example/a' }]]]);
+  render(<AddLinkDialog open onOpenChange={vi.fn()} workspaceId='w1' />);
+  fireEvent.click(screen.getByRole('button', { name: /Indexer/ }));
+  await waitFor(() =>
+    expect(addPageLinks).toHaveBeenCalledWith('w1', ['https://ok.example/a'], expect.anything()),
+  );
 });
