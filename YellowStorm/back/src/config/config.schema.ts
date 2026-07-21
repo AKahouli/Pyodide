@@ -1,6 +1,19 @@
 import * as Joi from 'joi';
 
 export const configValidationSchema = Joi.object({
+  GOVERNED_CONVERSATIONS_ENABLED: Joi.boolean().default(false),
+  GOVERNANCE_SCOPE_AUDIENCE_ENABLED: Joi.boolean().default(false),
+  GOVERNED_SCOPE_CAROUSEL_ENABLED: Joi.boolean().default(false),
+  DATA_ROOM_GOVERNANCE_ENABLED: Joi.boolean().default(false),
+  DATA_ROOM_SOURCE_VERSIONING_ENABLED: Joi.boolean().default(false),
+  DATA_ROOM_WORKSPACE_EVENTS_ENABLED: Joi.boolean().default(false),
+  DATA_ROOM_GOVERNANCE_EVENT_CONSUMER_ENABLED: Joi.boolean().default(false),
+  DATA_ROOM_AUTO_SOURCE_CREATION_ENABLED: Joi.boolean().default(false),
+  DATA_ROOM_RECONCILIATION_ENABLED: Joi.boolean().default(false),
+  DATA_ROOM_OUTBOX_DISPATCH_ENABLED: Joi.boolean().default(false),
+  DATA_ROOM_PERMANENT_SOURCE_DELETION_ENABLED: Joi.boolean().default(false),
+    DATA_ROOM_VALIDITY_INTELLIGENCE_ENABLED: Joi.boolean().default(false),
+    DATA_ROOM_KNOWLEDGE_ASSESSMENT_ENABLED: Joi.boolean().default(false),
   // Application
   APP_NAME: Joi.string().default('YelloStorm'),
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
@@ -183,6 +196,11 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_V2_GRPC_TLS_CA_CERT_PATH: Joi.string().optional(),
   CONVERSATION_V2_GRPC_TLS_SERVER_NAME_OVERRIDE: Joi.string().optional(),
   CONVERSATION_V2_GRPC_REQUIRE_TLS: Joi.boolean().default(false),
+  APP_BUILDER_DEPLOY_BASE_URL: Joi.string().uri().optional(),
+  APP_BUILDER_DEPLOY_TOKEN: Joi.string().min(1).optional(),
+  APP_BUILDER_DEPLOY_TIMEOUT_MS: Joi.number().min(30_000).default(600_000),
+  APP_BUILDER_DEPLOY_INITIAL_STATUS_DELAY_MS: Joi.number().min(0).default(20_000),
+  APP_BUILDER_DEPLOY_STATUS_POLL_INTERVAL_MS: Joi.number().min(1_000).default(15_000),
 
   // LiteLLM
   LITELLM_API_URL: Joi.string().uri().optional(),
@@ -229,6 +247,14 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_MAX_CONCURRENT_PER_PROVIDER: Joi.number().min(1).max(500).default(25),
   PLAYBOOK_MAX_CONCURRENT_PER_MODEL: Joi.number().min(1).max(500).default(10),
   PLAYBOOK_ASYNC_DESIGN_ENABLED: Joi.boolean().default(false),
+  PLAYBOOK_MCP_ASSISTANT_ENABLED: Joi.boolean().default(false),
+  PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),
+  PLAYBOOK_MCP_INGRESS_TOKEN: Joi.string().allow('').when('PLAYBOOK_MCP_CONNECTOR_RECONCILIATION_ENABLED', {
+    is: true,
+    then: Joi.string().min(16).required(),
+    otherwise: Joi.string().allow('').default(''),
+  }),
+  PLAYBOOK_MCP_CONNECTOR_RECONCILIATION_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_MAX_CONCURRENT_GLOBAL_DESIGN_OPERATIONS: Joi.number().min(1).max(100).default(10),
   PLAYBOOK_MAX_CONCURRENT_USER_DESIGN_OPERATIONS: Joi.number().min(1).max(50).default(3),
   // Telegram

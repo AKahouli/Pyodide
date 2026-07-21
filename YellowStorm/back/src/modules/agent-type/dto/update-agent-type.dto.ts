@@ -7,7 +7,7 @@ export class UpdateAgentTypeDto {
   @IsString()
   @MinLength(2)
   @MaxLength(100)
-  @Matches(/^[a-zA-Z0-9 ]+$/, { message: 'Name must contain only letters, numbers, and spaces' })
+  @Matches(/^[a-zA-Z0-9 -]+$/, { message: 'Name must contain only letters, numbers, spaces, and hyphens' })
   name?: string;
 
   @ApiPropertyOptional({ description: 'Default prompt template (fallback when no model-specific prompt exists)', maxLength: 50000 })

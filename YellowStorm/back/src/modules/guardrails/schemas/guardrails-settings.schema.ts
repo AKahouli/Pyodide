@@ -1,6 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
-import { GUARDRAIL_MODES, GuardrailMode } from '@modules/agent/schemas/agent.schema';
 
 export type GuardrailsSettingsDocument = HydratedDocument<GuardrailsSettings>;
 
@@ -14,9 +13,6 @@ export class PromptInjectionGuardrailsSettings {
 
   @Prop({ type: Boolean, default: false })
   toolCallGuardrailEnabled!: boolean;
-
-  @Prop({ type: String, enum: GUARDRAIL_MODES, default: 'balanced' })
-  mode!: GuardrailMode;
 
   @Prop({ type: String, default: '' })
   inputClassifierPrompt!: string;

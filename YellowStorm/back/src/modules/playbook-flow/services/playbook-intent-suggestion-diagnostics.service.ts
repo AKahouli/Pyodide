@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
+import type { PlaybookIntentDiagnostic, PlaybookIntentDiagnosticResolutionCode } from '../interfaces/playbook-flow-intent-diagnostic.interface';
 import type { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
 import { PlaybookFlowValidatorService } from './playbook-flow-validator.service';
 import type { PlaybookIntentSuggestion, PlaybookIntentTaskDraft, PlaybookIntentWorkflowChange } from './playbook-flow-intent.service';
@@ -25,8 +25,9 @@ export class PlaybookIntentSuggestionDiagnosticsService {
     diagnostics: PlaybookIntentDiagnostic[],
     repairSummary?: string[],
   ): WorkflowPlanSuggestion {
-    const validationDiagnostics = this.collectValidationDiagnostics(suggestion, flow);
-    const allDiagnostics = [...diagnostics, ...validationDiagnostics];
+    const validationDiagnostics = this.collectValidationDiagnostics(suggestion, flow)
+      .map((diagnostic) => this.addReviewGuidance(diagnostic, suggestion));
+    const allDiagnostics = [...diagnostics.map((diagnostic) => this.addReviewGuidance(diagnostic, suggestion)), ...validationDiagnostics];
     const validationStatus = this.classifyValidation(allDiagnostics);
     return {
       ...suggestion,
@@ -36,6 +37,53 @@ export class PlaybookIntentSuggestionDiagnosticsService {
       validationStatus,
       repairSummary: repairSummary && repairSummary.length > 0 ? repairSummary.join(' ') : null,
     };
+  }
+
+  private addReviewGuidance(
+    diagnostic: PlaybookIntentDiagnostic,
+    suggestion: WorkflowPlanSuggestion,
+  ): PlaybookIntentDiagnostic {
+    if (diagnostic.reviewTarget && diagnostic.resolutionCode) return diagnostic;
+    const searchable = [diagnostic.itemId, diagnostic.path, diagnostic.message].filter(Boolean).join(' ');
+    const nodes = suggestion.changes
+      .filter((change): change is Extract<PlaybookIntentWorkflowChange, { type: 'create_node' }> => change.type === 'create_node')
+      .flatMap((change) => [{
+        ref: change.nodeRef,
+        label: change.task.title,
+        ports: [...(change.task.inputPorts || []), ...(change.task.outputPorts || [])].map((port) => port.id),
+      }, ...(change.task.iteratorBody?.steps || []).map((step) => ({
+        ref: `${change.nodeRef}.${step.nodeRef}`,
+        label: step.title,
+        ports: [...(step.inputPorts || []), ...(step.outputPorts || [])].map((port) => port.id),
+      }))])
+      .sort((a, b) => b.ref.length - a.ref.length);
+    const node = nodes.find((candidate) => this.containsIdentifier(searchable, candidate.ref))
+      || nodes.find((candidate) => this.containsIdentifier(searchable, candidate.ref.split('.').at(-1) || ''));
+    const portId = node?.ports.find((port) => this.containsIdentifier(searchable, port));
+    return {
+      ...diagnostic,
+      reviewTarget: node
+        ? { kind: portId ? 'port' : 'node', nodeRef: node.ref, nodeLabel: node.label, ...(portId ? { portId } : {}) }
+        : { kind: 'workflow' },
+      resolutionCode: this.resolveResolutionCode(diagnostic),
+    };
+  }
+
+  private containsIdentifier(value: string, identifier: string): boolean {
+    if (!identifier) return false;
+    const escaped = identifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[^A-Za-z0-9_-])${escaped}($|[^A-Za-z0-9_-])`).test(value);
+  }
+
+  private resolveResolutionCode(diagnostic: PlaybookIntentDiagnostic): PlaybookIntentDiagnosticResolutionCode {
+    const value = `${diagnostic.code} ${diagnostic.message}`.toLowerCase();
+    if (value.includes('constant')) return 'review_constant';
+    if (value.includes('binding') || value.includes('required input')) return 'review_data_binding';
+    if (value.includes('router')) return 'review_router';
+    if (value.includes('edge') || value.includes('link')) return 'review_connection';
+    if (value.includes('port')) return 'review_port';
+    if (diagnostic.stage === 'repair') return 'review_repair';
+    return diagnostic.itemId ? 'review_node' : 'review_workflow';
   }
 
   private classifyValidation(diagnostics: PlaybookIntentDiagnostic[]): IntentSuggestionValidationStatus {
@@ -177,6 +225,9 @@ export class PlaybookIntentSuggestionDiagnosticsService {
     if (!targetNode) return null;
     if (change.sourceKind === 'constant') {
       return { id: this.bindingId(targetNode, change.targetPort), targetNode, targetPort: change.targetPort, sourceKind: 'constant', constantValue: change.constantValue } as DataBinding;
+    }
+    if (change.sourceKind === 'state') {
+      return { id: this.bindingId(targetNode, change.targetPort), targetNode, targetPort: change.targetPort, sourceKind: 'state', statePath: change.statePath } as DataBinding;
     }
     const sourceNode = this.resolveNodeId(change.sourceTaskId, change.sourceNodeRef, nodeRefToId);
     if (!sourceNode || !change.sourcePort) return null;

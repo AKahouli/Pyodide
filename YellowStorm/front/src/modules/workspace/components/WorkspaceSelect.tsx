@@ -148,14 +148,14 @@ export function WorkspaceSelect({ selectedIds, onChange, disabled, className, wo
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
-        <div className='relative'>
-          <Button type='button' variant={hasSelection ? 'secondary' : 'ghost'} size='icon' className={cn('h-8 w-8 shrink-0', hasSelection && 'text-primary', className)} disabled={disabled || isLoadingWorkspaces}>
+      <div className='relative'>
+        <PopoverTrigger asChild>
+          <Button type='button' variant={hasSelection ? 'secondary' : 'ghost'} size='icon' aria-label={t('select.triggerLabel')} title={t('select.triggerLabel')} className={cn('h-8 w-8 shrink-0', hasSelection && 'text-primary', className)} disabled={disabled || isLoadingWorkspaces}>
             <Layers className={cn('h-4 w-4', hasSelection && 'fill-current', isLoadingWorkspaces && 'opacity-50')} />
           </Button>
-          <BadgeCount count={selectedCount} />
-        </div>
-      </PopoverTrigger>
+        </PopoverTrigger>
+        <BadgeCount count={selectedCount} />
+      </div>
       <PopoverContent className='w-75 p-0' align='start' sideOffset={4}>
         <Command>
           <div className='flex items-center border-b px-3'>

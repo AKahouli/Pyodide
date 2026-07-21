@@ -15,8 +15,11 @@ export class GovernanceDeploymentRevision extends Document {
   @Prop({ type: String, enum: ['draft', 'dry_run', 'approved', 'published', 'rejected'], default: 'draft', index: true })
   status!: GovernanceRevisionStatus;
 
-  @Prop({ type: Types.ObjectId, ref: 'Agent', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'Agent' })
   agentId!: Types.ObjectId;
+
+  @Prop({ type: [Types.ObjectId], ref: 'Agent', default: [] })
+  allowedAgentIds!: Types.ObjectId[];
 
   @Prop({ type: [Types.ObjectId], ref: 'Workspace', default: [] })
   workspaceIds!: Types.ObjectId[];
@@ -37,7 +40,28 @@ export class GovernanceDeploymentRevision extends Document {
   sourceSnapshot!: Record<string, unknown>;
 
   @Prop({ type: Object, default: {} })
+  workspaceBindingSnapshot!: Record<string, unknown>;
+
+  @Prop({ type: Object, default: {} })
   channelSnapshot!: Record<string, unknown>;
+
+  @Prop({ type: String, index: true })
+  configurationFingerprint?: string;
+
+  @Prop({ type: Object, default: {} })
+  scopeSnapshot!: Record<string, unknown>;
+
+  @Prop({ type: Object, default: {} })
+  audienceSnapshot!: Record<string, unknown>;
+
+  @Prop({ type: Object, default: {} })
+  previousAudienceSnapshot!: Record<string, unknown>;
+
+  @Prop({ type: Object, default: {} })
+  ownershipSnapshot!: Record<string, unknown>;
+
+  @Prop({ type: Object, default: {} })
+  guardrailSnapshot!: Record<string, unknown>;
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy!: Types.ObjectId;

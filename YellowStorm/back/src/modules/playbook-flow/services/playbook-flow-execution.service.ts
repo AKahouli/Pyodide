@@ -765,6 +765,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   private async prepareExecutionStartFlow(
     flowId: string,
     ownerId: string,
+    singleStepTaskId?: string,
   ): Promise<IFlowResponse> {
     const preflightStartedAt = Date.now();
     const flow = await this.loadFlowForExecutionStart(flowId, ownerId);
@@ -796,7 +797,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       flow.dataBindings = sanitizedGraph.dataBindings as any;
     }
 
-    this.validatorService.validate(flow.nodes, flow.controlEdges, flow.dataBindings);
+    this.validatorService.validate(flow.nodes, flow.controlEdges, flow.dataBindings, {
+      ...(singleStepTaskId ? { requiredBindingNodeIds: [singleStepTaskId] } : {}),
+    });
 
     return flow;
   }
@@ -816,7 +819,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     stepExecutionModes?: Record<string, string>,
     modelIdOverride?: string,
   ): Promise<IFlowExecutionResponse> {
-    const flow = await this.prepareExecutionStartFlow(flowId, ownerId);
+    const flow = await this.prepareExecutionStartFlow(flowId, ownerId, singleStepTaskId);
 
     if (singleStepTaskId) {
       this.assertSingleStepSupported(flow.nodes, singleStepTaskId);

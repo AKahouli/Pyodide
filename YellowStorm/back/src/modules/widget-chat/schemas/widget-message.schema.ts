@@ -26,6 +26,9 @@ export class WidgetMessage extends Document {
   @Prop({ type: [] })
   components?: Array<{ id: string; type: string; data: Record<string, unknown> }>;
 
+  @Prop({ type: Object, default: undefined })
+  interaction?: Record<string, unknown>;
+
   @Prop()
   inputTokens?: number;
 
@@ -34,6 +37,7 @@ export class WidgetMessage extends Document {
 
   @Prop()
   durationMs?: number;
+
 }
 
 export const WidgetMessageSchema = SchemaFactory.createForClass(WidgetMessage);

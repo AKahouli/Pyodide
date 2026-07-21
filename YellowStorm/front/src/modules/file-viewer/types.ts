@@ -24,11 +24,15 @@ export interface FileTab {
   urlExpiresAt?: string;
   /** Whether the file URL is currently being loaded */
   isLoading?: boolean;
+  canWriteWorkspace?: boolean;
+  currentPage?: number;
+  pageCount?: number;
 }
 
 export type HighlightBBox = [number, number, number, number];
 
 export interface FileOpenOptions {
+  canWriteWorkspace?: boolean;
   /** Page number to scroll to after load */
   page?: number;
   /** Text to highlight/search after load */
@@ -37,6 +41,8 @@ export interface FileOpenOptions {
   highlightBBox?: HighlightBBox;
   /** Whether to open as floating window or sidebar panel */
   displayMode?: DisplayMode;
+  /** Whether clicking the floating backdrop closes the viewer */
+  closeOnOutsideClick?: boolean;
   /** Spreadsheet-specific navigation (sheet + row highlighting) */
   spreadsheet?: SpreadsheetNavigationOptions;
 }

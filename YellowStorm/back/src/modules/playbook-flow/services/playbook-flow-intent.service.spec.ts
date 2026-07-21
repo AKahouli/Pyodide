@@ -163,11 +163,77 @@ describe('PlaybookFlowIntentService normalization', () => {
 
     expect(promptService.findByKey).toHaveBeenCalledWith('intent.design_assessment');
     expect(httpClient.post).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+      temperature: 0.1,
       messages: [
         { role: 'system', content: 'Custom design assessment prompt' },
         { role: 'user', content: 'User intent context' },
       ],
     }), { timeout: 180000 });
+  });
+
+  it('omits temperature when the inference model rejects that parameter', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"ready_to_generate","detectedIntent":"Ready"}' } }] },
+      }),
+    };
+    service = createService({
+      promptService: { findByKey: jest.fn().mockResolvedValue(null) } as unknown as PlaybookFlowPromptTemplateService,
+    });
+    jest.spyOn(service, 'buildIntentAnalysisContext').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'azure/gpt-5.6-luna',
+      omitTemperature: true,
+      systemPrompt: '',
+      userPrompt: 'User intent context',
+      userMessageContent: 'User intent context',
+      promptVariables: {},
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
+    });
+
+    await service.assessDesign('flow-1', 'owner-1', { intent: 'Build workflow' });
+
+    expect(httpClient.post.mock.calls[0][1]).not.toHaveProperty('temperature');
+  });
+
+  it.each([
+    { omitTemperature: true, expectedTemperature: undefined },
+    { omitTemperature: false, expectedTemperature: 0.2 },
+  ])('uses model temperature capability during intent analysis', async ({ omitTemperature, expectedTemperature }) => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"suggestions":[]}' } }] },
+      }),
+    };
+    service = createService();
+    jest.spyOn(service, 'buildIntentAnalysisContext').mockResolvedValue({
+      httpClient: httpClient as any,
+      flow: {},
+      selectedNodeId: null,
+      effectiveSettings: {} as EffectiveFlowDesignSettings,
+      model: 'test-model',
+      omitTemperature,
+      systemPrompt: 'Return JSON',
+      userPrompt: 'Build workflow',
+      userMessageContent: 'Build workflow',
+      promptVariables: {},
+      validationContext: makeContext(),
+      limits: DEFAULT_LIMITS,
+      availableDesignCatalog: EMPTY_AVAILABLE_DESIGN_CATALOG,
+      nodeTemplates: [],
+    });
+
+    await service.analyze('flow-1', 'owner-1', { intent: 'Build workflow' });
+
+    const payload = httpClient.post.mock.calls[0][1];
+    if (expectedTemperature === undefined) expect(payload).not.toHaveProperty('temperature');
+    else expect(payload).toHaveProperty('temperature', expectedTemperature);
   });
 
   it('builds multimodal user message content when prompt images are provided', () => {
@@ -329,7 +395,7 @@ describe('PlaybookFlowIntentService normalization', () => {
       } as unknown as PlaybookFlowService,
       settingsService: {
         resolveEffectiveSettings: jest.fn().mockResolvedValue({ intentNormalizationLimits: DEFAULT_LIMITS }),
-        resolveInferenceModel: jest.fn().mockResolvedValue('model-1'),
+        resolveInferenceModelConfig: jest.fn().mockResolvedValue({ model: 'model-1', omitTemperature: true }),
       } as unknown as PlaybookFlowSettingsService,
       liteLLMConnectionService: {
         getHttpClient: jest.fn().mockReturnValue({ post: jest.fn() }),
@@ -393,6 +459,8 @@ describe('PlaybookFlowIntentService normalization', () => {
     const context = await service.buildIntentAnalysisContext('flow-1', 'owner-1', { intent: 'Build workflow' });
     const catalog = JSON.parse(context.promptVariables.available_design_catalog as string);
     const nodeTemplates = JSON.parse(context.promptVariables.node_templates as string);
+
+    expect(context).toMatchObject({ model: 'model-1', omitTemperature: true });
 
     expect(catalog).toEqual({
       availableConnectors: [{ id: 'connector-1', connectorSlug: 'google-drive', name: 'Google Drive', description: 'Drive access', category: 'Storage' }],

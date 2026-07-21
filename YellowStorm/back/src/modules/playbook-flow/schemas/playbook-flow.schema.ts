@@ -182,6 +182,9 @@ export class Flow {
   @Prop({ required: true, type: String })
   ownerId!: string;
 
+  @Prop({ required: false, type: String })
+  assistantOperationId?: string | null;
+
   @Prop({ required: true, type: Number, default: 1 })
   schemaVersion!: number;
 
@@ -191,7 +194,7 @@ export class Flow {
   @Prop({ required: true, type: String, minlength: 2, maxlength: 100 })
   name!: string;
 
-  @Prop({ required: false, type: String, maxlength: 20000 })
+  @Prop({ required: false, type: String, maxlength: 40000 })
   description?: string;
 
   @Prop({ required: false, type: FlowTriggerConfig })
@@ -249,9 +252,18 @@ export class Flow {
 }
 
 export const FlowSchema = SchemaFactory.createForClass(Flow);
+FlowSchema.index(
+  { assistantOperationId: 1 },
+  {
+    name: 'assistantOperationId_unique_string',
+    unique: true,
+    partialFilterExpression: { assistantOperationId: { $type: 'string' } },
+  },
+);
 
 FlowSchema.index({ ownerId: 1, updatedAt: -1 });
 FlowSchema.index({ ownerId: 1, name: 1 }, { unique: true });
+FlowSchema.index({ 'nodes.metadata.toolBindings.connectorId': 1 });
 
 FlowSchema.set('toJSON', {
   virtuals: true,

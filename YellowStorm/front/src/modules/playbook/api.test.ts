@@ -9,6 +9,7 @@ import {
   getPlaybookTriggers,
   getExecution,
   runAdvisorEvaluation,
+  runPlaybookAssistantTurn,
   getPlaybookRepeatability,
   getTaskRepeatability,
   sanitizePlaybookUpdate,
@@ -729,6 +730,53 @@ describe('validated replay routes', () => {
 });
 
 describe('updatePlaybook', () => {
+  it('uses the completed-operation commit endpoint for assistant construction saves', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.patch.mockClear();
+    apiClientMock.post.mockResolvedValueOnce({
+      data: { data: { id: 'playbook-1', name: 'Generated', nodes: [], controlEdges: [], dataBindings: [], triggers: [], workspaces: [] } },
+    });
+
+    await updatePlaybook('playbook-1', {
+      name: 'Generated',
+      tasks: [],
+      edges: [],
+      dataBindings: [],
+      expectedDefinitionRevision: 5,
+      assistantOperationId: 'operation-1',
+    });
+
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      '/playbooks/playbook-1/intent-constructions/operation-1/commit',
+      expect.objectContaining({ expectedDefinitionRevision: 5, nodes: [] }),
+    );
+    expect(apiClientMock.patch).not.toHaveBeenCalled();
+  });
+
+  it('uses the explicit apply endpoint for Advisor preview saves', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.patch.mockClear();
+    apiClientMock.post.mockResolvedValueOnce({
+      data: { data: { id: 'playbook-1', name: 'Optimized', nodes: [], controlEdges: [], dataBindings: [], triggers: [], workspaces: [] } },
+    });
+
+    await updatePlaybook('playbook-1', {
+      name: 'Optimized',
+      tasks: [],
+      edges: [],
+      dataBindings: [],
+      expectedDefinitionRevision: 5,
+      assistantOperationId: 'advisor-1',
+      assistantOperationTarget: 'advisor_preview',
+    });
+
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      '/playbooks/playbook-1/intent-constructions/advisor-1/apply',
+      expect.objectContaining({ expectedDefinitionRevision: 5, nodes: [] }),
+    );
+    expect(apiClientMock.patch).not.toHaveBeenCalled();
+  });
+
   it('sends empty flow arrays so the backend can clear persisted canvas state', async () => {
     apiClientMock.patch.mockReset();
     apiClientMock.patch.mockResolvedValueOnce({
@@ -1184,6 +1232,26 @@ describe('executePlaybook', () => {
 });
 
 describe('design message API', () => {
+  it('runs a dedicated Playbook assistant turn with revision context', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.post.mockResolvedValueOnce({
+      data: { data: { answer: 'Two tasks.', operation: null } },
+    });
+
+    const result = await runPlaybookAssistantTurn('playbook-1', {
+      message: 'How many tasks?',
+      expectedDefinitionRevision: 7,
+      selectedTaskId: 'task-1',
+    });
+
+    expect(apiClientMock.post).toHaveBeenCalledWith('/playbooks/playbook-1/assistant/turns', {
+      message: 'How many tasks?',
+      expectedDefinitionRevision: 7,
+      selectedTaskId: 'task-1',
+    }, { timeout: 180000 });
+    expect(result).toEqual({ answer: 'Two tasks.', operation: null });
+  });
+
   it('appends a designer sidebar interaction', async () => {
     apiClientMock.post.mockReset();
     apiClientMock.post.mockResolvedValueOnce({

@@ -23,11 +23,17 @@ import { ConnectedAppModule } from '../connected-app/connected-app.module';
 import { TeamModule } from '../team/team.module';
 import { UserModule } from '../user/user.module';
 import { GuardrailsModule } from '../guardrails/guardrails.module';
+import { ConversationModule } from '../conversation/conversation.module';
+import { AgentTaskExecutionService } from './services/agent-task-execution.service';
+import { UsageModule } from '../usage/usage.module';
+import playbookFlowConfig from '@config/playbook-flow.config';
+import { PlaybookAssistantConnectorReconcilerService } from './services/playbook-assistant-connector-reconciler.service';
 
 @Module({
   imports: [
     ConfigModule,
     ConfigModule.forFeature(a2aAdminConfig),
+    ConfigModule.forFeature(playbookFlowConfig),
     MongooseModule.forFeature([
       { name: Agent.name, schema: AgentSchema },
       { name: SharedAgent.name, schema: SharedAgentSchema },
@@ -42,9 +48,18 @@ import { GuardrailsModule } from '../guardrails/guardrails.module';
     forwardRef(() => TeamModule),
     UserModule,
     GuardrailsModule,
+    forwardRef(() => ConversationModule),
+    forwardRef(() => UsageModule),
   ],
   controllers: [AgentController, AdminAgentController, AgentA2AController, AgentShareController],
-  providers: [AgentService, AgentShareService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService],
-  exports: [AgentService, AgentShareService, A2AAdminGrpcClientService, A2APublishService],
+  providers: [AgentService, AgentShareService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, PlaybookAssistantConnectorReconcilerService],
+  exports: [
+    AgentService,
+    AgentShareService,
+    AgentPermissionGuard,
+    A2AAdminGrpcClientService,
+    A2APublishService,
+    AgentTaskExecutionService,
+  ],
 })
 export class AgentModule {}

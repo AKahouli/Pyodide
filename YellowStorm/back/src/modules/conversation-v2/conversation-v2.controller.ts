@@ -12,7 +12,6 @@ import {
   Patch,
   Post,
   Query,
-  ServiceUnavailableException,
   UseGuards,
 } from '@nestjs/common';
 import { Types } from 'mongoose';
@@ -33,11 +32,13 @@ import { WorkspaceService } from '@modules/workspace/workspace.service';
 import { ListSessionsDto } from './dto/list-sessions.dto';
 import { ListEventsDto } from './dto/list-events.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
+import { DeployAppDto } from './dto/deploy-app.dto';
 import { ShareDeployDto } from './dto/share-deploy.dto';
-import { EmailService } from '@modules/email';
 import { DocumentQueryDto } from '@modules/workspace/dto/document-query.dto';
 import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2EventStoreService, PersistedEventRow } from './services/conversation-v2-event-store.service';
+import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
+import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 
 interface AuthUser { id: string; }
 
@@ -54,7 +55,8 @@ export class ConversationV2Controller {
     private readonly eventStore: ConversationV2EventStoreService,
     private readonly workspaceService: WorkspaceService,
     private readonly config: ConfigService,
-    private readonly email: EmailService,
+    private readonly deployment: ConversationV2DeployService,
+    private readonly appShares: ConversationV2AppShareService,
   ) {}
 
   @Post('sessions')
@@ -133,6 +135,42 @@ export class ConversationV2Controller {
       ? items[items.length - 1].lastEventAt
       : null;
     return { items, nextCursor };
+  }
+
+  /** Owned + shared Marketplace apps for the current user. */
+  @Get('apps')
+  async listDeployedApps(@CurrentUser() user: AuthUser): Promise<{
+    items: {
+      sessionId: string;
+      title: string;
+      deployedUrl: string;
+      lastDeployedAt: string | null;
+      source: 'owned' | 'shared';
+      shareId: string | null;
+    }[];
+  }> {
+    const [owned, shared] = await Promise.all([
+      this.sessions.listDeployedApps(user.id),
+      this.appShares.listSharedWithUser(user.id),
+    ]);
+    const ownedIds = new Set(owned.map((app) => app.sessionId));
+    const items = [...owned, ...shared.filter((app) => !ownedIds.has(app.sessionId))];
+    return { items };
+  }
+
+  @Delete('apps/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeDeployedApp(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+  ): Promise<void> {
+    const removedOwn = await this.sessions.removeDeployedApp(user.id, id);
+    if (removedOwn) {
+      await this.appShares.deleteAllSharesForSession(id);
+      return;
+    }
+    const removedShare = await this.appShares.removeShareForRecipient(user.id, id);
+    if (!removedShare) throw new NotFoundException('Deployed app not found');
   }
 
   @Get('sessions/:id')
@@ -274,6 +312,7 @@ export class ConversationV2Controller {
       await this.workspaceService.deleteSystemWorkspace(wsId);
     }
     await this.sessions.softDelete(user.id, id);
+    await this.appShares.deleteAllSharesForSession(id);
     return { deleted: true };
   }
 
@@ -340,6 +379,7 @@ export class ConversationV2Controller {
   async deploySession(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
+    @Body() body: DeployAppDto,
   ): Promise<{
     deployStatus: string;
     deployedUrl: string | null;
@@ -352,35 +392,33 @@ export class ConversationV2Controller {
     // Mark in-flight first so a reload mid-deploy resumes the loader state.
     await this.sessions.setDeployState(user.id, id, { deployStatus: 'deploying' });
 
-    let result: { url: string; deployedAt: number } | null;
+    let deployedUrl: string;
     try {
-      result = await this.grpcClient.deploy(user.id, pointer.aiSessionId);
+      const result = await this.deployment.deploy(user.id, pointer.aiSessionId);
+      deployedUrl = result.url;
     } catch (err) {
       await this.sessions
         .setDeployState(user.id, id, { deployStatus: 'error' })
         .catch(() => undefined);
-      this.translateGrpcError(err);
+      throw err;
     }
 
-    // Manus doesn't implement Deploy yet (UNIMPLEMENTED → null). Revert to idle
-    // and signal it's not available — once Manus ships the RPC this returns a
-    // real URL and the happy path below runs unchanged.
-    if (!result) {
-      await this.sessions
-        .setDeployState(user.id, id, { deployStatus: 'idle' })
-        .catch(() => undefined);
-      throw new ServiceUnavailableException('Deployment is not available yet');
-    }
-
-    const lastDeployedAt = new Date(result.deployedAt * 1000);
+    const lastDeployedAt = new Date();
+    const deployedAppTitle = body.title?.trim() || pointer.title || null;
     await this.sessions.setDeployState(user.id, id, {
       deployStatus: 'deployed',
-      deployedUrl: result.url,
+      deployedUrl,
+      deployedAppTitle,
+      lastDeployedAt,
+    });
+    await this.appShares.syncDeployMetadata(id, {
+      title: deployedAppTitle || 'Untitled app',
+      deployedUrl,
       lastDeployedAt,
     });
     return {
       deployStatus: 'deployed',
-      deployedUrl: result.url,
+      deployedUrl,
       lastDeployedAt: lastDeployedAt.toISOString(),
     };
   }
@@ -392,40 +430,29 @@ export class ConversationV2Controller {
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() body: ShareDeployDto,
-  ): Promise<{ sent: number }> {
+  ): Promise<{ sent: number; notFound: string[]; skippedSelf: string[] }> {
     const pointer = await this.sessions.getOne(user.id, id);
     if (!pointer) throw new NotFoundException('Session not found');
-    const url = pointer.deployedUrl;
-    if (!url) {
+    if (pointer.deployStatus !== 'deployed' || !pointer.deployedUrl) {
       throw new BadRequestException('App is not deployed yet');
     }
-    if (!this.email.isAvailable()) {
-      throw new ServiceUnavailableException('Email service is not available');
-    }
-
-    const appName = pointer.title?.trim() || 'an app';
-    const subject = `${appName} has been shared with you`;
-    const html = `
-      <p>Hello,</p>
-      <p>An app built on ${this.config.get<string>('app.name', 'YelloStorm')} has been shared with you.</p>
-      <p><a href="${url}" target="_blank" rel="noreferrer">${url}</a></p>
-      <p>You can open it any time at the link above.</p>
-    `;
-    const text = `An app has been shared with you.\n\nOpen it here: ${url}\n`;
-
-    // Dedupe and send one email per recipient; tolerate individual failures so
-    // one bad address doesn't fail the whole batch.
-    const recipients = Array.from(new Set(body.emails.map((e) => e.trim().toLowerCase())));
-    const results = await Promise.all(
-      recipients.map((to) =>
-        this.email
-          .send({ to, subject, html, text })
-          .then((r) => r.success)
-          .catch(() => false),
-      ),
-    );
-    const sent = results.filter(Boolean).length;
-    return { sent };
+    const title =
+      (pointer as { deployedAppTitle?: string | null }).deployedAppTitle?.trim() ||
+      pointer.title?.trim() ||
+      'Untitled app';
+    const result = await this.appShares.shareByEmails({
+      ownerId: user.id,
+      sessionId: id,
+      emails: body.emails,
+      title,
+      deployedUrl: pointer.deployedUrl,
+      lastDeployedAt: pointer.lastDeployedAt ? new Date(pointer.lastDeployedAt) : null,
+    });
+    return {
+      sent: result.shared.length,
+      notFound: result.notFound,
+      skippedSelf: result.skippedSelf,
+    };
   }
 
   @Get('share/v2/:token')

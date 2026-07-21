@@ -1,7 +1,12 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsIn, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsArray, IsIn, IsMongoId, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CreateGovernanceDryRunDto {
+  @ApiPropertyOptional({ enum: ['conversation', 'manual'], description: 'How the dry-run outcome is recorded. Manual records an explicit attestation without starting a conversation.' })
+  @IsOptional()
+  @IsIn(['conversation', 'manual'])
+  executionMode?: 'conversation' | 'manual';
+
   @ApiPropertyOptional({ enum: ['widget', 'whatsapp', 'telegram', 'api'] })
   @IsOptional()
   @IsIn(['widget', 'whatsapp', 'telegram', 'api'])
@@ -16,6 +21,12 @@ export class CreateGovernanceDryRunDto {
   @IsOptional()
   @IsString()
   agentId?: string;
+
+  @ApiPropertyOptional({ type: [String], description: 'One or more workspaces from the draft revision to use for this dry-run conversation.' })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  workspaceIds?: string[];
 
   @ApiPropertyOptional({ maxLength: 4000 })
   @IsOptional()

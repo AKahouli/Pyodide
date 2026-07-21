@@ -13,9 +13,10 @@ import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } fr
 import { GovernanceDryRun, GovernanceDryRunDocument } from '../schemas/governance-dry-run.schema';
 import { GovernanceSource, GovernanceSourceDocument } from '../schemas/governance-source.schema';
 import { GovernancePublicationAttempt, GovernancePublicationAttemptDocument, GovernancePublicationAttemptStatus } from '../schemas/governance-publication-attempt.schema';
+import { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
 
 export interface GovernanceDeploymentResponse { id: string; programId: string; scopeId: string; name: string; status: string; currentDraftRevisionId?: string; currentPublishedRevisionId?: string; channels: Record<string, unknown>; createdAt: string; updatedAt: string }
-export interface GovernanceRevisionResponse { id: string; deploymentId: string; revisionNumber: number; status: string; agentId: string; workspaceIds: string[]; sourceIds: string[]; includedSourceIds: string[]; excludedSourceIds: string[]; createdBy: string; publishedBy?: string; publishedAt?: string; createdAt: string; updatedAt: string }
+export interface GovernanceRevisionResponse { id: string; deploymentId: string; revisionNumber: number; status: string; agentId: string; allowedAgentIds: string[]; workspaceIds: string[]; sourceIds: string[]; includedSourceIds: string[]; excludedSourceIds: string[]; sourceSnapshot: Record<string, unknown>; workspaceBindingSnapshot: Record<string, unknown>; configurationFingerprint?: string; scopeSnapshot: Record<string, unknown>; audienceSnapshot: Record<string, unknown>; previousAudienceSnapshot: Record<string, unknown>; createdBy: string; publishedBy?: string; publishedAt?: string; createdAt: string; updatedAt: string }
 export interface GovernanceReadiness { deploymentId: string; score: number; status: 'ready' | 'blocked' | 'warning'; blockers: GovernanceReadinessCheck[]; warnings: GovernanceReadinessCheck[]; checks: GovernanceReadinessCheck[] }
 export interface GovernanceReadinessCheck { key: string; label: string; status: 'passed' | 'warning' | 'failed'; severity: 'info' | 'warning' | 'blocking'; message?: string; targetType?: string; targetId?: string }
 
@@ -31,15 +32,17 @@ export class GovernanceDeploymentService {
     private readonly scopeService: GovernanceScopeService,
     private readonly accessService: GovernanceAccessService,
     private readonly auditLogService: AuditLogService,
+    private readonly draftPreparationService: GovernanceDraftPreparationService,
   ) {}
 
   async create(actorId: string, actorEmail: string, programId: string, dto: CreateGovernanceDeploymentDto): Promise<GovernanceDeploymentResponse> {
-    await this.scopeService.findById(actorId, programId, dto.scopeId);
+    const scope = await this.scopeService.findById(actorId, programId, dto.scopeId);
     await this.accessService.assertScopeAccess(actorId, programId, dto.scopeId);
     const duplicate = await this.deploymentModel.findOne({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(dto.scopeId) }).lean().exec();
     if (duplicate) throw new ConflictException(ErrorCode.GOVERNANCE_DEPLOYMENT_EXISTS);
     const deployment = await this.deploymentModel.create({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(dto.scopeId), name: dto.name.trim(), status: 'draft', channels: dto.channels ?? {} });
     this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.deployment.created', targetType: 'governance_deployment', targetId: deployment._id.toString(), metadata: { programId, scopeId: dto.scopeId } });
+    if (scope.agentIds.length > 0) await this.draftPreparationService.prepare(actorId, actorEmail, programId, dto.scopeId);
     return this.toDeploymentResponse(deployment);
   }
 
@@ -71,10 +74,14 @@ export class GovernanceDeploymentService {
     if (deployment.status === 'archived') throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
     const deploymentObjectId = new Types.ObjectId(deploymentId);
     const revisionNumber = (await this.revisionModel.countDocuments({ deploymentId: deploymentObjectId })) + 1;
+    const allowedAgentIds = this.normalizeAllowedAgentIds(dto.agentId, dto.allowedAgentIds);
+    await this.assertAgentsBelongToScope(actorId, deployment.programId.toString(), deployment.scopeId.toString(), allowedAgentIds);
+    await this.assertWorkspacesBelongToScope(deployment.programId.toString(), deployment.scopeId.toString(), dto.workspaceIds ?? []);
     const revision = await this.revisionModel.create({
       deploymentId: deploymentObjectId,
       revisionNumber,
       agentId: new Types.ObjectId(dto.agentId),
+      allowedAgentIds: this.toObjectIds(allowedAgentIds),
       workspaceIds: this.toObjectIds(dto.workspaceIds),
       sourceIds: this.toObjectIds(dto.sourceIds),
       includedSourceIds: this.toObjectIds(dto.includedSourceIds),
@@ -103,7 +110,20 @@ export class GovernanceDeploymentService {
     if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
     if (revision.status === 'published') throw new ConflictException(ErrorCode.GOVERNANCE_REVISION_IMMUTABLE);
     if (dto.agentId !== undefined) revision.agentId = new Types.ObjectId(dto.agentId);
-    if (dto.workspaceIds !== undefined) revision.workspaceIds = this.toObjectIds(dto.workspaceIds);
+    if (dto.agentId !== undefined || dto.allowedAgentIds !== undefined) {
+      const primaryAgentId = dto.agentId ?? revision.agentId.toString();
+      const allowedAgentIds = this.normalizeAllowedAgentIds(primaryAgentId, dto.allowedAgentIds ?? revision.allowedAgentIds.map(String));
+      const deployment = await this.deploymentModel.findById(deploymentId).lean().exec();
+      if (!deployment) throw new NotFoundException(ErrorCode.GOVERNANCE_DEPLOYMENT_NOT_FOUND);
+      await this.assertAgentsBelongToScope(actorId, deployment.programId.toString(), deployment.scopeId.toString(), allowedAgentIds);
+      revision.allowedAgentIds = this.toObjectIds(allowedAgentIds);
+    }
+    if (dto.workspaceIds !== undefined) {
+      const deployment = await this.deploymentModel.findById(deploymentId).lean().exec();
+      if (!deployment) throw new NotFoundException(ErrorCode.GOVERNANCE_DEPLOYMENT_NOT_FOUND);
+      await this.assertWorkspacesBelongToScope(deployment.programId.toString(), deployment.scopeId.toString(), dto.workspaceIds);
+      revision.workspaceIds = this.toObjectIds(dto.workspaceIds);
+    }
     if (dto.sourceIds !== undefined) revision.sourceIds = this.toObjectIds(dto.sourceIds);
     if (dto.includedSourceIds !== undefined) revision.includedSourceIds = this.toObjectIds(dto.includedSourceIds);
     if (dto.excludedSourceIds !== undefined) revision.excludedSourceIds = this.toObjectIds(dto.excludedSourceIds);
@@ -123,7 +143,9 @@ export class GovernanceDeploymentService {
     let readiness: GovernanceReadiness | undefined;
     let revisionId = dto.revisionId ?? deployment.currentDraftRevisionId?.toString();
     try {
-      if (deployment.status === 'archived' || deployment.status === 'suspended') throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
+      if (deployment.status === 'archived') throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
+      const scope = await this.scopeService.findById(actorId, deployment.programId.toString(), deployment.scopeId.toString());
+      if (scope.status !== 'active') throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
       readiness = await this.buildReadiness(actorId, deploymentId, deployment);
       if (readiness.blockers.length > 0 && !dto.allowPartial) {
         await this.createPublicationAttempt(actorId, actorEmail, deployment, revisionId, dto, 'blocked', readiness, ErrorCode.GOVERNANCE_PUBLISH_BLOCKED, 'Readiness blockers prevent publication');
@@ -136,16 +158,44 @@ export class GovernanceDeploymentService {
       const revision = await this.revisionModel.findOne({ _id: new Types.ObjectId(revisionId), deploymentId: new Types.ObjectId(deploymentId) }).exec();
       if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
       if (revision.status === 'published' || revision.status === 'rejected') throw new ConflictException(ErrorCode.GOVERNANCE_REVISION_IMMUTABLE);
+      if (!revision.agentId || !revision.allowedAgentIds?.length) throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
+      const previousRevisionStatus = revision.status;
       revision.status = 'published';
       revision.publishedBy = new Types.ObjectId(actorId);
       revision.publishedAt = new Date();
       await revision.save();
-      deployment.currentPublishedRevisionId = revision._id;
-      deployment.status = 'published';
-      await deployment.save();
-      await this.createPublicationAttempt(actorId, actorEmail, deployment, revisionId, dto, dto.allowPartial ? 'partial' : 'success', readiness);
+      let publishDeployment: GovernanceDeploymentDocument | null;
+      try {
+        publishDeployment = await this.deploymentModel.findOneAndUpdate(
+          { _id: deployment._id, currentDraftRevisionId: revision._id, currentPublishedRevisionId: { $ne: revision._id } },
+          { $set: { currentPublishedRevisionId: revision._id, status: 'published' } },
+          { new: true },
+        ).exec();
+      } catch (error) {
+        const observedDeployment = await this.deploymentModel.findById(deployment._id).exec();
+        if (observedDeployment?.currentPublishedRevisionId?.equals(revision._id)) publishDeployment = observedDeployment;
+        else {
+          revision.status = previousRevisionStatus;
+          revision.publishedBy = undefined;
+          revision.publishedAt = undefined;
+          await revision.save();
+          throw error;
+        }
+      }
+      if (!publishDeployment) {
+        const observedDeployment = await this.deploymentModel.findById(deployment._id).exec();
+        if (observedDeployment?.currentPublishedRevisionId?.equals(revision._id)) publishDeployment = observedDeployment;
+        else {
+          revision.status = previousRevisionStatus;
+          revision.publishedBy = undefined;
+          revision.publishedAt = undefined;
+          await revision.save();
+          throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
+        }
+      }
+      await this.createPublicationAttempt(actorId, actorEmail, publishDeployment, revisionId, dto, dto.allowPartial ? 'partial' : 'success', readiness);
       this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.deployment.published', targetType: 'governance_deployment', targetId: deploymentId, metadata: { revisionId, channels: dto.channels } });
-      return this.toDeploymentResponse(deployment);
+      return this.toDeploymentResponse(publishDeployment);
     } catch (error) {
       if (readiness && !(error instanceof ConflictException && (error as { code?: string }).code === ErrorCode.GOVERNANCE_PUBLISH_BLOCKED)) {
         await this.createPublicationAttempt(actorId, actorEmail, deployment, revisionId, dto, 'failed', readiness, this.getErrorCode(error), this.getErrorMessage(error));
@@ -261,7 +311,32 @@ export class GovernanceDeploymentService {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private toRevisionResponse(doc: any): GovernanceRevisionResponse {
-    return { id: doc._id?.toString() ?? '', deploymentId: doc.deploymentId?.toString() ?? '', revisionNumber: Number(doc.revisionNumber), status: String(doc.status ?? ''), agentId: doc.agentId?.toString() ?? '', workspaceIds: this.toStrings(doc.workspaceIds), sourceIds: this.toStrings(doc.sourceIds), includedSourceIds: this.toStrings(doc.includedSourceIds), excludedSourceIds: this.toStrings(doc.excludedSourceIds), createdBy: doc.createdBy?.toString() ?? '', publishedBy: doc.publishedBy?.toString(), publishedAt: this.toOptionalIso(doc.publishedAt), createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+    const agentId = doc.agentId?.toString() ?? '';
+    return { id: doc._id?.toString() ?? '', deploymentId: doc.deploymentId?.toString() ?? '', revisionNumber: Number(doc.revisionNumber), status: String(doc.status ?? ''), agentId, allowedAgentIds: this.toStrings(doc.allowedAgentIds).length ? this.toStrings(doc.allowedAgentIds) : [agentId].filter(Boolean), workspaceIds: this.toStrings(doc.workspaceIds), sourceIds: this.toStrings(doc.sourceIds), includedSourceIds: this.toStrings(doc.includedSourceIds), excludedSourceIds: this.toStrings(doc.excludedSourceIds), sourceSnapshot: doc.sourceSnapshot ?? {}, workspaceBindingSnapshot: doc.workspaceBindingSnapshot ?? {}, configurationFingerprint: doc.configurationFingerprint, scopeSnapshot: doc.scopeSnapshot ?? {}, audienceSnapshot: doc.audienceSnapshot ?? {}, previousAudienceSnapshot: doc.previousAudienceSnapshot ?? {}, createdBy: doc.createdBy?.toString() ?? '', publishedBy: doc.publishedBy?.toString(), publishedAt: this.toOptionalIso(doc.publishedAt), createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+  }
+
+  private normalizeAllowedAgentIds(primaryAgentId: string, allowedAgentIds?: string[]): string[] {
+    return [...new Set([primaryAgentId, ...(allowedAgentIds?.length ? allowedAgentIds : [primaryAgentId])])];
+  }
+
+  private async assertAgentsBelongToScope(actorId: string, programId: string, scopeId: string, agentIds: string[]): Promise<void> {
+    const scope = await this.scopeService.findById(actorId, programId, scopeId);
+    const mappedAgentIds = new Set(scope.agentIds);
+    if (agentIds.some((agentId) => !mappedAgentIds.has(agentId))) {
+      throw new BadRequestException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED, 'Every published assistant must be mapped to the scope');
+    }
+  }
+
+  private async assertWorkspacesBelongToScope(programId: string, scopeId: string, workspaceIds: string[]): Promise<void> {
+    const uniqueIds = [...new Set(workspaceIds)];
+    if (!uniqueIds.length) return;
+    const matched = await this.sourceModel.distinct('workspaceId', {
+      programId: new Types.ObjectId(programId),
+      workspaceId: { $in: this.toObjectIds(uniqueIds) },
+      isArchived: false,
+      $or: [{ scopeIds: new Types.ObjectId(scopeId) }, { ownerScopeId: new Types.ObjectId(scopeId) }, { visibility: 'program_shared' }],
+    }).exec();
+    if (new Set(matched.map(String)).size !== uniqueIds.length) throw new BadRequestException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED, 'Every workspace must be mapped to this scope before it can be published');
   }
 
   private toObjectIds(ids?: string[]): Types.ObjectId[] { return (ids ?? []).map((id) => new Types.ObjectId(id)); }

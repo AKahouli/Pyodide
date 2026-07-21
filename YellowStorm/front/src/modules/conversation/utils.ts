@@ -2,8 +2,48 @@ import { z } from 'zod';
 import type { ChatMessage } from '@/components/ai-elements/chat-conversation';
 import type { CitationBBox, MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import type { ModuleTranslationKey } from '@/modules/localization';
-import type { ChartComponentData, ChartKind, ChartLayout, Message, MessageComponent } from './types';
+import type { ChartComponentData, ChartKind, ChartLayout, ChoiceComponentData, Message, MessageComponent } from './types';
 import { translateConversation } from './translation';
+
+export type ConversationStreamActivity = 'thinking' | 'usingTools' | 'responding';
+
+const conversationVisibleComponentTypes = new Set([
+  'text',
+  'code',
+  'queue',
+  'plan',
+  'checkpoint',
+  'chart',
+  'task',
+  'error',
+  'sources',
+  'sandbox',
+  'webPreview',
+  'artifact',
+  'citation',
+  'choice',
+]);
+
+function getComponentType(component: MessageComponent): string {
+  return typeof component.type === 'object' && component.type !== null
+    ? (component.type as { type?: string }).type || ''
+    : component.type;
+}
+
+/**
+ * Projects structured agent output into the user-facing transcript. Internal
+ * reasoning, tool calls, and unrecognised payloads are never chat content.
+ */
+export function mapConversationComponentsToContentParts(components: MessageComponent[]): MessageContentPart[] {
+  return mapComponentsToContentParts(components.filter((component) => conversationVisibleComponentTypes.has(getComponentType(component))));
+}
+
+export function getConversationStreamActivity(components: MessageComponent[]): ConversationStreamActivity {
+  const componentTypes = components.map(getComponentType);
+  if (componentTypes.includes('toolInfo')) return 'usingTools';
+  if (componentTypes.some((type) => type === 'text' || type === 'code')) return 'responding';
+  return 'thinking';
+}
 
 const chartKindSchema = z.enum(['line', 'bar', 'area', 'pie', 'scatter', 'composed']);
 const chartLayoutSchema = z.enum(['horizontal', 'vertical']);
@@ -67,7 +107,7 @@ export function messageToChat(msg: Message): ChatMessage {
   if (msg.conversationType === 'user') {
     content = msg.content || '';
   } else {
-    content = mapComponentsToContentParts(msg.components || []);
+    content = mapConversationComponentsToContentParts(msg.components || []);
   }
   
 return {
@@ -196,6 +236,10 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
     case 'chart':
       console.debug('[mapSingleComponent] chart component:', { data, dataKeys: Object.keys(data) });
       return mapChartComponent(data);
+    case 'choice': {
+      const choice = normalizeChoiceComponentData(data);
+      return choice ? { type: 'choice', componentId: comp.id || '', ...choice } : { type: 'text', content: (data.fallbackText as string) || '' };
+    }
     case 'task':
       return {
         type: 'task',
@@ -268,7 +312,7 @@ export function mapComponentsToContentParts(components: MessageComponent[]): Mes
   const regularComps: MessageComponent[] = [];
   const citationComps: MessageComponent[] = [];
   for (const comp of validComps) {
-    const compType = typeof comp.type === 'object' && comp.type !== null ? (comp.type as { type?: string }).type || 'text' : comp.type;
+    const compType = getComponentType(comp) || 'text';
     if (compType === 'citation') {
       citationComps.push(comp);
     } else {
@@ -497,6 +541,32 @@ export function normalizeChartComponentData(data: unknown): ChartComponentData |
   };
 }
 
+export function normalizeChoiceComponentData(data: unknown): ChoiceComponentData | null {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  const raw = data as Record<string, unknown>;
+  const options = Array.isArray(raw.options) ? raw.options : [];
+  if (raw.schemaVersion !== 1 || typeof raw.questionId !== 'string' || !raw.questionId || typeof raw.prompt !== 'string' || !raw.prompt || options.length < 2 || options.length > 10) return null;
+  const ids = new Set<string>();
+  const normalizedOptions = options.map((item) => {
+    if (!item || typeof item !== 'object') return null;
+    const option = item as Record<string, unknown>;
+    if (typeof option.id !== 'string' || !/^[A-Za-z0-9._-]+$/.test(option.id) || ids.has(option.id) || typeof option.label !== 'string' || !option.label || typeof option.submitText !== 'string' || !option.submitText) return null;
+    ids.add(option.id);
+    const url = typeof option.url === 'string' && /^https:\/\//i.test(option.url) ? option.url : undefined;
+    return { id: option.id, label: option.label, submitText: option.submitText, ...(typeof option.value === 'string' ? { value: option.value } : {}), ...(typeof option.description === 'string' ? { description: option.description } : {}), ...(url ? { url } : {}), ...(option.disabled === true ? { disabled: true } : {}) };
+  });
+  if (normalizedOptions.some((option) => option === null)) return null;
+  const presentation = raw.presentation === 'list' ? 'list' : 'quick_replies';
+  const selectionMode = raw.selectionMode === 'multiple' ? 'multiple' : 'single';
+  const other = raw.otherOption;
+  const otherOption = other && typeof other === 'object' && (other as Record<string, unknown>).enabled === true && typeof (other as Record<string, unknown>).label === 'string'
+    ? { enabled: true, label: (other as Record<string, unknown>).label as string, ...(typeof (other as Record<string, unknown>).placeholder === 'string' ? { placeholder: (other as Record<string, unknown>).placeholder as string } : {}), maxLength: typeof (other as Record<string, unknown>).maxLength === 'number' ? (other as Record<string, unknown>).maxLength as number : 500 }
+    : undefined;
+  const labels = raw.labels && typeof raw.labels === 'object' ? raw.labels as ChoiceComponentData['labels'] : undefined;
+  const progress = raw.progress && typeof raw.progress === 'object' && typeof (raw.progress as Record<string, unknown>).current === 'number' && typeof (raw.progress as Record<string, unknown>).total === 'number' ? raw.progress as ChoiceComponentData['progress'] : undefined;
+  return { schemaVersion: 1, questionId: raw.questionId, prompt: raw.prompt, ...(typeof raw.description === 'string' ? { description: raw.description } : {}), presentation, selectionMode, submitBehavior: selectionMode === 'multiple' || presentation === 'list' || otherOption || raw.submitBehavior === 'explicit' ? 'explicit' : 'immediate', options: normalizedOptions as ChoiceComponentData['options'], ...(otherOption ? { otherOption } : {}), ...(labels ? { labels } : {}), ...(progress ? { progress } : {}), ...(typeof raw.fallbackText === 'string' ? { fallbackText: raw.fallbackText } : {}), dismissible: raw.dismissible === true, status: raw.status === 'submitted' || raw.status === 'disabled' ? raw.status : 'ready' };
+}
+
 /**
  * Converts message components to markdown for copy-to-clipboard
  */
@@ -509,7 +579,7 @@ export function componentsToMarkdown(components: MessageComponent[]): string {
   const errorLabel = translateConversation('messageActions.markdown.errorLabel');
   const defaultCitationSource = translateConversation('messageActions.markdown.defaultCitation');
   return components
-    .filter((comp) => comp && comp.type)
+    .filter((comp) => comp && conversationVisibleComponentTypes.has(getComponentType(comp)))
     .map((comp) => {
       const data = comp.data || {};
       switch (comp.type) {

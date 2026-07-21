@@ -10,7 +10,7 @@ import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { QueryAgentDto } from './dto/query-agent.dto';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
-import { NotFoundException, ConflictException, ForbiddenException } from '../exceptions';
+import { NotFoundException, ConflictException, ForbiddenException, BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { escapeRegex, collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '../../common/utils';
 import { ToolService } from '../tool/tool.service';
@@ -22,6 +22,7 @@ import { ISkillResponse } from '../skill/interfaces/skill.interface';
 import { ConnectorService } from '../connector/connector.service';
 import { IConnectorResponse } from '../connector/interfaces/connector.interface';
 import { ConnectorAuthService } from '../connector/interfaces/connector-auth.interface';
+import { filterConnectorFixedParams } from '../connector/utils/connector-fixed-params.util';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 import { TeamService } from '../team/team.service';
 import {
@@ -29,6 +30,7 @@ import {
   normalizeAdminGuardrailsSettings,
   normalizePromptInjectionGuardrails,
 } from '../guardrails/services/guardrails-settings.service';
+import { normalizeWidgetSettings } from './constants/widget-default-settings';
 
 /** Agent-type slug of the orchestrating manager agent. */
 const MANAGER_SLUG = 'manager';
@@ -109,7 +111,9 @@ export class AgentService {
         dto.connectorActionSelections,
       ),
       guardrails: dto.guardrails,
-      deploymentSettings: dto.deploymentSettings,
+      deploymentSettings: this.normalizeDeploymentSettings(dto.deploymentSettings),
+      enable_temporary_child_agents: dto.enable_temporary_child_agents ?? false,
+      max_temporary_child_agents: dto.max_temporary_child_agents ?? 4,
       isDefault: false,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -178,11 +182,10 @@ export class AgentService {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
 
-    if (agent.isDefault) {
-      throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY);
-    }
-
     const isOwner = agent.createdBy.toString() === userId;
+    if (agent.isDefault) {
+      return this.toResponse(agent);
+    }
     let shareInfo: ISharedAgentInfo | undefined;
     if (!isOwner) {
       // Non-owners may read the agent only if it was shared with them.
@@ -285,6 +288,9 @@ export class AgentService {
         dto.connectorActionSelections,
       );
     }
+    if (dto.deploymentSettings) {
+      updateData.deploymentSettings = this.normalizeDeploymentSettings(dto.deploymentSettings, agent.deploymentSettings);
+    }
 
     const updated = await this.agentModel
       .findByIdAndUpdate(agentId, { $set: updateData }, { new: true })
@@ -375,7 +381,7 @@ export class AgentService {
       llmModel: dto.model,
       instruction: dto.instruction ?? '',
       ignorePrePrompt: dto.ignorePrePrompt ?? false,
-      knowledgeBases: [],
+      knowledgeBases: (dto.knowledgeBases ?? []).map((id) => new Types.ObjectId(id)),
       tools: (dto.tools ?? []).map((id) => new Types.ObjectId(id)),
       skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
       disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
@@ -385,7 +391,9 @@ export class AgentService {
         dto.connectorActionSelections,
       ),
       guardrails: dto.guardrails,
-      deploymentSettings: dto.deploymentSettings,
+      deploymentSettings: this.normalizeDeploymentSettings(dto.deploymentSettings),
+      enable_temporary_child_agents: dto.enable_temporary_child_agents ?? false,
+      max_temporary_child_agents: dto.max_temporary_child_agents ?? 4,
       isDefault: true,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -533,8 +541,9 @@ export class AgentService {
       updateData.llmModel = dto.model || '';
       delete updateData.model;
     }
-    // Strip knowledgeBases for default agents
-    delete updateData.knowledgeBases;
+    if (dto.knowledgeBases) {
+      updateData.knowledgeBases = dto.knowledgeBases.map((id) => new Types.ObjectId(id));
+    }
     if (dto.tools) {
       updateData.tools = dto.tools.map((id) => new Types.ObjectId(id));
     }
@@ -552,6 +561,9 @@ export class AgentService {
         dto.connectors ?? ((agent.connectors as Array<{ toString(): string }>) || []).map((id) => id.toString()),
         dto.connectorActionSelections,
       );
+    }
+    if (dto.deploymentSettings) {
+      updateData.deploymentSettings = this.normalizeDeploymentSettings(dto.deploymentSettings, agent.deploymentSettings);
     }
 
     const updated = await this.agentModel
@@ -724,12 +736,19 @@ export class AgentService {
       managerName: selectedManager?.name,
     });
 
+    // A chat-level model selection is the default only for untagged mono-agent
+    // requests. Explicitly routed agents retain their configured model.
+    const effectiveModelIdForAgent = (agent: IAgentForStream): string =>
+      pingedAgents.length === 0
+        ? fallbackModelId || agent.model || ''
+        : agent.model || fallbackModelId || '';
+
     // Batch-resolve prompts: collect all (agentTypeId, modelId) pairs
     const promptPairs = filteredAgents
       .filter((a) => !a.ignorePrePrompt && a.agentTypeId)
       .map((a) => ({
         agentTypeId: a.agentTypeId,
-        modelId: a.model || fallbackModelId || '',
+        modelId: effectiveModelIdForAgent(a),
       }));
 
     // Single batch query to AgentTypeService
@@ -746,17 +765,17 @@ export class AgentService {
     // Batch-fetch all unique model IDs to resolve full LiteLLM model identifiers
     const allModelIds = [...new Set(
       filteredAgents
-        .map((a) => a.model || fallbackModelId)
+        .map(effectiveModelIdForAgent)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, string>(); // modelId → proxy alias (e.g., "gpt-4.1")
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
         if (m) {
-          modelMap.set(m.id, m.id);
+          modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature });
         }
       }
     }
@@ -809,8 +828,9 @@ export class AgentService {
         toolNames: agentTools.map((t) => t.name),
       });
 
-      const effectiveModelId = agent.model || fallbackModelId || '';
-      const proxyModel = modelMap.get(effectiveModelId) || effectiveModelId;
+      const effectiveModelId = effectiveModelIdForAgent(agent);
+      const resolvedModel = modelMap.get(effectiveModelId);
+      const proxyModel = resolvedModel?.model || effectiveModelId;
       const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
       const effectiveConnectorIds = [
         ...new Set([...(agent.connectorIds || []), ...(selectedConnectorId ? [selectedConnectorId] : [])]),
@@ -865,7 +885,10 @@ export class AgentService {
         agent_params: {
           params: {
             user_id: userId,
+
             connector_bindings_json: JSON.stringify(connectorBindings),
+            enable_temporary_child_agents: String(agent.enable_temporary_child_agents),
+            max_temporary_child_agents: String(agent.max_temporary_child_agents),
             guardrails_json: JSON.stringify({
               agent: { promptInjection: normalizePromptInjectionGuardrails(agent.guardrails?.promptInjection) },
               admin: normalizeAdminGuardrailsSettings(adminGuardrailsSettings),
@@ -873,6 +896,9 @@ export class AgentService {
             guardrails_classifier_model: guardrailsClassifierModelId,
             platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
             platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
+            ...(resolvedModel?.omitTemperature
+              ? { omit_temperature: 'true' }
+              : { temperature: String(agent.temperature) }),
           },
         },
         connectorIds: effectiveConnectorIds,
@@ -963,13 +989,13 @@ export class AgentService {
         .map((a) => a.model || inheritedDefaultModelId)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, string>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
-        if (m) modelMap.set(m.id, m.id);
+        if (m) modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature });
       }
     }
 
@@ -1014,7 +1040,8 @@ export class AgentService {
         const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
         const effectiveModelId = agent.model || inheritedDefaultModelId;
-        const proxyModel = modelMap.get(effectiveModelId) || effectiveModelId;
+        const resolvedModel = modelMap.get(effectiveModelId);
+        const proxyModel = resolvedModel?.model || effectiveModelId;
         const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
 
         let prompt = '';
@@ -1048,6 +1075,8 @@ export class AgentService {
           agent_params: {
             params: {
               user_id: userId,
+              enable_temporary_child_agents: String(agent.enable_temporary_child_agents),
+              max_temporary_child_agents: String(agent.max_temporary_child_agents),
               connector_bindings_json: JSON.stringify(connectorBindings),
               guardrails_json: JSON.stringify({
                 agent: { promptInjection: normalizePromptInjectionGuardrails(agent.guardrails?.promptInjection) },
@@ -1057,6 +1086,9 @@ export class AgentService {
               ...(sessionId ? { session_id: sessionId } : {}),
               platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
               platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
+              ...(resolvedModel?.omitTemperature
+                ? { omit_temperature: 'true' }
+                : { temperature: String(agent.temperature) }),
             },
           },
           connector_bindings: connectorBindings,
@@ -1079,6 +1111,20 @@ export class AgentService {
     });
 
     return grpcAgents;
+  }
+
+  /** Trusted governed-runtime path: exact published roster with pinned knowledge. */
+  async buildGovernedAgentsForStream(userId: string, agentIds: string[], workspaceIds: string[], fallbackModelId?: string): Promise<IGrpcAgent[]> {
+    const requestedIds = [...new Set(agentIds)];
+    const agents = await this.buildGrpcAgentsForPlaybook(userId, requestedIds, fallbackModelId);
+    const builtIds = new Set(agents.map((agent) => agent.id));
+    if (requestedIds.some((id) => !builtIds.has(id))) {
+      throw new NotFoundException(ErrorCode.AGENT_NOT_FOUND, 'One or more published assistants are unavailable');
+    }
+    return agents.map((agent) => ({
+      ...agent,
+      brain_context: workspaceIds.map((workspaceId) => ({ workspace_id: workspaceId, workspace_documents: [] })),
+    }));
   }
 
   async buildGrpcConnectorRuntimeForPlaybook(
@@ -1139,6 +1185,23 @@ export class AgentService {
     }
 
     const connectorsMap = await this.buildConnectorsMap(uniqueConnectorIds);
+    for (const [connectorId, fixedParams] of fixedParamsByConnectorId) {
+      const connector = connectorsMap.get(connectorId);
+      if (!connector) continue;
+
+      const allowedActionKeys = actionKeysByConnectorId.get(connectorId);
+      const selectedActions = (connector.actions || [])
+        .filter((action) => action.isEnabled !== false)
+        .filter((action) => !allowedActionKeys || allowedActionKeys.has(action.key))
+        .map((action) => ({
+          key: action.key,
+          parameterSchema: action.parameterSchema || {},
+        }));
+      fixedParamsByConnectorId.set(
+        connectorId,
+        filterConnectorFixedParams(fixedParams, selectedActions),
+      );
+    }
     const connectorBindings = await this.buildConnectorBindings(
       connectorsMap,
       uniqueConnectorIds,
@@ -1484,6 +1547,54 @@ export class AgentService {
   // Private mapping helpers
   // ==========================================
 
+  private normalizeDeploymentSettings(settings?: {
+    embedEnabled?: boolean;
+    restEnabled?: boolean;
+    widget?: unknown;
+  }, existing?: {
+    embedEnabled?: boolean;
+    restEnabled?: boolean;
+    widget?: unknown;
+  }): { embedEnabled: boolean; restEnabled: boolean; widget: ReturnType<typeof normalizeWidgetSettings> } {
+    return {
+      embedEnabled: settings?.embedEnabled ?? existing?.embedEnabled ?? false,
+      restEnabled: settings?.restEnabled ?? existing?.restEnabled ?? false,
+      widget: normalizeWidgetSettings((settings?.widget ?? existing?.widget) as Parameters<typeof normalizeWidgetSettings>[0]),
+    };
+  }
+
+  async listActiveDefaultAgentOptions(): Promise<Array<{ id: string; name: string; description?: string; agentTypeName?: string; model?: string }>> {
+    const agents = await this.agentModel
+      .find({ isDefault: true, isActive: true })
+      .populate('agentType', 'name')
+      .sort({ name: 1 })
+      .lean()
+      .exec();
+    return agents.map((agent) => {
+      const agentType = agent.agentType as unknown as { name?: string } | undefined;
+      return { id: agent._id.toString(), name: agent.name, description: agent.description || undefined, agentTypeName: agentType?.name, model: agent.llmModel };
+    });
+  }
+
+  async assertActiveDefaultAgent(agentId: string): Promise<void> {
+    if (!Types.ObjectId.isValid(agentId)) {
+      throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected decision-flow agent is invalid');
+    }
+    const agent = await this.agentModel.findOne({ _id: agentId, isDefault: true, isActive: true }).select('_id').lean().exec();
+    if (!agent) {
+      throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected decision-flow agent must be an active default agent');
+    }
+  }
+
+  async findActiveDefaultAgentIdBySlug(slug: string): Promise<string | null> {
+    const agent = await this.agentModel
+      .findOne({ slug, isDefault: true, isActive: true })
+      .select('_id')
+      .lean()
+      .exec();
+    return agent?._id.toString() ?? null;
+  }
+
   private toResponse(
     doc: AgentDocument | Record<string, unknown>,
     agentTypeDoc?: { id: string; name: string },
@@ -1539,7 +1650,12 @@ export class AgentService {
       deploymentSettings: {
         embedEnabled: ((d.deploymentSettings as { embedEnabled?: boolean } | undefined)?.embedEnabled) ?? false,
         restEnabled: ((d.deploymentSettings as { restEnabled?: boolean } | undefined)?.restEnabled) ?? false,
+        widget: normalizeWidgetSettings(
+          (d.deploymentSettings as { widget?: Parameters<typeof normalizeWidgetSettings>[0] } | undefined)?.widget,
+        ),
       },
+      enable_temporary_child_agents: (d.enable_temporary_child_agents as boolean) ?? false,
+      max_temporary_child_agents: (d.max_temporary_child_agents as number) ?? 4,
       hasSmartMemory: false,
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
@@ -1604,10 +1720,13 @@ export class AgentService {
         ),
       },
       agentTypeSkillIds,
+      enable_temporary_child_agents: (d.enable_temporary_child_agents as boolean) ?? false,
+      max_temporary_child_agents: (d.max_temporary_child_agents as number) ?? 4,
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
     };
   }
+
 
   private resolveEffectiveSkills(
     agent: IAgentForStream,
@@ -1830,12 +1949,13 @@ export class AgentService {
     if (userId) {
       for (const binding of bindings) {
         const connector = connectorsMap.get(binding.connector_id);
-        if (connector?.authSourceType === 'connected_app' && connector?.connectedAppKey) {
+        if (connector?.authSourceType && connector.authSourceType !== 'none') {
           try {
             const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
               authSourceType: connector.authSourceType,
               connectedAppKey: connector.connectedAppKey,
               runtimeAuthConfig: connector.runtimeAuthConfig || {},
+              connectorId: connector.id,
             });
             binding.auth_headers = auth.headers;
             binding.auth_env = auth.env;

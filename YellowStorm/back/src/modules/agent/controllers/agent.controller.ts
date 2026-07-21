@@ -9,6 +9,8 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  UseGuards,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -17,18 +19,25 @@ import {
   ApiBearerAuth,
   ApiParam,
 } from '@nestjs/swagger';
+import { Request } from 'express';
 import { AgentService } from '../agent.service';
+import { AuditLogService } from '../../authorization/services/audit-log.service';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { UserDocument } from '../../user/schemas/user.schema';
 import { CreateAgentDto, UpdateAgentDto, QueryAgentDto } from '../dto';
 import { IAgentResponse } from '../interfaces/agent.interface';
 import { PaginatedResponseDto } from '../../../common/dto/pagination.dto';
+import { AgentPermissionGuard, AgentContext } from '../guards/agent-permission.guard';
+import { RequireAgentPermission } from '../decorators/require-agent-permission.decorator';
 
 @ApiTags('Agents')
 @ApiBearerAuth()
 @Controller('agents')
 export class AgentController {
-  constructor(private readonly agentService: AgentService) {}
+  constructor(
+    private readonly agentService: AgentService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List personal agents (paginated)' })
@@ -48,6 +57,8 @@ export class AgentController {
   }
 
   @Get(':id')
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('read')
   @ApiOperation({ summary: 'Get personal agent by ID' })
   @ApiParam({ name: 'id', description: 'Agent ID' })
   @ApiResponse({ status: 200, description: 'Agent retrieved' })
@@ -55,7 +66,11 @@ export class AgentController {
   async findById(
     @CurrentUser() user: UserDocument,
     @Param('id') id: string,
+    @Req() request: { agentContext: AgentContext },
   ): Promise<IAgentResponse> {
+    if (request.agentContext.agent.isDefault) {
+      return this.agentService.findDefaultAgentById(id);
+    }
     return this.agentService.findUserAgentById(user._id.toString(), id);
   }
 
@@ -72,6 +87,8 @@ export class AgentController {
   }
 
   @Patch(':id')
+  @UseGuards(AgentPermissionGuard)
+  @RequireAgentPermission('write')
   @ApiOperation({ summary: 'Update a personal agent' })
   @ApiParam({ name: 'id', description: 'Agent ID' })
   @ApiResponse({ status: 200, description: 'Agent updated' })
@@ -80,7 +97,22 @@ export class AgentController {
     @CurrentUser() user: UserDocument,
     @Param('id') id: string,
     @Body() dto: UpdateAgentDto,
+    @Req() request: Request & { agentContext: AgentContext },
   ): Promise<IAgentResponse> {
+    if (request.agentContext.agent.isDefault) {
+      const agent = await this.agentService.updateDefault(id, dto);
+      this.auditLogService.logSuccess({
+        actorId: user._id.toString(),
+        actorEmail: user.email,
+        action: 'agents.update',
+        targetId: agent.id,
+        targetType: 'Agent',
+        metadata: { agentName: agent.name, changes: dto },
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'],
+      });
+      return agent;
+    }
     return this.agentService.updatePersonal(user._id.toString(), id, dto);
   }
 

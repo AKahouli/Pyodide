@@ -12,9 +12,39 @@ import {
   PublicShareViewResponse,
   EmbeddedMessage,
 } from '../interfaces/share.interface';
+import { MessageComponent } from '../interfaces/message.interface';
 import { LoggerService } from '../../logger';
 import { NotFoundException, ForbiddenException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
+
+const publicShareComponentTypes = new Set([
+  'text',
+  'code',
+  'plan',
+  'queue',
+  'checkpoint',
+  'chart',
+  'task',
+  'error',
+  'sources',
+  'sandbox',
+  'webPreview',
+  'artifact',
+  'citation',
+  'choice',
+]);
+
+function sanitizePublicShareMessages(messages: readonly EmbeddedMessage[]): EmbeddedMessage[] {
+  return messages.map(({ components, content, ...message }) => ({
+    ...message,
+    // AI content can aggregate private reasoning. Public AI output must use
+    // explicitly typed components, while user text remains shareable.
+    ...(message.conversationType === 'user' && content ? { content } : {}),
+    ...(components ? {
+      components: components.filter((component) => publicShareComponentTypes.has(component.type)),
+    } : {}),
+  }));
+}
 
 @Injectable()
 export class ShareService {
@@ -43,6 +73,9 @@ export class ShareService {
         'Conversation not found',
       );
     }
+    if (conversation.runtimeMode === 'governed') {
+      throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN, 'Governed conversations cannot be shared');
+    }
 
     if (data.shareType === 'public') {
       return this.createPublicShare(userId, conversation, data);
@@ -62,13 +95,13 @@ export class ShareService {
       .sort({ createdAt: 1 })
       .exec();
 
-    const embeddedMessages: EmbeddedMessage[] = messages.map((msg) => ({
+    const embeddedMessages = sanitizePublicShareMessages(messages.map((msg) => ({
       conversationType: msg.conversationType as 'user' | 'ai',
       content: msg.content,
-      components: msg.components as any,
+      components: msg.components as unknown as MessageComponent[],
       modelId: msg.modelId,
       createdAt: msg.createdAt,
-    }));
+    })));
 
     const accessToken = nanoid(32);
 
@@ -293,7 +326,9 @@ export class ShareService {
       id: share._id.toString(),
       title: share.title,
       sharedBy: share.sharedBy.toString(),
-      messages: (share.messages || []) as any,
+      // Legacy snapshots may contain internal components, so redact at read time
+      // as well as when creating a new public-share snapshot.
+      messages: sanitizePublicShareMessages((share.messages || []) as unknown as EmbeddedMessage[]),
       viewCount: share.viewCount,
       createdAt: share.createdAt.toISOString(),
     };

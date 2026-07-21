@@ -38,12 +38,15 @@ export interface Conversation {
   isShared: boolean;
   workspaces?: string[];
   selectedSkills?: string[];
+  /** Sticky routing agents (last @mention set); backend reuses when next turn has no tags. */
+  taggedAgentIds?: string[];
   systemWorkspaceId?: string;
   createdAt: string;
   updatedAt: string;
   groupMeta?: GroupConversationMeta;
-  taggedAgents?: string[];
   projectId?: string | null;
+  runtimeMode?: 'standard' | 'governed';
+  governanceContext?: { programId: string; scopeId: string; deploymentId: string; revisionId: string; revisionNumber: number; pinnedAt: string; runtimeDefinition: { primaryAgentId: string; allowedAgentIds: string[]; workspaceIds: string[] } };
 }
 
 export interface AttachedFile {
@@ -61,9 +64,13 @@ export interface Message {
   conversationType: 'user' | 'ai';
   content?: string;
   components?: MessageComponent[];
+  interaction?: ChoiceInteractionMetadata;
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];
   modelId?: string;
+  /** Agents used for this turn (mentions or sticky reuse from backend). */
+  agentIds?: string[];
+  memberIds?: string[];
   webSearchEnabled?: boolean;
   questionMessageId?: string;
   answerMessageId?: string;
@@ -116,9 +123,27 @@ export interface ChartComponentData extends Record<string, unknown> {
   showGrid?: boolean;
 }
 
+export type ChoicePresentation = 'quick_replies' | 'list';
+export type ChoiceSelectionMode = 'single' | 'multiple';
+export type ChoiceSubmitBehavior = 'immediate' | 'explicit';
+export type ChoiceStatus = 'ready' | 'submitted' | 'disabled';
+export interface ChoiceOption { id: string; label: string; submitText: string; value?: string; description?: string; disabled?: boolean; url?: string; }
+export interface ChoiceComponentData extends Record<string, unknown> {
+  schemaVersion: 1; questionId: string; prompt: string; description?: string; presentation: ChoicePresentation;
+  selectionMode: ChoiceSelectionMode; submitBehavior: ChoiceSubmitBehavior; options: ChoiceOption[];
+  otherOption?: { enabled: boolean; label: string; placeholder?: string; maxLength: number };
+  labels?: { submit?: string; dismiss?: string; other?: string };
+  progress?: { current: number; total: number; label?: string }; dismissible?: boolean; fallbackText?: string; status: ChoiceStatus;
+}
+export interface ChoiceInteractionMetadata {
+  type: 'choice'; componentId: string; questionId: string; sourceMessageId?: string; selectionMode: ChoiceSelectionMode;
+  selectedOptions: Array<{ optionId: string; label: string; value?: string }>; customAnswer?: string; dismissed?: boolean; displayText?: string;
+}
+
 export interface MessageComponent {
-  type: 'text' | 'code' | 'reasoning' | 'plan' | 'queue' | 'checkpoint' | 'chart' | 'task' | 'error' | 'sources' | 'sandbox' | 'webPreview' | 'artifact' | 'citation' | 'toolInfo' | 'chainOfThought';
-  data: Record<string, unknown> | ChartComponentData;
+  id?: string;
+  type: 'text' | 'code' | 'reasoning' | 'plan' | 'queue' | 'checkpoint' | 'chart' | 'task' | 'error' | 'sources' | 'sandbox' | 'webPreview' | 'artifact' | 'citation' | 'toolInfo' | 'chainOfThought' | 'choice';
+  data: Record<string, unknown> | ChartComponentData | ChoiceComponentData;
 }
 
 export interface StreamingComponent extends MessageComponent {
@@ -161,6 +186,7 @@ export interface SendMessagePayload {
   parentMessageId?: string;
   connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string };
   skillIds?: string[];
+  interaction?: ChoiceInteractionMetadata;
 }
 
 export interface CreateReportPayload {

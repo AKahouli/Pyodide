@@ -25,7 +25,6 @@ export {
   AgentTypesPage,
   DefaultAgentsPage,
   PlaybookPromptsPage,
-  PlaybookSettingsPage,
   WorkspaceSettingsPage,
   AuthProvidersPage,
   ConnectedAppsAdminPage,

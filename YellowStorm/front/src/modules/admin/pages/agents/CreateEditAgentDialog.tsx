@@ -113,6 +113,8 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
               connectorActionSelections: agent.connectorActionSelections || [],
               isActive: agent.isActive,
               isDefaultForType: agent.isDefaultForType || false,
+              enable_temporary_child_agents: agent.enable_temporary_child_agents ?? false,
+              max_temporary_child_agents: agent.max_temporary_child_agents ?? 4,
             });
           } else {
             reset(defaultFormValues);
@@ -249,6 +251,30 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                           <p className='text-xs text-muted-foreground'>{t('defaultAgents.form.defaultForType.description')}</p>
                         </div>
                         <Switch checked={watch('isDefaultForType')} onCheckedChange={(checked) => setValue('isDefaultForType', checked)} />
+                      </div>
+
+                      <div className='flex items-center justify-between'>
+                        <div className='space-y-0.5'>
+                          <Label>{t('defaultAgents.form.temporaryChildAgents.label')}</Label>
+                          <p className='text-xs text-muted-foreground'>{t('defaultAgents.form.temporaryChildAgents.description')}</p>
+                        </div>
+                        <Switch
+                          checked={watch('enable_temporary_child_agents')}
+                          onCheckedChange={(checked) => setValue('enable_temporary_child_agents', checked)}
+                        />
+                      </div>
+
+                      <div className='space-y-2'>
+                        <Label htmlFor='agent-max-temporary-child-agents'>{t('defaultAgents.form.maxTemporaryChildAgents.label')}</Label>
+                        <Input
+                          id='agent-max-temporary-child-agents'
+                          type='number'
+                          min={1}
+                          max={8}
+                          {...register('max_temporary_child_agents', { valueAsNumber: true })}
+                        />
+                        <p className='text-xs text-muted-foreground'>{t('defaultAgents.form.maxTemporaryChildAgents.description')}</p>
+                        {errors.max_temporary_child_agents && <p className='text-xs text-destructive'>{errors.max_temporary_child_agents.message}</p>}
                       </div>
 
                       <div className='space-y-2'>

@@ -1,6 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { usePlaybookIntentFlow } from './playbook-intent-flow';
+import { mergeConstructionDiagnostics, usePlaybookIntentFlow } from './playbook-intent-flow';
 import type { AdvisorRemediationPreviewResponse, Playbook, PlaybookIntentSuggestion } from '../types';
 
 vi.mock('@/modules/localization', () => ({
@@ -17,13 +17,17 @@ function buildDeps(preview: AdvisorRemediationPreviewResponse) {
     tasks: [{ id: 't1', title: 'Analyze Data' }],
   } as Playbook;
 
+  const startAdvisorRemediationConstruction = vi.fn().mockResolvedValue({ constructionId: 'advisor-operation', playbookId: 'p1', baseDefinitionRevision: 7, target: 'advisor_preview' });
+  const streamPlaybookIntentConstruction = vi.fn(async (_playbookId, _constructionId, options) => {
+    options.onEvent({ type: 'node_delta', constructionId: 'advisor-operation', playbookId: 'p1', sequence: 1, suggestion: preview.suggestion } as any);
+    options.onEvent({ type: 'completed', constructionId: 'advisor-operation', playbookId: 'p1', sequence: 2 } as any);
+  });
   return {
     id: 'p1',
     playbook,
     selectedStepId: 't1',
     isDirty: false,
     intentValue: '',
-    intentAutoApply: false,
     intentDesign: null,
     selectStep: vi.fn(),
     assessPlaybookIntentDesign: vi.fn(),
@@ -37,9 +41,16 @@ function buildDeps(preview: AdvisorRemediationPreviewResponse) {
     setLastIntentSuggestions: vi.fn(),
     addIntentSuggestionHistoryEntry: vi.fn(),
     previewAdvisorRemediation: vi.fn().mockResolvedValue(preview),
+    startAdvisorRemediationConstruction,
+    startPlaybookIntentConstruction: vi.fn(),
+    streamPlaybookIntentConstruction,
+    constructionAbortRef: { current: null },
+    captureConstructionSnapshot: vi.fn(),
+    setPreviewConstructionReady: vi.fn(),
     showError: vi.fn(),
     showWarning: vi.fn(),
     getCurrentDefinitionRevision: vi.fn(() => 7),
+    realtimeConstructionEnabled: true,
   };
 }
 
@@ -68,6 +79,43 @@ const blockedWorkflowSuggestion: PlaybookIntentSuggestion = {
   validationStatus: 'blocked',
   isDirectIntentFallback: false,
 };
+
+const additiveWorkflowSuggestion: PlaybookIntentSuggestion = {
+  id: 'additive-plan',
+  kind: 'workflow_plan',
+  label: 'Append a task',
+  summary: 'Append a task after the current last task.',
+  reason: 'The existing workflow needs one more task.',
+  confidence: 0.9,
+  impact: { nodesToCreate: 1, nodesToUpdate: 0, nodesToDelete: 0, edgesToCreate: 0, edgesToDelete: 0, dataBindingsToCreate: 0, dataBindingsToDelete: 0, affectedTaskIds: ['t1'], businessOutcome: '' },
+  changes: [{
+    type: 'create_node',
+    nodeRef: 'appended-task',
+    anchor: { mode: 'after', targetTaskId: 't1', nodeRef: null, targetTaskIds: ['t1'] },
+    task: { title: 'Appended task', description: 'Continue the existing workflow.' },
+  }],
+  isDirectIntentFallback: false,
+};
+
+describe('mergeConstructionDiagnostics', () => {
+  it('deduplicates cumulative diagnostics while preserving actionable targets', () => {
+    const diagnostic = {
+      severity: 'warning' as const,
+      stage: 'repair' as const,
+      code: 'repair_template_required_port_added',
+      itemId: 'prepare_report',
+      message: 'repair_template_required_port_added',
+      reviewTarget: { kind: 'node' as const, nodeRef: 'prepare_report', nodeLabel: 'Prepare report' },
+      resolutionCode: 'review_port' as const,
+    };
+    const suggestion = {
+      ...additiveWorkflowSuggestion,
+      diagnostics: [diagnostic],
+    };
+
+    expect(mergeConstructionDiagnostics([diagnostic], suggestion)).toEqual([diagnostic]);
+  });
+});
 
 describe('usePlaybookIntentFlow advisor remediation', () => {
   it('uses design assessment before manual-mode generation', async () => {
@@ -99,6 +147,308 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
   });
 
+  it('routes ready Designer submissions through realtime construction when enabled', async () => {
+    const deps = {
+      ...buildDeps({
+        suggestion: validStepSuggestion,
+        suggestions: [validStepSuggestion],
+        intent: 'Build workflow.',
+        expectedDefinitionRevision: 7,
+        validation: { valid: true, warnings: [], errors: [] },
+      }),
+      assessPlaybookIntentDesign: vi.fn().mockResolvedValue({ status: 'ready_to_generate', detectedIntent: 'Build workflow' }),
+      startPlaybookIntentConstruction: vi.fn().mockResolvedValue({ constructionId: 'construction-ready', playbookId: 'p1', baseDefinitionRevision: 7 }),
+      streamPlaybookIntentConstruction: vi.fn(async (_playbookId, _constructionId, options) => {
+        options.onEvent({ type: 'node_delta', constructionId: 'construction-ready', playbookId: 'p1', sequence: 1, suggestion: validStepSuggestion } as any);
+        options.onEvent({ type: 'completed', constructionId: 'construction-ready', playbookId: 'p1', sequence: 2 } as any);
+      }),
+      captureConstructionSnapshot: vi.fn(),
+      finalizeConstruction: vi.fn().mockResolvedValue(undefined),
+      setConstructionStatus: vi.fn(),
+      setConstructionProgress: vi.fn(),
+      setConstructionId: vi.fn(),
+      constructionAbortRef: { current: null },
+    };
+    const { result } = renderHook(() => usePlaybookIntentFlow(deps));
+
+    await act(async () => {
+      await result.current.handleSubmitIntentText('Build workflow');
+    });
+
+    expect(deps.startPlaybookIntentConstruction).toHaveBeenCalledWith('p1', { intent: 'Build workflow', selectedTaskId: 't1' }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(deps.captureConstructionSnapshot).toHaveBeenCalledTimes(1);
+    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledWith(validStepSuggestion, expect.objectContaining({
+      save: false,
+      captureHistory: false,
+      applicationKey: 'intent-construction-construction-ready',
+    }));
+    expect(deps.finalizeConstruction).toHaveBeenCalledWith(7, 'construction-ready');
+    expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
+  });
+
+  it('applies streamed workflow plans as explicit deltas without replacing the existing graph', async () => {
+    const deps = {
+      ...buildDeps({
+        suggestion: additiveWorkflowSuggestion,
+        suggestions: [additiveWorkflowSuggestion],
+        intent: 'Append a task.',
+        expectedDefinitionRevision: 7,
+        validation: { valid: true, warnings: [], errors: [] },
+      }),
+      assessPlaybookIntentDesign: vi.fn().mockResolvedValue({ status: 'ready_to_generate', detectedIntent: 'Append a task' }),
+      startPlaybookIntentConstruction: vi.fn().mockResolvedValue({ constructionId: 'construction-additive', playbookId: 'p1', baseDefinitionRevision: 7 }),
+      streamPlaybookIntentConstruction: vi.fn(async (_playbookId, _constructionId, options) => {
+        options.onEvent({ type: 'node_delta', constructionId: 'construction-additive', playbookId: 'p1', sequence: 1, suggestion: additiveWorkflowSuggestion } as any);
+        options.onEvent({ type: 'completed', constructionId: 'construction-additive', playbookId: 'p1', sequence: 2 } as any);
+      }),
+      captureConstructionSnapshot: vi.fn(),
+      finalizeConstruction: vi.fn().mockResolvedValue(undefined),
+      setConstructionStatus: vi.fn(),
+      setConstructionProgress: vi.fn(),
+      setConstructionId: vi.fn(),
+      constructionAbortRef: { current: null },
+    };
+    const { result } = renderHook(() => usePlaybookIntentFlow(deps));
+
+    await act(async () => {
+      await result.current.handleSubmitIntentText('Append a task');
+    });
+
+    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledWith(additiveWorkflowSuggestion, expect.objectContaining({
+      replaceAll: false,
+      save: false,
+      captureHistory: false,
+    }));
+    expect(deps.finalizeConstruction).toHaveBeenCalledWith(7, 'construction-additive');
+  });
+
+  it('consumes an MCP-started construction without starting a second operation', async () => {
+    const deps = {
+      ...buildDeps({
+        suggestion: validStepSuggestion,
+        suggestions: [validStepSuggestion],
+        intent: 'Build workflow.',
+        expectedDefinitionRevision: 7,
+        validation: { valid: true, warnings: [], errors: [] },
+      }),
+      startPlaybookIntentConstruction: vi.fn(),
+      streamPlaybookIntentConstruction: vi.fn(async (_playbookId, _constructionId, options) => {
+        options.onEvent({ type: 'started', constructionId: 'mcp-operation', playbookId: 'p1', sequence: 1, baseDefinitionRevision: 6, model: 'model-1' } as any);
+        options.onEvent({ type: 'node_delta', constructionId: 'mcp-operation', playbookId: 'p1', sequence: 2, suggestion: validStepSuggestion } as any);
+        options.onEvent({ type: 'completed', constructionId: 'mcp-operation', playbookId: 'p1', sequence: 3 } as any);
+      }),
+      captureConstructionSnapshot: vi.fn(),
+      rollbackConstruction: vi.fn(),
+      finalizeConstruction: vi.fn().mockResolvedValue(undefined),
+      setConstructionStatus: vi.fn(),
+      setConstructionProgress: vi.fn(),
+      setConstructionId: vi.fn(),
+      constructionAbortRef: { current: null },
+    };
+    const { result } = renderHook(() => usePlaybookIntentFlow(deps));
+
+    await act(async () => {
+      await result.current.consumePlaybookConstruction({ constructionId: 'mcp-operation', playbookId: 'p1', baseDefinitionRevision: 7 });
+    });
+
+    expect(deps.startPlaybookIntentConstruction).not.toHaveBeenCalled();
+    expect(deps.streamPlaybookIntentConstruction).toHaveBeenCalledWith('p1', 'mcp-operation', expect.any(Object));
+    expect(deps.captureConstructionSnapshot).toHaveBeenCalledTimes(1);
+    expect(deps.finalizeConstruction).toHaveBeenCalledWith(6, 'mcp-operation');
+  });
+
+  it('fails closed without legacy preview when realtime construction is disabled', async () => {
+    const deps = {
+      ...buildDeps({
+        suggestion: validStepSuggestion,
+        suggestions: [validStepSuggestion],
+        intent: 'Build workflow.',
+        expectedDefinitionRevision: 7,
+        validation: { valid: true, warnings: [], errors: [] },
+      }),
+      realtimeConstructionEnabled: false,
+      assessPlaybookIntentDesign: vi.fn().mockResolvedValue({ status: 'ready_to_generate', detectedIntent: 'Build workflow' }),
+      requestPlaybookIntent: vi.fn().mockResolvedValue({ suggestions: [validStepSuggestion] }),
+      startPlaybookIntentConstruction: vi.fn(),
+      streamPlaybookIntentConstruction: vi.fn(),
+      constructionAbortRef: { current: null },
+    };
+    const { result } = renderHook(() => usePlaybookIntentFlow(deps));
+
+    await act(async () => {
+      await result.current.handleSubmitIntentText('Build workflow');
+    });
+
+    expect(deps.startPlaybookIntentConstruction).not.toHaveBeenCalled();
+    expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
+    expect(deps.setIntentError).toHaveBeenCalled();
+  });
+
+  it('fails closed without legacy preview when construction fails before a delta', async () => {
+    const deps = {
+      ...buildDeps({
+        suggestion: validStepSuggestion,
+        suggestions: [validStepSuggestion],
+        intent: 'Build workflow.',
+        expectedDefinitionRevision: 7,
+        validation: { valid: true, warnings: [], errors: [] },
+      }),
+      assessPlaybookIntentDesign: vi.fn().mockResolvedValue({ status: 'ready_to_generate', detectedIntent: 'Build workflow' }),
+      requestPlaybookIntent: vi.fn().mockResolvedValue({ suggestions: [validStepSuggestion] }),
+      startPlaybookIntentConstruction: vi.fn().mockRejectedValue(new Error('Construction unavailable')),
+      streamPlaybookIntentConstruction: vi.fn(),
+      setConstructionStatus: vi.fn(),
+      setConstructionProgress: vi.fn(),
+      constructionAbortRef: { current: null },
+    };
+    const { result } = renderHook(() => usePlaybookIntentFlow(deps));
+
+    await act(async () => {
+      await result.current.handleSubmitIntentText('Build workflow');
+    });
+
+    expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
+    expect(deps.setIntentError).toHaveBeenCalledWith('Construction unavailable');
+  });
+
+  it('does not fall back after construction emits a delta and then fails', async () => {
+    const deps = {
+      ...buildDeps({
+        suggestion: validStepSuggestion,
+        suggestions: [validStepSuggestion],
+        intent: 'Build workflow.',
+        expectedDefinitionRevision: 7,
+        validation: { valid: true, warnings: [], errors: [] },
+      }),
+      assessPlaybookIntentDesign: vi.fn().mockResolvedValue({ status: 'ready_to_generate', detectedIntent: 'Build workflow' }),
+      requestPlaybookIntent: vi.fn(),
+      startPlaybookIntentConstruction: vi.fn().mockResolvedValue({ constructionId: 'construction-partial', playbookId: 'p1', baseDefinitionRevision: 7 }),
+      streamPlaybookIntentConstruction: vi.fn(async (_playbookId, _constructionId, options) => {
+        options.onEvent({ type: 'node_delta', constructionId: 'construction-partial', playbookId: 'p1', sequence: 1, suggestion: validStepSuggestion } as any);
+        throw new Error('Stream interrupted');
+      }),
+      captureConstructionSnapshot: vi.fn(),
+      rollbackConstruction: vi.fn(),
+      finalizeConstruction: vi.fn().mockResolvedValue(undefined),
+      setConstructionStatus: vi.fn(),
+      setConstructionProgress: vi.fn(),
+      constructionAbortRef: { current: null },
+    };
+    const { result } = renderHook(() => usePlaybookIntentFlow(deps));
+
+    let response: Awaited<ReturnType<typeof result.current.handleSubmitIntentText>> | undefined;
+    await act(async () => {
+      response = await result.current.handleSubmitIntentText('Build workflow');
+    });
+
+    expect(response?.status).toBe('failed');
+    expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
+    expect(deps.captureConstructionSnapshot).toHaveBeenCalledTimes(1);
+    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledTimes(1);
+    expect(deps.finalizeConstruction).not.toHaveBeenCalled();
+    expect(deps.rollbackConstruction).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fall back after direct construction applies but final persistence fails', async () => {
+    const deps = {
+      ...buildDeps({
+        suggestion: validStepSuggestion,
+        suggestions: [validStepSuggestion],
+        intent: 'Build workflow.',
+        expectedDefinitionRevision: 7,
+        validation: { valid: true, warnings: [], errors: [] },
+      }),
+      assessPlaybookIntentDesign: vi.fn().mockResolvedValue({ status: 'ready_to_generate', detectedIntent: 'Build workflow' }),
+      requestPlaybookIntent: vi.fn(),
+      startPlaybookIntentConstruction: vi.fn().mockResolvedValue({ constructionId: 'construction-save-failure', playbookId: 'p1', baseDefinitionRevision: 7 }),
+      streamPlaybookIntentConstruction: vi.fn(async (_playbookId, _constructionId, options) => {
+        options.onEvent({ type: 'node_delta', constructionId: 'construction-save-failure', playbookId: 'p1', sequence: 1, suggestion: validStepSuggestion } as any);
+        options.onEvent({ type: 'completed', constructionId: 'construction-save-failure', playbookId: 'p1', sequence: 2 } as any);
+      }),
+      captureConstructionSnapshot: vi.fn(),
+      rollbackConstruction: vi.fn(),
+      finalizeConstruction: vi.fn().mockRejectedValue(new Error('Save failed')),
+      setConstructionStatus: vi.fn(),
+      setConstructionProgress: vi.fn(),
+      constructionAbortRef: { current: null },
+    };
+    const { result } = renderHook(() => usePlaybookIntentFlow(deps));
+
+    let response: Awaited<ReturnType<typeof result.current.handleSubmitIntentText>> | undefined;
+    await act(async () => {
+      response = await result.current.handleSubmitIntentText('Build workflow');
+    });
+
+    expect(response).toEqual({ status: 'failed', error: 'Save failed' });
+    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledTimes(1);
+    expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
+    expect(deps.rollbackConstruction).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns skipped without legacy fallback when construction is cancelled', async () => {
+    const constructionAbortRef = { current: null as AbortController | null };
+    const deps = {
+      ...buildDeps({
+        suggestion: validStepSuggestion,
+        suggestions: [validStepSuggestion],
+        intent: 'Build workflow.',
+        expectedDefinitionRevision: 7,
+        validation: { valid: true, warnings: [], errors: [] },
+      }),
+      assessPlaybookIntentDesign: vi.fn().mockResolvedValue({ status: 'ready_to_generate', detectedIntent: 'Build workflow' }),
+      requestPlaybookIntent: vi.fn(),
+      startPlaybookIntentConstruction: vi.fn().mockResolvedValue({ constructionId: 'construction-cancelled', playbookId: 'p1', baseDefinitionRevision: 7 }),
+      streamPlaybookIntentConstruction: vi.fn(async () => {
+        constructionAbortRef.current?.abort();
+      }),
+      setConstructionStatus: vi.fn(),
+      setConstructionProgress: vi.fn(),
+      constructionAbortRef,
+    };
+    const { result } = renderHook(() => usePlaybookIntentFlow(deps));
+
+    let response: Awaited<ReturnType<typeof result.current.handleSubmitIntentText>> | undefined;
+    await act(async () => {
+      response = await result.current.handleSubmitIntentText('Build workflow');
+    });
+
+    expect(response?.status).toBe('skipped');
+    expect(deps.setConstructionStatus).toHaveBeenCalledWith('cancelled');
+    expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
+  });
+
+  it('returns skipped without saving or fallback on a server cancellation event', async () => {
+    const deps = {
+      ...buildDeps({
+        suggestion: validStepSuggestion,
+        suggestions: [validStepSuggestion],
+        intent: 'Build workflow.',
+        expectedDefinitionRevision: 7,
+        validation: { valid: true, warnings: [], errors: [] },
+      }),
+      assessPlaybookIntentDesign: vi.fn().mockResolvedValue({ status: 'ready_to_generate', detectedIntent: 'Build workflow' }),
+      requestPlaybookIntent: vi.fn(),
+      startPlaybookIntentConstruction: vi.fn().mockResolvedValue({ constructionId: 'construction-server-cancelled', playbookId: 'p1', baseDefinitionRevision: 7 }),
+      streamPlaybookIntentConstruction: vi.fn(async (_playbookId, _constructionId, options) => {
+        options.onEvent({ type: 'cancelled', constructionId: 'construction-server-cancelled', playbookId: 'p1', sequence: 1, reason: 'Stopped' } as any);
+      }),
+      finalizeConstruction: vi.fn().mockResolvedValue(undefined),
+      setConstructionStatus: vi.fn(),
+      setConstructionProgress: vi.fn(),
+      constructionAbortRef: { current: null },
+    };
+    const { result } = renderHook(() => usePlaybookIntentFlow(deps));
+
+    let response: Awaited<ReturnType<typeof result.current.handleSubmitIntentText>> | undefined;
+    await act(async () => {
+      response = await result.current.handleSubmitIntentText('Build workflow');
+    });
+
+    expect(response?.status).toBe('skipped');
+    expect(deps.finalizeConstruction).not.toHaveBeenCalled();
+    expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
+  });
+
   it('forces manual generation with typed clarification answers', async () => {
     const deps = {
       ...buildDeps({
@@ -124,8 +474,10 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
           sequence: 1,
           suggestion: validStepSuggestion,
         } as any);
+        options.onEvent({ type: 'completed', constructionId: 'construction-clarified', playbookId: 'p1', sequence: 2 } as any);
       }),
-      saveConstruction: vi.fn().mockResolvedValue(undefined),
+      captureConstructionSnapshot: vi.fn(),
+      finalizeConstruction: vi.fn().mockResolvedValue(undefined),
       setConstructionStatus: vi.fn(),
       setConstructionProgress: vi.fn(),
       setConstructionId: vi.fn(),
@@ -143,11 +495,9 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
       selectedTaskId: 't1',
     }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
-    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledWith(validStepSuggestion, expect.objectContaining({ expectedDefinitionRevision: 7 }));
-    expect(deps.saveConstruction).toHaveBeenCalledWith({
-      expectedDefinitionRevision: 9,
-      clientMutationId: 'intent-construction-construction-clarified',
-    });
+    expect(deps.captureConstructionSnapshot).toHaveBeenCalledTimes(1);
+    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledWith(validStepSuggestion, expect.objectContaining({ captureHistory: false }));
+    expect(deps.finalizeConstruction).toHaveBeenCalledWith(7, 'construction-clarified');
     expect(deps.setIntentSuggestions).not.toHaveBeenCalledWith([]);
   });
 
@@ -161,7 +511,6 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
         expectedDefinitionRevision: 7,
         validation: { valid: true, warnings: [], errors: [] },
       }),
-      intentAutoApply: true,
       startPlaybookIntentConstruction: vi.fn().mockResolvedValue({
         constructionId: 'construction-images',
         playbookId: 'p1',
@@ -170,13 +519,12 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
       streamPlaybookIntentConstruction: vi.fn(async (_playbookId, _constructionId, options) => {
         options.onEvent({ type: 'completed', constructionId: 'construction-images', playbookId: 'p1', sequence: 1 } as any);
       }),
-      saveConstruction: vi.fn().mockResolvedValue(undefined),
       constructionAbortRef: { current: null },
     };
     const { result } = renderHook(() => usePlaybookIntentFlow(deps));
 
     await act(async () => {
-      await result.current.handleSubmitIntentText('Build from this diagram', images);
+      await result.current.handleForceGenerateIntentText('Build from this diagram', undefined, images);
     });
 
     expect(deps.startPlaybookIntentConstruction).toHaveBeenCalledWith('p1', {
@@ -186,7 +534,7 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
-  it('force generation applies a direct fallback without blanking the UI', async () => {
+  it('force generation does not present a legacy preview fallback', async () => {
     const fallbackSuggestion: PlaybookIntentSuggestion = {
       ...validStepSuggestion,
       id: 'fallback',
@@ -210,12 +558,12 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
       await result.current.handleForceGenerateIntent('Use what is already known.');
     });
 
-    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledWith(fallbackSuggestion, { expectedDefinitionRevision: 7 });
-    expect(deps.setIntentSuggestions).not.toHaveBeenCalledWith([]);
-    expect(deps.setIntentSuggestions).toHaveBeenCalledWith([fallbackSuggestion]);
+    expect(deps.handleApplyIntentSuggestion).not.toHaveBeenCalled();
+    expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
+    expect(deps.setIntentSuggestions).not.toHaveBeenCalledWith([fallbackSuggestion]);
   });
 
-  it('auto-applies workflow suggestions with validation warnings', async () => {
+  it('does not present legacy workflow suggestions with validation warnings', async () => {
     const deps = {
       ...buildDeps({
         suggestion: blockedWorkflowSuggestion,
@@ -233,14 +581,10 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
       await result.current.handleForceGenerateIntent('Use what is already known.');
     });
 
-    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledWith(blockedWorkflowSuggestion, { expectedDefinitionRevision: 7 });
-    expect(deps.addIntentSuggestionHistoryEntry).toHaveBeenCalledWith(
-      'p1',
-      'Advisor test playbook',
-      blockedWorkflowSuggestion,
-      'Build invoice workflow\n\nClarifications:\nUse what is already known.',
-    );
-    expect(deps.setIntentSuggestions).toHaveBeenCalledWith([blockedWorkflowSuggestion]);
+    expect(deps.handleApplyIntentSuggestion).not.toHaveBeenCalled();
+    expect(deps.addIntentSuggestionHistoryEntry).not.toHaveBeenCalled();
+    expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
+    expect(deps.setIntentSuggestions).not.toHaveBeenCalledWith([blockedWorkflowSuggestion]);
   });
 
   it('uses the latest revision for the final realtime construction save', async () => {
@@ -254,7 +598,6 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
       }),
       selectedStepId: null,
       intentValue: 'Build invoice reconciliation workflow',
-      intentAutoApply: true,
       getCurrentDefinitionRevision: vi.fn(() => 9),
       startPlaybookIntentConstruction: vi.fn().mockResolvedValue({
         constructionId: 'construction-1',
@@ -269,8 +612,10 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
           sequence: 1,
           suggestion: validStepSuggestion,
         } as any);
+        options.onEvent({ type: 'completed', constructionId: 'construction-1', playbookId: 'p1', sequence: 2 } as any);
       }),
-      saveConstruction: vi.fn().mockResolvedValue(undefined),
+      captureConstructionSnapshot: vi.fn(),
+      finalizeConstruction: vi.fn().mockResolvedValue(undefined),
       setConstructionStatus: vi.fn(),
       setConstructionProgress: vi.fn(),
       setConstructionId: vi.fn(),
@@ -279,16 +624,12 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     const { result } = renderHook(() => usePlaybookIntentFlow(deps));
 
     await act(async () => {
-      await result.current.handleSubmitIntent();
+      await result.current.handleForceGenerateIntent();
     });
 
-    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledWith(validStepSuggestion, expect.objectContaining({
-      expectedDefinitionRevision: 7,
-    }));
-    expect(deps.saveConstruction).toHaveBeenCalledWith({
-      expectedDefinitionRevision: 9,
-      clientMutationId: 'intent-construction-construction-1',
-    });
+    expect(deps.captureConstructionSnapshot).toHaveBeenCalledTimes(1);
+    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledTimes(1);
+    expect(deps.finalizeConstruction).toHaveBeenCalledWith(7, 'construction-1');
   });
 
   it('applies and saves realtime construction deltas with validation warnings', async () => {
@@ -301,7 +642,6 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
         validation: { valid: false, warnings: [], errors: ['Required input remains unbound.'] },
       }),
       intentValue: 'Build invoice reconciliation workflow',
-      intentAutoApply: true,
       startPlaybookIntentConstruction: vi.fn().mockResolvedValue({
         constructionId: 'construction-blocked',
         playbookId: 'p1',
@@ -322,8 +662,10 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
           sequence: 2,
           suggestion: blockedWorkflowSuggestion,
         } as any);
+        options.onEvent({ type: 'completed', constructionId: 'construction-blocked', playbookId: 'p1', sequence: 3 } as any);
       }),
-      saveConstruction: vi.fn().mockResolvedValue(undefined),
+      captureConstructionSnapshot: vi.fn(),
+      finalizeConstruction: vi.fn().mockResolvedValue(undefined),
       setConstructionStatus: vi.fn(),
       setConstructionProgress: vi.fn(),
       setConstructionId: vi.fn(),
@@ -332,18 +674,16 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     const { result } = renderHook(() => usePlaybookIntentFlow(deps));
 
     await act(async () => {
-      await result.current.handleSubmitIntent();
+      await result.current.handleForceGenerateIntent();
     });
 
+    expect(deps.captureConstructionSnapshot).toHaveBeenCalledTimes(1);
     expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledTimes(2);
-    expect(deps.saveConstruction).toHaveBeenCalledWith({
-      expectedDefinitionRevision: 7,
-      clientMutationId: 'intent-construction-construction-blocked',
-    });
+    expect(deps.finalizeConstruction).toHaveBeenCalledWith(7, 'construction-blocked');
     expect(deps.showWarning).not.toHaveBeenCalled();
   });
 
-  it('marks auto-apply construction as starting before dirty-save completes', async () => {
+  it('marks explicit construction as starting before dirty-save completes', async () => {
     const saveNow = vi.fn().mockResolvedValue(undefined);
     const deps = {
       ...buildDeps({
@@ -355,7 +695,6 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
       }),
       isDirty: true,
       intentValue: 'Build invoice reconciliation workflow',
-      intentAutoApply: true,
       saveNow,
       requestPlaybookIntent: vi.fn().mockResolvedValue({ suggestions: [] }),
       startPlaybookIntentConstruction: vi.fn().mockResolvedValue({
@@ -364,7 +703,6 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
         baseDefinitionRevision: 7,
       }),
       streamPlaybookIntentConstruction: vi.fn().mockResolvedValue(undefined),
-      saveConstruction: vi.fn().mockResolvedValue(undefined),
       setConstructionStatus: vi.fn(),
       setConstructionProgress: vi.fn(),
       setConstructionId: vi.fn(),
@@ -373,7 +711,7 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     const { result } = renderHook(() => usePlaybookIntentFlow(deps));
 
     await act(async () => {
-      await result.current.handleSubmitIntent();
+      await result.current.handleForceGenerateIntent();
     });
 
     expect(deps.setConstructionStatus).toHaveBeenCalledWith('starting');
@@ -385,7 +723,7 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
-  it('passes empty selected findings to preview instead of blocking optimize-step', async () => {
+  it('starts a durable Advisor preview with empty selected findings', async () => {
     const deps = buildDeps({
       suggestion: validStepSuggestion,
       suggestions: [validStepSuggestion],
@@ -404,13 +742,15 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
       });
     });
 
-    expect(deps.previewAdvisorRemediation).toHaveBeenCalledWith('p1', {
+    expect(deps.startAdvisorRemediationConstruction).toHaveBeenCalledWith('p1', {
       mode: 'optimize-step',
       executionId: 'exec-1',
       items: [],
-      targetTaskId: 't1',
+      selectedTaskId: 't1',
+      expectedDefinitionRevision: 7,
     });
-    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledWith(validStepSuggestion, { expectedDefinitionRevision: 7 });
+    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledWith(validStepSuggestion, expect.objectContaining({ save: false }));
+    expect(deps.setPreviewConstructionReady).toHaveBeenCalledWith('advisor-operation', 7);
   });
 
   it('rejects optimize-step preview suggestions that are not selected-node updates', async () => {
@@ -435,7 +775,6 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     })).rejects.toThrow('detail.remediation.noApplicableSuggestion');
 
     expect(deps.handleApplyIntentSuggestion).not.toHaveBeenCalled();
-    expect(deps.setIntentSuggestions).toHaveBeenCalledWith([invalidSuggestion]);
     expect(deps.showError).toHaveBeenCalledWith('detail.remediation.noApplicableSuggestion');
   });
 });

@@ -3,8 +3,8 @@ import { Loader2 } from 'lucide-react';
 import { ChatConversation, ChatConversationContent, ChatMessageBubble, ChatScrollButton, ChatConversationEmptyState } from '@/components/ai-elements/chat-conversation';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { useAuth } from '@/modules/auth';
-import { useConversationStore, useDisplayMessages, useIsAwaitingFirstChunk, useMessagesHasMore, useMessagesLoadingOlder, useBranchCache, useActiveBranches, useEditingMessageId } from '../store';
-import { messageToChat, mapComponentsToContentParts } from '../utils';
+import { useConversationStore, useDisplayMessages, useIsAwaitingFirstChunk, useAwaitingConversationId, useMessagesHasMore, useMessagesLoadingOlder, useBranchCache, useActiveBranches, useEditingMessageId } from '../store';
+import { getConversationStreamActivity, mapConversationComponentsToContentParts, messageToChat } from '../utils';
 import { MessageActions } from './MessageActions';
 import { UserMessageActions } from './UserMessageActions';
 import { EditableUserMessage } from './EditableUserMessage';
@@ -12,10 +12,12 @@ import { BranchNavigation } from './BranchNavigation';
 import { LoadingIndicator } from './LoadingIndicator';
 import { MessageAttachments } from './MessageAttachments';
 import { MentionMessageJump } from './MentionMessageJump';
-import type { Message } from '../types';
+import type { ChoiceInteractionMetadata, Message } from '../types';
 import { ParentMessagePreview } from './ParentMessagePreview';
 import { MessageAvatar } from './MessageAvatar';
 import { cn } from '@/lib/utils';
+import { buildChoiceInteractionIndex } from '../choice-interactions';
+import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 
 /** Find the scrollable ancestor element */
 function getScrollContainer(element: HTMLElement | null): HTMLElement | null {
@@ -72,6 +74,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   conversationId,
   currentUserId,
   allMessages,
+  choiceInteractions,
 }: { 
   message: Message; 
   isLastAiMessage: boolean; 
@@ -79,15 +82,20 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   conversationId: string;
   currentUserId?: string;
   allMessages: Message[];
+  choiceInteractions: Map<string, ChoiceInteractionMetadata>;
 }) {
+  const sendMessage = useConversationStore((s) => s.sendMessage);
+  const handleComponentAction = useCallback(async (action: ChoiceComponentAction) => {
+    await sendMessage(conversationId, { content: action.submitText, interaction: { ...action.interaction, sourceMessageId: message.id } });
+  }, [conversationId, message.id, sendMessage]);
   const chatMessage = useMemo(() => {
     const chatMsg = messageToChat(message);
     // Force the role to 'assistant' for other members' messages so ChatMessageBubble renders them on the left
     if (message.conversationType === 'user' && message.senderId && currentUserId && message.senderId !== currentUserId) {
-      return { ...chatMsg, role: 'assistant' } as const;
+      return { ...chatMsg, role: 'assistant', onComponentAction: handleComponentAction, choiceInteractions } as const;
     }
-    return chatMsg;
-  }, [message, currentUserId]);
+    return { ...chatMsg, onComponentAction: handleComponentAction, choiceInteractions } as const;
+  }, [message, currentUserId, handleComponentAction, choiceInteractions]);
   const branchCache = useBranchCache();
   const activeBranches = useActiveBranches();
   const editingMessageId = useEditingMessageId();
@@ -132,6 +140,9 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   const branches = message.questionMessageId ? branchCache.get(message.questionMessageId) : undefined;
   const activeBranchId = message.questionMessageId ? activeBranches.get(message.questionMessageId) : undefined;
   const showBranchNav = !isStreaming && message.conversationType === 'ai' && message.questionMessageId && branches && branches.length > 1 && activeBranchId;
+  const hasPersistedActivity = message.components?.some((component) => component.type === 'chainOfThought' || component.type === 'toolInfo') ?? false;
+
+  if (!isUser && Array.isArray(chatMessage.content) && chatMessage.content.length === 0 && !hasPersistedActivity) return null;
 
   return (
     <div className='group/msg' id={`message-${message.id}`}>
@@ -164,7 +175,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
             {isCurrentUser ? (
               <>
                 <div className="flex justify-end min-w-0">
-                  <ChatMessageBubble message={chatMessage} />
+                  <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} />
                 </div>
                 <MessageAvatar message={message} currentConversation={currentConversation} />
               </>
@@ -174,6 +185,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
                 <div className="flex justify-start min-w-0">
                   <ChatMessageBubble 
                     message={chatMessage} 
+                    isStreaming={isStreaming}
                     className="[&>div:first-child]:w-auto [&>div:first-child]:min-w-0"
                   />
                 </div>
@@ -204,6 +216,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
           </div>
         )}
       </MessageProvider>
+      {!isUser && <LoadingIndicator isComplete components={message.components || []} />}
       {showBranchNav && <BranchNavigation userMessageId={message.questionMessageId!} branches={branches!} activeBranchId={activeBranchId!} />}
     </div>
   );
@@ -216,6 +229,7 @@ export function GroupConversationContent() {
   const streamingComponents = useConversationStore((s) => s.streamingComponents);
   const streamingConversationId = useConversationStore((s) => s.streamingConversationId);
   const isAwaitingFirstChunk = useIsAwaitingFirstChunk();
+  const awaitingConversationId = useAwaitingConversationId();
   const hasMore = useMessagesHasMore();
   const loadingOlder = useMessagesLoadingOlder();
   const loadMoreMessages = useConversationStore((s) => s.loadMoreMessages);
@@ -226,6 +240,11 @@ export function GroupConversationContent() {
   const fetchBranches = useConversationStore((s) => s.fetchBranches);
   const branchCache = useConversationStore((s) => s.branchCache);
   const mentionNavigationLock = useConversationStore((s) => s.mentionNavigationLock);
+  const sendMessage = useConversationStore((s) => s.sendMessage);
+  const choiceInteractions = useMemo(() => buildChoiceInteractionIndex(messages), [messages]);
+  const isActiveStream = isStreaming && streamingConversationId === currentConversationId;
+  const showStreamingActivity = (isAwaitingFirstChunk && awaitingConversationId === currentConversationId) || isActiveStream;
+  const streamingActivity = useMemo(() => getConversationStreamActivity(streamingComponents), [streamingComponents]);
 
   // Refs for branch fetching
   const fetchedRef = useRef(new Set<string>());
@@ -297,10 +316,10 @@ export function GroupConversationContent() {
   }, [messages]);
 
   const streamingChatMessage = useMemo(() => {
-    if (!isStreaming || !streamingComponents.length) return null;
-    if (streamingConversationId !== currentConversationId) return null;
+    if (!isActiveStream || !streamingComponents.length) return null;
 
-    const parts = mapComponentsToContentParts(streamingComponents);
+    const parts = mapConversationComponentsToContentParts(streamingComponents);
+    if (!parts.length) return null;
     const lastPart = parts.at(-1);
     if (lastPart?.type === 'text') {
       (lastPart as { showCursor?: boolean }).showCursor = true;
@@ -311,13 +330,18 @@ export function GroupConversationContent() {
       role: 'assistant',
       conversationType: 'ai',
       content: parts,
+      onComponentAction: async (action: ChoiceComponentAction) => {
+        if (!currentConversationId) throw new Error('No active conversation');
+        await sendMessage(currentConversationId, { content: action.submitText, interaction: { ...action.interaction, ...(streamingMessageId ? { sourceMessageId: streamingMessageId } : {}) } });
+      },
     } as const;
-  }, [isStreaming, streamingComponents, streamingConversationId, currentConversationId, streamingMessageId]);
+  }, [isActiveStream, streamingComponents, currentConversationId, streamingMessageId, sendMessage]);
 
   return (
-    <ChatConversation className='flex-1 min-h-0'>
-      <ChatConversationContent className='py-6'>
-        <div ref={contentRef}>
+    <>
+      <ChatConversation className='flex-1 min-h-0'>
+        <ChatConversationContent className='py-6'>
+          <div ref={contentRef}>
           {/* Load trigger - hidden during initial load to prevent immediate firing */}
           {hasMore && !messagesLoading && <TopLoadTrigger onTrigger={handleLoadMore} disabled={loadingOlder} />}
 
@@ -339,14 +363,9 @@ export function GroupConversationContent() {
                 conversationId={currentConversationId!} 
                 currentUserId={user?.id}
                 allMessages={messages}
+                choiceInteractions={choiceInteractions}
               />
             ))
-          )}
-
-          {isAwaitingFirstChunk && streamingComponents.length === 0 && (
-            <div className='flex w-full gap-3'>
-              <LoadingIndicator />
-            </div>
           )}
 
           {streamingChatMessage && !mentionNavigationLock && (
@@ -361,10 +380,12 @@ export function GroupConversationContent() {
               </MessageProvider>
             </div>
           )}
-        </div>
-      </ChatConversationContent>
-      <MentionMessageJump />
-      <ChatScrollButton />
-    </ChatConversation>
+          </div>
+        </ChatConversationContent>
+        <MentionMessageJump />
+        <ChatScrollButton />
+      </ChatConversation>
+      {showStreamingActivity && <LoadingIndicator activity={streamingActivity} components={isActiveStream ? streamingComponents : []} />}
+    </>
   );
 }

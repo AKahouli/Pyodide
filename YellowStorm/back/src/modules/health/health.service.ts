@@ -33,7 +33,7 @@ export class HealthService {
 
   async check(userId?:string): Promise<HealthCheckResult> {
     // Run all checks in parallel — network pings are independent
-    const [memory, eventLoop, database, storage, email, litellm, conversationGrpc, conversationV2Grpc] =
+    const [memory, eventLoop, database, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp] =
       await Promise.all([
         this.checkMemory(),
         this.checkEventLoop(),
@@ -43,10 +43,11 @@ export class HealthService {
         this.checkLiteLLM(),
         this.checkConversationGrpc(),
         this.checkConversationV2Grpc(),
+        this.checkPlaybookMcp(),
       ]);
 
     const checks: Record<string, HealthCheckDetail> = {
-      memory, eventLoop, database, storage, email, litellm, conversationGrpc, conversationV2Grpc,
+      memory, eventLoop, database, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp,
     };
 
     const allUp = Object.values(checks).every((c) => c.status === 'up');
@@ -96,6 +97,9 @@ export class HealthService {
     const conversationV2GrpcCheck = await this.checkConversationV2Grpc();
     checks.conversationV2Grpc = conversationV2GrpcCheck.status === 'up';
 
+    const playbookMcpCheck = await this.checkPlaybookMcp();
+    checks.playbookMcp = playbookMcpCheck.status === 'up';
+
     const allReady = Object.values(checks).every(Boolean);
 
     return {
@@ -132,6 +136,36 @@ export class HealthService {
       message,
       lastChecked: new Date().toISOString(),
     };
+  }
+
+  private async checkPlaybookMcp(): Promise<HealthCheckDetail> {
+    const startTime = Date.now();
+    if (!this.configService.get<boolean>('playbook-flow.mcpAssistantEnabled', false)) {
+      return {
+        status: 'up',
+        responseTime: 0,
+        message: 'Playbook MCP assistant is disabled',
+        lastChecked: new Date().toISOString(),
+      };
+    }
+    const serverUrl = this.configService.get<string>('playbook-flow.mcpServerUrl', 'http://localhost:8025/mcp');
+    try {
+      const healthUrl = new URL('/health/ready', serverUrl).toString();
+      const response = await fetch(healthUrl, { signal: AbortSignal.timeout(3000) });
+      return {
+        status: response.ok ? 'up' : 'down',
+        responseTime: Date.now() - startTime,
+        message: response.ok ? 'Playbook MCP is ready' : `Playbook MCP readiness returned HTTP ${response.status}`,
+        lastChecked: new Date().toISOString(),
+      };
+    } catch {
+      return {
+        status: 'down',
+        responseTime: Date.now() - startTime,
+        message: 'Playbook MCP readiness is unavailable',
+        lastChecked: new Date().toISOString(),
+      };
+    }
   }
 
   private async checkEventLoop(): Promise<HealthCheckDetail> {

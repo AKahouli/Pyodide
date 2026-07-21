@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { useConversationStore, useCurrentConversation, useConversationLoading, useMessagesLoading } from './store';
+import { useConversationStore, useCurrentConversation, useConversationLoading } from './store';
 import { ConversationHeader } from './components/ConversationHeader';
 import { ConversationContent } from './components/ConversationContent';
 import { ConversationInput } from './components/ConversationInput';
@@ -10,6 +10,7 @@ import { Shimmer } from '@/components/ai-elements/shimmer';
 import { useFileViewerStore, FileViewerSidebar } from '@/modules/file-viewer';
 import { useModuleTranslation } from '@/modules/localization';
 import { GroupConversationPage } from './GroupConversationPage';
+import { GovernedConversationBanner } from '@/modules/governance/components/consumer/GovernedConversationBanner';
 
 export function ConversationPage() {
   const { id } = useParams<{ id: string }>();
@@ -19,18 +20,13 @@ export function ConversationPage() {
   const currentConversationId = useConversationStore((s) => s.currentConversationId);
   const currentConversation = useCurrentConversation();
   const conversationLoading = useConversationLoading();
-  const messagesLoading = useMessagesLoading();
 
- 
   const isGroup = !!currentConversation?.groupMeta?.isGroup;
 
-  // Auto-switch to floating when leaving conversation page
+  // Conversation previews belong to this page and must not follow the user elsewhere.
   useEffect(() => {
     return () => {
-      const state = useFileViewerStore.getState();
-      if (state.displayMode === 'sidebar' && state.mode !== 'closed') {
-        state.setDisplayMode('floating');
-      }
+      useFileViewerStore.getState().closeViewer();
     };
   }, []);
 
@@ -54,13 +50,12 @@ export function ConversationPage() {
     }
   }, [id, setCurrentConversation]);
 
+  // Depend on conversation id only — object patches (e.g. taggedAgentIds) must not re-fetch.
   useEffect(() => {
-    if (id && currentConversation) {
-      if (!isGroup) {
-        fetchMessages(id);
-      }
+    if (id && currentConversationId === id) {
+      fetchMessages(id);
     }
-  }, [id, currentConversation, isGroup, fetchMessages]);
+  }, [id, currentConversationId, fetchMessages]);
 
   useEffect(() => {
     return () => {
@@ -93,6 +88,7 @@ export function ConversationPage() {
     <div className='relative flex flex-1 min-h-0 w-full'>
       <div className='flex flex-col flex-1 min-w-0 max-w-4xl mx-auto'>
         <ConversationHeader />
+        <GovernedConversationBanner conversation={currentConversation} />
         <ConversationContent />
         <ConversationInput conversationId={id!} />
         <StreamErrorDialog />

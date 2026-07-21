@@ -21,6 +21,8 @@ import telegramConfig from './config/telegram.config';
 import whatsappConfig from './config/whatsapp.config';
 import workyConfig from './config/worky.config';
 import memoryCardsConfig from './config/memory-cards.config';
+import dataRoomConfig from './config/data-room.config';
+import governedConversationsConfig from './config/governed-conversations.config';
 
 // Global Modules
 import { LoggerModule } from './modules/logger';
@@ -42,6 +44,7 @@ import { UsageModule } from './modules/usage';
 import { NotificationsModule } from './modules/notifications';
 import { WorkspaceModule } from './modules/workspace';
 import { IndexingModule } from './modules/indexing';
+import { BrowserSessionModule } from './modules/browser-session/browser-session.module';
 import { ModelsModule } from './modules/models';
 import { ChatCompletionModule } from './modules/chat-completion/chat-completion.module';
 import { ConversationModule } from './modules/conversation';
@@ -67,6 +70,8 @@ import { WorkyModule } from './modules/worky';
 import { GuardrailsModule } from './modules/guardrails/guardrails.module';
 import { MemoryCardsModule } from './modules/memory-cards/memory-cards.module';
 import { GovernanceModule } from './modules/governance';
+import { IntegrationEventsModule } from './modules/integration-events/integration-events.module';
+import { WorkspaceArtifactModule } from './modules/workspace-artifact/workspace-artifact.module';
 
 @Module({
   imports: [
@@ -74,7 +79,7 @@ import { GovernanceModule } from './modules/governance';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig, memoryCardsConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig, memoryCardsConfig, dataRoomConfig, governedConversationsConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -101,8 +106,11 @@ import { GovernanceModule } from './modules/governance';
     AuthModule,
     UsageModule,
     NotificationsModule,
+    IntegrationEventsModule,
     WorkspaceModule,
+    WorkspaceArtifactModule,
     IndexingModule,
+    BrowserSessionModule,
     ConversationModule,
     ConversationV2Module,
     ModelsModule,

@@ -28,10 +28,13 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Lab
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import type { ChartConfig } from '@/components/ui/chart';
 import type { ChartComponentData } from '@/modules/conversation/types';
+import type { ChoiceComponentData, ChoiceInteractionMetadata } from '@/modules/conversation/types';
+import { ChoicePartRenderer, type ChoiceComponentAction } from './choice/ChoicePartRenderer';
 import { useModuleTranslation } from '@/modules/localization';
 import { isViewableFilename } from '@/modules/file-viewer/renderers';
 import { Separator } from '../ui/separator';
 import { rehypeCitationMarkers } from '@/lib/rehype-citation-markers';
+import { remarkAssistantCitationLinks } from '@/lib/remark-assistant-citation-links';
 
 // ============================================================================
 // Message Content Part Types
@@ -112,6 +115,7 @@ export interface CheckpointPart {
 export interface ChartPart extends ChartComponentData {
   type: 'chart';
 }
+export interface ChoicePart extends ChoiceComponentData { type: 'choice'; componentId: string; }
 
 export interface TaskPart {
   type: 'task';
@@ -187,7 +191,7 @@ export interface ChainOfThoughtPart {
   steps: string[];
 }
 
-export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolInfoPart | ChainOfThoughtPart;
+export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | ChoicePart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolInfoPart | ChainOfThoughtPart;
 
 // ============================================================================
 // AIMessageContent Component
@@ -197,16 +201,21 @@ export type AIMessageContentProps = HTMLAttributes<HTMLDivElement> & {
   parts: MessageContentPart[];
   /** Whether the message is currently streaming. Affects default open state of collapsible components. */
   isStreaming?: boolean;
+  onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
+  choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
 };
 
 /**
  * AIMessageContent - Renders structured AI message content using ai-sdk components
  */
-export const AIMessageContent = ({ parts, className, isStreaming = false, ...props }: AIMessageContentProps) => {
+export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, choiceInteractions, ...props }: AIMessageContentProps) => {
+  const choicePrompts = new Set(parts.filter((part): part is ChoicePart => part.type === 'choice' && part.status === 'ready').map((part) => part.prompt.trim()).filter(Boolean));
+  const visibleParts = parts.filter((part) => part.type !== 'text' || !choicePrompts.has(part.content.trim()));
+
   return (
     <div className={cn('space-y-4', className)} {...props}>
-      {parts.map((part, index) => (
-        <AIMessagePart key={index} part={part} isStreaming={isStreaming} />
+      {visibleParts.map((part, index) => (
+        <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} />
       ))}
     </div>
   );
@@ -219,9 +228,11 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, ...pro
 type AIMessagePartProps = {
   part: MessageContentPart;
   isStreaming?: boolean;
+  onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
+  choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
 };
 
-const AIMessagePart = ({ part, isStreaming = false }: AIMessagePartProps) => {
+const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInteractions }: AIMessagePartProps) => {
   switch (part.type) {
     case 'text':
       return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} />;
@@ -237,6 +248,8 @@ const AIMessagePart = ({ part, isStreaming = false }: AIMessagePartProps) => {
       return <CheckpointPartRenderer label={part.label} />;
     case 'chart':
       return <ChartPartRenderer type='chart' kind={part.kind} title={part.title} data={part.data} config={part.config} xAxisKey={part.xAxisKey} yAxisKey={part.yAxisKey} nameKey={part.nameKey} zAxisKey={part.zAxisKey} stacked={part.stacked} layout={part.layout} innerRadius={part.innerRadius} showLegend={part.showLegend} showGrid={part.showGrid} series={part.series} />;
+    case 'choice':
+      return <ChoicePartRenderer {...part} onAction={onComponentAction} submittedInteraction={choiceInteractions?.get(part.componentId)} externallyDisabled={isStreaming} />;
     case 'task':
       return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} />;
     case 'error':
@@ -321,7 +334,7 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
   },
 };
 
-const remarkPlugins = [remarkGfm];
+const remarkPlugins = [remarkGfm, remarkAssistantCitationLinks];
 const rehypeCitationPlugins = [rehypeCitationMarkers];
 
 function normalizeCitationReference(reference?: string): string | undefined {
@@ -416,6 +429,7 @@ async function openCitationSource(
   const { downloadUrl } = await getArtifactDownloadUrl(objectKey, displayName);
   openFileViewerFromUrl(downloadUrl, displayName, mimeType, {
     displayMode,
+    closeOnOutsideClick: displayMode === 'floating',
     page,
     highlightText: c.highlightText || c.pageContent || undefined,
     highlightBBox: c.highlightBBox || c.blockBBox,
@@ -1121,7 +1135,10 @@ const ArtifactPartRenderer = ({ filePath, filename }: { filePath: string; filena
 
       const { downloadUrl } = await getArtifactDownloadUrl(filePath, filename);
       const mimeType = getMimeTypeFromFilename(filename) ?? 'application/octet-stream';
-      openFileViewerFromUrl(downloadUrl, filename, mimeType, { displayMode: fileViewerDisplayMode });
+      openFileViewerFromUrl(downloadUrl, filename, mimeType, {
+        displayMode: fileViewerDisplayMode,
+        closeOnOutsideClick: fileViewerDisplayMode === 'floating',
+      });
     } catch (error: unknown) {
       console.error('Failed to open artifact:', error);
 

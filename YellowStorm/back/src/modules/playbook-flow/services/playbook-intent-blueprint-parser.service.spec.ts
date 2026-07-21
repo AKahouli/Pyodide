@@ -400,6 +400,63 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(result.diagnostics.find((d) => d.code === 'blueprint_binding_invalid_constant')).toMatchObject({ stage: 'parser', severity: 'warning' });
   });
 
+  it('accepts typed literal constants and maps iterator items to the current child item', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        version: 2,
+        title: 'Scenario run',
+        nodes: [{
+          ref: 'iterator',
+          label: 'Scenarios',
+          nodeTemplateKey: 'iterator',
+          inputPorts: [{ id: 'items', artifactKind: 'data', required: true }],
+          iteratorBody: {
+            steps: [{
+              ref: 'compute',
+              title: 'Compute',
+              nodeTemplateKey: 'generic.agent_step',
+              inputPorts: [{ id: 'scenario', artifactKind: 'data', required: true }],
+            }],
+            edges: [],
+            bindings: [{
+              sourceKind: 'node-output',
+              sourceRef: 'iterator',
+              sourcePort: 'items',
+              targetRef: 'compute',
+              targetPort: 'scenario',
+            }],
+          },
+        }, {
+          ref: 'load',
+          label: 'Load',
+          nodeTemplateKey: 'generic.agent_step',
+          inputPorts: [{ id: 'path', artifactKind: 'text', required: true }],
+        }],
+        bindings: [{
+          sourceKind: 'constant',
+          targetRef: 'iterator',
+          targetPort: 'items',
+          constantValue: [{ name: 'reference' }, { name: 'stress' }],
+        }, {
+          sourceKind: 'constant',
+          targetRef: 'load',
+          targetPort: 'path',
+          constantValue: '/mnt/workspace/portfolio.csv',
+        }],
+      },
+    });
+
+    const result = service.parse(raw)!;
+
+    expect(result.blueprint.bindings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceKind: 'constant', targetRef: 'iterator', targetPort: 'items', constantValue: [{ name: 'reference' }, { name: 'stress' }] }),
+      expect.objectContaining({ sourceKind: 'constant', targetRef: 'load', targetPort: 'path', constantValue: '/mnt/workspace/portfolio.csv' }),
+      expect.objectContaining({ sourceKind: 'state', targetIteratorRef: 'iterator', targetRef: 'compute', targetPort: 'scenario', statePath: 'inputs._item' }),
+    ]));
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain('blueprint_binding_invalid_constant');
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain('blueprint_binding_unknown_source_port');
+  });
+
   it('drops duplicate bindings targeting the same port on a node', () => {
     const raw = JSON.stringify({
       blueprint: {

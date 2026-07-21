@@ -64,6 +64,8 @@ export interface ConversationResponse {
   ownerName?: string;
   workspaces: string[];
   selectedSkills: string[];
+  /** Sticky routing agents: last @mention set; reused when a turn has no tags. */
+  taggedAgentIds: string[];
   systemWorkspaceId?: string;
   lastMessageAt?: string;
   messageCount: number;
@@ -74,6 +76,16 @@ export interface ConversationResponse {
   updatedAt: string;
   groupMeta?: GroupConversationMeta;
   projectId?: string | null;
+  runtimeMode: 'standard' | 'governed';
+  governanceContext?: {
+    programId: string;
+    scopeId: string;
+    deploymentId: string;
+    revisionId: string;
+    revisionNumber: number;
+    pinnedAt: string;
+    runtimeDefinition: { primaryAgentId: string; allowedAgentIds: string[]; workspaceIds: string[] };
+  };
 }
 
 export interface PaginatedConversations {

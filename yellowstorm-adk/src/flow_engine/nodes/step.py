@@ -10,9 +10,11 @@ Output is stored into task_outputs[(node_id, iteration)].
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import litellm
+from pydantic import BaseModel, Field
 from structlog import get_logger
 from langgraph.config import get_stream_writer
 from langgraph.errors import GraphInterrupt
@@ -46,12 +48,44 @@ from src.flow_engine.nodes.step_tools import (
 )
 from src.flow_engine.nodes.deterministic_script import run_deterministic_script
 from src.flow_engine.state import ExecutionState
+from src.smart_rag.infrastructure.model_parameters import normalize_temperature_for_model
+from src.temporary_child_summary import (
+    record_temporary_child_result,
+    record_temporary_child_start,
+)
 from src.skills.runtime import inject_skill_catalog
 
 logger = get_logger(__name__)
 settings = get_settings()
 
 DEFAULT_MODEL = "gpt-4o-mini"
+
+TEMP_CHILD_PARENT_INSTRUCTION = """
+Temporary child-agent rule:
+Temporary child agents are enabled, and the required first temporary child result
+has already been provided in your task context. Call
+`create_temporary_child_agent` again only when you decide more evidence or
+verification is needed, until the evidence is sufficient or the child limit is
+reached. You may create additional children sequentially, or in parallel if
+supported.
+
+Your role is only to evaluate, compare, and synthesize the temporary child
+results. Do not use skills, MCP connector tools, retrieval tools, code tools, or
+other operational tools directly. The temporary children inherit and use those
+tools. If more tool work is needed, create another temporary child with a focused
+task. Evaluate all child results and return the best final answer.
+""".strip()
+
+
+class _TemporaryChildAgentInput(BaseModel):
+    task_description: str = Field(
+        ...,
+        description="One focused subtask for the temporary child agent.",
+    )
+    expected_output: str = Field(
+        "",
+        description="Optional description of the evidence or answer format needed.",
+    )
 
 
 def _first_workspace_id(value: Any) -> str:
@@ -90,6 +124,142 @@ def _resolve_output_workspace_id(
         if default_ws:
             return default_ws
     return ""
+
+
+def _temporary_child_enabled(agent_params: dict[str, Any]) -> bool:
+    has_connector_bindings = bool(agent_params.get("connector_bindings_json"))
+    flag = str(agent_params.get("enable_temporary_child_agents", "false")).lower()
+    enabled = flag == "true"
+    logger.info(
+        "[TEMP CHILD] Flow eligibility",
+        has_connector_bindings_json=has_connector_bindings,
+        enable_temporary_child_agents=agent_params.get("enable_temporary_child_agents"),
+        max_temporary_child_agents=agent_params.get("max_temporary_child_agents"),
+        enabled=enabled,
+    )
+    return enabled
+
+
+def _temporary_child_limit(agent_params: dict[str, Any]) -> int:
+    try:
+        return max(1, min(8, int(agent_params.get("max_temporary_child_agents", 4))))
+    except (TypeError, ValueError):
+        logger.warning("[TEMP CHILD] Invalid max_temporary_child_agents; using default")
+        return 4
+
+
+class _TemporaryChildAgentTool:
+    name = "create_temporary_child_agent"
+    description = (
+        "Create one temporary cloned child agent for a focused subtask. "
+        "The child inherits this agent's tools/connectors/skills but cannot "
+        "create more child agents. The child receives the same file names, "
+        "workspace IDs, connector context, headers, and fixed params available "
+        "to this parent. Call this only when more evidence or verification is "
+        "needed after the required first child result."
+    )
+    args_schema = _TemporaryChildAgentInput
+
+    def __init__(
+        self,
+        model_id: str,
+        system_prompt: str,
+        child_tools: list[Any],
+        max_children: int,
+        session_id: str,
+        parent_name: str,
+        inherited_context: str,
+        trace_collector: TraceCollector | None = None,
+        on_trace_update: Any = None,
+    ):
+        self._model_id = model_id
+        self._system_prompt = system_prompt
+        self._child_tools = child_tools
+        self._max_children = max_children
+        self._session_id = session_id
+        self._parent_name = parent_name
+        self._inherited_context = inherited_context
+        self._trace_collector = trace_collector
+        self._on_trace_update = on_trace_update
+        self._count = 0
+
+    async def ainvoke(self, args: dict[str, Any]) -> str:
+        if self._count >= self._max_children:
+            logger.info("[TEMP CHILD] Flow child limit reached", max=self._max_children)
+            return f"Temporary child-agent limit reached ({self._max_children})."
+
+        self._count += 1
+        task_description = str(args.get("task_description") or "").strip()
+        expected_output = str(args.get("expected_output") or "").strip()
+        child_prompt = (
+            f"Focused child task:\n{task_description}\n\n"
+            f"Expected output:\n{expected_output or 'Return concise findings with evidence.'}\n\n"
+            f"{self._inherited_context}"
+        )
+        child_system_prompt = (
+            f"{self._system_prompt}\n\n"
+            "You are a temporary child agent. Complete only the focused task. "
+            "Use the inherited skills, MCP connector tools, retrieval tools, "
+            "code tools, and workspace context when needed. Return concise "
+            "findings with evidence so the parent can evaluate your result."
+        )
+        logger.info(
+            "[TEMP CHILD] Flow creating temporary child",
+            child_index=self._count,
+            max=self._max_children,
+        )
+        child_id = f"{self._parent_name}:flow_tmp_{self._count}"
+        record_temporary_child_start(
+            session_id=self._session_id,
+            parent=self._parent_name,
+            child=child_id,
+            task_description=task_description,
+            expected_output=expected_output,
+            execution_mode="model_tool_call_sequential",
+        )
+        result = await run_step_with_tools(
+            model_id=self._model_id,
+            system_prompt=child_system_prompt,
+            user_msg=child_prompt,
+            tools=self._child_tools,
+            agent_role="temporary_child",
+            agent_name=child_id,
+            summary_session_id=self._session_id,
+            trace_collector=self._trace_collector,
+            on_trace_update=self._on_trace_update,
+        )
+        logger.info("[TEMP CHILD] Flow child completed", child_index=self._count)
+        record_temporary_child_result(
+            session_id=self._session_id,
+            child=child_id,
+            result=result,
+        )
+        return result
+
+
+def _build_temporary_child_inherited_context(
+    tool_scope: Any,
+    tools: list[Any],
+    agent_config: dict[str, Any],
+    output_workspace_id: str,
+) -> str:
+    payload = {
+        "available_tool_names": [str(getattr(tool, "name", "")) for tool in tools],
+        "file_names": tool_scope.file_names,
+        "workspace_ids": tool_scope.binding_workspace_ids,
+        "documents_by_port": tool_scope.documents_by_port,
+        "workspace_context": tool_scope.workspace_context,
+        "output_workspace_id": output_workspace_id,
+        "agent_params_keys": sorted((agent_config.get("agent_params") or {}).keys()),
+    }
+    return (
+        "<inherited_parent_context>\n"
+        "You are a clone of the parent agent. Use these exact inherited context "
+        "values when calling connector/MCP tools. Do not ask the user for "
+        "workspace_id, file_name, headers, or document identifiers if they appear here.\n"
+        f"{json.dumps(payload, ensure_ascii=False, default=str)}\n"
+        "</inherited_parent_context>"
+    )
 
 
 def _collect_workspace_ceph_paths(
@@ -605,6 +775,44 @@ async def _execute_step(
         deep_search=deep_search,
         binding_workspace_ids=tool_scope.binding_workspace_ids,
     )
+    if _temporary_child_enabled(agent_config["agent_params"]):
+        temporary_child_tool = _TemporaryChildAgentTool(
+            model_id=model_id,
+            system_prompt=system_prompt,
+            child_tools=list(tools),
+            max_children=_temporary_child_limit(agent_config["agent_params"]),
+            session_id=str(state.get("execution_id") or ""),
+            parent_name=agent_config.get("name") or node_id,
+            inherited_context=_build_temporary_child_inherited_context(
+                tool_scope=tool_scope,
+                tools=tools,
+                agent_config=agent_config,
+                output_workspace_id=output_workspace_id,
+            ),
+            trace_collector=trace_collector,
+            on_trace_update=emit_trace_update,
+        )
+        tools = [temporary_child_tool]
+        system_prompt = f"{system_prompt}\n\n{TEMP_CHILD_PARENT_INSTRUCTION}"
+        logger.info(
+            "[TEMP CHILD] Flow tool attached",
+            node_id=node_id,
+            max_temporary_child_agents=_temporary_child_limit(agent_config["agent_params"]),
+        )
+        required_child_result = await temporary_child_tool.ainvoke({
+            "task_description": (
+                "Run the required first temporary-child pass for this parent "
+                f"task. Gather or verify the key evidence the parent should consider.\n\n{user_msg}"
+            ),
+            "expected_output": "Return concise findings with evidence for the parent.",
+        })
+        user_msg = (
+            f"{user_msg}\n\n"
+            "<required_temporary_child_result>\n"
+            f"{required_child_result}\n"
+            "</required_temporary_child_result>"
+        )
+
     components: list[dict[str, Any]] = []
     should_stream_tokens = (
         not structured_output
@@ -642,6 +850,9 @@ async def _execute_step(
                 iteration=iteration,
                 writer=writer,
             ),
+            agent_role="parent",
+            agent_name=agent_config.get("name") or node_id,
+            summary_session_id=str(state.get("execution_id") or ""),
         )
         if full_output and should_stream_tokens:
             writer({
@@ -659,7 +870,7 @@ async def _execute_step(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_msg},
             ],
-            temperature=0.7,
+            temperature=normalize_temperature_for_model(model_id, 0.7),
             max_tokens=32000,
             stream=True,
         )

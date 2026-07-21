@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards, Logger, Inject, Res } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards, Logger, Inject, Res, Headers } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ConfigType } from '@nestjs/config';
@@ -21,6 +21,8 @@ import { Permissions } from '@modules/authorization/constants/permissions';
 import playbookFlowConfig from '@config/playbook-flow.config';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { PlaybookAssistantService } from '../assistant/playbook-assistant.service';
+import { RunPlaybookAssistantTurnDto, StartAdvisorRemediationConstructionDto } from '../dto/playbook-assistant.dto';
 
 @ApiTags('Playbook Flows')
 @ApiBearerAuth()
@@ -36,6 +38,7 @@ export class PlaybookFlowController {
     private readonly evaluationService: PlaybookFlowEvaluationService,
     private readonly playbookFlowIntentService: PlaybookFlowIntentService,
     private readonly playbookFlowIntentConstructionService: PlaybookFlowIntentConstructionService,
+    private readonly playbookAssistantService: PlaybookAssistantService,
     @Inject(playbookFlowConfig.KEY)
     private readonly playbookFlowSettings: ConfigType<typeof playbookFlowConfig>,
   ) {}
@@ -334,17 +337,6 @@ export class PlaybookFlowController {
 
   // Note: integration-link and public-execute endpoints are deferred to a future integration-token service slice with durable storage.
 
-  @Post(':id/intent')
-  @ApiOperation({ summary: 'Analyze a canvas-level playbook intent without mutating the flow' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
-  async analyzeIntent(
-    @CurrentUser('_id') userId: string,
-    @Param('id') id: string,
-    @Body() dto: RequestPlaybookFlowIntentDto,
-  ) {
-    return this.playbookFlowIntentService.analyze(id, userId, dto);
-  }
-
   @Post(':id/intent-design')
   @ApiOperation({ summary: 'Assess playbook intent requirements before manual generation' })
   @RequirePermissions(Permissions.PLAYBOOK_READ)
@@ -385,23 +377,27 @@ export class PlaybookFlowController {
     @Param('id') id: string,
     @Param('constructionId') constructionId: string,
     @Query('after') after: string | undefined,
+    @Headers('last-event-id') lastEventId: string | undefined,
     @Res() res: Response,
   ) {
-    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
-    const afterSequence = Number.isFinite(Number(after)) ? Number(after) : 0;
+    const afterSequence = Math.max(
+      Number.isFinite(Number(after)) ? Number(after) : 0,
+      Number.isFinite(Number(lastEventId)) ? Number(lastEventId) : 0,
+    );
     try {
       for await (const event of this.playbookFlowIntentConstructionService.stream(id, userId, constructionId, afterSequence)) {
-        res.write(`${JSON.stringify(event)}\n`);
+        res.write(`id: ${event.sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Intent construction stream failed.';
       this.logger.error(`playbook_intent_construction_stream_failed playbookId=${id} constructionId=${constructionId} message=${message}`);
       if (!res.destroyed && !res.writableEnded) {
-        res.write(`${JSON.stringify({
+        res.write(`event: failed\ndata: ${JSON.stringify({
           type: 'failed',
           constructionId,
           playbookId: id,
@@ -409,7 +405,7 @@ export class PlaybookFlowController {
           createdAt: new Date().toISOString(),
           message,
           recoverable: true,
-        })}\n`);
+        })}\n\n`);
       }
     }
     if (!res.destroyed && !res.writableEnded) {
@@ -427,5 +423,85 @@ export class PlaybookFlowController {
     @Body() body: CancelIntentConstructionDto,
   ) {
     return this.playbookFlowIntentConstructionService.cancel(id, userId, constructionId, body?.reason);
+  }
+
+  @Post(':id/assistant/turns')
+  @ApiOperation({ summary: 'Run a Playbook Designer turn through the dedicated MCP assistant' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async runAssistantTurn(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: RunPlaybookAssistantTurnDto,
+  ) {
+    return this.playbookAssistantService.runTurn(id, userId, dto);
+  }
+
+  @Post(':id/advisor-remediation-constructions')
+  @ApiOperation({ summary: 'Start an Advisor remediation construction preview' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async startAdvisorRemediationConstruction(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: StartAdvisorRemediationConstructionDto,
+  ) {
+    return this.playbookAssistantService.startAdvisorRemediationConstruction(id, userId, dto);
+  }
+
+  @Get(':id/intent-constructions/:constructionId')
+  @ApiOperation({ summary: 'Get assistant construction status and disposition' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async getIntentConstruction(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Param('constructionId') constructionId: string,
+  ) {
+    return this.playbookFlowIntentConstructionService.getStatus(id, userId, constructionId);
+  }
+
+  @Post(':id/intent-constructions/:constructionId/commit')
+  @ApiOperation({ summary: 'Commit a completed assistant construction at its base revision' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async commitIntentConstruction(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Param('constructionId') constructionId: string,
+    @Body() dto: UpdatePlaybookFlowDto,
+  ) {
+    return this.playbookFlowIntentConstructionService.commit(id, userId, constructionId, dto);
+  }
+
+
+  @Post(':id/intent-constructions/:constructionId/apply')
+  @ApiOperation({ summary: 'Apply a completed Advisor construction preview' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async applyIntentConstructionPreview(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Param('constructionId') constructionId: string,
+    @Body() dto: UpdatePlaybookFlowDto,
+  ) {
+    return this.playbookFlowIntentConstructionService.applyPreview(id, userId, constructionId, dto);
+  }
+
+  @Post(':id/intent-constructions/:constructionId/discard')
+  @ApiOperation({ summary: 'Discard a completed Advisor construction preview' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async discardIntentConstructionPreview(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Param('constructionId') constructionId: string,
+  ) {
+    return this.playbookFlowIntentConstructionService.discardPreview(id, userId, constructionId);
+  }
+
+  @Post(':id/intent-constructions/:constructionId/revert')
+  @ApiOperation({ summary: 'Revert a committed assistant construction when no later revision exists' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async revertIntentConstruction(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Param('constructionId') constructionId: string,
+  ) {
+    return this.playbookFlowIntentConstructionService.revert(id, userId, constructionId);
   }
 }

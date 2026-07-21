@@ -8,6 +8,8 @@ import { AgentModule } from '@modules/agent/agent.module';
 import { ConversationModule } from '@modules/conversation/conversation.module';
 import { WorkyModule } from '@modules/worky/worky.module';
 import { LoggerModule } from '@modules/logger';
+import { Agent, AgentSchema } from '@modules/agent/schemas/agent.schema';
+import { SharedAgent, SharedAgentSchema } from '@modules/agent/schemas/shared-agent.schema';
 import { User, UserSchema } from '@modules/user/schemas/user.schema';
 import { BaileysClientFactory } from './baileys/baileys-client.factory';
 import { MongoBaileysAuthStore } from './baileys/mongo-auth-state';
@@ -41,6 +43,8 @@ import { WhatsAppSessionManager } from './services/whatsapp-session.manager';
       { name: WhatsAppAuthSession.name, schema: WhatsAppAuthSessionSchema },
       { name: WhatsAppChatBinding.name, schema: WhatsAppChatBindingSchema },
       { name: User.name, schema: UserSchema },
+      { name: Agent.name, schema: AgentSchema },
+      { name: SharedAgent.name, schema: SharedAgentSchema },
     ]),
     LoggerModule,
     AgentModule,

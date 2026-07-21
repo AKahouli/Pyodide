@@ -1,12 +1,13 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { AlertTriangle, ArrowRight, BookOpen, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BookOpen, Copy, Plus, Trash2, X } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { parseApiError } from '@/lib/api-error';
 import { showError } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { useDeleteGovernanceScope, useGovernanceScopeOverviews, useGovernanceScopes, type GovernanceScope, type GovernanceScopeOverview } from '@/modules/governance';
+import { useCreateGovernanceScope, useDeleteGovernanceScope, useGovernanceScopeOverviews, useGovernanceScopes, type GovernanceScope, type GovernanceScopeOverview } from '@/modules/governance';
+import { createGovernanceScopeClonePayload } from '../clone-payloads';
 import { useGovernanceCheckLabel } from '../useGovernanceCheckLabel';
 import { GovernanceAgentName } from './GovernanceAgentSelector';
 import { ReadinessRing } from './ReadinessRing';
@@ -59,6 +60,7 @@ export function GovernanceCockpit({ programId, onSelectScope, onCreateScope }: R
   const { t } = useModuleTranslation('governance');
   const [activeFilter, setActiveFilter] = useState<ScopeFilter>('all');
   const { data: scopes = [] } = useGovernanceScopes(programId);
+  const createScope = useCreateGovernanceScope(programId);
   const deleteScope = useDeleteGovernanceScope(programId);
   const scopeIds = useMemo(() => scopes.map((scope) => scope.id), [scopes]);
   const { byScopeId } = useGovernanceScopeOverviews(programId, scopeIds);
@@ -72,8 +74,8 @@ export function GovernanceCockpit({ programId, onSelectScope, onCreateScope }: R
   const attentionItems = overviews.flatMap((overview) =>
     overview.readiness.blockers.filter((blocker) => isVisibleAttentionItem(blocker.key)).map((blocker) => {
       const tab = tabForAttentionItem(blocker.targetType, blocker.key);
-      const labelKey = actionLabelKeys[blocker.key] ?? actionLabelKeys.channel_ready;
-      const helpKey = actionHelpKeys[blocker.key] ?? actionHelpKeys.channel_ready;
+      const labelKey = actionLabelKeys[blocker.key];
+      const helpKey = actionHelpKeys[blocker.key];
       return {
         scopeId: overview.scope.id,
         scopeName: overview.scope.name,
@@ -128,7 +130,7 @@ export function GovernanceCockpit({ programId, onSelectScope, onCreateScope }: R
           ) : (
             <div className='grid gap-3 p-4 sm:grid-cols-2'>
               {visibleScopes.map((scope) => (
-                <ScopeCard key={scope.id} scope={scope} overview={byScopeId[scope.id]} onOpen={() => onSelectScope(scope.id)} onDelete={() => deleteScope.mutate(scope.id, { onError: (error) => showError(t('cockpit.scopes.deleteError'), { description: parseApiError(error).message }) })} isDeleting={deleteScope.isPending && deleteScope.variables === scope.id} translateBlocker={translateBlocker} translateDryRunStatus={(status) => t(`scopeShell.testPublish.status.${status}` as never)} typeLabel={t(`scopeShell.scopeTypes.${scope.type}`)} statusReady={t('cockpit.scopes.ready')} statusPublished={t('cockpit.scopes.published')} statusDraft={t('cockpit.scopes.draft')} ownerReady={t('cockpit.scopes.ownerReady')} ownerMissing={t('cockpit.scopes.ownerMissing')} dryRunLabel={t('cockpit.scopes.dryRun')} noAgent={t('cockpit.scopes.noAgent')} noDryRun={t('cockpit.scopes.noDryRun')} deleteLabel={t('cockpit.scopes.delete')} deleteConfirmTitle={t('cockpit.scopes.deleteConfirmTitle')} deleteConfirmBody={t('cockpit.scopes.deleteConfirmBody', { name: scope.name })} deleteCancel={t('scopeShell.settings.deleteCancel')} />
+                <ScopeCard key={scope.id} scope={scope} overview={byScopeId[scope.id]} onOpen={() => onSelectScope(scope.id)} onClone={() => createScope.mutate(createGovernanceScopeClonePayload(scope, t('cockpit.scopes.copySuffix')), { onError: (error) => showError(t('cockpit.scopes.cloneError'), { description: parseApiError(error).message }) })} onDelete={() => deleteScope.mutate(scope.id, { onError: (error) => showError(t('cockpit.scopes.deleteError'), { description: parseApiError(error).message }) })} isCloning={createScope.isPending && createScope.variables?.name === createGovernanceScopeClonePayload(scope, t('cockpit.scopes.copySuffix')).name} isDeleting={deleteScope.isPending && deleteScope.variables === scope.id} translateBlocker={translateBlocker} translateDryRunStatus={(status) => t(`scopeShell.testPublish.status.${status}` as never)} typeLabel={t(`scopeShell.scopeTypes.${scope.type}`)} statusReady={t('cockpit.scopes.ready')} statusPublished={t('cockpit.scopes.published')} statusDraft={t('cockpit.scopes.draft')} ownerReady={t('cockpit.scopes.ownerReady')} ownerMissing={t('cockpit.scopes.ownerMissing')} dryRunLabel={t('cockpit.scopes.dryRun')} noAgent={t('cockpit.scopes.noAgent')} noDryRun={t('cockpit.scopes.noDryRun')} cloneLabel={t('cockpit.scopes.clone')} deleteLabel={t('cockpit.scopes.delete')} deleteConfirmTitle={t('cockpit.scopes.deleteConfirmTitle')} deleteConfirmBody={t('cockpit.scopes.deleteConfirmBody', { name: scope.name })} deleteCancel={t('scopeShell.settings.deleteCancel')} />
               ))}
               {visibleScopes.length === 0 && <p className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground sm:col-span-2'>{t('cockpit.scopes.filteredEmpty')}</p>}
             </div>
@@ -187,7 +189,9 @@ interface ScopeCardProps {
   scope: GovernanceScope;
   overview?: GovernanceScopeOverview;
   onOpen: () => void;
+  onClone: () => void;
   onDelete: () => void;
+  isCloning: boolean;
   isDeleting: boolean;
   translateBlocker: (key: string, fallback: string) => string;
   translateDryRunStatus: (status: string) => string;
@@ -200,13 +204,14 @@ interface ScopeCardProps {
   dryRunLabel: string;
   noAgent: string;
   noDryRun: string;
+  cloneLabel: string;
   deleteLabel: string;
   deleteConfirmTitle: string;
   deleteConfirmBody: string;
   deleteCancel: string;
 }
 
-function ScopeCard({ scope, overview, onOpen, onDelete, isDeleting, translateBlocker, translateDryRunStatus, typeLabel, statusReady, statusPublished, statusDraft, ownerReady, ownerMissing, dryRunLabel, noAgent, noDryRun, deleteLabel, deleteConfirmTitle, deleteConfirmBody, deleteCancel }: Readonly<ScopeCardProps>): JSX.Element {
+function ScopeCard({ scope, overview, onOpen, onClone, onDelete, isCloning, isDeleting, translateBlocker, translateDryRunStatus, typeLabel, statusReady, statusPublished, statusDraft, ownerReady, ownerMissing, dryRunLabel, noAgent, noDryRun, cloneLabel, deleteLabel, deleteConfirmTitle, deleteConfirmBody, deleteCancel }: Readonly<ScopeCardProps>): JSX.Element {
   const score = overview?.readiness.score ?? 0;
   const topBlocker = overview?.readiness.blockers.find((blocker) => isVisibleAttentionItem(blocker.key));
   const isPublished = Boolean(overview?.publishedRevision);
@@ -216,7 +221,7 @@ function ScopeCard({ scope, overview, onOpen, onDelete, isDeleting, translateBlo
   const dryRun = overview?.latestDryRun?.status ? `${dryRunLabel}: ${translateDryRunStatus(overview.latestDryRun.status)}` : noDryRun;
   return (
     <article className='group relative rounded-xl border bg-card transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-sm'>
-      <button type='button' onClick={onOpen} className='grid w-full grid-cols-[44px_1fr] items-center gap-3 p-4 text-left sm:pr-12'>
+      <button type='button' onClick={onOpen} className='grid w-full grid-cols-[44px_1fr] items-center gap-3 p-4 text-left sm:pr-20'>
         <ReadinessRing score={score} />
         <span className='min-w-0'>
           <span className='block truncate font-medium'>{scope.name}</span>
@@ -237,6 +242,9 @@ function ScopeCard({ scope, overview, onOpen, onDelete, isDeleting, translateBlo
           </span>
         </span>
       </button>
+      <Button type='button' variant='ghost' size='icon' className='absolute right-10 top-2 h-8 w-8 text-muted-foreground opacity-100 hover:text-foreground sm:opacity-0 sm:transition sm:group-hover:opacity-100 sm:group-focus-within:opacity-100' aria-label={cloneLabel} onClick={onClone} disabled={isCloning}>
+        <Copy className='h-4 w-4' />
+      </Button>
       <AlertDialog>
         <AlertDialogTrigger asChild>
           <Button type='button' variant='ghost' size='icon' className='absolute right-2 top-2 h-8 w-8 text-muted-foreground opacity-100 hover:text-destructive sm:opacity-0 sm:transition sm:group-hover:opacity-100 sm:group-focus-within:opacity-100' aria-label={deleteLabel} disabled={isDeleting}>

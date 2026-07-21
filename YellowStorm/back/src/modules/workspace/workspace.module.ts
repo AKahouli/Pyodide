@@ -34,7 +34,6 @@ import { WorkspaceDocumentService } from './workspace-document.service';
 import { WorkspaceInitializerService } from './workspace-initializer.service';
 import { WorkspaceShareService } from './workspace-share.service';
 import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
-import { WebsiteCrawlerService } from './services/website-crawler.service';
 import {
   WorkspaceOwnerGuard,
   WorkspaceAccessGuard,
@@ -49,6 +48,8 @@ import { UsageModule } from '../usage/usage.module';
 import { IndexingModule } from '../indexing/indexing.module';
 import { UserModule } from '../user/user.module';
 import workspaceConfig from '../../config/workspace.config';
+import { IntegrationEventsModule } from '../integration-events/integration-events.module';
+import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
 
 @Module({
   imports: [
@@ -70,6 +71,7 @@ import workspaceConfig from '../../config/workspace.config';
     UserModule,
     DocumentModule,
     LoggerModule,
+    IntegrationEventsModule,
   ],
   controllers: [
     WorkspaceController,
@@ -91,14 +93,17 @@ import workspaceConfig from '../../config/workspace.config';
     WritePermissionGuard,
     InternalServiceGuard,
     UrlToPdfClientService,
-    WebsiteCrawlerService,
+    WorkspaceArtifactCleanupService,
   ],
   exports: [
+    MongooseModule,
     WorkspaceService,
     WorkspaceSettingService,
     WorkspaceDocumentService,
     WorkspaceInitializerService,
     WorkspaceShareService,
+    WorkspaceAccessGuard,
+    WritePermissionGuard,
   ],
 })
 export class WorkspaceModule {}

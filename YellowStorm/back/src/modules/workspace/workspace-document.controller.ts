@@ -45,8 +45,8 @@ import { ReportProgressDto } from './dto/report-progress.dto';
 import { DocumentQueryDto } from './dto/document-query.dto';
 import { BulkDeleteDocumentsDto } from './dto/bulk-delete-documents.dto';
 import { AddLinkDto } from './dto/add-link.dto';
-import { CrawlUrlDto } from './dto/crawl-url.dto';
 import { AddLinksDto } from './dto/add-links.dto';
+import { CheckUrlsDto } from './dto/check-urls.dto';
 
 @ApiTags('Workspace Documents')
 @Controller('workspaces/:workspaceId/documents')
@@ -126,23 +126,8 @@ export class WorkspaceDocumentController {
       workspaceId,
       user._id.toString(),
       body.url,
+      { deepSearch: body.deepSearch, autoIndex: body.autoIndex },
     );
-  }
-
-  @Post('crawl')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Discover a website's sub-pages for selective indexing" })
-  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
-  async crawl(
-    @Param('workspaceId') workspaceId: string,
-    @Body() body: CrawlUrlDto,
-  ) {
-    // Reachability first (clear error), then discover.
-    const reach = await this.workspaceDocumentService.checkUrlReachable(body.url);
-    if (!reach.reachable) {
-      return { tree: [], truncated: false, unreachable: true };
-    }
-    return this.workspaceDocumentService.crawlSite(workspaceId, body.url);
   }
 
   @Post('links')
@@ -158,7 +143,14 @@ export class WorkspaceDocumentController {
       workspaceId,
       user._id.toString(),
       body.urls,
+      { deepSearch: body.deepSearch, autoIndex: body.autoIndex },
     );
+  }
+
+  @Post('check-urls')
+  @ApiOperation({ summary: 'Check URL duplicates across the complete workspace' })
+  async checkUrls(@Param('workspaceId') workspaceId: string, @Body() body: CheckUrlsDto) {
+    return this.workspaceDocumentService.checkUrls(workspaceId, body.urls);
   }
 
   /**
@@ -407,11 +399,13 @@ export class WorkspaceDocumentController {
     @CurrentUser() user: UserDocument,
     @Param('workspaceId') workspaceId: string,
     @Param('docId') docId: string,
+    @Query('cascadeArtifacts') cascadeArtifacts?: string,
   ) {
     await this.workspaceDocumentService.delete(
       workspaceId,
       user._id.toString(),
       docId,
+      cascadeArtifacts === 'true',
     );
     return { message: 'Document deleted successfully' };
   }

@@ -98,6 +98,53 @@ export class ConversationService {
     return this.findById(conversation._id.toString());
   }
 
+  async createGoverned(userId: string, data: {
+    title: string;
+    requestId: string;
+    programId: string;
+    scopeId: string;
+    deploymentId: string;
+    revisionId: string;
+    revisionNumber: number;
+    primaryAgentId: string;
+    allowedAgentIds: string[];
+    workspaceIds: string[];
+  }): Promise<ConversationResponse> {
+    const existing = await this.conversationModel.findOne({ createdBy: new Types.ObjectId(userId), governedCreationRequestId: data.requestId }).lean().exec();
+    if (existing) return this.mapToResponse(existing);
+    try {
+      const conversation = await this.conversationModel.create({
+        title: data.title,
+        createdBy: new Types.ObjectId(userId),
+        runtimeMode: 'governed',
+        governedCreationRequestId: data.requestId,
+        governanceContext: {
+          programId: new Types.ObjectId(data.programId),
+          scopeId: new Types.ObjectId(data.scopeId),
+          deploymentId: new Types.ObjectId(data.deploymentId),
+          revisionId: new Types.ObjectId(data.revisionId),
+          revisionNumber: data.revisionNumber,
+          pinnedAt: new Date(),
+          runtimeDefinition: { primaryAgentId: data.primaryAgentId, allowedAgentIds: data.allowedAgentIds, workspaceIds: data.workspaceIds },
+        },
+        workspaces: data.workspaceIds.map((id) => new Types.ObjectId(id)),
+        taggedAgentIds: [new Types.ObjectId(data.primaryAgentId)],
+        messages: [],
+        messageCount: 0,
+        isArchived: false,
+        isShared: false,
+      });
+      this.logger.log('Governed conversation created', { conversationId: conversation._id.toString(), userId, scopeId: data.scopeId, revisionId: data.revisionId });
+      return this.mapToResponse(conversation);
+    } catch (error: unknown) {
+      if (typeof error === 'object' && error !== null && 'code' in error && (error as { code?: number }).code === 11000) {
+        const raced = await this.conversationModel.findOne({ createdBy: new Types.ObjectId(userId), governedCreationRequestId: data.requestId }).lean().exec();
+        if (raced) return this.mapToResponse(raced);
+      }
+      throw error;
+    }
+  }
+
   async findById(conversationId: string): Promise<ConversationResponse> {
     const conversation = await this.conversationModel
       .findById(conversationId)
@@ -215,6 +262,10 @@ export class ConversationService {
         ErrorCode.CHAT_FORBIDDEN,
         'You do not have access to this conversation',
       );
+    }
+
+    if (conversation.runtimeMode === 'governed' && (data.workspaces !== undefined || data.skillIds !== undefined || data.taggedAgents !== undefined || data.participantEmails !== undefined || data.participants !== undefined)) {
+      throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN, 'The approved assistants, knowledge, and participants of a governed conversation cannot be changed');
     }
 
     if (data.title !== undefined) {
@@ -553,6 +604,22 @@ export class ConversationService {
         newAgentIds,
       });
     }
+  }
+
+  /**
+   * Replaces conversation sticky routing agents with the latest @mention set.
+   * Call only when the user tagged agents on the current turn (full replace, not merge).
+   */
+  async replaceTaggedAgentIds(conversationId: string, agentIds: string[]): Promise<void> {
+    if (!agentIds.length) {
+      return;
+    }
+
+    await this.conversationModel.findByIdAndUpdate(conversationId, {
+      $set: {
+        taggedAgentIds: agentIds.map((id) => new Types.ObjectId(id)),
+      },
+    });
   }
 
   async getGroupMembers(conversationId: string): Promise<any[]> {
@@ -907,6 +974,7 @@ export class ConversationService {
       ownerName,
       workspaces: conversation.workspaces?.map((w: any) => toStr(w)) || [],
       selectedSkills: conversation.selectedSkills?.map((s: any) => toStr(s)) || [],
+      taggedAgentIds: conversation.taggedAgentIds?.map((id: any) => toStr(id)) || [],
       systemWorkspaceId: toStr(conversation.systemWorkspaceId),
       lastMessageAt: toISO(conversation.lastMessageAt),
       messageCount: conversation.messageCount,
@@ -917,6 +985,16 @@ export class ConversationService {
       updatedAt: toISO(conversation.updatedAt),
       groupMeta,
       projectId: conversation.projectId ? toStr(conversation.projectId) : null,
+      runtimeMode: conversation.runtimeMode ?? 'standard',
+      governanceContext: conversation.governanceContext ? {
+        programId: toStr(conversation.governanceContext.programId),
+        scopeId: toStr(conversation.governanceContext.scopeId),
+        deploymentId: toStr(conversation.governanceContext.deploymentId),
+        revisionId: toStr(conversation.governanceContext.revisionId),
+        revisionNumber: conversation.governanceContext.revisionNumber,
+        pinnedAt: toISO(conversation.governanceContext.pinnedAt),
+        runtimeDefinition: conversation.governanceContext.runtimeDefinition,
+      } : undefined,
     };
   }
 

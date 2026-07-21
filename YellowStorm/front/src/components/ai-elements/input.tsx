@@ -1,12 +1,12 @@
 import { PromptInput, PromptInputActionAddAttachments, PromptInputActionMenu, PromptInputActionMenuContent, PromptInputActionMenuTrigger, PromptInputAttachment, PromptInputAttachments, PromptInputBody, PromptInputButton, PromptInputFooter, type PromptInputMessage, PromptInputProvider, PromptInputSpeechButton, PromptInputSubmit, PromptInputTextarea, PromptInputTools } from '@/components/ai-elements/prompt-input';
-import { MentionPopup } from '@/components/ai-elements/mention-popup';
+import { MentionPopup, type MentionAgent } from '@/components/ai-elements/mention-popup';
 import { InputContextMenu } from '@/components/ai-elements/input-context-menu';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 import { ConnectorReposDialog } from '@/components/ai-elements/connector-repos-dialog';
 import { RecentConnectorsMenu, ManageConnectorsDialog, useRecentConnectors } from '@/modules/connector';
 import { RecentSkillsMenu, ManageSkillsDialog, useRecentSkills, SelectedSkillsPills } from '@/modules/skill';
 
-import { Pencil } from 'lucide-react';
+import { CheckIcon, Pencil } from 'lucide-react';
 import { useRef, useState, useEffect, useCallback, useMemo, memo, type ReactNode } from 'react';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { SketchBoardDialog } from '@/modules/conversation/components/SketchBoard';
@@ -25,6 +25,19 @@ import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSc
 import { useModuleTranslation } from '@/modules/localization';
 import { getActiveConnectors, getActiveSkills, type ConnectorOption } from '@/modules/agent/api';
 import type { SkillOption } from '@/modules/agent/types';
+import {
+  ModelSelector,
+  ModelSelectorContent,
+  ModelSelectorEmpty,
+  ModelSelectorGroup,
+  ModelSelectorInput,
+  ModelSelectorItem,
+  ModelSelectorList,
+  ModelSelectorLogo,
+  ModelSelectorLogoGroup,
+  ModelSelectorName,
+  ModelSelectorTrigger,
+} from '@/components/ai-elements/model-selector';
 
 const SUBMITTING_TIMEOUT = 200;
 const STREAMING_TIMEOUT = 2000;
@@ -65,7 +78,9 @@ interface InputProps {
   members?: Array<{ id: string; name: string }>;
   autoMention?: { id: string; name: string; isMember?: boolean; _msgId?: string };
   showWorkspaceSelect?: boolean;
-  mentionAgents?: Agent[];
+  showModelSelector?: boolean;
+  governedMode?: boolean;
+  mentionAgents?: MentionAgent[];
   enableTeamMentions?: boolean;
   workspaceOptions?: Array<{ id: string; name: string; documentCount: number }>;
   /** Rendered inside PromptInputProvider between the textarea and the footer (e.g. suggestion chips). */
@@ -76,7 +91,7 @@ interface InputProps {
   onTextChange?: (text: string) => void;
 }
 
-const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, mentionAgents, enableTeamMentions = true, workspaceOptions, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
+const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, showModelSelector = false, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -102,6 +117,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
   const [sketchOpen, setSketchOpen] = useState(false);
   const lastAppliedMentionMsgId = useRef<string | null>(null);
   const { t } = useModuleTranslation('common');
+  const { t: tConversation } = useModuleTranslation('conversation');
 
   const currentConversation = useCurrentConversation();
   const [sharedAgents, setSharedAgents] = useState<Agent[]>([]);
@@ -115,8 +131,10 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
   const memoizedTeams = useMemo(() => enableTeamMentions ? teams : [], [enableTeamMentions, teams]);
 
   useEffect(() => {
-    useAgentStore.getState().fetchAgents();
-    useTeamStore.getState().fetchTeams();
+    if (!governedMode) {
+      useAgentStore.getState().fetchAgents();
+      useTeamStore.getState().fetchTeams();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -412,7 +430,6 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
         disabledSkills: data.disabledSkills,
         connectors: data.connectors,
         isActive: data.isActive,
-        isDefaultForType: data.isDefaultForType,
       });
       setShowCreateAgentDialog(false);
     } finally {
@@ -544,9 +561,9 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
             }}
           </PromptInputAttachments>
           <PromptInputBody>
-            <InputContextMenu onMentionAgent={handleContextMentionAgent} onCreateAgent={() => setShowCreateAgentDialog(true)}>
-              <PromptInputTextarea ref={textareaRef} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} />
-            </InputContextMenu>
+            {governedMode
+              ? <PromptInputTextarea ref={textareaRef} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} />
+              : <InputContextMenu onMentionAgent={handleContextMentionAgent} onCreateAgent={() => setShowCreateAgentDialog(true)}><PromptInputTextarea ref={textareaRef} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} /></InputContextMenu>}
           </PromptInputBody>
           {belowTextarea}
           <PromptInputFooter>
@@ -558,37 +575,36 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                   <DropdownMenuItem onSelect={() => setSketchOpen(true)}>
                     <Pencil className='mr-2 size-4' /> {t('input.drawSketch')}
                   </DropdownMenuItem>
-                  <RecentConnectorsMenu
+                  {!governedMode && <RecentConnectorsMenu
                     connectors={connectors}
                     loading={connectorsLoading}
                     onSelectConnector={handleSelectConnector}
                     onOpenManage={() => setManageConnectorsOpen(true)}
-                  />
-                  <RecentSkillsMenu
+                  />}
+                  {!governedMode && <RecentSkillsMenu
                     skills={skills}
                     loading={skillsLoading}
                     selectedIds={selectedSkillIds}
                     onSelectSkill={handleSelectSkill}
                     onOpenManage={() => setManageSkillsOpen(true)}
-                  />
+                  />}
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
               {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={setSelectedWorkspaceIds} disabled={disabled || submitDisabled} workspaceOptions={workspaceOptions} />}
               {extraTools}
-              {/* <PromptInputSpeechButton textareaRef={textareaRef} /> */}
-              {/* <ModelSelector onOpenChange={setModelSelectorOpen} open={modelSelectorOpen}>
-                <ModelSelectorTrigger asChild>
-                  <PromptInputButton>
-                    {selectedModelData?.chefSlug && <ModelSelectorLogo provider={selectedModelData.chefSlug} />}
-                    {selectedModelData?.name && <ModelSelectorName>{selectedModelData.name}</ModelSelectorName>}
-                  </PromptInputButton>
-                </ModelSelectorTrigger>
-                <ModelSelectorContent>
-                  <ModelSelectorInput placeholder='Search models...' />
-                  <ModelSelectorList>
-                    <ModelSelectorEmpty>No models found.</ModelSelectorEmpty>
-                    {chefs.map((chef) => (
-                      <ModelSelectorGroup heading={chef.name} key={chef.slug}>
+               {showModelSelector && !governedMode && models.length > 0 && <ModelSelector onOpenChange={setModelSelectorOpen} open={modelSelectorOpen}>
+                 <ModelSelectorTrigger asChild>
+                   <PromptInputButton type='button' disabled={disabled || submitDisabled}>
+                     {selectedModelData?.chefSlug && <ModelSelectorLogo provider={selectedModelData.chefSlug} />}
+                     <ModelSelectorName>{selectedModelData?.name ?? tConversation('newConversation.modelSelector.unset')}</ModelSelectorName>
+                   </PromptInputButton>
+                 </ModelSelectorTrigger>
+                 <ModelSelectorContent>
+                   <ModelSelectorInput placeholder={tConversation('newConversation.modelSelector.search')} />
+                   <ModelSelectorList>
+                     <ModelSelectorEmpty>{tConversation('newConversation.modelSelector.empty')}</ModelSelectorEmpty>
+                     {chefs.map((chef) => (
+                       <ModelSelectorGroup heading={chef.name} key={chef.slug}>
                         {models
                           .filter((m) => m.chefSlug === chef.slug)
                           .map((m) => (
@@ -598,7 +614,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                                 setSelectedModelId(m.id);
                                 setModelSelectorOpen(false);
                               }}
-                              value={m.id}>
+                               value={`${m.name} ${m.chef}`}>
                               <ModelSelectorLogo provider={m.chefSlug} />
                               <ModelSelectorName>{m.name}</ModelSelectorName>
                               <ModelSelectorLogoGroup>
@@ -606,14 +622,14 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                                   <ModelSelectorLogo key={provider} provider={provider} />
                                 ))}
                               </ModelSelectorLogoGroup>
-                              {model === m.id ? <CheckIcon className='ml-auto size-4' /> : <div className='ml-auto size-4' />}
+                               {model === m.id && <CheckIcon className='ml-auto size-4 text-muted-foreground' />}
                             </ModelSelectorItem>
                           ))}
                       </ModelSelectorGroup>
                     ))}
                   </ModelSelectorList>
                 </ModelSelectorContent>
-              </ModelSelector> */}
+               </ModelSelector>}
             </PromptInputTools>
             <div className='flex flex-row w-fit gap-3 px-1'>
               <Usage />
@@ -622,11 +638,11 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
             </div>
           </PromptInputFooter>
         </PromptInput>
-        <SelectedSkillsPills skills={skills} selectedIds={selectedSkillIds} onRemove={toggleSelectedSkill} />
+        {!governedMode && <SelectedSkillsPills skills={skills} selectedIds={selectedSkillIds} onRemove={toggleSelectedSkill} />}
         <SketchBoardAttacher open={sketchOpen} onOpenChange={setSketchOpen} />
       </PromptInputProvider>
 
-      <MentionPopup
+      {(!governedMode || Boolean(mentionAgents?.length)) && <MentionPopup
         open={mentionPopupOpen}
         onSelect={handleMentionSelect}
         onClose={() => {
@@ -640,9 +656,9 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
         sharedAgents={sharedAgents}
         members={members}
         teams={memoizedTeams}
-      />
+      />}
 
-      {showCreateAgentDialog && <CreateEditAgentDialog open={showCreateAgentDialog} onOpenChange={setShowCreateAgentDialog} agent={null} onSave={handleCreateAgentSave} saving={savingAgent} />}
+      {!governedMode && showCreateAgentDialog && <CreateEditAgentDialog open={showCreateAgentDialog} onOpenChange={setShowCreateAgentDialog} agent={null} onSave={handleCreateAgentSave} saving={savingAgent} />}
 
       <ConnectorReposDialog
         open={connectorDialogOpen}

@@ -26,7 +26,7 @@ export class DynamicCorsMiddleware implements NestMiddleware {
       res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
       res.setHeader(
         'Access-Control-Allow-Headers',
-        'Content-Type,Authorization,Accept,Origin,X-Requested-With,X-Correlation-ID,X-Request-ID,Cache-Control,Connection',
+        'Content-Type,Authorization,Accept,Origin,X-Requested-With,X-Correlation-ID,X-Request-ID,Cache-Control,Connection,Last-Event-ID',
       );
       res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie');
     }

@@ -61,6 +61,13 @@ if (
 }
 
 if (
+  typeof HTMLElement !== 'undefined'
+  && !HTMLElement.prototype.hasPointerCapture
+) {
+  HTMLElement.prototype.hasPointerCapture = vi.fn(() => false);
+}
+
+if (
   !globalThis.localStorage
   || typeof globalThis.localStorage.getItem !== 'function'
   || typeof globalThis.localStorage.setItem !== 'function'

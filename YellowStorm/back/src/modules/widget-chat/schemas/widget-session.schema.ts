@@ -20,6 +20,27 @@ export class WidgetSession extends Document {
   @Prop({ type: Object, default: {} })
   metadata!: { ip?: string; userAgent?: string; origin?: string };
 
+  @Prop({ type: Object, default: {} })
+  clientContext!: {
+    pageUrl?: string;
+    origin?: string;
+    referrer?: string;
+    locale?: string;
+    timezone?: string;
+  };
+
+  @Prop({ type: Object, default: {} })
+  appSource!: {
+    channel: 'web_widget' | 'rest_api';
+    appSourceName: string;
+    sourceInstanceId?: string;
+    origin?: string;
+    pageUrl?: string;
+  };
+
+  @Prop({ type: Object, default: { status: 'unavailable', reason: 'provider_not_configured' } })
+  geo!: { status: 'resolved' | 'unavailable' | 'error'; reason?: string };
+
   @Prop({ enum: ['active', 'closed'], default: 'active' })
   status!: string;
 

@@ -30,4 +30,31 @@ describe('playbook ui store', () => {
     expect(usePlaybookUiStore.getState().workspaceExplorerOpen).toBe(true);
     expect(usePlaybookUiStore.getState().executionPanelOpen).toBe(false);
   });
+
+  it('owns the durable assistant preview lifecycle', () => {
+    usePlaybookUiStore.getState().setAssistantOperation({
+      id: 'advisor-1',
+      target: 'advisor_preview',
+      baseDefinitionRevision: 7,
+      status: 'ready',
+    });
+
+    expect(usePlaybookUiStore.getState()).toMatchObject({
+      assistantOperationId: 'advisor-1',
+      assistantOperationTarget: 'advisor_preview',
+      assistantBaseDefinitionRevision: 7,
+      assistantPreviewStatus: 'ready',
+    });
+
+    usePlaybookUiStore.getState().setAssistantPreviewStatus('applying');
+    expect(usePlaybookUiStore.getState().assistantPreviewStatus).toBe('applying');
+
+    usePlaybookUiStore.getState().clearAssistantOperation();
+    expect(usePlaybookUiStore.getState()).toMatchObject({
+      assistantOperationId: null,
+      assistantOperationTarget: null,
+      assistantBaseDefinitionRevision: null,
+      assistantPreviewStatus: 'idle',
+    });
+  });
 });

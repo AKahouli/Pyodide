@@ -11,6 +11,16 @@ export type DocumentStatus = 'pending' | 'uploading' | 'processing' | 'completed
 
 export type IndexingStatus = 'none' | 'pending' | 'processing' | 'ready' | 'failed';
 
+export type WorkspaceArtifactType = 'decision_flow';
+export type WorkspaceArtifactStatus = 'queued' | 'generating' | 'ready' | 'failed';
+export type DecisionFlowNodeType = 'start' | 'information' | 'decision' | 'result' | 'end';
+export type DecisionFlowType = 'eligibility' | 'orientation' | 'guided_diagnostic' | 'procedure' | 'other';
+export type DecisionFlowTargetAudience = 'business_creator' | 'artisan' | 'merchant' | 'existing_business' | 'infer_from_document';
+export type DecisionFlowDetailLevel = 'synthetic' | 'standard' | 'detailed';
+export interface DecisionFlowGenerationOptions { flowType: DecisionFlowType; customFlowType?: string; targetAudiences: DecisionFlowTargetAudience[]; detailLevel: DecisionFlowDetailLevel; ambiguityPolicy: { doNotInvent: boolean; createToConfirmNodes: boolean; citeSourcePassages: boolean; identifyContradictions: boolean; }; }
+export interface DecisionFlowPayload { title: string; description?: string; nodes: Array<{ id: string; type: DecisionFlowNodeType; label: string; description?: string; position?: { x: number; y: number }; sourceRefs?: Array<{ page: number; passage: string }>; needsConfirmation?: boolean; uncertaintyReason?: string }>; edges: Array<{ id: string; source: string; target: string; label?: string }>; warnings?: string[]; }
+export interface WorkspaceArtifact { id: string; workspaceId: string; type: WorkspaceArtifactType; name: string; description?: string; status: WorkspaceArtifactStatus; schemaVersion: number; revision: number; primarySource: { documentId: string; documentName: string; contentHash?: string; selection: { mode: 'all' } | { mode: 'pages'; pages: number[] } }; generationOptions: DecisionFlowGenerationOptions; payload?: DecisionFlowPayload; generation: { agentId: string; requestedBy: string; attempts: number; startedAt?: string; completedAt?: string; error?: string }; clonedFromArtifactId?: string; createdBy: string; updatedBy: string; createdAt: string; updatedAt: string; }
+
 // ===== Pagination =====
 
 export interface PaginationInfo {
@@ -476,25 +486,6 @@ export function isWorkspace(item: WorkspaceListItem): item is Workspace {
 
 export function isSharedWorkspace(item: WorkspaceListItem): item is SharedWorkspaceResponse {
   return 'shareId' in item;
-}
-
-// ===== Website Crawl Types =====
-
-export interface PageNode {
-  /** Real page URL, or '' for a synthetic category/group node (not selectable). */
-  url: string;
-  title?: string;
-  path: string;
-  /** Display label: last path segment, or the host for the site root page. */
-  name: string;
-  alreadyIndexed: boolean;
-  children: PageNode[];
-}
-
-export interface CrawlResponse {
-  tree: PageNode[];
-  truncated: boolean;
-  unreachable?: boolean;
 }
 
 // Local upload tracking (for UI state)

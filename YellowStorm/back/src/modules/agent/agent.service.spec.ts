@@ -27,6 +27,18 @@ describe('AgentService connector skill inheritance', () => {
     updatedAt: new Date(),
   });
 
+  const defaultGuardrails = {
+    promptInjection: {
+      inputGuardrailEnabled: false,
+      outputGuardrailEnabled: false,
+      toolCallGuardrailEnabled: false,
+      inputClassifierPrompt: 'input policy',
+      outputClassifierPrompt: 'output policy',
+      toolCallClassifierPrompt: 'tool policy',
+      blockMessage: 'I cannot follow this instruction.',
+    },
+  };
+
   const createService = () => {
     const agentModel = {
       find: jest.fn(),
@@ -89,7 +101,6 @@ describe('AgentService connector skill inheritance', () => {
           inputGuardrailEnabled: false,
           outputGuardrailEnabled: false,
           toolCallGuardrailEnabled: false,
-          mode: 'balanced',
           inputClassifierPrompt: 'input policy',
           outputClassifierPrompt: 'output policy',
           toolCallClassifierPrompt: 'tool policy',
@@ -139,6 +150,19 @@ describe('AgentService connector skill inheritance', () => {
     });
   };
 
+  it('preserves deployment modes for widget-only updates', () => {
+    const { service } = createService();
+
+    const settings = (service as any).normalizeDeploymentSettings(
+      { widget: { layout: { desktopWidth: 480, desktopHeight: 720 } } },
+      { embedEnabled: true, restEnabled: true, widget: {} },
+    );
+
+    expect(settings.embedEnabled).toBe(true);
+    expect(settings.restEnabled).toBe(true);
+    expect(settings.widget.layout).toEqual({ desktopWidth: 480, desktopHeight: 720 });
+  });
+
   it('injects connector skills into stream agent runtime', async () => {
     const { service, skillService, connectorService, agentTypeService } = createService();
     const streamAgent: IAgentForStream = {
@@ -155,23 +179,14 @@ describe('AgentService connector skill inheritance', () => {
       ignorePrePrompt: false,
       knowledgeBases: [],
       toolIds: [],
-      guardrails: {
-        promptInjection: {
-          inputGuardrailEnabled: false,
-          outputGuardrailEnabled: false,
-          toolCallGuardrailEnabled: false,
-          mode: 'balanced',
-          inputClassifierPrompt: 'input policy',
-          outputClassifierPrompt: 'output policy',
-          toolCallClassifierPrompt: 'tool policy',
-          blockMessage: 'I cannot follow this instruction.',
-        },
-      },
+      guardrails: defaultGuardrails,
       connectorIds: ['connector-1'],
       connectorActionSelections: [{ connectorId: 'connector-1', actionKeys: ['run_code'] }],
       skillIds: ['agent-skill'],
       disabledSkillIds: ['disabled-skill'],
       agentTypeSkillIds: ['type-skill'],
+      enable_temporary_child_agents: true,
+      max_temporary_child_agents: 6,
       isDefault: true,
       isDefaultForType: false,
     };
@@ -210,6 +225,12 @@ describe('AgentService connector skill inheritance', () => {
       'agent-skill',
       'connector-skill',
     ]);
+    expect(result[0].agent_params?.params).toEqual(expect.objectContaining({
+      connector_bindings_json: expect.any(String),
+      enable_temporary_child_agents: 'true',
+      max_temporary_child_agents: '6',
+    }));
+    expect(result[0].agent_params?.params.temperature).toBe('0');
   });
 
   it('resolves the mono-agent directly from the DB even though it is not part of the user\'s roster', async () => {
@@ -229,23 +250,14 @@ describe('AgentService connector skill inheritance', () => {
       ignorePrePrompt: false,
       knowledgeBases: [],
       toolIds: [],
-      guardrails: {
-        promptInjection: {
-          inputGuardrailEnabled: false,
-          outputGuardrailEnabled: false,
-          toolCallGuardrailEnabled: false,
-          mode: 'balanced',
-          inputClassifierPrompt: 'input policy',
-          outputClassifierPrompt: 'output policy',
-          toolCallClassifierPrompt: 'tool policy',
-          blockMessage: 'I cannot follow this instruction.',
-        },
-      },
+      guardrails: defaultGuardrails,
       connectorIds: [],
       connectorActionSelections: [],
       skillIds: [],
       disabledSkillIds: [],
       agentTypeSkillIds: [],
+      enable_temporary_child_agents: false,
+      max_temporary_child_agents: 4,
       isDefault: true,
       isDefaultForType: false,
     };
@@ -283,6 +295,47 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].name).toBe('Mono Agent Instance');
   });
 
+  it('uses the selected model for an untagged mono-agent request', async () => {
+    const { service, modelsService, agentTypeService } = createService();
+    const monoAgent: IAgentForStream = {
+      id: 'mono-agent', name: 'Mono Agent', agentTypeName: 'Mono Agent', agentTypeSlug: 'mono-agent',
+      agentTypeId: 'type-mono', role: 'Role', description: '', temperature: 0, model: 'native-model',
+      instruction: '', ignorePrePrompt: false, knowledgeBases: [], toolIds: [], guardrails: defaultGuardrails,
+      connectorIds: [], connectorActionSelections: [], skillIds: [], disabledSkillIds: [], agentTypeSkillIds: [],
+      enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: true, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([]);
+    jest.spyOn(service as any, 'resolveDefaultMonoAgent').mockResolvedValue(monoAgent);
+    modelsService.findById.mockImplementation(async (id: string) => ({ id, omitTemperature: false }));
+
+    const result = await service.buildAgentsForStream(userId, 'selected-model');
+
+    expect(agentTypeService.resolvePromptsInBatch).toHaveBeenCalledWith([
+      { agentTypeId: 'type-mono', modelId: 'selected-model' },
+    ]);
+    expect(result[0].chatbot.model).toBe('selected-model');
+  });
+
+  it('preserves a tagged agent\'s native model over the selected model', async () => {
+    const { service, modelsService, agentTypeService } = createService();
+    const taggedAgent: IAgentForStream = {
+      id: 'tagged-agent', name: 'Tagged Agent', agentTypeName: 'Worker', agentTypeSlug: 'worker',
+      agentTypeId: 'type-worker', role: 'Role', description: '', temperature: 0, model: 'native-model',
+      instruction: '', ignorePrePrompt: false, knowledgeBases: [], toolIds: [], guardrails: defaultGuardrails,
+      connectorIds: [], connectorActionSelections: [], skillIds: [], disabledSkillIds: [], agentTypeSkillIds: [],
+      enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: false, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([taggedAgent]);
+    modelsService.findById.mockImplementation(async (id: string) => ({ id, omitTemperature: false }));
+
+    const result = await service.buildAgentsForStream(userId, 'selected-model', ['tagged-agent']);
+
+    expect(agentTypeService.resolvePromptsInBatch).toHaveBeenCalledWith([
+      { agentTypeId: 'type-worker', modelId: 'native-model' },
+    ]);
+    expect(result[0].chatbot.model).toBe('native-model');
+  });
+
   it('routes through a single agent when no agent is tagged, even if no "mono-agent" type is configured', async () => {
     const { service, agentTypeService } = createService();
 
@@ -300,23 +353,14 @@ describe('AgentService connector skill inheritance', () => {
       ignorePrePrompt: false,
       knowledgeBases: [],
       toolIds: [],
-      guardrails: {
-        promptInjection: {
-          inputGuardrailEnabled: false,
-          outputGuardrailEnabled: false,
-          toolCallGuardrailEnabled: false,
-          mode: 'balanced',
-          inputClassifierPrompt: 'input policy',
-          outputClassifierPrompt: 'output policy',
-          toolCallClassifierPrompt: 'tool policy',
-          blockMessage: 'I cannot follow this instruction.',
-        },
-      },
+      guardrails: defaultGuardrails,
       connectorIds: [],
       connectorActionSelections: [],
       skillIds: [],
       disabledSkillIds: [],
       agentTypeSkillIds: [],
+      enable_temporary_child_agents: false,
+      max_temporary_child_agents: 4,
       isDefault: true,
       isDefaultForType: false,
     };
@@ -364,6 +408,8 @@ describe('AgentService connector skill inheritance', () => {
               skills: [new Types.ObjectId('111111111111111111111111')],
               disabledSkills: [],
               connectors: [new Types.ObjectId('222222222222222222222222')],
+              enable_temporary_child_agents: true,
+              max_temporary_child_agents: 5,
               isDefault: false,
               isDefaultForType: false,
               agentType: {
@@ -410,12 +456,17 @@ describe('AgentService connector skill inheritance', () => {
       '111111111111111111111111',
       'connector-skill',
     ]);
+    expect(result[0].agent_params?.params).toEqual(expect.objectContaining({
+      connector_bindings_json: expect.any(String),
+      enable_temporary_child_agents: 'true',
+      max_temporary_child_agents: '5',
+    }));
   });
 
   it('falls back to the admin default model when the agent has no model set', async () => {
     const { service, agentModel, modelsService } = createService();
     modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
-    modelsService.findById.mockResolvedValue({ id: 'admin-default-id' } as any);
+    modelsService.findById.mockResolvedValue({ id: 'admin-default-id', omitTemperature: false } as any);
 
     const objectId = new Types.ObjectId();
     agentModel.find.mockReturnValue({
@@ -454,12 +505,13 @@ describe('AgentService connector skill inheritance', () => {
     expect(modelsService.getDefaultModel).toHaveBeenCalled();
     expect(result).toHaveLength(1);
     expect(result[0].chatbot.model).toBe('admin-default-id');
+    expect(result[0].agent_params?.params.temperature).toBe('0');
   });
 
   it('prefers fallbackModelId over the admin default when the agent has no model set', async () => {
     const { service, agentModel, modelsService } = createService();
     modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
-    modelsService.findById.mockResolvedValue({ id: 'explicit-fallback' } as any);
+    modelsService.findById.mockResolvedValue({ id: 'explicit-fallback', omitTemperature: true } as any);
 
     const objectId = new Types.ObjectId();
     agentModel.find.mockReturnValue({
@@ -502,6 +554,8 @@ describe('AgentService connector skill inheritance', () => {
     expect(modelsService.getDefaultModel).not.toHaveBeenCalled();
     expect(result).toHaveLength(1);
     expect(result[0].chatbot.model).toBe('explicit-fallback');
+    expect(result[0].agent_params?.params).toEqual(expect.objectContaining({ omit_temperature: 'true' }));
+    expect(result[0].agent_params?.params.temperature).toBeUndefined();
   });
 
   describe('canWriteAgent', () => {
@@ -567,5 +621,52 @@ describe('AgentService connector skill inheritance', () => {
       expect(connectorService.findByIds).not.toHaveBeenCalled();
       expect(responses[0].hasSmartMemory).toBe(false);
     });
+  });
+
+  it('uses current connector schemas and removes stale fixed parameters for playbook runtime', async () => {
+    const { service, connectorService, skillService } = createService();
+    connectorService.findByIds.mockResolvedValue([{
+      id: 'connector-1',
+      name: 'Search',
+      slug: 'search',
+      authSourceType: 'none',
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://example.com/mcp',
+      mcpServerConfig: {},
+      referencedSkillIds: [],
+      actions: [{
+        key: 'search',
+        label: 'Search',
+        description: '',
+        parameterSchema: {
+          type: 'object',
+          properties: { query: { type: 'string' }, limit: { type: 'number' } },
+          additionalProperties: false,
+        },
+        isEnabled: true,
+      }],
+    }]);
+    skillService.findByIds.mockResolvedValue([]);
+
+    const result = await service.buildGrpcConnectorRuntimeForPlaybook(userId, [{
+      connectorId: 'connector-1',
+      isEnabled: true,
+      actions: [{ actionKey: 'search', isEnabled: true }],
+      fixedParams: { limit: 10, removedArg: 'stale' },
+    }]);
+
+    expect(result.connector_bindings).toEqual([
+      expect.objectContaining({
+        fixed_params: { limit: 10 },
+        actions: [expect.objectContaining({
+          action_key: 'search',
+          parameter_schema: {
+            type: 'object',
+            properties: { query: { type: 'string' }, limit: { type: 'number' } },
+            additionalProperties: false,
+          },
+        })],
+      }),
+    ]);
   });
 });

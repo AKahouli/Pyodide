@@ -82,7 +82,7 @@ export class UserController {
   }
 
   @Get('search')
-  @ApiOperation({ summary: 'Search users by email' })
+  @ApiOperation({ summary: 'Search active users by name or email' })
   @ApiResponse({ status: 200, description: 'Search results returned', type: [UserSearchResultDto] })
   async searchUsers(
     @CurrentUser() currentUser: UserDocument,

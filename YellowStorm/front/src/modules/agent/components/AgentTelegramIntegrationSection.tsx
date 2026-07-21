@@ -22,6 +22,7 @@ const TELEGRAM_TOKEN_PATTERN = /^\d{6,}:[A-Za-z0-9_-]{30,}$/;
 
 interface AgentTelegramIntegrationSectionProps {
   agentId: string | null;
+  readOnly?: boolean;
 }
 
 function formatExpiry(isoDate: string | undefined): string | undefined {
@@ -59,6 +60,7 @@ function resolveIntegrationMessage(
 
 export function AgentTelegramIntegrationSection({
   agentId,
+  readOnly = false,
 }: AgentTelegramIntegrationSectionProps) {
   const { t } = useModuleTranslation("agent");
 
@@ -135,7 +137,7 @@ export function AgentTelegramIntegrationSection({
   };
 
   const handleSave = async () => {
-    if (!agentId) return;
+    if (readOnly || !agentId) return;
     setTokenError(null);
 
     if (enabled && !hasExistingToken && !botToken) {
@@ -167,6 +169,7 @@ export function AgentTelegramIntegrationSection({
   };
 
   const handleEnabledChange = async (nextEnabled: boolean) => {
+    if (readOnly) return;
     setEnabled(nextEnabled);
     if (nextEnabled || !agentId || !integration) return;
 
@@ -187,7 +190,7 @@ export function AgentTelegramIntegrationSection({
   };
 
   const handleRemove = async () => {
-    if (!agentId) return;
+    if (readOnly || !agentId) return;
     setSaving(true);
     try {
       await deleteAgentTelegramIntegration(agentId);
@@ -237,7 +240,7 @@ export function AgentTelegramIntegrationSection({
         <Switch
           data-testid="telegram-switch"
           checked={enabled}
-          disabled={!agentId || saving || loading}
+          disabled={readOnly || !agentId || saving || loading}
           onCheckedChange={(checked) => void handleEnabledChange(checked)}
         />
       </div>
@@ -308,7 +311,7 @@ export function AgentTelegramIntegrationSection({
               }
               value={botToken}
               onChange={(e) => setBotToken(e.target.value)}
-              disabled={loading || saving}
+              disabled={readOnly || loading || saving}
             />
             <p className="text-xs text-muted-foreground">
               {hasExistingToken
@@ -328,13 +331,13 @@ export function AgentTelegramIntegrationSection({
               variant="outline"
               size="sm"
               onClick={handleRemove}
-              disabled={saving || loading}
+              disabled={readOnly || saving || loading}
             >
               {t("createEdit.fields.telegramRemove")}
             </Button>
           )}
           {enabled && (
-            <Button type="button" size="sm" onClick={handleSave} disabled={saving || loading}>
+            <Button type="button" size="sm" onClick={handleSave} disabled={readOnly || saving || loading}>
               {saving ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

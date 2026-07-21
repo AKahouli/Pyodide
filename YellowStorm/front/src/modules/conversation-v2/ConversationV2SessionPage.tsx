@@ -109,6 +109,7 @@ export default function ConversationV2SessionPage() {
           setDeployState({
             deployStatus: pointer.deployStatus ?? 'idle',
             deployedUrl: pointer.deployedUrl ?? null,
+            lastDeployedAt: pointer.lastDeployedAt ?? null,
           });
           setSelectedSkillIds(pointer.selectedSkillIds ?? []);
           setSelectedConnectorIds(pointer.selectedConnectorIds ?? []);
@@ -132,6 +133,7 @@ export default function ConversationV2SessionPage() {
         setDeployState({
           deployStatus: pointer.deployStatus ?? 'idle',
           deployedUrl: pointer.deployedUrl ?? null,
+          lastDeployedAt: pointer.lastDeployedAt ?? null,
         });
         setSelectedSkillIds(pointer.selectedSkillIds ?? []);
         setSelectedConnectorIds(pointer.selectedConnectorIds ?? []);

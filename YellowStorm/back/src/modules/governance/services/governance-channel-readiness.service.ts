@@ -36,7 +36,7 @@ export class GovernanceChannelReadinessService {
 
   private async buildChannelCheck(userId: string, agentId: string, channel: string): Promise<GovernanceReadinessCheck> {
     const isReady = await this.isChannelReady(userId, agentId, channel);
-    return { key: `${agentId}:${channel}_ready`, label: `${channel} ready`, status: isReady ? 'passed' : 'failed', severity: 'blocking', targetType: 'channel', targetId: agentId };
+    return { key: `${agentId}:${channel}_ready`, label: `${channel} ready`, status: isReady ? 'passed' : 'warning', severity: 'warning', targetType: 'channel', targetId: agentId };
   }
 
   private async isChannelReady(userId: string, agentId: string, channel: string): Promise<boolean> {

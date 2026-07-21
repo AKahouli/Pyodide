@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Play, Save, Check, Loader2, History, Settings2, Square, AlertTriangle, Download, Upload } from 'lucide-react';
+import { Play, Save, Check, Loader2, History, Settings2, Square, AlertTriangle, Download, Upload, LocateFixed } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/select';
 import { useModuleTranslation } from '@/modules/localization';
 import type { PlaybookDesignSettings, PlaybookPageMode } from '../types';
+import type { PlaybookValidationIssue } from '../utils/required-port-validation';
 
 interface Props {
   pageMode: PlaybookPageMode;
@@ -27,7 +28,8 @@ interface Props {
   hasActiveExecution?: boolean;
   isStopping?: boolean;
   canRun: boolean;
-  hasValidationIssues?: boolean;
+  validationIssues?: PlaybookValidationIssue[];
+  onValidationIssueSelect?: (issue: PlaybookValidationIssue) => void;
   nodeReflectionEnabled: boolean;
   onNodeReflectionChange: (enabled: boolean) => void;
   advisorAutopilotEnabled?: boolean;
@@ -61,7 +63,8 @@ export function PlaybookToolbar({
   hasActiveExecution = false,
   isStopping = false,
   canRun,
-  hasValidationIssues,
+  validationIssues = [],
+  onValidationIssueSelect,
   nodeReflectionEnabled,
   onNodeReflectionChange,
   advisorAutopilotEnabled = false,
@@ -81,6 +84,7 @@ export function PlaybookToolbar({
   const { t } = useModuleTranslation('playbook');
   const showExecutionsAction = pageMode === 'run' || hasExecutionContext;
   const [runSettingsOpen, setRunSettingsOpen] = useState(false);
+  const [validationOpen, setValidationOpen] = useState(false);
 
   return (
     <div className="flex items-center gap-1 sm:gap-2">
@@ -211,26 +215,74 @@ export function PlaybookToolbar({
           <Download className="h-4 w-4" />
         </Button>
       )}
-      <Button
-        variant={isDirty ? 'outline' : 'ghost'}
-        size="sm"
-        onClick={onSave}
-        disabled={!isDirty || isSaving || hasValidationIssues}
-        className="px-2 sm:px-3"
-      >
-        {isSaving ? (
-          <Loader2 className="h-4 w-4 sm:mr-1 animate-spin" />
-        ) : hasValidationIssues ? (
-          <AlertTriangle className="h-4 w-4 sm:mr-1 text-amber-500" />
-        ) : isDirty ? (
-          <Save className="h-4 w-4 sm:mr-1" />
-        ) : (
-          <Check className="h-4 w-4 sm:mr-1" />
-        )}
-        <span className="hidden sm:inline">
-          {isSaving ? t('toolbar.saving') : hasValidationIssues ? t('toolbar.validationIssues') : isDirty ? t('toolbar.save') : t('toolbar.saved')}
-        </span>
-      </Button>
+      {validationIssues.length > 0 && !isSaving ? (
+        <Popover open={validationOpen} onOpenChange={setValidationOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-amber-500/40 px-2 text-amber-700 sm:px-3 dark:text-amber-400"
+              aria-label={t('toolbar.validationIssuesCount', { count: validationIssues.length })}
+            >
+              <AlertTriangle className="h-4 w-4 sm:mr-1" />
+              <span>{t('toolbar.validationIssuesCount', { count: validationIssues.length })}</span>
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-[min(24rem,calc(100vw-1rem))] p-0">
+            <div className="border-b p-3">
+              <p className="text-sm font-medium">{t('toolbar.validation.title')}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{t('toolbar.validation.description')}</p>
+            </div>
+            <div className="max-h-80 space-y-1 overflow-y-auto p-2">
+              {validationIssues.map((issue) => (
+                <button
+                  key={issue.id}
+                  type="button"
+                  className="group flex w-full items-start gap-2 rounded-md border border-transparent p-2 text-left transition-colors hover:border-amber-500/30 hover:bg-amber-500/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => {
+                    setValidationOpen(false);
+                    onValidationIssueSelect?.(issue);
+                  }}
+                >
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{issue.taskName}</span>
+                    <span className="block text-xs font-medium text-foreground/80">
+                      {t('toolbar.validation.port', { port: issue.portName, type: issue.artifactKind || t('toolbar.validation.unknownType') })}
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {t(`toolbar.validation.reason.${issue.reason}`)}
+                    </span>
+                    <span className="mt-1 block text-xs text-foreground">
+                      {t(`toolbar.validation.resolution.${issue.reason}`)}
+                    </span>
+                  </span>
+                  <LocateFixed className="mt-1 h-4 w-4 shrink-0 text-muted-foreground group-hover:text-foreground" aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
+      ) : (
+        <Button
+          variant={isDirty ? 'outline' : 'ghost'}
+          size="sm"
+          onClick={onSave}
+          disabled={!isDirty || isSaving}
+          className="px-2 sm:px-3"
+        >
+          {isSaving ? (
+            <Loader2 className="h-4 w-4 sm:mr-1 animate-spin" />
+          ) : isDirty ? (
+            <Save className="h-4 w-4 sm:mr-1" />
+          ) : (
+            <Check className="h-4 w-4 sm:mr-1" />
+          )}
+          <span className="hidden sm:inline">
+            {isSaving ? t('toolbar.saving') : isDirty ? t('toolbar.save') : t('toolbar.saved')}
+          </span>
+        </Button>
+      )}
       {isExecuting || hasActiveExecution ? (
         <Button variant="destructive" size="sm" onClick={onStop} disabled={isStopping || !onStop} className="px-2 sm:px-3">
           {isStopping ? (

@@ -15,10 +15,17 @@ from src.smart_rag.agents.factories.delegation_factory_helper import (
     _get_connector_repo,
     _get_team_skills,
     _inject_connector_repo_into_bindings,
+    _resolve_temperature,
     get_enhanced_prompt,
     merge_skills,
     prepare_agent_data,
 )
+
+
+def test_resolve_temperature_normalizes_grpc_string_values():
+    assert _resolve_temperature({"temperature": "0.25"}) == 0.25
+    assert _resolve_temperature({"omit_temperature": "true", "temperature": "0"}) is None
+    assert _resolve_temperature({"temperature": "invalid"}) == 0.0
 
 
 class TestConnectorRepoHelpers:

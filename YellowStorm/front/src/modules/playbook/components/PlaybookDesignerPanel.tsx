@@ -5,7 +5,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useModuleTranslation } from '@/modules/localization';
 import {
@@ -23,7 +22,7 @@ import {
 import { useAutosave } from '../hooks/useAutosave';
 import { useIsDirty } from '../store';
 import { createHitlBlocker, updateNodeHitlPolicy } from '../api';
-import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, IntentSuggestionHistoryEntry, InterruptType, PlaybookIntentClarificationResource, PlaybookIntentConstructionStatus, PlaybookIntentDesignResponse, PlaybookIntentImageInput, PlaybookIntentSuggestion, PlaybookIntentTraceResponse } from '../types';
+import type { HitlFeedbackScope, HitlHistoryEntry, HumanFeedbackData, IntentSuggestionHistoryEntry, InterruptType, PlaybookIntentClarificationResource, PlaybookIntentConstructionStatus, PlaybookIntentDesignResponse, PlaybookIntentDiagnostic, PlaybookIntentImageInput, PlaybookIntentSuggestion, PlaybookIntentTraceResponse } from '../types';
 import { PlaybookClarificationResourcePicker } from './PlaybookClarificationResourcePicker';
 import { IntentTraceModal } from './IntentTraceModal';
 
@@ -31,16 +30,19 @@ interface Props {
   playbookId: string | undefined;
   intentDesign?: PlaybookIntentDesignResponse | null;
   intentLoading?: boolean;
-  autoApply?: boolean;
   history?: IntentSuggestionHistoryEntry[];
   constructionStatus?: PlaybookIntentConstructionStatus;
+  constructionDiagnostics?: PlaybookIntentDiagnostic[];
   intentTraces?: PlaybookIntentTraceResponse | null;
   intentTracesLoading?: boolean;
   onSubmitDesignIntent?: (intentText: string, visibleUserQuery: string, images?: PlaybookIntentImageInput[]) => Promise<void> | void;
   onAnswerDesignIntent?: (answerText?: string) => Promise<void> | void;
-  onAutoApplyChange?: (value: boolean) => void;
   onApplyHistorySuggestion?: (suggestion: PlaybookIntentSuggestion) => void;
   onCancelConstruction?: () => void;
+  onReviewConstructionDiagnostic?: (diagnostic: PlaybookIntentDiagnostic) => void;
+  assistantPreviewStatus?: 'idle' | 'streaming' | 'ready' | 'applying' | 'discarding';
+  onApplyAssistantPreview?: () => void;
+  onDiscardAssistantPreview?: () => void;
   onWidthChange?: (width: number) => void;
   onOpenIntentTraces?: () => void;
 }
@@ -256,20 +258,24 @@ export function PlaybookDesignerPanel({
   playbookId,
   intentDesign = null,
   intentLoading = false,
-  autoApply = false,
   history = [],
   constructionStatus = 'idle',
+  constructionDiagnostics = [],
   intentTraces = null,
   intentTracesLoading = false,
   onSubmitDesignIntent,
   onAnswerDesignIntent,
-  onAutoApplyChange,
   onApplyHistorySuggestion,
   onCancelConstruction,
+  onReviewConstructionDiagnostic,
+  assistantPreviewStatus = 'idle',
+  onApplyAssistantPreview,
+  onDiscardAssistantPreview,
   onWidthChange,
   onOpenIntentTraces,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
+  const constructionActive = constructionStatus === 'starting' || constructionStatus === 'streaming';
 
   const designerOpen = useDesignerOpen();
   const copilotMode = useCopilotMode();
@@ -305,7 +311,7 @@ export function PlaybookDesignerPanel({
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
   const isStopping = usePlaybookStore((s) => s.isStopping);
 
-  const { saveNow } = useAutosave();
+  const { saveNow } = useAutosave({ paused: constructionActive });
 
   const [query, setQuery] = useState('');
   const [response, setResponse] = useState('');
@@ -327,6 +333,7 @@ export function PlaybookDesignerPanel({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [promptImages, setPromptImages] = useState<PromptImageAttachment[]>([]);
   const [promptImageError, setPromptImageError] = useState('');
+  const [isMobileOverlay, setIsMobileOverlay] = useState(false);
   const [localInterruptThread, setLocalInterruptThread] = useState<{
     executionId: string;
     entries: InterruptEntry[];
@@ -337,6 +344,7 @@ export function PlaybookDesignerPanel({
   } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const prevScrollCount = useRef(0);
   const interruptComposerRef = useRef<HTMLTextAreaElement>(null);
   const designClarificationActionsRef = useRef<HTMLDivElement>(null);
@@ -345,6 +353,67 @@ export function PlaybookDesignerPanel({
   const resizeDragging = useRef(false);
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(0);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 639px)');
+    const updateMobileOverlay = () => setIsMobileOverlay(mediaQuery.matches);
+    updateMobileOverlay();
+    mediaQuery.addEventListener('change', updateMobileOverlay);
+    return () => mediaQuery.removeEventListener('change', updateMobileOverlay);
+  }, []);
+
+  useEffect(() => {
+    if (!designerOpen || !isMobileOverlay) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    panelRef.current?.focus();
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.requestAnimationFrame(() => {
+        const designerTrigger = document.querySelector<HTMLElement>('[data-playbook-designer-trigger="true"]');
+        const priorFocusIsValid = previouslyFocused?.isConnected
+          && previouslyFocused !== document.body
+          && !previouslyFocused.matches(':disabled');
+        (priorFocusIsValid ? previouslyFocused : designerTrigger)?.focus();
+      });
+    };
+  }, [designerOpen, isMobileOverlay]);
+
+  const handleMobileDialogKeyDown = useCallback((event: globalThis.KeyboardEvent) => {
+    if (!isMobileOverlay) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setDesignerOpen(false);
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(panelRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ) ?? []).filter((element) => !element.hidden && element.getClientRects().length > 0);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      panelRef.current?.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const activeElement = document.activeElement;
+    const focusIsOutside = !panelRef.current?.contains(activeElement);
+    if (event.shiftKey && (activeElement === panelRef.current || activeElement === first || focusIsOutside)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (activeElement === panelRef.current || activeElement === last || focusIsOutside)) {
+      event.preventDefault();
+      first.focus();
+    }
+  }, [isMobileOverlay, setDesignerOpen]);
+
+  useEffect(() => {
+    if (!designerOpen || !isMobileOverlay) return;
+    document.addEventListener('keydown', handleMobileDialogKeyDown, true);
+    return () => document.removeEventListener('keydown', handleMobileDialogKeyDown, true);
+  }, [designerOpen, handleMobileDialogKeyDown, isMobileOverlay]);
 
   const onResizeStart = useCallback((e: React.PointerEvent) => {
     if (e.button !== 0) return;
@@ -473,8 +542,7 @@ export function PlaybookDesignerPanel({
   const designQuestions = intentDesign?.status === 'needs_clarification' ? intentDesign.questions : [];
   const currentDesignQuestion = designQuestions[Math.min(designStepIndex, Math.max(0, designQuestions.length - 1))] ?? null;
   const isLastDesignQuestion = currentDesignQuestion ? designStepIndex >= designQuestions.length - 1 : true;
-  const designIntentBusy = isDesigning || intentLoading;
-  const constructionActive = constructionStatus === 'starting' || constructionStatus === 'streaming';
+  const designIntentBusy = intentLoading;
   const isAwaitingDesignAnswer = effectiveCopilotMode === 'design' && intentDesign?.status === 'needs_clarification' && Boolean(currentDesignQuestion);
   const scrollCount = effectiveCopilotMode === 'design' ? messages.length + (designIntentBusy ? 1 : 0) + designQuestions.length : interruptThread.length;
 
@@ -924,21 +992,27 @@ export function PlaybookDesignerPanel({
         </Button>
       )}
       <div
-        className="absolute right-0 inset-y-0 z-40 border-l bg-background flex flex-col transition-transform duration-300"
-        style={{ transform: designerOpen ? 'translateX(0)' : 'translateX(100%)', width: sidebarWidth }}
+        ref={panelRef}
+        role={isMobileOverlay ? (designerOpen ? 'dialog' : undefined) : 'complementary'}
+        aria-modal={isMobileOverlay && designerOpen ? true : undefined}
+        aria-hidden={!designerOpen}
+        aria-labelledby="playbook-designer-panel-title"
+        tabIndex={-1}
+        className="fixed inset-0 z-50 flex flex-col border-l bg-background transition-transform duration-300 sm:absolute sm:left-auto sm:z-40"
+        style={{ transform: designerOpen ? 'translateX(0)' : 'translateX(100%)', width: sidebarWidth, maxWidth: '100vw' }}
       >
       <div
         onPointerDown={onResizeStart}
         onPointerMove={onResizeMove}
         onPointerUp={onResizeEnd}
         onPointerCancel={onResizeEnd}
-        className="absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize z-10 hover:bg-primary/30 active:bg-primary/50 transition-colors"
+        className="absolute left-0 top-0 bottom-0 z-10 hidden w-1 cursor-ew-resize transition-colors hover:bg-primary/30 active:bg-primary/50 sm:block"
         style={{ touchAction: 'none' }}
       />
       <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold">{panelTitle}</h3>
+            <h3 id="playbook-designer-panel-title" className="text-sm font-semibold">{panelTitle}</h3>
             {effectiveCopilotMode === 'interrupt' && activeInterruptEntry && (
               <Badge variant="secondary" className="h-5 px-2 text-[10px]">
                 {interruptTitle}
@@ -1268,11 +1342,66 @@ export function PlaybookDesignerPanel({
           className={`border-t px-3 py-3 shrink-0 space-y-2 transition-shadow ${isAwaitingDesignAnswer ? 'animate-pulse ring-2 ring-primary/40' : ''}`}
           onSubmit={handleSubmitDesign}
         >
-          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-            <label htmlFor="designer-auto-apply" className="flex items-center gap-2">
-              <Switch id="designer-auto-apply" checked={autoApply} onCheckedChange={onAutoApplyChange} aria-label={t('intentBar.actions.autoApply')} />
-              <span>{t('intentBar.actions.autoApply')}</span>
-            </label>
+          {constructionDiagnostics.length > 0 && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3" aria-label={t('intentBar.diagnostics.title')}>
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 text-amber-600" />
+                <p className="text-sm font-medium">{t('intentBar.diagnostics.title')}</p>
+                <Badge variant="outline" className="ml-auto text-[10px]">{constructionDiagnostics.length}</Badge>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{t('intentBar.diagnostics.description')}</p>
+              <div className="mt-2 max-h-48 space-y-2 overflow-y-auto">
+                {constructionDiagnostics.map((diagnostic) => {
+                  const target = diagnostic.reviewTarget;
+                  const location = target?.nodeLabel || target?.nodeRef || diagnostic.itemId || t('intentBar.diagnostics.workflow');
+                  return (
+                    <div key={[diagnostic.stage, diagnostic.code, diagnostic.itemId, diagnostic.path].join(':')} className="rounded-md border bg-background/70 p-2 text-xs">
+                      <div className="flex items-start gap-2">
+                        <Badge variant={diagnostic.severity === 'error' ? 'destructive' : 'secondary'} className="text-[10px]">
+                          {t(`intentBar.diagnostics.severity.${diagnostic.severity}`)}
+                        </Badge>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-foreground">
+                            {location}{target?.portId ? ` / ${target.portId}` : ''}
+                          </p>
+                          <p className="mt-1 text-muted-foreground">
+                            {t(`intentBar.diagnostics.resolution.${diagnostic.resolutionCode || 'review_workflow'}`)}
+                          </p>
+                          <p className="mt-1 font-mono text-[10px] text-muted-foreground">{diagnostic.code}</p>
+                        </div>
+                        {target?.nodeRef && onReviewConstructionDiagnostic ? (
+                          <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 px-2 text-xs" onClick={() => onReviewConstructionDiagnostic(diagnostic)}>
+                            <Eye className="mr-1 h-3.5 w-3.5" />
+                            {t('intentBar.diagnostics.reviewNode')}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {assistantPreviewStatus !== 'idle' && (
+            <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
+              <p className="text-sm font-medium">{t('intentBar.preview.title')}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{t('intentBar.preview.description')}</p>
+              {assistantPreviewStatus === 'ready' && (
+                <div className="mt-3 flex justify-end gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={onDiscardAssistantPreview}>
+                    {t('intentBar.preview.discard')}
+                  </Button>
+                  <Button type="button" size="sm" onClick={onApplyAssistantPreview}>
+                    {t('intentBar.preview.apply')}
+                  </Button>
+                </div>
+              )}
+              {(assistantPreviewStatus === 'applying' || assistantPreviewStatus === 'discarding') && (
+                <Loader2 className="mt-2 h-4 w-4 animate-spin" />
+              )}
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-2">
               <Button
                 type="button"
@@ -1290,7 +1419,7 @@ export function PlaybookDesignerPanel({
                 variant={historyOpen ? 'secondary' : 'outline'}
                 size="sm"
                 className="h-7 gap-1.5 px-2"
-                disabled={history.length === 0 || !onApplyHistorySuggestion}
+                disabled={constructionActive || history.length === 0 || !onApplyHistorySuggestion}
                 aria-expanded={historyOpen}
                 onClick={() => setHistoryOpen((current) => !current)}
               >
@@ -1307,6 +1436,7 @@ export function PlaybookDesignerPanel({
                   type="button"
                   variant="ghost"
                   className="h-auto w-full justify-start whitespace-normal px-2 py-1.5 text-left text-xs"
+                  disabled={constructionActive || !onApplyHistorySuggestion}
                   onClick={() => handleApplyHistory(entry)}
                 >
                   <span className="line-clamp-2">{entry.intent || entry.suggestion.label}</span>

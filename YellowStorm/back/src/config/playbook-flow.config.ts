@@ -30,6 +30,10 @@ export default registerAs('playbook-flow', () => ({
   maxConcurrentPerProvider: Number.parseInt(process.env.PLAYBOOK_MAX_CONCURRENT_PER_PROVIDER || '25', 10),
   maxConcurrentPerModel: Number.parseInt(process.env.PLAYBOOK_MAX_CONCURRENT_PER_MODEL || '10', 10),
   asyncDesignEnabled: process.env.PLAYBOOK_ASYNC_DESIGN_ENABLED === 'true',
+  mcpAssistantEnabled: process.env.PLAYBOOK_MCP_ASSISTANT_ENABLED === 'true',
+  mcpServerUrl: process.env.PLAYBOOK_MCP_SERVER_URL || 'http://localhost:8025/mcp',
+  mcpIngressToken: process.env.PLAYBOOK_MCP_INGRESS_TOKEN || '',
+  mcpConnectorReconciliationEnabled: process.env.PLAYBOOK_MCP_CONNECTOR_RECONCILIATION_ENABLED === 'true',
   maxConcurrentGlobalDesignOperations: Number.parseInt(process.env.PLAYBOOK_MAX_CONCURRENT_GLOBAL_DESIGN_OPERATIONS || '10', 10),
   maxConcurrentUserDesignOperations: Number.parseInt(process.env.PLAYBOOK_MAX_CONCURRENT_USER_DESIGN_OPERATIONS || '3', 10),
 }));

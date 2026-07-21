@@ -143,6 +143,23 @@ describe('PlaybookDataFlowSection', () => {
     ]);
   });
 
+  it('stores a newly entered constant value on the created binding', () => {
+    render(<PlaybookDataFlowSection targetNodeId="task-1" />);
+
+    fireEvent.click(screen.getByText('dataFlow.connectSource'));
+    fireEvent.change(screen.getByPlaceholderText('dataFlow.constantPlaceholder'), { target: { value: 'RUN_RAW' } });
+    fireEvent.click(screen.getAllByText('dataFlow.apply')[0]);
+
+    expect(updateDataBindings).toHaveBeenCalledWith([
+      expect.objectContaining({
+        targetNode: 'task-1',
+        targetPort: 'input_file',
+        sourceKind: 'constant',
+        constantValue: { text: 'RUN_RAW' },
+      }),
+    ]);
+  });
+
   it('adds iterator context input ports while keeping the collection port locked', () => {
     const onInputPortsChange = vi.fn();
 

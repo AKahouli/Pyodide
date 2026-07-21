@@ -22,6 +22,7 @@ interface ValidateOptions {
   allowDraftRouters?: boolean;
   allowUnboundRequiredPorts?: boolean;
   allowIncompleteNodeOutputBindings?: boolean;
+  requiredBindingNodeIds?: readonly string[];
 }
 
 @Injectable()
@@ -49,7 +50,7 @@ export class PlaybookFlowValidatorService {
     errors.push(...this.checkIteratorContainerDag(nodes, controlEdges));
     errors.push(...this.checkBindingEndpoints(nodes, dataBindings, options));
     if (!options.allowUnboundRequiredPorts) {
-      errors.push(...this.checkRequiredDataBindings(nodes, dataBindings));
+      errors.push(...this.checkRequiredDataBindings(nodes, dataBindings, options.requiredBindingNodeIds));
     }
     errors.push(...this.checkDuplicateDataBindings(dataBindings));
     errors.push(...this.checkBindingSourceReachable(nodes, controlEdges, dataBindings));
@@ -244,9 +245,15 @@ export class PlaybookFlowValidatorService {
     return errors;
   }
 
-  private checkRequiredDataBindings(nodes: FlowNode[], bindings: DataBinding[]): ValidationError[] {
+  private checkRequiredDataBindings(
+    nodes: FlowNode[],
+    bindings: DataBinding[],
+    requiredBindingNodeIds?: readonly string[],
+  ): ValidationError[] {
     const errors: ValidationError[] = [];
+    const nodeIds = requiredBindingNodeIds ? new Set(requiredBindingNodeIds) : undefined;
     for (const node of nodes) {
+      if (nodeIds && !nodeIds.has(node.id)) continue;
       if (!node.input?.ports) continue;
       for (const port of node.input.ports) {
         if (!port.required) continue;

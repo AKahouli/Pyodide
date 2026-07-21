@@ -2,6 +2,10 @@ import { Types } from 'mongoose';
 import { ConnectorService } from './connector.service';
 import { ConnectorActionSafety } from './schemas/connector.schema';
 
+const createPlaybookBindingSyncServiceMock = () => ({
+  syncConnectorActions: jest.fn().mockResolvedValue(undefined),
+});
+
 describe('ConnectorService importFromMcp', () => {
   it('persists normalized actions when creating a connector', async () => {
     const create = jest.fn().mockResolvedValue({
@@ -49,6 +53,7 @@ describe('ConnectorService importFromMcp', () => {
         resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
         resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
       } as any,
+      createPlaybookBindingSyncServiceMock() as any,
     );
 
     await service.create(new Types.ObjectId().toString(), {
@@ -146,6 +151,7 @@ describe('ConnectorService importFromMcp', () => {
         resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
         resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
       } as any,
+      createPlaybookBindingSyncServiceMock() as any,
     );
 
     await service.update(connectorId, {
@@ -184,6 +190,184 @@ describe('ConnectorService importFromMcp', () => {
         }),
       },
       { new: true },
+    );
+  });
+
+  it('syncs referenced playbook bindings when connector actions change', async () => {
+    const connectorId = new Types.ObjectId().toString();
+    const findById = jest.fn().mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: connectorId,
+          slug: 'github',
+          createdBy: new Types.ObjectId(),
+          actions: [
+            { key: 'old_tool', parameterSchema: { properties: { oldArg: {} } }, isEnabled: true },
+            { key: 'disabled_tool', parameterSchema: {}, isEnabled: true },
+          ],
+        }),
+      }),
+    });
+    const findByIdAndUpdate = jest.fn().mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: connectorId,
+          slug: 'github',
+          name: 'GitHub',
+          description: 'GitHub MCP',
+          icon: '',
+          color: '',
+          authType: 'token',
+          authConfigSchema: {},
+          authSourceType: 'credential',
+          connectedAppKey: '',
+          runtimeAuthConfig: {},
+          mcpTransportType: 'streamable_http',
+          mcpServerUrl: 'https://example.com/mcp',
+          mcpServerConfig: {},
+          actions: [],
+          referencedSkillIds: [],
+          isActive: true,
+          createdBy: new Types.ObjectId(),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }),
+      }),
+    });
+    const playbookBindingSyncService = { syncConnectorActions: jest.fn().mockResolvedValue(undefined) };
+    const logger = { setContext: jest.fn(), log: jest.fn(), error: jest.fn() };
+    const service = new ConnectorService(
+      { findById, findByIdAndUpdate, findOne: jest.fn() } as any,
+      { find: jest.fn() } as any,
+      logger as any,
+      null as any,
+      null as any,
+      playbookBindingSyncService as any,
+    );
+
+    await service.update(connectorId, {
+      actions: [
+        {
+          key: 'old_tool',
+          label: 'Old Tool',
+          description: '',
+          parameterSchema: { properties: { newArg: {} } },
+          outputSchema: {},
+          safety: ConnectorActionSafety.READ,
+          supportsBatch: false,
+          supportsIteration: false,
+          isEnabled: true,
+        },
+        {
+          key: 'new_tool',
+          label: 'New Tool',
+          description: '',
+          parameterSchema: {},
+          outputSchema: {},
+          safety: ConnectorActionSafety.READ,
+          supportsBatch: false,
+          supportsIteration: false,
+          isEnabled: true,
+        },
+        {
+          key: 'disabled_tool',
+          label: 'Disabled Tool',
+          description: '',
+          parameterSchema: {},
+          outputSchema: {},
+          safety: ConnectorActionSafety.READ,
+          supportsBatch: false,
+          supportsIteration: false,
+          isEnabled: false,
+        },
+      ],
+    });
+
+    expect(playbookBindingSyncService.syncConnectorActions).toHaveBeenCalledWith(
+      connectorId,
+      [
+        { key: 'old_tool', parameterSchema: { properties: { oldArg: {} } } },
+        { key: 'disabled_tool', parameterSchema: {} },
+      ],
+      [
+        { key: 'old_tool', parameterSchema: { properties: { newArg: {} } } },
+        { key: 'new_tool', parameterSchema: {} },
+      ],
+    );
+  });
+
+  it('does not fail connector updates when playbook binding sync fails', async () => {
+    const connectorId = new Types.ObjectId().toString();
+    const findById = jest.fn().mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          _id: connectorId,
+          slug: 'github',
+          createdBy: new Types.ObjectId(),
+          actions: [{ key: 'old_tool', isEnabled: true }],
+        }),
+      }),
+    });
+    const updatedConnector = {
+      _id: connectorId,
+      slug: 'github',
+      name: 'GitHub',
+      description: 'GitHub MCP',
+      icon: '',
+      color: '',
+      authType: 'token',
+      authConfigSchema: {},
+      authSourceType: 'credential',
+      connectedAppKey: '',
+      runtimeAuthConfig: {},
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://example.com/mcp',
+      mcpServerConfig: {},
+      actions: [],
+      referencedSkillIds: [],
+      isActive: true,
+      createdBy: new Types.ObjectId(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const findByIdAndUpdate = jest.fn().mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue(updatedConnector),
+      }),
+    });
+    const playbookBindingSyncService = {
+      syncConnectorActions: jest.fn().mockRejectedValue(new Error('sync failed')),
+    };
+    const logger = { setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    const service = new ConnectorService(
+      { findById, findByIdAndUpdate, findOne: jest.fn() } as any,
+      { find: jest.fn() } as any,
+      logger as any,
+      null as any,
+      null as any,
+      playbookBindingSyncService as any,
+    );
+
+    const response = await service.update(connectorId, {
+      actions: [
+        {
+          key: 'new_tool',
+          label: 'New Tool',
+          description: '',
+          parameterSchema: {},
+          outputSchema: {},
+          safety: ConnectorActionSafety.READ,
+          supportsBatch: false,
+          supportsIteration: false,
+          isEnabled: true,
+        },
+      ],
+    });
+
+    expect(response.id).toBe(connectorId);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Failed to synchronize playbook connector action bindings after connector update',
+      expect.objectContaining({ connectorId, error: 'sync failed' }),
     );
   });
 
@@ -240,6 +424,7 @@ describe('ConnectorService importFromMcp', () => {
       logger as any,
       null as any,
       null as any,
+      createPlaybookBindingSyncServiceMock() as any,
     );
 
     await service.update(connectorId, {
@@ -303,6 +488,7 @@ describe('ConnectorService importFromMcp', () => {
         resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
         resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
       } as any,
+      createPlaybookBindingSyncServiceMock() as any,
     );
 
     await service.create(new Types.ObjectId().toString(), {
@@ -362,6 +548,7 @@ describe('ConnectorService importFromMcp', () => {
         resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
         resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
       } as any,
+      createPlaybookBindingSyncServiceMock() as any,
     );
 
     jest.spyOn(service, 'inspectMcp').mockResolvedValue({
@@ -418,6 +605,7 @@ describe('ConnectorService importFromMcp', () => {
         resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
         resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
       } as any,
+      createPlaybookBindingSyncServiceMock() as any,
     );
 
     jest.spyOn(service, 'inspectMcp').mockResolvedValue({
@@ -454,6 +642,7 @@ describe('ConnectorService importFromMcp', () => {
         resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
         resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
       } as any,
+      createPlaybookBindingSyncServiceMock() as any,
     );
 
     const requestInit = (service as any).buildMcpRequestInit({
@@ -486,6 +675,7 @@ describe('ConnectorService importFromMcp', () => {
         resolveRuntimeAuth: jest.fn().mockResolvedValue({ headers: {}, env: {} }),
         resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
       } as any,
+      createPlaybookBindingSyncServiceMock() as any,
     );
 
     const requestInit = (service as any).buildMcpRequestInit({
@@ -520,6 +710,7 @@ describe('ConnectorService findByIdsForGrpc', () => {
       logger as any,
       null as any,
       auth as any,
+      createPlaybookBindingSyncServiceMock() as any,
     );
   };
 

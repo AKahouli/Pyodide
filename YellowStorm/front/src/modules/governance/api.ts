@@ -23,6 +23,8 @@ import type {
   UpdateGovernanceProgramPayload,
   UpdateGovernanceScopePayload,
   UpdateGovernanceSourcePayload,
+  GovernanceScopeAudienceConfiguration,
+  AvailableGovernedScope,
 } from './types';
 
 export const governanceApi = {
@@ -92,6 +94,83 @@ export const governanceApi = {
   async deleteSource(programId: string, sourceId: string): Promise<void> {
     await apiClient.delete(API_ENDPOINTS.governance.source(programId, sourceId));
   },
+
+  async getScopeAudience(programId: string, scopeId: string): Promise<GovernanceScopeAudienceConfiguration> {
+    const res = await apiClient.get(API_ENDPOINTS.governance.scopeAudience(programId, scopeId));
+    return res.data.data;
+  },
+
+  async updateScopeAudience(programId: string, scopeId: string, payload: { mode: GovernanceScopeAudienceConfiguration['mode']; userIds: string[]; groupIds: string[] }): Promise<GovernanceScopeAudienceConfiguration> {
+    const res = await apiClient.patch(API_ENDPOINTS.governance.scopeAudience(programId, scopeId), payload);
+    return res.data.data;
+  },
+
+  async listAvailableScopes(): Promise<AvailableGovernedScope[]> {
+    const res = await apiClient.get(API_ENDPOINTS.governance.availableScopes);
+    return res.data.data;
+  },
+
+  async createWorkspaceBinding(programId: string, payload: import('./types').CreateGovernanceWorkspaceBindingPayload): Promise<import('./types').GovernanceWorkspaceBinding> {
+    const res = await apiClient.post(API_ENDPOINTS.governance.workspaceBindings(programId), payload);
+    return res.data.data;
+  },
+  async listWorkspaceBindings(programId: string): Promise<import('./types').GovernanceWorkspaceBinding[]> {
+    const res = await apiClient.get(API_ENDPOINTS.governance.workspaceBindings(programId));
+    return res.data.data;
+  },
+  async updateWorkspaceBinding(programId: string, bindingId: string, payload: Partial<Pick<import('./types').GovernanceWorkspaceBinding, 'enabled' | 'ingestionMode' | 'defaults'>>): Promise<import('./types').GovernanceWorkspaceBinding> {
+    const res = await apiClient.patch(API_ENDPOINTS.governance.workspaceBinding(programId, bindingId), payload);
+    return res.data.data;
+  },
+  async deleteWorkspaceBinding(programId: string, bindingId: string): Promise<void> {
+    await apiClient.delete(API_ENDPOINTS.governance.workspaceBinding(programId, bindingId));
+  },
+  async reconcileWorkspaceBinding(programId: string, bindingId: string, dryRun: boolean): Promise<import('./types').GovernanceWorkspaceReconciliationResult> {
+    const res = await apiClient.post(API_ENDPOINTS.governance.reconcileWorkspaceBinding(programId, bindingId), { dryRun });
+    return res.data.data;
+  },
+  async createReconciliationRun(programId: string, bindingId: string, dryRun: boolean): Promise<import('./types').GovernanceReconciliationRun> {
+    const res = await apiClient.post(API_ENDPOINTS.governance.reconciliationRuns(programId, bindingId), { dryRun });
+    return res.data.data;
+  },
+  async getReconciliationRun(programId: string, bindingId: string, runId: string): Promise<import('./types').GovernanceReconciliationRun> {
+    const res = await apiClient.get(API_ENDPOINTS.governance.reconciliationRun(programId, bindingId, runId));
+    return res.data.data;
+  },
+  async resumeReconciliationRun(programId: string, bindingId: string, runId: string): Promise<import('./types').GovernanceReconciliationRun> {
+    const res = await apiClient.post(API_ENDPOINTS.governance.resumeReconciliationRun(programId, bindingId, runId), {});
+    return res.data.data;
+  },
+
+  async listSourceVersions(programId: string, sourceId: string): Promise<import('./types').GovernanceSourceVersion[]> {
+    const res = await apiClient.get(API_ENDPOINTS.governance.sourceVersions(programId, sourceId));
+    return res.data.data;
+  },
+  async listSourceEvents(programId: string, sourceId: string): Promise<import('./types').GovernanceSourceEvent[]> {
+    const res = await apiClient.get(API_ENDPOINTS.governance.sourceEvents(programId, sourceId));
+    return res.data.data;
+  },
+  async transitionSourceVersion(programId: string, sourceId: string, versionId: string, action: 'submit-review' | 'return-to-editing' | 'approve' | 'reject' | 'publish', comment?: string): Promise<import('./types').GovernanceSourceVersion> {
+    const res = await apiClient.post(`${API_ENDPOINTS.governance.sourceVersion(programId, sourceId, versionId)}/${action}`, { commandId: crypto.randomUUID(), comment });
+    return res.data.data;
+  },
+  async updateSourceValidity(programId: string, sourceId: string, versionId: string, payload: Partial<import('./types').GovernanceSourceValidity>): Promise<import('./types').GovernanceSourceVersion> {
+    const res = await apiClient.patch(`${API_ENDPOINTS.governance.sourceVersion(programId, sourceId, versionId)}/validity`, payload);
+    return res.data.data;
+  },
+  async listTemporalCandidates(programId: string, sourceId: string, versionId: string): Promise<import('./types').GovernanceTemporalCandidateRecord[]> { const res = await apiClient.get(API_ENDPOINTS.governance.temporalCandidates(programId, sourceId, versionId)); return res.data.data; },
+  async runTemporalAnalysis(programId: string, sourceId: string, versionId: string): Promise<{ id: string; status: string }> { const res = await apiClient.post(API_ENDPOINTS.governance.temporalAnalysis(programId, sourceId, versionId), {}); return res.data.data; },
+  async getTemporalAnalysisStatus(programId: string, sourceId: string, versionId: string): Promise<{ id: string; jobType: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; attempts: number; error?: string } | null> { const res = await apiClient.get(API_ENDPOINTS.governance.temporalAnalysis(programId, sourceId, versionId)); return res.data.data; },
+  async decideTemporalCandidate(programId: string, sourceId: string, versionId: string, candidateId: string, payload: { action: 'confirm' | 'correct' | 'reject'; correctedValue?: string; comment?: string }): Promise<import('./types').GovernanceTemporalCandidateRecord> { const res = await apiClient.post(API_ENDPOINTS.governance.temporalCandidateDecision(programId, sourceId, versionId, candidateId), payload); return res.data.data; },
+  async refreshKnowledge(programId: string, scopeId?: string): Promise<{ assessed: number }> { const res = await apiClient.post(API_ENDPOINTS.governance.knowledgeRefresh(programId), {}, { params: scopeId ? { scopeId } : undefined }); return res.data.data; },
+  async getKnowledgeHealth(programId: string, scopeId?: string): Promise<import('./types').KnowledgeHealthSummary> { const res = await apiClient.get(API_ENDPOINTS.governance.knowledgeHealth(programId), { params: scopeId ? { scopeId } : undefined }); return res.data.data; },
+  async listKnowledgeAlerts(programId: string, filter: import('./types').KnowledgeListFilter = {}): Promise<import('./types').KnowledgeAlert[]> { const res = await apiClient.get(API_ENDPOINTS.governance.knowledgeAlerts(programId), { params: filter }); return res.data.data; },
+  async acknowledgeKnowledgeAlert(programId: string, alertId: string): Promise<import('./types').KnowledgeAlert> { const res = await apiClient.post(API_ENDPOINTS.governance.knowledgeAlertAcknowledge(programId, alertId), {}); return res.data.data; },
+  async listKnowledgeRecommendations(programId: string, filter: import('./types').KnowledgeListFilter = {}): Promise<import('./types').KnowledgeRecommendation[]> { const res = await apiClient.get(API_ENDPOINTS.governance.knowledgeRecommendations(programId), { params: filter }); return res.data.data; },
+  async decideKnowledgeRecommendation(programId: string, id: string, action: 'accept' | 'reject', reason?: string): Promise<import('./types').KnowledgeRecommendation> { const res = await apiClient.post(API_ENDPOINTS.governance.knowledgeRecommendationAction(programId, id, action), { reason }); return res.data.data; },
+  async applyKnowledgeRecommendation(programId: string, id: string): Promise<import('./types').KnowledgeRecommendation> { const res = await apiClient.post(API_ENDPOINTS.governance.knowledgeRecommendationAction(programId, id, 'apply'), {}); return res.data.data; },
+  async listMetadataCandidates(programId: string, filter: import('./types').KnowledgeListFilter = {}): Promise<import('./types').GovernanceMetadataCandidate[]> { const res = await apiClient.get(API_ENDPOINTS.governance.metadataCandidates(programId), { params: filter }); return res.data.data; },
+  async decideMetadataCandidate(programId: string, id: string, action: 'accept' | 'reject', acceptedValue?: unknown): Promise<import('./types').GovernanceMetadataCandidate> { const res = await apiClient.post(API_ENDPOINTS.governance.metadataCandidateAction(programId, id, action), action === 'accept' ? { acceptedValue } : {}); return res.data.data; },
 
   async listMemberships(programId: string): Promise<GovernanceMembership[]> {
     const res = await apiClient.get(API_ENDPOINTS.governance.memberships(programId));

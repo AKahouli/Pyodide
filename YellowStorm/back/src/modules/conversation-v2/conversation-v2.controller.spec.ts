@@ -13,6 +13,8 @@ import { EmailService } from '@modules/email';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import * as grpc from '@grpc/grpc-js';
 import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
+import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
+import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 
 describe('ConversationV2Controller', () => {
   let controller: ConversationV2Controller;
@@ -35,6 +37,9 @@ describe('ConversationV2Controller', () => {
     getByShareToken: jest.fn(),
     rename: jest.fn(),
     setShared: jest.fn(),
+    setDeployState: jest.fn(),
+    listDeployedApps: jest.fn(),
+    removeDeployedApp: jest.fn(),
     softDelete: jest.fn(),
   };
 
@@ -69,7 +74,16 @@ describe('ConversationV2Controller', () => {
     send: jest.fn().mockResolvedValue({ success: true }),
   };
 
+  const mockAppShares = {
+    listSharedWithUser: jest.fn(),
+    shareByEmails: jest.fn(),
+    removeShareForRecipient: jest.fn(),
+    deleteAllSharesForSession: jest.fn(),
+    syncDeployMetadata: jest.fn(),
+  };
+
   const mockConfig = { get: jest.fn().mockReturnValue(52428800) };
+  const mockDeployment = { deploy: jest.fn() };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -84,6 +98,8 @@ describe('ConversationV2Controller', () => {
         { provide: WorkspaceService, useValue: mockWorkspaceService },
         { provide: ConfigService, useValue: mockConfig },
         { provide: EmailService, useValue: mockEmail },
+        { provide: ConversationV2DeployService, useValue: mockDeployment },
+        { provide: ConversationV2AppShareService, useValue: mockAppShares },
       ],
     }).compile();
     controller = module.get(ConversationV2Controller);
@@ -96,8 +112,11 @@ describe('ConversationV2Controller', () => {
       ...Object.values(mockWorkspaceDocuments),
       ...Object.values(mockWorkspaceService),
       ...Object.values(mockEventStore),
+      ...Object.values(mockDeployment),
+      ...Object.values(mockAppShares),
     ].forEach((fn) => (fn as jest.Mock).mockReset?.());
     mockConfig.get.mockReturnValue(52428800);
+    mockAppShares.listSharedWithUser.mockResolvedValue([]);
   });
 
   // --- POST /sessions ---
@@ -255,6 +274,132 @@ describe('ConversationV2Controller', () => {
       success: true,
     });
     expect(mockClient.resumeSession).toHaveBeenCalledWith('u1', 'ai-1');
+  });
+
+  it('GET /apps returns owned and shared deployed apps', async () => {
+    mockSessions.listDeployedApps.mockResolvedValueOnce([
+      {
+        sessionId: 'session-1',
+        title: 'Generated app',
+        deployedUrl: 'https://apps.example/app-1',
+        lastDeployedAt: '2026-07-17T10:00:00.000Z',
+        source: 'owned',
+        shareId: null,
+      },
+    ]);
+    mockAppShares.listSharedWithUser.mockResolvedValueOnce([
+      {
+        sessionId: 'session-2',
+        title: 'Shared app',
+        deployedUrl: 'https://apps.example/app-2',
+        lastDeployedAt: '2026-07-16T10:00:00.000Z',
+        source: 'shared',
+        shareId: 'share-2',
+      },
+    ]);
+
+    await expect(controller.listDeployedApps({ id: 'user-1' })).resolves.toEqual({
+      items: [
+        {
+          sessionId: 'session-1',
+          title: 'Generated app',
+          deployedUrl: 'https://apps.example/app-1',
+          lastDeployedAt: '2026-07-17T10:00:00.000Z',
+          source: 'owned',
+          shareId: null,
+        },
+        {
+          sessionId: 'session-2',
+          title: 'Shared app',
+          deployedUrl: 'https://apps.example/app-2',
+          lastDeployedAt: '2026-07-16T10:00:00.000Z',
+          source: 'shared',
+          shareId: 'share-2',
+        },
+      ],
+    });
+    expect(mockAppShares.listSharedWithUser).toHaveBeenCalledWith('user-1');
+  });
+
+  it('POST /sessions/:id/share-deploy grants Marketplace access by email', async () => {
+    mockSessions.getOne.mockResolvedValueOnce({
+      deployStatus: 'deployed',
+      deployedUrl: 'https://apps.example/app-1',
+      deployedAppTitle: 'Generated app',
+      title: 'Conversation title',
+      lastDeployedAt: '2026-07-17T10:00:00.000Z',
+    });
+    mockAppShares.shareByEmails.mockResolvedValueOnce({
+      shared: [{ shareId: 'share-1', recipientEmail: 'colleague@example.com' }],
+      notFound: [],
+      skippedSelf: [],
+    });
+
+    await expect(
+      controller.shareDeploy({ id: 'user-1' }, 'session-1', {
+        emails: ['colleague@example.com'],
+      }),
+    ).resolves.toEqual({ sent: 1, notFound: [], skippedSelf: [] });
+  });
+
+  it('DELETE /apps/:id clears deploy state and shares for the owner', async () => {
+    mockSessions.removeDeployedApp.mockResolvedValueOnce({});
+
+    await expect(
+      controller.removeDeployedApp({ id: 'user-1' }, 'session-1'),
+    ).resolves.toBeUndefined();
+    expect(mockAppShares.deleteAllSharesForSession).toHaveBeenCalledWith('session-1');
+  });
+
+  it('DELETE /apps/:id removes a shared app for the recipient', async () => {
+    mockSessions.removeDeployedApp.mockResolvedValueOnce(null);
+    mockAppShares.removeShareForRecipient.mockResolvedValueOnce(true);
+
+    await expect(
+      controller.removeDeployedApp({ id: 'user-2' }, 'session-1'),
+    ).resolves.toBeUndefined();
+    expect(mockAppShares.removeShareForRecipient).toHaveBeenCalledWith('user-2', 'session-1');
+  });
+
+  it('POST /sessions/:id/deploy calls app-builder with the user and AI session ids', async () => {
+    mockSessions.getOne.mockResolvedValueOnce({
+      aiSessionId: 'conversation-1',
+      title: 'Conversation title',
+    });
+    mockSessions.setDeployState.mockResolvedValue({});
+    mockDeployment.deploy.mockResolvedValueOnce({ url: 'https://deployed.example/app' });
+
+    const result = await controller.deploySession(
+      { id: 'user-1' },
+      'session-1',
+      { title: 'Generated app' },
+    );
+
+    expect(mockDeployment.deploy).toHaveBeenCalledWith('user-1', 'conversation-1');
+    expect(mockSessions.setDeployState).toHaveBeenNthCalledWith(
+      1,
+      'user-1',
+      'session-1',
+      { deployStatus: 'deploying' },
+    );
+    expect(mockSessions.setDeployState).toHaveBeenNthCalledWith(
+      2,
+      'user-1',
+      'session-1',
+      expect.objectContaining({
+        deployStatus: 'deployed',
+        deployedUrl: 'https://deployed.example/app',
+        deployedAppTitle: 'Generated app',
+      }),
+    );
+    expect(mockAppShares.syncDeployMetadata).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({
+        title: 'Generated app',
+        deployedUrl: 'https://deployed.example/app',
+      }),
+    );
+    expect(result.deployedUrl).toBe('https://deployed.example/app');
   });
 
   // --- GET /share/v2/:token ---

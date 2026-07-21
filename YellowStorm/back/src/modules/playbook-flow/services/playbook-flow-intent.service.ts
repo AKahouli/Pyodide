@@ -273,7 +273,16 @@ export type PlaybookIntentWorkflowChange =
     targetIteratorNodeRef?: string | null;
     targetPort: string;
     sourceKind: 'constant';
-    constantValue: ResolvedDesignResourceBindingValue;
+    constantValue: unknown;
+  }
+  | {
+    type: 'create_data_binding';
+    targetTaskId: string | null;
+    targetNodeRef: string | null;
+    targetIteratorNodeRef?: string | null;
+    targetPort: string;
+    sourceKind: 'state';
+    statePath: string;
   }
   | {
     type: 'delete_data_binding';
@@ -322,6 +331,7 @@ export interface PlaybookIntentAnalysisContext {
   selectedNodeId: string | null;
   effectiveSettings: EffectiveFlowDesignSettings;
   model: string;
+  omitTemperature?: boolean;
   systemPrompt: string;
   userPrompt: string;
   userMessageContent: IntentUserMessageContent;
@@ -384,7 +394,7 @@ export class PlaybookFlowIntentService {
     const context = await this.buildIntentAnalysisContext(flowId, ownerId, dto);
     const responseData = await this.postChatCompletion(context, {
       model: context.model,
-      temperature: 0.2,
+      ...(context.omitTemperature ? {} : { temperature: 0.2 }),
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: context.systemPrompt },
@@ -411,7 +421,7 @@ export class PlaybookFlowIntentService {
     const systemPrompt = prompt?.systemTemplate?.trim() || this.buildDesignAssessmentSystemPrompt();
     const responseData = await this.postChatCompletion(context, {
       model: context.model,
-      temperature: 0.1,
+      ...(context.omitTemperature ? {} : { temperature: 0.1 }),
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: systemPrompt },
@@ -482,7 +492,7 @@ export class PlaybookFlowIntentService {
     const effectiveSettings = await this.settingsService.resolveEffectiveSettings(
       (flow as any).designSettings,
     );
-    const model = await this.settingsService.resolveInferenceModel(
+    const inferenceModel = await this.settingsService.resolveInferenceModelConfig(
       (flow as any).designSettings,
     );
     const prompt = await this.promptService.findByKey('intent.analyze');
@@ -561,7 +571,8 @@ export class PlaybookFlowIntentService {
       flow,
       selectedNodeId: selectedNode?.id || null,
       effectiveSettings,
-      model,
+      model: inferenceModel.model,
+      omitTemperature: inferenceModel.omitTemperature,
       systemPrompt,
       userPrompt,
       userMessageContent: this.buildUserMessageContent(userPrompt, dto),
@@ -1267,13 +1278,14 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
         return null;
       }
 
-      if (change.sourceKind === 'constant') {
+      if (change.sourceKind === 'constant' || change.sourceKind === 'state') {
         if (change.targetTaskId && ctx.existingTaskIds.has(change.targetTaskId)) {
           const inputPorts = ctx.inputPortsByTaskId.get(change.targetTaskId);
           if (inputPorts && change.targetPort && !inputPorts.has(change.targetPort)) {
             return null;
           }
         }
+        if (change.sourceKind === 'state' && !change.statePath.trim()) return null;
         return change;
       }
 

@@ -188,19 +188,25 @@ export class PlaybookFlowSettingsService {
   async resolveInferenceModel(
     playbookSettings?: Partial<FlowDesignSettings> | Record<string, unknown> | null,
   ): Promise<string> {
+    return (await this.resolveInferenceModelConfig(playbookSettings)).model;
+  }
+
+  async resolveInferenceModelConfig(
+    playbookSettings?: Partial<FlowDesignSettings> | Record<string, unknown> | null,
+  ): Promise<{ model: string; omitTemperature: boolean }> {
     const effectiveSettings = await this.resolveEffectiveSettings(playbookSettings);
 
     if (effectiveSettings.resolvedInferenceModelId) {
       const validation = await this.modelsService.validateModelActive(effectiveSettings.resolvedInferenceModelId);
       if (validation.valid && validation.model) {
         const identifier = this.modelsService.getModelIdentifier(validation.model);
-        if (identifier) return identifier;
+        if (identifier) return { model: identifier, omitTemperature: validation.model.omitTemperature === true };
       }
     }
 
     const defaultModel = await this.modelsService.getDefaultModel();
     const fallbackIdentifier = this.modelsService.getModelIdentifier(defaultModel);
     if (!fallbackIdentifier) throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
-    return fallbackIdentifier;
+    return { model: fallbackIdentifier, omitTemperature: defaultModel?.omitTemperature === true };
   }
 }

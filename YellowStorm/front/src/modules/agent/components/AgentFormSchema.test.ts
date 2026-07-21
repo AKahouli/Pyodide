@@ -16,6 +16,8 @@ describe('AgentFormSchema', () => {
     expect(parsed.tools).toEqual([]);
     expect(parsed.knowledgeBases).toEqual([]);
     expect(parsed.connectorActionSelections).toEqual([]);
+    expect(parsed.enable_temporary_child_agents).toBe(false);
+    expect(parsed.max_temporary_child_agents).toBe(4);
   });
 
   it('rejects connector action selections without selected tools', () => {
@@ -42,13 +44,39 @@ describe('AgentFormSchema', () => {
     ).toThrow('Name must contain only letters, numbers, and spaces');
   });
 
+  it('accepts persisted widget suggestions with a null icon', () => {
+    const parsed = userAgentFormSchema.parse({
+      name: 'Agent One',
+      slug: 'agent-one',
+      agentType: 'type-1',
+      role: 'Do helpful things',
+      deploymentSettings: {
+        widget: {
+          content: {
+            suggestions: [{
+              id: 'suggestion-1',
+              label: 'Get started',
+              prompt: 'Help me get started',
+              icon: null,
+            }],
+          },
+        },
+      },
+    });
+
+    expect(parsed.deploymentSettings.widget.content.suggestions).toEqual([
+      expect.objectContaining({ id: 'suggestion-1', icon: undefined }),
+    ]);
+  });
+
   it('provides exported default form values', () => {
     expect(defaultFormValues).toMatchObject({
       name: '',
       agentType: '',
       role: '',
       isActive: true,
-      isDefaultForType: false,
+      enable_temporary_child_agents: false,
+      max_temporary_child_agents: 4,
     });
   });
 });

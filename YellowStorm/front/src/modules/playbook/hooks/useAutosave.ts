@@ -3,11 +3,11 @@
  * Saves playbook canvas changes after adaptive inactivity windows.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { parseApiError } from '@/lib/api-error';
 import { ErrorCode } from '@/lib/error-codes';
 import { usePlaybookStore, useIsDirty, useIsSaving, useDirtyVersion } from '../store';
-import { getUnboundRequiredPorts, hasIncompleteDataBindings } from '../utils/required-port-validation';
+import { getPlaybookValidationIssues } from '../utils/required-port-validation';
 import { playbookFeatures } from '../features';
 import { useAutosaveActor } from '../machines/autosave/useAutosaveActor';
 
@@ -40,7 +40,8 @@ function getAdaptiveDebounceMs(params: {
   return Math.min(nextDelay, maxDelay);
 }
 
-export function useAutosave() {
+export function useAutosave(options?: { paused?: boolean }) {
+  const paused = options?.paused === true;
   const isDirty = useIsDirty();
   const isSaving = useIsSaving();
   const dirtyVersion = useDirtyVersion();
@@ -49,16 +50,15 @@ export function useAutosave() {
   const setPendingAutosaveAfterCurrent = usePlaybookStore((s) => s.setPendingAutosaveAfterCurrent);
   const lastAutosaveDurationMs = usePlaybookStore((s) => s.lastAutosaveDurationMs);
   const autosaveBackoffUntil = usePlaybookStore((s) => s.autosaveBackoffUntil);
-  const hasUnboundRequiredPorts = usePlaybookStore((s) => {
-    const playbook = s.currentPlaybook;
-    if (!playbook) return false;
-    return getUnboundRequiredPorts(playbook.tasks, playbook.dataBindings ?? []).length > 0;
-  });
-  const hasIncompleteBindings = usePlaybookStore((s) => {
-    const playbook = s.currentPlaybook;
-    if (!playbook) return false;
-    return hasIncompleteDataBindings(playbook.dataBindings ?? []);
-  });
+  const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
+  const validationIssues = useMemo(
+    () => currentPlaybook
+      ? getPlaybookValidationIssues(currentPlaybook.tasks, currentPlaybook.dataBindings ?? [])
+      : [],
+    [currentPlaybook],
+  );
+  const hasUnboundRequiredPorts = validationIssues.some((issue) => issue.reason === 'missing_required_binding');
+  const hasIncompleteBindings = validationIssues.some((issue) => issue.reason !== 'missing_required_binding');
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastDirtyAtRef = useRef<number | null>(null);
@@ -96,6 +96,10 @@ export function useAutosave() {
   }, [autosaveActor, clearTimer, lastAutosaveDurationMs, notifySaveFailure, saveCurrentPlaybook]);
 
   useEffect(() => {
+    if (paused) {
+      clearTimer();
+      return;
+    }
     if (!isDirty || dirtyVersion === 0) return;
 
     const now = Date.now();
@@ -127,6 +131,7 @@ export function useAutosave() {
     isDirty,
     isSaving,
     lastAutosaveDurationMs,
+    paused,
     setPendingAutosaveAfterCurrent,
   ]);
 
@@ -158,5 +163,5 @@ export function useAutosave() {
     saveCurrentPlaybook,
   ]);
 
-  return { saveNow, isDirty, isSaving, hasUnboundRequiredPorts, hasIncompleteBindings };
+  return { saveNow, isDirty, isSaving, hasUnboundRequiredPorts, hasIncompleteBindings, validationIssues };
 }

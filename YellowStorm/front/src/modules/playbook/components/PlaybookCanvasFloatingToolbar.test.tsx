@@ -144,6 +144,37 @@ describe('PlaybookCanvasFloatingToolbar', () => {
     expect(onToggleConnectors).toHaveBeenCalledOnce();
   });
 
+  it('disables canvas mutation actions while editing is locked', () => {
+    render(
+      <PlaybookCanvasFloatingToolbar
+        containerRef={containerRef}
+        onAddStep={vi.fn()}
+        onAddStepFromTemplate={vi.fn()}
+        onAutoLayout={vi.fn()}
+        onUndo={vi.fn()}
+        onRedo={vi.fn()}
+        onToggleExplorer={vi.fn()}
+        onToggleConnectors={vi.fn()}
+        onToggleSkills={vi.fn()}
+        explorerOpen={false}
+        connectorsOpen={false}
+        skillsOpen={false}
+        canUndo
+        canRedo
+        disabled
+        onRemoveAllTasks={vi.fn()}
+        taskCount={1}
+        deepSearch={false}
+        onToggleDeepSearch={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('toolbar.addBlankStep').closest('button')).toBeDisabled();
+    expect(screen.getByText('toolbar.autoLayout').closest('button')).toBeDisabled();
+    expect(screen.getByText('floatingToolbar.deepSearchEnable').closest('button')).toBeDisabled();
+    expect(screen.getByText('toolbar.removeAllTasks').closest('button')).toBeDisabled();
+  });
+
   it('opens template menu and calls template handler', async () => {
     const onAddStepFromTemplate = vi.fn();
 

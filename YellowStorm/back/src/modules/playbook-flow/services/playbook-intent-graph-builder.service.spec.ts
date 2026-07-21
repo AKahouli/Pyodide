@@ -147,6 +147,55 @@ describe('PlaybookIntentGraphBuilderService', () => {
     expect(suggestion.impact.edgesToCreate).toBe(1);
   });
 
+  it('preserves literal constants and iterator current-item state bindings', () => {
+    const blueprint: PlaybookIntentBlueprint = {
+      version: 2,
+      title: 'Scenario run',
+      summary: 'Run scenarios',
+      nodes: [{
+        ref: 'iterator',
+        label: 'Scenarios',
+        purpose: 'Iterate',
+        nodeTemplateKey: 'iterator',
+        primitive: { kind: 'iterator' },
+        inputPorts: [{ id: 'items', artifactKind: 'data', required: true }],
+        iteratorBody: {
+          steps: [{ ref: 'compute', title: 'Compute', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'scenario', artifactKind: 'data', required: true }] }],
+          edges: [],
+        },
+      }],
+      links: [],
+      bindings: [{
+        sourceKind: 'constant',
+        targetRef: 'iterator',
+        targetPort: 'items',
+        constantValue: [{ name: 'reference' }],
+      }, {
+        sourceKind: 'state',
+        statePath: 'inputs._item',
+        targetIteratorRef: 'iterator',
+        targetRef: 'compute',
+        targetPort: 'scenario',
+      }],
+    };
+
+    const { suggestion } = service.build({
+      blueprint,
+      context: makeContext(),
+      limits: DEFAULT_LIMITS,
+      templates: [
+        genericTemplate(),
+        genericTemplate({ id: 'tpl-iterator', key: 'iterator', nodeType: 'iterator', iteratorConfig: ITERATOR_CONFIG, inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: true }] }),
+      ],
+      selectedNodeId: null,
+    });
+
+    expect(suggestion.changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'create_data_binding', sourceKind: 'constant', targetNodeRef: 'iterator', constantValue: [{ name: 'reference' }] }),
+      expect.objectContaining({ type: 'create_data_binding', sourceKind: 'state', targetIteratorNodeRef: 'iterator', targetNodeRef: 'compute', statePath: 'inputs._item' }),
+    ]));
+  });
+
   it('resolves connector and skill refs into drag-drop equivalent bindings', () => {
     const blueprint: PlaybookIntentBlueprint = {
       title: 'Use catalog',

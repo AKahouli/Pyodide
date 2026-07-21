@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -54,8 +54,10 @@ import { WorkspaceUploadSettingsService } from '../system/workspace-upload-setti
 import { getUploadExtension } from '../system/constants/workspace-upload-settings.constants';
 import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
 import { assertUrlIsSafe as assertUrlSafe } from './services/url-safety';
-import { WebsiteCrawlerService } from './services/website-crawler.service';
-import { buildPageTree, PageNode } from './services/page-tree';
+import { normalizeWorkspaceUrl } from './services/url-normalization';
+import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
+import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
+import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
 
 @Injectable()
 export class WorkspaceDocumentService {
@@ -80,8 +82,9 @@ export class WorkspaceDocumentService {
     private readonly configService: ConfigService,
     private readonly uploadSettingsService: WorkspaceUploadSettingsService,
     private readonly urlToPdfClient: UrlToPdfClientService,
-    private readonly websiteCrawler: WebsiteCrawlerService,
     private readonly logger: LoggerService,
+    private readonly workspaceArtifacts: WorkspaceArtifactCleanupService,
+    @Optional() private readonly outbox?: IntegrationEventOutboxService,
   ) {
     this.logger.setContext('WorkspaceDocumentService');
 
@@ -455,7 +458,14 @@ export class WorkspaceDocumentService {
     document.status = DocumentStatus.COMPLETED;
     document.uploadedAt = new Date();
     document.url = document.path; // Canonical object key (no presigned signature)
+    document.metadata = {
+      ...document.metadata,
+      deepSearchRequested: String(Boolean(deepSearch)),
+      autoIndexRequested: 'true',
+    };
     await document.save();
+    await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, document);
+    await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, document);
 
     // Trigger indexing (non-blocking). Skip folders — they have no blob to index.
     if (!document.isFolder) {
@@ -565,7 +575,13 @@ export class WorkspaceDocumentService {
       status: DocumentStatus.COMPLETED,
       uploadedAt: new Date(),
       parentId: folderId ? new Types.ObjectId(folderId) : undefined,
+      metadata: {
+        deepSearchRequested: String(Boolean(deepSearch)),
+        autoIndexRequested: String(autoIndex),
+      },
     });
+    await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, document);
+    await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, document);
 
     // Trigger indexing (non-blocking), unless auto-indexation is disabled.
     if (autoIndex) {
@@ -671,8 +687,9 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     userId: string,
     url: string,
+    options?: { deepSearch?: boolean; autoIndex?: boolean },
   ): Promise<DocumentResponse> {
-    const [doc] = await this.addLinks(workspaceId, userId, [url]);
+    const [doc] = await this.addLinks(workspaceId, userId, [url], options);
     return doc;
   }
 
@@ -686,6 +703,7 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     userId: string,
     urls: string[],
+    options?: { deepSearch?: boolean; autoIndex?: boolean },
   ): Promise<DocumentResponse[]> {
     // Nominal size of 0: the converted PDF's size is unknown until conversion
     // runs, but we can still reject early if the workspace is already over
@@ -713,6 +731,11 @@ export class WorkspaceDocumentService {
         size: 0,
         type: DocumentType.URL,
         sourceUrl: url,
+        metadata: {
+          deepSearchRequested: String(Boolean(options?.deepSearch)),
+          autoIndexRequested: String(options?.autoIndex !== false),
+          normalizedSourceUrl: normalizeWorkspaceUrl(url),
+        },
         // The collection enforces a unique index on `path`. A link has no blob
         // yet at creation, so assign a unique placeholder (mirroring the folder
         // pattern above) to avoid an E11000 collision on { path: null } between
@@ -730,6 +753,7 @@ export class WorkspaceDocumentService {
       });
 
       this.logger.debug('Link document created', { documentId: document._id, workspaceId, url });
+      await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.WebPageRegisteredV1, document);
       created.push({
         response: this.mapToResponse(document),
         id: document._id.toString(),
@@ -738,24 +762,54 @@ export class WorkspaceDocumentService {
       });
     }
 
-    // Convert with a concurrency cap so we don't hammer Gotenberg.
-    const CONCURRENCY = 3;
-    let i = 0;
-    const workers = Array.from({ length: Math.min(CONCURRENCY, created.length) }, async () => {
-      while (i < created.length) {
-        const item = created[i++];
-        await this.convertAndStore(item.id, workspaceId, item.url, item.name).catch((err) => {
+    // Convert strictly one at a time, spaced by a delay, so a rate-limited target
+    // (HTTP 429) gets its window to reset between pages instead of being hit in a
+    // burst. Fire-and-forget the whole loop; respond as soon as the docs exist.
+    const delayMs = this.configService.get<number>('indexing.sequentialDelayMs') ?? 2000;
+    void (async () => {
+      for (let idx = 0; idx < created.length; idx++) {
+        const item = created[idx];
+        await this.convertAndStore(item.id, workspaceId, item.url, item.name, options).catch((err) => {
           this.logger.error('convertAndStore failed', {
             documentId: item.id,
             error: err instanceof Error ? err.message : 'Unknown error',
           });
         });
+        if (idx < created.length - 1 && delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
       }
-    });
-    // Fire-and-forget the whole conversion batch; respond as soon as docs exist.
-    void Promise.all(workers);
+    })();
 
     return created.map((c) => c.response);
+  }
+
+  async checkUrls(workspaceId: string, urls: string[]): Promise<{ results: Array<Record<string, unknown>> }> {
+    const normalized = urls.map((url) => ({ url, normalizedUrl: normalizeWorkspaceUrl(url) }));
+    const documents = await this.documentModel.find({
+      workspaceId: new Types.ObjectId(workspaceId),
+      type: DocumentType.URL,
+      sourceUrl: { $exists: true },
+    }).select('_id sourceUrl status indexingStatus').lean().exec();
+    const byNormalized = new Map(documents.map((doc) => [normalizeWorkspaceUrl(doc.sourceUrl ?? ''), doc]));
+    return {
+      results: normalized.map(({ url, normalizedUrl }) => {
+        const document = byNormalized.get(normalizedUrl);
+        return {
+          url,
+          normalizedUrl,
+          exists: Boolean(document),
+          documentId: document?._id?.toString(),
+          status: document?.status,
+          indexingStatus: document?.indexingStatus,
+        };
+      }),
+    };
+  }
+
+  private async recordWorkspaceEvent(eventType: string, document: WorkspaceDocumentDoc): Promise<void> {
+    if (!this.outbox || !this.configService.get<boolean>('dataRoom.workspaceEventsEnabled')) return;
+    await this.outbox.record({ eventId: uuidv4(), eventType, aggregateType: 'workspace_document', aggregateId: document._id.toString(), payload: { workspaceId: document.workspaceId.toString(), documentId: document._id.toString(), createdBy: document.createdBy.toString(), documentType: document.type, originalName: document.originalName, mimeType: document.mimeType, sourceUrl: document.sourceUrl, normalizedSourceUrl: document.sourceUrl ? normalizeWorkspaceUrl(document.sourceUrl) : undefined, contentHash: document.contentHash, documentStatus: document.status, indexingStatus: document.indexingStatus, indexingTaskId: document.indexingTaskId, deepSearchRequested: document.metadata?.deepSearchRequested === 'true', metadata: document.metadata }, occurredAt: new Date() });
   }
 
   /**
@@ -767,6 +821,7 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     url: string,
     filename: string,
+    options?: { deepSearch?: boolean; autoIndex?: boolean },
   ): Promise<void> {
     try {
       await this.assertUrlIsSafe(url);
@@ -789,7 +844,7 @@ export class WorkspaceDocumentService {
         customFileName: sanitizedName,
       });
 
-      await this.documentModel.findByIdAndUpdate(documentId, {
+      const completed = await this.documentModel.findByIdAndUpdate(documentId, {
         $set: {
           filename: uploaded.storedName,
           path: uploaded.blobPath,
@@ -799,10 +854,17 @@ export class WorkspaceDocumentService {
           status: DocumentStatus.COMPLETED,
           uploadedAt: new Date(),
         },
-      });
+      }, { new: true });
+
+      if (completed) {
+        await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, completed);
+        await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, completed);
+      }
 
       await this.workspaceService.updateStorageUsage(workspaceId, size, 1);
-      await this.indexingService.queueDocument(documentId);
+      if (options?.autoIndex !== false) {
+        await this.indexingService.queueDocument(documentId, options?.deepSearch);
+      }
 
       this.logger.debug('Link converted and stored', { documentId, workspaceId, size });
     } catch (error) {
@@ -940,27 +1002,6 @@ export class WorkspaceDocumentService {
       return res;
     }
     return null;
-  }
-
-  /**
-   * Crawl a website to discover its sub-pages for selective indexing, and mark
-   * which of those pages are already indexed in this workspace (by sourceUrl).
-   */
-  async crawlSite(
-    workspaceId: string,
-    url: string,
-  ): Promise<{ tree: PageNode[]; truncated: boolean }> {
-    const { pages, truncated } = await this.websiteCrawler.crawl(url);
-    // Mark pages already indexed in this workspace (by sourceUrl).
-    const existing = await this.documentModel
-      .find({ workspaceId: new Types.ObjectId(workspaceId), type: DocumentType.URL })
-      .select({ sourceUrl: 1 })
-      .lean()
-      .exec();
-    const indexed = new Set<string>(
-      existing.map((d) => (d as { sourceUrl?: string }).sourceUrl).filter(Boolean) as string[],
-    );
-    return { tree: buildPageTree(pages, indexed), truncated };
   }
 
   /**
@@ -1268,7 +1309,14 @@ export class WorkspaceDocumentService {
         document.status = DocumentStatus.COMPLETED;
         document.uploadedAt = new Date();
         document.url = document.path;
+        document.metadata = {
+          ...document.metadata,
+          deepSearchRequested: String(Boolean(deepSearch)),
+          autoIndexRequested: String(autoIndex),
+        };
         await document.save();
+        await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, document);
+        await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, document);
 
         // Trigger indexing (non-blocking). Skip folders — nothing to index —
         // and skip entirely when auto-indexation is disabled by the uploader.
@@ -1578,6 +1626,7 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     userId: string,
     documentId: string,
+    cascadeArtifacts = false,
   ): Promise<void> {
     const document = await this.documentModel.findOne({
       _id: documentId,
@@ -1589,6 +1638,20 @@ export class WorkspaceDocumentService {
         ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND,
         'Document not found',
       );
+    }
+
+    const linkedArtifactCount = await this.workspaceArtifacts.countBySource(
+      workspaceId,
+      documentId,
+    );
+    if (linkedArtifactCount > 0 && !cascadeArtifacts) {
+      throw new ConflictException(
+        ErrorCode.WORKSPACE_DOCUMENT_HAS_DERIVED_ARTIFACTS,
+        `This document has ${linkedArtifactCount} linked decision flow(s)`,
+      );
+    }
+    if (linkedArtifactCount > 0) {
+      await this.workspaceArtifacts.deleteBySource(workspaceId, documentId);
     }
 
     // Delete from blob storage (skip for folders)
@@ -1614,6 +1677,9 @@ export class WorkspaceDocumentService {
         });
       });
     }
+
+    // Preserve the Governance source history before the document row disappears.
+    await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentDeletedV1, document);
 
     // Delete document record
     await this.documentModel.deleteOne({ _id: documentId });
@@ -1664,6 +1730,8 @@ export class WorkspaceDocumentService {
       workspaceId: new Types.ObjectId(workspaceId),
     });
 
+    await this.workspaceArtifacts.deleteAllByWorkspace(workspaceId);
+
     // Delete indexes from vectorstore for indexed documents (non-blocking, parallel)
     const indexedDocuments = documents.filter(
       (doc) => doc.indexingStatus === IndexingStatus.READY,
@@ -1699,6 +1767,11 @@ export class WorkspaceDocumentService {
       (doc) => doc.status === DocumentStatus.COMPLETED,
     );
     const totalSize = completedDocuments.reduce((sum, doc) => sum + doc.size, 0);
+
+    // Preserve Governance source history before removing document rows.
+    for (const document of documents) {
+      if (!document.isFolder) await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentDeletedV1, document);
+    }
 
     // Delete all document records
     await this.documentModel.deleteMany({
@@ -2022,7 +2095,10 @@ export class WorkspaceDocumentService {
     userId: string,
     folderId: string,
   ): Promise<{ deletedFolders: number; deletedDocuments: number }> {
-    const folder = await this.documentModel.findById(folderId);
+    const folder = await this.documentModel.findOne({
+      _id: folderId,
+      workspaceId: new Types.ObjectId(workspaceId),
+    });
 
     if (!folder) {
       throw new NotFoundException(
@@ -2042,11 +2118,31 @@ export class WorkspaceDocumentService {
       );
     }
 
+    const descendantDocumentIds = await this.collectFolderDocumentIds(
+      new Types.ObjectId(folderId),
+      workspaceId,
+    );
+    for (const documentId of descendantDocumentIds) {
+      const linkedArtifactCount = await this.workspaceArtifacts.countBySource(
+        workspaceId,
+        documentId,
+      );
+      if (linkedArtifactCount > 0) {
+        throw new ConflictException(
+          ErrorCode.WORKSPACE_DOCUMENT_HAS_DERIVED_ARTIFACTS,
+          'Delete linked decision flows before deleting this folder',
+        );
+      }
+    }
+
     // Recursively delete all contents
     const result = await this.deleteFolderRecursive(new Types.ObjectId(folderId), workspaceId, userId);
 
     // Delete the folder itself
-    await this.documentModel.deleteOne({ _id: folderId });
+    await this.documentModel.deleteOne({
+      _id: folderId,
+      workspaceId: new Types.ObjectId(workspaceId),
+    });
 
     this.logger.log('Folder deleted', {
       folderId,
@@ -2072,6 +2168,7 @@ export class WorkspaceDocumentService {
     // Find all items in the folder
     const items = await this.documentModel.find({
       parentId: folderId,
+      workspaceId: new Types.ObjectId(workspaceId),
     });
 
     let deletedFolders = 0;
@@ -2111,6 +2208,8 @@ export class WorkspaceDocumentService {
           });
         }
 
+        await this.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentDeletedV1, item);
+
         deletedDocuments++;
       }
 
@@ -2119,6 +2218,16 @@ export class WorkspaceDocumentService {
     }
 
     return { deletedFolders, deletedDocuments };
+  }
+
+  private async collectFolderDocumentIds(folderId: Types.ObjectId, workspaceId: string): Promise<string[]> {
+    const items = await this.documentModel.find({ parentId: folderId, workspaceId: new Types.ObjectId(workspaceId) });
+    const ids: string[] = [];
+    for (const item of items) {
+      if (item.isFolder) ids.push(...await this.collectFolderDocumentIds(item._id, workspaceId));
+      else ids.push(item._id.toString());
+    }
+    return ids;
   }
 
   /**

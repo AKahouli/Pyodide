@@ -166,7 +166,13 @@ export function HeadlessViewer({ tabId, isActive, pendingNavigation, registryRef
                         <SelectionLayer documentId={activeDocumentId} pageIndex={pageIndex} />
                         <AnnotationLayer documentId={activeDocumentId} pageIndex={pageIndex} />
                         <SearchLayer documentId={activeDocumentId} pageIndex={pageIndex} />
-                        <CitationBBoxOverlay bbox={pendingNavigation?.highlightBBox} documentId={activeDocumentId} page={pendingNavigation?.page} pageIndex={pageIndex} />
+                        <CitationBBoxOverlay
+                          autoScroll={isActive && pendingNavigation?.tabId === tabId}
+                          bbox={pendingNavigation?.highlightBBox}
+                          documentId={activeDocumentId}
+                          page={pendingNavigation?.page}
+                          pageIndex={pageIndex}
+                        />
                       </PagePointerProvider>
                     )}
                   />
