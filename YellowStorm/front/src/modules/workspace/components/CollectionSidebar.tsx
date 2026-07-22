@@ -245,7 +245,11 @@ function TrieNodes({
             <div className='min-w-0 flex-1'>
               <div className='truncate font-medium' title={displayName}>{displayName}</div>
               <div className='truncate text-[11px] text-muted-foreground' title={url}>{url}</div>
-              {already && <span className='text-[10px] text-muted-foreground'>Déjà indexée</span>}
+              {already && (
+                <span className='mt-0.5 inline-block rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground'>
+                  Déjà indexée
+                </span>
+              )}
             </div>
             {actions}
           </FileTreeFile>

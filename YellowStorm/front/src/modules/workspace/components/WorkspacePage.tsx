@@ -165,6 +165,9 @@ export function WorkspacePage() {
   const [editFolder, setEditFolder] = useState<WorkspaceFolder | null>(null);
   const [moveFolderTarget, setMoveFolderTarget] = useState<WorkspaceFolder | null>(null);
   const [moveTarget, setMoveTarget] = useState<{ files: WorkspaceFile[]; title: string } | null>(null);
+  const [deleteGroupTarget, setDeleteGroupTarget] = useState<{ files: WorkspaceFile[]; label: string } | null>(null);
+  const [isDeletingGroup, setIsDeletingGroup] = useState(false);
+  const deleteDocument = useWorkspaceStore((s) => s.deleteDocument);
   const [classifyOpen, setClassifyOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
@@ -204,6 +207,24 @@ export function WorkspacePage() {
       setIsSyncing(false);
     }
   }, [activeWorkspaceId, isSyncing]);
+
+  const handleDeleteGroup = useCallback(async () => {
+    if (!deleteGroupTarget) return;
+    setIsDeletingGroup(true);
+    try {
+      // Delete every page in the group; cascade any linked artifacts.
+      for (const file of deleteGroupTarget.files) {
+        await deleteDocument(file.workspaceId, file.id, true);
+      }
+      toast.success(`Groupe « ${deleteGroupTarget.label} » supprimé`);
+      setDeleteGroupTarget(null);
+      await refreshPageData();
+    } catch {
+      // toast handled by the store
+    } finally {
+      setIsDeletingGroup(false);
+    }
+  }, [deleteGroupTarget, deleteDocument, refreshPageData]);
 
   const breadcrumbs = useMemo(() => {
     if (!currentFolderId) return [] as WorkspaceFolder[];
@@ -444,7 +465,7 @@ export function WorkspacePage() {
                     return (
                       <div className='space-y-1'>
                         {groups.map((group) => (
-                          <SourceGroupRow key={group.key} label={group.label} rootUrl={group.rootUrl} count={group.files.length} status={group.status} onOpenInNavigator={(url) => openAddLink({ url, autoStart: true, sourceGroupId: group.sourceGroupId, seed: group.files.filter((f) => f.sourceUrl).map((f) => ({ url: f.sourceUrl as string, name: f.name, indexingStatus: f.indexingStatus })) })} onMove={() => setMoveTarget({ files: group.files, title: group.label })}>
+                          <SourceGroupRow key={group.key} label={group.label} rootUrl={group.rootUrl} count={group.files.length} status={group.status} onOpenInNavigator={(url) => openAddLink({ url, autoStart: true, sourceGroupId: group.sourceGroupId, seed: group.files.filter((f) => f.sourceUrl).map((f) => ({ url: f.sourceUrl as string, name: f.name, indexingStatus: f.indexingStatus })) })} onMove={() => setMoveTarget({ files: group.files, title: group.label })} onDelete={canWrite ? () => setDeleteGroupTarget({ files: group.files, label: group.label }) : undefined}>
                             {group.files.map(renderFileRow)}
                           </SourceGroupRow>
                         ))}
@@ -463,6 +484,25 @@ export function WorkspacePage() {
       <EditFolderDialog open={!!editFolder} onOpenChange={(o) => !o && setEditFolder(null)} folder={editFolder} />
       <MoveFolderDialog open={!!moveFolderTarget} onOpenChange={(o) => !o && setMoveFolderTarget(null)} folder={moveFolderTarget} />
       <MoveFileDialog open={!!moveTarget} onOpenChange={(o) => !o && setMoveTarget(null)} files={moveTarget?.files ?? []} title={moveTarget?.title ?? ''} />
+      <Dialog open={!!deleteGroupTarget} onOpenChange={(o) => !isDeletingGroup && !o && setDeleteGroupTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Supprimer le groupe</DialogTitle>
+            <DialogDescription>
+              Voulez-vous vraiment supprimer le groupe <span className='font-medium text-foreground'>{deleteGroupTarget?.label}</span> et ses {deleteGroupTarget?.files.length ?? 0} lien(s) indexé(s) ? Cette action est irréversible.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setDeleteGroupTarget(null)} disabled={isDeletingGroup}>
+              Annuler
+            </Button>
+            <Button variant='destructive' onClick={handleDeleteGroup} disabled={isDeletingGroup} className='gap-1.5'>
+              {isDeletingGroup ? <Loader2 className='h-4 w-4 animate-spin' /> : <Trash2 className='h-4 w-4' />}
+              Supprimer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <ClassifyDialog open={classifyOpen} onOpenChange={setClassifyOpen} />
       <RulesDialog open={rulesOpen} onOpenChange={setRulesOpen} />
       <CommunityGraphPanel open={graphOpen} onOpenChange={setGraphOpen} workspaceId={selectedWorkspaceId} />

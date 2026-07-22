@@ -39,4 +39,16 @@ describe('SourceGroupRow', () => {
     expect(onMove).toHaveBeenCalledTimes(1);
     expect(screen.queryByText('child-a')).not.toBeInTheDocument(); // still collapsed
   });
+
+  it('calls onDelete from the delete button without toggling the group', () => {
+    const onDelete = vi.fn();
+    render(
+      <SourceGroupRow label='example.com/services' rootUrl='https://example.com/services' count={3} onDelete={onDelete}>
+        <div>child-a</div>
+      </SourceGroupRow>,
+    );
+    fireEvent.click(screen.getByLabelText('delete example.com/services'));
+    expect(onDelete).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('child-a')).not.toBeInTheDocument(); // still collapsed
+  });
 });
