@@ -18,10 +18,10 @@ export class CreatePlaybookFlowDto {
   @MaxLength(100)
   name!: string;
 
-  @ApiPropertyOptional({ maxLength: 40000 })
+  @ApiPropertyOptional({ maxLength: 80000 })
   @IsOptional()
   @IsString()
-  @MaxLength(40000)
+  @MaxLength(80000)
   description?: string;
 
   @ApiPropertyOptional()

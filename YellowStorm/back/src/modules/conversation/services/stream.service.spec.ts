@@ -32,25 +32,27 @@ describe('StreamService guardrail metadata buffering', () => {
     });
   });
 
-  it('keeps initial tool arguments when the terminal update only changes status', () => {
+  it('merges tool arguments and start time with the terminal result', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     const buffer = new Map<string, MessageComponent>();
 
     (service as any).applyChunkToBuffer(buffer, 'add', {
       id: 'tool-call-1',
       type: 'toolInfo',
-      data: { title: 'search_documents', status: 'running', params: '{"query":"contract"}' },
+      data: { title: 'search_documents', status: 'running', params: '{"query":"contract"}', startedAt: '2026-07-21T10:13:42Z' },
     });
     (service as any).applyChunkToBuffer(buffer, 'update', {
       id: 'tool-call-1',
       type: 'toolInfo',
-      data: { title: 'search_documents', status: 'completed' },
+      data: { title: 'search_documents', status: 'completed', resultJson: '{"matches":2}' },
     });
 
     expect(buffer.get('tool-call-1')?.data).toEqual({
       title: 'search_documents',
       status: 'completed',
       params: '{"query":"contract"}',
+      startedAt: '2026-07-21T10:13:42Z',
+      resultJson: '{"matches":2}',
     });
   });
 });

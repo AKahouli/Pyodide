@@ -1,5 +1,5 @@
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { Conversation, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse } from './types';
+import type { Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse } from './types';
 
 // ===== Conversation APIs =====
 
@@ -133,13 +133,17 @@ export async function getArtifactDownloadUrl(filePath: string, filename?: string
 export async function fetchComposerSuggestions(
   partialText: string,
   signal?: AbortSignal,
-  agentId?: string,
 ): Promise<{ content: string }> {
   const response = await apiClient.post<ApiResponse<{ content: string }>>(
     API_ENDPOINTS.conversations.composerSuggestions,
-    { partialText, agentId },
+    { partialText },
     { signal },
   );
+  return response.data.data;
+}
+
+export async function fetchConversationSettings(): Promise<ConversationSettings> {
+  const response = await apiClient.get<ApiResponse<ConversationSettings>>(API_ENDPOINTS.conversations.settings);
   return response.data.data;
 }
 

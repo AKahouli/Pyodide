@@ -11,6 +11,7 @@ Classes:
 import asyncio
 import time
 from typing import Dict, Any, Optional, List, Union, Tuple
+from src.smart_rag.infrastructure.model_parameters import resolve_model_config
 
 
 
@@ -121,9 +122,7 @@ class AutoAgentGenerationTeam:
         self.streaming_formatter = streaming_formatter
         self.event_extractor = event_extractor
         self.current_queue = None
-        if isinstance(chatbot_name, dict):
-            chatbot_name = str(chatbot_name.get('provider'))
-        self.chatbot_name = chatbot_name
+        self.chatbot_name = resolve_model_config(chatbot_name)
 
         # Initialize components only if config is provided
         if config is not None:

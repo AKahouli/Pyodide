@@ -13,6 +13,7 @@ from src.smart_rag.agents.factories import AgentFactory
 from src.smart_rag.infrastructure.session.manager import SessionHelper
 from src.smart_rag.infrastructure.processing import PromptProcessor
 from src.smart_rag.infrastructure.factories import LLMFactory
+from src.smart_rag.infrastructure.model_parameters import resolve_model_config
 from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
 from src.smart_rag.messaging import StreamingFormatter
 from src.smart_rag.infrastructure.monitoring import langfuse_client
@@ -260,8 +261,13 @@ class SingleAgentService:
             chatbot_config = agent_config.chatbot_name or agent_config.chatbot or {}
             
             if isinstance(chatbot_config, dict):
-                # Extract the name from dict, fallback to provider, then to a default
-                chatbot_name = chatbot_config.get('name') or chatbot_config.get('provider') or agent_config.model or 'gpt-5.4-mini'
+                # This legacy path prefers `name`; retain the full config long enough
+                # to register request-local model capabilities before flattening it.
+                preferred_model = chatbot_config.get('name') or chatbot_config.get('provider') or agent_config.model or 'gpt-5.4-mini'
+                chatbot_name = resolve_model_config({
+                    **chatbot_config,
+                    'provider': preferred_model,
+                })
             else:
                 chatbot_name = chatbot_config or agent_config.model or 'gpt-5.4-mini'
 

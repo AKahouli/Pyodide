@@ -500,6 +500,11 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
         descriptionKey: 'roles.permissions.items.conversations.admin_delete.description',
       },
       {
+        value: 'conversations.settings.manage',
+        labelKey: 'roles.permissions.items.conversations.settingsManage.label',
+        descriptionKey: 'roles.permissions.items.conversations.settingsManage.description',
+      },
+      {
         value: 'conversations.*',
         labelKey: 'roles.permissions.items.conversations.all.label',
         descriptionKey: 'roles.permissions.items.conversations.all.description',
@@ -933,6 +938,7 @@ export interface AdminModelResponse {
   isActive: boolean;
   isDefault: boolean;
   omitTemperature: boolean;
+  inputModalities: ModelInputModality[];
 }
 
 export interface AdminModelsListResponse {
@@ -954,6 +960,9 @@ export const MODEL_TYPES = [
 
 export type ModelType = (typeof MODEL_TYPES)[number];
 
+export const MODEL_INPUT_MODALITIES = ['text', 'image'] as const;
+export type ModelInputModality = (typeof MODEL_INPUT_MODALITIES)[number];
+
 export interface UpdateModelRequest {
   name?: string;
   chef?: string;
@@ -963,6 +972,7 @@ export interface UpdateModelRequest {
   types?: ModelType[];
   isActive?: boolean;
   omitTemperature?: boolean;
+  inputModalities?: ModelInputModality[];
 }
 
 export interface SyncModelsResponse {
@@ -1644,6 +1654,18 @@ export interface WorkspaceEvidenceSearchConnectorOption { id: string; name: stri
 export interface WorkspaceTransformationSettingsResponse { decisionFlowAgentId: string | null; updatedAt?: string; }
 export interface UpdateWorkspaceTransformationSettingsRequest { decisionFlowAgentId: string | null; }
 export interface WorkspaceTransformationAgentOption { id: string; name: string; description?: string; agentTypeName?: string; model?: string; }
+
+export interface ComposerSuggestionSettings {
+  enabled: boolean;
+  agentId: string | null;
+  debounceMs: number;
+  minimumDraftLength: number;
+  requestsPerMinute: number;
+  maxOutputTokens: number;
+}
+export interface ConversationSettingsResponse { composerSuggestions: ComposerSuggestionSettings; updatedAt?: string; }
+export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'>;
+export interface ConversationSettingsAgentOption { id: string; name: string; description?: string; agentTypeName?: string; model?: string; }
 
 // ===== Team Auto-Builder =====
 

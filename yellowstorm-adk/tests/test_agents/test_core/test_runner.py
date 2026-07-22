@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import asyncio
+from datetime import datetime
 from google.genai import types
 
 from src.smart_rag.agents.core.runner import AgentRunner
@@ -396,6 +397,8 @@ class TestAgentRunner:
                 for call in mock_streaming_formatter.format_component_event.call_args_list
                 if call.kwargs["component_type"] == "tool_info"
             ]
+            started_at = tool_events[0]["component_data"].pop("started_at")
+            assert datetime.fromisoformat(started_at.replace("Z", "+00:00")).tzinfo is not None
             assert tool_events == [
                 {
                     "agent_id": "agent_123",

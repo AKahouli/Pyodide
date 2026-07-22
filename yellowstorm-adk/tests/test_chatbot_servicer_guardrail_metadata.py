@@ -38,3 +38,25 @@ def test_stream_chunk_allows_missing_guardrail_metadata() -> None:
     )
 
     assert chunk.metadata.guardrail_decision_json == ""
+
+
+def test_tool_info_serializes_start_time_and_result() -> None:
+    field = chatbot_pb2.ToolInfoComponent.DESCRIPTOR.fields_by_name["started_at"]
+    assert field.number == 5
+
+    component = ChatbotServicer(agent_team_service=None)._build_component(
+        "tool-1",
+        "tool_info",
+        {
+            "title": "search_documents",
+            "status": "completed",
+            "params": '{"query":"contract"}',
+            "result_json": '{"matches":2}',
+            "started_at": "2026-07-21T10:13:42Z",
+        },
+    )
+
+    decoded = chatbot_pb2.Component.FromString(component.SerializeToString())
+    assert decoded.tool_info.params == '{"query":"contract"}'
+    assert decoded.tool_info.result_json == '{"matches":2}'
+    assert decoded.tool_info.started_at == "2026-07-21T10:13:42Z"

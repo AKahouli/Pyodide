@@ -52,7 +52,7 @@ Use vault memory to establish durable feature context, then verify it against li
 
 ## Working Principles
 
-- Must ask me choose betwwen : finishing the work until the end without stopping unless you need to ask me for clarification OR Work step by step
+- when it comes to implement multiple tasks, Must ask me choose betwwen : finishing the work until the end without stopping unless you need to ask me for clarification OR Work step by step
 - State assumptions that affect correctness, scope, safety, or external contracts.
 - Ask only when an unresolved choice would materially change the result.
 - Implement the smallest correct change. Do not add speculative features or abstractions.

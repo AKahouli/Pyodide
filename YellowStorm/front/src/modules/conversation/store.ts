@@ -12,6 +12,7 @@ import type { Conversation, Message, StreamingComponent, SendMessagePayload, Cre
 
 export const DEFAULT_CONVERSATIONS_LIMIT = 12;
 const DEFAULT_MESSAGES_LIMIT = 5;
+let currentConversationRequestSequence = 0;
 
 // ===== Streaming Helper Functions =====
 
@@ -257,6 +258,8 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
         title: (incoming.title as string) || (existing.title as string) || '',
         status: (incoming.status as string) || (existing.status as string) || 'running',
         params: (incoming.params as string) || (existing.params as string) || '',
+        startedAt: (incoming.startedAt as string) || (existing.startedAt as string) || '',
+        resultJson: (incoming.resultJson as string) || (existing.resultJson as string) || '',
       };
     case 'chart': {
       // For charts, data is an object with properties (title, data, config, etc.)
@@ -752,17 +755,21 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       setCurrentConversation: async (id) => {
+        const requestSequence = ++currentConversationRequestSequence;
         set({ conversationLoading: true, currentConversationId: id });
         try {
           const conversation = await api.fetchConversation(id);
+          if (requestSequence !== currentConversationRequestSequence || get().currentConversationId !== id) return;
           // Restore the skills selected for this conversation (persisted server-side)
           // so they survive a page refresh and conversation switches.
           set({
             currentConversation: conversation,
             conversationLoading: false,
             selectedSkillIds: conversation.selectedSkills ?? [],
+            selectedWorkspaceIds: conversation.workspaces ?? [],
           });
         } catch (err) {
+          if (requestSequence !== currentConversationRequestSequence || get().currentConversationId !== id) return;
           set({ currentConversation: null, conversationLoading: false });
           console.error('[ConversationStore] setCurrentConversation error:', err);
         }

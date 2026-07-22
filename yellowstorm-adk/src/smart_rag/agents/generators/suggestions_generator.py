@@ -11,6 +11,7 @@ from src.smart_rag.agents.generators.suggestions_helper import parse_suggestions
 from src.smart_rag.infrastructure.processing import append_suggested_agents, modify_suggested_agents
 from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
 from src.smart_rag.infrastructure.session import SessionHelper
+from src.smart_rag.infrastructure.model_parameters import resolve_model_config
 from google.adk.sessions import DatabaseSessionService
 from src.config.settings import get_settings
 settings=get_settings()
@@ -23,9 +24,7 @@ class AgentSuggestionGenerator:
     def __init__(self, prompt_processor, llm_factory, chatbot_name: str):
         self.prompt_processor = prompt_processor
         self.llm_factory = llm_factory
-        if isinstance(chatbot_name, dict):
-            chatbot_name = str(chatbot_name.get('provider'))
-        self.chatbot_name = chatbot_name
+        self.chatbot_name = resolve_model_config(chatbot_name)
 
     async def generate_suggestions(self,session_id:str, suggestions_prompt: str, user_prompt: str,available_agents: List,
                                    config, brain_documents: Optional[List] = None,

@@ -54,7 +54,7 @@ export function AgentGuardrailsTab({ value, disabled, forceActivation, onChange 
           description={t('createEdit.guardrails.toolCallGuardrailDescription')}
           badge={t('createEdit.guardrails.toolCallGuardrailBadge')}
           checked={value.toolCallGuardrailEnabled}
-          disabled
+          disabled={disabled}
           onCheckedChange={(checked) => setField('toolCallGuardrailEnabled', checked)}
         />
       </div>
@@ -101,7 +101,7 @@ function ProtectionCard({ title, description, checked, disabled, onCheckedChange
         <Label className="text-sm font-semibold">{title}</Label>
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
-      <Switch checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
+      <Switch aria-label={title} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
     </div>
   );
 }

@@ -89,6 +89,14 @@ describe('conversation utils', () => {
     expect(getConversationStreamActivity([{ type: 'text', data: { content: 'Public answer' } }] as never)).toBe('responding');
   });
 
+  it('maps persisted stream errors from the backend contract', () => {
+    expect(mapConversationComponentsToContentParts([
+      { type: 'error', data: { code: 'ERR_1406', message: 'AI stream failed unexpectedly.' } },
+    ] as never)).toEqual([
+      { type: 'error', title: 'ERR_1406', content: 'AI stream failed unexpectedly.' },
+    ]);
+  });
+
   it('maps snake_case sandbox and artifact component fields', () => {
     const parts = mapComponentsToContentParts([
       {

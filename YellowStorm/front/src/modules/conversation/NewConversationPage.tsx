@@ -36,7 +36,6 @@ import {
   useConversationStore,
   useInputDisabled,
   useSelectedWorkspaceIds,
-  useResetSelectedWorkspaceIds,
 } from './store';
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
 import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
@@ -64,7 +63,6 @@ export function NewConversationPage() {
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
-  const resetSelectedWorkspaceIds = useResetSelectedWorkspaceIds();
   const navigate = useNavigate();
   const [isSending, setIsSending] = useState(false);
   const [silentConvId, setSilentConvId] = useState<string | null>(null);
@@ -74,10 +72,10 @@ export function NewConversationPage() {
   const isLimitExceeded = usageStatus?.isLimitExceeded ?? false;
 
   // Starting a brand-new conversation: no conversation is active yet, so clear
-  // any skill selection (and stale conversation id) carried over from the
+  // any workspace/skill selection (and stale conversation id) carried over from the
   // previously open conversation. Direct setState avoids PATCHing the old one.
   useEffect(() => {
-    useConversationStore.setState({ currentConversationId: null, selectedSkillIds: [] });
+    useConversationStore.setState({ currentConversationId: null, selectedSkillIds: [], selectedWorkspaceIds: [] });
     // The agent (v2) path keeps its own skill + connector selection in the
     // conv-v2 store; reset both so selections from a previous v2 session don't
     // leak into this new one.
@@ -215,9 +213,9 @@ export function NewConversationPage() {
         // Create new conversation with workspaces if provided
         const conv = await createConversation(workspaceIds?.length ? { workspaces: workspaceIds } : undefined);
         convId = conv.id;
-      } else if (workspaceIds?.length && workspaceIds.join() !== selectedWorkspaceIds.join()) {
-        // Update existing conversation with workspaces only if they changed
-        await updateConversation(convId, { workspaces: workspaceIds });
+      } else {
+        // Uploads can create the conversation before workspace selection is final.
+        await updateConversation(convId, { workspaces: workspaceIds ?? [] });
       }
 
       navigate(`/conversation/${convId}`);
@@ -247,7 +245,6 @@ export function NewConversationPage() {
       });
 
       clearAll();
-      resetSelectedWorkspaceIds();
     } catch {
       toast.error(t('toasts.conversation.createError'));
     } finally {
@@ -258,7 +255,7 @@ export function NewConversationPage() {
   return (
     <>
       <StarsBackground />
-      <div className='flex w-full flex-1 flex-col items-center justify-center min-h-0 '>
+      <div className='flex min-h-0 w-full flex-1 flex-col items-center justify-center-safe overflow-y-auto py-8'>
         <div className='mb-8 text-center'>
           <Shimmer as='h1' className='font-bold text-4xl pb-4' duration={5} spread={7}>
             {t('newConversation.heroTitle')}
@@ -281,6 +278,7 @@ export function NewConversationPage() {
                   accept={accept}
                   maxFiles={5}
                   showWorkspaceSelect={true}
+                  preserveWorkspaceSelectionOnSubmit
                   showModelSelector
                   belowTextarea={
                     <ComposerSuggestionChips

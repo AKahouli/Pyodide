@@ -14,7 +14,7 @@ from src.middleware.correlation import get_user_label
 from src.logger.logging import get_logger
 import os
 from typing import Dict, Any
-from src.smart_rag.infrastructure.model_parameters import normalize_temperature_for_model
+from src.smart_rag.infrastructure.model_parameters import normalize_temperature_for_model, resolve_model_config
 
 if TYPE_CHECKING:
     from google.adk.models.lite_llm import LiteLlm
@@ -24,6 +24,10 @@ logger = get_logger("api.smart_rag.llm_factory")
 app_settings = get_settings()
 os.environ["OLLAMA_API_BASE"] = app_settings.OLLAMA_API_BASE_URL
 os.environ["OLLAMA_API_KEY"] = app_settings.OLLAMA_API_KEY
+
+
+def _resolve_model_config(model_name: str | dict) -> str:
+    return resolve_model_config(model_name)
 
 
 def _temperature_for_model(model_name: str, temperature: float | None) -> float:
@@ -65,8 +69,7 @@ class LLMFactory:
             import litellm
             litellm.drop_params = True
             from google.adk.models.lite_llm import LiteLlm
-            if isinstance(model_name, dict):
-                model_name = str(model_name.get('provider'))
+            model_name = _resolve_model_config(model_name)
             model_temperature = _temperature_for_model(model_name, temperature)
 
             # Create new LLM instance
@@ -107,8 +110,7 @@ class LLMFactory:
             import litellm
             litellm.drop_params = True
             from google.adk.models.lite_llm import LiteLlm
-            if isinstance(model_name, dict):
-                model_name = str(model_name.get('provider'))
+            model_name = _resolve_model_config(model_name)
             model_temperature = _temperature_for_model(model_name, temperature)
 
             # Create new LLM instance
@@ -150,8 +152,7 @@ class LLMFactory:
             import litellm
             litellm.drop_params = True
             from google.adk.models.lite_llm import LiteLlm
-            if isinstance(model_name, dict):
-                model_name = str(model_name.get('provider'))
+            model_name = _resolve_model_config(model_name)
             model_temperature = _temperature_for_model(model_name, temperature)
             # Create new LLM instance
             if "ollama" in model_name.lower():

@@ -243,8 +243,11 @@
   "stream.activity.details": "Activité ({{count}})",
   "stream.activity.detailsAria": "Afficher les détails de l'activité du flux",
   "stream.activity.debugData": "Données de débogage",
+  "stream.activity.viewResponse": "Afficher la réponse complète de l'outil",
+  "stream.activity.responseTitle": "Réponse de l'outil : {{tool}}",
+  "stream.activity.responseDescription": "Réponse complète en lecture seule renvoyée par l'outil.",
   "stream.activity.toolFallback": "Outil",
-  "stream.activity.sensitiveNotice": "Les paramètres de l'outil peuvent contenir des informations sensibles.",
+  "stream.activity.sensitiveNotice": "Les paramètres et les réponses de l'outil peuvent contenir des informations sensibles.",
   "stream.activity.toolStatus.running": "En cours",
   "stream.activity.toolStatus.completed": "Terminé",
   "stream.activity.toolStatus.failed": "Échec"

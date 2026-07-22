@@ -41,6 +41,7 @@ message AttachedFile {
 
 message Chatbot {
     string model = 1;  // Full LiteLLM model identifier (e.g., "anthropic/claude-sonnet-4-5", "azure/gpt-4.1")
+    repeated string input_modalities = 2; // Supported request inputs: "text", optionally "image"
 }
 
 message Tool {
@@ -259,6 +260,7 @@ message ToolInfoComponent {
     string status = 2;           // running | completed | failed
     optional string params = 3;  // JSON object of tool-call arguments {name: value}; omitted when empty
     optional string result_json = 4; // Bounded structured tool result for trusted backend consumers
+    optional string started_at = 5; // RFC 3339 UTC instant captured when the tool call starts
 }
 
 enum ChartKind {

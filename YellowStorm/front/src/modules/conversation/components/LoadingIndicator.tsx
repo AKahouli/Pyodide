@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, Loader2, Sparkles, Wrench } from 'lucide-react';
+import { ChevronDown, Loader2, Search, Sparkles, Wrench } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ConversationStreamActivity } from '../utils';
 import type { MessageComponent } from '../types';
 
 type StreamDetail =
   | { type: 'thought'; label: string }
-  | { type: 'tool'; title: string; status: 'running' | 'completed' | 'failed'; data: Record<string, unknown> };
+  | { type: 'tool'; title: string; status: 'running' | 'completed' | 'failed'; data: Record<string, unknown>; startedAt?: string; resultJson?: string };
+
+type SelectedResponse = { title: string; resultJson: string };
 
 function formatLabel(value: string): string {
   return value.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/\b\w/g, (character) => character.toUpperCase());
@@ -19,6 +24,25 @@ function formatDebugData(data: Record<string, unknown>): string {
   } catch {
     return String(data);
   }
+}
+
+function formatToolResponse(resultJson: string): string {
+  try {
+    return JSON.stringify(JSON.parse(resultJson), null, 2);
+  } catch {
+    return resultJson;
+  }
+}
+
+function formatToolDate(value: string | undefined, locale: string): { label: string; tooltip: string } | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+
+  return {
+    label: new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'medium' }).format(date),
+    tooltip: new Intl.DateTimeFormat(locale, { dateStyle: 'full', timeStyle: 'long' }).format(date),
+  };
 }
 
 function getStreamDetails(components: readonly MessageComponent[]): StreamDetail[] {
@@ -44,6 +68,8 @@ function getStreamDetails(components: readonly MessageComponent[]): StreamDetail
         title: formatLabel(title),
         status: status === 'completed' || status === 'failed' ? status : 'running',
         data: component.data,
+        startedAt: typeof component.data.startedAt === 'string' ? component.data.startedAt : undefined,
+        resultJson: typeof component.data.resultJson === 'string' && component.data.resultJson.length > 0 ? component.data.resultJson : undefined,
       }];
     }
 
@@ -52,8 +78,9 @@ function getStreamDetails(components: readonly MessageComponent[]): StreamDetail
 }
 
 export function LoadingIndicator({ activity = 'thinking', components = [], isComplete = false }: Readonly<{ activity?: ConversationStreamActivity; components?: readonly MessageComponent[]; isComplete?: boolean }>) {
-  const { t } = useModuleTranslation('conversation');
+  const { t, language } = useModuleTranslation('conversation');
   const [isOpen, setIsOpen] = useState(false);
+  const [selectedResponse, setSelectedResponse] = useState<SelectedResponse | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const details = useMemo(() => getStreamDetails(components), [components]);
   const labels: Record<ConversationStreamActivity, string> = {
@@ -111,26 +138,59 @@ export function LoadingIndicator({ activity = 'thinking', components = [], isCom
       {details.length > 0 && (
         <CollapsibleContent className='pt-3'>
           <div className='max-h-48 space-y-3 overflow-auto border-t pt-3 pr-1'>
-            {details.map((detail, index) => detail.type === 'thought' ? (
-              <div key={`thought-${index}`} className='flex gap-2 text-sm text-muted-foreground'>
-                <span className='mt-2 size-1.5 shrink-0 rounded-full bg-primary/70' aria-hidden='true' />
-                <span className='break-words'>{detail.label}</span>
-              </div>
-            ) : (
-              <details key={`tool-${index}`} className='rounded-lg bg-muted/60 p-2.5'>
-                <summary className='flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden'>
-                  <Wrench className='size-3.5 text-primary' aria-hidden='true' />
-                  <span className='min-w-0 flex-1 break-words'>{detail.title || t('stream.activity.toolFallback')}</span>
-                  <span className='text-xs font-normal text-muted-foreground'>{toolStatusLabels[detail.status]}</span>
-                </summary>
-                <p className='mt-2 text-xs text-muted-foreground'>{t('stream.activity.debugData')}</p>
-                <pre className='mt-2 max-h-40 overflow-auto rounded-md border bg-background p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words'>{formatDebugData(detail.data)}</pre>
-              </details>
-            ))}
+            {details.map((detail, index) => {
+              if (detail.type === 'thought') {
+                return (
+                  <div key={`thought-${index}`} className='flex gap-2 text-sm text-muted-foreground'>
+                    <span className='mt-2 size-1.5 shrink-0 rounded-full bg-primary/70' aria-hidden='true' />
+                    <span className='break-words'>{detail.label}</span>
+                  </div>
+                );
+              }
+
+              const toolDate = formatToolDate(detail.startedAt, language);
+              const toolTitle = detail.title || t('stream.activity.toolFallback');
+              const resultJson = detail.resultJson;
+              return (
+                <details key={`tool-${index}`} className='rounded-lg bg-muted/60 p-2.5'>
+                  <summary className='flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden'>
+                    <Wrench className='size-3.5 text-primary' aria-hidden='true' />
+                    <span className='min-w-0 flex-1 break-words'>{toolTitle}</span>
+                    <span className='text-xs font-normal text-muted-foreground'>{toolStatusLabels[detail.status]}</span>
+                  </summary>
+                  <div className='mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground'>
+                    <span>{t('stream.activity.debugData')}</span>
+                    {toolDate && <span className='truncate' title={toolDate.tooltip}>· {toolDate.label}</span>}
+                    {resultJson && (
+                      <TooltipProvider delayDuration={300}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button type='button' variant='ghost' size='icon-sm' className='ml-auto size-7 shrink-0' aria-label={t('stream.activity.viewResponse')} onClick={() => setSelectedResponse({ title: toolTitle, resultJson })}>
+                              <Search aria-hidden='true' />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{t('stream.activity.viewResponse')}</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
+                  </div>
+                  <pre className='mt-2 max-h-40 overflow-auto rounded-md border bg-background p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words'>{formatDebugData(detail.data)}</pre>
+                </details>
+              );
+            })}
             <p className='text-xs text-muted-foreground'>{t('stream.activity.sensitiveNotice')}</p>
           </div>
         </CollapsibleContent>
       )}
+      <Dialog open={selectedResponse !== null} onOpenChange={(open) => { if (!open) setSelectedResponse(null); }}>
+        <DialogContent className='flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-4xl flex-col overflow-hidden'>
+          <DialogHeader>
+            <DialogTitle>{t('stream.activity.responseTitle', { tool: selectedResponse?.title || t('stream.activity.toolFallback') })}</DialogTitle>
+            <DialogDescription>{t('stream.activity.responseDescription')}</DialogDescription>
+          </DialogHeader>
+          <pre className='min-h-0 flex-1 overflow-auto rounded-md border bg-muted/40 p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words'>{selectedResponse ? formatToolResponse(selectedResponse.resultJson) : ''}</pre>
+        </DialogContent>
+      </Dialog>
     </Collapsible>
   );
 }

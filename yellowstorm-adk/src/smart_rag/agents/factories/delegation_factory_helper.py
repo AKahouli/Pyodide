@@ -12,6 +12,7 @@ from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
 from src.smart_rag.infrastructure.processing.sandbox_callbacks import (
     create_sandbox_callbacks,
 )
+from src.smart_rag.infrastructure.model_parameters import resolve_model_config
 from src.logger.logging import get_logger
 import json
 
@@ -368,8 +369,7 @@ def prepare_agent_data(
     final_workspace_names = agent_config.get("brain_ids") or config.brain_ids
     vectorstore_name = agent_config.get("vectorstore_name", config.vectorstore_name)
     chatbot_name = agent_config.get("chatbot_name", chatbot_name)
-    if isinstance(chatbot_name, dict):
-        chatbot_name = str(chatbot_name.get("provider"))
+    chatbot_name = resolve_model_config(chatbot_name)
 
     return (
         doc_tree,

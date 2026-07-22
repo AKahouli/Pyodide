@@ -250,8 +250,8 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
     case 'error':
       return {
         type: 'error',
-        title: (data.title as string) || '',
-        content: (data.content as string) || '',
+        title: (data.title as string) || (data.code as string) || '',
+        content: (data.content as string) || (data.message as string) || '',
       };
     case 'sources':
       return {

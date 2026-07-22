@@ -6,6 +6,7 @@ from google.genai import types
 
 from src.smart_rag.core.single_agent_service import SingleAgentService
 from src.schema.chatbot_schema import RunSingleAgentRequest, AgentSuggestion
+from src.smart_rag.infrastructure.model_parameters import normalize_messages_for_model
 
 
 @pytest.fixture
@@ -188,6 +189,33 @@ class TestSingleAgentService:
 
             # Verify that create_parallel_tool_calls_llm was called with extracted name
             mock_llm_factory.create_parallel_tool_calls_llm.assert_called_with("gpt-4.1", temperature=0.0)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("modalities", "expected_types"),
+        [(["text"], ["text"]), (["text", "image"], ["text", "image_url"])]
+    )
+    async def test_create_agent_registers_input_modalities(
+        self, mock_single_agent_request, mock_llm_factory, modalities, expected_types
+    ):
+        mock_single_agent_request.agent.chatbot_name["input_modalities"] = modalities
+        with patch('src.smart_rag.core.single_agent_service.Agent'), \
+             patch('src.smart_rag.core.single_agent_service.SearchToolkit') as mock_toolkit_class, \
+             patch('src.smart_rag.core.single_agent_service.SearchToolADK'):
+            mock_toolkit_class.return_value.generate_function.return_value = (
+                MagicMock(), {"name": "perform_standard_search"}
+            )
+            service = SingleAgentService()
+            service.llm_factory = mock_llm_factory
+
+            await service._create_agent_from_request(mock_single_agent_request)
+
+        messages = [{"role": "user", "content": [
+            {"type": "text", "text": "question"},
+            {"type": "image_url", "image_url": {"url": "redacted"}},
+        ]}]
+        normalized = normalize_messages_for_model("gpt-4.1", messages)
+        assert [part["type"] for part in normalized[0]["content"]] == expected_types
 
     @pytest.mark.asyncio
     async def test_create_agent_handles_exception(self, mock_single_agent_request):

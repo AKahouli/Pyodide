@@ -49,6 +49,20 @@ export interface Conversation {
   governanceContext?: { programId: string; scopeId: string; deploymentId: string; revisionId: string; revisionNumber: number; pinnedAt: string; runtimeDefinition: { primaryAgentId: string; allowedAgentIds: string[]; workspaceIds: string[] } };
 }
 
+export interface ComposerSuggestionSettings {
+  enabled: boolean;
+  agentId: string | null;
+  debounceMs: number;
+  minimumDraftLength: number;
+  requestsPerMinute: number;
+  maxOutputTokens: number;
+}
+
+export interface ConversationSettings {
+  composerSuggestions: ComposerSuggestionSettings;
+  updatedAt?: string;
+}
+
 export interface AttachedFile {
   id: string;
   originalName: string;

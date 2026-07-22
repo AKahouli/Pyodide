@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { ArrowLeft, BarChart3, Loader2, Share2, Copy, PanelRightOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { ReactFlowProvider, useReactFlow, getNodesBounds, type Edge } from '@xyflow/react';
@@ -66,7 +66,7 @@ import { usePlaybookCanvasNodeHandlers, type PlaybookBindingModalState } from '.
 import { usePlaybookCanvasPageHandlers } from '../hooks/usePlaybookCanvasPageHandlers';
 import { usePlaybookCanvasExecutionHandlers } from '../hooks/usePlaybookCanvasExecutionHandlers';
 import { usePlaybookCanvasOutputFormatHandlers } from '../hooks/usePlaybookCanvasOutputFormatHandlers';
-import { flowEdgesToPlaybookEdges } from '../hooks/helpers/control-edge-serializer';
+import { flowEdgesToControlEdges, flowEdgesToPlaybookEdges } from '../hooks/helpers/control-edge-serializer';
 import { dataBindingsToLayerEdges, filterMirroredDataLayerEdges } from '../hooks/helpers/data-binding-serializer';
 import { tasksToNodes, TRIGGER_NODE_ID } from '../hooks/helpers/node-serializer';
 import { useAutosave } from '../hooks/useAutosave';
@@ -268,11 +268,27 @@ export function resolveIntentNodeSemantics(
   return { nodeType, taskType };
 }
 
+export function shouldApplyHomeAutoLayout(
+  requested: boolean,
+  routePlaybookId: string | undefined,
+  loadedPlaybookId: string | null,
+  currentPlaybookId: string | undefined,
+  appliedPlaybookId: string | null,
+): boolean {
+  return requested
+    && Boolean(routePlaybookId)
+    && loadedPlaybookId === routePlaybookId
+    && currentPlaybookId === routePlaybookId
+    && appliedPlaybookId !== routePlaybookId;
+}
+
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [canvasViewMode, setCanvasViewMode] = useState<CanvasViewMode>('expanded');
+  const [loadedPlaybookId, setLoadedPlaybookId] = useState<string | null>(null);
   const { t } = useModuleTranslation('playbook');
   const { setOpen: setGlobalSidebarOpen } = useSidebar();
 
@@ -340,6 +356,7 @@ function PlaybookCanvasInner() {
   const nodeEditorRef = useRef<PlaybookNodeEditorHandle | null>(null);
   const previousHumanInputKeyRef = useRef<string | null>(null);
   const viewportInitializedPlaybookRef = useRef<string | null>(null);
+  const autoLayoutAppliedPlaybookRef = useRef<string | null>(null);
   const globalSidebarOpenRef = useRef(setGlobalSidebarOpen);
 
   useEffect(() => {
@@ -408,6 +425,23 @@ function PlaybookCanvasInner() {
     pasteClipboard,
     artifactKindMismatch,
   } = usePlaybookCanvas(triggerNodeActions);
+
+  useEffect(() => {
+    const navigationState = location.state as { autoLayoutOnOpen?: boolean } | null;
+    if (!shouldApplyHomeAutoLayout(
+      navigationState?.autoLayoutOnOpen === true,
+      id,
+      loadedPlaybookId,
+      playbook?.id,
+      autoLayoutAppliedPlaybookRef.current,
+    )) return;
+
+    autoLayoutAppliedPlaybookRef.current = id!;
+    const layoutedTasks = autoLayoutTasks(playbook.tasks, playbook.edges);
+    setNodes(tasksToNodes(layoutedTasks, playbook.automatedTriggerType === 'mail'));
+    updateTasks(layoutedTasks);
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [id, loadedPlaybookId, location.pathname, location.search, location.state, navigate, playbook, setNodes, updateTasks]);
 
   const saveCurrentPlaybook = usePlaybookStore((state) => state.saveCurrentPlaybook);
 
@@ -503,6 +537,7 @@ function PlaybookCanvasInner() {
 
     if (id && !isGeneratingRoute) {
       let cancelled = false;
+      setLoadedPlaybookId(null);
       const hasExecutionParam = typeof window !== 'undefined'
         ? new URLSearchParams(window.location.search).get('execution') !== null
         : false;
@@ -543,6 +578,7 @@ function PlaybookCanvasInner() {
           usePlaybookStore.getState().fetchPlaybook(id),
           usePlaybookStore.getState().fetchExecutions(id),
         ]);
+        if (!cancelled) setLoadedPlaybookId(id);
         if (cancelled || hasExecutionParam) {
           return;
         }
@@ -2416,7 +2452,7 @@ function PlaybookCanvasInner() {
     };
 
     const reconcileUnboundRequiredInputsByPort = () => {
-      getUnboundRequiredPortsForTaskIds(nextTasks, nextDataBindings, changedNodeIds).forEach((unboundInput) => {
+      getUnboundRequiredPortsForTaskIds(nextTasks, nextDataBindings, changedNodeIds, flowEdgesToControlEdges(nextEdges)).forEach((unboundInput) => {
         const targetIndex = nextTasks.findIndex((task) => task.id === unboundInput.taskId);
         const targetTask = targetIndex >= 0 ? nextTasks[targetIndex] : null;
         const targetPort = targetTask?.inputPorts?.find((port) => port.id === unboundInput.portId);
@@ -2437,7 +2473,7 @@ function PlaybookCanvasInner() {
     };
 
     const findUnboundRequiredInputs = (): Array<{ taskId: string; portId: string }> => {
-      return getUnboundRequiredPortsForTaskIds(nextTasks, nextDataBindings, changedNodeIds);
+      return getUnboundRequiredPortsForTaskIds(nextTasks, nextDataBindings, changedNodeIds, flowEdgesToControlEdges(nextEdges));
     };
 
     const warnInvalidRequiredInputs = () => {

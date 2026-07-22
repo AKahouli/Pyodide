@@ -102,6 +102,9 @@ import type {
   TeamAutoBuilderConfigResponse,
   UpsertTeamAutoBuilderConfigRequest,
   AdminGuardrailsSettings,
+  ConversationSettingsResponse,
+  UpdateConversationSettingsRequest,
+  ConversationSettingsAgentOption,
 } from './types';
 import type {
   WorkyWhatsAppConnectResponse,
@@ -1184,6 +1187,21 @@ export async function getAdminWorkspaceTransformationAgents(): Promise<Workspace
 
 export async function updateAdminWorkspaceTransformationSettings(data: UpdateWorkspaceTransformationSettingsRequest): Promise<WorkspaceTransformationSettingsResponse> {
   const response = await apiClient.put<ApiResponse<WorkspaceTransformationSettingsResponse>>(API_ENDPOINTS.adminWorkspaceTransformationSettings.base, data);
+  return response.data.data;
+}
+
+export async function getAdminConversationSettings(): Promise<ConversationSettingsResponse> {
+  const response = await apiClient.get<ApiResponse<ConversationSettingsResponse>>(API_ENDPOINTS.adminConversationSettings.base);
+  return response.data.data;
+}
+
+export async function getAdminConversationSettingsAgents(): Promise<ConversationSettingsAgentOption[]> {
+  const response = await apiClient.get<ApiResponse<ConversationSettingsAgentOption[]>>(API_ENDPOINTS.adminConversationSettings.agents);
+  return response.data.data;
+}
+
+export async function updateAdminConversationSettings(data: UpdateConversationSettingsRequest): Promise<ConversationSettingsResponse> {
+  const response = await apiClient.put<ApiResponse<ConversationSettingsResponse>>(API_ENDPOINTS.adminConversationSettings.base, data);
   return response.data.data;
 }
 

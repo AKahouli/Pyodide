@@ -2,7 +2,7 @@
  * Admin Module Constants
  */
 
-import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, FolderCog, Wand2, MessageCircle } from 'lucide-react';
+import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, Sparkles, FolderCog, Wand2, MessageCircle, MessageSquare } from 'lucide-react';
 import type { AdminMenuItem } from './types';
 
 // Admin menu items with their required permissions
@@ -143,9 +143,19 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     labelKey: 'menu.playbookPrompts.label',
     path: '/admin/playbook-prompts',
     icon: FileText,
-    permissions: ['admin.*', 'system.maintenance', 'system.*', '*'],
-    description: 'Manage playbook prompts and node templates',
+    permissions: ['admin.*', '*'],
+    description: 'Manage playbook prompt templates',
     descriptionKey: 'menu.playbookPrompts.description',
+  },
+  {
+    id: 'playbook-settings',
+    label: 'Playbook Settings',
+    labelKey: 'menu.playbookSettings.label',
+    path: '/admin/playbook-settings',
+    icon: Sparkles,
+    permissions: ['system.maintenance', 'system.*', '*'],
+    description: 'Manage playbook AI inference settings',
+    descriptionKey: 'menu.playbookSettings.description',
   },
   {
     id: 'workspace-settings',
@@ -156,6 +166,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     permissions: ['workspaces.*', '*'],
     description: 'Manage workspace upload policies',
     descriptionKey: 'menu.workspaceSettings.description',
+  },
+  {
+    id: 'conversation-settings',
+    label: 'Conversation Settings',
+    labelKey: 'menu.conversationSettings.label',
+    path: '/admin/conversation-settings',
+    icon: MessageSquare,
+    permissions: ['conversations.settings.manage', 'conversations.*', '*'],
+    description: 'Manage conversation behavior',
+    descriptionKey: 'menu.conversationSettings.description',
   },
   {
     id: 'worky-whatsapp-system',

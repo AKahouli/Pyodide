@@ -68,4 +68,40 @@ describe('LoadingIndicator', () => {
     fireEvent.click(screen.getByRole('button'));
     expect(screen.getByText('Reviewed the request')).toBeInTheDocument();
   });
+
+  it('shows the tool datetime and opens the complete response dialog', () => {
+    const startedAt = '2026-07-21T10:13:42Z';
+    const expectedDate = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(startedAt));
+    render(<LoadingIndicator isComplete components={[{
+      id: 'tool',
+      type: 'toolInfo',
+      data: {
+        title: 'search_documents',
+        status: 'completed',
+        params: '{"query":"contract"}',
+        startedAt,
+        resultJson: '{"matches":[{"id":"doc-1"}]}',
+      },
+    }] as never} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.detailsAria' }));
+    fireEvent.click(screen.getByText('Search Documents'));
+
+    expect(screen.getByText((content) => content.includes(expectedDate))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.viewResponse' }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText(/"id": "doc-1"/)).toBeInTheDocument();
+  });
+
+  it('omits response controls for legacy tool activity', () => {
+    render(<LoadingIndicator isComplete components={[{
+      id: 'tool',
+      type: 'toolInfo',
+      data: { title: 'search_documents', status: 'completed', params: '{"query":"contract"}' },
+    }] as never} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.detailsAria' }));
+    fireEvent.click(screen.getByText('Search Documents'));
+    expect(screen.queryByRole('button', { name: 'stream.activity.viewResponse' })).not.toBeInTheDocument();
+  });
 });

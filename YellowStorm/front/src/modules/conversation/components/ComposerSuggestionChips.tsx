@@ -5,6 +5,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { Loader2, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useComposerSuggestions } from '../hooks/useComposerSuggestions';
+import { useConversationSettings } from '../hooks/useConversationSettings';
 
 export interface ComposerSuggestionChipsProps {
   /** When true, no network requests are made and chips are cleared. */
@@ -16,9 +17,13 @@ const ESTIMATED_SUGGESTION_HEIGHT = 120; // Estimated height of suggestion bar f
 export function ComposerSuggestionChips({ fetchDisabled }: ComposerSuggestionChipsProps) {
   const { t } = useModuleTranslation('conversation');
   const { textInput } = usePromptInputController();
+  const settings = useConversationSettings();
+  const suggestionSettings = settings?.composerSuggestions;
   const { suggestion, loading, fetchError } = useComposerSuggestions({
     draftText: textInput.value,
-    enabled: !fetchDisabled,
+    enabled: !fetchDisabled && suggestionSettings?.enabled === true,
+    debounceMs: suggestionSettings?.debounceMs,
+    minLength: suggestionSettings?.minimumDraftLength,
   });
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -37,7 +42,7 @@ export function ComposerSuggestionChips({ fetchDisabled }: ComposerSuggestionChi
   useEffect(() => {
     const showBar = loading || fetchError || (suggestion !== null && suggestion.length > 0);
 
-    if (!showBar || fetchDisabled) {
+    if (!showBar || fetchDisabled || suggestionSettings?.enabled !== true) {
       setIsVisible(false);
       return;
     }
@@ -64,7 +69,7 @@ export function ComposerSuggestionChips({ fetchDisabled }: ComposerSuggestionChi
       });
       setIsVisible(true);
     }
-  }, [loading, fetchError, suggestion, fetchDisabled]);
+  }, [loading, fetchError, suggestion, fetchDisabled, suggestionSettings?.enabled]);
 
   // Update position on scroll/resize
   useEffect(() => {

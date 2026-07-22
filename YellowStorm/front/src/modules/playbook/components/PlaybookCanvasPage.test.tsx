@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildIntentEdgeOptions, hydrateAssistantOperationHandoff, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldUsePlaybookAgentAssistant } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, hydrateAssistantOperationHandoff, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyHomeAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldUsePlaybookAgentAssistant } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
@@ -208,6 +208,18 @@ describe('shouldAutoLayoutAfterConstruction', () => {
 
   it('returns false for repeated completed status updates', () => {
     expect(shouldAutoLayoutAfterConstruction('completed', 'completed')).toBe(false);
+  });
+});
+
+describe('shouldApplyHomeAutoLayout', () => {
+  it('waits for the current route load instead of laying out a stale cached playbook', () => {
+    expect(shouldApplyHomeAutoLayout(true, 'playbook-1', null, 'playbook-1', null)).toBe(false);
+    expect(shouldApplyHomeAutoLayout(true, 'playbook-1', 'playbook-1', 'playbook-1', null)).toBe(true);
+  });
+
+  it('does not repeat layout or apply it to direct navigation', () => {
+    expect(shouldApplyHomeAutoLayout(true, 'playbook-1', 'playbook-1', 'playbook-1', 'playbook-1')).toBe(false);
+    expect(shouldApplyHomeAutoLayout(false, 'playbook-1', 'playbook-1', 'playbook-1', null)).toBe(false);
   });
 });
 

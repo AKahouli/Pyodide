@@ -120,7 +120,7 @@ describe('PlaybookFlowIntentConstructionService', () => {
       expect(suggestions[0].changes.some((c: any) => c.type === 'create_node' && c.task.title === 'test')).toBe(false);
     });
 
-    it('attaches diagnostics and lowers confidence for invalid compiled blueprint drafts', () => {
+    it('accepts compiled blueprint routers with an intentionally unlinked branch', () => {
       const service = new PlaybookFlowIntentConstructionService({
         normalizeConstructionSuggestions: jest.fn(),
       } as any);
@@ -145,13 +145,8 @@ describe('PlaybookFlowIntentConstructionService', () => {
       const suggestions = (service as any).buildBlueprintSuggestions(raw, context);
 
       expect(suggestions).toHaveLength(1);
-      expect(suggestions[0].confidence).toBeLessThan(0.85);
-      expect(suggestions[0].diagnostics).toEqual(expect.arrayContaining([
-        expect.objectContaining({ stage: 'invariant_validator', code: 'validator_rule_4' }),
-      ]));
-      expect(suggestions[0].validationDiagnostics).toEqual(expect.arrayContaining([
-        expect.objectContaining({ message: 'Router classify label "no" has no outgoing edge' }),
-      ]));
+      expect(suggestions[0].diagnostics.some((diagnostic: any) => diagnostic.stage === 'invariant_validator' && diagnostic.code === 'validator_rule_4')).toBe(false);
+      expect(suggestions[0].validationDiagnostics).toBeUndefined();
       expect(suggestions[0].diagnostics).toEqual(expect.arrayContaining([
         expect.objectContaining({ stage: 'repair', code: 'repair_router_link_source_port_set' }),
       ]));

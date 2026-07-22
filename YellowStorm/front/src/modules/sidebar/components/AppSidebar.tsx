@@ -268,7 +268,7 @@ export const AppSidebar = memo(function AppSidebar() {
         </NavLink>
       </SidebarHeader>
 
-      <SidebarContent className='my-3 w-full min-h-0 overflow-hidden'>
+      <SidebarContent className='my-3 w-full min-h-0 overflow-y-auto overscroll-y-contain'>
         <SidebarGroup>
           <SidebarMenu>
             <SidebarMenuItem>
@@ -300,9 +300,8 @@ export const AppSidebar = memo(function AppSidebar() {
 
         {state !== 'collapsed' && <ProjectsSection />}
 
-        <SidebarGroup className='flex-1 min-h-0 overflow-hidden'>
+        <SidebarGroup>
           <Collapsible
-            className='flex flex-1 min-h-0 flex-col overflow-hidden'
             open={historyPanelOpen && state !== 'collapsed'}
             onOpenChange={() => {
               if (state === 'collapsed') {
@@ -321,9 +320,9 @@ export const AppSidebar = memo(function AppSidebar() {
                 </CollapsibleTrigger>
               </SidebarMenuItem>
             </SidebarMenu>
-            <CollapsibleContent className='flex min-h-0 flex-1 flex-col'>
+            <CollapsibleContent>
               {(mergedHistory.length > 0 || historySearch.trim().length > 0) && (
-                <div className='px-2 pb-2'>
+                <div className='sticky top-0 z-10 bg-sidebar px-2 pb-2'>
                   <Input
                     value={historySearch}
                     onChange={(e) => setHistorySearch(e.target.value)}
@@ -333,7 +332,7 @@ export const AppSidebar = memo(function AppSidebar() {
                 </div>
               )}
               <HistoryDropZone
-                className='flex-1 min-h-0 overflow-y-auto pr-1'
+                className='pr-1'
                 onDropConversation={handleHistoryDrop}
               >
                 <SidebarMenu>

@@ -10,6 +10,7 @@ import json
 import os
 import re2 as re
 import uuid
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 from typing import Optional, Tuple, Any, List, Dict
 from google.adk import Agent, Runner
@@ -537,6 +538,7 @@ class AgentRunner:
                                         "title": func_name,
                                         "status": "running",
                                         "params": json.dumps(tool_args, default=str, sort_keys=True),
+                                        "started_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                                     },
                                     message_id=session_id,
                                     component_id=tool_component_id,

@@ -279,10 +279,22 @@ describe('component-mapper choice extraction', () => {
   it('maps tool arguments and terminal status from the toolInfo proto component', () => {
     expect(extractComponentData({
       id: 'tool-1',
-      tool_info: { title: 'search_documents', status: 'completed', params: '{"query":"contract"}' },
+      tool_info: {
+        title: 'search_documents',
+        status: 'completed',
+        params: '{"query":"contract"}',
+        result_json: '{"matches":2}',
+        started_at: '2026-07-21T10:13:42Z',
+      },
     })).toEqual({
       type: 'toolInfo',
-      data: { title: 'search_documents', status: 'completed', params: '{"query":"contract"}' },
+      data: {
+        title: 'search_documents',
+        status: 'completed',
+        params: '{"query":"contract"}',
+        resultJson: '{"matches":2}',
+        startedAt: '2026-07-21T10:13:42Z',
+      },
     });
   });
 });

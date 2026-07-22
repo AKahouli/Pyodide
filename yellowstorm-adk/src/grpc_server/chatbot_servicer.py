@@ -838,7 +838,8 @@ class ChatbotServicer(
             brain_documents=brain_documents,
             brain_relations={"nodes": [], "relationships": []},
             chatbot_name={
-                "provider": pb_agent.chatbot.model
+                "provider": pb_agent.chatbot.model,
+                "input_modalities": list(pb_agent.chatbot.input_modalities) or ["text"],
             }
             if pb_agent.HasField("chatbot")
             else None,
@@ -1098,7 +1099,10 @@ class ChatbotServicer(
         # Chatbot config + base prompt come from the single agent (no manager).
         agent_chatbot_name = None
         if pb_request.agent.HasField("chatbot"):
-            agent_chatbot_name = {"provider": pb_request.agent.chatbot.model}
+            agent_chatbot_name = {
+                "provider": pb_request.agent.chatbot.model,
+                "input_modalities": list(pb_request.agent.chatbot.input_modalities) or ["text"],
+            }
         if not agent_chatbot_name:
             logger.error(
                 f"No chatbot model provided for single agent in conversation {pb_request.conversation_id}"
@@ -1335,7 +1339,8 @@ class ChatbotServicer(
                 # Found the manager agent - use its chatbot configuration and prompt
                 if agent.HasField("chatbot"):
                     manager_chatbot_name = {
-                        "provider": agent.chatbot.model  # Full model identifier
+                        "provider": agent.chatbot.model,
+                        "input_modalities": list(agent.chatbot.input_modalities) or ["text"],
                     }
                 if agent.prompt:
                     manager_prompt = agent.prompt
@@ -1916,6 +1921,9 @@ class ChatbotServicer(
             result_json = component_data.get("result_json")
             if result_json:
                 tool_info.result_json = result_json
+            started_at = component_data.get("started_at")
+            if started_at:
+                tool_info.started_at = started_at
             component_kwargs["tool_info"] = tool_info
         elif component_type == "web_preview":
             component_kwargs["web_preview"] = chatbot_pb2.WebPreviewComponent(

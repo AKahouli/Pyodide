@@ -85,6 +85,10 @@ export const API_ENDPOINTS = {
     base: '/admin/workspace-settings/transformations',
     agents: '/admin/workspace-settings/transformations/agents',
   },
+  adminConversationSettings: {
+    base: '/admin/conversation-settings',
+    agents: '/admin/conversation-settings/agents',
+  },
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
   },
@@ -194,6 +198,7 @@ export const API_ENDPOINTS = {
     stream: '/conversations/stream',
     artifactUrl: '/conversations/artifact-url',
     composerSuggestions: '/conversations/suggestions',
+    settings: '/conversations/settings',
     // Share endpoints
     shares: (id: string) => `/conversations/${id}/shares`,
     share: (id: string) => `/conversations/${id}/share`,

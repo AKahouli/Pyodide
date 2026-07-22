@@ -50,7 +50,7 @@ export class PlaybookFlowValidatorService {
     errors.push(...this.checkIteratorContainerDag(nodes, controlEdges));
     errors.push(...this.checkBindingEndpoints(nodes, dataBindings, options));
     if (!options.allowUnboundRequiredPorts) {
-      errors.push(...this.checkRequiredDataBindings(nodes, dataBindings, options.requiredBindingNodeIds));
+      errors.push(...this.checkRequiredDataBindings(nodes, controlEdges, dataBindings, options.requiredBindingNodeIds));
     }
     errors.push(...this.checkDuplicateDataBindings(dataBindings));
     errors.push(...this.checkBindingSourceReachable(nodes, controlEdges, dataBindings));
@@ -140,16 +140,11 @@ export class PlaybookFlowValidatorService {
           .map((e) => e.routerLabel)
           .filter(Boolean),
       );
-      if (options.allowDraftRouters && outgoingLabels.size === 0) {
-        continue;
-      }
-
       const declaredLabels = new Set(node.routerConfig.outputLabels.filter((label) => !RESERVED_LABELS.includes(label as any)));
-
-      for (const label of declaredLabels) {
-        if (!outgoingLabels.has(label)) {
-          errors.push({ rule: 4, message: `Router ${node.id} label "${label}" has no outgoing edge` });
-        }
+      if (declaredLabels.size === 0) continue;
+      const linkedDeclaredLabels = [...outgoingLabels].filter((label) => declaredLabels.has(label!));
+      if (linkedDeclaredLabels.length === 0 && !options.allowDraftRouters) {
+        errors.push({ rule: 4, message: `Router ${node.id} has no linked output label` });
       }
     }
     return errors;
@@ -169,7 +164,14 @@ export class PlaybookFlowValidatorService {
         continue;
       }
 
-      const hasTerminalExit = _edges
+      const linkedLabels = new Set(_edges
+        .filter((edge) => edge.source === node.id && edge.kind === 'conditional')
+        .map((edge) => edge.routerLabel)
+        .filter(Boolean));
+      const hasImplicitTerminalExit = (node.routerConfig?.outputLabels ?? [])
+        .filter((label) => !RESERVED_LABELS.includes(label as any))
+        .some((label) => !linkedLabels.has(label));
+      const hasTerminalExit = hasImplicitTerminalExit || _edges
         .filter((edge) => edge.source === node.id && edge.kind === 'conditional')
         .some((edge) => !canReachTarget(adjacency, edge.target, node.id));
 
@@ -247,18 +249,24 @@ export class PlaybookFlowValidatorService {
 
   private checkRequiredDataBindings(
     nodes: FlowNode[],
+    edges: ControlEdge[],
     bindings: DataBinding[],
     requiredBindingNodeIds?: readonly string[],
   ): ValidationError[] {
     const errors: ValidationError[] = [];
     const nodeIds = requiredBindingNodeIds ? new Set(requiredBindingNodeIds) : undefined;
+    const routerIds = new Set(nodes.filter((node) => node.kind === 'router').map((node) => node.id));
     for (const node of nodes) {
       if (nodeIds && !nodeIds.has(node.id)) continue;
       if (!node.input?.ports) continue;
       for (const port of node.input.ports) {
         if (!port.required) continue;
         const binding = bindings.filter((b) => b.targetNode === node.id && b.targetPort === port.id);
-        if (binding.length === 0) {
+        const hasRouterControlEdge = edges.some((edge) => edge.kind === 'conditional'
+          && routerIds.has(edge.source)
+          && edge.target === node.id
+          && (edge.targetInputPortId || 'default') === port.id);
+        if (binding.length === 0 && !hasRouterControlEdge) {
           errors.push({ rule: 8, message: `Required port ${node.id}.${port.id} has no data binding` });
         } else if (binding.length > 1) {
           errors.push({ rule: 8, message: `Port ${node.id}.${port.id} has multiple data bindings` });

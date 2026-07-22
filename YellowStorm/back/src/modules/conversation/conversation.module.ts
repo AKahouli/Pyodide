@@ -32,6 +32,7 @@ import { ChoiceInteractionService } from './services/choice-interaction.service'
 // Guards
 import { ConversationOwnerGuard } from './guards/conversation-owner.guard';
 import { SseAuthGuard } from './guards/stream-auth.guard';
+import { ComposerSuggestionsRateLimitGuard } from './guards/composer-suggestions-rate-limit.guard';
 
 // External modules
 import { AuthModule } from '../auth/auth.module';
@@ -92,6 +93,7 @@ import { GovernanceRuntimeModule } from '../governance/governance-runtime.module
     ChoiceInteractionService,
     ConversationOwnerGuard,
     SseAuthGuard,
+    ComposerSuggestionsRateLimitGuard,
   ],
   exports: [
     ConversationService,

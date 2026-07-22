@@ -768,14 +768,14 @@ export class AgentService {
         .map(effectiveModelIdForAgent)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[] }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
         if (m) {
-          modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature });
+          modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature, inputModalities: m.inputModalities });
         }
       }
     }
@@ -881,6 +881,7 @@ export class AgentService {
         })),
         chatbot: {
           model: proxyModel,
+          input_modalities: resolvedModel?.inputModalities || ['text'],
         },
         agent_params: {
           params: {
@@ -989,13 +990,13 @@ export class AgentService {
         .map((a) => a.model || inheritedDefaultModelId)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[] }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
-        if (m) modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature });
+        if (m) modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature, inputModalities: m.inputModalities });
       }
     }
 
@@ -1071,6 +1072,7 @@ export class AgentService {
           })),
           chatbot: {
             model: proxyModel,
+            input_modalities: resolvedModel?.inputModalities || ['text'],
           },
           agent_params: {
             params: {

@@ -938,7 +938,6 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         // Reset idle timeout on each chunk received
         resetIdleTimeout();
         chunkCount++;
-        console.log(chunk);
         // Capture time to first chunk
 
         // Capture time to first
@@ -1485,6 +1484,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           title: (incoming.title as string) || (existing.title as string) || '',
           status: (incoming.status as string) || (existing.status as string) || 'running',
           params: (incoming.params as string) || (existing.params as string) || '',
+          startedAt: (incoming.startedAt as string) || (existing.startedAt as string) || '',
+          resultJson: (incoming.resultJson as string) || (existing.resultJson as string) || '',
         };
       case 'sandbox':
         // Sandbox: merge code from first chunk with output/error from update

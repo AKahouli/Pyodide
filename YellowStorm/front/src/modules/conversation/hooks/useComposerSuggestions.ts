@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchComposerSuggestions } from '../api';
 import { parseComposerSuggestionsContent } from '../utils/parseComposerSuggestions';
-import { getAllAgents } from '@/modules/agent/api';
 
 const DEFAULT_DEBOUNCE_MS = 400;
 const DEFAULT_MIN_LENGTH = 3;
@@ -19,50 +18,14 @@ export interface UseComposerSuggestionsOptions {
   enabled: boolean;
   debounceMs?: number;
   minLength?: number;
-  agentId?: string;
 }
 
-export function useComposerSuggestions({ draftText, enabled, debounceMs = DEFAULT_DEBOUNCE_MS, minLength = DEFAULT_MIN_LENGTH, agentId }: UseComposerSuggestionsOptions) {
+export function useComposerSuggestions({ draftText, enabled, debounceMs = DEFAULT_DEBOUNCE_MS, minLength = DEFAULT_MIN_LENGTH }: UseComposerSuggestionsOptions) {
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(false);
-  const [resolvedAgentId, setResolvedAgentId] = useState<string | undefined>(agentId);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-
-  // Fetch composer-suggestions agent once on mount if no agentId provided
-  useEffect(() => {
-    if (agentId) {
-      setResolvedAgentId(agentId);
-      return;
-    }
-
-    const fetchComposerAgent = async () => {
-      try {
-        const agents = await getAllAgents();
-
-        // Priority 1: Find by name === 'Suggestions' (case-insensitive)
-        let composerAgent = agents.find((a) => a.name.toLowerCase() === 'suggestions' && a.isDefault);
-
-        // Priority 2: Try to find by agentType.name === 'composer-suggestions'
-        if (!composerAgent) {
-          composerAgent = agents.find((a) => a.agentType.name === 'composer-suggestions' && a.isDefault);
-        }
-
-        // Priority 3: Try to find by agentType.slug === 'composer-suggestions'
-        if (!composerAgent) {
-          composerAgent = agents.find((a) => a.agentType.name === 'composer-suggestions' && a.isDefault);
-        }
-
-        if (composerAgent) {
-          setResolvedAgentId(composerAgent.id);
-        }
-      } catch (err) {
-        // Silently fail - suggestions will be disabled
-      }
-    };
-    fetchComposerAgent();
-  }, [agentId]);
 
   useEffect(() => {
     if (debounceTimerRef.current) {
@@ -94,7 +57,7 @@ export function useComposerSuggestions({ draftText, enabled, debounceMs = DEFAUL
       setLoading(true);
       setFetchError(false);
 
-      fetchComposerSuggestions(text, ac.signal, resolvedAgentId)
+      fetchComposerSuggestions(text, ac.signal)
         .then(({ content }) => {
           if (ac.signal.aborted) return;
           const parsed = parseComposerSuggestionsContent(content);
@@ -111,7 +74,7 @@ export function useComposerSuggestions({ draftText, enabled, debounceMs = DEFAUL
           if (ac.signal.aborted) return;
           const statusCode = httpStatusFromComposerError(err);
           // Nest returns 502 when ADK is down or misconfigured; avoid noisy "unavailable" UX.
-          if (statusCode === 502) {
+          if (statusCode === 403 || statusCode === 429 || statusCode === 502) {
             setSuggestion(null);
             setFetchError(false);
             return;
@@ -133,7 +96,7 @@ export function useComposerSuggestions({ draftText, enabled, debounceMs = DEFAUL
       }
       abortRef.current?.abort();
     };
-  }, [draftText, enabled, debounceMs, minLength, resolvedAgentId]);
+  }, [draftText, enabled, debounceMs, minLength]);
 
   return { suggestion, loading, fetchError };
 }
