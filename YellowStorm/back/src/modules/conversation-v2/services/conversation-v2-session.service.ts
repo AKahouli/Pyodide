@@ -29,6 +29,8 @@ export interface DeployedAppSummary {
   lastDeployedAt: string | null;
   source: 'owned' | 'shared';
   shareId: string | null;
+  /** Recipient may open the conversation with full access (shared apps only). */
+  canOpenConversation: boolean;
 }
 
 @Injectable()
@@ -122,6 +124,7 @@ export class ConversationV2SessionService {
       lastDeployedAt: doc.lastDeployedAt ? new Date(doc.lastDeployedAt).toISOString() : null,
       source: 'owned' as const,
       shareId: null,
+      canOpenConversation: true,
     }));
   }
 
@@ -146,6 +149,15 @@ export class ConversationV2SessionService {
     if (!Types.ObjectId.isValid(id)) return null;
     return this.model
       .findOne({ _id: new Types.ObjectId(id), ownerId, deletedAt: null })
+      .lean()
+      .exec() as unknown as ConversationV2SessionDocument | null;
+  }
+
+  /** Load a non-deleted session by id regardless of owner (caller must authorize). */
+  async getById(id: string): Promise<ConversationV2SessionDocument | null> {
+    if (!Types.ObjectId.isValid(id)) return null;
+    return this.model
+      .findOne({ _id: new Types.ObjectId(id), deletedAt: null })
       .lean()
       .exec() as unknown as ConversationV2SessionDocument | null;
   }

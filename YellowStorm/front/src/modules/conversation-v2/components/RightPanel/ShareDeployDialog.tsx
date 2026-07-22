@@ -31,7 +31,7 @@ function initials(u: UserSearchResult): string {
   return (u.firstName?.[0] ?? u.email[0] ?? '?').toUpperCase();
 }
 
-/** Modal to share a deployed app with one or more users (search + chips). */
+/** Modal to share a deployed app + its conversation with one or more users. */
 export function ShareDeployDialog({
   sessionId,
   deployedUrl,

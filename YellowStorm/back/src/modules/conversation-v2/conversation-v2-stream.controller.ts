@@ -22,6 +22,7 @@ import { Public } from '@modules/auth/decorators/public.decorator';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { StreamAuth } from '@modules/conversation/decorators/stream-auth.decorator';
 import { ConversationV2SessionService } from './services/conversation-v2-session.service';
+import { ConversationV2SessionAccessService } from './services/conversation-v2-session-access.service';
 import { ConversationV2EventStoreService } from './services/conversation-v2-event-store.service';
 import { ConversationV2StreamGatewayService } from './services/conversation-v2-stream-gateway.service';
 import { ConversationV2StreamService } from './services/conversation-v2-stream.service';
@@ -52,6 +53,7 @@ export class ConversationV2StreamController {
   constructor(
     private readonly config: ConfigService,
     private readonly sessions: ConversationV2SessionService,
+    private readonly sessionAccess: ConversationV2SessionAccessService,
     private readonly eventStore: ConversationV2EventStoreService,
     private readonly gateway: ConversationV2StreamGatewayService,
     private readonly streamService: ConversationV2StreamService,
@@ -176,8 +178,9 @@ export class ConversationV2StreamController {
     @Query('since') sinceRaw: string | undefined,
     @Res() res: Response,
   ): Promise<void> {
-    const pointer = await this.sessions.getOne(user.id, sessionId);
-    if (!pointer) throw new NotFoundException('Session not found');
+    const resolved = await this.sessionAccess.resolveSession(user.id, sessionId);
+    if (!resolved) throw new NotFoundException('Session not found');
+    void resolved.pointer;
 
     const since = Math.max(0, Number.parseInt(sinceRaw ?? '0', 10) || 0);
     const terminal: ReadonlyArray<string> = ['completed', 'stopped', 'error'];
@@ -217,7 +220,7 @@ export class ConversationV2StreamController {
             sseWrite(eventToSseFrame(wire, row.sequence));
             lastSeen = row.sequence;
           }
-          const latest = await this.sessions.getOne(user.id, sessionId);
+          const latest = await this.sessions.getById(sessionId);
           const sessionGone = latest === null;
           const sessionTerminal = !!latest && terminal.includes(latest.status as string);
           if (sessionGone || sessionTerminal) {

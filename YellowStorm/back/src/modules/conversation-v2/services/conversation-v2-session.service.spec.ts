@@ -61,6 +61,7 @@ describe('ConversationV2SessionService', () => {
         lastDeployedAt: '2026-07-17T10:00:00.000Z',
         source: 'owned',
         shareId: null,
+        canOpenConversation: true,
       },
     ]);
     expect(find).toHaveBeenCalledWith({

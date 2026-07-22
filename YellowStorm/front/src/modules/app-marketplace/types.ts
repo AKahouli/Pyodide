@@ -7,6 +7,8 @@ export interface DeployedApp {
   lastDeployedAt: string | null;
   source: DeployedAppSource;
   shareId: string | null;
+  /** Shared recipients may open the conversation when the share included it. */
+  canOpenConversation?: boolean;
 }
 
 export interface ListDeployedAppsResponse {
