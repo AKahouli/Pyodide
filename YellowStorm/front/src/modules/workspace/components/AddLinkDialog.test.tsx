@@ -91,7 +91,7 @@ it('sends the clicked link text as each page name', async () => {
   );
 });
 
-it('sends a roots map with manual links self-rooted', async () => {
+it('indexes a manual different-domain link under the session root (no self-rooting)', async () => {
   session.status = 'live';
   session.rootUrl = 'https://ok.example/start';
   session.pages = [
@@ -100,13 +100,10 @@ it('sends a roots map with manual links self-rooted', async () => {
   ];
   render(<AddLinkDialog open onOpenChange={vi.fn()} workspaceId='w1' />);
   fireEvent.click(screen.getByRole('button', { name: /Indexer/ }));
-  await waitFor(() =>
-    expect(addPageLinks).toHaveBeenCalledWith(
-      'w1',
-      ['https://ok.example/a', 'https://manual.org/p'],
-      expect.objectContaining({ roots: { 'https://manual.org/p': 'https://manual.org/p' } }),
-    ),
-  );
+  await waitFor(() => expect(addPageLinks).toHaveBeenCalled());
+  const opts = addPageLinks.mock.calls[0][2] as { sourceRootUrl?: string; roots?: unknown };
+  expect(opts.sourceRootUrl).toBe('https://ok.example/start'); // every page shares the session root
+  expect(opts.roots).toBeUndefined(); // manual links no longer self-root into their own group
 });
 
 it('auto-starts browsing when opened with autoStart and a valid url', () => {

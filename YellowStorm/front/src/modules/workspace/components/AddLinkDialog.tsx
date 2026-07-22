@@ -138,17 +138,14 @@ export function AddLinkDialog({
         const name = (page.linkText || page.title || '').replace(/\s+/g, ' ').trim();
         if (name) names[page.url] = name;
       }
-      const roots: Record<string, string> = {};
-      for (const page of session.pages) {
-        if (!chosen.includes(page.url)) continue;
-        if (page.manual) roots[page.url] = page.url;
-      }
+      // Every link indexed in this session shares the session's start URL as its
+      // group root — including manually-added links on other domains (grouping is
+      // the user's responsibility). No per-link self-rooting.
       await addPageLinks(workspaceId, chosen, {
         deepSearch: readDeepSearchIndexationValue(),
         autoIndex: readAutoIndexationValue(),
         sourceRootUrl: session.rootUrl ?? undefined,
         names,
-        roots,
       });
       toast.success(`${chosen.length} page(s) ajoutée(s) · conversion en cours`);
       onOpenChange(false);
@@ -160,7 +157,7 @@ export function AddLinkDialog({
   return (
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
       <DialogContent
-        className={phase === 'browse' ? 'flex h-[92vh] w-[96vw] max-w-[96vw] flex-col gap-3 overflow-hidden' : undefined}
+        className={phase === 'browse' ? 'flex h-[92vh] w-[80vw] max-w-[96vw] flex-col gap-3 overflow-hidden' : undefined}
       >
         <DialogHeader className={phase === 'browse' ? 'shrink-0' : undefined}>
           <DialogTitle>Ajouter un lien</DialogTitle>
@@ -185,7 +182,7 @@ export function AddLinkDialog({
             {error && <p className='text-sm text-destructive'>{error}</p>}
           </div>
         ) : (
-          <div className='grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[1fr_320px]'>
+          <div className='grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[1fr_520px]'>
             <div className='flex min-h-0 min-w-0 flex-col rounded border'>
               <div className='flex shrink-0 items-center gap-1 border-b px-2 py-1.5'>
                 <Button size='icon' variant='ghost' className='h-7 w-7' onClick={() => session.navigate({ kind: 'back' })}><ArrowLeft className='h-4 w-4' /></Button>
