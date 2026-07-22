@@ -39,7 +39,8 @@
     "empty": "Select a tool to inspect.",
     "jumpToLive": "Jump to live",
     "tabCode": "Code",
-    "tabPreview": "Preview"
+    "tabPreview": "Preview",
+    "resizeHandle": "Drag to resize preview"
   },
   "vnc": {
     "unavailable": "No VM attached to this session",
