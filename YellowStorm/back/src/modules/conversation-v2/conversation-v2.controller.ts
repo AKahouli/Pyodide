@@ -12,6 +12,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { Types } from 'mongoose';
@@ -24,7 +25,10 @@ import { ConversationV2GrpcClientService } from './services/conversation-v2.grpc
 import { ConversationV2SessionService } from './services/conversation-v2-session.service';
 import { ConversationV2ShareService } from './services/conversation-v2-share.service';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
-import { ConversationV2ReadAccessGuard } from './guards/conversation-v2-read-access.guard';
+import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-session-access.guard';
+import { RequireConversationSessionPermission } from './decorators/require-conversation-session-permission.decorator';
+import { ConversationV2SessionPermissions } from './constants/conversation-v2-session-permissions';
+import type { ConversationV2SessionPermission } from './constants/conversation-v2-session-permissions';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { GetFileSignedUrlDto } from './dto/get-file-signed-url.dto';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
@@ -42,6 +46,13 @@ import { ConversationV2DeployService } from './services/conversation-v2-deploy.s
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 
 interface AuthUser { id: string; }
+
+interface ConversationV2Request {
+  conversationV2Access?: {
+    viewerRole: 'owner' | 'shared';
+    permissions: ConversationV2SessionPermission[];
+  };
+}
 
 @ApiTags('conversation-v2')
 @ApiBearerAuth()
@@ -176,10 +187,11 @@ export class ConversationV2Controller {
   }
 
   @Get('sessions/:id')
-  @UseGuards(ConversationV2ReadAccessGuard)
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_READ)
   async getSession(
-    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
+    @Req() req: ConversationV2Request,
   ): Promise<{
     sessionId: string;
     title: string;
@@ -195,13 +207,11 @@ export class ConversationV2Controller {
     deployedUrl: string | null;
     lastDeployedAt: string | null;
     viewerRole: 'owner' | 'shared';
+    permissions: ConversationV2SessionPermission[];
   }> {
     const pointer = await this.sessions.getById(id);
     if (!pointer) throw new NotFoundException('Session not found');
-    const ownerId =
-      typeof pointer.ownerId === 'string'
-        ? pointer.ownerId
-        : (pointer.ownerId as { toString(): string }).toString();
+    const access = req.conversationV2Access!;
     return {
       sessionId: (pointer._id as Types.ObjectId).toString(),
       title: pointer.title,
@@ -220,12 +230,14 @@ export class ConversationV2Controller {
       lastDeployedAt: pointer.lastDeployedAt
         ? new Date(pointer.lastDeployedAt).toISOString()
         : null,
-      viewerRole: ownerId === user.id ? 'owner' : 'shared',
+      viewerRole: access.viewerRole,
+      permissions: [...access.permissions],
     };
   }
 
   @Get('sessions/:id/events')
-  @UseGuards(ConversationV2ReadAccessGuard)
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.EVENTS_READ)
   async listEvents(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
@@ -251,13 +263,15 @@ export class ConversationV2Controller {
   }
 
   @Get('sessions/:id/workspace-documents')
-  @UseGuards(ConversationV2OwnerGuard)
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.WORKSPACE_DOCUMENTS_READ)
   async listWorkspaceDocuments(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Query() query: DocumentQueryDto,
   ) {
-    const pointer = await this.sessions.getOne(user.id, id);
+    void user;
+    const pointer = await this.sessions.getById(id);
     if (!pointer) throw new NotFoundException('Session not found');
     const systemWsId = (pointer as unknown as { systemWorkspaceId?: { toString(): string } | string | null })
       .systemWorkspaceId?.toString() ?? null;

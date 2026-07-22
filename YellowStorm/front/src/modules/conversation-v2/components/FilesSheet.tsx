@@ -53,7 +53,7 @@ interface DocumentsResponse {
   documents: WorkspaceDocumentRow[];
 }
 
-export function FilesSheet() {
+export function FilesSheet({ readOnly: _readOnly = false }: { readOnly?: boolean }) {
   const { t } = useConversationV2Translation();
   const { systemWorkspaceId, events, open, setOpen } = useConversationV2Store(
     useShallow((s) => ({

@@ -15,6 +15,7 @@ import * as grpc from '@grpc/grpc-js';
 import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
+import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-session-access.guard';
 
 describe('ConversationV2Controller', () => {
   let controller: ConversationV2Controller;
@@ -102,7 +103,10 @@ describe('ConversationV2Controller', () => {
         { provide: ConversationV2DeployService, useValue: mockDeployment },
         { provide: ConversationV2AppShareService, useValue: mockAppShares },
       ],
-    }).compile();
+    })
+      .overrideGuard(ConversationV2SessionAccessGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
     controller = module.get(ConversationV2Controller);
 
     [
@@ -178,18 +182,26 @@ describe('ConversationV2Controller', () => {
       eventCount: 3,
       systemWorkspaceId: 'sysws',
     });
-    const result = await controller.getSession({ id: 'u1' } as never, id.toString());
+    const result = await controller.getSession(id.toString(), {
+      conversationV2Access: {
+        viewerRole: 'owner',
+        permissions: ['session.read', 'events.read', 'stream.write'],
+      },
+    } as never);
     expect(result.sessionId).toBe(id.toString());
     expect(result.eventCount).toBe(3);
     expect(result.systemWorkspaceId).toBe('sysws');
     expect(result.viewerRole).toBe('owner');
+    expect(result.permissions).toContain('session.read');
   });
 
   it('GET /sessions/:id throws NotFoundException when the pointer is missing', async () => {
     mockSessions.getById.mockResolvedValueOnce(null);
-    await expect(controller.getSession({ id: 'u1' } as never, 's1')).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    await expect(
+      controller.getSession('s1', {
+        conversationV2Access: { viewerRole: 'owner', permissions: ['session.read'] },
+      } as never),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   // --- PATCH /sessions/:id ---

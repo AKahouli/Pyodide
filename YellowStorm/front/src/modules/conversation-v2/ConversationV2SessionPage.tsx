@@ -13,6 +13,12 @@ import { useConversationV2Translation } from './translation';
 import { FileViewerSidebar, useFileViewerStore } from '@/modules/file-viewer';
 import { useModelsStore } from '@/modules/models';
 import type { AgentEvent } from './types';
+import {
+  canWriteConversationV2Session,
+  ConversationV2SessionPermissions,
+  hasConversationV2SessionPermission,
+  type ConversationV2SessionPermission,
+} from './session-permissions';
 
 interface LocationState {
   initialMessage?: string;
@@ -67,10 +73,19 @@ export default function ConversationV2SessionPage() {
   );
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [viewerRole, setViewerRole] = useState<'owner' | 'shared'>('owner');
+  const [sessionPermissions, setSessionPermissions] = useState<ConversationV2SessionPermission[]>([]);
   const sentInitialForSession = useRef<string | null>(null);
   const { t } = useConversationV2Translation();
-  const isReadOnlyViewer = viewerRole === 'shared';
+  const canWrite = canWriteConversationV2Session(sessionPermissions);
+  const canReadFiles = hasConversationV2SessionPermission(
+    sessionPermissions,
+    ConversationV2SessionPermissions.FILES_READ,
+  );
+  const canBrowseFiles = hasConversationV2SessionPermission(
+    sessionPermissions,
+    ConversationV2SessionPermissions.WORKSPACE_DOCUMENTS_READ,
+  );
+  const isReadOnlyViewer = !canWrite;
 
   const latestPlan = useMemo(() => {
     for (let i = events.length - 1; i >= 0; i--) {
@@ -98,7 +113,7 @@ export default function ConversationV2SessionPage() {
     // Idempotent: a no-op if models are already cached (≤ 5 min old).
     void useModelsStore.getState().fetchModels().catch(() => undefined);
     setNotFound(false);
-    setViewerRole('owner');
+    setSessionPermissions([]);
 
     if (hydratedFromCache) {
       // Live state already in memory; just refresh pointer metadata.
@@ -107,7 +122,7 @@ export default function ConversationV2SessionPage() {
         try {
           const pointer = await conversationV2Api.getSession(sessionId);
           if (cancelled) return;
-          setViewerRole(pointer.viewerRole ?? 'owner');
+          setSessionPermissions(pointer.permissions ?? []);
           setSystemWorkspaceId(pointer.systemWorkspaceId);
           setWorkspaceIds(pointer.workspaceIds ?? []);
           setDeployState({
@@ -132,7 +147,7 @@ export default function ConversationV2SessionPage() {
         const pointer = await conversationV2Api.getSession(sessionId);
         if (cancelled) return;
 
-        setViewerRole(pointer.viewerRole ?? 'owner');
+        setSessionPermissions(pointer.permissions ?? []);
         setSystemWorkspaceId(pointer.systemWorkspaceId);
         setWorkspaceIds(pointer.workspaceIds ?? []);
         setDeployState({
@@ -162,7 +177,7 @@ export default function ConversationV2SessionPage() {
         const last = collected[collected.length - 1];
         const lastIsTerminal = last?.type === 'done' || last?.type === 'error';
         setStreaming(
-          !pointer.viewerRole || pointer.viewerRole === 'owner'
+          canWriteConversationV2Session(pointer.permissions)
             ? nonTerminal && collected.length > 0 && !lastIsTerminal
             : false,
         );
@@ -216,23 +231,26 @@ export default function ConversationV2SessionPage() {
   return (
     <div className='relative flex w-full min-h-0 flex-1'>
       <div key={sessionId} className='flex min-w-0 flex-1 flex-col'>
-        <ConversationV2Header />
+        <ConversationV2Header
+          readOnly={isReadOnlyViewer}
+          permissions={sessionPermissions}
+        />
         {streamError && (
           <div className='bg-destructive p-2 text-sm text-destructive-foreground'>
             {t('session.errorTitle')}: {streamError}
           </div>
         )}
-        <MessageList readOnly={isReadOnlyViewer} />
+        <MessageList canOpenAttachments={canReadFiles} />
         {latestPlan && (
           <div className='shrink-0 pb-2'>
             <PlanPanel steps={latestPlan.steps} />
           </div>
         )}
-        {!isReadOnlyViewer && <Composer onSend={sendMessage} />}
+        {canWrite && <Composer onSend={sendMessage} />}
       </div>
-      {!isReadOnlyViewer && <RightPanel />}
+      {canWrite && <RightPanel />}
       <FileViewerSidebar />
-      {!isReadOnlyViewer && <FilesSheet />}
+      {canBrowseFiles && <FilesSheet readOnly={isReadOnlyViewer} />}
     </div>
   );
 }

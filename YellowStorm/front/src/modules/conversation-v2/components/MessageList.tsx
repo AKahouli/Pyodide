@@ -18,10 +18,11 @@ import type { AgentEvent } from '../types';
 
 interface MessageListProps {
   events?: AgentEvent[];
-  readOnly?: boolean;
+  /** When true, attachment chips open the file viewer (requires files.read). */
+  canOpenAttachments?: boolean;
 }
 
-export function MessageList({ events: eventsProp, readOnly }: MessageListProps = {}) {
+export function MessageList({ events: eventsProp, canOpenAttachments = true }: MessageListProps = {}) {
   const storeEvents = useConversationV2Store(useShallow((s) => s.events));
   const streaming = useConversationV2Store((s) => s.streaming);
   const liveAssistantIds = useConversationV2Store((s) => s.liveAssistantIds);
@@ -56,7 +57,7 @@ export function MessageList({ events: eventsProp, readOnly }: MessageListProps =
                 <MessageBubble
                   key={node.key}
                   event={node.event}
-                  readOnly={readOnly}
+                  canOpenAttachments={canOpenAttachments}
                   hideAssistantHeader={hideHeader}
                   animate={animate}
                 />

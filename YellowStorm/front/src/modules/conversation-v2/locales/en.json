@@ -76,6 +76,7 @@
   },
   "header": {
     "back": "Back",
+    "readOnly": "Read-only",
     "tooltips": {
       "workspaces": "Manage workspaces",
       "files": "Files"
