@@ -104,8 +104,12 @@ export function AddLinkDialog({
 
   const toggle = (u: string) =>
     setSelected((prev) => { const n = new Set(prev); n.has(u) ? n.delete(u) : n.add(u); return n; });
-  const remove = (u: string) =>
+  // Remove the page from the collection entirely (the delete button). Unchecking
+  // is a separate action handled by the checkbox (`toggle`).
+  const remove = (u: string) => {
+    session.removePage(u);
     setSelected((prev) => { const n = new Set(prev); n.delete(u); return n; });
+  };
   const selectableUrls = () => session.pages.map((p) => p.url).filter((u) => !indexedUrls.has(normalizeUrl(u)));
   const selectAll = () => setSelected(new Set(selectableUrls()));
   const selectNone = () => setSelected(new Set());

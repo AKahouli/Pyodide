@@ -120,6 +120,22 @@ describe('useBrowserSession', () => {
     expect(ok).toBe(false);
   });
 
+  it('removePage removes a page and frees its url so it can be re-added', () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.addManualPage('https://a.com/x', 'X'); });
+    let ok!: boolean;
+    act(() => { ok = result.current.removePage('https://a.com/x'); });
+    expect(ok).toBe(true);
+    expect(result.current.pages.map((p) => p.url)).not.toContain('https://a.com/x');
+    // seenRef was cleared, so the same url is addable again
+    let readded!: boolean;
+    act(() => { readded = result.current.addManualPage('https://a.com/x', 'X again'); });
+    expect(readded).toBe(true);
+    // removing an unknown url is a no-op
+    act(() => { ok = result.current.removePage('https://nope.com'); });
+    expect(ok).toBe(false);
+  });
+
   it('addPages batch-adds new pages and dedups already-seen ones', () => {
     const { result } = renderHook(() => useBrowserSession());
     act(() => { result.current.addManualPage('https://a.com/x'); });

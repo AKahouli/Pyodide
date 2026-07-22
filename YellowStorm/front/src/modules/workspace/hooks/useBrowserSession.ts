@@ -129,6 +129,15 @@ export function useBrowserSession() {
     return true;
   }, []);
 
+  const removePage = useCallback((url: string): boolean => {
+    const key = normalizeUrl(url);
+    if (!seenRef.current.has(key)) return false;
+    // Drop from `seenRef` too so the same URL can be re-collected or re-added later.
+    seenRef.current.delete(key);
+    setPages((prev) => prev.filter((p) => p.url !== url));
+    return true;
+  }, []);
+
   const addPages = useCallback((incoming: CollectedPage[]): number => {
     const fresh = incoming.filter((p) => {
       const key = normalizeUrl(p.url);
@@ -140,5 +149,5 @@ export function useBrowserSession() {
     return fresh.length;
   }, []);
 
-  return { status, frame, currentUrl, rootUrl, pages, blockedNotice, start, sendInput, navigate, stop, addManualPage, updatePage, addPages };
+  return { status, frame, currentUrl, rootUrl, pages, blockedNotice, start, sendInput, navigate, stop, addManualPage, updatePage, addPages, removePage };
 }
