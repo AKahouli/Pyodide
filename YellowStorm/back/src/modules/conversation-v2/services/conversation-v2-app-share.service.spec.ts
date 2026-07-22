@@ -118,6 +118,34 @@ describe('ConversationV2AppShareService', () => {
     });
   });
 
+  it('listSharedWithUser treats legacy shares without includeConversation as conversation-enabled', async () => {
+    const sessionId = new Types.ObjectId();
+    const shareId = new Types.ObjectId();
+    find.mockReturnValueOnce({
+      sort: () => ({
+        lean: () => ({
+          exec: () =>
+            Promise.resolve([
+              {
+                _id: shareId,
+                sessionId,
+                title: 'Legacy shared app',
+                deployedUrl: 'https://apps.example/legacy',
+                lastDeployedAt: null,
+              },
+            ]),
+        }),
+      }),
+    });
+
+    await expect(svc.listSharedWithUser(new Types.ObjectId().toString())).resolves.toEqual([
+      expect.objectContaining({
+        sessionId: sessionId.toString(),
+        canOpenConversation: true,
+      }),
+    ]);
+  });
+
   it('listSharedWithUser maps share docs for Marketplace', async () => {
     const sessionId = new Types.ObjectId();
     const shareId = new Types.ObjectId();

@@ -2,7 +2,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Types } from 'mongoose';
 import {
   CONVERSATION_V2_OWNER_SESSION_PERMISSIONS,
-  CONVERSATION_V2_SHARED_SESSION_PERMISSIONS,
 } from '../constants/conversation-v2-session-permissions';
 import { ConversationV2AppShareService } from './conversation-v2-app-share.service';
 import { ConversationV2SessionService } from './conversation-v2-session.service';
@@ -36,7 +35,7 @@ describe('ConversationV2SessionAccessService', () => {
     });
   });
 
-  it('returns shared read permissions for a marketplace recipient', async () => {
+  it('returns full owner-equivalent permissions for a marketplace recipient', async () => {
     const sessionId = new Types.ObjectId();
     sessions.getById.mockResolvedValueOnce({ _id: sessionId, ownerId: 'owner-1' });
     appShares.hasConversationAccess.mockResolvedValueOnce(true);
@@ -44,7 +43,7 @@ describe('ConversationV2SessionAccessService', () => {
     await expect(svc.resolve('recipient-1', sessionId.toString())).resolves.toEqual({
       sessionId: sessionId.toString(),
       viewerRole: 'shared',
-      permissions: CONVERSATION_V2_SHARED_SESSION_PERMISSIONS,
+      permissions: CONVERSATION_V2_OWNER_SESSION_PERMISSIONS,
     });
   });
 

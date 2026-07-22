@@ -26,13 +26,9 @@ export const CONVERSATION_V2_OWNER_SESSION_PERMISSIONS: ConversationV2SessionPer
   ConversationV2SessionPermissions.SHARE_WRITE,
 ];
 
-/** Marketplace share recipients: read-only conversation access. */
-export const CONVERSATION_V2_SHARED_SESSION_PERMISSIONS: ConversationV2SessionPermission[] = [
-  ConversationV2SessionPermissions.SESSION_READ,
-  ConversationV2SessionPermissions.EVENTS_READ,
-  ConversationV2SessionPermissions.FILES_READ,
-  ConversationV2SessionPermissions.WORKSPACE_DOCUMENTS_READ,
-];
+/** Marketplace share recipients with conversation access: same rights as owner. */
+export const CONVERSATION_V2_SHARED_SESSION_PERMISSIONS: ConversationV2SessionPermission[] =
+  CONVERSATION_V2_OWNER_SESSION_PERMISSIONS;
 
 export function hasConversationV2SessionPermission(
   permissions: readonly ConversationV2SessionPermission[],

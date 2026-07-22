@@ -7,6 +7,7 @@ import { ConversationV2EventStoreService } from './conversation-v2-event-store.s
 import { ConversationV2PointerWriterService } from './conversation-v2-pointer-writer.service';
 import { ConversationV2NameGeneratorService } from './conversation-v2-name-generator.service';
 import { ConversationV2SessionService } from './conversation-v2-session.service';
+import { ConversationV2SessionAccessService } from './conversation-v2-session-access.service';
 import { ConversationV2StreamGatewayService } from './conversation-v2-stream-gateway.service';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { SkillService } from '@modules/skill/skill.service';
@@ -50,6 +51,17 @@ describe('ConversationV2StreamService', () => {
         { provide: ConversationV2EventStoreService, useValue: eventStore },
         { provide: ConversationV2PointerWriterService, useValue: { apply: jest.fn().mockResolvedValue(undefined) } },
         { provide: ConversationV2NameGeneratorService, useValue: { generate: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: ConversationV2SessionAccessService,
+          useValue: {
+            resolveSession: jest.fn().mockImplementation(async (userId: string) => ({
+              ownerId: userId,
+              actorUserId: userId,
+              pointer,
+              access: { sessionId: 's1', viewerRole: 'owner', permissions: [] },
+            })),
+          },
+        },
         {
           provide: ConversationV2SessionService,
           useValue: {

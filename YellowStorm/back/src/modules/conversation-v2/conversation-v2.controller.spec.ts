@@ -16,9 +16,22 @@ import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-session-access.guard';
+import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
+import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
 
 describe('ConversationV2Controller', () => {
   let controller: ConversationV2Controller;
+
+  const resolvedSession = (
+    ownerId: string,
+    pointer: Record<string, unknown> = {},
+    viewerRole: 'owner' | 'shared' = 'owner',
+  ): ConversationV2ResolvedSession => ({
+    ownerId,
+    actorUserId: ownerId,
+    pointer: pointer as unknown as ConversationV2ResolvedSession['pointer'],
+    access: { sessionId: 's1', viewerRole, permissions: [] },
+  });
 
   const mockClient = {
     createSession: jest.fn(),
@@ -105,6 +118,8 @@ describe('ConversationV2Controller', () => {
       ],
     })
       .overrideGuard(ConversationV2SessionAccessGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(ConversationV2OwnerGuard)
       .useValue({ canActivate: () => true })
       .compile();
     controller = module.get(ConversationV2Controller);
@@ -208,7 +223,7 @@ describe('ConversationV2Controller', () => {
 
   it('PATCH /sessions/:id renames when title provided', async () => {
     mockSessions.rename.mockResolvedValueOnce({ title: 'New Name' });
-    const result = await controller.patchSession({ id: 'u1' } as never, 's1', { title: 'New Name' });
+    const result = await controller.patchSession(resolvedSession('u1'), 's1', { title: 'New Name' });
     expect(result.title).toBe('New Name');
     expect(mockSessions.rename).toHaveBeenCalledWith('u1', 's1', 'New Name');
   });
@@ -216,7 +231,7 @@ describe('ConversationV2Controller', () => {
   it('PATCH /sessions/:id issues a share token when isShared=true', async () => {
     mockShare.issue.mockReturnValueOnce({ token: 'tok', hash: 'hsh' });
     mockSessions.setShared.mockResolvedValueOnce({});
-    const result = await controller.patchSession({ id: 'u1' } as never, 's1', { isShared: true });
+    const result = await controller.patchSession(resolvedSession('u1'), 's1', { isShared: true });
     expect(result.isShared).toBe(true);
     expect(result.shareToken).toBe('tok');
     expect(mockSessions.setShared).toHaveBeenCalledWith('u1', 's1', true, 'hsh');
@@ -224,7 +239,7 @@ describe('ConversationV2Controller', () => {
 
   it('PATCH /sessions/:id clears the share token when isShared=false', async () => {
     mockSessions.setShared.mockResolvedValueOnce({});
-    const result = await controller.patchSession({ id: 'u1' } as never, 's1', { isShared: false });
+    const result = await controller.patchSession(resolvedSession('u1'), 's1', { isShared: false });
     expect(result.isShared).toBe(false);
     expect(result.shareToken).toBeNull();
     expect(mockSessions.setShared).toHaveBeenCalledWith('u1', 's1', false, null);
@@ -233,12 +248,13 @@ describe('ConversationV2Controller', () => {
   // --- DELETE /sessions/:id ---
 
   it('DELETE /sessions/:id removes the system workspace then soft-deletes', async () => {
-    mockSessions.getOne.mockResolvedValueOnce({ systemWorkspaceId: 'sysws' });
     mockWorkspaceDocuments.deleteAllByWorkspace.mockResolvedValueOnce(undefined);
     mockWorkspaceService.deleteSystemWorkspace.mockResolvedValueOnce(undefined);
     mockSessions.softDelete.mockResolvedValueOnce({});
-
-    const result = await controller.deleteSession({ id: 'u1' } as never, 's1');
+    const result = await controller.deleteSession(
+      resolvedSession('u1', { systemWorkspaceId: 'sysws' }),
+      's1',
+    );
     expect(result).toEqual({ deleted: true });
     expect(mockWorkspaceDocuments.deleteAllByWorkspace).toHaveBeenCalledWith('sysws');
     expect(mockWorkspaceService.deleteSystemWorkspace).toHaveBeenCalledWith('sysws');
@@ -248,44 +264,49 @@ describe('ConversationV2Controller', () => {
   // --- POST /sessions/:id/stop|pause|resume ---
 
   it('POST /sessions/:id/stop resolves the aiSessionId and calls gRPC stop', async () => {
-    mockSessions.getOne.mockResolvedValueOnce({ aiSessionId: 'ai-1' });
     mockClient.stopSession.mockResolvedValueOnce(undefined);
-    await expect(controller.stopSession({ id: 'u1' } as never, 's1')).resolves.toEqual({
+    await expect(
+      controller.stopSession(resolvedSession('u1', { aiSessionId: 'ai-1' })),
+    ).resolves.toEqual({
       success: true,
     });
     expect(mockClient.stopSession).toHaveBeenCalledWith('u1', 'ai-1');
   });
 
   it('POST /sessions/:id/stop throws NotFoundException when session has no aiSessionId', async () => {
-    mockSessions.getOne.mockResolvedValueOnce({ aiSessionId: null });
-    await expect(controller.stopSession({ id: 'u1' } as never, 's1')).rejects.toBeInstanceOf(
+    await expect(
+      controller.stopSession(resolvedSession('u1', { aiSessionId: null })),
+    ).rejects.toBeInstanceOf(
       NotFoundException,
     );
   });
 
   it('POST /sessions/:id/stop translates gRPC NOT_FOUND to NotFoundException', async () => {
-    mockSessions.getOne.mockResolvedValueOnce({ aiSessionId: 'ai-1' });
     const err = new Error('nope') as grpc.ServiceError;
     (err as { code?: number }).code = grpc.status.NOT_FOUND;
     mockClient.stopSession.mockRejectedValueOnce(err);
-    await expect(controller.stopSession({ id: 'u1' } as never, 's1')).rejects.toBeInstanceOf(
+    await expect(
+      controller.stopSession(resolvedSession('u1', { aiSessionId: 'ai-1' })),
+    ).rejects.toBeInstanceOf(
       NotFoundException,
     );
   });
 
   it('POST /sessions/:id/pause resolves the aiSessionId and calls gRPC pause', async () => {
-    mockSessions.getOne.mockResolvedValueOnce({ aiSessionId: 'ai-1' });
     mockClient.pauseSession.mockResolvedValueOnce(undefined);
-    await expect(controller.pauseSession({ id: 'u1' } as never, 's1')).resolves.toEqual({
+    await expect(
+      controller.pauseSession(resolvedSession('u1', { aiSessionId: 'ai-1' })),
+    ).resolves.toEqual({
       success: true,
     });
     expect(mockClient.pauseSession).toHaveBeenCalledWith('u1', 'ai-1');
   });
 
   it('POST /sessions/:id/resume resolves the aiSessionId and calls gRPC resume', async () => {
-    mockSessions.getOne.mockResolvedValueOnce({ aiSessionId: 'ai-1' });
     mockClient.resumeSession.mockResolvedValueOnce(undefined);
-    await expect(controller.resumeSession({ id: 'u1' } as never, 's1')).resolves.toEqual({
+    await expect(
+      controller.resumeSession(resolvedSession('u1', { aiSessionId: 'ai-1' })),
+    ).resolves.toEqual({
       success: true,
     });
     expect(mockClient.resumeSession).toHaveBeenCalledWith('u1', 'ai-1');
@@ -341,13 +362,6 @@ describe('ConversationV2Controller', () => {
   });
 
   it('POST /sessions/:id/share-deploy grants Marketplace access by email', async () => {
-    mockSessions.getOne.mockResolvedValueOnce({
-      deployStatus: 'deployed',
-      deployedUrl: 'https://apps.example/app-1',
-      deployedAppTitle: 'Generated app',
-      title: 'Conversation title',
-      lastDeployedAt: '2026-07-17T10:00:00.000Z',
-    });
     mockAppShares.shareByEmails.mockResolvedValueOnce({
       shared: [{ shareId: 'share-1', recipientEmail: 'colleague@example.com' }],
       notFound: [],
@@ -355,9 +369,19 @@ describe('ConversationV2Controller', () => {
     });
 
     await expect(
-      controller.shareDeploy({ id: 'user-1' }, 'session-1', {
-        emails: ['colleague@example.com'],
-      }),
+      controller.shareDeploy(
+        resolvedSession('user-1', {
+          deployStatus: 'deployed',
+          deployedUrl: 'https://apps.example/app-1',
+          deployedAppTitle: 'Generated app',
+          title: 'Conversation title',
+          lastDeployedAt: '2026-07-17T10:00:00.000Z',
+        }),
+        'session-1',
+        {
+          emails: ['colleague@example.com'],
+        },
+      ),
     ).resolves.toEqual({ sent: 1, notFound: [], skippedSelf: [] });
   });
 
@@ -381,15 +405,13 @@ describe('ConversationV2Controller', () => {
   });
 
   it('POST /sessions/:id/deploy calls app-builder with the user and AI session ids', async () => {
-    mockSessions.getOne.mockResolvedValueOnce({
-      aiSessionId: 'conversation-1',
-      title: 'Conversation title',
-    });
     mockSessions.setDeployState.mockResolvedValue({});
     mockDeployment.deploy.mockResolvedValueOnce({ url: 'https://deployed.example/app' });
-
     const result = await controller.deploySession(
-      { id: 'user-1' },
+      resolvedSession('user-1', {
+        aiSessionId: 'conversation-1',
+        title: 'Conversation title',
+      }),
       'session-1',
       { title: 'Generated app' },
     );
@@ -451,20 +473,22 @@ describe('ConversationV2Controller', () => {
   // --- GET /sessions/:id/vnc/signed-url ---
 
   it('GET /sessions/:id/vnc/signed-url returns url + expiresAt when gRPC responds', async () => {
-    mockSessions.getOne.mockResolvedValueOnce({ aiSessionId: 'ai-1' });
     mockClient.getVncSignedUrl.mockResolvedValueOnce({
       url: 'wss://vnc.example.com/token',
       expiresAt: 9999999,
     });
-    const result = await controller.vncSignedUrl({ id: 'u1' } as never, 's1');
+    const result = await controller.vncSignedUrl(
+      resolvedSession('u1', { aiSessionId: 'ai-1' }),
+    );
     expect(result).toEqual({ url: 'wss://vnc.example.com/token', expiresAt: 9999999 });
     expect(mockClient.getVncSignedUrl).toHaveBeenCalledWith('u1', 'ai-1');
   });
 
   it('GET /sessions/:id/vnc/signed-url throws VmUnavailableException (409) when gRPC returns null', async () => {
-    mockSessions.getOne.mockResolvedValue({ aiSessionId: 'ai-1' });
     mockClient.getVncSignedUrl.mockResolvedValue(null);
-    const err = await controller.vncSignedUrl({ id: 'u1' } as never, 's1').catch((e) => e);
+    const err = await controller
+      .vncSignedUrl(resolvedSession('u1', { aiSessionId: 'ai-1' }))
+      .catch((e) => e);
     expect(err).toBeInstanceOf(VmUnavailableException);
     expect(err).toBeInstanceOf(ConflictException);
     expect((err as ConflictException).getStatus()).toBe(409);

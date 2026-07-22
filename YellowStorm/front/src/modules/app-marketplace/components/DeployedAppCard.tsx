@@ -86,7 +86,7 @@ export const DeployedAppCard = memo(function DeployedAppCard({ app }: DeployedAp
                   <TooltipContent>{t('card.conversation')}</TooltipContent>
                 </Tooltip>
               )}
-              {isOwned && (
+              {canOpenConversation && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -107,7 +107,7 @@ export const DeployedAppCard = memo(function DeployedAppCard({ app }: DeployedAp
         </CardContent>
       </Card>
 
-      {isOwned && (
+      {canOpenConversation && (
         <ShareDeployDialog
           sessionId={app.sessionId}
           deployedUrl={app.deployedUrl}

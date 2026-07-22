@@ -5,7 +5,7 @@ export type ConversationV2AppShareDocument = HydratedDocument<ConversationV2AppS
 
 /**
  * Grants Marketplace access to a deployed app. When `includeConversation` is
- * true, the recipient may also open the conversation read-only.
+ * true, the recipient may also open the conversation with full session access.
  */
 @Schema({
   timestamps: true,
@@ -30,8 +30,8 @@ export class ConversationV2AppShare extends Document {
   @Prop({ type: Date, default: null })
   lastDeployedAt!: Date | null;
 
-  /** When true, recipient can GET session + events (read-only). */
-  @Prop({ type: Boolean, default: false })
+  /** When true (default), recipient can open the conversation with full access. */
+  @Prop({ type: Boolean, default: true })
   includeConversation!: boolean;
 
   createdAt!: Date;

@@ -127,7 +127,7 @@ describe('AppMarketplacePage', () => {
 
     expect(await screen.findByText('Shared app')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /card\.conversation/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /card\.share/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /card\.share/i })).toBeInTheDocument();
   });
 
   it('opens the share dialog from the card', async () => {

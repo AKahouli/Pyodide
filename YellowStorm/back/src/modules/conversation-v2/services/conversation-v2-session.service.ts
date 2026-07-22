@@ -29,7 +29,7 @@ export interface DeployedAppSummary {
   lastDeployedAt: string | null;
   source: 'owned' | 'shared';
   shareId: string | null;
-  /** Recipient may open the conversation read-only (shared apps only). */
+  /** Recipient may open the conversation with full access (shared apps only). */
   canOpenConversation: boolean;
 }
 

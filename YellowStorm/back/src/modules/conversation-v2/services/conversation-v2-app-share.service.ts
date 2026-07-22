@@ -25,7 +25,7 @@ export interface ShareAppsBatchResult {
 }
 
 /**
- * Marketplace app sharing. New shares also grant read-only conversation access
+ * Marketplace app sharing. New shares also grant full conversation access
  * (`includeConversation: true`) so recipients can open the session via the
  * same Share icon flow.
  */
@@ -96,7 +96,7 @@ export class ConversationV2AppShareService {
         : null,
       source: 'shared' as const,
       shareId: doc._id.toString(),
-      canOpenConversation: doc.includeConversation === true,
+      canOpenConversation: doc.includeConversation !== false,
     }));
   }
 
@@ -107,7 +107,7 @@ export class ConversationV2AppShareService {
       .findOne({
         sessionId: new Types.ObjectId(sessionId),
         recipientUserId: new Types.ObjectId(userId),
-        includeConversation: true,
+        includeConversation: { $ne: false },
       })
       .select('_id')
       .lean()

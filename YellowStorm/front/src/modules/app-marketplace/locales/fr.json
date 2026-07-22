@@ -45,6 +45,7 @@
     "shared": "Partagée avec vous",
     "open": "Ouvrir l'application",
     "conversation": "Accéder à la conversation",
+    "conversationReadOnly": "Ouvrir la conversation (lecture seule)",
     "share": "Partager l'app et la conversation",
     "delete": "Supprimer",
     "deleteTitle": "Retirer l'application du Marketplace ?",

@@ -4,6 +4,7 @@ import {
   CONVERSATION_V2_SHARED_SESSION_PERMISSIONS,
   type ConversationV2SessionPermission,
 } from '../constants/conversation-v2-session-permissions';
+import type { ConversationV2SessionDocument } from '../schemas/conversation-v2-session.schema';
 import { ConversationV2AppShareService } from './conversation-v2-app-share.service';
 import { ConversationV2SessionService } from './conversation-v2-session.service';
 
@@ -15,6 +16,14 @@ export interface ConversationV2SessionAccess {
   permissions: ConversationV2SessionPermission[];
 }
 
+export interface ConversationV2ResolvedSession {
+  pointer: ConversationV2SessionDocument;
+  ownerId: string;
+  /** Authenticated user id (may differ from ownerId for shared access). */
+  actorUserId: string;
+  access: ConversationV2SessionAccess;
+}
+
 @Injectable()
 export class ConversationV2SessionAccessService {
   constructor(
@@ -23,6 +32,14 @@ export class ConversationV2SessionAccessService {
   ) {}
 
   async resolve(userId: string, sessionId: string): Promise<ConversationV2SessionAccess | null> {
+    const resolved = await this.resolveSession(userId, sessionId);
+    return resolved?.access ?? null;
+  }
+
+  async resolveSession(
+    userId: string,
+    sessionId: string,
+  ): Promise<ConversationV2ResolvedSession | null> {
     const pointer = await this.sessions.getById(sessionId);
     if (!pointer) return null;
 
@@ -33,9 +50,14 @@ export class ConversationV2SessionAccessService {
 
     if (ownerId === userId) {
       return {
-        sessionId,
-        viewerRole: 'owner',
-        permissions: [...CONVERSATION_V2_OWNER_SESSION_PERMISSIONS],
+        pointer,
+        ownerId,
+        actorUserId: userId,
+        access: {
+          sessionId,
+          viewerRole: 'owner',
+          permissions: [...CONVERSATION_V2_OWNER_SESSION_PERMISSIONS],
+        },
       };
     }
 
@@ -43,9 +65,14 @@ export class ConversationV2SessionAccessService {
     if (!shared) return null;
 
     return {
-      sessionId,
-      viewerRole: 'shared',
-      permissions: [...CONVERSATION_V2_SHARED_SESSION_PERMISSIONS],
+      pointer,
+      ownerId,
+      actorUserId: userId,
+      access: {
+        sessionId,
+        viewerRole: 'shared',
+        permissions: [...CONVERSATION_V2_SHARED_SESSION_PERMISSIONS],
+      },
     };
   }
 }

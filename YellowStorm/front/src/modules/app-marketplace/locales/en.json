@@ -45,6 +45,7 @@
     "shared": "Shared with you",
     "open": "Open the application",
     "conversation": "Go to the conversation",
+    "conversationReadOnly": "Open conversation (read-only)",
     "share": "Share app & conversation",
     "delete": "Delete",
     "deleteTitle": "Remove app from Marketplace?",
