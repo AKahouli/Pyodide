@@ -1,15 +1,23 @@
 import type { IndexingStatus, WorkspaceFile } from '../types';
 
 export interface SourceGroup {
-  /** Normalized start URL — the grouping key. */
+  /** Grouping key: the per-batch source group id, or the normalized start URL (legacy). */
   key: string;
   /** Cleaned display label (host + path, no scheme). */
   label: string;
   /** Raw start URL, for the header tooltip. */
   rootUrl: string;
+  /** The batch group id shared by these files (undefined for legacy root-URL groups). */
+  sourceGroupId?: string;
   files: WorkspaceFile[];
   /** Aggregate indexing status across the group's files. */
   status: IndexingStatus;
+}
+
+/** A url-doc's grouping key: its per-batch group id, falling back to the normalized start URL. */
+function groupKeyOf(f: WorkspaceFile): string | undefined {
+  if (f.type !== 'url') return undefined;
+  return f.sourceGroupId ?? f.normalizedSourceRootUrl;
 }
 
 export interface GroupedFiles {
@@ -36,17 +44,17 @@ function cleanRootLabel(rawUrl: string): string {
 }
 
 /**
- * Partition workspace files into start-URL groups and loose files. A group is
- * formed only when 2+ url-documents share the same `normalizedSourceRootUrl`;
- * every other file (non-url, missing root, or a lone url-doc) stays loose.
- * First-seen order is preserved for both groups and loose files.
+ * Partition workspace files into groups and loose files. A group is one indexing
+ * batch, identified by `sourceGroupId` (falling back to `normalizedSourceRootUrl`
+ * for legacy docs) and labelled by its start URL — so two separate sessions on the
+ * same URL form two distinct groups. A group forms only when 2+ url-documents share
+ * the same key; every other file stays loose. First-seen order is preserved.
  */
 export function groupBySourceRoot(files: WorkspaceFile[]): GroupedFiles {
   const counts = new Map<string, number>();
   for (const f of files) {
-    if (f.type === 'url' && f.normalizedSourceRootUrl) {
-      counts.set(f.normalizedSourceRootUrl, (counts.get(f.normalizedSourceRootUrl) ?? 0) + 1);
-    }
+    const key = groupKeyOf(f);
+    if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
   const groupByKey = new Map<string, SourceGroup>();
@@ -54,11 +62,12 @@ export function groupBySourceRoot(files: WorkspaceFile[]): GroupedFiles {
   const loose: WorkspaceFile[] = [];
 
   for (const f of files) {
-    const key = f.type === 'url' ? f.normalizedSourceRootUrl : undefined;
+    const key = groupKeyOf(f);
     if (key && (counts.get(key) ?? 0) >= 2) {
       let group = groupByKey.get(key);
       if (!group) {
-        group = { key, label: cleanRootLabel(f.sourceRootUrl ?? key), rootUrl: f.sourceRootUrl ?? key, files: [], status: 'none' };
+        const rootUrl = f.sourceRootUrl ?? f.normalizedSourceRootUrl ?? key;
+        group = { key, label: cleanRootLabel(rootUrl), rootUrl, sourceGroupId: f.sourceGroupId, files: [], status: 'none' };
         groupByKey.set(key, group);
         order.push(key);
       }

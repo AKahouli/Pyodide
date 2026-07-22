@@ -705,7 +705,7 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     userId: string,
     urls: string[],
-    options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string; names?: Record<string, string>; roots?: Record<string, string> },
+    options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string; names?: Record<string, string>; roots?: Record<string, string>; sourceGroupId?: string },
   ): Promise<DocumentResponse[]> {
     // Nominal size of 0: the converted PDF's size is unknown until conversion
     // runs, but we can still reject early if the workspace is already over
@@ -717,6 +717,10 @@ export class WorkspaceDocumentService {
         `Insufficient storage. Available: ${Math.round(quota.available / 1024 / 1024)}MB`,
       );
     }
+
+    // One group per index batch: reuse the caller's id (continue mode) or mint a
+    // fresh one, so two separate sessions on the same URL form two distinct groups.
+    const groupId = options?.sourceGroupId ?? new Types.ObjectId().toString();
 
     // Create all docs first (fast; each PROCESSING with a unique placeholder path).
     const created: Array<{ response: DocumentResponse; id: string; url: string; name: string }> =
@@ -742,6 +746,7 @@ export class WorkspaceDocumentService {
           deepSearchRequested: String(Boolean(options?.deepSearch)),
           autoIndexRequested: String(options?.autoIndex !== false),
           normalizedSourceUrl: normalizeWorkspaceUrl(url),
+          sourceGroupId: groupId,
           ...(root
             ? {
                 sourceRootUrl: root,

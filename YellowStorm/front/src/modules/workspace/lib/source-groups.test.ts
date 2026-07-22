@@ -53,4 +53,27 @@ describe('groupBySourceRoot', () => {
     expect(groupBySourceRoot([urlFile('a'), urlFile('b', { indexingStatus: 'processing' })]).groups[0].status).toBe('processing');
     expect(groupBySourceRoot([urlFile('a'), urlFile('b')]).groups[0].status).toBe('ready');
   });
+
+  it('groups by sourceGroupId, so two sessions on the same URL form separate groups', () => {
+    const files = [
+      urlFile('a', { sourceGroupId: 'g1', sourceRootUrl: 'https://ex.com', normalizedSourceRootUrl: 'https://ex.com' }),
+      urlFile('b', { sourceGroupId: 'g1', sourceRootUrl: 'https://ex.com', normalizedSourceRootUrl: 'https://ex.com' }),
+      urlFile('c', { sourceGroupId: 'g2', sourceRootUrl: 'https://ex.com', normalizedSourceRootUrl: 'https://ex.com' }),
+      urlFile('d', { sourceGroupId: 'g2', sourceRootUrl: 'https://ex.com', normalizedSourceRootUrl: 'https://ex.com' }),
+    ];
+    const { groups } = groupBySourceRoot(files);
+    expect(groups.map((g) => g.key)).toEqual(['g1', 'g2']); // same URL → two distinct groups
+    expect(groups.every((g) => g.label === 'ex.com')).toBe(true);
+    expect(groups[0].sourceGroupId).toBe('g1');
+  });
+
+  it('falls back to root-URL grouping for legacy docs without a sourceGroupId', () => {
+    const files = [
+      urlFile('a', { sourceRootUrl: 'https://ex.com', normalizedSourceRootUrl: 'https://ex.com' }),
+      urlFile('b', { sourceRootUrl: 'https://ex.com', normalizedSourceRootUrl: 'https://ex.com' }),
+    ];
+    const { groups } = groupBySourceRoot(files);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].key).toBe('https://ex.com');
+  });
 });

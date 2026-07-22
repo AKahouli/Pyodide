@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsBoolean, IsObject, IsOptional, IsUrl } from 'class-validator';
+import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsBoolean, IsObject, IsOptional, IsString, IsUrl } from 'class-validator';
 
 export class AddLinksDto {
   @IsArray()
@@ -28,4 +28,9 @@ export class AddLinksDto {
   @IsOptional()
   @IsObject()
   roots?: Record<string, string>;
+
+  /** Reuse an existing group id (continue mode); omitted → the backend mints a new one. */
+  @IsOptional()
+  @IsString()
+  sourceGroupId?: string;
 }

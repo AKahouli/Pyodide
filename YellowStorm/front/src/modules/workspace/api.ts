@@ -780,7 +780,7 @@ export async function addLink(
 /**
  * Add multiple website links as workspace documents
  */
-export async function addLinks(workspaceId: string, urls: string[], options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string; names?: Record<string, string>; roots?: Record<string, string> }): Promise<WorkspaceDocument[]> {
+export async function addLinks(workspaceId: string, urls: string[], options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string; names?: Record<string, string>; roots?: Record<string, string>; sourceGroupId?: string }): Promise<WorkspaceDocument[]> {
   const response = await apiClient.post<ApiResponse<WorkspaceDocument[]>>(
     API_ENDPOINTS.workspaceDocuments.links(workspaceId),
       { urls, ...options },

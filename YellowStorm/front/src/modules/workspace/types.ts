@@ -155,10 +155,12 @@ export interface WorkspaceFile {
   type?: 'doc' | 'url';
   /** Original website URL when type === 'url'. */
   sourceUrl?: string;
-  /** Browse-session start URL this url-doc was indexed from (workspace grouping). */
+  /** Browse-session start URL this url-doc was indexed from (workspace grouping label). */
   sourceRootUrl?: string;
-  /** Normalized form of sourceRootUrl, used as the workspace grouping key. */
+  /** Normalized form of sourceRootUrl (legacy grouping key / fallback). */
   normalizedSourceRootUrl?: string;
+  /** Per-index-batch group id — the grouping key, so two sessions on the same URL form two groups. */
+  sourceGroupId?: string;
   /** Upload/processing lifecycle status (url links are 'processing' while converting). */
   status?: DocumentStatus;
 }

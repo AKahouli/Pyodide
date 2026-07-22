@@ -495,6 +495,22 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     expect(createArg.metadata.sourceRootUrl).toBeUndefined();
   });
 
+  it('addLinks stamps one generated sourceGroupId across the whole batch', async () => {
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.com/x', 'https://a.com/y']);
+    const first = documentModel.create.mock.calls[0][0];
+    const second = documentModel.create.mock.calls[1][0];
+    expect(first.metadata.sourceGroupId).toEqual(expect.any(String));
+    expect(second.metadata.sourceGroupId).toBe(first.metadata.sourceGroupId);
+  });
+
+  it('addLinks reuses a provided sourceGroupId (continue mode)', async () => {
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.com/x'], { sourceGroupId: 'grp-123' });
+    const createArg = documentModel.create.mock.calls[0][0];
+    expect(createArg.metadata.sourceGroupId).toBe('grp-123');
+  });
+
   it('addLinks names the document from the provided link text when present', async () => {
     (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/services'], {

@@ -42,6 +42,7 @@ export function AddLinkDialog({
 }) {
   const addPageLinks = useWorkspaceStore((s) => s.addPageLinks);
   const seed = useWorkspaceStore((s) => s.addLinkDialog.seed);
+  const sourceGroupId = useWorkspaceStore((s) => s.addLinkDialog.sourceGroupId);
   const session = useBrowserSession();
 
   const [phase, setPhase] = useState<'input' | 'browse'>('input');
@@ -146,6 +147,10 @@ export function AddLinkDialog({
         autoIndex: readAutoIndexationValue(),
         sourceRootUrl: session.rootUrl ?? undefined,
         names,
+        // Continue mode (double-click) reuses the group's id so new pages join it;
+        // a clean-slate "Ajouter un lien" leaves it undefined → the backend mints a
+        // fresh group id, so re-adding the same URL forms a new (duplicate) group.
+        sourceGroupId,
       });
       toast.success(`${chosen.length} page(s) ajoutée(s) · conversion en cours`);
       onOpenChange(false);

@@ -156,7 +156,7 @@ interface WorkspaceState {
   workspaceCreatedCallback: ((workspace: Workspace) => void) | null;
   isCreateTemplateModalOpen: boolean;
   isSettingsModalOpen: boolean;
-  addLinkDialog: { open: boolean; initialUrl: string; autoStart: boolean; seed: SeedPage[] };
+  addLinkDialog: { open: boolean; initialUrl: string; autoStart: boolean; seed: SeedPage[]; sourceGroupId?: string };
   createModalStep: 1 | 2;
   createTemplateModalStep: 1 | 2;
   isMobileSidebarOpen: boolean;
@@ -207,7 +207,7 @@ interface WorkspaceActions {
   closeCreateTemplateModal: () => void;
   openSettingsModal: (workspace?: Workspace) => void;
   closeSettingsModal: () => void;
-  openAddLink: (options?: { url?: string; autoStart?: boolean; seed?: SeedPage[] }) => void;
+  openAddLink: (options?: { url?: string; autoStart?: boolean; seed?: SeedPage[]; sourceGroupId?: string }) => void;
   closeAddLink: () => void;
   setCreateModalStep: (step: 1 | 2) => void;
   setCreateTemplateModalStep: (step: 1 | 2) => void;
@@ -306,7 +306,7 @@ interface WorkspaceActions {
   setFileFolderAssignment: (fileId: string, folderId: string | null) => Promise<void>;
   uploadPageFiles: (files: File[], options?: { autoIndex?: boolean; deepSearch?: boolean }) => Promise<void>;
   addPageLink: (workspaceId: string, url: string, options?: { deepSearch?: boolean; autoIndex?: boolean }) => Promise<void>;
-  addPageLinks: (workspaceId: string, urls: string[], options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string; names?: Record<string, string>; roots?: Record<string, string> }) => Promise<void>;
+  addPageLinks: (workspaceId: string, urls: string[], options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string; names?: Record<string, string>; roots?: Record<string, string>; sourceGroupId?: string }) => Promise<void>;
   runClassification: (input: StartClassificationRunInput) => Promise<void>;
   pollClassificationRun: (runId: string) => Promise<void>;
 
@@ -485,7 +485,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         }),
 
       openAddLink: (options) =>
-        set({ addLinkDialog: { open: true, initialUrl: options?.url ?? '', autoStart: options?.autoStart ?? false, seed: options?.seed ?? [] } }),
+        set({ addLinkDialog: { open: true, initialUrl: options?.url ?? '', autoStart: options?.autoStart ?? false, seed: options?.seed ?? [], sourceGroupId: options?.sourceGroupId } }),
 
       closeAddLink: () =>
         set({ addLinkDialog: { open: false, initialUrl: '', autoStart: false, seed: [] } }),
