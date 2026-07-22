@@ -107,7 +107,7 @@ describe('AppMarketplacePage', () => {
     expect(removeAppMock).toHaveBeenCalledWith('session-1');
   });
 
-  it('hides conversation and share actions for shared apps', async () => {
+  it('hides conversation and share actions for shared apps without conversation access', async () => {
     listDeployedAppsMock.mockResolvedValueOnce(sharedApps);
 
     renderPage();
@@ -115,6 +115,18 @@ describe('AppMarketplacePage', () => {
     expect(await screen.findByText('Shared app')).toBeInTheDocument();
     expect(screen.getByText(/card\.shared/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /card\.conversation/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /card\.share/i })).not.toBeInTheDocument();
+  });
+
+  it('shows conversation for shared apps with conversation access', async () => {
+    listDeployedAppsMock.mockResolvedValueOnce(
+      sharedApps.map((app) => ({ ...app, canOpenConversation: true })),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('Shared app')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /card\.conversation/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /card\.share/i })).not.toBeInTheDocument();
   });
 

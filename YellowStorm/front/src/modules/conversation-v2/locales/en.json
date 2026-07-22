@@ -97,7 +97,7 @@
     "menu": "Deployment options"
   },
   "share": {
-    "title": "Share the app",
+    "title": "Share app & conversation",
     "searchPlaceholder": "Search a user by email…",
     "searching": "Searching…",
     "noResults": "No user found",
@@ -159,7 +159,7 @@
       "copyError": "Failed to copy link"
     },
     "share": {
-      "success": "App shared by email",
+      "success": "App and conversation shared by email",
       "error": "Failed to share the app"
     }
   }

@@ -25,7 +25,9 @@ export interface ShareAppsBatchResult {
 }
 
 /**
- * Marketplace-only app sharing: grants recipients a card without conversation access.
+ * Marketplace app sharing. New shares also grant read-only conversation access
+ * (`includeConversation: true`) so recipients can open the session via the
+ * same Share icon flow.
  */
 @Injectable()
 export class ConversationV2AppShareService {
@@ -94,7 +96,23 @@ export class ConversationV2AppShareService {
         : null,
       source: 'shared' as const,
       shareId: doc._id.toString(),
+      canOpenConversation: doc.includeConversation === true,
     }));
+  }
+
+  /** True when the user has an app-share row with conversation access for this session. */
+  async hasConversationAccess(userId: string, sessionId: string): Promise<boolean> {
+    if (!Types.ObjectId.isValid(sessionId) || !Types.ObjectId.isValid(userId)) return false;
+    const share = await this.model
+      .findOne({
+        sessionId: new Types.ObjectId(sessionId),
+        recipientUserId: new Types.ObjectId(userId),
+        includeConversation: true,
+      })
+      .select('_id')
+      .lean()
+      .exec();
+    return !!share;
   }
 
   async removeShareForRecipient(userId: string, sessionId: string): Promise<boolean> {
@@ -150,7 +168,12 @@ export class ConversationV2AppShareService {
       throw new BadRequestException('You cannot share an app with yourself');
     }
 
-    await this.sendInviteEmail({ to: email, title: params.title, deployedUrl: params.deployedUrl });
+    await this.sendInviteEmail({
+      to: email,
+      title: params.title,
+      deployedUrl: params.deployedUrl,
+      sessionId: params.sessionId,
+    });
 
     const share = await this.model.findOneAndUpdate(
       {
@@ -163,6 +186,7 @@ export class ConversationV2AppShareService {
           title: params.title,
           deployedUrl: params.deployedUrl,
           lastDeployedAt: params.lastDeployedAt,
+          includeConversation: true,
         },
         $setOnInsert: {
           sessionId: new Types.ObjectId(params.sessionId),
@@ -181,20 +205,25 @@ export class ConversationV2AppShareService {
     to: string;
     title: string;
     deployedUrl: string;
+    sessionId: string;
   }): Promise<void> {
     const appName = this.config.get<string>('app.name', 'YelloStorm');
     const frontBase = this.config.get<string>('app.frontendUrl') ?? 'http://localhost:5173';
-    const marketplaceUrl = `${frontBase.replace(/\/$/, '')}/#/app-market`;
+    const base = frontBase.replace(/\/$/, '');
+    const marketplaceUrl = `${base}/#/app-market`;
+    const conversationUrl = `${base}/#/conversation-v2/${params.sessionId}`;
     const subject = `${params.title || 'An app'} has been shared with you`;
     const html = `
       <p>Hello,</p>
-      <p>An app built on ${appName} has been shared with you.</p>
-      <p><a href="${params.deployedUrl}" target="_blank" rel="noreferrer">${params.deployedUrl}</a></p>
-      <p>You can also open it from your <a href="${marketplaceUrl}">App Marketplace</a>.</p>
+      <p>An app and its conversation built on ${appName} have been shared with you.</p>
+      <p><strong>App:</strong> <a href="${params.deployedUrl}" target="_blank" rel="noreferrer">${params.deployedUrl}</a></p>
+      <p><strong>Conversation:</strong> <a href="${conversationUrl}">Open the conversation</a></p>
+      <p>You can also open the app from your <a href="${marketplaceUrl}">App Marketplace</a>.</p>
     `;
     const text = [
-      'An app has been shared with you.',
-      `Open it here: ${params.deployedUrl}`,
+      'An app and its conversation have been shared with you.',
+      `App: ${params.deployedUrl}`,
+      `Conversation: ${conversationUrl}`,
       `Marketplace: ${marketplaceUrl}`,
     ].join('\n');
 
@@ -213,7 +242,7 @@ export class ConversationV2AppShareService {
       await this.notifications.sendToUser(userId, {
         type: NotificationType.INFO,
         title: 'App shared with you',
-        message: `"${title || 'An app'}" was added to your App Marketplace.`,
+        message: `"${title || 'An app'}" and its conversation were added to your App Marketplace.`,
         data: { route: '/app-market' },
         metadata: { sourceModule: 'conversation-v2-app-share' },
       });

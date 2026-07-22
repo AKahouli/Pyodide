@@ -24,6 +24,7 @@ import { ConversationV2GrpcClientService } from './services/conversation-v2.grpc
 import { ConversationV2SessionService } from './services/conversation-v2-session.service';
 import { ConversationV2ShareService } from './services/conversation-v2-share.service';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
+import { ConversationV2ReadAccessGuard } from './guards/conversation-v2-read-access.guard';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { GetFileSignedUrlDto } from './dto/get-file-signed-url.dto';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
@@ -147,6 +148,7 @@ export class ConversationV2Controller {
       lastDeployedAt: string | null;
       source: 'owned' | 'shared';
       shareId: string | null;
+      canOpenConversation: boolean;
     }[];
   }> {
     const [owned, shared] = await Promise.all([
@@ -174,7 +176,7 @@ export class ConversationV2Controller {
   }
 
   @Get('sessions/:id')
-  @UseGuards(ConversationV2OwnerGuard)
+  @UseGuards(ConversationV2ReadAccessGuard)
   async getSession(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
@@ -192,9 +194,14 @@ export class ConversationV2Controller {
     deployStatus: string;
     deployedUrl: string | null;
     lastDeployedAt: string | null;
+    viewerRole: 'owner' | 'shared';
   }> {
-    const pointer = await this.sessions.getOne(user.id, id);
+    const pointer = await this.sessions.getById(id);
     if (!pointer) throw new NotFoundException('Session not found');
+    const ownerId =
+      typeof pointer.ownerId === 'string'
+        ? pointer.ownerId
+        : (pointer.ownerId as { toString(): string }).toString();
     return {
       sessionId: (pointer._id as Types.ObjectId).toString(),
       title: pointer.title,
@@ -213,11 +220,12 @@ export class ConversationV2Controller {
       lastDeployedAt: pointer.lastDeployedAt
         ? new Date(pointer.lastDeployedAt).toISOString()
         : null,
+      viewerRole: ownerId === user.id ? 'owner' : 'shared',
     };
   }
 
   @Get('sessions/:id/events')
-  @UseGuards(ConversationV2OwnerGuard)
+  @UseGuards(ConversationV2ReadAccessGuard)
   async listEvents(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,

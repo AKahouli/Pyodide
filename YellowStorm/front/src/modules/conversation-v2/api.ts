@@ -25,6 +25,8 @@ export interface SessionPointer {
   deployStatus: DeployStatus;
   deployedUrl: string | null;
   lastDeployedAt: string | null;
+  /** Owner can write; shared recipients are read-only. */
+  viewerRole?: 'owner' | 'shared';
 }
 
 export interface PersistedEventEnvelope {

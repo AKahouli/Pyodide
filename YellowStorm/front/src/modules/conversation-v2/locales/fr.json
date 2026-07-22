@@ -97,7 +97,7 @@
     "menu": "Options de déploiement"
   },
   "share": {
-    "title": "Partager l'application",
+    "title": "Partager l'application et la conversation",
     "searchPlaceholder": "Rechercher un utilisateur par email…",
     "searching": "Recherche…",
     "noResults": "Aucun utilisateur trouvé",
@@ -159,7 +159,7 @@
       "copyError": "Impossible de copier le lien"
     },
     "share": {
-      "success": "Application partagée par email",
+      "success": "Application et conversation partagées par email",
       "error": "Impossible de partager l'application"
     }
   }

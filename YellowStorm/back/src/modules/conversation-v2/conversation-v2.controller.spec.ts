@@ -34,6 +34,7 @@ describe('ConversationV2Controller', () => {
     deleteDraft: jest.fn(),
     list: jest.fn(),
     getOne: jest.fn(),
+    getById: jest.fn(),
     getByShareToken: jest.fn(),
     rename: jest.fn(),
     setShared: jest.fn(),
@@ -166,8 +167,9 @@ describe('ConversationV2Controller', () => {
 
   it('GET /sessions/:id returns the pointer payload', async () => {
     const id = new Types.ObjectId();
-    mockSessions.getOne.mockResolvedValueOnce({
+    mockSessions.getById.mockResolvedValueOnce({
       _id: id,
+      ownerId: 'u1',
       title: 't',
       status: 'active',
       isShared: false,
@@ -180,10 +182,11 @@ describe('ConversationV2Controller', () => {
     expect(result.sessionId).toBe(id.toString());
     expect(result.eventCount).toBe(3);
     expect(result.systemWorkspaceId).toBe('sysws');
+    expect(result.viewerRole).toBe('owner');
   });
 
   it('GET /sessions/:id throws NotFoundException when the pointer is missing', async () => {
-    mockSessions.getOne.mockResolvedValueOnce(null);
+    mockSessions.getById.mockResolvedValueOnce(null);
     await expect(controller.getSession({ id: 'u1' } as never, 's1')).rejects.toBeInstanceOf(
       NotFoundException,
     );
@@ -285,6 +288,7 @@ describe('ConversationV2Controller', () => {
         lastDeployedAt: '2026-07-17T10:00:00.000Z',
         source: 'owned',
         shareId: null,
+        canOpenConversation: true,
       },
     ]);
     mockAppShares.listSharedWithUser.mockResolvedValueOnce([
@@ -295,6 +299,7 @@ describe('ConversationV2Controller', () => {
         lastDeployedAt: '2026-07-16T10:00:00.000Z',
         source: 'shared',
         shareId: 'share-2',
+        canOpenConversation: true,
       },
     ]);
 
@@ -307,6 +312,7 @@ describe('ConversationV2Controller', () => {
           lastDeployedAt: '2026-07-17T10:00:00.000Z',
           source: 'owned',
           shareId: null,
+          canOpenConversation: true,
         },
         {
           sessionId: 'session-2',
@@ -315,6 +321,7 @@ describe('ConversationV2Controller', () => {
           lastDeployedAt: '2026-07-16T10:00:00.000Z',
           source: 'shared',
           shareId: 'share-2',
+          canOpenConversation: true,
         },
       ],
     });

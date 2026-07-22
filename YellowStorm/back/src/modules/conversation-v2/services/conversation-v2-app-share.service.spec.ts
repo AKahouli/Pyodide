@@ -74,6 +74,7 @@ describe('ConversationV2AppShareService', () => {
       skippedSelf: [],
     });
     expect(findOneAndUpdate).toHaveBeenCalled();
+    expect(findOneAndUpdate.mock.calls[0][1].$set.includeConversation).toBe(true);
     expect(email.send.mock.invocationCallOrder[0]).toBeLessThan(
       findOneAndUpdate.mock.invocationCallOrder[0],
     );
@@ -131,6 +132,7 @@ describe('ConversationV2AppShareService', () => {
                 title: 'Shared app',
                 deployedUrl: 'https://apps.example/shared',
                 lastDeployedAt: new Date('2026-07-16T10:00:00.000Z'),
+                includeConversation: true,
               },
             ]),
         }),
@@ -145,6 +147,7 @@ describe('ConversationV2AppShareService', () => {
         lastDeployedAt: '2026-07-16T10:00:00.000Z',
         source: 'shared',
         shareId: shareId.toString(),
+        canOpenConversation: true,
       },
     ]);
   });

@@ -4,7 +4,8 @@ import { Document, HydratedDocument, Types } from 'mongoose';
 export type ConversationV2AppShareDocument = HydratedDocument<ConversationV2AppShare>;
 
 /**
- * Grants Marketplace access to a deployed app without sharing the conversation.
+ * Grants Marketplace access to a deployed app. When `includeConversation` is
+ * true, the recipient may also open the conversation read-only.
  */
 @Schema({
   timestamps: true,
@@ -28,6 +29,10 @@ export class ConversationV2AppShare extends Document {
 
   @Prop({ type: Date, default: null })
   lastDeployedAt!: Date | null;
+
+  /** When true, recipient can GET session + events (read-only). */
+  @Prop({ type: Boolean, default: false })
+  includeConversation!: boolean;
 
   createdAt!: Date;
   updatedAt!: Date;

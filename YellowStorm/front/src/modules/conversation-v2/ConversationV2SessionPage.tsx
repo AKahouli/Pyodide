@@ -67,8 +67,10 @@ export default function ConversationV2SessionPage() {
   );
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [viewerRole, setViewerRole] = useState<'owner' | 'shared'>('owner');
   const sentInitialForSession = useRef<string | null>(null);
   const { t } = useConversationV2Translation();
+  const isReadOnlyViewer = viewerRole === 'shared';
 
   const latestPlan = useMemo(() => {
     for (let i = events.length - 1; i >= 0; i--) {
@@ -96,6 +98,7 @@ export default function ConversationV2SessionPage() {
     // Idempotent: a no-op if models are already cached (≤ 5 min old).
     void useModelsStore.getState().fetchModels().catch(() => undefined);
     setNotFound(false);
+    setViewerRole('owner');
 
     if (hydratedFromCache) {
       // Live state already in memory; just refresh pointer metadata.
@@ -104,6 +107,7 @@ export default function ConversationV2SessionPage() {
         try {
           const pointer = await conversationV2Api.getSession(sessionId);
           if (cancelled) return;
+          setViewerRole(pointer.viewerRole ?? 'owner');
           setSystemWorkspaceId(pointer.systemWorkspaceId);
           setWorkspaceIds(pointer.workspaceIds ?? []);
           setDeployState({
@@ -128,6 +132,7 @@ export default function ConversationV2SessionPage() {
         const pointer = await conversationV2Api.getSession(sessionId);
         if (cancelled) return;
 
+        setViewerRole(pointer.viewerRole ?? 'owner');
         setSystemWorkspaceId(pointer.systemWorkspaceId);
         setWorkspaceIds(pointer.workspaceIds ?? []);
         setDeployState({
@@ -156,7 +161,11 @@ export default function ConversationV2SessionPage() {
         const nonTerminal = pointer.status === 'active' || pointer.status === 'waiting';
         const last = collected[collected.length - 1];
         const lastIsTerminal = last?.type === 'done' || last?.type === 'error';
-        setStreaming(nonTerminal && collected.length > 0 && !lastIsTerminal);
+        setStreaming(
+          !pointer.viewerRole || pointer.viewerRole === 'owner'
+            ? nonTerminal && collected.length > 0 && !lastIsTerminal
+            : false,
+        );
       } catch {
         if (cancelled) return;
         setNotFound(true);
@@ -173,7 +182,7 @@ export default function ConversationV2SessionPage() {
   // session is loaded. Guarded by sentInitialForSession so we don't re-send
   // when the user navigates back to a session that was created with a state.
   useEffect(() => {
-    if (loading || notFound) return;
+    if (loading || notFound || isReadOnlyViewer) return;
     if (!sessionId || !initialMessage) return;
     if (sentInitialForSession.current === sessionId) return;
     sentInitialForSession.current = sessionId;
@@ -187,7 +196,7 @@ export default function ConversationV2SessionPage() {
     if (window.history.replaceState) {
       window.history.replaceState({}, '');
     }
-  }, [loading, notFound, sessionId, initialMessage, initialModel, initialSkillIds, setSelectedSkillIds, initialConnectorIds, setSelectedConnectorIds, sendMessage]);
+  }, [loading, notFound, isReadOnlyViewer, sessionId, initialMessage, initialModel, initialSkillIds, setSelectedSkillIds, initialConnectorIds, setSelectedConnectorIds, sendMessage]);
 
   if (loading) {
     return (
@@ -213,17 +222,17 @@ export default function ConversationV2SessionPage() {
             {t('session.errorTitle')}: {streamError}
           </div>
         )}
-        <MessageList />
+        <MessageList readOnly={isReadOnlyViewer} />
         {latestPlan && (
           <div className='shrink-0 pb-2'>
             <PlanPanel steps={latestPlan.steps} />
           </div>
         )}
-        <Composer onSend={sendMessage} />
+        {!isReadOnlyViewer && <Composer onSend={sendMessage} />}
       </div>
-      <RightPanel />
+      {!isReadOnlyViewer && <RightPanel />}
       <FileViewerSidebar />
-      <FilesSheet />
+      {!isReadOnlyViewer && <FilesSheet />}
     </div>
   );
 }
