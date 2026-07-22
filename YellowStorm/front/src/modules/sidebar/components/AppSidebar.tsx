@@ -45,6 +45,7 @@ import { PlaybookButton } from '@/modules/playbook/components/PlaybookButton';
 import { WorkyButton } from '@/modules/worky/components/WorkyButton';
 import { GovernanceButton } from '@/modules/governance';
 import { ConnectedAppButton } from '@/modules/connected-app';
+import { AppMarketplaceButton } from '@/modules/app-marketplace';
 import { AdminButton } from '@/modules/admin';
 import { usePermissions } from '@/modules/admin/hooks/usePermissions';
 import { useModuleTranslation } from '@/modules/localization';
@@ -293,6 +294,8 @@ export const AppSidebar = memo(function AppSidebar() {
             <WorkyButton />
 
             <ConnectedAppButton />
+
+            <AppMarketplaceButton />
 
             <AdminButton />
           </SidebarMenu>
