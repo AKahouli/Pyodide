@@ -730,7 +730,9 @@ export class WorkspaceDocumentService {
       // sidebar) as the document name; fall back to the URL-derived filename when
       // the page carried no link text.
       const providedName = options?.names?.[url]?.replace(/\s+/g, ' ').trim();
-      const filename = providedName ? providedName.slice(0, 200) : this.deriveFilenameFromUrl(url);
+      const filename = this.ensurePdfExtension(
+        providedName ? providedName.slice(0, 200) : this.deriveFilenameFromUrl(url),
+      );
       const root = options?.roots?.[url] ?? options?.sourceRootUrl;
       const effectiveName = await this.resolveUniqueOriginalName(workspaceId, filename);
       const documentId = new Types.ObjectId();
@@ -929,6 +931,17 @@ export class WorkspaceDocumentService {
    * segment), falling back to the host for the site root. Collisions are
    * resolved upstream by resolveUniqueOriginalName ("page (1).pdf").
    */
+  /**
+   * A link is always converted to a PDF, so its filename must carry a `.pdf`
+   * extension. Without it the stored blob key has no dot, and DocumentService
+   * .generateSasUrl rejects it as a "folder" — breaking view/download. The
+   * URL-derived name already ends in `.pdf`; this guards the clicked-link-text
+   * name (e.g. "Our Services" → "Our Services.pdf").
+   */
+  private ensurePdfExtension(name: string): string {
+    return /\.pdf$/i.test(name) ? name : `${name}.pdf`;
+  }
+
   private deriveFilenameFromUrl(url: string): string {
     try {
       const u = new URL(url);

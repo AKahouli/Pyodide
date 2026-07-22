@@ -56,6 +56,8 @@ describe('WorkspaceDocumentService.createFromAiArtifact', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
+        { provide: WorkspaceArtifactCleanupService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: {} },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -154,6 +156,8 @@ describe('WorkspaceDocumentService upload validation', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
+        { provide: WorkspaceArtifactCleanupService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: {} },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -243,6 +247,8 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
+        { provide: WorkspaceArtifactCleanupService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: {} },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -517,7 +523,10 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
       names: { 'https://a.com/services': '  Our   Services  ' },
     });
     const createArg = documentModel.create.mock.calls[0][0];
-    expect(createArg.originalName).toBe('Our Services');
+    // Link docs are always PDFs; the provided name gets a `.pdf` extension so the
+    // converted blob key carries one (an extensionless key can't be signed for
+    // view/download — DocumentService.generateSasUrl rejects it as a folder).
+    expect(createArg.originalName).toBe('Our Services.pdf');
   });
 
   it('addLinks falls back to the url-derived name when no link text is provided', async () => {
@@ -575,6 +584,8 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
+        { provide: WorkspaceArtifactCleanupService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: {} },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -792,6 +803,8 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: indexingService },
         { provide: UrlToPdfClientService, useValue: { convert } },
+        { provide: WorkspaceArtifactCleanupService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: {} },
         {
           provide: ConfigService,
           useValue: {
