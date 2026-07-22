@@ -39,7 +39,8 @@
     "empty": "Sélectionnez un outil pour l'inspecter.",
     "jumpToLive": "Revenir au direct",
     "tabCode": "Code",
-    "tabPreview": "Aperçu"
+    "tabPreview": "Aperçu",
+    "resizeHandle": "Glisser pour redimensionner l'aperçu"
   },
   "vnc": {
     "unavailable": "Aucune VM attachée à cette session",

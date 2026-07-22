@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from 'react';
-import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
+import { GripVertical } from 'lucide-react';
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
 export function OverflowTooltip({ children, text, className }: { children?: ReactNode; text: string; className?: string }) {
@@ -47,6 +48,8 @@ interface ResizablePanelProps {
   minWidth: number;
   maxWidthRatio?: number;
   handlePosition?: 'left' | 'right';
+  withHandle?: boolean;
+  resizeHandleLabel?: string;
   className?: string;
   style?: CSSProperties;
 }
@@ -58,6 +61,8 @@ export function ResizablePanel({
   minWidth,
   maxWidthRatio = 0.6,
   handlePosition = 'right',
+  withHandle = false,
+  resizeHandleLabel,
   className,
   style,
 }: ResizablePanelProps) {
@@ -128,6 +133,30 @@ export function ResizablePanel({
     event.currentTarget.releasePointerCapture(event.pointerId);
   }, []);
 
+  const handle = (
+    <div
+      onPointerDown={onResizeStart}
+      onPointerMove={onResizeMove}
+      onPointerUp={onResizeEnd}
+      onPointerCancel={onResizeEnd}
+      role='separator'
+      aria-orientation='vertical'
+      aria-label={resizeHandleLabel}
+      className={cn(
+        'group/resize absolute top-0 bottom-0 z-20 flex cursor-ew-resize items-center justify-center transition-colors hover:bg-primary/20 active:bg-primary/30',
+        withHandle ? 'w-3' : 'w-1 hover:bg-primary/30 active:bg-primary/50',
+        handlePosition === 'left' ? 'left-0' : 'right-0',
+      )}
+      style={{ touchAction: 'none' }}
+    >
+      {withHandle && (
+        <div className='flex h-8 w-3 items-center justify-center rounded-sm border bg-background text-muted-foreground shadow-sm transition-colors group-hover/resize:border-primary/40 group-hover/resize:text-foreground group-active/resize:border-primary/60'>
+          <GripVertical className='size-3' aria-hidden />
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div
       className={`relative flex h-full shrink-0 flex-col overflow-hidden ${className ?? ''}`}
@@ -138,16 +167,18 @@ export function ResizablePanel({
         ...style,
       }}
     >
-      <div
-        onPointerDown={onResizeStart}
-        onPointerMove={onResizeMove}
-        onPointerUp={onResizeEnd}
-        onPointerCancel={onResizeEnd}
-        className={`absolute top-0 bottom-0 z-20 w-1 cursor-ew-resize transition-colors hover:bg-primary/30 active:bg-primary/50 ${
-          handlePosition === 'left' ? 'left-0' : 'right-0'
-        }`}
-        style={{ touchAction: 'none' }}
-      />
+      {resizeHandleLabel ? (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>{handle}</TooltipTrigger>
+            <TooltipContent side={handlePosition === 'left' ? 'left' : 'right'} sideOffset={8}>
+              {resizeHandleLabel}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      ) : (
+        handle
+      )}
       {children}
     </div>
   );
