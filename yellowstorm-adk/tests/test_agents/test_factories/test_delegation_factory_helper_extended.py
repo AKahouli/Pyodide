@@ -118,13 +118,9 @@ class TestDelegationFactoryHelperExtended:
         agent_config = _agent_config(with_search=True)
         agent_config["agent_params"] = {
             "connector_bindings_json": '[{"connector_id": "c1", "action": "search"}]',
-            "platform_api_url": "https://platform.example.com",
         }
         with patch(
             "src.smart_rag.agents.factories.delegation_factory_helper.create_connector_tools",
-            return_value=[MagicMock()],
-        ), patch(
-            "src.smart_rag.agents.factories.delegation_factory_helper.create_platform_tools",
             return_value=[MagicMock()],
         ), patch(
             "src.smart_rag.agents.factories.delegation_factory_helper.prepare_agent_data",
@@ -144,7 +140,7 @@ class TestDelegationFactoryHelperExtended:
             )
         assert agent is mock_agent
         assert toolkit is not None
-        assert len(mock_agent.tools) >= 2
+        assert len(mock_agent.tools) >= 1
 
     def test_create_standard_agent_with_tools(self):
         helper = MagicMock()
