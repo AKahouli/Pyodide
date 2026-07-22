@@ -1,8 +1,9 @@
-import { useCallback, useState } from 'react';
-import { ChevronRight, Compass, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { Compass, Link2, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { FileTree, FileTreeActions, FileTreeFile, FileTreeFolder, FileTreeIcon } from '@/components/ai-elements/file-tree';
 import { normalizeUrl, type CollectedPage } from '../hooks/useBrowserSession';
 import type { IndexingStatus } from '../types';
 import { IndexingStatusDot } from './IndexingStatusDot';
@@ -139,15 +140,24 @@ function EditLeafPopover({ node, onEdit }: { node: TrieNode; onEdit: (oldUrl: st
   );
 }
 
-function TrieRows({
-  nodes, parentKey, selected, indexedUrls, collapsed, onToggleCollapse, onToggle, onDelete, onEdit, onExplore, exploring,
+/** Collect the tree path keys of every node that has children (a "folder"). */
+function collectFolderPaths(nodes: TrieNode[], parentKey: string, out: string[]): void {
+  for (const node of nodes) {
+    const path = `${parentKey}/${node.segment}`;
+    if (node.children.length > 0) {
+      out.push(path);
+      collectFolderPaths(node.children, path, out);
+    }
+  }
+}
+
+function TrieNodes({
+  nodes, parentKey, selected, indexedUrls, onToggle, onDelete, onEdit, onExplore, exploring,
 }: {
   nodes: TrieNode[];
   parentKey: string;
   selected: Set<string>;
   indexedUrls: Set<string>;
-  collapsed: Set<string>;
-  onToggleCollapse: (key: string) => void;
   onToggle: (url: string) => void;
   onDelete: (url: string) => void;
   onEdit?: (oldUrl: string, patch: { url?: string; name?: string }) => boolean;
@@ -155,97 +165,93 @@ function TrieRows({
   exploring?: Set<string>;
 }) {
   return (
-    <ul className='m-0 list-none p-0'>
+    <>
       {nodes.map((node) => {
-        const key = `${parentKey}/${node.segment}`;
+        const path = `${parentKey}/${node.segment}`;
         const hasChildren = node.children.length > 0;
-        const isCollapsed = collapsed.has(key);
-        const already = node.url ? indexedUrls.has(normalizeUrl(node.url)) : false;
+        const url = node.url;
+        const already = url ? indexedUrls.has(normalizeUrl(url)) : false;
         const displayName = node.label ?? node.segment;
-        return (
-          <li key={node.segment}>
-            <div className='flex items-center gap-1 border-b py-1 pr-2 text-sm'>
-              {hasChildren ? (
-                <button
-                  type='button'
-                  aria-label={`${isCollapsed ? 'expand' : 'collapse'} ${node.segment}`}
-                  className='flex size-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground'
-                  onClick={() => onToggleCollapse(key)}
-                >
-                  <ChevronRight className={`size-3.5 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
-                </button>
-              ) : (
-                <span className='size-4 shrink-0' aria-hidden />
-              )}
 
-              {node.url ? (
-                <>
-                  {node.indexingStatus && <IndexingStatusDot status={node.indexingStatus} />}
-                  <Checkbox
-                    aria-label={displayName}
-                    checked={selected.has(node.url)}
-                    disabled={already}
-                    onCheckedChange={() => onToggle(node.url as string)}
-                  />
-                  <div className='min-w-0 flex-1'>
-                    <div className='truncate font-medium' title={displayName}>{displayName}</div>
-                    <div className='truncate text-[11px] text-muted-foreground' title={node.url}>{node.url}</div>
-                    {already && <span className='text-[10px] text-muted-foreground'>Déjà indexée</span>}
-                  </div>
-                  {onExplore && (
-                    <button
-                      type='button'
-                      aria-label={`explore ${node.url}`}
-                      disabled={exploring?.has(node.url as string)}
-                      onClick={() => onExplore(node.url as string)}
-                      className='shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50'
-                    >
-                      {exploring?.has(node.url as string) ? <Loader2 className='h-4 w-4 animate-spin' /> : <Compass className='h-4 w-4' />}
-                    </button>
-                  )}
-                  {onEdit && <EditLeafPopover node={node} onEdit={onEdit} />}
-                  <button
-                    type='button'
-                    aria-label={`delete ${node.url}`}
-                    className='shrink-0 text-muted-foreground hover:text-destructive'
-                    onClick={() => onDelete(node.url as string)}
-                  >
-                    <Trash2 className='h-4 w-4' />
-                  </button>
-                </>
-              ) : (
-                <button
-                  type='button'
-                  className='min-w-0 flex-1 truncate text-left text-xs font-medium text-muted-foreground'
-                  title={node.segment}
-                  onClick={() => onToggleCollapse(key)}
-                >
-                  {node.segment}
-                </button>
-              )}
-            </div>
-
-            {hasChildren && !isCollapsed && (
-              <div className='ml-[9px] border-l border-border/60 pl-1'>
-                <TrieRows
-                  nodes={node.children}
-                  parentKey={key}
-                  selected={selected}
-                  indexedUrls={indexedUrls}
-                  collapsed={collapsed}
-                  onToggleCollapse={onToggleCollapse}
-                  onToggle={onToggle}
-                  onDelete={onDelete}
-                  onEdit={onEdit}
-                  onExplore={onExplore}
-                  exploring={exploring}
-                />
-              </div>
+        // Per-page controls, only for nodes that terminate a page (have a `url`).
+        const status = url && node.indexingStatus ? <IndexingStatusDot status={node.indexingStatus} /> : null;
+        const checkbox = url ? (
+          <Checkbox
+            aria-label={displayName}
+            checked={selected.has(url)}
+            disabled={already}
+            onCheckedChange={() => onToggle(url)}
+          />
+        ) : null;
+        const actions = url ? (
+          <FileTreeActions>
+            {onExplore && (
+              <button
+                type='button'
+                aria-label={`explore ${url}`}
+                disabled={exploring?.has(url)}
+                onClick={() => onExplore(url)}
+                className='shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-50'
+              >
+                {exploring?.has(url) ? <Loader2 className='h-4 w-4 animate-spin' /> : <Compass className='h-4 w-4' />}
+              </button>
             )}
-          </li>
+            {onEdit && <EditLeafPopover node={node} onEdit={onEdit} />}
+            <button
+              type='button'
+              aria-label={`delete ${url}`}
+              className='shrink-0 text-muted-foreground hover:text-destructive'
+              onClick={() => onDelete(url)}
+            >
+              <Trash2 className='h-4 w-4' />
+            </button>
+          </FileTreeActions>
+        ) : null;
+
+        // A node with children is a folder (a pure category, or a page that is
+        // also a category — in which case it carries the page controls too).
+        if (hasChildren) {
+          return (
+            <FileTreeFolder
+              key={node.segment}
+              path={path}
+              name={displayName}
+              icon={<Link2 className='size-4 text-muted-foreground' />}
+              leading={url ? <span className='flex items-center gap-1'>{status}{checkbox}</span> : undefined}
+              actions={actions ?? undefined}
+            >
+              <TrieNodes
+                nodes={node.children}
+                parentKey={path}
+                selected={selected}
+                indexedUrls={indexedUrls}
+                onToggle={onToggle}
+                onDelete={onDelete}
+                onEdit={onEdit}
+                onExplore={onExplore}
+                exploring={exploring}
+              />
+            </FileTreeFolder>
+          );
+        }
+
+        // Leaf page: fully custom row (checkbox, status, name/url, actions).
+        return (
+          <FileTreeFile key={node.segment} path={path} name={displayName}>
+            <span className='size-4 shrink-0' aria-hidden />
+            <FileTreeIcon><Link2 className='size-4 text-muted-foreground' /></FileTreeIcon>
+            {status}
+            {checkbox}
+            <div className='min-w-0 flex-1'>
+              <div className='truncate font-medium' title={displayName}>{displayName}</div>
+              <div className='truncate text-[11px] text-muted-foreground' title={url}>{url}</div>
+              {already && <span className='text-[10px] text-muted-foreground'>Déjà indexée</span>}
+            </div>
+            {actions}
+          </FileTreeFile>
         );
       })}
-    </ul>
+    </>
   );
 }
 
@@ -264,19 +270,16 @@ export function CollectionSidebar({
   onExplore?: (url: string) => void;
   exploring?: Set<string>;
 }) {
+  // Track collapsed folders (default: all expanded). Translate to/from the
+  // file-tree's "expanded" model, which is keyed on the same node path.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const onToggleCollapse = useCallback(
-    (key: string) =>
-      setCollapsed((prev) => {
-        const next = new Set(prev);
-        if (next.has(key)) next.delete(key);
-        else next.add(key);
-        return next;
-      }),
-    [],
-  );
-
   const roots = buildTrie(pages);
+  const folderPaths: string[] = [];
+  collectFolderPaths(roots, '', folderPaths);
+  const expanded = new Set(folderPaths.filter((p) => !collapsed.has(p)));
+  const onExpandedChange = (next: Set<string>) =>
+    setCollapsed(new Set(folderPaths.filter((p) => !next.has(p))));
+
   return (
     <div className='flex min-h-0 min-w-0 flex-col rounded border'>
       <div className='flex shrink-0 items-center gap-2 border-b px-2 py-1.5 text-xs'>
@@ -290,19 +293,19 @@ export function CollectionSidebar({
         {pages.length === 0 ? (
           <p className='p-3 text-sm text-muted-foreground'>Naviguez pour collecter des pages.</p>
         ) : (
-          <TrieRows
-            nodes={roots}
-            parentKey=''
-            selected={selected}
-            indexedUrls={indexedUrls}
-            collapsed={collapsed}
-            onToggleCollapse={onToggleCollapse}
-            onToggle={onToggle}
-            onDelete={onDelete}
-            onEdit={onEdit}
-            onExplore={onExplore}
-            exploring={exploring}
-          />
+          <FileTree className='border-0 bg-transparent font-sans' expanded={expanded} onExpandedChange={onExpandedChange}>
+            <TrieNodes
+              nodes={roots}
+              parentKey=''
+              selected={selected}
+              indexedUrls={indexedUrls}
+              onToggle={onToggle}
+              onDelete={onDelete}
+              onEdit={onEdit}
+              onExplore={onExplore}
+              exploring={exploring}
+            />
+          </FileTree>
         )}
       </div>
     </div>
