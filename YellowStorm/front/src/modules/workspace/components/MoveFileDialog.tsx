@@ -11,10 +11,11 @@ import type { WorkspaceFile, WorkspaceFolder } from '../types';
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  file: WorkspaceFile | null;
+  files: WorkspaceFile[];
+  title: string;
 };
 
-export function MoveFileDialog({ open, onOpenChange, file }: Props) {
+export function MoveFileDialog({ open, onOpenChange, files, title }: Props) {
   const folders = useWorkspaceStore((s) => s.pageFolders);
   const setFileFolderAssignment = useWorkspaceStore((s) => s.setFileFolderAssignment);
   const workspaceId = useWorkspaceStore((s) => s.selectedWorkspaceId);
@@ -22,13 +23,14 @@ export function MoveFileDialog({ open, onOpenChange, file }: Props) {
   const [pickerFolderId, setPickerFolderId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (open && file) {
-      const current = file.folderId
-        ? folders.find((f) => f.id === file.folderId) ?? null
+    if (open && files.length > 0) {
+      const current = files[0].folderId
+        ? folders.find((f) => f.id === files[0].folderId) ?? null
         : null;
       setPickerFolderId(current?.parentId ?? null);
     }
-  }, [open, file, folders]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `folders` is only used to resolve the seed value, not as a re-seed trigger; depending on it would re-run this effect on every unrelated folder-store update and reset the in-progress picker selection.
+  }, [open, files]);
 
   const wsFolders = useMemo(
     () => folders.filter((f) => f.workspaceId === workspaceId),
@@ -55,7 +57,7 @@ export function MoveFileDialog({ open, onOpenChange, file }: Props) {
     ? wsFolders.find((f) => f.id === pickerFolderId) ?? null
     : null;
 
-  const isAlreadyHere = file?.folderId === pickerFolderId;
+  const isAlreadyHere = files.length > 0 && files.every((f) => f.folderId === pickerFolderId);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -66,8 +68,8 @@ export function MoveFileDialog({ open, onOpenChange, file }: Props) {
               <ArrowRight className='h-5 w-5' />
             </div>
             <div className='min-w-0'>
-              <DialogTitle>Déplacer le fichier</DialogTitle>
-              <DialogDescription className='truncate'>{file?.name ?? ''}</DialogDescription>
+              <DialogTitle>Déplacer</DialogTitle>
+              <DialogDescription className='truncate'>{title}</DialogDescription>
             </div>
           </div>
         </DialogHeader>
@@ -157,8 +159,8 @@ export function MoveFileDialog({ open, onOpenChange, file }: Props) {
           <Button
             disabled={isAlreadyHere}
             onClick={() => {
-              if (!file) return;
-              void setFileFolderAssignment(file.id, pickerFolderId);
+              if (files.length === 0) return;
+              files.forEach((f) => void setFileFolderAssignment(f.id, pickerFolderId));
               onOpenChange(false);
             }}
           >

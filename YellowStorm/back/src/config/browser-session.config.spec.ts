@@ -9,6 +9,7 @@ describe('browserSessionConfig', () => {
     expect(c.viewportWidth).toBe(1280);
     expect(c.viewportHeight).toBe(720);
     expect(c.screencastQuality).toBe(80);
+    expect(c.clickLabelTtlMs).toBe(5000);
     expect(c.chromiumExecutablePath).toBe('');
   });
 
@@ -22,5 +23,11 @@ describe('browserSessionConfig', () => {
     process.env.BROWSER_SESSION_CHROMIUM_PATH = '/usr/bin/chromium';
     expect(browserSessionConfig().chromiumExecutablePath).toBe('/usr/bin/chromium');
     delete process.env.BROWSER_SESSION_CHROMIUM_PATH;
+  });
+
+  it('reads clickLabelTtlMs override from env', () => {
+    process.env.BROWSER_SESSION_CLICK_LABEL_TTL_MS = '8000';
+    expect(browserSessionConfig().clickLabelTtlMs).toBe(8000);
+    delete process.env.BROWSER_SESSION_CLICK_LABEL_TTL_MS;
   });
 });

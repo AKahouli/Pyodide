@@ -9,12 +9,14 @@ import { LoggerService } from '../logger';
 class FakeSession implements EngineSession {
   frameCb?: (f: string) => void;
   navCb?: (n: { url: string; title: string }) => void;
+  loadingCb?: (loading: boolean) => void;
   closed = false;
   inputs: InputEvent[] = [];
   navs: NavAction[] = [];
   constructor(private url: string) {}
   onFrame(cb: (f: string) => void) { this.frameCb = cb; }
   onNavigated(cb: (n: { url: string; title: string }) => void) { this.navCb = cb; }
+  onLoading(cb: (loading: boolean) => void) { this.loadingCb = cb; }
   async dispatchInput(e: InputEvent) { this.inputs.push(e); }
   async navigate(a: NavAction) { this.navs.push(a); if (a.kind === 'goto') this.url = a.url; }
   currentUrl() { return this.url; }
@@ -64,6 +66,17 @@ describe('BrowserSessionService', () => {
     await Promise.resolve();
     expect(events).toContainEqual({ e: 'frame', p: { data: 'BASE64' } });
     expect(events).toContainEqual({ e: 'navigated', p: { url: 'https://ok.example/a', title: 'A' } });
+  });
+
+  it('relays engine loading state to the client', async () => {
+    const engine = new FakeEngine();
+    const svc = await build(engine);
+    const events: Array<{ e: string; p: unknown }> = [];
+    await svc.create('u1', 'https://ok.example', (e, p) => events.push({ e, p }));
+    engine.sessions[0].loadingCb!(true);
+    engine.sessions[0].loadingCb!(false);
+    expect(events).toContainEqual({ e: 'loading', p: { loading: true } });
+    expect(events).toContainEqual({ e: 'loading', p: { loading: false } });
   });
 
   it('rejects a session over the concurrency cap', async () => {

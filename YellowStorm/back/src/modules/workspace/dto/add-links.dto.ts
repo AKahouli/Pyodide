@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsBoolean, IsOptional, IsUrl } from 'class-validator';
+import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsBoolean, IsObject, IsOptional, IsString, IsUrl } from 'class-validator';
 
 export class AddLinksDto {
   @IsArray()
@@ -14,4 +14,23 @@ export class AddLinksDto {
   @IsOptional()
   @IsBoolean()
   autoIndex?: boolean;
+
+  @IsOptional()
+  @IsUrl({ require_protocol: true })
+  sourceRootUrl?: string;
+
+  /** Optional display name per URL (the clicked link/button text), keyed by url. */
+  @IsOptional()
+  @IsObject()
+  names?: Record<string, string>;
+
+  /** Optional per-URL source-root override (manual links root themselves), keyed by url. */
+  @IsOptional()
+  @IsObject()
+  roots?: Record<string, string>;
+
+  /** Reuse an existing group id (continue mode); omitted → the backend mints a new one. */
+  @IsOptional()
+  @IsString()
+  sourceGroupId?: string;
 }

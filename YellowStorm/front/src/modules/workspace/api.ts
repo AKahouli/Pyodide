@@ -780,7 +780,7 @@ export async function addLink(
 /**
  * Add multiple website links as workspace documents
  */
-export async function addLinks(workspaceId: string, urls: string[], options?: { deepSearch?: boolean; autoIndex?: boolean }): Promise<WorkspaceDocument[]> {
+export async function addLinks(workspaceId: string, urls: string[], options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string; names?: Record<string, string>; roots?: Record<string, string>; sourceGroupId?: string }): Promise<WorkspaceDocument[]> {
   const response = await apiClient.post<ApiResponse<WorkspaceDocument[]>>(
     API_ENDPOINTS.workspaceDocuments.links(workspaceId),
       { urls, ...options },
@@ -790,5 +790,14 @@ export async function addLinks(workspaceId: string, urls: string[], options?: { 
 
 export async function checkUrls(workspaceId: string, urls: string[]): Promise<{ results: Array<{ url: string; normalizedUrl: string; exists: boolean }> }> {
   const response = await apiClient.post<ApiResponse<{ results: Array<{ url: string; normalizedUrl: string; exists: boolean }> }>>(API_ENDPOINTS.workspaceDocuments.checkUrls(workspaceId), { urls });
+  return response.data.data;
+}
+
+/** Crawl a link and return the sublinks under its path. */
+export async function crawlUrl(workspaceId: string, url: string): Promise<{ pages: Array<{ url: string; title?: string }>; truncated: boolean }> {
+  const response = await apiClient.post<ApiResponse<{ pages: Array<{ url: string; title?: string }>; truncated: boolean }>>(
+    API_ENDPOINTS.workspaceDocuments.crawl(workspaceId),
+    { url },
+  );
   return response.data.data;
 }

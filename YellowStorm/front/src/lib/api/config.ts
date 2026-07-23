@@ -159,6 +159,7 @@ export const API_ENDPOINTS = {
     validateUrl: (workspaceId: string) => `/workspaces/${workspaceId}/documents/validate-url`,
     links: (workspaceId: string) => `/workspaces/${workspaceId}/documents/links`,
     checkUrls: (workspaceId: string) => `/workspaces/${workspaceId}/documents/check-urls`,
+    crawl: (workspaceId: string) => `/workspaces/${workspaceId}/documents/crawl`,
   },
   workspaceSettings: {
     list: '/workspace-settings',

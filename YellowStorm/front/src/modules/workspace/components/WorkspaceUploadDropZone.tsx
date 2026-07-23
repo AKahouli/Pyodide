@@ -15,12 +15,13 @@ export function WorkspaceUploadDropZone() {
   const canWrite = useCanWriteWorkspace();
   const uploadPageFiles = useWorkspaceStore((s) => s.uploadPageFiles);
   const selectedWorkspaceId = useWorkspaceStore((s) => s.selectedWorkspaceId);
+  const addLinkDialog = useWorkspaceStore((s) => s.addLinkDialog);
+  const openAddLink = useWorkspaceStore((s) => s.openAddLink);
+  const closeAddLink = useWorkspaceStore((s) => s.closeAddLink);
   const { accept } = useAllowedUploadExtensions();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
-  const [linkOpen, setLinkOpen] = useState(false);
-  const [linkInitialUrl, setLinkInitialUrl] = useState('');
 
   const pushFiles = (list: FileList | null) => {
     if (!list || list.length === 0) return;
@@ -30,10 +31,7 @@ export function WorkspaceUploadDropZone() {
     });
   };
 
-  const openLink = (initialUrl: string) => {
-    setLinkInitialUrl(initialUrl);
-    setLinkOpen(true);
-  };
+  const openLink = (initialUrl: string) => openAddLink({ url: initialUrl });
 
   const dragHasFiles = (e: React.DragEvent) => e.dataTransfer.types.includes('Files');
   const dragHasText = (e: React.DragEvent) =>
@@ -147,10 +145,11 @@ export function WorkspaceUploadDropZone() {
 
       {selectedWorkspaceId && (
         <AddLinkDialog
-          open={linkOpen}
-          onOpenChange={setLinkOpen}
+          open={addLinkDialog.open}
+          onOpenChange={(o) => { if (!o) closeAddLink(); }}
           workspaceId={selectedWorkspaceId}
-          initialUrl={linkInitialUrl}
+          initialUrl={addLinkDialog.initialUrl}
+          autoStart={addLinkDialog.autoStart}
         />
       )}
     </>

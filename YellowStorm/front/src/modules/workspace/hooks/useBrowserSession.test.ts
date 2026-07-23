@@ -50,6 +50,25 @@ describe('useBrowserSession', () => {
     expect(result.current.pages.map((p) => p.title)).toEqual(['A', 'B']);
   });
 
+  it('stores the clicked link text on the collected page', async () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.start('https://ok.example'); });
+    await waitFor(() => expect(result.current.status).toBe('live'));
+    act(() => { handlers['navigated']({ url: 'https://ok.example/a', title: 'A', linkText: 'About Us' }); });
+    expect(result.current.pages[0].linkText).toBe('About Us');
+  });
+
+  it('tracks loading state from the loading event', async () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.start('https://ok.example'); });
+    await waitFor(() => expect(result.current.status).toBe('live'));
+    expect(result.current.loading).toBe(false);
+    act(() => { handlers['loading']({ loading: true }); });
+    expect(result.current.loading).toBe(true);
+    act(() => { handlers['loading']({ loading: false }); });
+    expect(result.current.loading).toBe(false);
+  });
+
   it('surfaces a blocked notice', async () => {
     const { result } = renderHook(() => useBrowserSession());
     act(() => { result.current.start('https://ok.example'); });
@@ -63,5 +82,77 @@ describe('useBrowserSession', () => {
     const { result } = renderHook(() => useBrowserSession());
     act(() => { result.current.start('https://ok.example'); });
     await waitFor(() => expect(result.current.status).toBe('busy'));
+  });
+
+  it('retains the session root url across navigations', async () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.start('https://root.example/start'); });
+    await waitFor(() => expect(result.current.status).toBe('live'));
+    expect(result.current.rootUrl).toBe('https://root.example/start');
+    act(() => { handlers['navigated']({ url: 'https://root.example/other', title: 'Other' }); });
+    expect(result.current.currentUrl).toBe('https://root.example/other');
+    expect(result.current.rootUrl).toBe('https://root.example/start');
+  });
+
+  it('addManualPage adds a manual page and rejects invalid/duplicate urls', () => {
+    const { result } = renderHook(() => useBrowserSession());
+    let ok!: boolean;
+    act(() => { ok = result.current.addManualPage('https://other.org/docs', '  My  Docs '); });
+    expect(ok).toBe(true);
+    expect(result.current.pages.at(-1)).toMatchObject({ url: 'https://other.org/docs', linkText: 'My Docs', manual: true });
+    act(() => { ok = result.current.addManualPage('https://other.org/docs'); }); // duplicate
+    expect(ok).toBe(false);
+    act(() => { ok = result.current.addManualPage('not a url'); }); // invalid
+    expect(ok).toBe(false);
+    expect(result.current.pages).toHaveLength(1);
+  });
+
+  it('start seeds the collection and dedups a later navigation to a seeded url', async () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.start('https://root.example', [{ url: 'https://root.example/a', title: '', indexingStatus: 'ready' }]); });
+    await waitFor(() => expect(result.current.status).toBe('live'));
+    expect(result.current.pages).toHaveLength(1);
+    expect(result.current.pages[0]).toMatchObject({ url: 'https://root.example/a', indexingStatus: 'ready' });
+    act(() => { handlers['navigated']({ url: 'https://root.example/a', title: 'A' }); }); // same as seeded → deduped
+    expect(result.current.pages).toHaveLength(1);
+    act(() => { handlers['navigated']({ url: 'https://root.example/b', title: 'B' }); }); // new → added
+    expect(result.current.pages).toHaveLength(2);
+  });
+
+  it('updatePage edits name and url and rejects collisions', () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.addManualPage('https://a.com/x', 'X'); });
+    act(() => { result.current.addManualPage('https://b.com/y', 'Y'); });
+    let ok!: boolean;
+    act(() => { ok = result.current.updatePage('https://a.com/x', { name: 'New Name', url: 'https://a.com/z' }); });
+    expect(ok).toBe(true);
+    expect(result.current.pages.find((p) => p.url === 'https://a.com/z')).toMatchObject({ linkText: 'New Name', url: 'https://a.com/z' });
+    act(() => { ok = result.current.updatePage('https://a.com/z', { url: 'https://b.com/y' }); }); // collides with Y
+    expect(ok).toBe(false);
+  });
+
+  it('removePage removes a page and frees its url so it can be re-added', () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.addManualPage('https://a.com/x', 'X'); });
+    let ok!: boolean;
+    act(() => { ok = result.current.removePage('https://a.com/x'); });
+    expect(ok).toBe(true);
+    expect(result.current.pages.map((p) => p.url)).not.toContain('https://a.com/x');
+    // seenRef was cleared, so the same url is addable again
+    let readded!: boolean;
+    act(() => { readded = result.current.addManualPage('https://a.com/x', 'X again'); });
+    expect(readded).toBe(true);
+    // removing an unknown url is a no-op
+    act(() => { ok = result.current.removePage('https://nope.com'); });
+    expect(ok).toBe(false);
+  });
+
+  it('addPages batch-adds new pages and dedups already-seen ones', () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.addManualPage('https://a.com/x'); });
+    let added!: number;
+    act(() => { added = result.current.addPages([{ url: 'https://a.com/x', title: '' }, { url: 'https://a.com/y', title: 'Y' }]); });
+    expect(added).toBe(1); // x already seen, y new
+    expect(result.current.pages.map((p) => p.url)).toContain('https://a.com/y');
   });
 });

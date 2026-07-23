@@ -58,6 +58,7 @@ import { normalizeWorkspaceUrl } from './services/url-normalization';
 import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
 import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
 import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
+import { WebsiteCrawlerService } from './services/website-crawler.service';
 
 @Injectable()
 export class WorkspaceDocumentService {
@@ -84,6 +85,7 @@ export class WorkspaceDocumentService {
     private readonly urlToPdfClient: UrlToPdfClientService,
     private readonly logger: LoggerService,
     private readonly workspaceArtifacts: WorkspaceArtifactCleanupService,
+    private readonly websiteCrawler: WebsiteCrawlerService,
     @Optional() private readonly outbox?: IntegrationEventOutboxService,
   ) {
     this.logger.setContext('WorkspaceDocumentService');
@@ -703,7 +705,7 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     userId: string,
     urls: string[],
-    options?: { deepSearch?: boolean; autoIndex?: boolean },
+    options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string; names?: Record<string, string>; roots?: Record<string, string>; sourceGroupId?: string },
   ): Promise<DocumentResponse[]> {
     // Nominal size of 0: the converted PDF's size is unknown until conversion
     // runs, but we can still reject early if the workspace is already over
@@ -716,11 +718,22 @@ export class WorkspaceDocumentService {
       );
     }
 
+    // One group per index batch: reuse the caller's id (continue mode) or mint a
+    // fresh one, so two separate sessions on the same URL form two distinct groups.
+    const groupId = options?.sourceGroupId ?? new Types.ObjectId().toString();
+
     // Create all docs first (fast; each PROCESSING with a unique placeholder path).
     const created: Array<{ response: DocumentResponse; id: string; url: string; name: string }> =
       [];
     for (const url of urls) {
-      const filename = this.deriveFilenameFromUrl(url);
+      // Prefer the clicked link/button text (the same label shown in the browse
+      // sidebar) as the document name; fall back to the URL-derived filename when
+      // the page carried no link text.
+      const providedName = options?.names?.[url]?.replace(/\s+/g, ' ').trim();
+      const filename = this.ensurePdfExtension(
+        providedName ? providedName.slice(0, 200) : this.deriveFilenameFromUrl(url),
+      );
+      const root = options?.roots?.[url] ?? options?.sourceRootUrl;
       const effectiveName = await this.resolveUniqueOriginalName(workspaceId, filename);
       const documentId = new Types.ObjectId();
 
@@ -735,6 +748,13 @@ export class WorkspaceDocumentService {
           deepSearchRequested: String(Boolean(options?.deepSearch)),
           autoIndexRequested: String(options?.autoIndex !== false),
           normalizedSourceUrl: normalizeWorkspaceUrl(url),
+          sourceGroupId: groupId,
+          ...(root
+            ? {
+                sourceRootUrl: root,
+                normalizedSourceRootUrl: normalizeWorkspaceUrl(root),
+              }
+            : {}),
         },
         // The collection enforces a unique index on `path`. A link has no blob
         // yet at creation, so assign a unique placeholder (mirroring the folder
@@ -805,6 +825,24 @@ export class WorkspaceDocumentService {
         };
       }),
     };
+  }
+
+  /**
+   * Crawl a seed URL and return the discovered pages that live UNDER the seed's
+   * path (so "Explore" on /docs yields /docs/*; a root seed yields the whole site).
+   */
+  async crawlSite(_workspaceId: string, url: string): Promise<{ pages: Array<{ url: string; title?: string }>; truncated: boolean }> {
+    const { pages, truncated } = await this.websiteCrawler.crawl(url);
+    let seedPath = '/';
+    try { seedPath = new URL(url).pathname.replace(/\/+$/, '') || '/'; } catch { /* keep '/' */ }
+    const underSeed = (candidate: string): boolean => {
+      try {
+        const p = new URL(candidate).pathname;
+        if (seedPath === '/') return true;
+        return p === seedPath || p.startsWith(`${seedPath}/`);
+      } catch { return false; }
+    };
+    return { pages: pages.filter((p) => underSeed(p.url)), truncated };
   }
 
   private async recordWorkspaceEvent(eventType: string, document: WorkspaceDocumentDoc): Promise<void> {
@@ -893,6 +931,17 @@ export class WorkspaceDocumentService {
    * segment), falling back to the host for the site root. Collisions are
    * resolved upstream by resolveUniqueOriginalName ("page (1).pdf").
    */
+  /**
+   * A link is always converted to a PDF, so its filename must carry a `.pdf`
+   * extension. Without it the stored blob key has no dot, and DocumentService
+   * .generateSasUrl rejects it as a "folder" — breaking view/download. The
+   * URL-derived name already ends in `.pdf`; this guards the clicked-link-text
+   * name (e.g. "Our Services" → "Our Services.pdf").
+   */
+  private ensurePdfExtension(name: string): string {
+    return /\.pdf$/i.test(name) ? name : `${name}.pdf`;
+  }
+
   private deriveFilenameFromUrl(url: string): string {
     try {
       const u = new URL(url);

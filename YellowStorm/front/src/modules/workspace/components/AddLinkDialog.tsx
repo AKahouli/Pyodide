@@ -8,10 +8,10 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { useWorkspaceStore } from '../store';
-import { useBrowserSession, normalizeUrl } from '../hooks/useBrowserSession';
+import { crawlUrl } from '../api';
+import { useBrowserSession, normalizeUrl, type CollectedPage } from '../hooks/useBrowserSession';
 import { readAutoIndexationValue } from '../hooks/useAutoIndexation';
 import { readDeepSearchIndexationValue } from '../hooks/useDeepSearchIndexation';
-import { checkUrls } from '../api';
 import { BrowserSessionViewer } from './BrowserSessionViewer';
 import { CollectionSidebar } from './CollectionSidebar';
 
@@ -22,16 +22,27 @@ function isValidUrl(value: string): boolean {
   } catch { return false; }
 }
 
+/** Move a selection entry from oldUrl to newUrl (no-op if oldUrl wasn't selected). */
+export function migrateSelection(selected: Set<string>, oldUrl: string, newUrl: string): Set<string> {
+  if (!selected.has(oldUrl)) return selected;
+  const next = new Set(selected);
+  next.delete(oldUrl);
+  next.add(newUrl);
+  return next;
+}
+
 export function AddLinkDialog({
-  open, onOpenChange, workspaceId, initialUrl = '',
+  open, onOpenChange, workspaceId, initialUrl = '', autoStart = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   workspaceId: string;
   initialUrl?: string;
+  autoStart?: boolean;
 }) {
   const addPageLinks = useWorkspaceStore((s) => s.addPageLinks);
-  const documentsCache = useWorkspaceStore((s) => s.documents);
+  const seed = useWorkspaceStore((s) => s.addLinkDialog.seed);
+  const sourceGroupId = useWorkspaceStore((s) => s.addLinkDialog.sourceGroupId);
   const session = useBrowserSession();
 
   const [phase, setPhase] = useState<'input' | 'browse'>('input');
@@ -40,52 +51,49 @@ export function AddLinkDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [serverIndexedUrls, setServerIndexedUrls] = useState<Set<string>>(new Set());
+  const [exploring, setExploring] = useState<Set<string>>(new Set());
+
+  const indexedUrls = useMemo(() => new Set(seed.map((s) => normalizeUrl(s.url))), [seed]);
 
   useEffect(() => {
     if (open) {
-      // An already-active session (e.g. carried over from a prior open) should
-      // drop the user straight into the browse phase instead of forcing a
-      // redundant "input" step.
-      setPhase(session.status === 'idle' ? 'input' : 'browse');
-      setUrl(initialUrl); setError(null); setBusy(false); setSelected(new Set());
+      if (autoStart && isValidUrl(initialUrl)) {
+        // Opened from an existing group: skip the input step and browse the
+        // root URL directly so the user can index more pages immediately.
+        setUrl(initialUrl); setError(null); setBusy(false); setSelected(new Set());
+        session.start(
+          initialUrl.trim(),
+          seed.map((s) => ({
+            url: s.url,
+            title: '',
+            linkText: s.name,
+            indexingStatus: s.indexingStatus as CollectedPage['indexingStatus'],
+          })),
+        );
+        setPhase('browse');
+      } else {
+        // An already-active session (e.g. carried over from a prior open) should
+        // drop the user straight into the browse phase instead of forcing a
+        // redundant "input" step.
+        setPhase(session.status === 'idle' ? 'input' : 'browse');
+        setUrl(initialUrl); setError(null); setBusy(false); setSelected(new Set());
+      }
     } else {
       session.stop();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialUrl]);
 
-  // Auto-select each newly collected page.
+  // Auto-select each newly collected page (never the already-indexed seed).
   useEffect(() => {
     setSelected((prev) => {
       const next = new Set(prev);
-      session.pages.forEach((p) => next.add(p.url));
+      session.pages.forEach((p) => { if (!indexedUrls.has(normalizeUrl(p.url))) next.add(p.url); });
       return next;
     });
-  }, [session.pages]);
+  }, [session.pages, indexedUrls]);
 
   useEffect(() => { if (session.currentUrl) setAddressBar(session.currentUrl); }, [session.currentUrl]);
-
-  // `documents` in the store is a paginated cache (Map<page, WorkspaceDocument[]>),
-  // not a flat array — flatten it defensively (tests may pass a plain array/[]).
-  const indexedUrls = useMemo(() => {
-    const all = documentsCache instanceof Map ? Array.from(documentsCache.values()).flat() : [];
-    return new Set([
-      ...all.filter((d) => d?.sourceUrl).map((d) => normalizeUrl(d.sourceUrl as string)),
-      ...serverIndexedUrls,
-    ]);
-  }, [documentsCache, serverIndexedUrls]);
-
-  useEffect(() => {
-    const urls = session.pages.map((page) => page.url);
-    if (urls.length === 0) return;
-    const timer = window.setTimeout(() => {
-      void checkUrls(workspaceId, urls).then((response) => {
-        setServerIndexedUrls(new Set(response.results.filter((result) => result.exists).map((result) => normalizeUrl(result.normalizedUrl))));
-      }).catch(() => undefined);
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [workspaceId, session.pages]);
 
   const handleStart = () => {
     setError(null);
@@ -96,9 +104,13 @@ export function AddLinkDialog({
 
   const toggle = (u: string) =>
     setSelected((prev) => { const n = new Set(prev); n.has(u) ? n.delete(u) : n.add(u); return n; });
-  const remove = (u: string) =>
+  // Remove the page from the collection entirely (the delete button). Unchecking
+  // is a separate action handled by the checkbox (`toggle`).
+  const remove = (u: string) => {
+    session.removePage(u);
     setSelected((prev) => { const n = new Set(prev); n.delete(u); return n; });
-  const selectableUrls = () => session.pages.filter((p) => !indexedUrls.has(normalizeUrl(p.url))).map((p) => p.url);
+  };
+  const selectableUrls = () => session.pages.map((p) => p.url).filter((u) => !indexedUrls.has(normalizeUrl(u)));
   const selectAll = () => setSelected(new Set(selectableUrls()));
   const selectNone = () => setSelected(new Set());
 
@@ -106,11 +118,44 @@ export function AddLinkDialog({
     .map((p) => p.url)
     .filter((u) => selected.has(u) && !indexedUrls.has(normalizeUrl(u)));
 
+  const handleExplore = async (exploreUrl: string) => {
+    setExploring((p) => new Set(p).add(exploreUrl));
+    try {
+      const { pages, truncated } = await crawlUrl(workspaceId, exploreUrl);
+      const added = session.addPages(pages.map((p) => ({ url: p.url, title: p.title ?? '' })));
+      toast.success(added === 0 ? 'Aucune nouvelle page trouvée.' : `${added} page(s) trouvée(s)${truncated ? ' (limite atteinte)' : ''}`);
+    } catch {
+      toast.error("L'exploration a échoué.");
+    } finally {
+      setExploring((p) => { const n = new Set(p); n.delete(exploreUrl); return n; });
+    }
+  };
+
   const handleIndex = async () => {
     if (busy || chosen.length === 0) return;
     setBusy(true);
     try {
-      await addPageLinks(workspaceId, chosen, { deepSearch: readDeepSearchIndexationValue(), autoIndex: readAutoIndexationValue() });
+      // Carry each page's display name (the clicked link/button text, same as the
+      // sidebar) so indexed docs are named after the link rather than the URL.
+      const names: Record<string, string> = {};
+      for (const page of session.pages) {
+        if (!chosen.includes(page.url)) continue;
+        const name = (page.linkText || page.title || '').replace(/\s+/g, ' ').trim();
+        if (name) names[page.url] = name;
+      }
+      // Every link indexed in this session shares the session's start URL as its
+      // group root — including manually-added links on other domains (grouping is
+      // the user's responsibility). No per-link self-rooting.
+      await addPageLinks(workspaceId, chosen, {
+        deepSearch: readDeepSearchIndexationValue(),
+        autoIndex: readAutoIndexationValue(),
+        sourceRootUrl: session.rootUrl ?? undefined,
+        names,
+        // Continue mode (double-click) reuses the group's id so new pages join it;
+        // a clean-slate "Ajouter un lien" leaves it undefined → the backend mints a
+        // fresh group id, so re-adding the same URL forms a new (duplicate) group.
+        sourceGroupId,
+      });
       toast.success(`${chosen.length} page(s) ajoutée(s) · conversion en cours`);
       onOpenChange(false);
     } catch {
@@ -121,7 +166,7 @@ export function AddLinkDialog({
   return (
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
       <DialogContent
-        className={phase === 'browse' ? 'flex h-[92vh] w-[96vw] max-w-[96vw] flex-col gap-3 overflow-hidden' : undefined}
+        className={phase === 'browse' ? 'flex h-[92vh] w-[80vw] max-w-[96vw] flex-col gap-3 overflow-hidden' : undefined}
       >
         <DialogHeader className={phase === 'browse' ? 'shrink-0' : undefined}>
           <DialogTitle>Ajouter un lien</DialogTitle>
@@ -146,7 +191,7 @@ export function AddLinkDialog({
             {error && <p className='text-sm text-destructive'>{error}</p>}
           </div>
         ) : (
-          <div className='grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[1fr_320px]'>
+          <div className='grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[1fr_520px]'>
             <div className='flex min-h-0 min-w-0 flex-col rounded border'>
               <div className='flex shrink-0 items-center gap-1 border-b px-2 py-1.5'>
                 <Button size='icon' variant='ghost' className='h-7 w-7' onClick={() => session.navigate({ kind: 'back' })}><ArrowLeft className='h-4 w-4' /></Button>
@@ -165,7 +210,7 @@ export function AddLinkDialog({
                 ) : session.status === 'connecting' ? (
                   <div className='flex h-full items-center justify-center'><Loader2 className='h-6 w-6 animate-spin' /></div>
                 ) : (
-                  <BrowserSessionViewer frame={session.frame} onInput={session.sendInput} />
+                  <BrowserSessionViewer frame={session.frame} onInput={session.sendInput} loading={session.loading} />
                 )}
                 {session.blockedNotice && (
                   <div className='absolute inset-x-0 bottom-0 bg-destructive/90 px-3 py-1.5 text-xs text-destructive-foreground'>
@@ -182,6 +227,16 @@ export function AddLinkDialog({
               onDelete={remove}
               onSelectAll={selectAll}
               onSelectNone={selectNone}
+              onAdd={(url, name) => session.addManualPage(url, name)}
+              onEdit={(oldUrl, patch) => {
+                const ok = session.updatePage(oldUrl, patch);
+                if (ok && patch.url && patch.url !== oldUrl) {
+                  setSelected((prev) => migrateSelection(prev, oldUrl, patch.url as string));
+                }
+                return ok;
+              }}
+              onExplore={handleExplore}
+              exploring={exploring}
             />
           </div>
         )}

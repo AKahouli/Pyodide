@@ -19,6 +19,8 @@ import { IndexingService } from '../indexing/indexing.service';
 import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
 import { LoggerService } from '../logger';
 import { WorkspaceUploadSettingsService } from '../system/workspace-upload-settings.service';
+import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
+import { WebsiteCrawlerService } from './services/website-crawler.service';
 import {
   DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS,
 } from '../system/constants/workspace-upload-settings.constants';
@@ -55,6 +57,8 @@ describe('WorkspaceDocumentService.createFromAiArtifact', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
+        { provide: WorkspaceArtifactCleanupService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: {} },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -161,6 +165,8 @@ describe('WorkspaceDocumentService upload validation', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
+        { provide: WorkspaceArtifactCleanupService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: {} },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -258,6 +264,8 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
+        { provide: WorkspaceArtifactCleanupService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: {} },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -318,7 +326,7 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
 
 describe('WorkspaceDocumentService url document (addLink)', () => {
   let service: WorkspaceDocumentService;
-  let documentModel: { create: jest.Mock; findByIdAndUpdate: jest.Mock };
+  let documentModel: { create: jest.Mock; findByIdAndUpdate: jest.Mock; exists: jest.Mock };
   let workspaceService: {
     getStorageContext: jest.Mock;
     checkStorageQuota: jest.Mock;
@@ -330,8 +338,18 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
 
   beforeEach(async () => {
     documentModel = {
-      create: jest.fn().mockResolvedValue({}),
+      // Echo the create() argument back (it already carries a real ObjectId
+      // _id/workspaceId/createdBy set by the service), so mapToResponse()
+      // has real values to read instead of crashing on an empty object.
+      // A real Mongoose model stamps createdAt/updatedAt on insert; fill
+      // those in here since this plain-object mock doesn't.
+      create: jest.fn().mockImplementation(async (doc: any) => ({
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...doc,
+      })),
       findByIdAndUpdate: jest.fn().mockResolvedValue({}),
+      exists: jest.fn().mockReturnValue({ lean: () => Promise.resolve(null) }),
     };
     workspaceService = {
       getStorageContext: jest.fn().mockResolvedValue({ ownerUserId: USER_ID, storagePrefix: 'ws' }),
@@ -394,6 +412,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
             deleteAllByWorkspace: jest.fn().mockResolvedValue(undefined),
           },
         },
+        { provide: WebsiteCrawlerService, useValue: {} },
       ],
     }).compile();
 
@@ -498,6 +517,86 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect((service as any).convertAndStore).toHaveBeenCalledTimes(2);
   });
+
+  it('addLinks persists sourceRootUrl and its normalized form in metadata', async () => {
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.com/x'], { sourceRootUrl: 'https://a.com/services' });
+    const createArg = documentModel.create.mock.calls[0][0];
+    expect(createArg.metadata.sourceRootUrl).toBe('https://a.com/services');
+    expect(createArg.metadata.normalizedSourceRootUrl).toBe('https://a.com/services');
+  });
+
+  it('addLinks omits sourceRootUrl metadata when none is provided', async () => {
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.com/x']);
+    const createArg = documentModel.create.mock.calls[0][0];
+    expect(createArg.metadata.sourceRootUrl).toBeUndefined();
+  });
+
+  it('addLinks stamps one generated sourceGroupId across the whole batch', async () => {
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.com/x', 'https://a.com/y']);
+    const first = documentModel.create.mock.calls[0][0];
+    const second = documentModel.create.mock.calls[1][0];
+    expect(first.metadata.sourceGroupId).toEqual(expect.any(String));
+    expect(second.metadata.sourceGroupId).toBe(first.metadata.sourceGroupId);
+  });
+
+  it('addLinks reuses a provided sourceGroupId (continue mode)', async () => {
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.com/x'], { sourceGroupId: 'grp-123' });
+    const createArg = documentModel.create.mock.calls[0][0];
+    expect(createArg.metadata.sourceGroupId).toBe('grp-123');
+  });
+
+  it('addLinks names the document from the provided link text when present', async () => {
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.com/services'], {
+      names: { 'https://a.com/services': '  Our   Services  ' },
+    });
+    const createArg = documentModel.create.mock.calls[0][0];
+    // Link docs are always PDFs; the provided name gets a `.pdf` extension so the
+    // converted blob key carries one (an extensionless key can't be signed for
+    // view/download — DocumentService.generateSasUrl rejects it as a folder).
+    expect(createArg.originalName).toBe('Our Services.pdf');
+  });
+
+  it('addLinks falls back to the url-derived name when no link text is provided', async () => {
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.com/services']);
+    const createArg = documentModel.create.mock.calls[0][0];
+    expect(createArg.originalName).toBe('services.pdf');
+  });
+
+  it('addLinks roots a manual link to its own url via the roots override', async () => {
+    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.com/x', 'https://manual.org/p'], {
+      sourceRootUrl: 'https://a.com/services',
+      roots: { 'https://manual.org/p': 'https://manual.org/p' },
+    });
+    const first = documentModel.create.mock.calls[0][0];
+    const second = documentModel.create.mock.calls[1][0];
+    expect(first.metadata.sourceRootUrl).toBe('https://a.com/services'); // session root
+    expect(second.metadata.sourceRootUrl).toBe('https://manual.org/p'); // self-rooted
+  });
+
+  it('crawlSite returns only pages under the seed path', async () => {
+    (service as any).websiteCrawler = {
+      crawl: jest.fn().mockResolvedValue({ pages: [{ url: 'https://a.com/docs/x' }, { url: 'https://a.com/pricing' }, { url: 'https://a.com/docsfoo/y' }], truncated: false }),
+    };
+    const res = await service.crawlSite(WS_ID, 'https://a.com/docs');
+    expect(res.pages.map((p) => p.url)).toEqual(['https://a.com/docs/x']); // /pricing and the /docsfoo prefix-collision are excluded
+    expect(res.truncated).toBe(false);
+  });
+
+  it('crawlSite (root seed) keeps all pages', async () => {
+    (service as any).websiteCrawler = {
+      crawl: jest.fn().mockResolvedValue({ pages: [{ url: 'https://a.com/docs/x' }, { url: 'https://a.com/pricing' }], truncated: true }),
+    };
+    const res = await service.crawlSite(WS_ID, 'https://a.com');
+    expect(res.pages).toHaveLength(2);
+    expect(res.truncated).toBe(true);
+  });
 });
 
 describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachable)', () => {
@@ -517,6 +616,8 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
+        { provide: WorkspaceArtifactCleanupService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: {} },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -742,6 +843,8 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: indexingService },
         { provide: UrlToPdfClientService, useValue: { convert } },
+        { provide: WorkspaceArtifactCleanupService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: {} },
         {
           provide: ConfigService,
           useValue: {

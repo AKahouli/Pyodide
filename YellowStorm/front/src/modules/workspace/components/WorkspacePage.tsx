@@ -20,6 +20,9 @@ import { useWorkspaceStore, useCanWriteWorkspace } from '../store';
 import * as pageApi from '../page-api';
 import type { Workspace, WorkspaceArtifact, WorkspaceFile, WorkspaceFolder, WorkspaceRole } from '../types';
 import { WorkspaceArtifactRow } from './WorkspaceArtifactRow';
+import { IndexingStatusDot } from './IndexingStatusDot';
+import { groupBySourceRoot } from '../lib/source-groups';
+import { SourceGroupRow } from './SourceGroupRow';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
 import { useDeepSearchIndexation } from '../hooks/useDeepSearchIndexation';
 import { formatFileSize } from '../utils';
@@ -97,6 +100,7 @@ export function WorkspacePage() {
   const setFileFolderAssignment = useWorkspaceStore((s) => s.setFileFolderAssignment);
   const refreshPageData = useWorkspaceStore((s) => s.refreshPageData);
   const refreshWorkspaceArtifacts = useWorkspaceStore((s) => s.refreshWorkspaceArtifacts);
+  const openAddLink = useWorkspaceStore((s) => s.openAddLink);
 
   useEffect(() => {
     if (routeWorkspaceId && routeWorkspaceId !== selectedWorkspaceId) {
@@ -160,7 +164,10 @@ export function WorkspacePage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editFolder, setEditFolder] = useState<WorkspaceFolder | null>(null);
   const [moveFolderTarget, setMoveFolderTarget] = useState<WorkspaceFolder | null>(null);
-  const [mapFile, setMapFile] = useState<WorkspaceFile | null>(null);
+  const [moveTarget, setMoveTarget] = useState<{ files: WorkspaceFile[]; title: string } | null>(null);
+  const [deleteGroupTarget, setDeleteGroupTarget] = useState<{ files: WorkspaceFile[]; label: string } | null>(null);
+  const [isDeletingGroup, setIsDeletingGroup] = useState(false);
+  const deleteDocument = useWorkspaceStore((s) => s.deleteDocument);
   const [classifyOpen, setClassifyOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
@@ -201,6 +208,24 @@ export function WorkspacePage() {
     }
   }, [activeWorkspaceId, isSyncing]);
 
+  const handleDeleteGroup = useCallback(async () => {
+    if (!deleteGroupTarget) return;
+    setIsDeletingGroup(true);
+    try {
+      // Delete every page in the group; cascade any linked artifacts.
+      for (const file of deleteGroupTarget.files) {
+        await deleteDocument(file.workspaceId, file.id, true);
+      }
+      toast.success(`Groupe « ${deleteGroupTarget.label} » supprimé`);
+      setDeleteGroupTarget(null);
+      await refreshPageData();
+    } catch {
+      // toast handled by the store
+    } finally {
+      setIsDeletingGroup(false);
+    }
+  }, [deleteGroupTarget, deleteDocument, refreshPageData]);
+
   const breadcrumbs = useMemo(() => {
     if (!currentFolderId) return [] as WorkspaceFolder[];
     const chain: WorkspaceFolder[] = [];
@@ -229,6 +254,23 @@ export function WorkspacePage() {
       .filter((f) => (currentFolderId ? f.folderId === currentFolderId : f.folderId === null))
       .filter((f) => !q || f.name.toLowerCase().includes(q) || artifacts.some((artifact) => artifact.primarySource.documentId === f.id && artifact.name.toLowerCase().includes(q)));
   }, [files, artifacts, activeWorkspaceId, currentFolderId, search]);
+
+  const renderFileRow = (file: WorkspaceFile) => {
+    const query = search.trim().toLowerCase();
+    const sourceMatches = file.name.toLowerCase().includes(query);
+    const allLinkedArtifacts = artifacts.filter((artifact) => artifact.primarySource.documentId === file.id);
+    const linkedArtifacts = allLinkedArtifacts.filter((artifact) => !query || sourceMatches || artifact.name.toLowerCase().includes(query));
+    return (
+      <FileRow
+        key={file.id}
+        file={file}
+        artifacts={linkedArtifacts}
+        totalArtifactCount={allLinkedArtifacts.length}
+        forceExpanded={!!query && !sourceMatches && linkedArtifacts.length > 0}
+        onMove={() => setMoveTarget({ files: [file], title: file.name })}
+      />
+    );
+  };
 
   const handleDropOnFolder = useCallback(
     (targetFolder: WorkspaceFolder, payload: DragPayload) => {
@@ -413,15 +455,24 @@ export function WorkspacePage() {
               {visibleFiles.length > 0 && (
                 <section>
                   <SectionHeader title='Fichiers' count={visibleFiles.length} icon={<FileIcon className='h-3.5 w-3.5' />} />
-                  <div className='space-y-1'>
-                    {visibleFiles.map((file) => {
-                      const query = search.trim().toLowerCase();
-                      const sourceMatches = file.name.toLowerCase().includes(query);
-                      const allLinkedArtifacts = artifacts.filter((artifact) => artifact.primarySource.documentId === file.id);
-                      const linkedArtifacts = allLinkedArtifacts.filter((artifact) => !query || sourceMatches || artifact.name.toLowerCase().includes(query));
-                      return <FileRow key={file.id} file={file} artifacts={linkedArtifacts} totalArtifactCount={allLinkedArtifacts.length} forceExpanded={!!query && !sourceMatches && linkedArtifacts.length > 0} onMove={() => setMapFile(file)} />;
-                    })}
-                  </div>
+                  {/* Group only at the workspace root with no active search. While a
+                      search is active, render flat so matching pages surface directly
+                      instead of being hidden inside a collapsed start-URL group. */}
+                  {search.trim() ? (
+                    <div className='space-y-1'>{visibleFiles.map(renderFileRow)}</div>
+                  ) : (() => {
+                    const { groups, loose } = groupBySourceRoot(visibleFiles);
+                    return (
+                      <div className='space-y-1'>
+                        {groups.map((group) => (
+                          <SourceGroupRow key={group.key} label={group.label} rootUrl={group.rootUrl} count={group.files.length} status={group.status} onOpenInNavigator={(url) => openAddLink({ url, autoStart: true, sourceGroupId: group.sourceGroupId, seed: group.files.filter((f) => f.sourceUrl).map((f) => ({ url: f.sourceUrl as string, name: f.name, indexingStatus: f.indexingStatus })) })} onMove={() => setMoveTarget({ files: group.files, title: group.label })} onDelete={canWrite ? () => setDeleteGroupTarget({ files: group.files, label: group.label }) : undefined}>
+                            {group.files.map(renderFileRow)}
+                          </SourceGroupRow>
+                        ))}
+                        {loose.map(renderFileRow)}
+                      </div>
+                    );
+                  })()}
                 </section>
               )}
             </div>
@@ -432,7 +483,26 @@ export function WorkspacePage() {
       <CreateFolderDialog open={createOpen} onOpenChange={setCreateOpen} parentId={currentFolderId} />
       <EditFolderDialog open={!!editFolder} onOpenChange={(o) => !o && setEditFolder(null)} folder={editFolder} />
       <MoveFolderDialog open={!!moveFolderTarget} onOpenChange={(o) => !o && setMoveFolderTarget(null)} folder={moveFolderTarget} />
-      <MoveFileDialog open={!!mapFile} onOpenChange={(o) => !o && setMapFile(null)} file={mapFile} />
+      <MoveFileDialog open={!!moveTarget} onOpenChange={(o) => !o && setMoveTarget(null)} files={moveTarget?.files ?? []} title={moveTarget?.title ?? ''} />
+      <Dialog open={!!deleteGroupTarget} onOpenChange={(o) => !isDeletingGroup && !o && setDeleteGroupTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Supprimer le groupe</DialogTitle>
+            <DialogDescription>
+              Voulez-vous vraiment supprimer le groupe <span className='font-medium text-foreground'>{deleteGroupTarget?.label}</span> et ses {deleteGroupTarget?.files.length ?? 0} lien(s) indexé(s) ? Cette action est irréversible.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setDeleteGroupTarget(null)} disabled={isDeletingGroup}>
+              Annuler
+            </Button>
+            <Button variant='destructive' onClick={handleDeleteGroup} disabled={isDeletingGroup} className='gap-1.5'>
+              {isDeletingGroup ? <Loader2 className='h-4 w-4 animate-spin' /> : <Trash2 className='h-4 w-4' />}
+              Supprimer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <ClassifyDialog open={classifyOpen} onOpenChange={setClassifyOpen} />
       <RulesDialog open={rulesOpen} onOpenChange={setRulesOpen} />
       <CommunityGraphPanel open={graphOpen} onOpenChange={setGraphOpen} workspaceId={selectedWorkspaceId} />
@@ -799,27 +869,6 @@ function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onD
         </div>
       </div>
     </div>
-  );
-}
-
-/** Small colored dot reflecting a file's vectorstore indexing status. */
-function IndexingStatusDot({ status, error }: { status?: WorkspaceFile['indexingStatus']; error?: string }) {
-  const config: Record<NonNullable<WorkspaceFile['indexingStatus']>, { color: string; pulse?: boolean; label: string }> = {
-    ready: { color: 'bg-green-500', label: 'Indexé' },
-    failed: { color: 'bg-red-500', label: "Échec de l'indexation" },
-    pending: { color: 'bg-orange-500', pulse: true, label: 'Indexation en attente' },
-    processing: { color: 'bg-orange-500', pulse: true, label: 'Indexation en cours' },
-    none: { color: 'bg-muted-foreground/40', label: 'Non indexé' },
-  };
-  const cfg = config[status ?? 'none'] ?? config.none;
-  const title = status === 'failed' && error ? `${cfg.label} : ${error}` : cfg.label;
-  return (
-    <span
-      className={cn('inline-block h-2 w-2 shrink-0 rounded-full', cfg.color, cfg.pulse && 'animate-pulse')}
-      title={title}
-      aria-label={title}
-      role='img'
-    />
   );
 }
 
