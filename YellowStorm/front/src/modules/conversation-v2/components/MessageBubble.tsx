@@ -13,14 +13,19 @@ type MessageEvent = Extract<AgentEvent, { type: 'message' }>;
 
 interface MessageBubbleProps {
   event: MessageEvent;
-  readOnly?: boolean;
+  canOpenAttachments?: boolean;
   /** Hide the assistant avatar/header when the previous node is also from the assistant. */
   hideAssistantHeader?: boolean;
   /** Animate the assistant reply as a typewriter (fresh live message). */
   animate?: boolean;
 }
 
-export function MessageBubble({ event, readOnly, hideAssistantHeader, animate }: MessageBubbleProps) {
+export function MessageBubble({
+  event,
+  canOpenAttachments = true,
+  hideAssistantHeader,
+  animate,
+}: MessageBubbleProps) {
   const isUser = event.role === 'user';
   const attachments = event.attachments ?? [];
   const content = event.content ?? '';
@@ -31,7 +36,7 @@ export function MessageBubble({ event, readOnly, hideAssistantHeader, animate }:
         {attachments.length > 0 && (
           <div className='flex w-fit max-w-[90%] flex-wrap justify-end gap-1'>
             {attachments.map((file) => (
-              <AttachmentChip key={file.id} file={file} readOnly={readOnly} />
+              <AttachmentChip key={file.id} file={file} canOpen={canOpenAttachments} />
             ))}
           </div>
         )}
@@ -55,7 +60,7 @@ export function MessageBubble({ event, readOnly, hideAssistantHeader, animate }:
       {attachments.length > 0 && (
         <div className='flex w-fit max-w-[90%] flex-wrap gap-1'>
           {attachments.map((file) => (
-            <AttachmentChip key={file.id} file={file} readOnly={readOnly} />
+            <AttachmentChip key={file.id} file={file} canOpen={canOpenAttachments} />
           ))}
         </div>
       )}
@@ -71,12 +76,12 @@ export function MessageBubble({ event, readOnly, hideAssistantHeader, animate }:
   );
 }
 
-function AttachmentChip({ file, readOnly }: { file: FileInfo; readOnly?: boolean }) {
+function AttachmentChip({ file, canOpen = true }: { file: FileInfo; canOpen?: boolean }) {
   const [loading, setLoading] = useState(false);
   const closeRightPanel = useConversationV2Store((s) => s.closeRightPanel);
 
   const handleClick = async () => {
-    if (readOnly || loading) return;
+    if (!canOpen || loading) return;
     setLoading(true);
     try {
       const { url } = await conversationV2Api.getFileSignedUrl(file.path);
@@ -100,11 +105,11 @@ function AttachmentChip({ file, readOnly }: { file: FileInfo; readOnly?: boolean
   return (
     <button
       type='button'
-      onClick={readOnly ? undefined : handleClick}
+      onClick={canOpen ? handleClick : undefined}
       disabled={loading}
       className={cn(
         'inline-flex items-center rounded-md border border-border bg-background/60 px-2 py-1 text-xs',
-        readOnly ? 'cursor-default' : 'hover:bg-accent',
+        canOpen ? 'hover:bg-accent' : 'cursor-default',
         loading && 'opacity-60',
       )}
     >

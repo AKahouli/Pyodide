@@ -72,6 +72,9 @@ export class BrowserSessionService {
         () => emit('blocked', { url: nav.url, reason: 'private/internal address blocked' }),
       );
     });
+    engineSession.onLoading((loading) => {
+      emit('loading', { loading });
+    });
 
     this.logger.debug('Browser session created', { id, userId });
     return id;

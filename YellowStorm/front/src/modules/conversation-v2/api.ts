@@ -1,5 +1,9 @@
 import { apiClient, ApiResponse } from '@/lib/api';
 import type { AgentEvent, ListSessionsResponse, UserSearchResult } from './types';
+import type {
+  ConversationV2SessionPermission,
+  ConversationV2ViewerRole,
+} from './session-permissions';
 
 export interface ListSessionsParams { limit?: number; cursor?: string | null; q?: string }
 
@@ -25,6 +29,8 @@ export interface SessionPointer {
   deployStatus: DeployStatus;
   deployedUrl: string | null;
   lastDeployedAt: string | null;
+  viewerRole?: ConversationV2ViewerRole;
+  permissions?: ConversationV2SessionPermission[];
 }
 
 export interface PersistedEventEnvelope {

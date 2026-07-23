@@ -150,4 +150,17 @@ describe('RightPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /close/i }));
     expect(useConversationV2Store.getState().rightPanelMode).toBe('closed');
   });
+
+  it('renders a left-edge resize handle when open', () => {
+    useConversationV2Store.setState({
+      rightPanelMode: 'app',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'https://preview.example/app',
+      },
+    });
+    const { container } = render(<RightPanel />);
+    expect(container.querySelector('.cursor-ew-resize')).toBeInTheDocument();
+    expect(container.querySelector('.lucide-grip-vertical')).toBeInTheDocument();
+  });
 });

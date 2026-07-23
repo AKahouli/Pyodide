@@ -118,6 +118,7 @@ message Event {
     WaitEvent    wait    = 16;
     ErrorEvent   error   = 17;
     ApplicationComponentEvent application_component = 18;
+    HeartbeatEvent heartbeat = 19;
   }
 }
 
@@ -149,6 +150,7 @@ message PlanEvent {
 message TitleEvent { string title = 1; }
 message DoneEvent  {}
 message WaitEvent  {}
+message HeartbeatEvent {}
 message ErrorEvent { string error = 1; }
 
 // Pushes a UI "application component" (an embeddable web app / preview) for the

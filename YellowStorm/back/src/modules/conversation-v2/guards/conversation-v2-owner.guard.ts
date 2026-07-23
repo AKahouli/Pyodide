@@ -1,20 +1,23 @@
 import {
   CanActivate,
   ExecutionContext,
-  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ConversationV2SessionService } from '../services/conversation-v2-session.service';
+import {
+  ConversationV2SessionAccessService,
+  type ConversationV2ResolvedSession,
+} from '../services/conversation-v2-session-access.service';
 
 interface RequestShape {
   user?: { id: string };
   params: { id?: string };
+  conversationV2Session?: ConversationV2ResolvedSession;
 }
 
 @Injectable()
 export class ConversationV2OwnerGuard implements CanActivate {
-  constructor(private readonly sessions: ConversationV2SessionService) {}
+  constructor(private readonly access: ConversationV2SessionAccessService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<RequestShape>();
@@ -22,9 +25,10 @@ export class ConversationV2OwnerGuard implements CanActivate {
     const sessionId = req.params.id;
     if (!userId || !sessionId) throw new NotFoundException('Session not found');
 
-    const pointer = await this.sessions.getOne(userId, sessionId);
-    if (!pointer) throw new NotFoundException('Session not found');
-    if (pointer.ownerId !== userId) throw new ForbiddenException('Not the owner');
+    const resolved = await this.access.resolveSession(userId, sessionId);
+    if (!resolved) throw new NotFoundException('Session not found');
+
+    req.conversationV2Session = resolved;
     return true;
   }
 }

@@ -39,7 +39,8 @@
     "empty": "Sélectionnez un outil pour l'inspecter.",
     "jumpToLive": "Revenir au direct",
     "tabCode": "Code",
-    "tabPreview": "Aperçu"
+    "tabPreview": "Aperçu",
+    "resizeHandle": "Glisser pour redimensionner l'aperçu"
   },
   "vnc": {
     "unavailable": "Aucune VM attachée à cette session",
@@ -76,6 +77,7 @@
   },
   "header": {
     "back": "Retour",
+    "readOnly": "Lecture seule",
     "tooltips": {
       "workspaces": "Gérer les workspaces",
       "files": "Fichiers"
@@ -97,7 +99,7 @@
     "menu": "Options de déploiement"
   },
   "share": {
-    "title": "Partager l'application",
+    "title": "Partager l'application et la conversation",
     "searchPlaceholder": "Rechercher un utilisateur par email…",
     "searching": "Recherche…",
     "noResults": "Aucun utilisateur trouvé",
@@ -159,7 +161,7 @@
       "copyError": "Impossible de copier le lien"
     },
     "share": {
-      "success": "Application partagée par email",
+      "success": "Application et conversation partagées par email",
       "error": "Impossible de partager l'application"
     }
   }

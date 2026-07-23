@@ -24,6 +24,7 @@ export const DeployedAppCard = memo(function DeployedAppCard({ app }: DeployedAp
   const navigate = useNavigate();
   const [shareOpen, setShareOpen] = useState(false);
   const isOwned = app.source !== 'shared';
+  const canOpenConversation = isOwned || app.canOpenConversation === true;
 
   const openApp = () => window.open(app.deployedUrl, '_blank', 'noreferrer');
   const goToConversation = () => navigate(`/conversation-v2/${app.sessionId}`);
@@ -70,7 +71,7 @@ export const DeployedAppCard = memo(function DeployedAppCard({ app }: DeployedAp
                 </TooltipTrigger>
                 <TooltipContent>{t('card.open')}</TooltipContent>
               </Tooltip>
-              {isOwned && (
+              {canOpenConversation && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -85,7 +86,7 @@ export const DeployedAppCard = memo(function DeployedAppCard({ app }: DeployedAp
                   <TooltipContent>{t('card.conversation')}</TooltipContent>
                 </Tooltip>
               )}
-              {isOwned && (
+              {canOpenConversation && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -106,7 +107,7 @@ export const DeployedAppCard = memo(function DeployedAppCard({ app }: DeployedAp
         </CardContent>
       </Card>
 
-      {isOwned && (
+      {canOpenConversation && (
         <ShareDeployDialog
           sessionId={app.sessionId}
           deployedUrl={app.deployedUrl}
