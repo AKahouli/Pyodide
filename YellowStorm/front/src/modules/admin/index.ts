@@ -33,7 +33,7 @@ export {
   TeamAutoBuilderPage,
   GuardrailsPage,
 } from './pages';
-export { ADMIN_ACCESS_PERMISSIONS, ADMIN_MENU_ITEMS } from './constants';
+export { ADMIN_ACCESS_PERMISSIONS, ADMIN_MENU_ITEMS, DEFAULT_FEATURE_VISIBILITY } from './constants';
 export type {
   AdminMenuItem,
   AgentTypeResponse,
@@ -57,6 +57,7 @@ export type {
   AnalyticsQueryParams,
   MaintenanceStatus,
   SetMaintenanceRequest,
+  FeatureVisibility,
   PlanResponse,
   CreatePlanRequest,
   UpdatePlanRequest,
@@ -136,6 +137,8 @@ export {
   getSummaryAnalytics,
   getMaintenanceStatus,
   setMaintenanceMode,
+  getFeatureVisibility,
+  updateFeatureVisibility,
   getAllPlans,
   createPlan,
   updatePlan,

@@ -175,6 +175,16 @@ export interface SetRegistrationRequest {
   enabled: boolean;
 }
 
+export interface FeatureVisibility {
+  conversation: boolean;
+  workspace: boolean;
+  playbook: boolean;
+  governance: boolean;
+  appMarketplace: boolean;
+  worky: boolean;
+  agents: boolean;
+}
+
 export interface CorsOriginEntry {
   origin: string;
   enabled: boolean;

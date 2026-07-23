@@ -237,6 +237,8 @@
   "stream.activity.toolStatus.running": "Running",
   "stream.activity.toolStatus.completed": "Completed",
   "stream.activity.toolStatus.failed": "Failed",
+  "governedScopes.headerTitle": "Governed Scopes",
+  "governedScopes.openAria": "Start a conversation with {{name}}",
   "governedScopes.title": "Trusted assistants available to you",
   "governedScopes.description": "These assistants use approved agents and knowledge selected by your organization.",
   "governedScopes.badge": "Governed",

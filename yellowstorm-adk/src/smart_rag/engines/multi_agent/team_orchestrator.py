@@ -714,7 +714,8 @@ Do not render charts for single values or non-numeric content.
 
     async def run_single_agent(self, user_prompt: str, session_id: str,
                                q: Optional[asyncio.Queue[dict]] = None,
-                               parent_trace=None, image_input: Optional[List[Dict]] = None) -> Optional[str]:
+                               parent_trace=None, image_input: Optional[List[Dict]] = None,
+                               task_summary: Optional[str] = None) -> Optional[str]:
         """Run a single specialized agent directly, with no manager/delegation.
 
         The one agent registered in the repository is built with its real tools
@@ -822,6 +823,7 @@ Do not render charts for single values or non-numeric content.
                 agent_config=agent_config,
                 image_input=image_input,
                 session_id=session_id_for_agent,
+                task_summary=task_summary,
             )
 
             # Stream any files produced by the python_interpreter tool

@@ -20,6 +20,7 @@ import { WorkspaceTransformationSettingsService } from './workspace-transformati
 import { AdminWorkspaceTransformationSettingsController } from './controllers/admin-workspace-transformation-settings.controller';
 import { ConversationSettingsService } from './conversation-settings.service';
 import { AdminConversationSettingsController } from './controllers/admin-conversation-settings.controller';
+import { FeatureVisibilityService } from './feature-visibility.service';
 
 @Global() // Make SystemService available globally for the guard
 @Module({
@@ -57,6 +58,7 @@ import { AdminConversationSettingsController } from './controllers/admin-convers
     WorkspaceEvidenceSearchSettingsService,
     WorkspaceTransformationSettingsService,
     ConversationSettingsService,
+    FeatureVisibilityService,
     {
       provide: APP_GUARD,
       useClass: MaintenanceGuard,

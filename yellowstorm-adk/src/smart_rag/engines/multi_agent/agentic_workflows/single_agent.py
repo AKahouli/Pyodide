@@ -110,6 +110,7 @@ async def handle_single_agent_workflow(
             q=q,
             parent_trace=single_agent_span,
             image_input=image_input,
+            task_summary=user_request.task_summary,
         )
         logger.info(f"[MONO WORKFLOW] Completed single-agent workflow - session_id: {session_id}")
 

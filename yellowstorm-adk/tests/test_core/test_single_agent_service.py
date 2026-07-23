@@ -168,6 +168,59 @@ class TestSingleAgentService:
             mock_llm_factory.create_no_tool_calls_llm.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_create_agent_resolves_assigned_workspace_file_tool(
+        self, mock_single_agent_request_no_tools, mock_llm_factory
+    ):
+        request = mock_single_agent_request_no_tools
+        request.agent.tools = [{"name": "save_file_to_workspace"}]
+        request.agent.agent_params = {
+            "platform_api_url": "https://platform.example.com",
+            "platform_api_token": "internal-secret",
+            "user_id": "test_user",
+        }
+        with patch('src.smart_rag.core.single_agent_service.Agent') as mock_agent_class:
+            mock_agent_class.return_value = MagicMock(name="TestAgent")
+            service = SingleAgentService()
+            service.llm_factory = mock_llm_factory
+
+            agent = await service._create_agent_from_request(request)
+
+        assert agent is not None
+        tools = mock_agent_class.call_args.kwargs["tools"]
+        assert [tool.__name__ for tool in tools] == ["save_file_to_workspace"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tools", "agent_params"),
+        [
+            ([], {
+                "platform_api_url": "https://platform.example.com",
+                "platform_api_token": "internal-secret",
+            }),
+            ([{"name": "save_file_to_workspace", "enabled": False}], {
+                "platform_api_url": "https://platform.example.com",
+                "platform_api_token": "internal-secret",
+            }),
+            ([{"name": "save_file_to_workspace"}], {}),
+        ],
+    )
+    async def test_create_agent_gates_workspace_file_tool(
+        self, mock_single_agent_request_no_tools, mock_llm_factory, tools, agent_params
+    ):
+        request = mock_single_agent_request_no_tools
+        request.agent.tools = tools
+        request.agent.agent_params = agent_params
+        with patch('src.smart_rag.core.single_agent_service.Agent') as mock_agent_class:
+            mock_agent_class.return_value = MagicMock(name="TestAgent")
+            service = SingleAgentService()
+            service.llm_factory = mock_llm_factory
+
+            agent = await service._create_agent_from_request(request)
+
+        assert agent is not None
+        assert "tools" not in mock_agent_class.call_args.kwargs
+
+    @pytest.mark.asyncio
     async def test_create_agent_extracts_chatbot_name_from_dict(self, mock_single_agent_request, mock_llm_factory):
         """Test that chatbot_name is correctly extracted from dict format."""
         with patch('src.smart_rag.core.single_agent_service.Agent') as mock_agent_class, \

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { parseApiError } from '@/lib/api-error';
@@ -67,6 +68,7 @@ const DEFAULT_PROMPT_INJECTION_GUARDRAILS: PromptInjectionGuardrailsConfig = {
 const channelKeys = ['widget', 'whatsapp', 'telegram', 'api'] as const;
 
 const scopeTypeOptions: GovernanceScope['type'][] = ['organization', 'municipality', 'department', 'business_unit', 'country', 'team', 'custom'];
+const SCOPE_DESCRIPTION_MAX_LENGTH = 2000;
 
 const inviteRoles: GovernanceMembershipRole[] = ['program_admin', 'scope_admin', 'scope_approver', 'scope_reviewer', 'scope_editor', 'scope_viewer'];
 
@@ -92,30 +94,32 @@ function scopeClassification(scope: GovernanceScope): Required<NonNullable<Gover
   };
 }
 
-type ScopeSettingsDraft = {
+export type ScopeSettingsDraft = {
   name: string;
+  description: string;
   type: GovernanceScope['type'];
   status: GovernanceScope['status'];
   classification: ReturnType<typeof scopeClassification>;
 };
 
-function createScopeSettingsDraft(scope: GovernanceScope): ScopeSettingsDraft {
+export function createScopeSettingsDraft(scope: GovernanceScope): ScopeSettingsDraft {
   return {
     name: scope.name,
+    description: (scope.metadata?.description ?? '').trim(),
     type: scope.type,
     status: scope.status,
     classification: scopeClassification(scope),
   };
 }
 
-function isScopeSettingsDraftDirty(scope: GovernanceScope, draft: ScopeSettingsDraft): boolean {
+export function isScopeSettingsDraftDirty(scope: GovernanceScope, draft: ScopeSettingsDraft): boolean {
   const currentClassification = scopeClassification(scope);
   const isClassificationDirty = Object.entries(draft.classification).some(([key, value]) => currentClassification[key as keyof typeof currentClassification] !== value);
-  return draft.name.trim() !== scope.name || draft.type !== scope.type || draft.status !== scope.status || isClassificationDirty;
+  return draft.name.trim() !== scope.name || draft.description.trim() !== (scope.metadata?.description ?? '').trim() || draft.type !== scope.type || draft.status !== scope.status || isClassificationDirty;
 }
 
-function buildScopeSettingsPayload(scope: GovernanceScope, draft: ScopeSettingsDraft): Parameters<ReturnType<typeof useUpdateGovernanceScope>['mutate']>[0] {
-  return { name: draft.name.trim(), type: draft.type, status: draft.status, metadata: { ...scope.metadata, classification: draft.classification } };
+export function buildScopeSettingsPayload(scope: GovernanceScope, draft: ScopeSettingsDraft): Parameters<ReturnType<typeof useUpdateGovernanceScope>['mutate']>[0] {
+  return { name: draft.name.trim(), type: draft.type, status: draft.status, metadata: { ...scope.metadata, description: draft.description.trim(), classification: draft.classification } };
 }
 
 const channelLabelKeys = {
@@ -327,6 +331,14 @@ function ScopeSettingsCard({ programId, overview, draft, onDraftChange }: Readon
             <option value='active'>{t('scopeShell.settings.status.active')}</option>
             <option value='inactive'>{t('scopeShell.settings.status.inactive')}</option>
           </select>
+        </div>
+      </div>
+      <div className='mt-3 grid gap-1.5'>
+        <Label htmlFor='governance-scope-description'>{t('scopeShell.settings.descriptionLabel')}</Label>
+        <Textarea id='governance-scope-description' value={draft.description} onChange={(event) => onDraftChange({ ...draft, description: event.target.value })} placeholder={t('scopeShell.settings.descriptionPlaceholder')} maxLength={SCOPE_DESCRIPTION_MAX_LENGTH} rows={3} aria-describedby='governance-scope-description-help' />
+        <div id='governance-scope-description-help' className='flex items-center justify-between gap-3 text-xs text-muted-foreground'>
+          <span>{t('scopeShell.settings.descriptionHelp')}</span>
+          <span>{t('scopeShell.settings.descriptionCount', { count: draft.description.length, max: SCOPE_DESCRIPTION_MAX_LENGTH })}</span>
         </div>
       </div>
       <div className='mt-4 rounded-xl border border-dashed p-3'>
@@ -1253,7 +1265,7 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
       )}
 
       {overview.draftRevision && deploymentId && (
-        <DryRunConversationPanel deploymentId={deploymentId} draftRevisionId={overview.draftRevision.id} latestDryRun={overview.latestDryRun} mappedAgentIds={overview.scope.agentIds} primaryAgentId={overview.agents.primaryAgentId} mappedWorkspaces={overview.knowledge.workspaceMappings.map((source) => ({ id: source.workspaceId, name: source.title, documentCount: 0 })).filter((workspace): workspace is { id: string; name: string; documentCount: number } => Boolean(workspace.id))} />
+        <DryRunConversationPanel programId={programId} scopeId={scopeId} deploymentId={deploymentId} draftRevisionId={overview.draftRevision.id} latestDryRun={overview.latestDryRun} mappedAgentIds={overview.draftRevision.allowedAgentIds} primaryAgentId={overview.draftRevision.agentId} mappedWorkspaces={overview.draftRevision.workspaceIds.map((workspaceId) => ({ id: workspaceId, name: overview.knowledge.workspaceMappings.find((source) => source.workspaceId === workspaceId)?.title ?? workspaceId, documentCount: 0 }))} />
       )}
 
       {overview.draftRevision && (
@@ -1304,16 +1316,16 @@ function MonitorTab({ overview, metrics, scopeId }: Readonly<{ overview: Governa
   </section>;
 }
 
-function DryRunConversationPanel({ deploymentId, draftRevisionId, latestDryRun, mappedAgentIds, primaryAgentId, mappedWorkspaces }: Readonly<{ deploymentId: string; draftRevisionId: string; latestDryRun?: GovernanceDryRun; mappedAgentIds: string[]; primaryAgentId?: string; mappedWorkspaces: Array<{ id: string; name: string; documentCount: number }> }>): JSX.Element {
+function DryRunConversationPanel({ programId, scopeId, deploymentId, draftRevisionId, latestDryRun, mappedAgentIds, primaryAgentId, mappedWorkspaces }: Readonly<{ programId: string | null; scopeId: string; deploymentId: string; draftRevisionId: string; latestDryRun?: GovernanceDryRun; mappedAgentIds: string[]; primaryAgentId?: string; mappedWorkspaces: Array<{ id: string; name: string; documentCount: number }> }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const agents = useAgents();
   const fetchAgents = useAgentStore((state) => state.fetchAgents);
-  const markDryRun = useMarkGovernanceDryRun(deploymentId);
+  const markDryRun = useMarkGovernanceDryRun(deploymentId, programId, scopeId);
   const { data: dryRuns = [] } = useGovernanceDryRuns(deploymentId);
 
   const draftDryRuns = dryRuns.filter((dryRun) => dryRun.revisionId === draftRevisionId);
   const latestDraftDryRun = draftDryRuns[0] ?? (latestDryRun?.revisionId === draftRevisionId ? latestDryRun : undefined);
-  const [modalConversationId, setModalConversationId] = useState(latestDraftDryRun?.conversationId);
+  const [modalDryRun, setModalDryRun] = useState(latestDraftDryRun);
 
   const mappedAgents = mappedAgentIds.map((id) => agents.find((agent) => agent.id === id)).filter((agent): agent is Agent => Boolean(agent));
   const [selectedAgentId, setSelectedAgentId] = useState(primaryAgentId ?? mappedAgentIds[0] ?? '');
@@ -1329,8 +1341,13 @@ function DryRunConversationPanel({ deploymentId, draftRevisionId, latestDryRun, 
   }, [mappedAgentIds, primaryAgentId, selectedAgentId]);
 
   useEffect(() => {
-    setModalConversationId(latestDraftDryRun?.conversationId);
-  }, [latestDraftDryRun?.conversationId]);
+    setModalDryRun(latestDraftDryRun);
+  }, [latestDraftDryRun]);
+
+  const persistedWorkspaceIds = Array.isArray(modalDryRun?.checks.workspaceIds)
+    ? modalDryRun.checks.workspaceIds.filter((workspaceId): workspaceId is string => typeof workspaceId === 'string')
+    : [];
+  const initialWorkspaceIds = persistedWorkspaceIds.length > 0 ? persistedWorkspaceIds : mappedWorkspaces.map((workspace) => workspace.id);
 
   const handleMarkPassed = () => {
     if (!latestDraftDryRun) return;
@@ -1377,7 +1394,7 @@ function DryRunConversationPanel({ deploymentId, draftRevisionId, latestDryRun, 
           </div>
         </div>
       )}
-      <GovernanceDryRunConversationModal open={isModalOpen} onOpenChange={setIsModalOpen} deploymentId={deploymentId} conversationId={modalConversationId} agentId={selectedAgentId} scopedAgents={mappedAgents} scopedWorkspaces={mappedWorkspaces} onDryRunCreated={(dryRun) => setModalConversationId(dryRun.conversationId)} />
+      <GovernanceDryRunConversationModal open={isModalOpen} onOpenChange={setIsModalOpen} deploymentId={deploymentId} programId={programId} scopeId={scopeId} conversationId={modalDryRun?.conversationId} agentId={selectedAgentId} scopedAgents={mappedAgents} scopedWorkspaces={mappedWorkspaces} initialWorkspaceIds={initialWorkspaceIds} onDryRunCreated={setModalDryRun} />
     </div>
   );
 }

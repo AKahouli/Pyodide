@@ -6,7 +6,6 @@ from src.smart_rag.tools.utilities import calculator, python_interpreter
 from src.smart_rag.tools.utilities.connector_tools import (
     ConnectorToolContext,
     create_connector_tools,
-    create_platform_tools,
 )
 from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
 from src.smart_rag.infrastructure.processing.sandbox_callbacks import (
@@ -512,10 +511,14 @@ def create_search_agent_with_tools(
     agent._toolkit = toolkit
 
     from src.smart_rag.tools.native_tool_registry import FACTORY_MANAGED_NATIVE_TOOLS, resolve_native_tools
-    agent.tools.extend(resolve_native_tools([
-        tool for tool in tools_config
-        if (tool if isinstance(tool, str) else tool.get("name")) not in FACTORY_MANAGED_NATIVE_TOOLS
-    ]))
+    agent_params = agent_config.get("agent_params") or {}
+    agent.tools.extend(resolve_native_tools(
+        [
+            tool for tool in tools_config
+            if (tool if isinstance(tool, str) else tool.get("name")) not in FACTORY_MANAGED_NATIVE_TOOLS
+        ],
+        runtime_context=agent_params,
+    ))
 
     if connector_bindings:
         try:
@@ -541,14 +544,6 @@ def create_search_agent_with_tools(
             )
         except Exception as e:
             logger.exception("Error adding connector tools to search agent: %s", e)
-
-    # Platform tools (save_file_to_workspace)
-    agent_params = agent_config.get("agent_params") or {}
-    if agent_params.get("platform_api_url"):
-        try:
-            agent.tools.extend(create_platform_tools(agent_params))
-        except Exception as e:
-            logger.exception("Error adding platform tools to search agent: %s", e)
 
     if "calculator" in tools:
         agent.tools.append(calculator)
@@ -716,18 +711,13 @@ def create_standard_agent_with_tools(
     # Catalogue assignment controls native UI tools; metadata alone never makes a
     # Python callable available to an agent.
     from src.smart_rag.tools.native_tool_registry import FACTORY_MANAGED_NATIVE_TOOLS, resolve_native_tools
-    agent.tools.extend(resolve_native_tools([
-        tool for tool in agent_config.get("tools", [])
-        if (tool if isinstance(tool, str) else tool.get("name")) not in FACTORY_MANAGED_NATIVE_TOOLS
-    ]))
-
-    # Platform tools (save_file_to_workspace)
-    agent_params = agent_config.get("agent_params") or {}
-    if agent_params.get("platform_api_url"):
-        try:
-            agent.tools.extend(create_platform_tools(agent_params))
-        except Exception as e:
-            logger.exception("Error adding platform tools to standard agent: %s", e)
+    agent.tools.extend(resolve_native_tools(
+        [
+            tool for tool in agent_config.get("tools", [])
+            if (tool if isinstance(tool, str) else tool.get("name")) not in FACTORY_MANAGED_NATIVE_TOOLS
+        ],
+        runtime_context=agent_params,
+    ))
 
     _attach_mcp_search_state(agent, config, agent_config)
     _attach_mcp_toolset(agent, config, agent_config)

@@ -914,6 +914,7 @@ export const useConversationStore = create<ConversationState>()(
           conversationId,
           conversationType: 'user',
           content: payload.content,
+          interaction: payload.interaction,
           attachedFileIds: payload.attachedFileIds,
           attachedFiles: payload.attachedFiles,
           createdAt: new Date().toISOString(),

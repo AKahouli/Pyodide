@@ -247,6 +247,7 @@ export class MessageController {
       this.streamService
         .startStream(user._id.toString(), conversationId, aiMessage.id, {
           content: canonicalChoice?.content ?? dto.content,
+          taskSummary: canonicalChoice?.taskSummary,
           attachedFileIds: dto.attachedFileIds,
           webSearchEnabled: dto.webSearchEnabled,
           deepSearchEnabled: dto.deepSearchEnabled,

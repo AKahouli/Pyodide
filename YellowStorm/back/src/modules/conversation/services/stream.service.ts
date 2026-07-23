@@ -42,6 +42,7 @@ import { randomUUID } from 'node:crypto';
 
 interface StreamRequest {
   content: string;
+  taskSummary?: string;
   attachedFileIds?: string[];
   webSearchEnabled?: boolean;
   deepSearchEnabled?: boolean;
@@ -692,6 +693,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       user_context: { user_id: userId, username: username || '' },
       conversation_id: conversationId,
       query: request.content,
+      ...(request.taskSummary ? { task_summary: request.taskSummary } : {}),
       workspace_context: workspaceContexts?.length
         ? workspaceContexts
         : [{ workspace_id: conversationId, workspace_name: conversationId, workspace_documents: [] }],

@@ -1,6 +1,6 @@
 """Unit tests for agentic workflow handlers."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -179,6 +179,7 @@ class TestSingleAgentWorkflow:
         team = _mock_team()
         worker = _worker_agent()
         request = _team_request("mono", agents=[worker])
+        request.task_summary = "Profitability"
 
         with patch(
             "src.smart_rag.engines.multi_agent.agentic_workflows.single_agent.DocumentHelpers"
@@ -191,7 +192,14 @@ class TestSingleAgentWorkflow:
             )
             await handle_single_agent_workflow(team, request, AsyncMock(), _main_trace())
 
-        mock_run.assert_awaited_once()
+        mock_run.assert_awaited_once_with(
+            user_prompt=request.message,
+            session_id=request.session_id,
+            q=ANY,
+            parent_trace=ANY,
+            image_input=request.image_input,
+            task_summary="Profitability",
+        )
         team._message_helper._send_error_message.assert_not_awaited()
 
     @pytest.mark.asyncio

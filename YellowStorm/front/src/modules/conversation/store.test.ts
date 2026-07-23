@@ -2,19 +2,58 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyChunksToComponents, useConversationStore } from './store';
 
 const fetchConversationMock = vi.hoisted(() => vi.fn());
+const sendMessageMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
   fetchConversation: fetchConversationMock,
+  sendMessage: sendMessageMock,
 }));
 
 beforeEach(() => {
   fetchConversationMock.mockReset();
+  sendMessageMock.mockReset();
   useConversationStore.setState({
     currentConversation: null,
     currentConversationId: null,
     conversationLoading: false,
     selectedWorkspaceIds: [],
+    messages: [],
+    optimisticMessages: [],
+  });
+});
+
+describe('conversation optimistic messages', () => {
+  it('preserves choice interaction display text while the request is pending', async () => {
+    let resolveSend: (value: { userMessage: Record<string, unknown> }) => void = () => undefined;
+    sendMessageMock.mockImplementation(() => new Promise((resolve) => { resolveSend = resolve; }));
+    const interaction = {
+      type: 'choice' as const,
+      componentId: 'choice-1',
+      questionId: 'q1',
+      sourceMessageId: '507f1f77bcf86cd799439011',
+      selectionMode: 'single' as const,
+      selectedOptions: [{ optionId: 'profitability', label: 'Profitability' }],
+      displayText: 'Profitability',
+    };
+
+    const pending = useConversationStore.getState().sendMessage('conv-1', {
+      content: 'Analyze profitability with full canonical context',
+      interaction,
+    });
+
+    expect(useConversationStore.getState().optimisticMessages[0]).toMatchObject({
+      content: 'Analyze profitability with full canonical context',
+      interaction,
+    });
+
+    resolveSend({
+      userMessage: {
+        id: 'message-1', conversationId: 'conv-1', conversationType: 'user',
+        content: 'canonical content', interaction, createdAt: '2026-07-22T00:00:00.000Z',
+      },
+    });
+    await pending;
   });
 });
 

@@ -91,6 +91,7 @@ class RunAgentTeamRequest(BaseModel):
     user_id: str
     session_id: str
     message: str
+    task_summary: Optional[str] = None
     image_input: Optional[List[Dict]] = None
     attached_files: Optional[List[Dict]] = None
     attached_images: Optional[List[Dict]] = None

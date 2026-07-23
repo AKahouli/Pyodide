@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildIntentEdgeOptions, hydrateAssistantOperationHandoff, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyHomeAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldUsePlaybookAgentAssistant } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, buildOverviewResultNodeIds, hydrateAssistantOperationHandoff, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyHomeAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldUsePlaybookAgentAssistant } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
@@ -11,6 +11,20 @@ describe('shouldBlockCanvasMutationShortcut', () => {
     }
     expect(shouldBlockCanvasMutationShortcut({ key: 'c', ctrlKey: true, metaKey: false }, true)).toBe(false);
     expect(shouldBlockCanvasMutationShortcut({ key: 'z', ctrlKey: true, metaKey: false }, false)).toBe(false);
+  });
+});
+
+describe('buildOverviewResultNodeIds', () => {
+  it('excludes pending and running placeholders from Overview result interactions', () => {
+    const template = makeExecution().taskResults[0]!;
+    const ids = buildOverviewResultNodeIds([
+      { ...template, taskId: 'pending', status: 'pending' },
+      { ...template, taskId: 'running', status: 'running' },
+      { ...template, taskId: 'completed', status: 'completed' },
+      { ...template, taskId: 'failed', status: 'failed' },
+    ]);
+
+    expect([...ids]).toEqual(['completed', 'failed']);
   });
 });
 

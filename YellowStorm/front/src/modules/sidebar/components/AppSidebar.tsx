@@ -46,7 +46,8 @@ import { WorkyButton } from '@/modules/worky/components/WorkyButton';
 import { GovernanceButton } from '@/modules/governance';
 import { ConnectedAppButton } from '@/modules/connected-app';
 import { AppMarketplaceButton } from '@/modules/app-marketplace';
-import { AdminButton } from '@/modules/admin';
+import { AdminButton, DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admin';
+import type { FeatureVisibility } from '@/modules/admin';
 import { usePermissions } from '@/modules/admin/hooks/usePermissions';
 import { useModuleTranslation } from '@/modules/localization';
 import { useProjectStore } from '@/modules/project';
@@ -119,6 +120,19 @@ export const AppSidebar = memo(function AppSidebar() {
   const { user } = useAuth();
   const { hasAnyPermission } = usePermissions();
   const canOpenGovernance = hasAnyPermission(['governance.read', 'governance.*', '*']);
+  const [featureVisibility, setFeatureVisibility] = useState<FeatureVisibility>(DEFAULT_FEATURE_VISIBILITY);
+
+  useEffect(() => {
+    let active = true;
+    getFeatureVisibility()
+      .then((value) => {
+        if (active) setFeatureVisibility(value);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const historyConversations = useHistoryConversations();
   const conversationsLoading = useConversationsLoading();
@@ -272,30 +286,30 @@ export const AppSidebar = memo(function AppSidebar() {
       <SidebarContent className='my-3 w-full min-h-0 overflow-y-auto overscroll-y-contain'>
         <SidebarGroup>
           <SidebarMenu>
-            <SidebarMenuItem>
+            {featureVisibility.conversation && <SidebarMenuItem>
               <SidebarMenuButton tooltip={t('actions.newChat.tooltip')} onClick={() => navigate('/')}>
                 <ChatBubbleIcon />
                 <span>{t('actions.newChat.label')}</span>
               </SidebarMenuButton>
-            </SidebarMenuItem>
+            </SidebarMenuItem>}
 
-            <WorkspaceButton />
+            {featureVisibility.workspace && <WorkspaceButton />}
 
-            <AgentButton />
+            {featureVisibility.agents && <AgentButton />}
 
-            {canOpenGovernance && <GovernanceButton />}
+            {featureVisibility.governance && canOpenGovernance && <GovernanceButton />}
 
             <TeamButton />
 
             <GroupsButton />
 
-            <PlaybookButton />
+            {featureVisibility.playbook && <PlaybookButton />}
 
-            <WorkyButton />
+            {featureVisibility.worky && <WorkyButton />}
 
             <ConnectedAppButton />
 
-            <AppMarketplaceButton />
+            {featureVisibility.appMarketplace && <AppMarketplaceButton />}
 
             <AdminButton />
           </SidebarMenu>

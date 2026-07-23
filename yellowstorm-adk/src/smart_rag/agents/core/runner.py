@@ -177,6 +177,7 @@ class AgentRunner:
         image_input: Optional[list] = None,
         session_id: Optional[str] = None,
         seed_events: Optional[list] = None,
+        task_summary: Optional[str] = None,
     ) -> Tuple[str, List[str], dict]:
         """Run an agent tool and yield streaming events.
 
@@ -269,7 +270,7 @@ class AgentRunner:
         else:
             agent_type = "agent"
 
-        task_desc = self.prompt_processor.extract_task_description(message)
+        task_desc = task_summary.strip() if task_summary and task_summary.strip() else self.prompt_processor.extract_task_description(message)
         output = self.streaming_formatter.format_streaming_event(
             agent_id=agent_id,
             agent_name=agent_name,

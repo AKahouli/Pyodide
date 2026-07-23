@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     DD_TRACE_ENABLED: bool = False
     APPLICATIONINSIGHTS_CONNECTION_STRING: Optional[str] = None
     APPLICATION_INSIGHTS_LOG_CONFIG_PATH: str = "./src/logger/app_insight_logging.json"
+    GOOGLE_API_USE_CLIENT_CERTIFICATE: bool = False
 
     LANGFUSE_HOST: str
     LANGFUSE_SECRET_KEY: str
@@ -690,7 +691,15 @@ def get_settings() -> Settings:
     if env_file:
         project_root = Path(__file__).parent.parent.parent
         env_file_path = str(project_root / env_file)
-        return Settings(_env_file=env_file_path)  # type: ignore
-    if environment == "prod":
-        return Settings()  # type: ignore
-    raise ValueError(f"Invalid environment: {environment}")
+        settings = Settings(_env_file=env_file_path)  # type: ignore
+    elif environment == "prod":
+        settings = Settings()  # type: ignore
+    else:
+        raise ValueError(f"Invalid environment: {environment}")
+
+    # Google ADK reads this value directly from os.environ rather than Settings.
+    os.environ.setdefault(
+        "GOOGLE_API_USE_CLIENT_CERTIFICATE",
+        str(settings.GOOGLE_API_USE_CLIENT_CERTIFICATE).lower(),
+    )
+    return settings

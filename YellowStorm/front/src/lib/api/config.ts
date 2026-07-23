@@ -62,6 +62,7 @@ export const API_ENDPOINTS = {
     registration: '/experimental/system/registration',
     appearance: '/experimental/system/appearance',
     cors: '/experimental/system/cors',
+    features: '/experimental/system/features',
   },
   workspaceUploadSettings: {
     current: '/workspace-settings/uploads',

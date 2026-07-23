@@ -27,6 +27,7 @@ import type {
   SetMaintenanceRequest,
   RegistrationStatus,
   SetRegistrationRequest,
+  FeatureVisibility,
   CorsSettings,
   SetCorsSettingsRequest,
   AppearanceSettings,
@@ -211,6 +212,19 @@ export async function setRegistrationStatus(
   const response = await apiClient.post<ApiResponse<RegistrationStatus>>(
     API_ENDPOINTS.system.registration,
     data
+  );
+  return response.data.data;
+}
+
+export async function getFeatureVisibility(): Promise<FeatureVisibility> {
+  const response = await apiClient.get<ApiResponse<FeatureVisibility>>(API_ENDPOINTS.system.features);
+  return response.data.data;
+}
+
+export async function updateFeatureVisibility(data: FeatureVisibility): Promise<FeatureVisibility> {
+  const response = await apiClient.put<ApiResponse<FeatureVisibility>>(
+    API_ENDPOINTS.system.features,
+    data,
   );
   return response.data.data;
 }

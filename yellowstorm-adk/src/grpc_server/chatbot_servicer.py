@@ -1113,6 +1113,7 @@ class ChatbotServicer(
             user_id=pb_request.user_context.user_id,
             session_id=pb_request.conversation_id,
             message=pb_request.query,
+            task_summary=getattr(pb_request, "task_summary", "") or None,
             image_input=ctx["image_input"] or None,
             attached_files=ctx["attached_documents"] or None,
             attached_images=ctx["attached_images_metadata"] or None,
@@ -1399,6 +1400,7 @@ class ChatbotServicer(
             user_id=pb_request.user_context.user_id,  # V2: user_context.user_id → V1: user_id
             session_id=pb_request.conversation_id,  # V2: conversation_id → V1: session_id
             message=pb_request.query,  # V2: query → V1: message
+            task_summary=getattr(pb_request, "task_summary", "") or None,
             image_input=image_input if image_input else None,
             attached_files=attached_documents if attached_documents else None,
             attached_images=attached_images_metadata

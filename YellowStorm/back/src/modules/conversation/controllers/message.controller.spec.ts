@@ -26,6 +26,7 @@ describe('MessageController.sendMessage sticky routing', () => {
   let modelsService: { validateModelActive: jest.Mock };
   let teamService: { resolveAgentIds: jest.Mock };
   let requestContext: { getRequestId: jest.Mock };
+  let choiceInteractionService: { canonicalize: jest.Mock };
   let logger: {
     setContext: jest.Mock;
     log: jest.Mock;
@@ -65,6 +66,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     modelsService = { validateModelActive: jest.fn() };
     teamService = { resolveAgentIds: jest.fn().mockResolvedValue([]) };
     requestContext = { getRequestId: jest.fn().mockReturnValue('req-1') };
+    choiceInteractionService = { canonicalize: jest.fn() };
     logger = {
       setContext: jest.fn(),
       log: jest.fn(),
@@ -80,7 +82,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       teamService as any,
       requestContext as any,
       logger as any,
-      { canonicalize: jest.fn() } as any,
+      choiceInteractionService as any,
       { resolveRuntime: jest.fn(), assertRuntimeRequestAllowed: jest.fn(), resolveEffectiveAgents: jest.fn() } as any,
     );
   });
@@ -162,5 +164,46 @@ describe('MessageController.sendMessage sticky routing', () => {
     );
     expect(messageService.createAIPlaceholder).not.toHaveBeenCalled();
     expect(streamService.startStream).not.toHaveBeenCalled();
+  });
+
+  it('uses canonical choice content for persistence and agent streaming', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({
+      isFirstMessage: false,
+      taggedAgentIds: [],
+    });
+    const canonicalInteraction = {
+      type: 'choice', componentId: 'choice-1', questionId: 'q1',
+      sourceMessageId: new Types.ObjectId().toString(), selectionMode: 'single',
+      selectedOptions: [{ optionId: 'profitability', label: 'Profitability' }],
+      displayText: 'Profitability',
+    };
+    choiceInteractionService.canonicalize.mockResolvedValue({
+      content: '{"selectedChoices":[{"submitText":"Analyze profitability","description":"Review margins"}]}',
+      taskSummary: 'Profitability',
+      interaction: canonicalInteraction,
+    });
+
+    await controller.sendMessage(user, conversationId, {
+      content: 'browser-controlled content',
+      interaction: { type: 'choice' },
+    } as any);
+
+    expect(messageService.createUserMessage).toHaveBeenCalledWith(expect.objectContaining({
+      content: '{"selectedChoices":[{"submitText":"Analyze profitability","description":"Review margins"}]}',
+      interaction: canonicalInteraction,
+    }));
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(),
+      conversationId,
+      expect.any(String),
+      expect.objectContaining({
+        content: '{"selectedChoices":[{"submitText":"Analyze profitability","description":"Review margins"}]}',
+        taskSummary: 'Profitability',
+      }),
+      'req-1',
+      undefined,
+      'Ada Lovelace',
+      undefined,
+    );
   });
 });

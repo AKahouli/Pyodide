@@ -2,6 +2,8 @@
   "governedConversation.title": "Conversation gouvernee",
   "governedConversation.version": "Configuration approuvee · Version {{number}}",
   "governedConversation.description": "Les assistants et les connaissances sont geres par votre organisation.",
+  "governedScopes.headerTitle": "Périmètres gouvernés",
+  "governedScopes.openAria": "Démarrer une conversation avec {{name}}",
   "governedScopes.title": "Assistants de confiance a votre disposition",
   "governedScopes.description": "Ces assistants utilisent les agents et connaissances approuves par votre organisation.",
   "governedScopes.badge": "Gouverne",

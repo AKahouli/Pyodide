@@ -1152,88 +1152,36 @@ def create_connector_tools(
     return tools
 
 
-# ---------------------------------------------------------------------------
-# Platform tools (save_file_to_workspace) for conversation flow
-# ---------------------------------------------------------------------------
-
-_SAVE_FILE_PARAMETER_SCHEMA: Dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "download_url": {
-            "type": "string",
-            "description": "URL to download the file from",
-        },
-        "workspace_id": {
-            "type": "string",
-            "description": "Target workspace ID to save the file into",
-        },
-        "filename": {
-            "type": "string",
-            "description": "Target filename (e.g. 'report.xlsx')",
-        },
-        "mime_type": {
-            "type": "string",
-            "description": "File MIME type. If omitted, inferred from the download response.",
-        },
-        "auth_headers": {
-            "type": "object",
-            "description": "Optional authorization headers for downloading the file",
-        },
-        "source_meta": {
-            "type": "object",
-            "description": "Optional metadata about the source (e.g. connector name, item ID)",
-        },
-    },
-    "required": ["download_url", "workspace_id", "filename"],
-    "additionalProperties": False,
-}
-
-
-def create_platform_tools(agent_params: Dict[str, Any]) -> List[Any]:
-    """Create platform tools (e.g. save_file_to_workspace) from agent_params.
-
-    Reads platform_api_url and platform_api_token to allow the agent to call
-    back into the NestJS backend for workspace file ingestion.
-    """
+def create_save_file_to_workspace(agent_params: Dict[str, Any]) -> Optional[Any]:
+    """Bind trusted platform credentials to the native workspace file tool."""
     platform_api_url = agent_params.get("platform_api_url", "")
     platform_api_token = agent_params.get("platform_api_token", "")
     user_id = agent_params.get("user_id", "")
 
     if not platform_api_url or not platform_api_token:
-        return []
+        return None
 
-    tools: List[Any] = []
+    def redact_runtime_context(message: str) -> str:
+        for value in (platform_api_token, platform_api_url, user_id):
+            if value:
+                message = message.replace(value, "[REDACTED]")
+        return message
 
-    tool_name = "save_file_to_workspace"
-    description = (
-        "Save an external file to a workspace by providing its download URL. "
-        "Use this when you receive a download_url from an MCP tool (e.g. SharePoint, "
-        "Google Drive) and need to make the file available in the workspace for "
-        "further processing like code interpreter. The platform will download "
-        "the file and store it in the workspace."
-    )
-    schema = _build_function_schema(tool_name, description, _SAVE_FILE_PARAMETER_SCHEMA)
-    signature = _build_signature(_SAVE_FILE_PARAMETER_SCHEMA)
-
-    async def _save_file_to_workspace(
+    async def save_file_to_workspace(
+        download_url: str,
+        workspace_id: str,
+        filename: str,
+        mime_type: Optional[str] = None,
+        auth_headers: Optional[Dict[str, Any]] = None,
+        source_meta: Optional[Dict[str, Any]] = None,
         tool_context: ToolContext = None,
-        _api_url: str = platform_api_url,
-        _api_token: str = platform_api_token,
-        _uid: str = user_id,
-        **kwargs: Any,
     ) -> str:
-        download_url = kwargs.get("download_url", "")
-        workspace_id = kwargs.get("workspace_id", "")
-        filename = kwargs.get("filename", "")
-        mime_type = kwargs.get("mime_type")
-        auth_headers = kwargs.get("auth_headers")
-        source_meta = kwargs.get("source_meta")
-
-        endpoint = f"{_api_url}/workspaces/{workspace_id}/documents/ingest-url"
+        """Save an external file in a workspace for later agent processing."""
+        endpoint = f"{platform_api_url}/workspaces/{workspace_id}/documents/ingest-url"
         body: Dict[str, Any] = {
             "downloadUrl": download_url,
             "filename": filename,
-            "userId": _uid,
+            "userId": user_id,
         }
         if mime_type:
             body["mimeType"] = mime_type
@@ -1250,17 +1198,17 @@ def create_platform_tools(agent_params: Dict[str, Any]) -> List[Any]:
                     endpoint,
                     json=body,
                     headers={
-                        "X-Internal-Token": _api_token,
+                        "X-Internal-Token": platform_api_token,
                         "Content-Type": "application/json",
                     },
                 )
                 if resp.status_code >= 400:
-                    return f"Error saving file to workspace: HTTP {resp.status_code} - {resp.text}"
+                    response_error = redact_runtime_context(resp.text)
+                    return f"Error saving file to workspace: HTTP {resp.status_code} - {response_error}"
                 data = resp.json()
                 doc = data.get("document", {})
 
-                # Fix 3: Propagate saved file to code interpreter brain_docs
-                # so subsequent python_interpreter calls can access it in the same session.
+                # Make the saved file available to code interpreter in this session.
                 if tool_context and doc:
                     file_path = doc.get("filePath") or doc.get("azurePath") or ""
                     saved_filename = doc.get("originalName") or filename
@@ -1290,21 +1238,10 @@ def create_platform_tools(agent_params: Dict[str, Any]) -> List[Any]:
                     f"Size: {doc.get('size')} bytes"
                 )
         except Exception as e:
+            error_message = redact_runtime_context(str(e))
             logger.error(
-                "save_file_to_workspace failed error=%s", str(e)
+                "save_file_to_workspace failed error=%s", error_message
             )
-            return f"Error saving file to workspace: {str(e)}"
+            return f"Error saving file to workspace: {error_message}"
 
-    _save_file_to_workspace.__name__ = tool_name
-    _save_file_to_workspace.__signature__ = signature
-    _save_file_to_workspace.__annotations__ = {
-        p.name: p.annotation for p in signature.parameters.values()
-    }
-    tools.append(SearchToolADK(_save_file_to_workspace, schema))
-
-    logger.info(
-        "conversation_platform_tools_created tool_count=%s",
-        len(tools),
-    )
-
-    return tools
+    return save_file_to_workspace

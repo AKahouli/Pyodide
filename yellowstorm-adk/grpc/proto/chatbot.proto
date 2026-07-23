@@ -160,6 +160,7 @@ message RunAgentTeamRequest {
     ConnectorRepo connector_repo = 12;
     bool deep_search_enabled = 13;
     repeated Skill skills = 14;
+    string task_summary = 15;                              // Human-readable task UI summary; query remains model input
 }
 
 // Mono-agent request: a single specialized agent runs directly with its own
@@ -176,6 +177,7 @@ message RunSingleAgentRequest {
     ConnectorRepo connector_repo = 8;
     repeated Skill skills = 9;                        // Conversation-level skills selected by the user
     bool deep_search_enabled = 10;                    // When true, enables deep search mode for this request
+    string task_summary = 11;                         // Human-readable task UI summary; query remains model input
 }
 
 message GenerateConversationNameRequest {

@@ -4,6 +4,17 @@
 
 import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, Sparkles, FolderCog, Wand2, MessageCircle, MessageSquare } from 'lucide-react';
 import type { AdminMenuItem } from './types';
+import type { FeatureVisibility } from './types';
+
+export const DEFAULT_FEATURE_VISIBILITY: FeatureVisibility = Object.freeze({
+  conversation: true,
+  workspace: true,
+  playbook: true,
+  governance: true,
+  appMarketplace: true,
+  worky: true,
+  agents: true,
+});
 
 // Admin menu items with their required permissions
 export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [

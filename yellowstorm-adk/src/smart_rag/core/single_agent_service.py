@@ -18,6 +18,7 @@ from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
 from src.smart_rag.messaging import StreamingFormatter
 from src.smart_rag.infrastructure.monitoring import langfuse_client
 from src.smart_rag.tools import build_tree, SearchToolkit, SearchToolADK, calculator
+from src.smart_rag.tools.native_tool_registry import resolve_native_tools
 from google.adk import Agent
 from src.logger.logging import get_logger
 from src.skills.runtime import inject_skill_catalog, make_activate_skill_tool
@@ -345,6 +346,14 @@ class SingleAgentService:
             # Add calculator tool if requested
             if calculator_tool:
                 tools.append(calculator)
+
+            tools.extend(resolve_native_tools(
+                [
+                    tool for tool in (agent_config.tools or [])
+                    if tool.get("name") != "calculator"
+                ],
+                runtime_context=agent_config.agent_params or {},
+            ))
 
             if vectorstore_mcp_tool:
                 tools.extend(MCPHelper.create_vectorstore_toolsets_with_deep_search(

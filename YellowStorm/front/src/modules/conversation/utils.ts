@@ -105,7 +105,9 @@ export function formatTimingMs(ms: number | undefined): string {
 export function messageToChat(msg: Message): ChatMessage {
   let content: string | MessageContentPart[];
   if (msg.conversationType === 'user') {
-    content = msg.content || '';
+    content = msg.interaction?.type === 'choice' && msg.interaction.displayText
+      ? msg.interaction.displayText
+      : msg.content || '';
   } else {
     content = mapConversationComponentsToContentParts(msg.components || []);
   }

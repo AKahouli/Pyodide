@@ -54,6 +54,7 @@ export interface GovernanceScopeReviewChecklistItem {
 }
 
 export interface GovernanceScopeMetadata {
+  description?: string;
   classification?: {
     audience?: GovernanceScopeAudience;
     riskLevel?: GovernanceScopeRiskLevel;
@@ -292,10 +293,14 @@ export interface GovernanceDryRun {
 }
 
 export interface CreateGovernanceDryRunPayload {
+  executionMode?: 'conversation' | 'manual';
   input?: string;
   simulatedChannel?: 'widget' | 'whatsapp' | 'telegram' | 'api';
   conversationId?: string;
   agentId?: string;
+  workspaceIds?: string[];
+  testCases?: Array<Record<string, unknown>>;
+  checks?: Record<string, unknown>;
 }
 
 export interface GovernanceMetric {

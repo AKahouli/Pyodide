@@ -1,7 +1,7 @@
 """Tests for AgentRunner."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import asyncio
 from datetime import datetime
 from google.genai import types
@@ -79,6 +79,42 @@ class TestAgentRunner:
             assert result == ("Test result", [], {}, [])
             mock_session_helper.create_session.assert_called_once()
             mock_run_standard.assert_called_once()
+            mock_prompt_processor.extract_task_description.assert_called_once_with("Test message")
+
+    @pytest.mark.asyncio
+    async def test_run_agent_tool_prefers_explicit_task_summary(self):
+        mock_streaming_formatter = MagicMock()
+        mock_streaming_formatter.format_streaming_event.return_value = {"type": "description"}
+        mock_prompt_processor = MagicMock()
+        runner = AgentRunner(
+            MagicMock(), MagicMock(), mock_streaming_formatter, mock_prompt_processor
+        )
+        mock_agent = MagicMock()
+        mock_agent.name = "Smart Agent"
+        mock_session_helper = MagicMock()
+        mock_session_helper.create_session = AsyncMock(return_value=MagicMock())
+        mock_queue = AsyncMock()
+
+        with patch.object(runner, '_run_standard_agent', new_callable=AsyncMock) as mock_run_standard:
+            mock_run_standard.return_value = ("Test result", [], {}, [])
+            await runner.run_agent_tool(
+                agent=mock_agent,
+                message='{"selectedChoices":[{"submitText":"Internal"}]}',
+                task_summary="  Profitability  ",
+                session_helper=mock_session_helper,
+                q=mock_queue,
+                agent_id="agent_123",
+            )
+
+        mock_prompt_processor.extract_task_description.assert_not_called()
+        mock_streaming_formatter.format_streaming_event.assert_called_once_with(
+            agent_id="agent_123",
+            agent_name="Smart Agent",
+            agent_type="agent",
+            chunk="Profitability",
+            message_id=ANY,
+            content_type="description",
+        )
 
     @pytest.mark.asyncio
     async def test_run_agent_tool_html_agent(self):
