@@ -38,6 +38,21 @@ def _is_tool_enabled(tools_config: List[Any], tool_name: str) -> bool:
     return False
 
 
+def _get_enabled_tool_config(
+    tools_config: List[Any], tool_name: str
+) -> Dict[str, Any] | None:
+    for tool in tools_config:
+        if isinstance(tool, str) and tool == tool_name:
+            return {"name": tool_name}
+        if (
+            isinstance(tool, dict)
+            and tool.get("name") == tool_name
+            and tool.get("enabled", True)
+        ):
+            return tool
+    return None
+
+
 def _build_connector_repo_fixed_params(
     connector_repo: Dict[str, str],
 ) -> Dict[str, str]:
@@ -467,6 +482,11 @@ def create_search_agent_with_tools(
         )
     top_k = 1
     tools_config = agent_config.get("tools", [])
+    preview_tool_config = _get_enabled_tool_config(
+        tools_config, "generate_web_preview"
+    )
+    if preview_tool_config:
+        agent_factory.set_web_preview_tool_config(preview_tool_config)
     connector_bindings = []
     _agent_params_search = agent_config.get("agent_params") or {}
     raw_connector_bindings = _agent_params_search.get("connector_bindings_json")
@@ -504,6 +524,7 @@ def create_search_agent_with_tools(
         logical_search_only=logical_search_only,
         deep_search=deep_search,
         render_chart_tool=_is_tool_enabled(tools_config, "render_chart"),
+        generate_web_preview=preview_tool_config is not None,
         skills=merge_skills(agent_config.get("skills", []), _get_team_skills(config)),
     )
 
@@ -645,6 +666,12 @@ def create_standard_agent_with_tools(
             html_tool_config.update(tool.get("config", {}))
             agent_factory.set_diagram_tool_config(html_tool_config)
 
+    preview_tool_config = _get_enabled_tool_config(
+        agent_config.get("tools", []), "generate_web_preview"
+    )
+    if preview_tool_config:
+        agent_factory.set_web_preview_tool_config(preview_tool_config)
+
     (
         doc_tree,
         brain_tree,
@@ -684,6 +711,7 @@ def create_standard_agent_with_tools(
         in_memory_tool=True if "in_memory" in tools else False,
         in_memory_tool_description=in_memory_tool_description,
         html_design=True if "html_design" in tools else False,
+        generate_web_preview=preview_tool_config is not None,
         search_tool=True if "search" in tools else False,
         code_interpreter_tool=True if "code interpreter" in tools else False,
         snowflake_tool=True if "snowflake connector" in tools else False,

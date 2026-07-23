@@ -5,6 +5,7 @@ import { NewConversationPage } from './NewConversationPage';
 
 const createConversationMock = vi.hoisted(() => vi.fn().mockResolvedValue({ id: 'conv-1' }));
 const updateConversationMock = vi.hoisted(() => vi.fn());
+const claimCurrentConversationMock = vi.hoisted(() => vi.fn());
 const sendMessageMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const setConversationStateMock = vi.hoisted(() => vi.fn());
 const clearAllMock = vi.hoisted(() => vi.fn());
@@ -74,11 +75,12 @@ vi.mock('./store', () => ({
       selector({
         createConversation: createConversationMock,
         updateConversation: updateConversationMock,
+        claimCurrentConversation: claimCurrentConversationMock,
         sendMessage: sendMessageMock,
       }),
     {
       setState: setConversationStateMock,
-      getState: () => ({ selectedSkillIds: [], selectedConnectorRepo: null }),
+      getState: () => ({ conversations: [], selectedSkillIds: [], selectedConnectorRepo: null }),
     },
   ),
   useInputDisabled: () => false,
@@ -190,6 +192,9 @@ describe('NewConversationPage', () => {
       });
       expect(clearAllMock).toHaveBeenCalled();
       expect(mockNavigate).toHaveBeenCalledWith('/conversation/conv-1');
+      expect(claimCurrentConversationMock).toHaveBeenCalledWith('conv-1', { id: 'conv-1' });
+      expect(claimCurrentConversationMock.mock.invocationCallOrder[0]).toBeLessThan(mockNavigate.mock.invocationCallOrder[0]);
+      expect(mockNavigate.mock.invocationCallOrder[0]).toBeLessThan(sendMessageMock.mock.invocationCallOrder[0]);
     });
   });
 
@@ -203,6 +208,7 @@ describe('NewConversationPage', () => {
     await waitFor(() => {
       expect(createConversationMock).not.toHaveBeenCalled();
       expect(updateConversationMock).toHaveBeenCalledWith('conv-upload', { workspaces: [] });
+      expect(claimCurrentConversationMock).toHaveBeenCalledWith('conv-upload', undefined);
       expect(sendMessageMock).toHaveBeenCalledWith('conv-upload', expect.objectContaining({ content: 'hello' }));
     });
   });

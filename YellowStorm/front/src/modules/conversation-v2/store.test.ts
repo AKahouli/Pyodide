@@ -47,6 +47,43 @@ describe('useConversationV2Store', () => {
     expect(useConversationV2Store.getState().streaming).toBe(false);
   });
 
+  it('reconciles a missed final event after reconnect', async () => {
+    useConversationV2Store.getState().setSessionId('s1');
+    useConversationV2Store.getState().setStreaming(true);
+    vi.spyOn(conversationV2Api, 'listEvents').mockResolvedValue({
+      items: [{ type: 'done', event_id: 'done-1', timestamp: 1, sequence: 1 }],
+      nextSince: 1,
+    });
+
+    await useConversationV2Store.getState().reconcileCurrentSession();
+
+    expect(conversationV2Api.listEvents).toHaveBeenCalledWith('s1', 0, 200);
+    expect(useConversationV2Store.getState().streaming).toBe(false);
+    expect(useConversationV2Store.getState().lastSequence).toBe(1);
+  });
+
+  it('reconciles a missed final event when opening a cached background session', async () => {
+    useConversationV2Store.getState().setSessionId('foreground');
+    useConversationV2Store.getState().handleStreamEvent('message', {
+      sessionId: 'background',
+      event_id: 'assistant-1',
+      timestamp: 1,
+      sequence: 1,
+      role: 'assistant',
+      content: 'Partial response',
+    });
+    expect(useConversationV2Store.getState().streamingStateCache.get('background')?.streaming).toBe(true);
+    vi.spyOn(conversationV2Api, 'listEvents').mockResolvedValue({
+      items: [{ type: 'done', event_id: 'done-1', timestamp: 2, sequence: 2 }],
+      nextSince: 2,
+    });
+
+    expect(useConversationV2Store.getState().switchToSession('background')).toBe(true);
+    await vi.waitFor(() => expect(useConversationV2Store.getState().streaming).toBe(false));
+
+    expect(conversationV2Api.listEvents).toHaveBeenCalledWith('background', 1, 200);
+  });
+
   it('handleEvent("error") sets streamError and clears streaming', () => {
     const { handleEvent, setStreaming } = useConversationV2Store.getState();
     setStreaming(true);

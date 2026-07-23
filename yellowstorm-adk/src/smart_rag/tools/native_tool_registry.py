@@ -19,7 +19,9 @@ RUNTIME_NATIVE_TOOL_FACTORIES = {
 
 # These tools are attached by the existing agent factories. The catalogue may
 # configure them, but must not add a second declaration to an ADK agent.
-FACTORY_MANAGED_NATIVE_TOOLS = frozenset({"calculator", "render_chart"})
+FACTORY_MANAGED_NATIVE_TOOLS = frozenset(
+    {"calculator", "render_chart", "generate_web_preview"}
+)
 
 
 def get_native_tool(name: str, runtime_context: dict[str, Any] | None = None) -> Any | None:

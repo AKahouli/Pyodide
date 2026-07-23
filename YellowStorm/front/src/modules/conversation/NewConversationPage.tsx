@@ -61,6 +61,7 @@ export function NewConversationPage() {
   const { accept } = useAllowedUploadExtensions();
   const createConversation = useConversationStore((s) => s.createConversation);
   const updateConversation = useConversationStore((s) => s.updateConversation);
+  const claimCurrentConversation = useConversationStore((s) => s.claimCurrentConversation);
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
   const navigate = useNavigate();
@@ -208,16 +209,21 @@ export function NewConversationPage() {
     try {
       // Use existing conversation (from file upload) or create new one
       let convId = resolvedConvId || silentConvId;
+      let conversation = convId
+        ? useConversationStore.getState().conversations.find((candidate) => candidate.id === convId)
+        : undefined;
 
       if (!convId) {
         // Create new conversation with workspaces if provided
-        const conv = await createConversation(workspaceIds?.length ? { workspaces: workspaceIds } : undefined);
-        convId = conv.id;
+        conversation = await createConversation(workspaceIds?.length ? { workspaces: workspaceIds } : undefined);
+        convId = conversation.id;
       } else {
         // Uploads can create the conversation before workspace selection is final.
         await updateConversation(convId, { workspaces: workspaceIds ?? [] });
+        conversation = useConversationStore.getState().conversations.find((candidate) => candidate.id === convId);
       }
 
+      claimCurrentConversation(convId, conversation);
       navigate(`/conversation/${convId}`);
 
       // Build optimistic attachedFiles

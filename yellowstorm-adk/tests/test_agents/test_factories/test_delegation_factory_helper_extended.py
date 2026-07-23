@@ -225,3 +225,42 @@ class TestDelegationFactoryHelperExtended:
                 "prompt", "1", "SearchAgent", "bot", False,
             )
         assert agent_factory.create_search_agent.call_args.kwargs["render_chart_tool"] is False
+
+    def test_standard_agent_preview_tool_is_explicit_and_configured(self):
+        helper = MagicMock()
+        agent_factory = MagicMock()
+        agent_factory.create_agent.return_value = MagicMock(tools=[])
+        agent_config = _agent_config()
+        agent_config["tools"] = [{
+            "name": "generate_web_preview",
+            "prompt": "Use previews.",
+            "instructions": "Return HTML.",
+        }]
+        with patch(
+            "src.smart_rag.agents.factories.delegation_factory_helper.prepare_agent_data",
+            return_value=([], [], "prompt", ["b1"], "vs", "bot"),
+        ):
+            create_standard_agent_with_tools(
+                helper, agent_factory, _config(), agent_config,
+                ["generate_web_preview"], "prompt", "1", "Worker", "bot", False,
+            )
+
+        agent_factory.set_web_preview_tool_config.assert_called_once_with(agent_config["tools"][0])
+        assert agent_factory.create_agent.call_args.kwargs["generate_web_preview"] is True
+
+    def test_search_agent_preview_tool_is_not_inferred_from_agent_type(self):
+        helper = MagicMock()
+        agent_factory = MagicMock()
+        agent_factory.create_search_agent.return_value = (MagicMock(tools=[]), MagicMock(), "instr")
+        agent_config = _agent_config(with_search=True)
+        agent_config["agent_type"] = "visualizer"
+        with patch(
+            "src.smart_rag.agents.factories.delegation_factory_helper.prepare_agent_data",
+            return_value=([], [], "prompt", ["b1"], "vs", "bot"),
+        ):
+            create_search_agent_with_tools(
+                helper, agent_factory, _config(), agent_config, ["search"],
+                "prompt", "1", "SearchAgent", "bot", False,
+            )
+
+        assert agent_factory.create_search_agent.call_args.kwargs["generate_web_preview"] is False

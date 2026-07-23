@@ -20,11 +20,22 @@ export function useConversationV2StreamConnection() {
     if (!isAuthenticated) return;
 
     conversationV2StreamService.connect();
+    const handleVisibilityChange = () => {
+      if (document.hidden) return;
+      void useConversationV2Store.getState().reconcileCurrentSession();
+      if (!conversationV2StreamService.getIsConnected()) conversationV2StreamService.reconnectWithNewToken();
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    const unsubscribeConnected = conversationV2StreamService.subscribeConnected(() => {
+      void useConversationV2Store.getState().reconcileCurrentSession();
+    });
     const unsubscribe = conversationV2StreamService.subscribe((event) => {
       useConversationV2Store.getState().handleStreamEvent(event.type, event.data);
     });
 
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      unsubscribeConnected();
       unsubscribe();
       conversationV2StreamService.disconnect();
     };

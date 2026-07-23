@@ -83,8 +83,8 @@ export async function fetchMessages(conversationId: string, params?: MessageList
   };
 }
 
-export async function sendMessage(conversationId: string, payload: SendMessagePayload): Promise<{ userMessage: Message }> {
-  const response = await apiClient.post<ApiResponse<{ userMessage: Message }>>(API_ENDPOINTS.conversations.messages(conversationId), payload);
+export async function sendMessage(conversationId: string, payload: SendMessagePayload): Promise<{ userMessage: Message; aiMessageId?: string }> {
+  const response = await apiClient.post<ApiResponse<{ userMessage: Message; aiMessageId?: string }>>(API_ENDPOINTS.conversations.messages(conversationId), payload);
   return response.data.data;
 }
 

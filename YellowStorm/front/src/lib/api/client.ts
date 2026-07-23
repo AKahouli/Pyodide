@@ -10,6 +10,8 @@ import axios, {
 } from 'axios';
 import { API_CONFIG, AUTH_STORAGE_KEYS, API_ENDPOINTS } from './config';
 import { notificationsService } from '@/modules/notifications';
+import { conversationStreamService } from '@/modules/conversation/stream';
+import { conversationV2StreamService } from '@/modules/conversation-v2/conversationV2Stream';
 
 // Types
 export interface ApiError {
@@ -153,6 +155,8 @@ apiClient.interceptors.response.use(
 
         // Reconnect SSE with new token
         notificationsService.reconnectWithNewToken();
+        conversationStreamService.reconnectWithNewToken();
+        conversationV2StreamService.reconnectWithNewToken();
 
         if (originalRequest.headers) {
           originalRequest.headers.Authorization = `Bearer ${accessToken}`;

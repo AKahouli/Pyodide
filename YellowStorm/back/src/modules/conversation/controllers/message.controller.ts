@@ -218,6 +218,8 @@ export class MessageController {
       );
     }
 
+    let aiMessageId: string | undefined;
+
     // Create AI placeholder and start stream
     if (!dto.memberIds?.length) {
       // Fail fast if AI service is unavailable when we actually need it
@@ -234,6 +236,7 @@ export class MessageController {
         questionMessageId: userMessage.id,
         requestId,
       });
+      aiMessageId = aiMessage.id;
 
       this.logger.log('Starting stream', {
         conversationId,
@@ -278,7 +281,7 @@ export class MessageController {
       });
     }
 
-    return { userMessage };
+    return { userMessage, aiMessageId };
   }
 
   @Get()

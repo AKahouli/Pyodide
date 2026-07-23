@@ -21,6 +21,9 @@ from src.logger.logging import get_logger
 
 logger = get_logger("api.smart_rag.infrastructure.processing.callback_helper")
 
+WEB_PREVIEW_TOOL_NAME = "generate_web_preview"
+MAX_WEB_PREVIEW_BYTES = 1_000_000
+
 try:
     from google.genai import types
 except Exception:  # pragma: no cover - optional dependency
@@ -584,8 +587,11 @@ async def add_diagram_context_before_tool(
     Returns:
         Optional[Dict]: None to proceed with execution.
     """
-    # Only apply to diagram agent calls (HtmlAgent delegation tools)
-    if not (tool.name and "HtmlAgent" in tool.name):
+    # Both HTML child tools need the parent conversation as generation context.
+    if not (
+        tool.name
+        and ("HtmlAgent" in tool.name or tool.name == WEB_PREVIEW_TOOL_NAME)
+    ):
         return None
 
     # Get session events for context
@@ -610,6 +616,32 @@ Here is the relevant context from the conversation that may help you create a be
 </context_from_calling_agent>
 """
     return None
+
+
+async def prepare_web_preview_after_tool(
+    tool: BaseTool,
+    args: dict,
+    tool_context: ToolContext,
+    tool_response: dict,
+) -> Optional[dict]:
+    """Convert output from the trusted HTML child tool into a UI component result."""
+    if getattr(tool, "name", None) != WEB_PREVIEW_TOOL_NAME:
+        return None
+
+    content = extract_html(tool_response)
+    if not content:
+        return {
+            "schemaVersion": 1,
+            "status": "error",
+            "error": "The HTML generator did not return renderable HTML.",
+        }
+    if len(content.encode("utf-8")) > MAX_WEB_PREVIEW_BYTES:
+        return {
+            "schemaVersion": 1,
+            "status": "error",
+            "error": "The generated HTML exceeds the preview size limit.",
+        }
+    return {"schemaVersion": 1, "status": "ready", "content": content}
 
 
 async def catch_diagram_after_tool(

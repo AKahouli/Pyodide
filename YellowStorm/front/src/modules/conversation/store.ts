@@ -142,6 +142,15 @@ class StreamingBuffer {
 
 const streamingBuffer = new StreamingBuffer();
 
+function upsertMessage(messages: Message[], message: Message): { messages: Message[]; inserted: boolean } {
+  const index = messages.findIndex((candidate) => candidate.id === message.id);
+  if (index < 0) return { messages: [...messages, message], inserted: true };
+
+  const next = [...messages];
+  next[index] = { ...next[index], ...message };
+  return { messages: next, inserted: false };
+}
+
 /**
  * Initialize component data with proper structure based on type.
  * Called on 'add' action.
@@ -354,6 +363,7 @@ interface ConversationState {
   // Send state
   isAwaitingFirstChunk: boolean;
   awaitingConversationId: string | null;
+  pendingAssistantMessageId: string | null;
   optimisticMessages: Message[];
 
   // SSE connection state
@@ -408,6 +418,7 @@ interface ConversationState {
   moveConversationToProject: (id: string, projectId: string | null) => Promise<void>;
   detachConversationsFromProject: (projectId: string) => void;
   deleteConversation: (id: string) => Promise<void>;
+  claimCurrentConversation: (id: string, conversation?: Conversation) => void;
   setCurrentConversation: (id: string) => Promise<void>;
 
   // Actions - History Panel
@@ -440,6 +451,7 @@ interface ConversationState {
   onConversationNameGenerated: (event: ConversationNameGeneratedEvent) => void;
   onMessageCreated: (event: MessageCreatedEvent) => void;
   onMessageUpdated: (event: MessageUpdatedEvent) => void;
+  reconcilePendingStream: () => Promise<void>;
   onMentionCreated: (event: { conversationId: string; messageId: string; userId: string }) => void;
   clearTypewriter: () => void;
   clearUnreadMentions: () => void;
@@ -509,6 +521,7 @@ export const useConversationStore = create<ConversationState>()(
 
       isAwaitingFirstChunk: false,
       awaitingConversationId: null,
+      pendingAssistantMessageId: null,
       optimisticMessages: [],
 
       sseStatus: 'disconnected' as SSEConnectionStatus,
@@ -754,6 +767,17 @@ export const useConversationStore = create<ConversationState>()(
         }
       },
 
+      claimCurrentConversation: (id, conversation) => {
+        const cached = conversation ?? get().conversations.find((candidate) => candidate.id === id) ?? null;
+        set({
+          currentConversationId: id,
+          currentConversation: cached,
+          conversationLoading: false,
+          selectedSkillIds: cached?.selectedSkills ?? [],
+          selectedWorkspaceIds: cached?.workspaces ?? [],
+        });
+      },
+
       setCurrentConversation: async (id) => {
         const requestSequence = ++currentConversationRequestSequence;
         set({ conversationLoading: true, currentConversationId: id });
@@ -838,6 +862,27 @@ export const useConversationStore = create<ConversationState>()(
             // Remove from cache
             const newCache = new Map(get().streamingStateCache);
             newCache.delete(conversationId);
+
+            // A terminal SSE event may have been missed while this conversation
+            // was in the background. Persistence wins over stale live cache.
+            const persistedMessage = cachedState.streamingMessageId
+              ? messages.find((message) => message.id === cachedState.streamingMessageId)
+              : undefined;
+            if (persistedMessage?.isComplete) {
+              streamingBuffer.clear();
+              set({
+                isStreaming: false,
+                streamingConversationId: null,
+                streamingMessageId: null,
+                streamingQuestionMessageId: null,
+                streamingComponents: [],
+                isAwaitingFirstChunk: false,
+                awaitingConversationId: null,
+                pendingAssistantMessageId: null,
+                streamingStateCache: newCache,
+              });
+              return;
+            }
 
             // Set up the buffer flush callback so new chunks render live
             streamingBuffer.clear();
@@ -962,6 +1007,7 @@ export const useConversationStore = create<ConversationState>()(
               currentConversation: taggedChanged
                 ? { ...s.currentConversation!, taggedAgentIds: nextTaggedAgentIds }
                 : s.currentConversation,
+              pendingAssistantMessageId: result.aiMessageId ?? s.pendingAssistantMessageId,
             };
           });
         } catch (err) {
@@ -1141,7 +1187,11 @@ export const useConversationStore = create<ConversationState>()(
           });
           set({
             streamingStateCache: newCache,
-            ...(state.awaitingConversationId === event.conversationId ? { isAwaitingFirstChunk: false, awaitingConversationId: null } : {}),
+            ...(state.awaitingConversationId === event.conversationId ? {
+              isAwaitingFirstChunk: false,
+              awaitingConversationId: null,
+              pendingAssistantMessageId: event.messageId,
+            } : {}),
           });
           return;
         }
@@ -1166,6 +1216,7 @@ export const useConversationStore = create<ConversationState>()(
           isStreaming: true,
           streamingConversationId: event.conversationId,
           streamingMessageId: event.messageId,
+          pendingAssistantMessageId: event.messageId,
           streamingComponents: [],
           inputDisabled: false,
         });
@@ -1201,7 +1252,10 @@ export const useConversationStore = create<ConversationState>()(
           // Background conversation — clean cache, message is now persisted in DB
           const newCache = new Map(get().streamingStateCache);
           newCache.delete(event.conversationId);
-          const clearCompletedStream = state.streamingConversationId === event.conversationId || state.awaitingConversationId === event.conversationId;
+          const clearCompletedStream =
+            state.streamingConversationId === event.conversationId ||
+            state.awaitingConversationId === event.conversationId ||
+            state.pendingAssistantMessageId === event.messageId;
           set({
             streamingStateCache: newCache,
             ...(clearCompletedStream ? {
@@ -1212,8 +1266,24 @@ export const useConversationStore = create<ConversationState>()(
               streamingComponents: [],
               isAwaitingFirstChunk: false,
               awaitingConversationId: null,
+              pendingAssistantMessageId: null,
             } : {}),
           });
+
+          try {
+            const message = await api.fetchMessage(event.conversationId, event.messageId);
+            if (get().currentConversationId === event.conversationId) {
+              set((s) => {
+                const result = upsertMessage(s.messages, message);
+                return {
+                  messages: result.messages,
+                  messagesTotal: result.inserted ? s.messagesTotal + 1 : s.messagesTotal,
+                };
+              });
+            }
+          } catch (err) {
+            console.error('[ConversationStore] background completion reconciliation error:', err);
+          }
           // Refresh conversations list to update sidebar order
           get().fetchConversations({ reset: true });
           return;
@@ -1249,25 +1319,15 @@ export const useConversationStore = create<ConversationState>()(
           const message = await api.fetchMessage(event.conversationId, event.messageId);
 
           set((s) => {
-            // Check if message already exists (could be added by fetchMessages race)
-            const existingIndex = s.messages.findIndex((m) => m.id === event.messageId);
-
-            let updatedMessages: Message[];
-            if (existingIndex >= 0) {
-              // Replace existing with complete version
-              updatedMessages = [...s.messages];
-              updatedMessages[existingIndex] = message;
-            } else {
-              // Append if not found
-              updatedMessages = [...s.messages, message];
-            }
+            const result = upsertMessage(s.messages, message);
 
             // Clean stale cache entry to prevent fetchMessages from restoring it
             const cleanedCache = new Map(s.streamingStateCache);
             cleanedCache.delete(event.conversationId);
 
             return {
-              messages: updatedMessages,
+              messages: result.messages,
+              messagesTotal: result.inserted ? s.messagesTotal + 1 : s.messagesTotal,
               isStreaming: false,
               streamingConversationId: null,
               streamingMessageId: null,
@@ -1275,6 +1335,7 @@ export const useConversationStore = create<ConversationState>()(
               streamingComponents: [],
               isAwaitingFirstChunk: false,
               awaitingConversationId: null,
+              pendingAssistantMessageId: null,
               streamingStateCache: cleanedCache,
             };
           });
@@ -1299,6 +1360,7 @@ export const useConversationStore = create<ConversationState>()(
             streamingComponents: [],
             isAwaitingFirstChunk: false,
             awaitingConversationId: null,
+            pendingAssistantMessageId: null,
             streamingStateCache: cleanedCache,
           });
         }
@@ -1322,6 +1384,7 @@ export const useConversationStore = create<ConversationState>()(
               streamingComponents: [],
               isAwaitingFirstChunk: false,
               awaitingConversationId: null,
+              pendingAssistantMessageId: null,
             } : {}),
           });
           return;
@@ -1347,6 +1410,7 @@ export const useConversationStore = create<ConversationState>()(
             streamingComponents: [],
             isAwaitingFirstChunk: false,
             awaitingConversationId: null,
+            pendingAssistantMessageId: null,
             streamingStateCache: cleanedCache,
           });
         } else {
@@ -1359,6 +1423,7 @@ export const useConversationStore = create<ConversationState>()(
             streamingComponents: [],
             isAwaitingFirstChunk: false,
             awaitingConversationId: null,
+            pendingAssistantMessageId: null,
             streamingStateCache: cleanedCache,
           });
         }
@@ -1428,9 +1493,75 @@ export const useConversationStore = create<ConversationState>()(
         const state = get();
         if (event.conversationId !== state.currentConversationId) return;
 
-        set((s) => ({
-          messages: s.messages.map((m) => (m.id === event.messageId ? { ...m, ...event.message } : m)),
-        }));
+        const existing = state.messages.find((message) => message.id === event.messageId);
+        if (existing) {
+          set((s) => ({
+            messages: s.messages.map((message) => (message.id === event.messageId ? { ...message, ...event.message } : message)),
+          }));
+          return;
+        }
+
+        if (event.message.conversationType && event.message.createdAt) {
+          const message = {
+            ...event.message,
+            id: event.messageId,
+            conversationId: event.conversationId,
+          } as Message;
+          set((s) => {
+            const result = upsertMessage(s.messages, message);
+            return {
+              messages: result.messages,
+              messagesTotal: result.inserted ? s.messagesTotal + 1 : s.messagesTotal,
+            };
+          });
+          return;
+        }
+
+        void api.fetchMessage(event.conversationId, event.messageId).then((message) => {
+          if (get().currentConversationId !== event.conversationId) return;
+          set((s) => {
+            const result = upsertMessage(s.messages, message);
+            return {
+              messages: result.messages,
+              messagesTotal: result.inserted ? s.messagesTotal + 1 : s.messagesTotal,
+            };
+          });
+        }).catch((err) => console.error('[ConversationStore] message update reconciliation error:', err));
+      },
+
+      reconcilePendingStream: async () => {
+        const state = get();
+        const conversationId = state.streamingConversationId ?? state.awaitingConversationId;
+        const messageId = state.streamingMessageId ?? state.pendingAssistantMessageId;
+        if (!conversationId || !messageId) return;
+
+        try {
+          const message = await api.fetchMessage(conversationId, messageId);
+          if (!message.isComplete || get().currentConversationId !== conversationId) return;
+
+          streamingBuffer.flush();
+          streamingBuffer.clear();
+          set((s) => {
+            const result = upsertMessage(s.messages, message);
+            const cache = new Map(s.streamingStateCache);
+            cache.delete(conversationId);
+            return {
+              messages: result.messages,
+              messagesTotal: result.inserted ? s.messagesTotal + 1 : s.messagesTotal,
+              isStreaming: false,
+              streamingConversationId: null,
+              streamingMessageId: null,
+              streamingQuestionMessageId: null,
+              streamingComponents: [],
+              isAwaitingFirstChunk: false,
+              awaitingConversationId: null,
+              pendingAssistantMessageId: null,
+              streamingStateCache: cache,
+            };
+          });
+        } catch (err) {
+          console.error('[ConversationStore] pending stream reconciliation error:', err);
+        }
       },
 
       onMentionCreated: (event) => {
@@ -1541,6 +1672,7 @@ export const useConversationStore = create<ConversationState>()(
 
       onSSEConnected: () => {
         set({ sseStatus: 'connected', sseError: null });
+        void get().reconcilePendingStream();
       },
 
       onConnectionFailed: (reason) => {
@@ -1659,6 +1791,7 @@ export const useConversationStore = create<ConversationState>()(
           streamingComponents: [],
           isAwaitingFirstChunk: false,
           awaitingConversationId: null,
+          pendingAssistantMessageId: null,
           optimisticMessages: [],
           branchCache: new Map(),
           activeBranches: new Map(),
@@ -1693,6 +1826,7 @@ export const useConversationStore = create<ConversationState>()(
           streamingComponents: [],
           isAwaitingFirstChunk: false,
           awaitingConversationId: null,
+          pendingAssistantMessageId: null,
           optimisticMessages: [],
           branchCache: new Map(),
           activeBranches: new Map(),

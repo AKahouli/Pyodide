@@ -18,7 +18,7 @@ import type { ToolUIPart } from 'ai';
 import { ChainOfThought, ChainOfThoughtHeader, ChainOfThoughtContent, ChainOfThoughtStep } from './chain-of-thought';
 import { Sources, SourcesTrigger, SourcesContent, Source } from './sources';
 import { Sandbox, SandboxHeader, SandboxContent, SandboxTabs, SandboxTabsBar, SandboxTabsList, SandboxTabsTrigger, SandboxTabContent, type SandboxState } from './sandbox';
-import { WebPreview, WebPreviewNavigation, WebPreviewBody } from './web-preview';
+import { WebPreview, WebPreviewNavigation, WebPreviewBody, isolateGeneratedPreviewHtml } from './web-preview';
 import { InlineCitation, InlineCitationCard, InlineCitationCardTrigger, InlineCitationCardBody, InlineCitationCarousel, InlineCitationCarouselContent, InlineCitationCarouselItem, InlineCitationSource, InlineCitationQuote } from './inline-citation';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -986,12 +986,13 @@ const WebPreviewPartRenderer = ({ content }: { content: string }) => {
     if (!isOpen || !content) return null;
 
     const hasOwnScheme = /color-scheme/i.test(content);
-    const previewHtml = hasOwnScheme
+    const themedHtml = hasOwnScheme
       ? content
       : content.replace(
           /<head([^>]*)>/i,
           '<head$1><meta name="color-scheme" content="light"><style>html,body{background:#fff;color:#111}</style>',
         );
+    const previewHtml = isolateGeneratedPreviewHtml(themedHtml);
 
     const blob = new Blob([previewHtml], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
@@ -1048,6 +1049,7 @@ const WebPreviewPartRenderer = ({ content }: { content: string }) => {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
+                aria-label={tCommon('ai.preview.downloadHtml')}
                 variant='ghost'
                 size='sm'
                 className='h-8 w-8 p-0'
@@ -1069,7 +1071,12 @@ const WebPreviewPartRenderer = ({ content }: { content: string }) => {
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant='ghost' size='sm' className='h-8 w-8 p-0' onClick={toggleFullscreen}>
+              <Button
+                aria-label={isFullscreen ? tCommon('ai.preview.exitFullscreen') : tCommon('ai.preview.fullscreen')}
+                variant='ghost'
+                size='sm'
+                className='h-8 w-8 p-0'
+                onClick={toggleFullscreen}>
                 {isFullscreen ? <Minimize className='h-4 w-4' /> : <Maximize className='h-4 w-4' />}
               </Button>
             </TooltipTrigger>
@@ -1082,7 +1089,7 @@ const WebPreviewPartRenderer = ({ content }: { content: string }) => {
           {tCommon('actionClose')}
         </Button>
       </WebPreviewNavigation>
-      <WebPreviewBody />
+      <WebPreviewBody isolation='generated' />
     </WebPreview>
   );
 };

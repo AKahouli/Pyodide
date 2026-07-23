@@ -906,6 +906,12 @@ Do not render charts for single values or non-numeric content.
                         agent_name= getattr(agent_config, 'name', 'Search Agent')
                         agent_max_tokens= getattr(agent_config, 'agent_params', {}).get('max_tokens', 20000)
                         agent_temp= getattr(agent_config, 'agent_params', {}).get('agent_temp', 0.0)
+                        preview_tool_config = next((
+                            tool for tool in agent_config.tools
+                            if tool.get('name') == 'generate_web_preview' and tool.get('enabled', True)
+                        ), None)
+                        if preview_tool_config:
+                            agent_factory.set_web_preview_tool_config(preview_tool_config)
 
                         agent, _, _ = agent_factory.create_search_agent(
                             doc_tree=doc_tree,
@@ -920,7 +926,8 @@ Do not render charts for single values or non-numeric content.
                             max_tokens=agent_max_tokens,
                             temperature=agent_temp,
                             name=agent_name,
-                            citation_manager=self.citation_manager
+                            citation_manager=self.citation_manager,
+                            generate_web_preview=preview_tool_config is not None,
                         )
                         team.agents.append(agent)
                     elif agent_config.type == 'report':

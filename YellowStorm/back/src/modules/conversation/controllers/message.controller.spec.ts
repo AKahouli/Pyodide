@@ -166,6 +166,19 @@ describe('MessageController.sendMessage sticky routing', () => {
     expect(streamService.startStream).not.toHaveBeenCalled();
   });
 
+  it('returns the assistant placeholder id for reconnect recovery', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({
+      isFirstMessage: false,
+      taggedAgentIds: [],
+    });
+    const aiMessageId = new Types.ObjectId().toString();
+    messageService.createAIPlaceholder.mockResolvedValue({ id: aiMessageId });
+
+    const result = await controller.sendMessage(user, conversationId, { content: 'hello' } as any);
+
+    expect(result).toEqual(expect.objectContaining({ aiMessageId }));
+  });
+
   it('uses canonical choice content for persistence and agent streaming', async () => {
     conversationService.getConversationDocument.mockResolvedValue({
       isFirstMessage: false,

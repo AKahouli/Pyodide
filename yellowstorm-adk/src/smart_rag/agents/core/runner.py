@@ -726,19 +726,20 @@ class AgentRunner:
 
                             if tool_component_id:
                                 result_json = ""
-                                try:
-                                    candidate_result_json = json.dumps(
-                                        part.function_response.response,
-                                        default=str,
-                                        separators=(",", ":"),
-                                    )
-                                    if len(candidate_result_json.encode("utf-8")) <= 65536:
-                                        result_json = candidate_result_json
-                                except (TypeError, ValueError):
-                                    logger.warning(
-                                        "tool_result_serialization_failed tool=%s",
-                                        func_name,
-                                    )
+                                if func_name != "generate_web_preview":
+                                    try:
+                                        candidate_result_json = json.dumps(
+                                            part.function_response.response,
+                                            default=str,
+                                            separators=(",", ":"),
+                                        )
+                                        if len(candidate_result_json.encode("utf-8")) <= 65536:
+                                            result_json = candidate_result_json
+                                    except (TypeError, ValueError):
+                                        logger.warning(
+                                            "tool_result_serialization_failed tool=%s",
+                                            func_name,
+                                        )
                                 await q.put(
                                     self.streaming_formatter.format_component_event(
                                         agent_id=agent_id,

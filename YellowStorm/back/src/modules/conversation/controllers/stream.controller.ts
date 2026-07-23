@@ -1,6 +1,6 @@
 import { Controller, Sse, Req, MessageEvent } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { Observable, of } from 'rxjs';
+import { concat, Observable, of } from 'rxjs';
 import { Request } from 'express';
 import { Subject } from 'rxjs';
 import { Public } from '../../auth/decorators/public.decorator';
@@ -52,12 +52,12 @@ export class StreamController {
       } as MessageEvent);
     }
 
-    // Send initial connected event
-    this.streamGateway.sendToUser(userId, {
+    // Emit after Nest subscribes so the initial connection frame cannot be lost.
+    const connected$ = of({
       type: 'connected',
       data: { connectionId },
-    });
+    } as MessageEvent);
 
-    return stream$;
+    return concat(connected$, stream$);
   }
 }

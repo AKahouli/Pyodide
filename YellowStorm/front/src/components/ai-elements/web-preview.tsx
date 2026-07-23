@@ -9,6 +9,17 @@ import { ChevronDownIcon } from 'lucide-react';
 import type { ComponentProps, ReactNode } from 'react';
 import { createContext, forwardRef, useContext, useEffect, useState } from 'react';
 
+const GENERATED_PREVIEW_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; form-action 'none'; base-uri 'none'";
+
+export const isolateGeneratedPreviewHtml = (content: string): string => {
+  const document = new DOMParser().parseFromString(content, 'text/html');
+  const securityMeta = document.createElement('meta');
+  securityMeta.httpEquiv = 'Content-Security-Policy';
+  securityMeta.content = GENERATED_PREVIEW_CSP;
+  document.head.prepend(securityMeta);
+  return `<!doctype html>${document.documentElement.outerHTML}`;
+};
+
 export type WebPreviewContextValue = {
   url: string;
   setUrl: (url: string) => void;
@@ -112,14 +123,23 @@ export const WebPreviewUrl = ({ value, onChange, onKeyDown, ...props }: WebPrevi
 
 export type WebPreviewBodyProps = ComponentProps<'iframe'> & {
   loading?: ReactNode;
+  isolation?: 'external' | 'generated';
 };
 
-export const WebPreviewBody = ({ className, loading, src, ...props }: WebPreviewBodyProps) => {
+export const WebPreviewBody = ({ className, loading, src, isolation = 'external', referrerPolicy, sandbox, ...props }: WebPreviewBodyProps) => {
   const { url } = useWebPreview();
+  const generated = isolation === 'generated';
 
   return (
     <div className='flex-1'>
-      <iframe className={cn('size-full', className)} sandbox='allow-scripts allow-same-origin allow-forms allow-popups allow-presentation' src={(src ?? url) || undefined} title='Preview' {...props} />
+      <iframe
+        {...props}
+        className={cn('size-full', className)}
+        referrerPolicy={generated ? 'no-referrer' : referrerPolicy}
+        sandbox={generated ? 'allow-scripts' : sandbox || 'allow-scripts allow-same-origin allow-forms allow-popups allow-presentation'}
+        src={(src ?? url) || undefined}
+        title='Preview'
+      />
       {loading}
     </div>
   );

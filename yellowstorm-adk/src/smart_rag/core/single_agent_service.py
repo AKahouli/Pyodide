@@ -12,6 +12,10 @@ from src.schema.chatbot_schema import RunSingleAgentRequest
 from src.smart_rag.agents.factories import AgentFactory
 from src.smart_rag.infrastructure.session.manager import SessionHelper
 from src.smart_rag.infrastructure.processing import PromptProcessor
+from src.smart_rag.infrastructure.processing import (
+    add_diagram_context_before_tool,
+    prepare_web_preview_after_tool,
+)
 from src.smart_rag.infrastructure.factories import LLMFactory
 from src.smart_rag.infrastructure.model_parameters import resolve_model_config
 from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
@@ -19,6 +23,8 @@ from src.smart_rag.messaging import StreamingFormatter
 from src.smart_rag.infrastructure.monitoring import langfuse_client
 from src.smart_rag.tools import build_tree, SearchToolkit, SearchToolADK, calculator
 from src.smart_rag.tools.native_tool_registry import resolve_native_tools
+from src.smart_rag.engines.helpers import coerce_to_dict
+from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from google.adk import Agent
 from src.logger.logging import get_logger
 from src.skills.runtime import inject_skill_catalog, make_activate_skill_tool
@@ -173,10 +179,18 @@ class SingleAgentService:
 
                     # Handle function responses
                     if part.function_response:
+                        if await self._handle_ui_tool_response(
+                            part.function_response,
+                            request.agent.id,
+                            session_id,
+                            queue,
+                        ):
+                            continue
                         response_text = part.function_response.response
+                        response_log = str(response_text)
 
                         # Log search tool results
-                        logger.info(f"Search tool response received: {response_text[:500]}..." if len(response_text) > 500 else f"Search tool response: {response_text}")
+                        logger.info(f"Search tool response received: {response_log[:500]}..." if len(response_log) > 500 else f"Search tool response: {response_log}")
 
                         agent_execution_span.event(
                             name="function_response",
@@ -188,7 +202,7 @@ class SingleAgentService:
                             agent_id=request.agent.id,
                             agent_name=request.agent.name,
                             agent_type="agent",
-                            chunk=f"\n📚 Search Results:\n{response_text}\n",
+                            chunk=f"\n📚 Search Results:\n{response_log}\n",
                             message_id=session_id,
                             content_type="source"
                         )
@@ -278,6 +292,7 @@ class SingleAgentService:
             deep_search = False
             search_tool_config = None
             search_web_tool = False
+            preview_tool_config = None
             vectorstore_mcp_tool = MCPHelper.has_requested_mcp_type(
                 "vectorstore",
                 agent_config.tools,
@@ -287,6 +302,8 @@ class SingleAgentService:
             if agent_config.tools:
                 for tool in agent_config.tools:
                     tool_name = tool.get("name", "").lower()
+                    if tool_name == "generate_web_preview" and tool.get("enabled", True):
+                        preview_tool_config = tool
                     if "calculator" in tool_name:
                         calculator_tool = True
                     elif tool_name == "deep_search":
@@ -347,10 +364,19 @@ class SingleAgentService:
             if calculator_tool:
                 tools.append(calculator)
 
+            if preview_tool_config:
+                self.agent_factory.llm_factory = self.llm_factory
+                self.agent_factory.set_web_preview_tool_config(preview_tool_config)
+                tools.append(
+                    self.agent_factory.create_web_preview_tool(
+                        chatbot_name, temperature=0.0
+                    )
+                )
+
             tools.extend(resolve_native_tools(
                 [
                     tool for tool in (agent_config.tools or [])
-                    if tool.get("name") != "calculator"
+                    if tool.get("name") not in {"calculator", "generate_web_preview"}
                 ],
                 runtime_context=agent_config.agent_params or {},
             ))
@@ -363,6 +389,8 @@ class SingleAgentService:
 
             # Inject skill catalog and deep search prompt
             agent_prompt = inject_skill_catalog(agent_config.prompt, agent_config.skills)
+            if preview_tool_config and preview_tool_config.get("prompt"):
+                agent_prompt += preview_tool_config["prompt"]
             activate_skill_tool = make_activate_skill_tool(agent_config.skills)
             if activate_skill_tool:
                 tools.append(activate_skill_tool)
@@ -392,20 +420,17 @@ class SingleAgentService:
             else:
                 model = self.llm_factory.create_no_tool_calls_llm(chatbot_name, temperature=0.0)
 
-            # Create agent directly using ADK Agent constructor
+            agent_kwargs = {
+                "name": agent_config.name,
+                "model": model,
+                "instruction": agent_prompt,
+            }
             if tools:
-                agent = Agent(
-                    name=agent_config.name,
-                    model=model,
-                    instruction=agent_prompt,
-                    tools=tools
-                )
-            else:
-                agent = Agent(
-                    name=agent_config.name,
-                    model=model,
-                    instruction=agent_prompt
-                )
+                agent_kwargs["tools"] = tools
+            if preview_tool_config:
+                agent_kwargs["before_tool_callback"] = add_diagram_context_before_tool
+                agent_kwargs["after_tool_callback"] = prepare_web_preview_after_tool
+            agent = Agent(**agent_kwargs)
 
             logger.info(f"Created agent {agent_config.name} with {len(tools)} tools: {[t.schema.get('name') if hasattr(t, 'schema') else str(t) for t in tools]}")
 
@@ -424,6 +449,34 @@ class SingleAgentService:
             logger.error(f"Failed to create agent {request.agent.name}: {str(e)}")
             logger.error(f"Full traceback: {traceback.format_exc()}")
             return None
+
+    async def _handle_ui_tool_response(
+        self,
+        function_response,
+        agent_id: str,
+        session_id: str,
+        queue: asyncio.Queue[dict],
+    ) -> bool:
+        tool_name = getattr(function_response, "name", "")
+        definition = UI_TOOL_COMPONENT_REGISTRY.get(tool_name)
+        if definition is None:
+            return False
+        response = coerce_to_dict(getattr(function_response, "response", None))
+        normalized = definition.normalize_response(response) if response else None
+        if normalized is None:
+            logger.warning("[UI TOOL] rejected response tool=%s", tool_name)
+            return True
+        await queue.put(
+            self.streaming_formatter.format_component_event(
+                agent_id=agent_id,
+                component_type=definition.component_type,
+                component_data=normalized,
+                message_id=session_id,
+                component_id=getattr(function_response, "id", None),
+                action="add",
+            )
+        )
+        return True
 
     async def _send_error_message(self, queue: asyncio.Queue[dict], session_id: str, error_message: str):
         """Send error message through the queue."""

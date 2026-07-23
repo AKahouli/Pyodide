@@ -441,7 +441,7 @@ class StreamingEventProcessor:
                     await self._handle_render_chart_response(
                         part.function_response, current_message_id, q
                     )
-                if func_name == "present_choices" and q:
+                if func_name in UI_TOOL_COMPONENT_REGISTRY and func_name != "render_chart" and q:
                     await self._handle_ui_tool_response(part.function_response, current_message_id, q)
 
             elif event.is_final_response() and event.content and event.content.parts:

@@ -95,6 +95,8 @@ interface Actions {
    * accumulate in `streamingStateCache`.
    */
   handleStreamEvent: (type: AgentEvent['type'], data: Record<string, unknown>) => void;
+  /** Fetch persisted events after reconnect so a missed final event cannot leave the UI streaming. */
+  reconcileCurrentSession: () => Promise<void>;
   /**
    * Switch the on-screen conversation, preserving background streams. Stashes
    * the outgoing session's live state if it is still streaming, and hydrates
@@ -183,6 +185,8 @@ const initial: State = {
       selectedConnectorIds: [],
       streamingStateCache: new Map<string, SessionSlice>(),
 };
+
+const sessionReconciliations = new Map<string, Promise<void>>();
 
 /** Empty slice for a not-yet-seen background session. */
 function emptySlice(): SessionSlice {
@@ -367,6 +371,7 @@ export const useConversationV2Store = create<State & Actions>()(
             false,
             'switchToSession/hydrate',
           );
+          if (cached.streaming) void get().reconcileCurrentSession();
           return true;
         }
         set(
@@ -480,6 +485,34 @@ export const useConversationV2Store = create<State & Actions>()(
         } else {
           get().handleEvent(event);
         }
+      },
+      reconcileCurrentSession: async () => {
+        const state = get();
+        const sessionId = state.sessionId;
+        if (!sessionId || !state.streaming) return;
+
+        const existing = sessionReconciliations.get(sessionId);
+        if (existing) return existing;
+
+        const reconciliation = (async () => {
+          let cursor = get().sessionId === sessionId ? get().lastSequence : 0;
+          while (get().sessionId === sessionId && get().streaming) {
+            const { items, nextSince } = await conversationV2Api.listEvents(sessionId, cursor, 200);
+            for (const event of items) {
+              if (get().sessionId !== sessionId) return;
+              get().handleEvent(event);
+            }
+            if (items.length < 200 || nextSince <= cursor) return;
+            cursor = nextSince;
+          }
+        })().catch((err) => {
+          console.error('[ConversationV2Store] session reconciliation failed:', err);
+        }).finally(() => {
+          sessionReconciliations.delete(sessionId);
+        });
+
+        sessionReconciliations.set(sessionId, reconciliation);
+        return reconciliation;
       },
       openToolPanel: (toolCallId) =>
         set({ rightPanelMode: 'tool', selectedToolCallId: toolCallId }, false, 'openToolPanel'),

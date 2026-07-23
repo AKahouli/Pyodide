@@ -21,6 +21,16 @@ export function useConversationStream() {
 
     conversationStreamService.connect();
 
+    const handleVisibilityChange = () => {
+      if (document.hidden) return;
+      const store = useConversationStore.getState();
+      void store.reconcilePendingStream();
+      if (!conversationStreamService.getIsConnected()) {
+        conversationStreamService.reconnectWithNewToken();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     const unsubscribe = conversationStreamService.subscribe((event: StreamSSEEvent) => {
       const store = useConversationStore.getState();
       switch (event.type) {
@@ -72,6 +82,7 @@ export function useConversationStream() {
     });
 
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       unsubscribe();
       conversationStreamService.disconnect();
     };

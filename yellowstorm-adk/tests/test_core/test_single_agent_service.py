@@ -221,6 +221,53 @@ class TestSingleAgentService:
         assert "tools" not in mock_agent_class.call_args.kwargs
 
     @pytest.mark.asyncio
+    async def test_create_agent_with_explicit_web_preview_tool(
+        self, mock_single_agent_request_no_tools, mock_llm_factory
+    ):
+        request = mock_single_agent_request_no_tools
+        request.agent.tools = [{
+            "name": "generate_web_preview",
+            "prompt": "\nUse previews when useful.",
+            "instructions": "Return complete HTML.",
+        }]
+        with patch('src.smart_rag.core.single_agent_service.Agent') as mock_agent_class:
+            mock_agent_class.return_value = MagicMock(name="TestAgent")
+            service = SingleAgentService()
+            service.llm_factory = mock_llm_factory
+            preview_tool = MagicMock(name="generate_web_preview")
+            service.agent_factory.create_web_preview_tool = MagicMock(return_value=preview_tool)
+
+            agent = await service._create_agent_from_request(request)
+
+        assert agent is not None
+        kwargs = mock_agent_class.call_args.kwargs
+        assert kwargs["tools"] == [preview_tool]
+        assert "Use previews when useful" in kwargs["instruction"]
+        assert kwargs["before_tool_callback"] is not None
+        assert kwargs["after_tool_callback"] is not None
+
+    @pytest.mark.asyncio
+    async def test_single_agent_emits_web_preview_component(self):
+        service = SingleAgentService()
+        queue = AsyncMock()
+        response = MagicMock()
+        response.name = "generate_web_preview"
+        response.id = "preview-1"
+        response.response = {
+            "schemaVersion": 1,
+            "status": "ready",
+            "content": "<html><body>Preview</body></html>",
+        }
+
+        handled = await service._handle_ui_tool_response(
+            response, "agent-1", "session-1", queue
+        )
+
+        assert handled is True
+        queue.put.assert_awaited_once()
+        assert queue.put.call_args.args[0]["component"]["type"] == "web_preview"
+
+    @pytest.mark.asyncio
     async def test_create_agent_extracts_chatbot_name_from_dict(self, mock_single_agent_request, mock_llm_factory):
         """Test that chatbot_name is correctly extracted from dict format."""
         with patch('src.smart_rag.core.single_agent_service.Agent') as mock_agent_class, \
