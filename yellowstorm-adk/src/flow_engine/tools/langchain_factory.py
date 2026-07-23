@@ -603,6 +603,7 @@ def create_langchain_tools(
     workspace_ceph_paths: Optional[List[str]] = None,
     deep_search: bool = False,
     binding_workspace_ids: Optional[List[str]] = None,
+    execution_id: str = "",
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
@@ -657,17 +658,24 @@ def create_langchain_tools(
         )
         if not connector_workspace_ids and output_workspace_id:
             connector_workspace_ids = [output_workspace_id]
+        connector_file_paths = [
+            str(doc.get("filepath") or "")
+            for doc in (code_interpreter_files or [])
+            if doc.get("filepath")
+        ]
         mcp_tools = _create_connector_mcp_tools(
             step_connector_bindings,
             collector,
             output_workspace_id=output_workspace_id,
             workspace_ids=connector_workspace_ids,
             file_names=effective_file_names,
+            file_paths=connector_file_paths,
             user_id=user_id,
             external_ids=input_files,
             session_id=session_id,
             workspace_paths=workspace_paths,
             deep_search=deep_search,
+            execution_id=execution_id,
         )
 
     tool_configs = agent_config.get("tools", [])
@@ -1716,12 +1724,14 @@ def _create_connector_mcp_tools(
     output_workspace_id: str = "",
     workspace_ids: Optional[List[str]] = None,
     file_names: Optional[List[str]] = None,
+    file_paths: Optional[List[str]] = None,
     user_id: Optional[str] = None,
     brain_ids: Optional[List[str]] = None,
     external_ids: Optional[List[str]] = None,
     session_id: str = "",
     workspace_paths: Optional[List[str]] = None,
     deep_search: bool = False,
+    execution_id: str = "",
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1832,7 +1842,9 @@ def _create_connector_mcp_tools(
                 _uid: Optional[str] = user_id,
                 _wi: Optional[List[str]] = workspace_ids,
                 sid: str = session_id,
+                eid: str = execution_id,
                 wsp: List[str] = list(workspace_paths or []),
+                fpths: List[str] = list(file_paths or []),
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
@@ -1877,8 +1889,12 @@ def _create_connector_mcp_tools(
                                 effective_auth_headers.pop("workspace_name", None)
                             if sid:
                                 effective_auth_headers["x-conversation-id"] = sid
+                            if eid:
+                                effective_auth_headers["x-execution-id"] = eid
                             if wsp:
                                 effective_auth_headers["x-workspace-paths"] = ",".join(wsp)
+                            if fpths:
+                                effective_auth_headers["x-file-paths"] = ",".join(fpths)
                             logger.info(
                                 "playbook_connector_mcp_context_headers workspace_id=%s",
                                 effective_auth_headers.get("workspace_id"),
