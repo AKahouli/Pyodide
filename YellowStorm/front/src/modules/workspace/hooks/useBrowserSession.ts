@@ -40,22 +40,36 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+// A page that stops firing load/domcontentloaded (e.g. an SPA client-side route
+// change) must never leave the spinner stuck — force it off after this long.
+const LOADING_SAFETY_MS = 12_000;
+
 export function useBrowserSession() {
   const socketRef = useRef<Socket | null>(null);
   const seenRef = useRef<Set<string>>(new Set());
+  const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [status, setStatus] = useState<BrowserSessionStatus>('idle');
   const [frame, setFrame] = useState<string | null>(null);
   const [currentUrl, setCurrentUrl] = useState<string | null>(null);
   const [rootUrl, setRootUrl] = useState<string | null>(null);
   const [pages, setPages] = useState<CollectedPage[]>([]);
+  const [loading, setLoading] = useState(false);
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
+
+  const setLoadingSafe = useCallback((next: boolean) => {
+    if (loadingTimerRef.current) { clearTimeout(loadingTimerRef.current); loadingTimerRef.current = null; }
+    setLoading(next);
+    if (next) {
+      loadingTimerRef.current = setTimeout(() => { setLoading(false); loadingTimerRef.current = null; }, LOADING_SAFETY_MS);
+    }
+  }, []);
 
   const start = useCallback((url: string, seed: CollectedPage[] = []) => {
     const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
     if (!token) { setStatus('error'); return; }
     setStatus('connecting');
     seenRef.current = new Set(seed.map((p) => normalizeUrl(p.url)));
-    setPages(seed); setFrame(null); setBlockedNotice(null); setCurrentUrl(url); setRootUrl(url);
+    setPages(seed); setFrame(null); setBlockedNotice(null); setCurrentUrl(url); setRootUrl(url); setLoadingSafe(false);
 
     const socket = io(`${getSocketBaseUrl()}/browser-session`, {
       auth: { token }, transports: ['websocket', 'polling'],
@@ -70,6 +84,7 @@ export function useBrowserSession() {
       seenRef.current.add(key);
       setPages((prev) => [...prev, { url: p.url, title: p.title || '', linkText: p.linkText }]);
     });
+    socket.on('loading', (p: { loading: boolean }) => setLoadingSafe(Boolean(p.loading)));
     socket.on('blocked', (p: { url: string; reason: string }) =>
       setBlockedNotice(`Navigation bloquée (${p.url}) : ${p.reason}`));
     socket.on('closed', () => setStatus('idle'));
@@ -79,7 +94,7 @@ export function useBrowserSession() {
       if (res.ok) setStatus('live');
       else setStatus(res.error === 'BUSY' ? 'busy' : 'error');
     });
-  }, []);
+  }, [setLoadingSafe]);
 
   const sendInput = useCallback((event: InputEvent) => {
     socketRef.current?.emit('input', { event });
@@ -91,7 +106,8 @@ export function useBrowserSession() {
     socketRef.current?.disconnect();
     socketRef.current = null;
     setStatus('idle');
-  }, []);
+    setLoadingSafe(false);
+  }, [setLoadingSafe]);
 
   const addManualPage = useCallback((url: string, name?: string): boolean => {
     if (!isHttpUrl(url)) return false;
@@ -149,5 +165,5 @@ export function useBrowserSession() {
     return fresh.length;
   }, []);
 
-  return { status, frame, currentUrl, rootUrl, pages, blockedNotice, start, sendInput, navigate, stop, addManualPage, updatePage, addPages, removePage };
+  return { status, frame, currentUrl, rootUrl, pages, loading, blockedNotice, start, sendInput, navigate, stop, addManualPage, updatePage, addPages, removePage };
 }

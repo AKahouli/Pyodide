@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { Loader2 } from 'lucide-react';
 import { VIEWPORT_W, VIEWPORT_H, type InputEvent, type MouseButton } from '../hooks/useBrowserSession';
 
 export function toViewportCoords(
@@ -13,8 +14,8 @@ export function toViewportCoords(
 const BTN: Record<number, MouseButton> = { 0: 'left', 1: 'middle', 2: 'right' };
 
 export function BrowserSessionViewer({
-  frame, onInput,
-}: { frame: string | null; onInput: (e: InputEvent) => void }) {
+  frame, onInput, loading = false,
+}: { frame: string | null; onInput: (e: InputEvent) => void; loading?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -42,7 +43,7 @@ export function BrowserSessionViewer({
   };
 
   return (
-    <div className='flex h-full w-full items-center justify-center'>
+    <div className='relative flex h-full w-full items-center justify-center'>
       {/* max-w/max-h keep the canvas within the box; its intrinsic width/height
           preserve the aspect ratio, so it letterboxes instead of stretching. */}
       <canvas
@@ -59,6 +60,20 @@ export function BrowserSessionViewer({
         onKeyDown={(e) => { e.preventDefault(); onInput({ kind: 'key', type: 'down', key: e.key, text: e.key.length === 1 ? e.key : undefined }); }}
         onKeyUp={(e) => { e.preventDefault(); onInput({ kind: 'key', type: 'up', key: e.key }); }}
       />
+      {/* While the page is loading, an overlay swallows clicks/keys (its
+          pointer-events sit above the canvas) so a fast double-click can't fire a
+          second navigation, and a spinner tells the user to wait. */}
+      {loading && (
+        <div
+          role='status'
+          aria-label='Chargement de la page'
+          className='absolute inset-0 z-10 flex items-center justify-center bg-background/40 backdrop-blur-[1px]'
+          onMouseDown={(e) => e.preventDefault()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <Loader2 className='h-8 w-8 animate-spin text-primary' />
+        </div>
+      )}
     </div>
   );
 }

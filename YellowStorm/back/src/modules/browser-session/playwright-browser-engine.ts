@@ -90,6 +90,7 @@ const KEY_TO_BUTTON = { left: 'left', right: 'right', middle: 'middle' } as cons
 class PlaywrightSession implements EngineSession {
   private frameCb?: (f: string) => void;
   private navCb?: (n: NavigatedEvent) => void;
+  private loadingCb?: (loading: boolean) => void;
   private lastNav: NavigatedEvent | undefined;
   private lastClick: { label: string; at: number } | undefined;
 
@@ -108,6 +109,9 @@ class PlaywrightSession implements EngineSession {
     });
     this.page.on('framenavigated', async (frame) => {
       if (frame !== this.page.mainFrame()) return; // main frame only
+      // The main frame committed a new document — signal "loading" so the client
+      // can show a spinner and lock input until the load settles (below).
+      this.loadingCb?.(true);
       // Read + consume the pending click label synchronously (before any await)
       // so concurrent navigations can't double-consume it. Single-use.
       const linkText = resolveClickLabel(this.lastClick, this.now(), this.ttlMs);
@@ -116,6 +120,11 @@ class PlaywrightSession implements EngineSession {
       this.lastNav = nav;
       this.navCb?.(nav);
     });
+    // Load finished (or DOM ready) — clear the loading state. The client also
+    // arms its own safety timeout in case a page never fires these (e.g. SPA
+    // client-side route changes), so the spinner can't stick forever.
+    this.page.on('load', () => this.loadingCb?.(false));
+    this.page.on('domcontentloaded', () => this.loadingCb?.(false));
   }
 
   onFrame(cb: (f: string) => void) { this.frameCb = cb; }
@@ -123,6 +132,10 @@ class PlaywrightSession implements EngineSession {
   onNavigated(cb: (n: NavigatedEvent) => void) {
     this.navCb = cb;
     if (this.lastNav) cb(this.lastNav);
+  }
+
+  onLoading(cb: (loading: boolean) => void) {
+    this.loadingCb = cb;
   }
 
   recordClick(label: string): void {

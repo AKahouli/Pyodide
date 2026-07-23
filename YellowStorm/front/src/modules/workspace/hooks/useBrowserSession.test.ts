@@ -58,6 +58,17 @@ describe('useBrowserSession', () => {
     expect(result.current.pages[0].linkText).toBe('About Us');
   });
 
+  it('tracks loading state from the loading event', async () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.start('https://ok.example'); });
+    await waitFor(() => expect(result.current.status).toBe('live'));
+    expect(result.current.loading).toBe(false);
+    act(() => { handlers['loading']({ loading: true }); });
+    expect(result.current.loading).toBe(true);
+    act(() => { handlers['loading']({ loading: false }); });
+    expect(result.current.loading).toBe(false);
+  });
+
   it('surfaces a blocked notice', async () => {
     const { result } = renderHook(() => useBrowserSession());
     act(() => { result.current.start('https://ok.example'); });

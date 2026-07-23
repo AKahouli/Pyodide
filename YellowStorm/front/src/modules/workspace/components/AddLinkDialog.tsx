@@ -210,7 +210,7 @@ export function AddLinkDialog({
                 ) : session.status === 'connecting' ? (
                   <div className='flex h-full items-center justify-center'><Loader2 className='h-6 w-6 animate-spin' /></div>
                 ) : (
-                  <BrowserSessionViewer frame={session.frame} onInput={session.sendInput} />
+                  <BrowserSessionViewer frame={session.frame} onInput={session.sendInput} loading={session.loading} />
                 )}
                 {session.blockedNotice && (
                   <div className='absolute inset-x-0 bottom-0 bg-destructive/90 px-3 py-1.5 text-xs text-destructive-foreground'>
