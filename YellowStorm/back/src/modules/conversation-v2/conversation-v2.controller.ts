@@ -12,7 +12,7 @@ import {
   Patch,
   Post,
   Query,
-  ServiceUnavailableException,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { Types } from 'mongoose';
@@ -25,6 +25,12 @@ import { ConversationV2GrpcClientService } from './services/conversation-v2.grpc
 import { ConversationV2SessionService } from './services/conversation-v2-session.service';
 import { ConversationV2ShareService } from './services/conversation-v2-share.service';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
+import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-session-access.guard';
+import { RequireConversationSessionPermission } from './decorators/require-conversation-session-permission.decorator';
+import { CurrentConversationSession } from './decorators/current-conversation-session.decorator';
+import { ConversationV2SessionPermissions } from './constants/conversation-v2-session-permissions';
+import type { ConversationV2SessionPermission } from './constants/conversation-v2-session-permissions';
+import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { GetFileSignedUrlDto } from './dto/get-file-signed-url.dto';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
@@ -33,13 +39,22 @@ import { WorkspaceService } from '@modules/workspace/workspace.service';
 import { ListSessionsDto } from './dto/list-sessions.dto';
 import { ListEventsDto } from './dto/list-events.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
+import { DeployAppDto } from './dto/deploy-app.dto';
 import { ShareDeployDto } from './dto/share-deploy.dto';
-import { EmailService } from '@modules/email';
 import { DocumentQueryDto } from '@modules/workspace/dto/document-query.dto';
 import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2EventStoreService, PersistedEventRow } from './services/conversation-v2-event-store.service';
+import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
+import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 
 interface AuthUser { id: string; }
+
+interface ConversationV2Request {
+  conversationV2Access?: {
+    viewerRole: 'owner' | 'shared';
+    permissions: ConversationV2SessionPermission[];
+  };
+}
 
 @ApiTags('conversation-v2')
 @ApiBearerAuth()
@@ -54,7 +69,8 @@ export class ConversationV2Controller {
     private readonly eventStore: ConversationV2EventStoreService,
     private readonly workspaceService: WorkspaceService,
     private readonly config: ConfigService,
-    private readonly email: EmailService,
+    private readonly deployment: ConversationV2DeployService,
+    private readonly appShares: ConversationV2AppShareService,
   ) {}
 
   @Post('sessions')
@@ -135,11 +151,49 @@ export class ConversationV2Controller {
     return { items, nextCursor };
   }
 
-  @Get('sessions/:id')
-  @UseGuards(ConversationV2OwnerGuard)
-  async getSession(
+  /** Owned + shared Marketplace apps for the current user. */
+  @Get('apps')
+  async listDeployedApps(@CurrentUser() user: AuthUser): Promise<{
+    items: {
+      sessionId: string;
+      title: string;
+      deployedUrl: string;
+      lastDeployedAt: string | null;
+      source: 'owned' | 'shared';
+      shareId: string | null;
+      canOpenConversation: boolean;
+    }[];
+  }> {
+    const [owned, shared] = await Promise.all([
+      this.sessions.listDeployedApps(user.id),
+      this.appShares.listSharedWithUser(user.id),
+    ]);
+    const ownedIds = new Set(owned.map((app) => app.sessionId));
+    const items = [...owned, ...shared.filter((app) => !ownedIds.has(app.sessionId))];
+    return { items };
+  }
+
+  @Delete('apps/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeDeployedApp(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
+  ): Promise<void> {
+    const removedOwn = await this.sessions.removeDeployedApp(user.id, id);
+    if (removedOwn) {
+      await this.appShares.deleteAllSharesForSession(id);
+      return;
+    }
+    const removedShare = await this.appShares.removeShareForRecipient(user.id, id);
+    if (!removedShare) throw new NotFoundException('Deployed app not found');
+  }
+
+  @Get('sessions/:id')
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_READ)
+  async getSession(
+    @Param('id') id: string,
+    @Req() req: ConversationV2Request,
   ): Promise<{
     sessionId: string;
     title: string;
@@ -154,9 +208,12 @@ export class ConversationV2Controller {
     deployStatus: string;
     deployedUrl: string | null;
     lastDeployedAt: string | null;
+    viewerRole: 'owner' | 'shared';
+    permissions: ConversationV2SessionPermission[];
   }> {
-    const pointer = await this.sessions.getOne(user.id, id);
+    const pointer = await this.sessions.getById(id);
     if (!pointer) throw new NotFoundException('Session not found');
+    const access = req.conversationV2Access!;
     return {
       sessionId: (pointer._id as Types.ObjectId).toString(),
       title: pointer.title,
@@ -175,11 +232,14 @@ export class ConversationV2Controller {
       lastDeployedAt: pointer.lastDeployedAt
         ? new Date(pointer.lastDeployedAt).toISOString()
         : null,
+      viewerRole: access.viewerRole,
+      permissions: [...access.permissions],
     };
   }
 
   @Get('sessions/:id/events')
-  @UseGuards(ConversationV2OwnerGuard)
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.EVENTS_READ)
   async listEvents(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
@@ -205,13 +265,15 @@ export class ConversationV2Controller {
   }
 
   @Get('sessions/:id/workspace-documents')
-  @UseGuards(ConversationV2OwnerGuard)
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.WORKSPACE_DOCUMENTS_READ)
   async listWorkspaceDocuments(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Query() query: DocumentQueryDto,
   ) {
-    const pointer = await this.sessions.getOne(user.id, id);
+    void user;
+    const pointer = await this.sessions.getById(id);
     if (!pointer) throw new NotFoundException('Session not found');
     const systemWsId = (pointer as unknown as { systemWorkspaceId?: { toString(): string } | string | null })
       .systemWorkspaceId?.toString() ?? null;
@@ -228,25 +290,26 @@ export class ConversationV2Controller {
   @Patch('sessions/:id')
   @UseGuards(ConversationV2OwnerGuard)
   async patchSession(
-    @CurrentUser() user: AuthUser,
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
     @Param('id') id: string,
     @Body() body: UpdateSessionDto,
   ): Promise<{ title?: string; isShared?: boolean; shareToken?: string | null }> {
+    const { ownerId } = session;
     let result: { title?: string; isShared?: boolean; shareToken?: string | null } = {};
 
     if (typeof body.title === 'string') {
-      const r = await this.sessions.rename(user.id, id, body.title);
+      const r = await this.sessions.rename(ownerId, id, body.title);
       result.title = r?.title as string | undefined;
     }
 
     if (typeof body.isShared === 'boolean') {
       if (body.isShared) {
         const { token, hash } = this.share.issue();
-        await this.sessions.setShared(user.id, id, true, hash);
+        await this.sessions.setShared(ownerId, id, true, hash);
         result.isShared = true;
         result.shareToken = token;
       } else {
-        await this.sessions.setShared(user.id, id, false, null);
+        await this.sessions.setShared(ownerId, id, false, null);
         result.isShared = false;
         result.shareToken = null;
       }
@@ -258,10 +321,11 @@ export class ConversationV2Controller {
   @Delete('sessions/:id')
   @UseGuards(ConversationV2OwnerGuard)
   async deleteSession(
-    @CurrentUser() user: AuthUser,
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
     @Param('id') id: string,
   ): Promise<{ deleted: true }> {
-    const pointer = await this.sessions.getOne(user.id, id);
+    const pointer = session.pointer;
+    const ownerId = session.ownerId;
     // Known: there's a small race window between deleteAllByWorkspace and
     // deleteSystemWorkspace where a concurrent stream's fire-and-forget
     // createFromAiArtifact can insert a new document row pointing at the
@@ -273,7 +337,8 @@ export class ConversationV2Controller {
       await this.workspaceDocuments.deleteAllByWorkspace(wsId);
       await this.workspaceService.deleteSystemWorkspace(wsId);
     }
-    await this.sessions.softDelete(user.id, id);
+    await this.sessions.softDelete(ownerId, id);
+    await this.appShares.deleteAllSharesForSession(id);
     return { deleted: true };
   }
 
@@ -281,15 +346,14 @@ export class ConversationV2Controller {
   @HttpCode(HttpStatus.OK)
   @UseGuards(ConversationV2OwnerGuard)
   async stopSession(
-    @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
   ): Promise<{ success: true }> {
-    const pointer = await this.sessions.getOne(user.id, id);
-    if (!pointer || !pointer.aiSessionId) {
+    const pointer = session.pointer;
+    if (!pointer.aiSessionId) {
       throw new NotFoundException('Session not found');
     }
     try {
-      await this.grpcClient.stopSession(user.id, pointer.aiSessionId);
+      await this.grpcClient.stopSession(session.ownerId, pointer.aiSessionId);
       return { success: true };
     } catch (err) {
       this.translateGrpcError(err);
@@ -300,15 +364,14 @@ export class ConversationV2Controller {
   @HttpCode(HttpStatus.OK)
   @UseGuards(ConversationV2OwnerGuard)
   async pauseSession(
-    @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
   ): Promise<{ success: true }> {
-    const pointer = await this.sessions.getOne(user.id, id);
-    if (!pointer || !pointer.aiSessionId) {
+    const pointer = session.pointer;
+    if (!pointer.aiSessionId) {
       throw new NotFoundException('Session not found');
     }
     try {
-      await this.grpcClient.pauseSession(user.id, pointer.aiSessionId);
+      await this.grpcClient.pauseSession(session.ownerId, pointer.aiSessionId);
       return { success: true };
     } catch (err) {
       this.translateGrpcError(err);
@@ -319,15 +382,14 @@ export class ConversationV2Controller {
   @HttpCode(HttpStatus.OK)
   @UseGuards(ConversationV2OwnerGuard)
   async resumeSession(
-    @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
   ): Promise<{ success: true }> {
-    const pointer = await this.sessions.getOne(user.id, id);
-    if (!pointer || !pointer.aiSessionId) {
+    const pointer = session.pointer;
+    if (!pointer.aiSessionId) {
       throw new NotFoundException('Session not found');
     }
     try {
-      await this.grpcClient.resumeSession(user.id, pointer.aiSessionId);
+      await this.grpcClient.resumeSession(session.ownerId, pointer.aiSessionId);
       return { success: true };
     } catch (err) {
       this.translateGrpcError(err);
@@ -338,49 +400,49 @@ export class ConversationV2Controller {
   @HttpCode(HttpStatus.OK)
   @UseGuards(ConversationV2OwnerGuard)
   async deploySession(
-    @CurrentUser() user: AuthUser,
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
     @Param('id') id: string,
+    @Body() body: DeployAppDto,
   ): Promise<{
     deployStatus: string;
     deployedUrl: string | null;
     lastDeployedAt: string | null;
   }> {
-    const pointer = await this.sessions.getOne(user.id, id);
-    if (!pointer || !pointer.aiSessionId) {
+    const pointer = session.pointer;
+    const ownerId = session.ownerId;
+    if (!pointer.aiSessionId) {
       throw new NotFoundException('Session not found');
     }
     // Mark in-flight first so a reload mid-deploy resumes the loader state.
-    await this.sessions.setDeployState(user.id, id, { deployStatus: 'deploying' });
+    await this.sessions.setDeployState(ownerId, id, { deployStatus: 'deploying' });
 
-    let result: { url: string; deployedAt: number } | null;
+    let deployedUrl: string;
     try {
-      result = await this.grpcClient.deploy(user.id, pointer.aiSessionId);
+      const result = await this.deployment.deploy(ownerId, pointer.aiSessionId);
+      deployedUrl = result.url;
     } catch (err) {
       await this.sessions
-        .setDeployState(user.id, id, { deployStatus: 'error' })
+        .setDeployState(ownerId, id, { deployStatus: 'error' })
         .catch(() => undefined);
-      this.translateGrpcError(err);
+      throw err;
     }
 
-    // Manus doesn't implement Deploy yet (UNIMPLEMENTED → null). Revert to idle
-    // and signal it's not available — once Manus ships the RPC this returns a
-    // real URL and the happy path below runs unchanged.
-    if (!result) {
-      await this.sessions
-        .setDeployState(user.id, id, { deployStatus: 'idle' })
-        .catch(() => undefined);
-      throw new ServiceUnavailableException('Deployment is not available yet');
-    }
-
-    const lastDeployedAt = new Date(result.deployedAt * 1000);
-    await this.sessions.setDeployState(user.id, id, {
+    const lastDeployedAt = new Date();
+    const deployedAppTitle = body.title?.trim() || pointer.title || null;
+    await this.sessions.setDeployState(ownerId, id, {
       deployStatus: 'deployed',
-      deployedUrl: result.url,
+      deployedUrl,
+      deployedAppTitle,
+      lastDeployedAt,
+    });
+    await this.appShares.syncDeployMetadata(id, {
+      title: deployedAppTitle || 'Untitled app',
+      deployedUrl,
       lastDeployedAt,
     });
     return {
       deployStatus: 'deployed',
-      deployedUrl: result.url,
+      deployedUrl,
       lastDeployedAt: lastDeployedAt.toISOString(),
     };
   }
@@ -389,43 +451,32 @@ export class ConversationV2Controller {
   @HttpCode(HttpStatus.OK)
   @UseGuards(ConversationV2OwnerGuard)
   async shareDeploy(
-    @CurrentUser() user: AuthUser,
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
     @Param('id') id: string,
     @Body() body: ShareDeployDto,
-  ): Promise<{ sent: number }> {
-    const pointer = await this.sessions.getOne(user.id, id);
-    if (!pointer) throw new NotFoundException('Session not found');
-    const url = pointer.deployedUrl;
-    if (!url) {
+  ): Promise<{ sent: number; notFound: string[]; skippedSelf: string[] }> {
+    const pointer = session.pointer;
+    const ownerId = session.ownerId;
+    if (pointer.deployStatus !== 'deployed' || !pointer.deployedUrl) {
       throw new BadRequestException('App is not deployed yet');
     }
-    if (!this.email.isAvailable()) {
-      throw new ServiceUnavailableException('Email service is not available');
-    }
-
-    const appName = pointer.title?.trim() || 'an app';
-    const subject = `${appName} has been shared with you`;
-    const html = `
-      <p>Hello,</p>
-      <p>An app built on ${this.config.get<string>('app.name', 'YelloStorm')} has been shared with you.</p>
-      <p><a href="${url}" target="_blank" rel="noreferrer">${url}</a></p>
-      <p>You can open it any time at the link above.</p>
-    `;
-    const text = `An app has been shared with you.\n\nOpen it here: ${url}\n`;
-
-    // Dedupe and send one email per recipient; tolerate individual failures so
-    // one bad address doesn't fail the whole batch.
-    const recipients = Array.from(new Set(body.emails.map((e) => e.trim().toLowerCase())));
-    const results = await Promise.all(
-      recipients.map((to) =>
-        this.email
-          .send({ to, subject, html, text })
-          .then((r) => r.success)
-          .catch(() => false),
-      ),
-    );
-    const sent = results.filter(Boolean).length;
-    return { sent };
+    const title =
+      (pointer as { deployedAppTitle?: string | null }).deployedAppTitle?.trim() ||
+      pointer.title?.trim() ||
+      'Untitled app';
+    const result = await this.appShares.shareByEmails({
+      ownerId,
+      sessionId: id,
+      emails: body.emails,
+      title,
+      deployedUrl: pointer.deployedUrl,
+      lastDeployedAt: pointer.lastDeployedAt ? new Date(pointer.lastDeployedAt) : null,
+    });
+    return {
+      sent: result.shared.length,
+      notFound: result.notFound,
+      skippedSelf: result.skippedSelf,
+    };
   }
 
   @Get('share/v2/:token')
@@ -486,14 +537,13 @@ export class ConversationV2Controller {
   @Get('sessions/:id/vnc/signed-url')
   @UseGuards(ConversationV2OwnerGuard)
   async vncSignedUrl(
-    @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
   ): Promise<{ url: string; expiresAt: number }> {
-    const pointer = await this.sessions.getOne(user.id, id);
-    if (!pointer || !pointer.aiSessionId) {
+    const pointer = session.pointer;
+    if (!pointer.aiSessionId) {
       throw new NotFoundException('Session not found');
     }
-    const r = await this.grpcClient.getVncSignedUrl(user.id, pointer.aiSessionId);
+    const r = await this.grpcClient.getVncSignedUrl(session.ownerId, pointer.aiSessionId);
     if (!r) throw new VmUnavailableException();
     return r;
   }

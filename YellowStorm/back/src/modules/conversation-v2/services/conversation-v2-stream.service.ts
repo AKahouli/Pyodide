@@ -14,6 +14,7 @@ import { ConversationV2EventStoreService } from './conversation-v2-event-store.s
 import { ConversationV2PointerWriterService } from './conversation-v2-pointer-writer.service';
 import { ConversationV2NameGeneratorService } from './conversation-v2-name-generator.service';
 import { ConversationV2SessionService } from './conversation-v2-session.service';
+import { ConversationV2SessionAccessService } from './conversation-v2-session-access.service';
 import { ConversationV2StreamGatewayService } from './conversation-v2-stream-gateway.service';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { SkillService } from '@modules/skill/skill.service';
@@ -71,6 +72,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     private readonly pointerWriter: ConversationV2PointerWriterService,
     private readonly nameGenerator: ConversationV2NameGeneratorService,
     private readonly sessions: ConversationV2SessionService,
+    private readonly sessionAccess: ConversationV2SessionAccessService,
     private readonly gateway: ConversationV2StreamGatewayService,
     private readonly workspaceDocuments: WorkspaceDocumentService,
     private readonly skillService: SkillService,
@@ -103,8 +105,10 @@ export class ConversationV2StreamService implements OnModuleDestroy {
       throw new BadRequestException(`message must be 1..${max} chars`);
     }
 
-    const pointer = await this.sessions.getOne(userId, sessionId);
-    if (!pointer) throw new NotFoundException('Session not found');
+    const resolved = await this.sessionAccess.resolveSession(userId, sessionId);
+    if (!resolved) throw new NotFoundException('Session not found');
+    const pointer = resolved.pointer;
+    const grpcUserId = resolved.ownerId;
     if (!pointer.aiSessionId) throw new BadRequestException('Session not ready');
 
     const aiSessionId = pointer.aiSessionId;
@@ -192,7 +196,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     // (mirrors v1's conversation-level `selectedSkills`). Refreshed every send.
     await this.sessions.setSelectedSkills(sessionId, req.skillIds ?? []);
     await this.sessions.setSelectedConnectors(sessionId, req.connectorIds ?? []);
-    this.runGrpc(userId, sessionId, aiSessionId, systemWorkspaceId, req, skills, connectors);
+    this.runGrpc(userId, grpcUserId, sessionId, aiSessionId, systemWorkspaceId, req, skills, connectors);
   }
 
   /**
@@ -217,7 +221,8 @@ export class ConversationV2StreamService implements OnModuleDestroy {
 
 
   private runGrpc(
-    userId: string,
+    actorUserId: string,
+    grpcUserId: string,
     sessionId: string,
     aiSessionId: string,
     systemWorkspaceId: string | null,
@@ -225,7 +230,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     skills: IGrpcSkill[],
     connectors: IGrpcConnector[],
   ): void {
-    const key = `${userId}:${sessionId}`;
+    const key = `${actorUserId}:${sessionId}`;
     const idleMs = this.config.get<number>('conversationV2.grpcIdleTimeoutMs') ?? 120000;
     // Serialize per-event work so SSE frames are written in emission order and
     // the terminal handlers wait for in-flight appends to drain.
@@ -236,7 +241,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     const finish = () => {
       const active = this.activeCalls.get(key);
       if (active?.idleTimer) clearTimeout(active.idleTimer);
-      this.cleanup(userId, sessionId);
+      this.cleanup(actorUserId, sessionId);
     };
 
     const emitTerminalError = async (message: string): Promise<void> => {
@@ -258,7 +263,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
       } catch {
         /* persistence failed — still push so the client can react */
       }
-      this.push(userId, sessionId, errorEvent, sequence);
+      this.push(actorUserId, sessionId, errorEvent, sequence);
     };
 
     const resetIdle = () => {
@@ -284,12 +289,16 @@ export class ConversationV2StreamService implements OnModuleDestroy {
       : req.message;
 
     const subscription = this.grpcClient
-      .chat(userId, aiSessionId, gRpcMessage, req.model, req.connectorRepo, skills, connectors)
+      .chat(grpcUserId, aiSessionId, gRpcMessage, req.model, req.connectorRepo, skills, connectors)
       .subscribe({
         next: (event) => {
           resetIdle();
+          // Pure liveness ping — a slow step (e.g. a tool call) is still in
+          // flight upstream. Nothing to persist or push; resetting the idle
+          // timer above is the entire point.
+          if (event.type === 'heartbeat') return;
           pending = pending.then(() =>
-            this.processEvent(userId, sessionId, event, req.model, systemWorkspaceId, {
+            this.processEvent(actorUserId, sessionId, event, req.model, systemWorkspaceId, {
               done: () => undefined,
               setFirstAssistantId: (id) => {
                 firstAssistantMessageEventId = id;

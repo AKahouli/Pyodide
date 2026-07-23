@@ -7,7 +7,8 @@ export type ConversationV2EventType =
   | 'done'
   | 'wait'
   | 'error'
-  | 'application_component';
+  | 'application_component'
+  | 'heartbeat';
 
 export interface ConversationV2BaseEvent {
   event_id: string;
@@ -55,6 +56,9 @@ export interface ApplicationComponentEventPayload extends ConversationV2BaseEven
 
 export type DoneEventPayload = ConversationV2BaseEvent;
 export type WaitEventPayload = ConversationV2BaseEvent;
+// No-op liveness signal while a step is still in flight — never persisted or
+// pushed to the frontend; only resets the gRPC stream's idle timer.
+export type HeartbeatEventPayload = ConversationV2BaseEvent;
 
 export interface FileInfo {
   id: string;
@@ -86,7 +90,8 @@ export interface ConversationV2Event {
     | ErrorEventPayload
     | DoneEventPayload
     | WaitEventPayload
-    | ApplicationComponentEventPayload;
+    | ApplicationComponentEventPayload
+    | HeartbeatEventPayload;
 }
 
 export interface SessionWithEvents {

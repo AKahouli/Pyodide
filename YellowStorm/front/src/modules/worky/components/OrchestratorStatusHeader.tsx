@@ -1,6 +1,7 @@
 import { AlertTriangle, Bot, Loader2 } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import { useWorkyStore } from '../store';
+import { streamStatusToOrch } from '../status';
 import type { WorkyBoardLane, WorkyStream, WorkyTask } from '../types';
 import { cn } from '@/lib/utils';
 
@@ -84,7 +85,7 @@ export function OrchestratorStatusHeader({
             isActive ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground',
           )}
         >
-          {t(`orchestrator.status.${phase}`)}
+          {t(`badges.status.${streamStatusToOrch(stream?.status)}`)}
         </span>
       </div>
       {stream ? (

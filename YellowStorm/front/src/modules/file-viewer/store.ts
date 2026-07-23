@@ -81,6 +81,7 @@ interface FileViewerState {
   size: WindowSize;
   minimizedPosition: WindowPosition;
   pendingNavigation: PendingNavigation | null;
+  closeOnOutsideClick: boolean;
 }
 
 interface FileViewerActions {
@@ -100,7 +101,7 @@ interface FileViewerActions {
     mimeType: string,
     options?: FileOpenOptions,
   ) => Promise<void>;
-  openFileFromUrl: (url: string, fileName: string, mimeType: string, options?: Pick<FileOpenOptions, 'displayMode' | 'page' | 'highlightText' | 'highlightBBox' | 'spreadsheet'>) => void;
+  openFileFromUrl: (url: string, fileName: string, mimeType: string, options?: Pick<FileOpenOptions, 'displayMode' | 'closeOnOutsideClick' | 'page' | 'highlightText' | 'highlightBBox' | 'spreadsheet'>) => void;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   updatePdfState: (tabId: string, currentPage: number, pageCount: number) => void;
@@ -132,6 +133,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
       size: { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT },
       minimizedPosition: getDefaultMinimizedPosition(),
       pendingNavigation: null,
+      closeOnOutsideClick: false,
 
       // Actions
       openFile: async (workspaceId, docId, path, fileName, mimeType, options) => {
@@ -169,6 +171,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
               activeTabId: tabId,
               mode: 'open',
               pendingNavigation: createPendingNavigation(tabId, options),
+              closeOnOutsideClick: options?.closeOnOutsideClick ?? false,
             }));
 
             try {
@@ -189,6 +192,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
               activeTabId: tabId,
               mode: 'open',
               pendingNavigation: createPendingNavigation(tabId, options),
+              closeOnOutsideClick: options?.closeOnOutsideClick ?? false,
               ...(resolved ? { displayMode: resolved } : {}),
             });
           }
@@ -214,6 +218,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
           activeTabId: tabId,
           mode: 'open',
           pendingNavigation: createPendingNavigation(tabId, options),
+          closeOnOutsideClick: options?.closeOnOutsideClick ?? false,
           // Set displayMode if provided, default to 'floating' when opening fresh
           ...(resolvedMode
             ? { displayMode: resolvedMode }
@@ -264,6 +269,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
             activeTabId: tabId,
             mode: 'open',
             pendingNavigation: pending,
+            closeOnOutsideClick: options?.closeOnOutsideClick ?? false,
             ...(resolved ? { displayMode: resolved } : {}),
           });
           return;
@@ -281,6 +287,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
           activeTabId: tabId,
           mode: 'open',
           pendingNavigation: pending,
+          closeOnOutsideClick: options?.closeOnOutsideClick ?? false,
           // Set displayMode if provided, default to 'floating' when opening fresh
           ...(resolved
             ? { displayMode: resolved }
@@ -346,6 +353,7 @@ export const useFileViewerStore = create<FileViewerStore>()(
           tabs: [],
           activeTabId: null,
           pendingNavigation: null,
+          closeOnOutsideClick: false,
         });
       },
 

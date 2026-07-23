@@ -61,6 +61,7 @@ export class WorkyTaskService {
       lanes[projectionLane].push({
         id,
         streamId,
+        externalId: (task.externalId as string | null | undefined) ?? null,
         title: task.title ?? '',
         description: task.description ?? '',
         lane: projectionLane,
@@ -71,7 +72,11 @@ export class WorkyTaskService {
         assigneeId: task.assigneeId ? (task.assigneeId as Types.ObjectId).toString() : null,
         actionCategory: task.actionCategory ?? 'internal_analysis',
         dependsOn: (task.dependsOn ?? []).map((d) => (d as Types.ObjectId).toString()),
+        wave: typeof task.wave === 'number' ? task.wave : null,
+        dependsOnStepIds: (task.dependsOnStepIds as string[] | undefined) ?? [],
         blockerReason: blockerReasons.join(', ') || null,
+        result: (task.result as string | null | undefined) ?? null,
+        blockedReason: (task.blockedReason as string | null | undefined) ?? null,
         theoreticalDeadlineAt: task.theoreticalDeadlineAt
           ? new Date(task.theoreticalDeadlineAt).toISOString()
           : null,
@@ -81,6 +86,29 @@ export class WorkyTaskService {
       });
     }
     return lanes;
+  }
+
+  /**
+   * DEBUG: count tasks for a stream, matching streamId as BOTH an ObjectId
+   * and a raw string (via the native driver, bypassing Mongoose casting).
+   * Reveals whether the Electric consumer stored streamId with a type that
+   * the ObjectId-typed board query can't match.
+   */
+  async countByStream(streamId: string): Promise<string> {
+    const coll = this.tasks.collection;
+    let asObjectId = -1;
+    let asString = -1;
+    try {
+      asObjectId = await coll.countDocuments({ streamId: new Types.ObjectId(streamId) });
+    } catch {
+      /* noop */
+    }
+    try {
+      asString = await coll.countDocuments({ streamId } as Record<string, unknown>);
+    } catch {
+      /* noop */
+    }
+    return `objectId=${asObjectId} string=${asString}`;
   }
 
   /** Resolve the current taskIds by clientTaskId mapping for one stream. */
@@ -108,6 +136,8 @@ export type BoardLane = (typeof BOARD_LANES)[number];
 export interface IBoardTaskView {
   id: string;
   streamId: string;
+  /** plan_steps.step_id (Electric source) — what `dependsOnStepIds` entries refer to. */
+  externalId: string | null;
   title: string;
   description: string;
   lane: BoardLane;
@@ -118,7 +148,13 @@ export interface IBoardTaskView {
   assigneeId: string | null;
   actionCategory: string;
   dependsOn: string[];
+  /** Parallel wave index (plan_steps.wave via Electric); null outside a plan. */
+  wave: number | null;
+  /** step_ids this step depends on (plan_steps.depends_on via Electric). */
+  dependsOnStepIds: string[];
   blockerReason: string | null;
+  result: string | null;
+  blockedReason: string | null;
   theoreticalDeadlineAt: string | null;
   startedAt: string | null;
   completedAt: string | null;

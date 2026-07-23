@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useConversationV2Store } from './store';
+import { conversationV2Api } from './api';
 
 describe('useConversationV2Store', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     useConversationV2Store.getState().reset();
   });
 
@@ -190,5 +192,68 @@ describe('useConversationV2Store', () => {
     const evs = useConversationV2Store.getState().events;
     expect(evs).toHaveLength(1);
     expect((evs[0] as any).event_id).toBe('r1');
+  });
+
+  it('setDeployState replaces the active application preview URL', () => {
+    useConversationV2Store.getState().handleEvent({
+      type: 'application_component',
+      event_id: 'app-1',
+      timestamp: 1,
+      title: 'Generated app',
+      url: 'https://preview.example/app',
+    });
+
+    useConversationV2Store.getState().setDeployState({
+      deployStatus: 'deployed',
+      deployedUrl: 'https://deployed.example/app',
+    });
+
+    expect(useConversationV2Store.getState().applicationComponent).toEqual({
+      title: 'Generated app',
+      url: 'https://deployed.example/app',
+    });
+  });
+
+  it('deploy sends the application component title to the backend', async () => {
+    const deploySpy = vi.spyOn(conversationV2Api, 'deploySession').mockResolvedValueOnce({
+      deployStatus: 'deployed',
+      deployedUrl: 'https://deployed.example/app',
+      lastDeployedAt: '2026-07-17T10:00:00.000Z',
+    });
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'https://preview.example/app',
+      },
+    });
+
+    await useConversationV2Store.getState().deploy();
+
+    expect(deploySpy).toHaveBeenCalledWith('session-1', 'Generated app');
+    expect(useConversationV2Store.getState().lastDeployedAt).toBe(
+      '2026-07-17T10:00:00.000Z',
+    );
+  });
+
+  it('replayEvents restores the deployed URL over the original preview URL', () => {
+    useConversationV2Store.setState({
+      deployedUrl: 'https://deployed.example/app',
+      deployStatus: 'deployed',
+    });
+
+    useConversationV2Store.getState().replayEvents([
+      {
+        type: 'application_component',
+        event_id: 'app-1',
+        timestamp: 1,
+        title: 'Generated app',
+        url: 'https://preview.example/app',
+      },
+    ]);
+
+    expect(useConversationV2Store.getState().applicationComponent?.url).toBe(
+      'https://deployed.example/app',
+    );
   });
 });

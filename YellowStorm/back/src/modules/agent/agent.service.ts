@@ -669,6 +669,46 @@ export class AgentService {
       }
     }
 
+    // Include agents shared *with* this user when they tag one. getAgentsForUser
+    // only returns owned + default agents, and the group toolbox (sharedAgentIds)
+    // only covers agents already persisted to the conversation. Without this, a
+    // tagged agent that was shared to the user resolves to no roster entry, so
+    // pingedAgents is empty and the request silently falls back to the default
+    // mono-agent — the reply then comes from the wrong agent.
+    if (agentIds && agentIds.length > 0) {
+      const availableIds = new Set(finalUserAgents.map((a) => a.id));
+      const unresolvedTaggedIds = agentIds.filter((id) => !availableIds.has(id));
+
+      if (unresolvedTaggedIds.length > 0) {
+        // Authorize against the user's share grants — only add agents genuinely
+        // shared to them, never an arbitrary id from the (untrusted) request.
+        const shareMap = await this.agentShareService.getShareInfoMapForUser(userId);
+        const authorizedSharedIds = unresolvedTaggedIds.filter((id) => shareMap.has(id));
+
+        if (authorizedSharedIds.length > 0) {
+          const sharedWithUserAgents = await this.agentModel
+            .find({
+              _id: { $in: authorizedSharedIds.map((id) => new Types.ObjectId(id)) },
+              isActive: true,
+            })
+            .populate('agentType', 'name slug skills')
+            .lean()
+            .exec();
+
+          finalUserAgents = [
+            ...finalUserAgents,
+            ...sharedWithUserAgents.map((agent) => this.toStreamAgent(agent)),
+          ];
+
+          this.logger.log('Shared-with-user agents resolved for stream', {
+            userId,
+            unresolvedCount: unresolvedTaggedIds.length,
+            authorizedCount: authorizedSharedIds.length,
+          });
+        }
+      }
+    }
+
     this.logger.log('Total available agents fetched', {
       userId,
       agentCount: finalUserAgents.length,

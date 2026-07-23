@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import types
 import json
@@ -98,6 +99,7 @@ sys.modules.setdefault("src.flow_engine.nodes.step_hitl_handlers", fake_step_hit
 from src.flow_engine.nodes.step import (
     TEMP_CHILD_PARENT_INSTRUCTION,
     _TemporaryChildAgentTool,
+    _build_available_file_context,
     _temporary_child_enabled,
     run_step,
 )
@@ -120,6 +122,15 @@ def test_temporary_child_enabled_uses_explicit_param_only():
     assert _temporary_child_enabled({"connector_bindings_json": "[{}]"}) is False
 
 
+def test_available_file_context_leaves_filename_choice_to_model():
+    context = _build_available_file_context(["Dragged.pdf", "Deep-search.pdf"])
+
+    assert '"file_names": ["Dragged.pdf", "Deep-search.pdf"]' in context
+    assert "Only send file_name or file_names when that tool declares the parameter" in context
+    assert "Preserve filenames exactly" in context
+    assert '"file_names": []' in _build_available_file_context([])
+
+
 def test_temporary_child_instruction_requires_one_child_not_two():
     instruction = " ".join(TEMP_CHILD_PARENT_INSTRUCTION.split())
     assert "required first temporary child result has already been provided" in instruction
@@ -127,7 +138,8 @@ def test_temporary_child_instruction_requires_one_child_not_two():
     assert "at least once" not in instruction
     assert "two separate" not in instruction
     assert "again only when you decide more evidence or verification is needed" in instruction
-    assert "additional children sequentially, or in parallel if supported" in instruction
+    assert "multiple `tasks` with `execution_mode=\"parallel\"`" in instruction
+    assert "hard total limit" in instruction
     assert "Do not use skills, MCP connector tools" in instruction
     assert "temporary children inherit and use those tools" in instruction
     assert "Call this only when more evidence or verification is needed" in (
@@ -698,6 +710,46 @@ async def test_run_step_attaches_temporary_child_tool_when_enabled(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_temporary_child_tool_runs_parallel_tasks_with_hard_total_limit(monkeypatch):
+    active = 0
+    max_active = 0
+
+    async def _fake_run_step_with_tools(**kwargs):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return kwargs["user_msg"].splitlines()[1]
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.run_step_with_tools", _fake_run_step_with_tools)
+    tool = _TemporaryChildAgentTool(
+        model_id="gpt-test",
+        system_prompt="system",
+        child_tools=[],
+        max_children=2,
+        session_id="exec-1",
+        parent_name="parent",
+        inherited_context="context",
+    )
+
+    result = await tool.ainvoke({
+        "tasks": [
+            {"task_description": "task one"},
+            {"task_description": "task two"},
+            {"task_description": "task three"},
+        ],
+        "execution_mode": "parallel",
+    })
+
+    assert max_active == 2
+    assert "Child 1 result" in result
+    assert "Child 2 result" in result
+    assert "Skipped 1 requested child task" in result
+    assert "limit reached" in (await tool.ainvoke({"task_description": "another"})).lower()
+
+
+@pytest.mark.anyio
 async def test_run_step_with_tools_preserves_tool_base64_images(monkeypatch):
     from src.flow_engine.nodes.step_tools import run_step_with_tools
 
@@ -904,6 +956,99 @@ async def test_run_step_uses_state_workspace_when_node_inputs_are_resolved(monke
     )
 
     assert captured_kwargs["output_workspace_id"] == "workspace-1"
+
+
+@pytest.mark.anyio
+async def test_run_step_deep_search_merges_dragged_and_returned_files(monkeypatch):
+    captured_factory_kwargs = {}
+    captured_search = {}
+
+    def _fake_create_langchain_tools(**kwargs):
+        captured_factory_kwargs.update(kwargs)
+        return [], None
+
+    async def _fake_search(query, workspace_id):
+        captured_search.update(query=query, workspace_id=workspace_id)
+        return {
+            "workspace_id": workspace_id,
+            "total_results": 3,
+            "results": [
+                {"file_name": "DOC-1-cv_kevin_diallo.PDF", "hybrid_score": 0.95},
+                {"file_name": "contract.pdf", "hybrid_score": 0.91},
+                {"file_name": "annex.pdf", "hybrid_score": 0.83},
+            ],
+        }
+
+    class _Chunk:
+        def __init__(self, token):
+            self.choices = [SimpleNamespace(delta=SimpleNamespace(content=token))]
+
+    class _Stream:
+        def __aiter__(self):
+            self._iter = iter([_Chunk("done")])
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+    async def _fake_acompletion(*args, **kwargs):
+        return _Stream()
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.deep_search.search_relevant_documents", _fake_search)
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
+    fake_factory_module.create_langchain_tools = _fake_create_langchain_tools
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
+
+    await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Research penalties",
+            "description": "Find the contractual penalties",
+            "metadata": {
+                "agent_name": "Document agent",
+                "deep_search": True,
+            },
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {"__playbook_default_workspace_id": "workspace-default"},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+        },
+        node_inputs={
+            "default": {
+                "workspaceId": "workspace-1",
+                "path": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
+                "kind": "document",
+                "id": "doc-1",
+                "metadata": {
+                    "documentId": "doc-1",
+                    "workspaceId": "workspace-1",
+                    "filepath": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
+                    "filename": "doc-1-CV_Kevin_Diallo.pdf",
+                },
+                "name": "CV_Kevin_Diallo.pdf",
+            }
+        },
+    )
+
+    assert captured_search["workspace_id"] == "workspace-1"
+    assert "contractual penalties" in captured_search["query"]
+    assert captured_factory_kwargs["input_files"] == [
+        "doc-1-CV_Kevin_Diallo.pdf",
+        "contract.pdf",
+        "annex.pdf",
+    ]
+    assert captured_factory_kwargs["deep_search"] is False
 
 
 @pytest.mark.anyio
@@ -1203,7 +1348,8 @@ async def test_run_step_passes_code_interpreter_file_scope(monkeypatch):
     user_message = next(message["content"] for message in captured_messages if message.get("role") == "user")
     assert "Sandbox Files:" in user_message
     assert "CV_Kevin_Diallo.pdf" in user_message
-    assert "doc-1-CV_Kevin_Diallo.pdf" not in user_message
+    assert '"file_names": ["doc-1-CV_Kevin_Diallo.pdf"]' in user_message
+    assert "available_mcp_file_names" in user_message
 
 
 @pytest.mark.anyio

@@ -12,11 +12,12 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { conversationV2Api } from '../../api';
-import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
 import type { UserSearchResult } from '../../types';
 
-interface ShareDeployDialogProps {
+export interface ShareDeployDialogProps {
+  sessionId: string;
+  deployedUrl: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -30,11 +31,14 @@ function initials(u: UserSearchResult): string {
   return (u.firstName?.[0] ?? u.email[0] ?? '?').toUpperCase();
 }
 
-/** Modal to email the deployed app URL to one or more users (search + chips). */
-export function ShareDeployDialog({ open, onOpenChange }: ShareDeployDialogProps) {
+/** Modal to share a deployed app + its conversation with one or more users. */
+export function ShareDeployDialog({
+  sessionId,
+  deployedUrl,
+  open,
+  onOpenChange,
+}: ShareDeployDialogProps) {
   const { t } = useConversationV2Translation();
-  const sessionId = useConversationV2Store((s) => s.sessionId);
-  const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
 
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<UserSearchResult[]>([]);
@@ -43,7 +47,6 @@ export function ShareDeployDialog({ open, onOpenChange }: ShareDeployDialogProps
   const [sending, setSending] = useState(false);
   const requestId = useRef(0);
 
-  // Reset everything whenever the dialog closes.
   useEffect(() => {
     if (!open) {
       setQuery('');
@@ -53,7 +56,6 @@ export function ShareDeployDialog({ open, onOpenChange }: ShareDeployDialogProps
     }
   }, [open]);
 
-  // Debounced search; min 3 chars; drop out-of-order responses.
   useEffect(() => {
     const q = query.trim();
     if (q.length < 3) {
@@ -84,13 +86,17 @@ export function ShareDeployDialog({ open, onOpenChange }: ShareDeployDialogProps
   const removeUser = (id: string) => setSelected((prev) => prev.filter((u) => u.id !== id));
 
   const handleSend = async () => {
-    if (!sessionId || selected.length === 0) return;
+    if (selected.length === 0) return;
     setSending(true);
     try {
-      await conversationV2Api.shareDeployedApp(
+      const result = await conversationV2Api.shareDeployedApp(
         sessionId,
         selected.map((u) => u.email),
       );
+      if (result.sent === 0) {
+        toast.error(t('toasts.share.error'));
+        return;
+      }
       toast.success(t('toasts.share.success'));
       onOpenChange(false);
     } catch {

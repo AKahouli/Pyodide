@@ -46,10 +46,29 @@ export default registerAs('conversationV2', () => ({
   /**
    * Idle timeout for a background gRPC chat stream: if no event is received
    * for this long the stream is cancelled and a terminal error is emitted.
-   * Resets on every received event. Mirrors v1 `conversation.grpcTimeoutMs`.
+   * Resets on every received event — including the HeartbeatEvent the agent
+   * emits every ~20s while a single step (e.g. a slow sandbox tool call) is
+   * still in flight, so this is now only the backstop for a genuinely dead
+   * channel/task, not a per-step timer. Sized above APImanus's own sandbox
+   * HTTP client timeout (600s) so a real timeout there surfaces as a proper
+   * error before we'd give up first. Mirrors v1 `conversation.grpcTimeoutMs`.
    */
   grpcIdleTimeoutMs: Number.parseInt(
-    process.env.CONVERSATION_V2_GRPC_IDLE_TIMEOUT_MS || '120000',
+    process.env.CONVERSATION_V2_GRPC_IDLE_TIMEOUT_MS || '900000',
+    10,
+  ),
+  appBuilderDeployBaseUrl: process.env.APP_BUILDER_DEPLOY_BASE_URL,
+  appBuilderDeployToken: process.env.APP_BUILDER_DEPLOY_TOKEN,
+  appBuilderDeployTimeoutMs: Number.parseInt(
+    process.env.APP_BUILDER_DEPLOY_TIMEOUT_MS || `${10 * 60 * 1000}`,
+    10,
+  ),
+  appBuilderDeployInitialStatusDelayMs: Number.parseInt(
+    process.env.APP_BUILDER_DEPLOY_INITIAL_STATUS_DELAY_MS || '20000',
+    10,
+  ),
+  appBuilderDeployStatusPollIntervalMs: Number.parseInt(
+    process.env.APP_BUILDER_DEPLOY_STATUS_POLL_INTERVAL_MS || '15000',
     10,
   ),
 }));

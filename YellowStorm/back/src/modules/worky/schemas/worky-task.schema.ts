@@ -28,6 +28,36 @@ export class WorkyTask extends Document {
   @Prop({ type: Types.ObjectId, ref: 'WorkyStream', required: true, index: true })
   streamId!: Types.ObjectId;
 
+  /**
+   * The manager's Postgres row id for this task (the Electric source of
+   * truth). Upsert key for the Electric consumer; null for tasks not
+   * originating from the manager.
+   */
+  @Prop({ type: String, default: null })
+  externalId?: string | null;
+
+  /** plan_steps.ordinal (Electric source) — step ordering within the plan. */
+  @Prop({ type: Number, default: null })
+  ordinal?: number | null;
+
+  /** plan_steps.result (Electric source) — the step's output / manager answer. */
+  @Prop({ type: String, default: null })
+  result?: string | null;
+
+  /** plan_steps.blocked_reason (Electric source) — why the step is blocked. */
+  @Prop({ type: String, default: null })
+  blockedReason?: string | null;
+
+  /** plan_steps.wave (Electric source) — parallel wave index; steps sharing a
+   *  wave ran concurrently. Null for tasks not from the orchestrator's plan. */
+  @Prop({ type: Number, default: null })
+  wave?: number | null;
+
+  /** plan_steps.depends_on (Electric source), split into step_ids — NOT Mongo
+   *  ids, unlike the legacy `dependsOn` field below. */
+  @Prop({ type: [String], default: [] })
+  dependsOnStepIds!: string[];
+
   @Prop({ type: String, required: true, trim: true, minlength: 1, maxlength: 200 })
   title!: string;
 
@@ -156,6 +186,10 @@ WorkyTaskSchema.index({ streamId: 1, lane: 1 });
 WorkyTaskSchema.index({ streamId: 1, status: 1 });
 WorkyTaskSchema.index({ streamId: 1, executionState: 1 });
 WorkyTaskSchema.index({ assigneeId: 1 });
+WorkyTaskSchema.index(
+  { streamId: 1, externalId: 1 },
+  { unique: true, partialFilterExpression: { externalId: { $type: 'string' } } },
+);
 
 WorkyTaskSchema.set('toJSON', {
   virtuals: true,

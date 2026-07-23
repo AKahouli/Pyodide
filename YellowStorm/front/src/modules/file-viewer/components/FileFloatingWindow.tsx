@@ -21,6 +21,8 @@ export function FileFloatingWindow() {
   const setPosition = useFileViewerStore((s) => s.setPosition);
   const setSize = useFileViewerStore((s) => s.setSize);
   const setMinimizedPosition = useFileViewerStore((s) => s.setMinimizedPosition);
+  const closeViewer = useFileViewerStore((s) => s.closeViewer);
+  const closeOnOutsideClick = useFileViewerStore((s) => s.closeOnOutsideClick);
 
   // Clamp position and size when the browser window is resized
   useEffect(() => {
@@ -71,7 +73,13 @@ export function FileFloatingWindow() {
   return (
     <>
       {mode === 'minimized' && <FileMinimizedWindow />}
-      {mode === 'open' && <div className='fixed inset-0 bg-black/80 z-51 pointer-events-none' />}
+      {mode === 'open' && (
+        <div
+          className={`fixed inset-0 bg-black/80 z-51 ${closeOnOutsideClick ? '' : 'pointer-events-none'}`}
+          onClick={closeOnOutsideClick ? closeViewer : undefined}
+          data-testid='file-viewer-backdrop'
+        />
+      )}
       <div className={`fixed z-55 rounded-lg border shadow-2xl bg-background overflow-hidden flex flex-col ${mode === 'minimized' ? 'opacity-0 pointer-events-none' : ''}`} style={{ left: position.x, top: position.y, width: size.width, height: size.height }}>
         {/* 8 invisible resize handles */}
         {RESIZE_EDGES.map((edge) => (

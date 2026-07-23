@@ -1,5 +1,9 @@
 import { apiClient, ApiResponse } from '@/lib/api';
 import type { AgentEvent, ListSessionsResponse, UserSearchResult } from './types';
+import type {
+  ConversationV2SessionPermission,
+  ConversationV2ViewerRole,
+} from './session-permissions';
 
 export interface ListSessionsParams { limit?: number; cursor?: string | null; q?: string }
 
@@ -25,6 +29,8 @@ export interface SessionPointer {
   deployStatus: DeployStatus;
   deployedUrl: string | null;
   lastDeployedAt: string | null;
+  viewerRole?: ConversationV2ViewerRole;
+  permissions?: ConversationV2SessionPermission[];
 }
 
 export interface PersistedEventEnvelope {
@@ -143,10 +149,13 @@ export const conversationV2Api = {
    * finishes with the live URL. The button shows a loader while this is in
    * flight. Re-invoking redeploys (the "Update" action).
    */
-  async deploySession(sessionId: string): Promise<DeployState> {
+  async deploySession(sessionId: string, title?: string): Promise<DeployState> {
     const res = await apiClient.post<ApiResponse<DeployState>>(
       `/conversation-v2/sessions/${sessionId}/deploy`,
-      {},
+      { title: title || undefined },
+      // Deploys can take minutes (build + publish). The backend waits up to
+      // 3 min on the app-builder, so outlive that instead of the global 30s.
+      { timeout: 200_000 },
     );
     return res.data.data;
   },
@@ -157,12 +166,14 @@ export const conversationV2Api = {
     });
     return res.data.data;
   },
-  /** Email the deployed app URL to the given recipients. Returns how many were sent. */
-  async shareDeployedApp(sessionId: string, emails: string[]): Promise<{ sent: number }> {
-    const res = await apiClient.post<ApiResponse<{ sent: number }>>(
-      `/conversation-v2/sessions/${sessionId}/share-deploy`,
-      { emails },
-    );
+  /** Email the deployed app to recipients and grant Marketplace access. */
+  async shareDeployedApp(
+    sessionId: string,
+    emails: string[],
+  ): Promise<{ sent: number; notFound: string[]; skippedSelf: string[] }> {
+    const res = await apiClient.post<
+      ApiResponse<{ sent: number; notFound: string[]; skippedSelf: string[] }>
+    >(`/conversation-v2/sessions/${sessionId}/share-deploy`, { emails });
     return res.data.data;
   },
   async listWorkspaceDocuments(

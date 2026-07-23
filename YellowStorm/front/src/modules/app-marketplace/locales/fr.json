@@ -1,0 +1,62 @@
+{
+  "button": {
+    "label": "App Marketplace",
+    "tooltip": "App Marketplace"
+  },
+  "page": {
+    "title": "Marché d'apps",
+    "description": "Vos applications déployées et partagées",
+    "empty": "Aucune application déployée pour le moment. Publiez une application depuis une conversation pour la voir ici.",
+    "error": "Impossible de charger vos applications déployées."
+  },
+  "hub": {
+    "overview": {
+      "eyebrow": "Vue d'ensemble",
+      "personal": "Personnelles",
+      "shared": "Partagées avec moi"
+    },
+    "filters": {
+      "searchPlaceholder": "Rechercher des applications...",
+      "ownerAll": "Toutes",
+      "ownerMine": "Les miennes",
+      "ownerShared": "Partagées avec moi",
+      "clear": "Effacer les filtres",
+      "noResults": "Aucune application ne correspond à vos filtres."
+    },
+    "sort": {
+      "label": "Trier",
+      "deployed": "Récemment déployées",
+      "name": "Nom (A–Z)"
+    },
+    "view": {
+      "grid": "Grille",
+      "list": "Liste"
+    },
+    "sections": {
+      "personal": "Personnelles",
+      "shared": "Partagées avec moi",
+      "appsCount": "{{count}} applications",
+      "singleApp": "1 application"
+    }
+  },
+  "card": {
+    "untitled": "Application sans titre",
+    "deployedAt": "Déployée le {{date}}",
+    "shared": "Partagée avec vous",
+    "open": "Ouvrir l'application",
+    "conversation": "Accéder à la conversation",
+    "conversationReadOnly": "Ouvrir la conversation (lecture seule)",
+    "share": "Partager l'app et la conversation",
+    "delete": "Supprimer",
+    "deleteTitle": "Retirer l'application du Marketplace ?",
+    "deleteDescription": "La conversation et l'application hébergée seront conservées. Une nouvelle publication l'ajoutera de nouveau au Marketplace.",
+    "unshare": "Retirer",
+    "unshareTitle": "Retirer l'application partagée ?",
+    "unshareDescription": "Cela retire uniquement l'application de votre Marketplace. La conversation du propriétaire reste privée.",
+    "cancel": "Annuler",
+    "deleteSuccess": "Application retirée du Marketplace.",
+    "deleteError": "Impossible de retirer l'application.",
+    "unshareSuccess": "Application partagée retirée de votre Marketplace.",
+    "unshareError": "Impossible de retirer l'application partagée."
+  }
+}

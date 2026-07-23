@@ -13,6 +13,12 @@ import { useConversationV2Translation } from './translation';
 import { FileViewerSidebar, useFileViewerStore } from '@/modules/file-viewer';
 import { useModelsStore } from '@/modules/models';
 import type { AgentEvent } from './types';
+import {
+  canWriteConversationV2Session,
+  ConversationV2SessionPermissions,
+  hasConversationV2SessionPermission,
+  type ConversationV2SessionPermission,
+} from './session-permissions';
 
 interface LocationState {
   initialMessage?: string;
@@ -67,8 +73,19 @@ export default function ConversationV2SessionPage() {
   );
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [sessionPermissions, setSessionPermissions] = useState<ConversationV2SessionPermission[]>([]);
   const sentInitialForSession = useRef<string | null>(null);
   const { t } = useConversationV2Translation();
+  const canWrite = canWriteConversationV2Session(sessionPermissions);
+  const canReadFiles = hasConversationV2SessionPermission(
+    sessionPermissions,
+    ConversationV2SessionPermissions.FILES_READ,
+  );
+  const canBrowseFiles = hasConversationV2SessionPermission(
+    sessionPermissions,
+    ConversationV2SessionPermissions.WORKSPACE_DOCUMENTS_READ,
+  );
+  const isReadOnlyViewer = !canWrite;
 
   const latestPlan = useMemo(() => {
     for (let i = events.length - 1; i >= 0; i--) {
@@ -96,6 +113,7 @@ export default function ConversationV2SessionPage() {
     // Idempotent: a no-op if models are already cached (≤ 5 min old).
     void useModelsStore.getState().fetchModels().catch(() => undefined);
     setNotFound(false);
+    setSessionPermissions([]);
 
     if (hydratedFromCache) {
       // Live state already in memory; just refresh pointer metadata.
@@ -104,11 +122,13 @@ export default function ConversationV2SessionPage() {
         try {
           const pointer = await conversationV2Api.getSession(sessionId);
           if (cancelled) return;
+          setSessionPermissions(pointer.permissions ?? []);
           setSystemWorkspaceId(pointer.systemWorkspaceId);
           setWorkspaceIds(pointer.workspaceIds ?? []);
           setDeployState({
             deployStatus: pointer.deployStatus ?? 'idle',
             deployedUrl: pointer.deployedUrl ?? null,
+            lastDeployedAt: pointer.lastDeployedAt ?? null,
           });
           setSelectedSkillIds(pointer.selectedSkillIds ?? []);
           setSelectedConnectorIds(pointer.selectedConnectorIds ?? []);
@@ -127,11 +147,13 @@ export default function ConversationV2SessionPage() {
         const pointer = await conversationV2Api.getSession(sessionId);
         if (cancelled) return;
 
+        setSessionPermissions(pointer.permissions ?? []);
         setSystemWorkspaceId(pointer.systemWorkspaceId);
         setWorkspaceIds(pointer.workspaceIds ?? []);
         setDeployState({
           deployStatus: pointer.deployStatus ?? 'idle',
           deployedUrl: pointer.deployedUrl ?? null,
+          lastDeployedAt: pointer.lastDeployedAt ?? null,
         });
         setSelectedSkillIds(pointer.selectedSkillIds ?? []);
         setSelectedConnectorIds(pointer.selectedConnectorIds ?? []);
@@ -154,7 +176,11 @@ export default function ConversationV2SessionPage() {
         const nonTerminal = pointer.status === 'active' || pointer.status === 'waiting';
         const last = collected[collected.length - 1];
         const lastIsTerminal = last?.type === 'done' || last?.type === 'error';
-        setStreaming(nonTerminal && collected.length > 0 && !lastIsTerminal);
+        setStreaming(
+          canWriteConversationV2Session(pointer.permissions)
+            ? nonTerminal && collected.length > 0 && !lastIsTerminal
+            : false,
+        );
       } catch {
         if (cancelled) return;
         setNotFound(true);
@@ -171,7 +197,7 @@ export default function ConversationV2SessionPage() {
   // session is loaded. Guarded by sentInitialForSession so we don't re-send
   // when the user navigates back to a session that was created with a state.
   useEffect(() => {
-    if (loading || notFound) return;
+    if (loading || notFound || isReadOnlyViewer) return;
     if (!sessionId || !initialMessage) return;
     if (sentInitialForSession.current === sessionId) return;
     sentInitialForSession.current = sessionId;
@@ -185,7 +211,7 @@ export default function ConversationV2SessionPage() {
     if (window.history.replaceState) {
       window.history.replaceState({}, '');
     }
-  }, [loading, notFound, sessionId, initialMessage, initialModel, initialSkillIds, setSelectedSkillIds, initialConnectorIds, setSelectedConnectorIds, sendMessage]);
+  }, [loading, notFound, isReadOnlyViewer, sessionId, initialMessage, initialModel, initialSkillIds, setSelectedSkillIds, initialConnectorIds, setSelectedConnectorIds, sendMessage]);
 
   if (loading) {
     return (
@@ -205,23 +231,26 @@ export default function ConversationV2SessionPage() {
   return (
     <div className='relative flex w-full min-h-0 flex-1'>
       <div key={sessionId} className='flex min-w-0 flex-1 flex-col'>
-        <ConversationV2Header />
+        <ConversationV2Header
+          readOnly={isReadOnlyViewer}
+          permissions={sessionPermissions}
+        />
         {streamError && (
           <div className='bg-destructive p-2 text-sm text-destructive-foreground'>
             {t('session.errorTitle')}: {streamError}
           </div>
         )}
-        <MessageList />
+        <MessageList canOpenAttachments={canReadFiles} />
         {latestPlan && (
           <div className='shrink-0 pb-2'>
             <PlanPanel steps={latestPlan.steps} />
           </div>
         )}
-        <Composer onSend={sendMessage} />
+        {canWrite && <Composer onSend={sendMessage} />}
       </div>
-      <RightPanel />
+      {canWrite && <RightPanel />}
       <FileViewerSidebar />
-      <FilesSheet />
+      {canBrowseFiles && <FilesSheet readOnly={isReadOnlyViewer} />}
     </div>
   );
 }

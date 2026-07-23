@@ -22,6 +22,17 @@ export interface PointerSummary {
   selectedConnectorIds: string[];
 }
 
+export interface DeployedAppSummary {
+  sessionId: string;
+  title: string;
+  deployedUrl: string;
+  lastDeployedAt: string | null;
+  source: 'owned' | 'shared';
+  shareId: string | null;
+  /** Recipient may open the conversation with full access (shared apps only). */
+  canOpenConversation: boolean;
+}
+
 @Injectable()
 export class ConversationV2SessionService {
   constructor(
@@ -49,6 +60,7 @@ export class ConversationV2SessionService {
       deletedAt: null,
       deployStatus: 'idle',
       deployedUrl: null,
+      deployedAppTitle: null,
       lastDeployedAt: null,
       workspaceIds,
       eventSequence: 0,
@@ -91,6 +103,31 @@ export class ConversationV2SessionService {
     });
   }
 
+  /**
+   * List the owner's successfully deployed apps (sessions with a live URL),
+   * newest deployment first. Powers the App Marketplace page.
+   */
+  async listDeployedApps(ownerId: string): Promise<DeployedAppSummary[]> {
+    const docs = await this.model
+      .find({ ownerId, deletedAt: null, deployStatus: 'deployed', deployedUrl: { $ne: null } })
+      .sort({ lastDeployedAt: -1 })
+      .select('title deployedAppTitle deployedUrl lastDeployedAt')
+      .lean()
+      .exec();
+    return docs.map((doc) => ({
+      sessionId: doc._id.toString(),
+      title:
+        (doc.deployedAppTitle as string | undefined) ??
+        (doc.title as string | undefined) ??
+        '',
+      deployedUrl: doc.deployedUrl as string,
+      lastDeployedAt: doc.lastDeployedAt ? new Date(doc.lastDeployedAt).toISOString() : null,
+      source: 'owned' as const,
+      shareId: null,
+      canOpenConversation: true,
+    }));
+  }
+
   async list(ownerId: string, dto: ListSessionsDto): Promise<PointerSummary[]> {
     const filter: FilterQuery<ConversationV2SessionDocument> = {
       ownerId,
@@ -112,6 +149,15 @@ export class ConversationV2SessionService {
     if (!Types.ObjectId.isValid(id)) return null;
     return this.model
       .findOne({ _id: new Types.ObjectId(id), ownerId, deletedAt: null })
+      .lean()
+      .exec() as unknown as ConversationV2SessionDocument | null;
+  }
+
+  /** Load a non-deleted session by id regardless of owner (caller must authorize). */
+  async getById(id: string): Promise<ConversationV2SessionDocument | null> {
+    if (!Types.ObjectId.isValid(id)) return null;
+    return this.model
+      .findOne({ _id: new Types.ObjectId(id), deletedAt: null })
       .lean()
       .exec() as unknown as ConversationV2SessionDocument | null;
   }
@@ -158,6 +204,7 @@ export class ConversationV2SessionService {
     patch: {
       deployStatus?: ConversationV2DeployStatus;
       deployedUrl?: string | null;
+      deployedAppTitle?: string | null;
       lastDeployedAt?: Date | null;
     },
   ) {
@@ -166,6 +213,31 @@ export class ConversationV2SessionService {
       .findOneAndUpdate(
         { _id: new Types.ObjectId(id), ownerId, deletedAt: null },
         { $set: patch },
+        { new: true },
+      )
+      .lean()
+      .exec();
+  }
+
+  /** Remove a deployed app from Marketplace without deleting its conversation. */
+  async removeDeployedApp(ownerId: string, id: string) {
+    if (!Types.ObjectId.isValid(id)) return null;
+    return this.model
+      .findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(id),
+          ownerId,
+          deletedAt: null,
+          deployStatus: 'deployed',
+        },
+        {
+          $set: {
+            deployStatus: 'idle',
+            deployedUrl: null,
+            deployedAppTitle: null,
+            lastDeployedAt: null,
+          },
+        },
         { new: true },
       )
       .lean()

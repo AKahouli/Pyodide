@@ -30,6 +30,7 @@ interface State {
    *  in flight (drives the header button's loader). */
   deployStatus: DeployStatus;
   deployedUrl: string | null;
+  lastDeployedAt: string | null;
   selectedToolCallId: string | null;
   /** Latest non-message tool emitted by the agent — the "live" target the panel follows. */
   liveToolCallId: string | null;
@@ -131,7 +132,11 @@ interface Actions {
   hydrateSelectedModelForSession: (sessionId: string) => void;
   setWorkspaceIds: (ids: string[]) => void;
   /** Apply deploy state hydrated from getSession (on session load/switch). */
-  setDeployState: (state: { deployStatus: DeployStatus; deployedUrl: string | null }) => void;
+  setDeployState: (state: {
+    deployStatus: DeployStatus;
+    deployedUrl: string | null;
+    lastDeployedAt?: string | null;
+  }) => void;
   /** Publish/deploy the current session's app. Flips to 'deploying' immediately,
    *  then 'deployed' (+ url) or 'error' once the backend responds. */
   deploy: () => Promise<void>;
@@ -170,6 +175,7 @@ const initial: State = {
   workspaceIds: [],
   deployStatus: 'idle',
   deployedUrl: null,
+  lastDeployedAt: null,
       typewriterSessionId: null,
       typewriterName: null,
       selectedConnectorRepo: null,
@@ -311,6 +317,7 @@ function freshViewState(): Partial<State> {
     workspaceIds: [],
     deployStatus: 'idle',
     deployedUrl: null,
+    lastDeployedAt: null,
     typewriterSessionId: null,
     typewriterName: null,
     selectedConnectorRepo: null,
@@ -496,19 +503,33 @@ export const useConversationV2Store = create<State & Actions>()(
       setSystemWorkspaceId: (id) =>
         set({ systemWorkspaceId: id }, false, 'setSystemWorkspaceId'),
       setWorkspaceIds: (ids) => set({ workspaceIds: ids }, false, 'setWorkspaceIds'),
-      setDeployState: ({ deployStatus, deployedUrl }) =>
-        set({ deployStatus, deployedUrl }, false, 'setDeployState'),
+      setDeployState: ({ deployStatus, deployedUrl, lastDeployedAt }) =>
+        set(
+          (s) => ({
+            deployStatus,
+            deployedUrl,
+            ...(lastDeployedAt !== undefined ? { lastDeployedAt } : {}),
+            ...(deployedUrl && s.applicationComponent
+              ? { applicationComponent: { ...s.applicationComponent, url: deployedUrl } }
+              : {}),
+          }),
+          false,
+          'setDeployState',
+        ),
       deploy: async () => {
         const id = get().sessionId;
         if (!id) return;
         set({ deployStatus: 'deploying' }, false, 'deploy/start');
         try {
-          const r = await conversationV2Api.deploySession(id);
-          set(
-            { deployStatus: r.deployStatus, deployedUrl: r.deployedUrl },
-            false,
-            'deploy/done',
+          const r = await conversationV2Api.deploySession(
+            id,
+            get().applicationComponent?.title,
           );
+          get().setDeployState({
+            deployStatus: r.deployStatus,
+            deployedUrl: r.deployedUrl,
+            lastDeployedAt: r.lastDeployedAt,
+          });
         } catch (err) {
           set({ deployStatus: 'error' }, false, 'deploy/error');
           throw err;
@@ -566,7 +587,12 @@ export const useConversationV2Store = create<State & Actions>()(
       setFilesSheetOpen: (open) =>
         set({ filesSheetOpen: open }, false, `setFilesSheetOpen/${open}`),
       replayEvents: (events) => {
-        const applicationComponent = deriveApplicationComponent(events);
+        const pushedApplication = deriveApplicationComponent(events);
+        const deployedUrl = get().deployedUrl;
+        const applicationComponent =
+          pushedApplication && deployedUrl
+            ? { ...pushedApplication, url: deployedUrl }
+            : pushedApplication;
         set(
           {
             events: dedupeReplayEvents(events),

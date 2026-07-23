@@ -1,4 +1,4 @@
-import { ExecutionContext, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ExecutionContext, NotFoundException } from '@nestjs/common';
 import { ConversationV2OwnerGuard } from './conversation-v2-owner.guard';
 
 function ctx(user: { id: string } | undefined, id: string): ExecutionContext {
@@ -7,29 +7,37 @@ function ctx(user: { id: string } | undefined, id: string): ExecutionContext {
 }
 
 describe('ConversationV2OwnerGuard', () => {
-  const sessionSvc = { getOne: jest.fn() };
-  const guard = new ConversationV2OwnerGuard(sessionSvc as any);
+  const accessSvc = { resolveSession: jest.fn() };
+  const guard = new ConversationV2OwnerGuard(accessSvc as any);
 
-  beforeEach(() => sessionSvc.getOne.mockReset());
+  beforeEach(() => accessSvc.resolveSession.mockReset());
 
   it('allows owner', async () => {
-    sessionSvc.getOne.mockResolvedValue({ ownerId: 'u1', sessionId: 's1' });
+    const resolved = {
+      ownerId: 'u1',
+      actorUserId: 'u1',
+      pointer: { aiSessionId: 'ai-1' },
+      access: { viewerRole: 'owner', permissions: [] },
+    };
+    accessSvc.resolveSession.mockResolvedValue(resolved);
+    const request = ctx({ id: 'u1' }, 's1');
+    await expect(guard.canActivate(request)).resolves.toBe(true);
+    expect((request.switchToHttp().getRequest() as any).conversationV2Session).toBe(resolved);
+  });
+
+  it('allows shared participant with conversation access', async () => {
+    accessSvc.resolveSession.mockResolvedValue({
+      ownerId: 'owner-1',
+      actorUserId: 'u1',
+      pointer: { aiSessionId: 'ai-1' },
+      access: { viewerRole: 'shared', permissions: [] },
+    });
     await expect(guard.canActivate(ctx({ id: 'u1' }, 's1'))).resolves.toBe(true);
   });
 
-  it('404s when session is missing or soft-deleted', async () => {
-    sessionSvc.getOne.mockResolvedValue(null);
+  it('404s when session is missing or inaccessible', async () => {
+    accessSvc.resolveSession.mockResolvedValue(null);
     await expect(guard.canActivate(ctx({ id: 'u1' }, 's1'))).rejects.toThrow(NotFoundException);
-  });
-
-  it('403s a non-owner', async () => {
-    sessionSvc.getOne.mockResolvedValue({ ownerId: 'someone-else', sessionId: 's1' });
-    await expect(guard.canActivate(ctx({ id: 'u1' }, 's1'))).rejects.toThrow(ForbiddenException);
-  });
-
-  it('returns 404 when getOne returns null (covers malformed id)', async () => {
-    sessionSvc.getOne.mockResolvedValueOnce(null);
-    await expect(guard.canActivate(ctx({ id: 'u1' }, 'not-a-hex'))).rejects.toThrow(NotFoundException);
   });
 
   it('returns 404 when userId is missing', async () => {
@@ -38,10 +46,5 @@ describe('ConversationV2OwnerGuard', () => {
 
   it('returns 404 when sessionId is missing', async () => {
     await expect(guard.canActivate(ctx({ id: 'u1' }, ''))).rejects.toThrow(NotFoundException);
-  });
-
-  it('returns 403 when ownerId does not match the request user', async () => {
-    sessionSvc.getOne.mockResolvedValueOnce({ ownerId: 'someone-else', sessionId: 's1' });
-    await expect(guard.canActivate(ctx({ id: 'u1' }, 's1'))).rejects.toThrow(ForbiddenException);
   });
 });
