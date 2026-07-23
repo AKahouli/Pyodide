@@ -207,6 +207,11 @@ export function AddLinkDialog({
               <div className='relative min-h-0 flex-1 overflow-hidden bg-muted/10'>
                 {session.status === 'busy' ? (
                   <div className='flex h-full items-center justify-center text-sm text-muted-foreground'>Navigateur occupé. Réessayez dans un instant.</div>
+                ) : session.status === 'error' ? (
+                  <div className='flex h-full flex-col items-center justify-center gap-3 p-6 text-center'>
+                    <p className='max-w-md text-sm text-destructive'>{session.errorReason ?? 'Connexion au navigateur impossible.'}</p>
+                    <Button size='sm' variant='outline' onClick={() => session.start(session.rootUrl ?? url)}>Réessayer</Button>
+                  </div>
                 ) : session.status === 'connecting' ? (
                   <div className='flex h-full items-center justify-center'><Loader2 className='h-6 w-6 animate-spin' /></div>
                 ) : (

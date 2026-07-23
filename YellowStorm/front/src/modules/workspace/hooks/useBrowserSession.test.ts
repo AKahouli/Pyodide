@@ -69,6 +69,15 @@ describe('useBrowserSession', () => {
     expect(result.current.loading).toBe(false);
   });
 
+  it('surfaces an error (not an infinite spinner) when the socket cannot connect', async () => {
+    const { result } = renderHook(() => useBrowserSession());
+    act(() => { result.current.start('https://ok.example'); });
+    act(() => { handlers['connect_error'](new Error('websocket error')); });
+    expect(result.current.status).toBe('error');
+    expect(result.current.errorReason).toContain('browser-session');
+    expect(result.current.errorReason).toContain('websocket error');
+  });
+
   it('surfaces a blocked notice', async () => {
     const { result } = renderHook(() => useBrowserSession());
     act(() => { result.current.start('https://ok.example'); });
