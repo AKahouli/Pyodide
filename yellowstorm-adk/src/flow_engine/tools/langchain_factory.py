@@ -765,7 +765,11 @@ def create_langchain_tools(
             tools.append(activate_skill_tool)
 
     if deep_search:
-        deep_search_tool = _create_deep_search_tool()
+        deep_search_workspace_id = next(
+            (workspace_id for workspace_id in (binding_workspace_ids or []) if workspace_id),
+            output_workspace_id,
+        )
+        deep_search_tool = _create_deep_search_tool(deep_search_workspace_id)
         if deep_search_tool:
             tools.append(deep_search_tool)
 
@@ -1653,12 +1657,11 @@ def _create_plan_tool() -> StructuredTool:
 
 class DeepSearchInput(BaseModel):
     query: str = Field(description="The search query string.")
-    workspace_id: str = Field(description="The workspace ID to search in.")
 
 
-def _create_deep_search_tool() -> Optional[StructuredTool]:
+def _create_deep_search_tool(workspace_id: str) -> Optional[StructuredTool]:
     """Create the relevant-document tool for compatible non-preflight callers."""
-    async def _deep_search(query: str, workspace_id: str) -> str:
+    async def _deep_search(query: str) -> str:
         from src.flow_engine.deep_search import search_relevant_documents
 
         try:
@@ -1672,8 +1675,7 @@ def _create_deep_search_tool() -> Optional[StructuredTool]:
         name="search_relevant_documents",
         description=(
             "Search for relevant documents across the knowledge base using semantic search. "
-            "Use this to find information in indexed documents by providing a natural language query "
-            "and the target workspace name."
+            "Use this to find information in indexed documents by providing a natural language query."
         ),
         func=None,
         coroutine=_deep_search,

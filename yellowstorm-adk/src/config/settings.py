@@ -152,7 +152,7 @@ class Settings(BaseSettings):
 
     # Community graph services (deep search document pre-filter)
     COMMUNITY_GRAPH_URL: Optional[str] = None
-    MCP_API_KEY_DEEP_SEARCH: Optional[str] = None
+    API_KEY_COMMUNITY_GRAPH: Optional[str] = None
     DEEP_SEARCH_TIMEOUT_SECONDS: float = 30.0
 
     # Legacy MCP endpoint retained for non-playbook callers.
