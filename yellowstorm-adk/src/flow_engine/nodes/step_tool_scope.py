@@ -69,7 +69,6 @@ def build_step_tool_scope(
         port_seen_doc_ids: set[str] = set()
         for ref in refs:
             ref = _hydrate_file_ref(ref, workspace_context)
-            _add_ceph_path(ref.get("workspace_path"))
             ref_workspace_id = str(ref.get("workspace_id") or "").strip()
             if ref_workspace_id and ref_workspace_id not in seen_binding_workspace_ids:
                 seen_binding_workspace_ids.add(ref_workspace_id)
