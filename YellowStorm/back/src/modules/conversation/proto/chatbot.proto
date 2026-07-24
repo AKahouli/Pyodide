@@ -457,6 +457,39 @@ message StreamChunk {
     Usage usage = 4;             // Token usage data (optional)
 }
 
+enum ConversationHistoryRole {
+    CONVERSATION_HISTORY_ROLE_UNSPECIFIED = 0;
+    CONVERSATION_HISTORY_ROLE_USER = 1;
+    CONVERSATION_HISTORY_ROLE_ASSISTANT = 2;
+}
+
+message ConversationHistoryEntry {
+    ConversationHistoryRole role = 1;
+    string text = 2;
+}
+
+message SeedConversationSessionRequest {
+    string user_id = 1;
+    string session_id = 2;
+    string idempotency_key = 3;
+    repeated ConversationHistoryEntry history = 4;
+}
+
+message SeedConversationSessionResponse {
+    string session_id = 1;
+    bool created = 2;
+}
+
+message DeleteConversationSessionRequest {
+    string user_id = 1;
+    string session_id = 2;
+    string idempotency_key = 3;
+}
+
+message DeleteConversationSessionResponse {
+    bool deleted = 1;
+}
+
 // ===== SERVICES =====
 
 service ChatbotService {
@@ -467,6 +500,8 @@ service ChatbotService {
     rpc GeneratePlaybook(GeneratePlaybookRequest) returns (GeneratePlaybookResponse);
     rpc EvaluateTask(TaskAdvisorRequest) returns (TaskAdvisorResult);
     rpc AdvisePlaybookNode(AdvisePlaybookNodeRequest) returns (AdvisePlaybookNodeResponse);
+    rpc SeedConversationSession(SeedConversationSessionRequest) returns (SeedConversationSessionResponse);
+    rpc DeleteConversationSession(DeleteConversationSessionRequest) returns (DeleteConversationSessionResponse);
 }
 
 // ===== PLAYBOOK LANGGRAPH SERVICE =====
@@ -958,5 +993,3 @@ message AdvisePlaybookNodeResponse {
     string task_id = 2;
     repeated NodeAdvisorSuggestion suggestions = 3;
 }
-
- 

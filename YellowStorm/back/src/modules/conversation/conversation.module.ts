@@ -28,6 +28,7 @@ import { ShareService } from './services/share.service';
 import { ReportService } from './services/report.service';
 import { ComposerSuggestionsService } from './services/composer-suggestions.service';
 import { ChoiceInteractionService } from './services/choice-interaction.service';
+import { ConversationBranchService } from './services/conversation-branch.service';
 
 // Guards
 import { ConversationOwnerGuard } from './guards/conversation-owner.guard';
@@ -91,6 +92,7 @@ import { GovernanceRuntimeModule } from '../governance/governance-runtime.module
     ReportService,
     ComposerSuggestionsService,
     ChoiceInteractionService,
+    ConversationBranchService,
     ConversationOwnerGuard,
     SseAuthGuard,
     ComposerSuggestionsRateLimitGuard,

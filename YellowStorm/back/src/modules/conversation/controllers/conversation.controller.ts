@@ -11,6 +11,8 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { ConversationService } from '../services/conversation.service';
+import { ConversationBranchService } from '../services/conversation-branch.service';
+import { BranchConversationDto } from '../dto/branch-conversation.dto';
 import { CreateConversationDto } from '../dto/create-conversation.dto';
 import { UpdateConversationDto } from '../dto/update-conversation.dto';
 import { ConversationQueryDto } from '../dto/conversation-query.dto';
@@ -26,6 +28,7 @@ import { ServiceUnavailableException, BadRequestException } from '../../exceptio
 export class ConversationController {
   constructor(
     private readonly conversationService: ConversationService,
+    private readonly conversationBranchService: ConversationBranchService,
     private readonly documentService: DocumentService,
   ) {}
 
@@ -77,6 +80,16 @@ export class ConversationController {
   @UseGuards(ConversationOwnerGuard)
   async findOne(@Param('id') id: string) {
     return this.conversationService.findById(id);
+  }
+
+  @Post(':id/branches')
+  @UseGuards(ConversationOwnerGuard)
+  async branch(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Body() dto: BranchConversationDto,
+  ) {
+    return this.conversationBranchService.createBranch(id, user._id.toString(), dto);
   }
 
   @Post(':id/join')

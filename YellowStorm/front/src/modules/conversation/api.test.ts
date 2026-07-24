@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '@/lib/api';
-import { createConversation, deleteConversation, fetchConversations, fetchMessages, sendMessage } from './api';
+import { branchConversation, createConversation, deleteConversation, fetchConversations, fetchMessages, sendMessage } from './api';
 
 vi.mock('@/lib/api', () => ({
   apiClient: {
@@ -14,6 +14,7 @@ vi.mock('@/lib/api', () => ({
       list: '/conversations',
       create: '/conversations',
       byId: (id: string) => `/conversations/${id}`,
+      branch: (id: string) => `/conversations/${id}/branches`,
       messages: (id: string) => `/conversations/${id}/messages`,
       messageById: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}`,
       feedback: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/feedback`,
@@ -89,5 +90,19 @@ describe('conversation api', () => {
     vi.mocked(apiClient.delete).mockResolvedValueOnce({} as never);
     await deleteConversation('c3');
     expect(apiClient.delete).toHaveBeenCalled();
+  });
+
+  it('creates a branch using message IDs only', async () => {
+    const payload = {
+      requestId: '64fcf421-dd8f-44d5-ad38-f7f1169fd810',
+      targetMessageId: 'ai-2',
+      activeBranches: { 'user-1': 'ai-2' },
+    };
+    vi.mocked(apiClient.post).mockResolvedValueOnce({ data: { data: { id: 'branch-1' } } } as never);
+
+    const result = await branchConversation('source-1', payload);
+
+    expect(apiClient.post).toHaveBeenCalledWith('/conversations/source-1/branches', payload);
+    expect(result.id).toBe('branch-1');
   });
 });

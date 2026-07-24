@@ -67,6 +67,11 @@ export interface StreamGovernanceOverride {
   scopeId: string;
 }
 
+export interface ConversationHistoryEntry {
+  role: 'CONVERSATION_HISTORY_ROLE_USER' | 'CONVERSATION_HISTORY_ROLE_ASSISTANT';
+  text: string;
+}
+
 // Log every Nth chunk to avoid overwhelming logs
 const CHUNK_LOG_INTERVAL = 10;
 
@@ -99,6 +104,46 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly skillService: SkillService,
   ) {
     this.logger.setContext('StreamService');
+  }
+
+  async seedConversationSession(
+    userId: string,
+    sessionId: string,
+    idempotencyKey: string,
+    history: ConversationHistoryEntry[],
+  ): Promise<void> {
+    await this.callConversationSessionRpc('SeedConversationSession', {
+      user_id: userId,
+      session_id: sessionId,
+      idempotency_key: idempotencyKey,
+      history,
+    });
+  }
+
+  async deleteConversationSession(userId: string, sessionId: string, idempotencyKey: string): Promise<void> {
+    await this.callConversationSessionRpc('DeleteConversationSession', {
+      user_id: userId,
+      session_id: sessionId,
+      idempotency_key: idempotencyKey,
+    });
+  }
+
+  private async callConversationSessionRpc(method: string, request: Record<string, unknown>): Promise<void> {
+    if (!this.isGrpcAvailable || !this.chatbotClient) {
+      throw new ServiceUnavailableException(
+        ErrorCode.CHAT_GRPC_UNAVAILABLE,
+        'AI service is currently unavailable',
+      );
+    }
+
+    const metadata = createGrpcMetadata(this.configService);
+    const deadline = new Date(Date.now() + this.configService.get<number>('conversation.grpcTimeoutMs', 120000));
+    await new Promise<void>((resolve, reject) => {
+      this.chatbotClient[method](request, metadata, { deadline }, (error: grpc.ServiceError | null) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
   }
 
   onModuleInit() {

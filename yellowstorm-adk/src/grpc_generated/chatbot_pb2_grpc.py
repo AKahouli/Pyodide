@@ -71,6 +71,16 @@ class ChatbotServiceStub(object):
                 request_serializer=chatbot__pb2.AdvisePlaybookNodeRequest.SerializeToString,
                 response_deserializer=chatbot__pb2.AdvisePlaybookNodeResponse.FromString,
                 _registered_method=True)
+        self.SeedConversationSession = channel.unary_unary(
+                '/chatbot.ChatbotService/SeedConversationSession',
+                request_serializer=chatbot__pb2.SeedConversationSessionRequest.SerializeToString,
+                response_deserializer=chatbot__pb2.SeedConversationSessionResponse.FromString,
+                _registered_method=True)
+        self.DeleteConversationSession = channel.unary_unary(
+                '/chatbot.ChatbotService/DeleteConversationSession',
+                request_serializer=chatbot__pb2.DeleteConversationSessionRequest.SerializeToString,
+                response_deserializer=chatbot__pb2.DeleteConversationSessionResponse.FromString,
+                _registered_method=True)
 
 
 class ChatbotServiceServicer(object):
@@ -120,6 +130,18 @@ class ChatbotServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SeedConversationSession(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteConversationSession(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_ChatbotServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -157,6 +179,16 @@ def add_ChatbotServiceServicer_to_server(servicer, server):
                     servicer.AdvisePlaybookNode,
                     request_deserializer=chatbot__pb2.AdvisePlaybookNodeRequest.FromString,
                     response_serializer=chatbot__pb2.AdvisePlaybookNodeResponse.SerializeToString,
+            ),
+            'SeedConversationSession': grpc.unary_unary_rpc_method_handler(
+                    servicer.SeedConversationSession,
+                    request_deserializer=chatbot__pb2.SeedConversationSessionRequest.FromString,
+                    response_serializer=chatbot__pb2.SeedConversationSessionResponse.SerializeToString,
+            ),
+            'DeleteConversationSession': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteConversationSession,
+                    request_deserializer=chatbot__pb2.DeleteConversationSessionRequest.FromString,
+                    response_serializer=chatbot__pb2.DeleteConversationSessionResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -350,6 +382,60 @@ class ChatbotService(object):
             '/chatbot.ChatbotService/AdvisePlaybookNode',
             chatbot__pb2.AdvisePlaybookNodeRequest.SerializeToString,
             chatbot__pb2.AdvisePlaybookNodeResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SeedConversationSession(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chatbot.ChatbotService/SeedConversationSession',
+            chatbot__pb2.SeedConversationSessionRequest.SerializeToString,
+            chatbot__pb2.SeedConversationSessionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteConversationSession(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chatbot.ChatbotService/DeleteConversationSession',
+            chatbot__pb2.DeleteConversationSessionRequest.SerializeToString,
+            chatbot__pb2.DeleteConversationSessionResponse.FromString,
             options,
             channel_credentials,
             insecure,

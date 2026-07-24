@@ -181,6 +181,7 @@ export const API_ENDPOINTS = {
     create: '/conversations',
     createGoverned: '/conversations/governed',
     byId: (id: string) => `/conversations/${id}`,
+    branch: (id: string) => `/conversations/${id}/branches`,
     join: (id: string) => `/conversations/${id}/join`,
     taggedAgents: (id: string) => `/conversations/${id}/tagged-agents`,
     messages: (id: string) => `/conversations/${id}/messages`,

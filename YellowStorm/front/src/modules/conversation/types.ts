@@ -47,6 +47,13 @@ export interface Conversation {
   projectId?: string | null;
   runtimeMode?: 'standard' | 'governed';
   governanceContext?: { programId: string; scopeId: string; deploymentId: string; revisionId: string; revisionNumber: number; pinnedAt: string; runtimeDefinition: { primaryAgentId: string; allowedAgentIds: string[]; workspaceIds: string[] } };
+  branchProvenance?: { sourceConversationId: string; sourceTargetMessageId: string; branchedAt: string };
+}
+
+export interface BranchConversationPayload {
+  requestId: string;
+  targetMessageId: string;
+  activeBranches: Record<string, string>;
 }
 
 export interface ComposerSuggestionSettings {

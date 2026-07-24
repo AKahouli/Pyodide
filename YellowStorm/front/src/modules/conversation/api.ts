@@ -1,5 +1,5 @@
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse } from './types';
+import type { Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload } from './types';
 
 // ===== Conversation APIs =====
 
@@ -85,6 +85,11 @@ export async function fetchMessages(conversationId: string, params?: MessageList
 
 export async function sendMessage(conversationId: string, payload: SendMessagePayload): Promise<{ userMessage: Message; aiMessageId?: string }> {
   const response = await apiClient.post<ApiResponse<{ userMessage: Message; aiMessageId?: string }>>(API_ENDPOINTS.conversations.messages(conversationId), payload);
+  return response.data.data;
+}
+
+export async function branchConversation(id: string, payload: BranchConversationPayload): Promise<Conversation> {
+  const response = await apiClient.post<ApiResponse<Conversation>>(API_ENDPOINTS.conversations.branch(id), payload);
   return response.data.data;
 }
 

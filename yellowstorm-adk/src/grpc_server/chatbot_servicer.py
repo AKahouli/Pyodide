@@ -39,6 +39,10 @@ from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
 from src.temporary_child_summary import pop_temporary_child_summary
 from src.flow_engine.advisor.playbook_node_advisor import advise_playbook_node
 from src.flow_engine.advisor.execution_advisor_service import evaluate_task_execution
+from src.grpc_server.conversation_session_seed import (
+    ConversationSessionSeedService,
+    SessionSeedConflictError,
+)
 
 logger = get_logger(__name__)
 app_settings = get_settings()
@@ -85,8 +89,69 @@ class ChatbotServicer(
             agent_team_service: Service for multi-agent team orchestration
         """
         self.agent_team_service = agent_team_service
+        self.conversation_session_seed = ConversationSessionSeedService()
         self._background_tasks: set[asyncio.Task] = set()
         logger.info("[gRPC] ChatbotServicer initialized (V2 only)")
+
+    async def SeedConversationSession(self, request, context):
+        role_names = {
+            chatbot_pb2.CONVERSATION_HISTORY_ROLE_USER: "user",
+            chatbot_pb2.CONVERSATION_HISTORY_ROLE_ASSISTANT: "assistant",
+        }
+        try:
+            history = []
+            for entry in request.history:
+                role = role_names.get(entry.role)
+                if not role:
+                    await context.abort(
+                        grpc.StatusCode.INVALID_ARGUMENT,
+                        "Conversation history contains an invalid role",
+                    )
+                history.append((role, entry.text))
+
+            created = await self.conversation_session_seed.seed(
+                user_id=request.user_id,
+                session_id=request.session_id,
+                idempotency_key=request.idempotency_key,
+                history=history,
+            )
+            return chatbot_pb2.SeedConversationSessionResponse(
+                session_id=request.session_id,
+                created=created,
+            )
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        except SessionSeedConflictError as exc:
+            await context.abort(grpc.StatusCode.ALREADY_EXISTS, str(exc))
+        except Exception:
+            logger.exception(
+                "[gRPC] Failed to seed conversation session",
+                session_id=request.session_id,
+            )
+            await context.abort(
+                grpc.StatusCode.INTERNAL,
+                "Failed to seed conversation session",
+            )
+
+    async def DeleteConversationSession(self, request, context):
+        try:
+            deleted = await self.conversation_session_seed.delete(
+                user_id=request.user_id,
+                session_id=request.session_id,
+                idempotency_key=request.idempotency_key,
+            )
+            return chatbot_pb2.DeleteConversationSessionResponse(deleted=deleted)
+        except SessionSeedConflictError as exc:
+            await context.abort(grpc.StatusCode.ALREADY_EXISTS, str(exc))
+        except Exception:
+            logger.exception(
+                "[gRPC] Failed to delete conversation session",
+                session_id=request.session_id,
+            )
+            await context.abort(
+                grpc.StatusCode.INTERNAL,
+                "Failed to delete conversation session",
+            )
 
     async def AdvisePlaybookNode(
         self,
