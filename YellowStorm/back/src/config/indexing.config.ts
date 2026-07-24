@@ -15,6 +15,7 @@ export default registerAs('indexing', () => ({
   apiKey: process.env.INDEXING_API_KEY || '',
   apiAdk: process.env.API_ADK_URL || '',
   communityGraphUrl: process.env.COMMUNITY_GRAPH_URL || 'http://localhost:8000',
+  communityGraphApiKey: process.env.API_KEY_COMMUNITY_GRAPH || '',
   username: process.env.INDEXING_API_USERNAME || '',
   password: process.env.INDEXING_API_PASSWORD || '',
   vectorstoreApiKey: process.env.VECTORSTORE_API_KEY || '',

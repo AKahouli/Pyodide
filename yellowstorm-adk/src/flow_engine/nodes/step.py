@@ -850,6 +850,10 @@ async def _execute_step(
         input_context if isinstance(input_context, dict) else {},
         state,
     )
+    deep_search_workspace_id = next(
+        (workspace_id for workspace_id in tool_scope.binding_workspace_ids if workspace_id),
+        output_workspace_id,
+    )
 
     effective_file_names = list(tool_scope.file_names)
     deep_search_result: dict[str, Any] | None = None
@@ -859,14 +863,7 @@ async def _execute_step(
             search_relevant_documents,
         )
 
-        deep_search_workspace_id = (
-            next((wid for wid in tool_scope.binding_workspace_ids if wid), "")
-            or output_workspace_id
-        )
         deep_search_query = str(node_description or "").strip()
-        if prompt_input_context:
-            input_query = json.dumps(prompt_input_context, ensure_ascii=False, default=str)
-            deep_search_query = f"{deep_search_query}\n\n{input_query}".strip()
         if not deep_search_query:
             deep_search_query = user_msg
 
@@ -876,9 +873,12 @@ async def _execute_step(
                 deep_search_query,
                 deep_search_workspace_id,
             )
+            routed_files = deep_search_result.get("files")
+            if not isinstance(routed_files, list):
+                routed_files = deep_search_result.get("results", [])
             deep_search_file_names = [
                 str(item.get("file_name") or "")
-                for item in deep_search_result.get("results", [])
+                for item in routed_files
                 if isinstance(item, dict)
             ]
             effective_file_names = merge_file_names(
@@ -918,11 +918,16 @@ async def _execute_step(
             raise
 
         user_msg = (
-            f"{user_msg}\n\n<deep_search_preflight>\n"
-            "Relevant-document discovery is complete. The returned filenames were "
-            "merged with user-provided files and exposed to the agent below.\n"
+            f"{user_msg}\n\n<deep_search_routing_plan>\n"
+            "The community-graph routing step is complete. Review each returned "
+            "file's routing_decision, reason, and search_for guidance. Decide which "
+            "exact file_name or file_names are needed for each next MCP call; do not "
+            "assume every candidate must be used. Pass selected filenames only when "
+            "the MCP tool schema supports file_name or file_names. If the status is "
+            "NO_RELEVANT_FILES, do not invent filenames; use only user-provided files "
+            "or explain that no relevant indexed file was found.\n"
             f"{json.dumps(deep_search_result, ensure_ascii=False, default=str)}\n"
-            "</deep_search_preflight>"
+            "</deep_search_routing_plan>"
         )
 
     user_msg = f"{user_msg}\n\n{_build_available_file_context(effective_file_names)}"
