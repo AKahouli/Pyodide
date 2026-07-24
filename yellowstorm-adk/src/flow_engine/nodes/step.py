@@ -941,6 +941,7 @@ async def _execute_step(
         workspace_ceph_paths=workspace_ceph_paths,
         deep_search=False,
         binding_workspace_ids=tool_scope.binding_workspace_ids,
+        execution_id=str(state.get("execution_id") or ""),
     )
     if _temporary_child_enabled(agent_config["agent_params"]):
         temporary_child_tool = _TemporaryChildAgentTool(
