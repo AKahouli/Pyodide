@@ -286,6 +286,7 @@ export interface GovernanceDryRun {
   conversationId?: string;
   testerId: string;
   status: 'running' | 'passed' | 'failed' | 'needs_review';
+  executionMode: 'conversation' | 'manual';
   testCases: Array<Record<string, unknown>>;
   checks: Record<string, unknown>;
   createdAt: string;

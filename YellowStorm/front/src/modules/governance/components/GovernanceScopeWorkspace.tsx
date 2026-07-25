@@ -19,6 +19,7 @@ import { useWorkspaceStore, useWorkspaces, type Workspace } from '@/modules/work
 import { governanceApi } from '../api';
 import {
   useCreateGovernanceDeployment,
+  useCreateGovernanceDryRun,
   useCreateGovernanceMembership,
   useCreateGovernanceRevision,
   useCreateGovernanceSource,
@@ -1320,11 +1321,12 @@ function DryRunConversationPanel({ programId, scopeId, deploymentId, draftRevisi
   const { t } = useModuleTranslation('governance');
   const agents = useAgents();
   const fetchAgents = useAgentStore((state) => state.fetchAgents);
+  const createDryRun = useCreateGovernanceDryRun(deploymentId, programId, scopeId);
   const markDryRun = useMarkGovernanceDryRun(deploymentId, programId, scopeId);
   const { data: dryRuns = [] } = useGovernanceDryRuns(deploymentId);
 
   const draftDryRuns = dryRuns.filter((dryRun) => dryRun.revisionId === draftRevisionId);
-  const latestDraftDryRun = draftDryRuns[0] ?? (latestDryRun?.revisionId === draftRevisionId ? latestDryRun : undefined);
+  const latestDraftDryRun = draftDryRuns[0] ?? (latestDryRun?.revisionId === draftRevisionId ? latestDryRun : undefined) ?? (createDryRun.data?.revisionId === draftRevisionId ? createDryRun.data : undefined);
   const [modalDryRun, setModalDryRun] = useState(latestDraftDryRun);
 
   const mappedAgents = mappedAgentIds.map((id) => agents.find((agent) => agent.id === id)).filter((agent): agent is Agent => Boolean(agent));
@@ -1350,8 +1352,13 @@ function DryRunConversationPanel({ programId, scopeId, deploymentId, draftRevisi
   const initialWorkspaceIds = persistedWorkspaceIds.length > 0 ? persistedWorkspaceIds : mappedWorkspaces.map((workspace) => workspace.id);
 
   const handleMarkPassed = () => {
-    if (!latestDraftDryRun) return;
-    markDryRun.mutate({ dryRunId: latestDraftDryRun.id, status: 'passed' }, { onError: (error) => showError(t('dryRun.error'), { description: parseApiError(error).message }) });
+    if (latestDraftDryRun?.status === 'passed') return;
+    const onError = (error: Error) => showError(t('dryRun.error'), { description: parseApiError(error).message });
+    if (latestDraftDryRun) {
+      markDryRun.mutate({ dryRunId: latestDraftDryRun.id, status: 'passed' }, { onError });
+      return;
+    }
+    createDryRun.mutate({ executionMode: 'manual' }, { onError });
   };
 
   const handleMarkFailed = () => {
@@ -1360,6 +1367,8 @@ function DryRunConversationPanel({ programId, scopeId, deploymentId, draftRevisi
   };
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
+  const hasConversation = Boolean(latestDraftDryRun?.conversationId);
+  const resultPending = createDryRun.isPending || markDryRun.isPending;
 
   return (
     <div className='rounded-xl border bg-background p-4'>
@@ -1381,19 +1390,17 @@ function DryRunConversationPanel({ programId, scopeId, deploymentId, draftRevisi
       </div>
 
       <div className='mt-3 rounded-lg border bg-muted/20 p-4'>
-        <p className='text-sm text-muted-foreground'>{latestDraftDryRun ? t('dryRun.conversationReady') : t('dryRun.empty')}</p>
-        <Button type='button' className='mt-3' onClick={() => setIsModalOpen(true)} disabled={!selectedAgentId}>{latestDraftDryRun ? t('dryRun.openConversation') : t('dryRun.startConversation')}</Button>
+        <p className='text-sm text-muted-foreground'>{hasConversation ? t('dryRun.conversationReady') : latestDraftDryRun?.status === 'passed' ? t('dryRun.manuallyPassed') : t('dryRun.empty')}</p>
+        <Button type='button' className='mt-3' onClick={() => setIsModalOpen(true)} disabled={!selectedAgentId || resultPending}>{hasConversation ? t('dryRun.openConversation') : t('dryRun.startConversation')}</Button>
       </div>
 
-      {latestDraftDryRun && (
-        <div className='mt-3 flex items-center justify-between gap-3 rounded-lg border p-3'>
-          <span className='text-sm'>{t(`scopeShell.testPublish.status.${latestDraftDryRun.status}`)}</span>
-          <div className='flex gap-2'>
-            <Button type='button' variant={latestDraftDryRun.status === 'passed' ? 'default' : 'outline'} size='sm' onClick={handleMarkPassed} disabled={markDryRun.isPending}>{t('dryRun.pass')}</Button>
-            <Button type='button' variant={latestDraftDryRun.status === 'failed' ? 'destructive' : 'outline'} size='sm' onClick={handleMarkFailed} disabled={markDryRun.isPending}>{t('dryRun.fail')}</Button>
-          </div>
+      <div className='mt-3 flex items-center justify-between gap-3 rounded-lg border p-3'>
+        <span className='text-sm'>{latestDraftDryRun ? t(`scopeShell.testPublish.status.${latestDraftDryRun.status}`) : t('dryRun.notRun')}</span>
+        <div className='flex gap-2'>
+          <Button type='button' variant={latestDraftDryRun?.status === 'passed' ? 'default' : 'outline'} size='sm' onClick={handleMarkPassed} disabled={resultPending || latestDraftDryRun?.status === 'passed'}>{t('dryRun.pass')}</Button>
+          {latestDraftDryRun && <Button type='button' variant={latestDraftDryRun.status === 'failed' ? 'destructive' : 'outline'} size='sm' onClick={handleMarkFailed} disabled={resultPending}>{t('dryRun.fail')}</Button>}
         </div>
-      )}
+      </div>
       <GovernanceDryRunConversationModal open={isModalOpen} onOpenChange={setIsModalOpen} deploymentId={deploymentId} programId={programId} scopeId={scopeId} conversationId={modalDryRun?.conversationId} agentId={selectedAgentId} scopedAgents={mappedAgents} scopedWorkspaces={mappedWorkspaces} initialWorkspaceIds={initialWorkspaceIds} onDryRunCreated={setModalDryRun} />
     </div>
   );

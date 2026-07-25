@@ -20,6 +20,10 @@ const ConnectedAppsPage = React.lazy(() => import('./modules/connected-app/compo
 // Lazy-loaded app marketplace
 const AppMarketplacePage = React.lazy(() => import('./modules/app-marketplace/components/AppMarketplacePage').then((m) => ({ default: m.AppMarketplacePage })));
 
+const PlatformOverviewPage = React.lazy(() =>
+  import('@/modules/platform-overview').then((m) => ({ default: m.PlatformOverviewPage }))
+);
+
 // Lazy-loaded playbook routes
 const PlaybookListPage = React.lazy(() =>
   import("./modules/playbook/components/PlaybookListPage").then((m) => ({ default: m.PlaybookListPage }))
@@ -135,6 +139,14 @@ export const router = createHashRouter([
       {
         index: true,
         element: null, // RootGuard handles this
+      },
+      {
+        path: 'platform',
+        element: (
+          <Suspense fallback={null}>
+            <PlatformOverviewPage />
+          </Suspense>
+        ),
       },
       {
         path: 'conversation/:id',

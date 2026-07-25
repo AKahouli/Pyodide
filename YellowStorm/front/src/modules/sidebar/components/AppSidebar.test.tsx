@@ -49,9 +49,8 @@ vi.mock('@/components/ui/sidebar', () => ({
   SidebarGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SidebarMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SidebarMenuItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SidebarMenuButton: ({ children, onClick, disabled }: { children: ReactNode; onClick?: () => void; disabled?: boolean }) => (
-    <button type='button' disabled={disabled} onClick={onClick}>{children}</button>
-  ),
+  SidebarMenuButton: ({ children, onClick, disabled, asChild }: { children: ReactNode; onClick?: () => void; disabled?: boolean; asChild?: boolean }) =>
+    asChild ? children : <button type='button' disabled={disabled} onClick={onClick}>{children}</button>,
   SidebarMenuSkeleton: ({ index }: { index: number }) => <div>skel-{index}</div>,
   SidebarFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SidebarTrigger: () => <button type='button'>trigger</button>,
@@ -176,6 +175,7 @@ describe('AppSidebar', () => {
     );
 
     expect(storeFns.fetchConversations).toHaveBeenCalledWith({ reset: true, limit: 20 });
+    expect(screen.getByRole('link', { name: 'actions.platformOverview.label' })).toHaveAttribute('href', '/platform');
 
     await userEvent.click(screen.getByRole('button', { name: 'actions.newChat.label' }));
     expect(navigateMock).toHaveBeenCalledWith('/');

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, memo } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
-import { Bot, History, Sparkles } from 'lucide-react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { Bot, History, LayoutGrid } from 'lucide-react';
 import { ChatBubbleIcon } from '@radix-ui/react-icons';
 import { toast } from 'sonner';
 
@@ -116,6 +116,7 @@ function HistoryDropZone({
 export const AppSidebar = memo(function AppSidebar() {
   const { state, toggleSidebar } = useAutoCollapse();
   const navigate = useNavigate();
+  const location = useLocation();
   const { t } = useModuleTranslation('sidebar');
   const { user } = useAuth();
   const { hasAnyPermission } = usePermissions();
@@ -286,6 +287,19 @@ export const AppSidebar = memo(function AppSidebar() {
       <SidebarContent className='my-3 w-full min-h-0 overflow-y-auto overscroll-y-contain'>
         <SidebarGroup>
           <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                tooltip={t('actions.platformOverview.tooltip')}
+                isActive={location.pathname === '/platform'}
+              >
+                <NavLink to='/platform'>
+                  <LayoutGrid />
+                  <span>{t('actions.platformOverview.label')}</span>
+                </NavLink>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+
             {featureVisibility.conversation && <SidebarMenuItem>
               <SidebarMenuButton tooltip={t('actions.newChat.tooltip')} onClick={() => navigate('/')}>
                 <ChatBubbleIcon />
