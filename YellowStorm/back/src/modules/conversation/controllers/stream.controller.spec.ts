@@ -9,6 +9,7 @@ describe('StreamController', () => {
       on: jest.fn((event: string, handler: () => void) => {
         if (event === 'close') closeHandlers.push(handler);
       }),
+      socket: { setNoDelay: jest.fn() },
     };
     const gateway = {
       registerConnection: jest.fn().mockReturnValue(NEVER),
@@ -27,5 +28,6 @@ describe('StreamController', () => {
       'user-1',
       expect.stringContaining('user-1:session-1:'),
     );
+    expect(request.socket.setNoDelay).toHaveBeenCalledWith(true);
   });
 });

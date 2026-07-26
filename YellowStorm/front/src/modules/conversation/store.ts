@@ -7,6 +7,7 @@ import { ErrorCode } from '@/lib/error-codes';
 import { useModelsStore } from '@/modules/models/store';
 import * as api from './api';
 import { getStreamErrorMessage } from './utils';
+import { conversationStreamService } from './stream';
 import { translateConversation } from './translation';
 import type { Conversation, Message, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent } from './types';
 
@@ -983,6 +984,11 @@ export const useConversationStore = create<ConversationState>()(
         try {
           // Strip attachedFiles (frontend-only for optimistic display) before sending to API
           const { attachedFiles: _, ...apiPayload } = payload;
+          // New conversations can submit before the app-level EventSource handshake finishes.
+          // Keep the optimistic message visible while waiting briefly for stream delivery.
+          if (!await conversationStreamService.waitForConnection()) {
+            throw new Error(translateConversation('sse.connectionErrors.rejected'));
+          }
           const result = await api.sendMessage(conversationId, apiPayload);
 
           // Replace optimistic message with real user message (with deduplication).

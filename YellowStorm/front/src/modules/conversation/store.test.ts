@@ -6,6 +6,11 @@ const sendMessageMock = vi.hoisted(() => vi.fn());
 const fetchMessageMock = vi.hoisted(() => vi.fn());
 const fetchMessagesMock = vi.hoisted(() => vi.fn());
 const fetchBranchesMock = vi.hoisted(() => vi.fn());
+const waitForConnectionMock = vi.hoisted(() => vi.fn());
+
+vi.mock('./stream', () => ({
+  conversationStreamService: { waitForConnection: waitForConnectionMock },
+}));
 
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -22,7 +27,9 @@ beforeEach(() => {
   fetchMessageMock.mockReset();
   fetchMessagesMock.mockReset();
   fetchBranchesMock.mockReset();
+  waitForConnectionMock.mockReset();
   fetchBranchesMock.mockResolvedValue([]);
+  waitForConnectionMock.mockResolvedValue(true);
   useConversationStore.setState({
     currentConversation: null,
     currentConversationId: null,
@@ -43,6 +50,39 @@ beforeEach(() => {
 });
 
 describe('conversation optimistic messages', () => {
+  it('waits for the app-level SSE handshake before sending a stream-producing message', async () => {
+    let resolveConnection: (connected: boolean) => void = () => undefined;
+    waitForConnectionMock.mockImplementation(() => new Promise((resolve) => { resolveConnection = resolve; }));
+    sendMessageMock.mockResolvedValue({
+      userMessage: {
+        id: 'message-1',
+        conversationId: 'conv-1',
+        conversationType: 'user',
+        content: 'hello',
+        createdAt: '2026-07-26T00:00:00.000Z',
+      },
+    });
+
+    const pending = useConversationStore.getState().sendMessage('conv-1', { content: 'hello' });
+
+    expect(useConversationStore.getState().optimisticMessages).toHaveLength(1);
+    expect(sendMessageMock).not.toHaveBeenCalled();
+
+    resolveConnection(true);
+    await pending;
+
+    expect(sendMessageMock).toHaveBeenCalledWith('conv-1', { content: 'hello' });
+  });
+
+  it('does not send when the app-level SSE handshake cannot be established', async () => {
+    waitForConnectionMock.mockResolvedValue(false);
+
+    await expect(useConversationStore.getState().sendMessage('conv-1', { content: 'hello' })).rejects.toBeInstanceOf(Error);
+
+    expect(sendMessageMock).not.toHaveBeenCalled();
+    expect(useConversationStore.getState().optimisticMessages).toHaveLength(0);
+  });
+
   it('preserves choice interaction display text while the request is pending', async () => {
     let resolveSend: (value: { userMessage: Record<string, unknown> }) => void = () => undefined;
     sendMessageMock.mockImplementation(() => new Promise((resolve) => { resolveSend = resolve; }));
@@ -66,6 +106,7 @@ describe('conversation optimistic messages', () => {
       interaction,
     });
 
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
     resolveSend({
       userMessage: {
         id: 'message-1', conversationId: 'conv-1', conversationType: 'user',

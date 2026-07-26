@@ -66,6 +66,7 @@ export function MessageReliabilityCard({ evaluation }: Readonly<{ evaluation?: R
 
   const counts = evaluation.claimCounts;
   const label = t(`reliability.labels.${evaluation.label}`);
+  // Only the complete claims array may drive groups; findings are truncated on older records.
   const groups = claimGroupOrder
     .map((status) => ({ status, claims: evaluation.claims?.filter((claim) => claim.status === status) || [] }))
     .filter((group) => group.claims.length > 0);

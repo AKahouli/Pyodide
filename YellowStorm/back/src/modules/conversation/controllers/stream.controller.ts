@@ -1,4 +1,4 @@
-import { Controller, Sse, Req, MessageEvent } from '@nestjs/common';
+import { Controller, Sse, Req, Header, MessageEvent } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { concat, Observable, of } from 'rxjs';
 import { Request } from 'express';
@@ -18,6 +18,7 @@ export class StreamController {
   constructor(private readonly streamGateway: StreamGatewayService) {}
 
   @Sse()
+  @Header('X-Accel-Buffering', 'no')
   @Public()
   @StreamAuth()
   stream(@Req() req: RequestWithSseUser): Observable<MessageEvent> {
@@ -25,6 +26,9 @@ export class StreamController {
     const userId = user.sub;
     const sessionId = user.sessionId || 'unknown';
     const connectionId = `${userId}:${sessionId}:${Date.now()}`;
+
+    // Nest owns @Sse response headers; mutating them here is already too late.
+    req.socket?.setNoDelay(true);
 
     const disconnect$ = new Subject<void>();
 

@@ -60,8 +60,9 @@ describe('useConversationStream', () => {
 
     renderHook(() => useConversationStream());
 
-    expect(connectMock).toHaveBeenCalledTimes(1);
     expect(subscribeMock).toHaveBeenCalledTimes(1);
+    expect(connectMock).toHaveBeenCalledTimes(1);
+    expect(subscribeMock.mock.invocationCallOrder[0]).toBeLessThan(connectMock.mock.invocationCallOrder[0]);
 
     listener!({ type: 'connected', data: { connectionId: 'cid' } });
     expect(storeHandlers.onSSEConnected).toHaveBeenCalledTimes(1);

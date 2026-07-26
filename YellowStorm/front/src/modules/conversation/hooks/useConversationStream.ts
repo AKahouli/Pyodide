@@ -19,8 +19,6 @@ export function useConversationStream() {
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    conversationStreamService.connect();
-
     const handleVisibilityChange = () => {
       if (document.hidden) return;
       const store = useConversationStore.getState();
@@ -80,6 +78,9 @@ export function useConversationStream() {
         }
 
     });
+
+    // Subscribe before opening the pipe so its initial `connected` frame is observed.
+    conversationStreamService.connect();
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);

@@ -15,6 +15,21 @@ import { ErrorCode, ErrorMessages } from '../constants/error-codes';
 import { ErrorResponse, ErrorDetail } from '../interfaces/error-response.interface';
 import { MaintenanceException } from '../../system/exceptions/maintenance.exception';
 
+const SENSITIVE_QUERY_PARAM = /token|secret|password|code|key/i;
+
+function sanitizeRequestUrl(requestUrl: string): string {
+  const queryIndex = requestUrl.indexOf('?');
+  if (queryIndex < 0) return requestUrl;
+
+  const path = requestUrl.slice(0, queryIndex);
+  const params = new URLSearchParams(requestUrl.slice(queryIndex + 1));
+  for (const key of params.keys()) {
+    if (SENSITIVE_QUERY_PARAM.test(key)) params.set(key, '[REDACTED]');
+  }
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly isProduction: boolean;
@@ -49,7 +64,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       success: false as const,
       error: {
         timestamp: new Date().toISOString(),
-        path: request.url,
+        path: sanitizeRequestUrl(request.url),
         method: request.method,
         requestId,
       },

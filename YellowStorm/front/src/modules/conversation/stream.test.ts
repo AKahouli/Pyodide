@@ -134,6 +134,15 @@ describe('conversationStreamService', () => {
     unsubscribe();
   });
 
+  it('resolves a pending connection wait when the server confirms the pipe', async () => {
+    localStorage.setItem('accessToken', 'token-123');
+
+    const ready = conversationStreamService.waitForConnection();
+    MockEventSource.instances[0]?.emitNamed('connected', { connectionId: 'conn-1' });
+
+    await expect(ready).resolves.toBe(true);
+  });
+
   it('replaces the existing EventSource when the token is refreshed', () => {
     localStorage.setItem('accessToken', 'old-token');
     conversationStreamService.connect();
@@ -145,6 +154,40 @@ describe('conversationStreamService', () => {
     expect(original.closed).toBe(true);
     expect(MockEventSource.instances).toHaveLength(2);
     expect(MockEventSource.instances[1].url).toContain('token=new-token');
+  });
+
+  it('replaces a connected pipe when another singleton changes the shared token', async () => {
+    localStorage.setItem('accessToken', 'old-token');
+    conversationStreamService.connect();
+    const original = MockEventSource.instances[0];
+    original.emitNamed('connected', { connectionId: 'old-connection' });
+
+    localStorage.setItem('accessToken', 'new-token');
+    const ready = conversationStreamService.waitForConnection();
+
+    expect(original.closed).toBe(true);
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.instances[1].url).toContain('token=new-token');
+
+    MockEventSource.instances[1].emitNamed('connected', { connectionId: 'new-connection' });
+    await expect(ready).resolves.toBe(true);
+  });
+
+  it('closes native CONNECTING retries so reconnects can read the latest token', () => {
+    vi.useFakeTimers();
+    localStorage.setItem('accessToken', 'old-token');
+    conversationStreamService.connect();
+    const original = MockEventSource.instances[0];
+    original.emitNamed('connected', { connectionId: 'old-connection' });
+
+    localStorage.setItem('accessToken', 'new-token');
+    original.readyState = MockEventSource.CONNECTING;
+    original.emitError();
+    vi.advanceTimersByTime(1000);
+
+    expect(original.closed).toBe(true);
+    expect(MockEventSource.instances[1].url).toContain('token=new-token');
+    vi.useRealTimers();
   });
 
   it('keeps chart data arrays when chart payload arrives as JSON strings', () => {

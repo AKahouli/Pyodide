@@ -179,6 +179,7 @@ export class ResponseReliabilityService implements OnModuleInit {
       await this.messageService.updateReliabilityEvaluation(job.messageId, {
         status: 'completed',
         ...scored,
+        // Claims remain complete; findings are the independently limited attention summary.
         claims: result.claims,
         evaluator: {
           modelId: model.id,

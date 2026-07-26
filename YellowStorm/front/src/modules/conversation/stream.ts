@@ -38,6 +38,7 @@ class ConversationStreamService {
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private isConnected = false;
   private connectionId: string | null = null;
+  private connectionToken: string | null = null;
   private isEvicted = false;
 
   private readonly maxReconnectAttempts = 10;
@@ -45,23 +46,36 @@ class ConversationStreamService {
   private readonly maxReconnectDelay = 60000;
   private readonly heartbeatTimeout = 30000;
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectionWaiters = new Set<(connected: boolean) => void>();
 
   connect(): void {
     if (this.isEvicted) return;
-    if (this.eventSource) return; // Already connected or connecting
 
     const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
     if (!token) {
+      this.resolveConnectionWaiters(false);
       this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.noToken') } });
       return;
+    }
+
+    if (this.eventSource && this.connectionToken === token) return;
+    if (this.eventSource) {
+      // Another singleton may have refreshed the shared token. Never let the
+      // browser keep retrying an EventSource URL carrying the revoked token.
+      this.eventSource.close();
+      this.eventSource = null;
+      this.isConnected = false;
+      this.connectionId = null;
     }
 
     const url = `${API_CONFIG.baseURL}/conversations/stream?token=${encodeURIComponent(token)}`;
     try {
       this.eventSource = new EventSource(url);
+      this.connectionToken = token;
       this.setupEventHandlers();
     } catch (error) {
       console.error('[ConversationStream] Failed to create EventSource:', error);
+      this.resolveConnectionWaiters(false);
       this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.creationFailed') } });
     }
   }
@@ -76,7 +90,9 @@ class ConversationStreamService {
 
     this.isConnected = false;
     this.connectionId = null;
+    this.connectionToken = null;
     this.reconnectAttempts = 0;
+    this.resolveConnectionWaiters(false);
   }
 
   subscribe(listener: StreamListener): () => void {
@@ -90,12 +106,32 @@ class ConversationStreamService {
     return this.isConnected;
   }
 
+  /** Wait briefly for the shared pipe before starting a new stream-producing request. */
+  waitForConnection(timeoutMs = 2000): Promise<boolean> {
+    const currentToken = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    if (this.isConnected && this.connectionToken === currentToken) return Promise.resolve(true);
+
+    return new Promise((resolve) => {
+      let timeout: ReturnType<typeof setTimeout>;
+      const settle = (connected: boolean) => {
+        clearTimeout(timeout);
+        this.connectionWaiters.delete(settle);
+        resolve(connected);
+      };
+
+      this.connectionWaiters.add(settle);
+      timeout = setTimeout(() => settle(false), timeoutMs);
+      this.connect();
+    });
+  }
+
   reconnectWithNewToken(): void {
     this.clearTimers();
     this.eventSource?.close();
     this.eventSource = null;
     this.isConnected = false;
     this.connectionId = null;
+    this.connectionToken = null;
     this.reconnectAttempts = 0;
     this.isEvicted = false;
     this.connect();
@@ -113,11 +149,19 @@ class ConversationStreamService {
     this.eventSource.onerror = () => {
       const wasConnected = this.isConnected;
       this.isConnected = false;
-      if (this.eventSource?.readyState === EventSource.CLOSED) {
+      if (!this.eventSource) return;
+
+      if (this.eventSource.readyState === EventSource.CONNECTING) {
+        // Disable native retry because it reuses the original tokenized URL.
+        this.eventSource.close();
+      }
+      if (this.eventSource.readyState === EventSource.CLOSED) {
         this.eventSource = null;
-        if (wasConnected) {
+        this.connectionToken = null;
+        if (wasConnected) this.scheduleReconnect();
+        else {
+          this.resolveConnectionWaiters(false);
           this.scheduleReconnect();
-        } else {
           this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.rejected') } });
         }
       }
@@ -173,6 +217,7 @@ class ConversationStreamService {
       case 'connected':
         this.connectionId = typeof data.connectionId === 'string' ? data.connectionId : null;
         this.isConnected = true;
+        this.resolveConnectionWaiters(true);
         this.resetHeartbeatTimer();
         this.emit({ type, data: { connectionId: this.connectionId ?? '' } });
         break;
@@ -209,6 +254,8 @@ class ConversationStreamService {
           this.isConnected = false;
           this.eventSource?.close();
           this.eventSource = null;
+          this.connectionToken = null;
+          this.resolveConnectionWaiters(false);
           this.emit({ type, data: { code: String(data.code), message: typeof data.message === 'string' ? data.message : undefined } });
         }
         break;
@@ -244,6 +291,13 @@ class ConversationStreamService {
       clearTimeout(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+  }
+
+  private resolveConnectionWaiters(connected: boolean): void {
+    for (const resolve of this.connectionWaiters) {
+      resolve(connected);
+    }
+    this.connectionWaiters.clear();
   }
 
   private emit(event: StreamSSEEvent): void {
