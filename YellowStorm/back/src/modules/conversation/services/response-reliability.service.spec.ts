@@ -14,6 +14,8 @@ describe('ResponseReliabilityService lifecycle', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
+      {} as never,
       logger as never,
     );
     (service as unknown as { scheduledMessageIds: Set<string> }).scheduledMessageIds.add('message-1');
@@ -68,6 +70,8 @@ describe('ResponseReliabilityService lifecycle', () => {
       {} as never,
       evidenceBuilder as never,
       scoringService as never,
+      {} as never,
+      { shouldCorrect: jest.fn().mockReturnValue(false) } as never,
       logger as never,
     );
     jest.spyOn(service as never, 'callEvaluator' as never).mockResolvedValue({

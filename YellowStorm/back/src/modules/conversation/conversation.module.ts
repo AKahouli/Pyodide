@@ -53,6 +53,10 @@ import { EvaluationModule } from '../evaluation/evaluation.module';
 import { ResponseReliabilityService } from './services/response-reliability.service';
 import { ResponseReliabilityEvidenceBuilder } from './services/response-reliability-evidence.builder';
 import { ResponseReliabilityScoringService } from './services/response-reliability-scoring.service';
+import { ResponseCorrectionPolicyService } from './services/response-correction-policy.service';
+import { ResponseCorrectionPlannerService } from './services/response-correction-planner.service';
+import { CorrectedResponseComponentBuilder } from './services/corrected-response-component.builder';
+import { ResponseCorrectionService } from './services/response-correction.service';
 
 @Module({
   imports: [
@@ -101,6 +105,10 @@ import { ResponseReliabilityScoringService } from './services/response-reliabili
     ResponseReliabilityService,
     ResponseReliabilityEvidenceBuilder,
     ResponseReliabilityScoringService,
+    ResponseCorrectionPolicyService,
+    ResponseCorrectionPlannerService,
+    CorrectedResponseComponentBuilder,
+    ResponseCorrectionService,
     ConversationOwnerGuard,
     SseAuthGuard,
     ComposerSuggestionsRateLimitGuard,

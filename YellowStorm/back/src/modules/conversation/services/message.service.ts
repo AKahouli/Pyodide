@@ -517,6 +517,28 @@ export class MessageService {
     return response;
   }
 
+  async updateCorrectionWorkflow(
+    messageId: string,
+    workflow: NonNullable<MessageResponse['correctionWorkflow']>,
+  ): Promise<MessageResponse> {
+    const message = await this.messageModel.findById(messageId);
+    if (!message || message.conversationType !== 'ai') {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'AI message not found');
+    }
+    message.correctionWorkflow = workflow;
+    await message.save();
+    const response = this.mapToResponse(message);
+    await this.broadcastMessage(message.conversationId.toString(), {
+      type: 'message_updated',
+      data: {
+        conversationId: message.conversationId.toString(),
+        messageId,
+        message: { correctionWorkflow: response.correctionWorkflow } as Partial<MessageResponse>,
+      },
+    });
+    return response;
+  }
+
   async markStaleReliabilityEvaluationsFailed(cutoff: Date): Promise<number> {
     const staleQuery = {
       'reliabilityEvaluation.status': 'pending',
@@ -751,6 +773,7 @@ export class MessageService {
       guardrailDecision: message.guardrailDecision as any,
       interaction: message.interaction as Record<string, unknown> | undefined,
       reliabilityEvaluation: message.reliabilityEvaluation as ReliabilityEvaluation | undefined,
+      correctionWorkflow: message.correctionWorkflow as MessageResponse['correctionWorkflow'],
       agentIds: message.agentIds?.map((id: any) => toStr(id)),
       memberIds: message.memberIds?.map((id: any) => toStr(id)),
       senderId: toStr(message.senderId),

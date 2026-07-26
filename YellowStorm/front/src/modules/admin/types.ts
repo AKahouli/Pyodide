@@ -39,11 +39,21 @@ export interface AdminGuardrailsSettings {
 export interface AdminEvaluationSettings {
   responseReliability: {
     enabled: boolean;
-    mode: 'informative';
+    mode: 'informative' | 'corrective_transparent' | 'corrective_guarded';
     judgeModelId: string | null;
     maxConcurrentEvaluations: number;
     timeoutMs: number;
     maxFindings: number;
+    correction: {
+      threshold: number;
+      maxAttempts: number;
+      maxDurationMs: number;
+      allowAdditionalDocumentRetrieval: boolean;
+      allowConnectorQueries: boolean;
+      allowCalculationReruns: boolean;
+      failureBehavior: 'publish_with_warning' | 'abstain' | 'require_human_review';
+      showOriginalAnswer: boolean;
+    };
   };
 }
 

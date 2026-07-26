@@ -285,5 +285,21 @@
   "reliability.groups.unsupported": "Absentes des sources ({{count}})",
   "reliability.groups.contradicted": "En contradiction avec les sources ({{count}})",
   "reliability.keyClaim": "Affirmation clé",
-  "reliability.legacyFindings": "Affirmations à examiner"
+  "reliability.legacyFindings": "Affirmations à examiner",
+  "correction.title": "Correction de la réponse",
+  "correction.status.queued": "Préparation de la correction…",
+  "correction.status.correcting": "Correction de la réponse après vérification…",
+  "correction.status.re_evaluating": "Vérification de la réponse corrigée…",
+  "correction.status.corrected": "Corrigée après vérification",
+  "correction.status.failed": "Correction incomplète",
+  "correction.status.abstained": "Réponse suspendue après vérification",
+  "correction.status.human_review_required": "En attente d'une révision humaine",
+  "correction.correctedCount": "{{count}} affirmation(s) corrigée(s) · Voir les modifications",
+  "correction.publishWarning": "La correction n'a pas produit de réponse suffisamment étayée. La réponse originale est affichée avec un avertissement de fiabilité.",
+  "correction.abstention": "Impossible de fournir une réponse suffisamment étayée. Les preuves disponibles étaient insuffisantes ou contradictoires.",
+  "correction.abstentionReason": "Les preuves disponibles étaient insuffisantes ou contradictoires.",
+  "correction.uncertainties": "{{count}} incertitude(s) restante(s)",
+  "correction.viewOriginal": "Voir l'original",
+  "correction.viewCorrected": "Voir la correction",
+  "correction.viewAbstention": "Voir le résultat de la vérification"
 }

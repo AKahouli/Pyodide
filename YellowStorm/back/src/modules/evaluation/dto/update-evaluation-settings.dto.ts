@@ -12,14 +12,54 @@ import {
   ValidateNested,
 } from 'class-validator';
 
+export class UpdateResponseCorrectionSettingsDto {
+  @ApiProperty({ minimum: 0, maximum: 100 })
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  threshold!: number;
+
+  @ApiProperty({ minimum: 1, maximum: 3 })
+  @IsInt()
+  @Min(1)
+  @Max(3)
+  maxAttempts!: number;
+
+  @ApiProperty({ minimum: 10000, maximum: 300000 })
+  @IsInt()
+  @Min(10000)
+  @Max(300000)
+  maxDurationMs!: number;
+
+  @ApiProperty()
+  @IsBoolean()
+  allowAdditionalDocumentRetrieval!: boolean;
+
+  @ApiProperty()
+  @IsBoolean()
+  allowConnectorQueries!: boolean;
+
+  @ApiProperty()
+  @IsBoolean()
+  allowCalculationReruns!: boolean;
+
+  @ApiProperty({ enum: ['publish_with_warning', 'abstain', 'require_human_review'] })
+  @IsIn(['publish_with_warning', 'abstain', 'require_human_review'])
+  failureBehavior!: 'publish_with_warning' | 'abstain' | 'require_human_review';
+
+  @ApiProperty()
+  @IsBoolean()
+  showOriginalAnswer!: boolean;
+}
+
 export class UpdateResponseReliabilitySettingsDto {
   @ApiProperty()
   @IsBoolean()
   enabled!: boolean;
 
-  @ApiProperty({ enum: ['informative'] })
-  @IsIn(['informative'])
-  mode!: 'informative';
+  @ApiProperty({ enum: ['informative', 'corrective_transparent', 'corrective_guarded'] })
+  @IsIn(['informative', 'corrective_transparent', 'corrective_guarded'])
+  mode!: 'informative' | 'corrective_transparent' | 'corrective_guarded';
 
   @ApiProperty({ nullable: true })
   @IsOptional()
@@ -44,6 +84,11 @@ export class UpdateResponseReliabilitySettingsDto {
   @Min(1)
   @Max(10)
   maxFindings!: number;
+
+  @ApiProperty({ type: UpdateResponseCorrectionSettingsDto })
+  @ValidateNested()
+  @Type(() => UpdateResponseCorrectionSettingsDto)
+  correction!: UpdateResponseCorrectionSettingsDto;
 }
 
 export class UpdateEvaluationSettingsDto {

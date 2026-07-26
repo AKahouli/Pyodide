@@ -285,5 +285,21 @@
   "reliability.groups.unsupported": "Not found in sources ({{count}})",
   "reliability.groups.contradicted": "Conflicts with sources ({{count}})",
   "reliability.keyClaim": "Key claim",
-  "reliability.legacyFindings": "Claims needing attention"
+  "reliability.legacyFindings": "Claims needing attention",
+  "correction.title": "Answer correction",
+  "correction.status.queued": "Preparing answer correction…",
+  "correction.status.correcting": "Correcting the answer after verification…",
+  "correction.status.re_evaluating": "Verifying the corrected answer…",
+  "correction.status.corrected": "Corrected after verification",
+  "correction.status.failed": "Correction incomplete",
+  "correction.status.abstained": "Answer withheld after verification",
+  "correction.status.human_review_required": "Awaiting human review",
+  "correction.correctedCount": "{{count}} claims corrected · View changes",
+  "correction.publishWarning": "Correction could not produce a sufficiently supported answer. The original answer is shown with a reliability warning.",
+  "correction.abstention": "Unable to provide a sufficiently supported answer. The available evidence was insufficient or conflicting.",
+  "correction.abstentionReason": "The available evidence was insufficient or conflicting.",
+  "correction.uncertainties": "{{count}} remaining uncertainties",
+  "correction.viewOriginal": "View original",
+  "correction.viewCorrected": "View corrected",
+  "correction.viewAbstention": "View verification result"
 }

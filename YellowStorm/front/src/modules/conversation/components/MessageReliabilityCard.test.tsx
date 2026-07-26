@@ -26,6 +26,8 @@ vi.mock('@/modules/localization', () => ({
         'reliability.keyClaim': 'Key claim',
         'reliability.legacyFindings': 'Claims needing attention',
         'reliability.disclaimer': 'Source comparison disclaimer',
+        'correction.title': 'Answer correction',
+        'correction.status.correcting': 'Correcting after verification',
       };
       return values[key] || key;
     },
@@ -89,5 +91,23 @@ describe('MessageReliabilityCard', () => {
     expect(screen.getByText('Claims needing attention')).toBeInTheDocument();
     expect(screen.getByText('The source does not mention this.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Supported by sources (1)' })).not.toBeInTheDocument();
+  });
+
+  it('encapsulates correction progress inside the reliability panel', () => {
+    const onVersionChange = vi.fn();
+    const { container } = render(<MessageReliabilityCard
+      evaluation={completedEvaluation}
+      correctionWorkflow={{
+        mode: 'corrective_transparent', status: 'correcting', activeVersion: 'original',
+        threshold: 70, attemptCount: 1, maxAttempts: 1,
+        failureBehavior: 'publish_with_warning', showOriginalAnswer: true,
+        queuedAt: '2026-07-26T00:00:00.000Z',
+      }}
+      displayedVersion='original'
+      onVersionChange={onVersionChange}
+    />);
+    const correctionPane = screen.getByRole('status', { name: 'Answer correction' });
+    expect(container.firstChild).toContainElement(correctionPane);
+    expect(correctionPane).toHaveTextContent('Correcting after verification');
   });
 });

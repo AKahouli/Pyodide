@@ -14,7 +14,8 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import type { ReliabilityClaimStatus, ReliabilityEvaluation, ReliabilityFinding } from '../types';
+import type { ActiveAnswerVersion, ReliabilityClaimStatus, ReliabilityEvaluation, ReliabilityFinding, ResponseCorrectionWorkflow } from '../types';
+import { MessageCorrectionCard } from './MessageCorrectionCard';
 
 const panelClassName = 'mx-2 mb-2 shrink-0 rounded-xl border border-border/80 bg-background/95 p-2 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80 md:mx-4';
 
@@ -39,7 +40,14 @@ const groupStyles = {
   supported: 'text-emerald-600 dark:text-emerald-400',
 } as const;
 
-export function MessageReliabilityCard({ evaluation }: Readonly<{ evaluation?: ReliabilityEvaluation }>) {
+interface MessageReliabilityCardProps {
+  evaluation?: ReliabilityEvaluation;
+  correctionWorkflow?: ResponseCorrectionWorkflow;
+  displayedVersion?: ActiveAnswerVersion;
+  onVersionChange?: (version: ActiveAnswerVersion) => void;
+}
+
+export function MessageReliabilityCard({ evaluation, correctionWorkflow, displayedVersion = 'original', onVersionChange }: Readonly<MessageReliabilityCardProps>) {
   const { t } = useModuleTranslation('conversation');
   const [open, setOpen] = useState(false);
   if (!evaluation) return null;
@@ -50,17 +58,19 @@ export function MessageReliabilityCard({ evaluation }: Readonly<{ evaluation?: R
         icon={<Loader2 className='size-5 animate-spin text-primary [animation-duration:1.1s]' />}
         title={t('reliability.pendingTitle')}
         description={t('reliability.pendingDescription')}
-      />
+      >
+        <CorrectionPane workflow={correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={onVersionChange} />
+      </ReliabilityPanelHeader>
     );
   }
   if (evaluation.status === 'insufficient_evidence') {
-    return <ReliabilityPanelHeader title={t('reliability.notScored')} description={t('reliability.insufficientEvidence')} />;
+    return <ReliabilityPanelHeader title={t('reliability.notScored')} description={t('reliability.insufficientEvidence')}><CorrectionPane workflow={correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={onVersionChange} /></ReliabilityPanelHeader>;
   }
   if (evaluation.status === 'not_applicable') {
-    return <ReliabilityPanelHeader title={t('reliability.notApplicable')} description={t('reliability.noClaims')} />;
+    return <ReliabilityPanelHeader title={t('reliability.notApplicable')} description={t('reliability.noClaims')}><CorrectionPane workflow={correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={onVersionChange} /></ReliabilityPanelHeader>;
   }
   if (evaluation.status === 'failed') {
-    return <ReliabilityPanelHeader icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.unavailableDescription')} />;
+    return <ReliabilityPanelHeader icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.unavailableDescription')}><CorrectionPane workflow={correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={onVersionChange} /></ReliabilityPanelHeader>;
   }
   if (evaluation.score === undefined || !evaluation.label || !evaluation.claimCounts) return null;
 
@@ -98,6 +108,8 @@ export function MessageReliabilityCard({ evaluation }: Readonly<{ evaluation?: R
           <ChevronDown className='size-3.5 transition-transform data-[state=open]:rotate-180' />
         </CollapsibleTrigger>
       </div>
+
+      <CorrectionPane workflow={correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={onVersionChange} />
 
       <CollapsibleContent className='pt-3'>
         <div className='max-h-96 space-y-3 overflow-y-auto border-t pt-3 pr-1'>
@@ -161,7 +173,16 @@ function LegacyFindings({ findings }: Readonly<{ findings: ReliabilityFinding[] 
   );
 }
 
-function ReliabilityPanelHeader({ icon, title, description }: Readonly<{ icon?: React.ReactNode; title: string; description?: string }>) {
+function CorrectionPane({ workflow, displayedVersion, onVersionChange }: Readonly<{
+  workflow?: ResponseCorrectionWorkflow;
+  displayedVersion: ActiveAnswerVersion;
+  onVersionChange?: (version: ActiveAnswerVersion) => void;
+}>) {
+  if (!workflow || !onVersionChange) return null;
+  return <MessageCorrectionCard workflow={workflow} displayedVersion={displayedVersion} onVersionChange={onVersionChange} />;
+}
+
+function ReliabilityPanelHeader({ icon, title, description, children }: Readonly<{ icon?: React.ReactNode; title: string; description?: string; children?: React.ReactNode }>) {
   return (
     <div className={panelClassName}>
       <div className='flex min-w-0 items-center gap-3 px-1'>
@@ -173,6 +194,7 @@ function ReliabilityPanelHeader({ icon, title, description }: Readonly<{ icon?: 
           <p className='text-sm font-medium text-foreground'>{title}</p>
           {description && <p className='text-xs leading-relaxed text-muted-foreground'>{description}</p>}
         </div>
+        {children}
       </div>
     </div>
   );

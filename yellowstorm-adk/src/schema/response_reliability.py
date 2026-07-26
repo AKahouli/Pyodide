@@ -28,6 +28,7 @@ class ResponseReliabilityRequest(BaseModel):
     globalEvidence: list[ReliabilityEvidenceItem] = Field(default_factory=list, max_length=40)
     judgeModel: str = Field(min_length=1, max_length=300)
     maxFindings: int = Field(default=5, ge=1, le=10)
+    omitTemperature: bool = False
 
 
 class ReliabilityClaimResult(BaseModel):

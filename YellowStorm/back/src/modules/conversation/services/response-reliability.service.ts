@@ -10,6 +10,8 @@ import type { ReliabilityClaimImportance, ReliabilityClaimStatus } from '../inte
 import { MessageService } from './message.service';
 import { ResponseReliabilityEvidenceBuilder, ResponseReliabilityInput } from './response-reliability-evidence.builder';
 import { EvaluatedReliabilityClaim, ResponseReliabilityScoringService } from './response-reliability-scoring.service';
+import { ResponseCorrectionService } from './response-correction.service';
+import { ResponseCorrectionPolicyService } from './response-correction-policy.service';
 
 const MAX_PENDING_QUEUE_SIZE = 100;
 const STALE_PENDING_MS = 5 * 60 * 1000;
@@ -44,6 +46,8 @@ export class ResponseReliabilityService implements OnModuleInit {
     private readonly configService: ConfigService,
     private readonly evidenceBuilder: ResponseReliabilityEvidenceBuilder,
     private readonly scoringService: ResponseReliabilityScoringService,
+    private readonly correctionService: ResponseCorrectionService,
+    private readonly correctionPolicy: ResponseCorrectionPolicyService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(ResponseReliabilityService.name);
@@ -146,13 +150,17 @@ export class ResponseReliabilityService implements OnModuleInit {
       const evidenceCount = evidenceInput.globalEvidence.length
         + evidenceInput.segments.reduce((sum, segment) => sum + segment.evidence.length, 0);
       if (!evidenceCount) {
-        await this.messageService.updateReliabilityEvaluation(job.messageId, {
+        const evaluation = {
           status: 'insufficient_evidence',
           summary: 'The answer did not include enough supporting evidence to verify its factual claims.',
           requestedAt: job.requestedAt,
           evaluatedAt: new Date().toISOString(),
           durationMs: 0,
-        });
+        } as const;
+        await this.messageService.updateReliabilityEvaluation(job.messageId, evaluation);
+        if (job.settings.mode === 'corrective_transparent') {
+          await this.correctionService.applyInsufficientEvidence({ ...job, originalEvaluation: evaluation });
+        }
         return;
       }
 
@@ -163,7 +171,7 @@ export class ResponseReliabilityService implements OnModuleInit {
       }
 
       const modelName = this.modelsService.getModelIdentifier(model);
-      const result = await this.callEvaluator(evidenceInput, modelName, job.settings);
+      const result = await this.callEvaluator(evidenceInput, modelName, model.omitTemperature, job.settings);
       if (result.applicability === 'not_applicable' || result.claims.length === 0) {
         await this.messageService.updateReliabilityEvaluation(job.messageId, {
           status: 'not_applicable',
@@ -176,7 +184,7 @@ export class ResponseReliabilityService implements OnModuleInit {
       }
 
       const scored = this.scoringService.scoreClaims(result.claims, job.settings.maxFindings);
-      await this.messageService.updateReliabilityEvaluation(job.messageId, {
+      const evaluation = {
         status: 'completed',
         ...scored,
         // Claims remain complete; findings are the independently limited attention summary.
@@ -190,7 +198,16 @@ export class ResponseReliabilityService implements OnModuleInit {
         requestedAt: job.requestedAt,
         evaluatedAt: new Date().toISOString(),
         durationMs: Date.now() - startedAt,
-      });
+      } as const;
+      await this.messageService.updateReliabilityEvaluation(job.messageId, evaluation);
+      if (this.correctionPolicy.shouldCorrect(job.settings, evaluation)) {
+        void this.correctionService.schedule({ ...job, originalEvaluation: evaluation }).catch((error) => {
+          this.logger.error('Unable to schedule response correction', {
+            messageId: job.messageId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
     } catch (error) {
       const failureCode = axios.isAxiosError(error)
         ? error.code === 'ECONNABORTED' ? 'evaluator_timeout' : 'evaluator_http_error'
@@ -203,13 +220,13 @@ export class ResponseReliabilityService implements OnModuleInit {
     }
   }
 
-  private async callEvaluator(input: ResponseReliabilityInput, judgeModel: string, settings: ResponseReliabilitySettings): Promise<AdkReliabilityResponse> {
+  private async callEvaluator(input: ResponseReliabilityInput, judgeModel: string, omitTemperature: boolean, settings: ResponseReliabilitySettings): Promise<AdkReliabilityResponse> {
     const baseUrl = (this.configService.get<string>('indexing.apiAdk') || 'http://localhost:8001').replace(/\/$/, '');
     const apiKey = (this.configService.get<string>('indexing.adkApiKey') || '').trim();
     if (!apiKey) throw new Error('ADK API key is not configured');
     const { data } = await axios.post(
       `${baseUrl}/response-evaluation/evaluate`,
-      { ...input, judgeModel, maxFindings: settings.maxFindings },
+      { ...input, judgeModel, maxFindings: settings.maxFindings, omitTemperature },
       { headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'X-Request-ID': input.requestId }, timeout: settings.timeoutMs },
     );
     return this.validateEvaluatorResponse(data, input);

@@ -273,6 +273,48 @@ describe('conversation streaming component updates', () => {
     });
   });
 
+  it('preserves correction metadata when its update arrives before message fetch', async () => {
+    fetchMessageMock.mockResolvedValue({
+      id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+      components: [{ type: 'text', data: { content: 'Original' } }],
+      createdAt: '2026-07-26T10:00:00.000Z',
+    });
+    useConversationStore.setState({ currentConversationId: 'conv-1', messages: [], messagesTotal: 0 });
+    const correctionWorkflow = {
+      mode: 'corrective_transparent' as const, status: 'corrected' as const, activeVersion: 'corrected' as const,
+      threshold: 70, attemptCount: 1, maxAttempts: 1, failureBehavior: 'publish_with_warning' as const,
+      showOriginalAnswer: true, queuedAt: '2026-07-26T10:00:01.000Z',
+      correctedComponents: [{ type: 'text' as const, data: { content: 'Corrected' } }],
+    };
+
+    useConversationStore.getState().onMessageUpdated({ conversationId: 'conv-1', messageId: 'ai-1', message: { correctionWorkflow } });
+    await vi.waitFor(() => expect(useConversationStore.getState().messages).toHaveLength(1));
+
+    expect(useConversationStore.getState().messages[0]).toMatchObject({
+      components: [{ data: { content: 'Original' } }], correctionWorkflow,
+    });
+  });
+
+  it('preserves correction and reliability metadata when a later fetch omits them', () => {
+    const metadata = {
+      reliabilityEvaluation: { status: 'completed' as const, score: 80 },
+      correctionWorkflow: {
+        mode: 'corrective_transparent' as const, status: 'corrected' as const, activeVersion: 'corrected' as const,
+        threshold: 70, attemptCount: 1, maxAttempts: 1, failureBehavior: 'publish_with_warning' as const,
+        showOriginalAnswer: true, queuedAt: '2026-07-26T10:00:01.000Z',
+      },
+    };
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      messages: [{ id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai', createdAt: '2026-07-26T10:00:00.000Z', ...metadata }],
+    });
+    useConversationStore.getState().onMessageUpdated({
+      conversationId: 'conv-1', messageId: 'ai-1',
+      message: { conversationType: 'ai', createdAt: '2026-07-26T10:00:00.000Z', components: [] },
+    });
+    expect(useConversationStore.getState().messages[0]).toMatchObject(metadata);
+  });
+
   it('reconciles a persisted completion after the live event was missed', async () => {
     fetchMessageMock.mockResolvedValue({
       id: 'ai-1',

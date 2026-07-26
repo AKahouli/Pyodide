@@ -1,4 +1,4 @@
-import { useMemo, memo, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
+import { useMemo, memo, useEffect, useRef, useLayoutEffect, useCallback, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { ChatConversation, ChatConversationContent, ChatMessageBubble, ChatScrollButton, ChatConversationEmptyState } from '@/components/ai-elements/chat-conversation';
 import { MessageProvider } from '@/components/ai-elements/message-context';
@@ -12,7 +12,9 @@ import { BranchNavigation } from './BranchNavigation';
 import { LoadingIndicator } from './LoadingIndicator';
 import { MessageAttachments } from './MessageAttachments';
 import { MessageReliabilityCard } from './MessageReliabilityCard';
-import type { ChoiceInteractionMetadata, Message } from '../types';
+import { getAnswerComponents } from '../utils/answer-version';
+import { useModuleTranslation } from '@/modules/localization';
+import type { ActiveAnswerVersion, ChoiceInteractionMetadata, Message } from '../types';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 
 /** Find the scrollable ancestor element */
@@ -63,7 +65,16 @@ function TopLoadTrigger({ onTrigger, disabled }: Readonly<{ onTrigger: () => voi
 }
 
 const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isLastAiMessage, isLastUserMessage, conversationId, choiceInteractions }: { message: Message; isLastAiMessage: boolean; isLastUserMessage: boolean; conversationId: string; choiceInteractions: Map<string, ChoiceInteractionMetadata> }) {
-  const chatMessage = useMemo(() => messageToChat(message), [message]);
+  const { t } = useModuleTranslation('conversation');
+  const [displayedVersion, setDisplayedVersion] = useState<ActiveAnswerVersion>(message.correctionWorkflow?.activeVersion || 'original');
+  useEffect(() => {
+    if (message.correctionWorkflow?.status === 'corrected' || message.correctionWorkflow?.status === 'abstained') {
+      setDisplayedVersion(message.correctionWorkflow.activeVersion);
+    }
+  }, [message.correctionWorkflow?.status, message.correctionWorkflow?.activeVersion]);
+  const activeComponents = useMemo(() => getAnswerComponents(message, displayedVersion, t('correction.abstention')), [message, displayedVersion, t]);
+  const displayedMessage = useMemo(() => ({ ...message, components: activeComponents }), [message, activeComponents]);
+  const chatMessage = useMemo(() => messageToChat(displayedMessage), [displayedMessage]);
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const branchCache = useBranchCache();
   const activeBranches = useActiveBranches();
@@ -93,10 +104,10 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
         {isUser && isEditing ? <EditableUserMessage message={message} conversationId={conversationId} /> : <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} />}
       </MessageProvider>
       {!isUser && <LoadingIndicator isComplete components={message.components || []} />}
-      {!isUser && <MessageReliabilityCard evaluation={message.reliabilityEvaluation} />}
+      {!isUser && <MessageReliabilityCard evaluation={displayedVersion === 'corrected' ? message.correctionWorkflow?.finalReliabilityEvaluation : message.reliabilityEvaluation} correctionWorkflow={message.correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={setDisplayedVersion} />}
       {isUser && !isEditing && <UserMessageActions message={message} isLastUserMessage={isLastUserMessage} />}
       {showBranchNav && <BranchNavigation userMessageId={message.questionMessageId!} branches={branches!} activeBranchId={activeBranchId!} />}
-      {message.conversationType === 'ai' && <MessageActions message={message} isLastAiMessage={isLastAiMessage} conversationId={conversationId} />}
+      {message.conversationType === 'ai' && <MessageActions message={displayedMessage} isLastAiMessage={isLastAiMessage} conversationId={conversationId} />}
     </div>
   );
 });

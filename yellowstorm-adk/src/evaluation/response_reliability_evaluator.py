@@ -39,7 +39,7 @@ class ResponseReliabilityEvaluator:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ]
-        raw_content = await self._complete(request.judgeModel, messages)
+        raw_content = await self._complete(request.judgeModel, messages, request.omitTemperature)
         try:
             result = self._parse(raw_content)
         except (ValueError, ValidationError):
@@ -50,7 +50,7 @@ class ResponseReliabilityEvaluator:
                     {"role": "user", "content": "Return corrected JSON only, matching the required schema."},
                 ]
             )
-            result = self._parse(await self._complete(request.judgeModel, messages))
+            result = self._parse(await self._complete(request.judgeModel, messages, request.omitTemperature))
 
         valid_evidence_ids = {
             item.id
@@ -64,13 +64,15 @@ class ResponseReliabilityEvaluator:
             raise ValueError("Evaluator returned an unknown evidence ID")
         return result
 
-    async def _complete(self, model: str, messages: list[dict[str, str]]) -> str:
-        response = await acompletion(
+    async def _complete(self, model: str, messages: list[dict[str, str]], omit_temperature: bool) -> str:
+        kwargs: dict[str, Any] = dict(
             model=model,
             messages=messages,
-            temperature=0,
             response_format={"type": "json_object"},
         )
+        if not omit_temperature:
+            kwargs["temperature"] = 0
+        response = await acompletion(**kwargs)
         return str(response.choices[0].message.content or "{}")
 
     def _parse(self, content: str) -> ResponseReliabilityResponse:

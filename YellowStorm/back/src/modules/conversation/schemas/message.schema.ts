@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types, Schema as MongooseSchema } from 'mongoose';
-import type { ReliabilityEvaluation } from '../interfaces/message.interface';
+import type { ReliabilityEvaluation, ResponseCorrectionWorkflow } from '../interfaces/message.interface';
 
 export type MessageDocument = HydratedDocument<Message>;
 
@@ -122,6 +122,9 @@ export class Message extends Document {
 
   @Prop({ type: Object, default: undefined })
   reliabilityEvaluation?: ReliabilityEvaluation;
+
+  @Prop({ type: Object, default: undefined })
+  correctionWorkflow?: ResponseCorrectionWorkflow;
 
   // Internal heartbeat prevents live in-memory jobs from being mistaken for restart leftovers.
   @Prop({ type: Date, default: undefined })

@@ -148,7 +148,12 @@ function upsertMessage(messages: Message[], message: Message): { messages: Messa
   if (index < 0) return { messages: [...messages, message], inserted: true };
 
   const next = [...messages];
-  next[index] = { ...next[index], ...message };
+  next[index] = {
+    ...next[index],
+    ...message,
+    reliabilityEvaluation: message.reliabilityEvaluation ?? next[index].reliabilityEvaluation,
+    correctionWorkflow: message.correctionWorkflow ?? next[index].correctionWorkflow,
+  };
   return { messages: next, inserted: false };
 }
 
@@ -1502,7 +1507,12 @@ export const useConversationStore = create<ConversationState>()(
         const existing = state.messages.find((message) => message.id === event.messageId);
         if (existing) {
           set((s) => ({
-            messages: s.messages.map((message) => (message.id === event.messageId ? { ...message, ...event.message } : message)),
+            messages: s.messages.map((message) => (message.id === event.messageId ? {
+              ...message,
+              ...event.message,
+              reliabilityEvaluation: event.message.reliabilityEvaluation ?? message.reliabilityEvaluation,
+              correctionWorkflow: event.message.correctionWorkflow ?? message.correctionWorkflow,
+            } : message)),
           }));
           return;
         }
@@ -1526,7 +1536,10 @@ export const useConversationStore = create<ConversationState>()(
         void api.fetchMessage(event.conversationId, event.messageId).then((message) => {
           if (get().currentConversationId !== event.conversationId) return;
           set((s) => {
-            const result = upsertMessage(s.messages, message);
+            // The partial SSE update may arrive before the fetch it triggers. It is newer
+            // than a response produced just before correction metadata was persisted.
+            const reconciled = { ...message, ...event.message, id: event.messageId, conversationId: event.conversationId } as Message;
+            const result = upsertMessage(s.messages, reconciled);
             return {
               messages: result.messages,
               messagesTotal: result.inserted ? s.messagesTotal + 1 : s.messagesTotal,

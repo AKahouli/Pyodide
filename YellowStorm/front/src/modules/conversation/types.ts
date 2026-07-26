@@ -106,6 +106,39 @@ export interface ReliabilityEvaluation {
   failureCode?: string;
 }
 
+export type ResponseCorrectionStatus = 'queued' | 'correcting' | 're_evaluating' | 'corrected' | 'failed' | 'abstained' | 'human_review_required';
+export type ActiveAnswerVersion = 'original' | 'corrected' | 'abstention';
+
+export interface AppliedCorrection {
+  claim: string;
+  action: 'removed' | 'qualified' | 'replaced' | 'citation_repaired';
+  explanation: string;
+  evidenceIds?: string[];
+}
+
+export interface ResponseCorrectionWorkflow {
+  mode: 'corrective_transparent';
+  status: ResponseCorrectionStatus;
+  activeVersion: ActiveAnswerVersion;
+  originalScore?: number;
+  threshold: number;
+  attemptCount: number;
+  maxAttempts: number;
+  correctedComponents?: MessageComponent[];
+  finalReliabilityEvaluation?: ReliabilityEvaluation;
+  appliedCorrections?: AppliedCorrection[];
+  remainingUncertainties?: string[];
+  failureBehavior: 'publish_with_warning' | 'abstain' | 'require_human_review';
+  failureCode?: string;
+  showOriginalAnswer: boolean;
+  reviewReportId?: string;
+  queuedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  correctionModel?: { modelId: string; modelName: string; correctorVersion: string; promptVersion: string };
+}
+
 export interface Message {
   id: string;
   conversationId: string;
@@ -135,6 +168,7 @@ export interface Message {
   timeToFirstToken?: number;
   parentMessageId?: string; // Reference to the message being replied to
   reliabilityEvaluation?: ReliabilityEvaluation;
+  correctionWorkflow?: ResponseCorrectionWorkflow;
   createdAt: string;
 }
 

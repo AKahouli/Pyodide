@@ -56,3 +56,14 @@ async def test_repairs_malformed_json_once():
         result = await ResponseReliabilityEvaluator().evaluate(request_fixture())
     assert result.applicability == "not_applicable"
     assert completion.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_omits_temperature_when_model_requires_it():
+    response = AsyncMock()
+    response.choices = [AsyncMock()]
+    response.choices[0].message.content = '{"applicability":"not_applicable","claims":[]}'
+    request = request_fixture().model_copy(update={"omitTemperature": True})
+    with patch("src.evaluation.response_reliability_evaluator.acompletion", new=AsyncMock(return_value=response)) as completion:
+        await ResponseReliabilityEvaluator().evaluate(request)
+    assert "temperature" not in completion.await_args.kwargs
