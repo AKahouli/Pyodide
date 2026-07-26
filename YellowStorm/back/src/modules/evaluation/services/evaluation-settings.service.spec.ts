@@ -1,4 +1,8 @@
-import { EvaluationSettingsService, DEFAULT_ADMIN_EVALUATION_SETTINGS } from './evaluation-settings.service';
+import {
+  DEFAULT_ADMIN_EVALUATION_SETTINGS,
+  DEFAULT_RESPONSE_CORRECTION_SETTINGS,
+  EvaluationSettingsService,
+} from './evaluation-settings.service';
 
 describe('EvaluationSettingsService', () => {
   const leanExec = (value: unknown) => ({ lean: () => ({ exec: async () => value }) });
@@ -10,10 +14,52 @@ describe('EvaluationSettingsService', () => {
     expect(model.findOne).toHaveBeenCalledWith({ key: 'global' });
   });
 
-  it('validates and upserts an enabled compatible judge model by global key', async () => {
+  it('normalizes legacy informative settings with corrective defaults', async () => {
+    const model = {
+      findOne: jest.fn(() => leanExec({
+        key: 'global',
+        responseReliability: {
+          enabled: false,
+          mode: 'informative',
+          judgeModelId: null,
+          maxConcurrentEvaluations: 3,
+          timeoutMs: 30000,
+          maxFindings: 5,
+        },
+      })),
+    };
+    const service = new EvaluationSettingsService(model as never, {} as never);
+
+    await expect(service.getSettings()).resolves.toEqual({
+      responseReliability: {
+        enabled: false,
+        mode: 'informative',
+        judgeModelId: null,
+        maxConcurrentEvaluations: 3,
+        timeoutMs: 30000,
+        maxFindings: 5,
+        correction: DEFAULT_RESPONSE_CORRECTION_SETTINGS,
+      },
+    });
+  });
+
+  it('validates and upserts enabled corrective transparent settings by global key', async () => {
     const saved = {
       key: 'global',
-      responseReliability: { enabled: true, mode: 'informative', judgeModelId: 'judge-1', maxConcurrentEvaluations: 3, timeoutMs: 30000, maxFindings: 5 },
+      responseReliability: {
+        enabled: true,
+        mode: 'corrective_transparent',
+        judgeModelId: 'judge-1',
+        maxConcurrentEvaluations: 3,
+        timeoutMs: 30000,
+        maxFindings: 5,
+        correction: {
+          ...DEFAULT_RESPONSE_CORRECTION_SETTINGS,
+          threshold: 75,
+          maxAttempts: 2,
+          failureBehavior: 'abstain',
+        },
+      },
     };
     const model = { findOneAndUpdate: jest.fn(() => leanExec(saved)) };
     const modelsService = {
@@ -28,9 +74,23 @@ describe('EvaluationSettingsService', () => {
     });
     expect(model.findOneAndUpdate).toHaveBeenCalledWith(
       { key: 'global' },
-      expect.any(Object),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          responseReliability: expect.objectContaining({ mode: 'corrective_transparent' }),
+        }),
+      }),
       expect.objectContaining({ upsert: true, new: true }),
     );
+  });
+
+  it('rejects corrective guarded mode until its runtime is implemented', async () => {
+    const service = new EvaluationSettingsService({} as never, {} as never);
+    await expect(service.updateSettings({
+      responseReliability: {
+        ...DEFAULT_ADMIN_EVALUATION_SETTINGS.responseReliability,
+        mode: 'corrective_guarded',
+      },
+    } as never)).rejects.toThrow('Corrective guarded mode is not available yet');
   });
 
   it('rejects enabled settings without a judge model', async () => {

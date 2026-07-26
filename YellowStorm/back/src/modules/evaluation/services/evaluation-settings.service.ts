@@ -60,6 +60,12 @@ export const DEFAULT_ADMIN_EVALUATION_SETTINGS: AdminEvaluationSettings = {
   },
 };
 
+function isEvaluationMode(value: unknown): value is EvaluationMode {
+  return value === 'informative'
+    || value === 'corrective_transparent'
+    || value === 'corrective_guarded';
+}
+
 function normalizeSettings(value?: Partial<AdminEvaluationSettings>): AdminEvaluationSettings {
   const requestedMode = value?.responseReliability?.mode;
   const mode: EvaluationMode = requestedMode === 'corrective_transparent' || requestedMode === 'corrective_guarded'
@@ -85,7 +91,7 @@ export class EvaluationSettingsService {
     @InjectModel(EvaluationSettings.name)
     private readonly settingsModel: Model<EvaluationSettingsDocument>,
     private readonly modelsService: ModelsService,
-  ) {}
+  ) { }
 
   async getSettings(): Promise<AdminEvaluationSettings> {
     const existing = await this.settingsModel.findOne({ key: 'global' }).lean().exec();
