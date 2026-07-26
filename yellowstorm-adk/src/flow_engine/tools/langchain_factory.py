@@ -21,6 +21,7 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, create_model
 from structlog import get_logger
 
+from src.connector_tool_name import build_connector_tool_name
 from src.config.settings import get_settings
 from src.flow_engine.runtime.artifact_routing import (
     infer_artifact_kind,
@@ -31,9 +32,7 @@ from src.smart_rag.tools.utilities.code_interpreter_payload import (
     _extract_workspace_name_hint,
     build_code_interpreter_payload_context,
 )
-from src.smart_rag.tools.utilities.connector_tools import (
-    import_connector_items_to_workspace_request,
-)
+from src.smart_rag.tools.utilities.connector_tools import import_connector_items_to_workspace_request
 
 logger = get_logger(__name__)
 
@@ -1567,9 +1566,9 @@ def _create_code_interpreter_tool(
                     inferred_kind,
                 )
                 artifact_data = {
-                    "file_path": gf.get("azure_path")
+                    "file_path": generated_object_key
+                    or gf.get("azure_path")
                     or gf.get("file_path")
-                    or generated_object_key
                     or "",
                     "filename": generated_filename,
                     "artifact_kind": str(
@@ -1847,10 +1846,7 @@ def _create_connector_mcp_tools(
                 action.get("description") or f"Connector action '{action_key}'"
             )
             action_parameter_schema = action.get("parameter_schema") or {}
-            slug = re.sub(r"[^a-z0-9-]", "", connector_slug)
-            slug = slug[:24]
-            tool_name = f"{slug}_{action_key}"
-            tool_name = tool_name[:64]
+            tool_name = build_connector_tool_name(connector_slug, action_key)
             args_schema = _build_args_schema_for_connector_tool(
                 tool_name,
                 action_parameter_schema,

@@ -11,6 +11,7 @@ import jwt
 import requests
 from google.adk.tools.tool_context import ToolContext
 
+from src.connector_tool_name import build_connector_tool_name
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
 from src.smart_rag.tools.search.tools import SearchToolADK
@@ -880,9 +881,9 @@ def create_connector_tools(
     backend_url = getattr(settings, "API_URL", None)
 
     for binding in bindings or []:
-        connector_id = str(binding.get("connector_id") or "").strip()
+        connector_id = str(binding.get("connector_id") or "")
         connector_name = str(binding.get("connector_name") or connector_id).strip()
-        connector_slug = str(binding.get("connector_slug") or connector_name).strip()
+        connector_slug = str(binding.get("connector_slug") or connector_name)
         transport_type = str(binding.get("mcp_transport_type") or "").strip()
         server_url = str(binding.get("mcp_server_url") or "").strip()
         server_config = binding.get("mcp_server_config") or {}
@@ -890,7 +891,7 @@ def create_connector_tools(
         binding_auth_headers = binding.get("auth_headers") or {}
         binding_auth_env = binding.get("auth_env") or {}
 
-        if not connector_id:
+        if not connector_id.strip():
             continue
 
         if context.workspace_id and binding_auth_headers.get("Authorization"):
@@ -1031,12 +1032,12 @@ def create_connector_tools(
             tools.append(SearchToolADK(_import_tool, schema))
 
         for action in binding.get("actions") or []:
-            action_key = str(action.get("action_key") or "").strip()
-            if not action_key:
+            action_key = str(action.get("action_key") or "")
+            if not action_key.strip():
                 continue
 
             # NestJS advertises connector actions with this exact runtime name.
-            tool_name = f"connector_{connector_id}_{action_key}"
+            tool_name = build_connector_tool_name(connector_slug, action_key)
             description = str(
                 action.get("description")
                 or f"Connector action '{action_key}' from {connector_name}"

@@ -21,3 +21,4 @@ export { AuthProvidersPage } from './AuthProvidersPage';
 export { ConnectedAppsAdminPage } from './ConnectedAppsAdminPage';
 export { TeamAutoBuilderPage } from './TeamAutoBuilderPage';
 export { GuardrailsPage } from './GuardrailsPage';
+export { EvaluationSettingsPage } from './EvaluationSettingsPage';

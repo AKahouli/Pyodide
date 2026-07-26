@@ -96,6 +96,9 @@ export const API_ENDPOINTS = {
   adminGuardrails: {
     base: '/admin/guardrails',
   },
+  adminEvaluationSettings: {
+    base: '/admin/evaluation-settings',
+  },
   adminWorkyWhatsAppSystemBot: {
     base: '/admin/worky/whatsapp-system-bot',
     expectedPhone: '/admin/worky/whatsapp-system-bot/expected-phone',

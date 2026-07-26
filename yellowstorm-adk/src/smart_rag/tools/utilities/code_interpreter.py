@@ -249,14 +249,14 @@ async def python_interpreter(
 
             for f in generated_files:
                 file_path = (
-                    f.get("azure_path")
+                    f.get("object_key")
+                    or f.get("azure_path")
                     or f.get("file_path")
-                    or f.get("object_key")
                     or ""
                 )
                 new_file = {
                     "filename": f["name"],
-                    "azure_path": file_path,
+                    "azure_path": f.get("azure_path") or file_path,
                     "file_path": file_path,
                     "object_key": f.get("object_key") or file_path,
                     "workspace_id": resolved_workspace_id,

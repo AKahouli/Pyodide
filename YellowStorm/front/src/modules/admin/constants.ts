@@ -2,7 +2,7 @@
  * Admin Module Constants
  */
 
-import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, Sparkles, FolderCog, Wand2, MessageCircle, MessageSquare } from 'lucide-react';
+import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, Sparkles, FolderCog, Wand2, MessageCircle, MessageSquare, Gauge } from 'lucide-react';
 import type { AdminMenuItem } from './types';
 import type { FeatureVisibility } from './types';
 
@@ -127,6 +127,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     permissions: ['admin.*', '*'],
     description: 'Configure global agent guardrails',
     descriptionKey: 'menu.guardrails.description',
+  },
+  {
+    id: 'evaluation-settings',
+    label: 'Evaluation settings',
+    labelKey: 'menu.evaluationSettings.label',
+    path: '/admin/evaluation-settings',
+    icon: Gauge,
+    permissions: ['admin.*', '*'],
+    description: 'Configure runtime answer reliability evaluation',
+    descriptionKey: 'menu.evaluationSettings.description',
   },
   {
     id: 'agent-types',

@@ -73,6 +73,28 @@ def _grpc_skill_summaries(skills: Any) -> List[Dict[str, Any]]:
     return summaries
 
 
+def _convert_file_chunk_to_artifact(chunk_dict: Dict[str, Any]) -> Dict[str, Any]:
+    file_data = json.loads(chunk_dict.get("chunk", "{}"))
+    return {
+        "action": "add",
+        "component": {
+            "id": str(uuid.uuid4()),
+            "type": "artifact",
+            "data": {
+                "filename": file_data.get("filename", ""),
+                "file_path": file_data.get("object_key")
+                or file_data.get("azure_path")
+                or file_data.get("file_path")
+                or "",
+            },
+        },
+        "metadata": {
+            "message_id": chunk_dict.get("message_id", ""),
+            "agent_id": chunk_dict.get("agent_id", ""),
+        },
+    }
+
+
 class ChatbotServicer(
     chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grpc else object
 ):
@@ -440,30 +462,9 @@ class ChatbotServicer(
                 # Convert old File chunks to artifact components
                 if chunk_dict.get("content_type") == "File":
                     try:
-                        file_json = chunk_dict.get("chunk", "{}")
-                        file_data = json.loads(file_json)
-
-                        # Convert to artifact component format
-                        chunk_dict = {
-                            "action": "add",
-                            "component": {
-                                "id": str(uuid.uuid4()),
-                                "type": "artifact",
-                                "data": {
-                                    "filename": file_data.get("filename", ""),
-                                    "file_path": file_data.get("azure_path")
-                                    or file_data.get("file_path")
-                                    or file_data.get("object_key")
-                                    or "",
-                                },
-                            },
-                            "metadata": {
-                                "message_id": chunk_dict.get("message_id", ""),
-                                "agent_id": chunk_dict.get("agent_id", ""),
-                            },
-                        }
+                        chunk_dict = _convert_file_chunk_to_artifact(chunk_dict)
                         logger.info(
-                            f"[gRPC] Converted old File chunk to artifact component - filename: {file_data.get('filename', 'unknown')}"
+                            "[gRPC] Converted old File chunk to artifact component"
                         )
                     except Exception as e:
                         logger.error(
@@ -672,25 +673,7 @@ class ChatbotServicer(
 
                 if chunk_dict.get("content_type") == "File":
                     try:
-                        file_data = json.loads(chunk_dict.get("chunk", "{}"))
-                        chunk_dict = {
-                            "action": "add",
-                            "component": {
-                                "id": str(uuid.uuid4()),
-                                "type": "artifact",
-                                "data": {
-                                    "filename": file_data.get("filename", ""),
-                                    "file_path": file_data.get("azure_path")
-                                    or file_data.get("file_path")
-                                    or file_data.get("object_key")
-                                    or "",
-                                },
-                            },
-                            "metadata": {
-                                "message_id": chunk_dict.get("message_id", ""),
-                                "agent_id": chunk_dict.get("agent_id", ""),
-                            },
-                        }
+                        chunk_dict = _convert_file_chunk_to_artifact(chunk_dict)
                     except Exception as e:
                         logger.error(
                             f"[gRPC] Failed to convert File chunk to artifact: {e}"
@@ -1998,9 +1981,9 @@ class ChatbotServicer(
             )
         elif component_type == "artifact":
             component_kwargs["artifact"] = chatbot_pb2.ArtifactComponent(
-                file_path=component_data.get("file_path")
+                file_path=component_data.get("object_key")
+                or component_data.get("file_path")
                 or component_data.get("azure_path")
-                or component_data.get("object_key")
                 or "",
                 filename=component_data.get("filename", ""),
                 output_port_id=component_data.get("output_port_id")

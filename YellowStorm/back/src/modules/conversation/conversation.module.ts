@@ -49,6 +49,10 @@ import { SkillModule } from '../skill/skill.module';
 import { EmailModule } from '../email/email.module';
 import conversationConfig from '../../config/conversation.config';
 import { GovernanceRuntimeModule } from '../governance/governance-runtime.module';
+import { EvaluationModule } from '../evaluation/evaluation.module';
+import { ResponseReliabilityService } from './services/response-reliability.service';
+import { ResponseReliabilityEvidenceBuilder } from './services/response-reliability-evidence.builder';
+import { ResponseReliabilityScoringService } from './services/response-reliability-scoring.service';
 
 @Module({
   imports: [
@@ -73,6 +77,7 @@ import { GovernanceRuntimeModule } from '../governance/governance-runtime.module
     SkillModule,
     EmailModule,
     GovernanceRuntimeModule,
+    forwardRef(() => EvaluationModule),
   ],
   controllers: [
     StreamController,  // Must be before ConversationController to avoid route conflict with :id param
@@ -93,6 +98,9 @@ import { GovernanceRuntimeModule } from '../governance/governance-runtime.module
     ComposerSuggestionsService,
     ChoiceInteractionService,
     ConversationBranchService,
+    ResponseReliabilityService,
+    ResponseReliabilityEvidenceBuilder,
+    ResponseReliabilityScoringService,
     ConversationOwnerGuard,
     SseAuthGuard,
     ComposerSuggestionsRateLimitGuard,

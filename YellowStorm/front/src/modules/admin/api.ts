@@ -103,6 +103,7 @@ import type {
   TeamAutoBuilderConfigResponse,
   UpsertTeamAutoBuilderConfigRequest,
   AdminGuardrailsSettings,
+  AdminEvaluationSettings,
   ConversationSettingsResponse,
   UpdateConversationSettingsRequest,
   ConversationSettingsAgentOption,
@@ -132,6 +133,16 @@ export async function getAdminGuardrailsSettings(): Promise<AdminGuardrailsSetti
 
 export async function updateAdminGuardrailsSettings(input: AdminGuardrailsSettings): Promise<AdminGuardrailsSettings> {
   const response = await apiClient.put<ApiResponse<AdminGuardrailsSettings>>(API_ENDPOINTS.adminGuardrails.base, input);
+  return response.data.data;
+}
+
+export async function getAdminEvaluationSettings(): Promise<AdminEvaluationSettings> {
+  const response = await apiClient.get<ApiResponse<AdminEvaluationSettings>>(API_ENDPOINTS.adminEvaluationSettings.base);
+  return response.data.data;
+}
+
+export async function updateAdminEvaluationSettings(input: AdminEvaluationSettings): Promise<AdminEvaluationSettings> {
+  const response = await apiClient.put<ApiResponse<AdminEvaluationSettings>>(API_ENDPOINTS.adminEvaluationSettings.base, input);
   return response.data.data;
 }
 

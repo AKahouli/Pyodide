@@ -42,7 +42,7 @@ Do not load unrelated guidelines.
 ## Context Retrieval
 
 Use vault memory to establish durable feature context, then verify it against live repository sources before changing code.
-
+- When searching the vault with `obsidian_vault`, use `strategy: "semantic"` instead of the default `"auto"` for better relevance ranking.
 - Tier 0 tasks do not require vault retrieval unless risk or ambiguity appears.
 - Before Tier 2 or Tier 3 implementation, search the vault using task terms, likely feature slugs, modules or source paths, endpoint or contract names, and relevant error terms. Locate and read the owning canonical note when one exists before changing code.
 - For Tier 1 work, retrieve vault context when historical decisions, invariants, pitfalls, or cross-file behavior may affect correctness.

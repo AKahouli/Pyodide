@@ -13,6 +13,7 @@ import {
   FeedbackType,
   AttachedFileResponse,
   MessageComponent,
+  ReliabilityEvaluation,
 } from '../interfaces/message.interface';
 import { ConversationService } from './conversation.service';
 import { StreamGatewayService } from './stream-gateway.service';
@@ -485,6 +486,90 @@ export class MessageService {
     return response;
   }
 
+  async updateReliabilityEvaluation(
+    messageId: string,
+    evaluation: ReliabilityEvaluation,
+  ): Promise<MessageResponse> {
+    const message = await this.messageModel.findById(messageId);
+    if (!message) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    }
+    if (message.conversationType !== 'ai') {
+      throw new AppException({
+        code: ErrorCode.BAD_REQUEST,
+        message: 'Reliability evaluation applies only to AI messages',
+        statusCode: HttpStatus.BAD_REQUEST,
+      });
+    }
+
+    message.reliabilityEvaluation = evaluation;
+    message.reliabilityEvaluationHeartbeatAt = evaluation.status === 'pending' ? new Date() : undefined;
+    await message.save();
+    const response = this.mapToResponse(message);
+    await this.broadcastMessage(message.conversationId.toString(), {
+      type: 'message_updated',
+      data: {
+        conversationId: message.conversationId.toString(),
+        messageId,
+        message: { reliabilityEvaluation: response.reliabilityEvaluation } as Partial<MessageResponse>,
+      },
+    });
+    return response;
+  }
+
+  async markStaleReliabilityEvaluationsFailed(cutoff: Date): Promise<number> {
+    const staleQuery = {
+      'reliabilityEvaluation.status': 'pending',
+      $or: [
+        { reliabilityEvaluationHeartbeatAt: { $lt: cutoff } },
+        {
+          reliabilityEvaluationHeartbeatAt: { $exists: false },
+          'reliabilityEvaluation.requestedAt': { $lt: cutoff.toISOString() },
+        },
+      ],
+    };
+    const candidates = await this.messageModel.find(staleQuery).select('_id').lean().exec();
+    let updatedCount = 0;
+    for (const candidate of candidates) {
+      // Reapply the stale predicate atomically so a fresh heartbeat or completed job wins the race.
+      const message = await this.messageModel.findOneAndUpdate(
+        { _id: candidate._id, ...staleQuery },
+        {
+          $set: {
+            'reliabilityEvaluation.status': 'failed',
+            'reliabilityEvaluation.failureCode': 'stale_pending_after_restart',
+            'reliabilityEvaluation.evaluatedAt': new Date().toISOString(),
+          },
+          $unset: { reliabilityEvaluationHeartbeatAt: 1 },
+        },
+        { new: true },
+      );
+      if (!message) continue;
+      const response = this.mapToResponse(message);
+      await this.broadcastMessage(message.conversationId.toString(), {
+        type: 'message_updated',
+        data: {
+          conversationId: message.conversationId.toString(),
+          messageId: message._id.toString(),
+          message: { reliabilityEvaluation: response.reliabilityEvaluation } as Partial<MessageResponse>,
+        },
+      });
+      updatedCount += 1;
+    }
+    return updatedCount;
+  }
+
+  async touchPendingReliabilityEvaluations(messageIds: string[]): Promise<void> {
+    if (!messageIds.length) return;
+    await this.messageModel.updateMany(
+      {
+        _id: { $in: messageIds },
+        'reliabilityEvaluation.status': 'pending',
+      },
+      { $set: { reliabilityEvaluationHeartbeatAt: new Date() } },
+    );
+  }
+
   async getMessageDocument(messageId: string): Promise<MessageDocument> {
     const message = await this.messageModel.findById(messageId);
 
@@ -665,6 +750,7 @@ export class MessageService {
       requestId: message.requestId,
       guardrailDecision: message.guardrailDecision as any,
       interaction: message.interaction as Record<string, unknown> | undefined,
+      reliabilityEvaluation: message.reliabilityEvaluation as ReliabilityEvaluation | undefined,
       agentIds: message.agentIds?.map((id: any) => toStr(id)),
       memberIds: message.memberIds?.map((id: any) => toStr(id)),
       senderId: toStr(message.senderId),

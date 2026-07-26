@@ -10,7 +10,7 @@ import type { MessageComponent } from '../types';
 
 type StreamDetail =
   | { type: 'thought'; label: string }
-  | { type: 'tool'; title: string; status: 'running' | 'completed' | 'failed'; data: Record<string, unknown>; startedAt?: string; resultJson?: string };
+  | { type: 'tool'; title: string; status: 'running' | 'completed' | 'failed'; data: Record<string, unknown>; startedAt?: string; resultJson?: string; sequence: number; durationSeconds?: number };
 
 type SelectedResponse = { title: string; resultJson: string };
 
@@ -52,7 +52,7 @@ function getStreamDetails(components: readonly MessageComponent[]): StreamDetail
       .map((component) => component.data.title as string),
   );
 
-  return components.flatMap<StreamDetail>((component): StreamDetail[] => {
+  const details = components.flatMap<StreamDetail>((component): StreamDetail[] => {
     if (component.type === 'chainOfThought') {
       const steps = component.data.steps;
       return Array.isArray(steps)
@@ -70,11 +70,25 @@ function getStreamDetails(components: readonly MessageComponent[]): StreamDetail
         data: component.data,
         startedAt: typeof component.data.startedAt === 'string' ? component.data.startedAt : undefined,
         resultJson: typeof component.data.resultJson === 'string' && component.data.resultJson.length > 0 ? component.data.resultJson : undefined,
+        sequence: 0,
       }];
     }
 
     return [];
   });
+
+  const tools = details.filter((detail): detail is Extract<StreamDetail, { type: 'tool' }> => detail.type === 'tool');
+  tools.forEach((tool, index) => {
+    tool.sequence = index + 1;
+    const startedAt = tool.startedAt ? Date.parse(tool.startedAt) : Number.NaN;
+    const nextStartedAtValue = tools[index + 1]?.startedAt;
+    const nextStartedAt = nextStartedAtValue ? Date.parse(nextStartedAtValue) : Number.NaN;
+    if (Number.isFinite(startedAt) && Number.isFinite(nextStartedAt) && nextStartedAt >= startedAt) {
+      tool.durationSeconds = Math.round((nextStartedAt - startedAt) / 1000);
+    }
+  });
+
+  return details;
 }
 
 export function LoadingIndicator({ activity = 'thinking', components = [], isComplete = false }: Readonly<{ activity?: ConversationStreamActivity; components?: readonly MessageComponent[]; isComplete?: boolean }>) {
@@ -155,7 +169,10 @@ export function LoadingIndicator({ activity = 'thinking', components = [], isCom
                 <details key={`tool-${index}`} className='rounded-lg bg-muted/60 p-2.5'>
                   <summary className='flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden'>
                     <Wrench className='size-3.5 text-primary' aria-hidden='true' />
-                    <span className='min-w-0 flex-1 break-words'>{toolTitle}</span>
+                    <span className='min-w-0 flex-1 break-words'>{detail.sequence}. {toolTitle}</span>
+                    {detail.durationSeconds !== undefined && (
+                      <span data-duration-seconds={detail.durationSeconds} className='text-xs font-normal tabular-nums text-muted-foreground'>{t('stream.activity.toolDuration', { seconds: detail.durationSeconds })}</span>
+                    )}
                     <span className='text-xs font-normal text-muted-foreground'>{toolStatusLabels[detail.status]}</span>
                   </summary>
                   <div className='mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground'>

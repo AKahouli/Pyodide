@@ -78,6 +78,34 @@ export interface AttachedFile {
   downloadUrl: string;
 }
 
+export type ReliabilityEvaluationStatus = 'pending' | 'completed' | 'insufficient_evidence' | 'not_applicable' | 'failed';
+export type ReliabilityClaimStatus = 'supported' | 'partially_supported' | 'unsupported' | 'contradicted';
+export type ReliabilityClaimImportance = 'critical' | 'major' | 'minor';
+export type ReliabilityLabel = 'strongly_supported' | 'mostly_supported' | 'needs_verification' | 'high_hallucination_risk';
+
+export interface ReliabilityFinding {
+  claim: string;
+  status: ReliabilityClaimStatus;
+  importance: ReliabilityClaimImportance;
+  explanation: string;
+  evidenceIds?: string[];
+}
+
+export interface ReliabilityEvaluation {
+  status: ReliabilityEvaluationStatus;
+  score?: number;
+  label?: ReliabilityLabel;
+  summary?: string;
+  claimCounts?: { total: number; supported: number; partiallySupported: number; unsupported: number; contradicted: number };
+  claims?: ReliabilityFinding[];
+  findings?: ReliabilityFinding[];
+  evaluator?: { modelId: string; modelName: string; evaluatorVersion: string; promptVersion: string };
+  requestedAt?: string;
+  evaluatedAt?: string;
+  durationMs?: number;
+  failureCode?: string;
+}
+
 export interface Message {
   id: string;
   conversationId: string;
@@ -106,6 +134,7 @@ export interface Message {
   timeToFirstChunk?: number;
   timeToFirstToken?: number;
   parentMessageId?: string; // Reference to the message being replied to
+  reliabilityEvaluation?: ReliabilityEvaluation;
   createdAt: string;
 }
 

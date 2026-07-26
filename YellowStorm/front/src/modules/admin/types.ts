@@ -36,6 +36,17 @@ export interface AdminGuardrailsSettings {
   promptInjection: PromptInjectionGuardrailsConfig;
 }
 
+export interface AdminEvaluationSettings {
+  responseReliability: {
+    enabled: boolean;
+    mode: 'informative';
+    judgeModelId: string | null;
+    maxConcurrentEvaluations: number;
+    timeoutMs: number;
+    maxFindings: number;
+  };
+}
+
 // Analytics Types
 
 export interface TimeSeriesDataPoint {

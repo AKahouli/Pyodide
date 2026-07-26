@@ -11,6 +11,7 @@ import { EditableUserMessage } from './EditableUserMessage';
 import { BranchNavigation } from './BranchNavigation';
 import { LoadingIndicator } from './LoadingIndicator';
 import { MessageAttachments } from './MessageAttachments';
+import { MessageReliabilityCard } from './MessageReliabilityCard';
 import type { ChoiceInteractionMetadata, Message } from '../types';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 
@@ -92,6 +93,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
         {isUser && isEditing ? <EditableUserMessage message={message} conversationId={conversationId} /> : <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} />}
       </MessageProvider>
       {!isUser && <LoadingIndicator isComplete components={message.components || []} />}
+      {!isUser && <MessageReliabilityCard evaluation={message.reliabilityEvaluation} />}
       {isUser && !isEditing && <UserMessageActions message={message} isLastUserMessage={isLastUserMessage} />}
       {showBranchNav && <BranchNavigation userMessageId={message.questionMessageId!} branches={branches!} activeBranchId={activeBranchId!} />}
       {message.conversationType === 'ai' && <MessageActions message={message} isLastAiMessage={isLastAiMessage} conversationId={conversationId} />}

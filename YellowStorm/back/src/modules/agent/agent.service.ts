@@ -1,6 +1,7 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
+import { createHash } from 'node:crypto';
 import { Model, FilterQuery, Types } from 'mongoose';
 import { LoggerService } from '../logger';
 import { Agent, AgentDocument } from './schemas/agent.schema';
@@ -1927,6 +1928,7 @@ export class AgentService {
       .map((connector: any) => ({
         connector_id: connector.id,
         connector_name: connector.name,
+        connector_slug: connector.slug || connector.name,
         actions: (connector.actions || [])
           .filter((action: any) => action.isEnabled !== false)
           .filter((action: any) => {
@@ -2009,23 +2011,34 @@ export class AgentService {
 
   private buildConnectorToolDefs(bindings: Record<string, unknown>[]): Record<string, unknown>[] {
     return bindings.flatMap((binding) => {
-      const connectorId = String(binding.connector_id || '');
       const connectorName = String(binding.connector_name || 'connector');
       const actions = Array.isArray(binding.actions) ? binding.actions : [];
 
       return actions.map((action) => {
         const normalizedAction = action as Record<string, unknown>;
         const actionKey = String(normalizedAction.action_key || '');
+        const connectorSlug = String(binding.connector_slug || connectorName);
         const label = String(normalizedAction.label || actionKey);
         const description = String(normalizedAction.description || '');
 
         return {
-          name: `connector_${connectorId}_${actionKey}`,
+          name: this.buildConnectorToolName(connectorSlug, actionKey),
           description: description || `${connectorName} connector action ${label}`,
           prompt: '',
           top_k: 0,
         };
       });
     });
+  }
+
+  private buildConnectorToolName(connectorSlug: string, actionKey: string): string {
+    const candidate = `${connectorSlug}_${actionKey}`;
+    const sanitized = candidate.replace(/[^A-Za-z0-9_-]+/g, '_');
+    if (sanitized === candidate && sanitized.length <= 64) {
+      return sanitized;
+    }
+
+    const suffix = createHash('sha256').update(candidate, 'utf8').digest('hex').slice(0, 16);
+    return `${sanitized.slice(0, 47)}_${suffix}`;
   }
 }

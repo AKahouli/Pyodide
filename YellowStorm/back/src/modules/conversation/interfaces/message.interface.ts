@@ -21,6 +21,42 @@ export type ComponentType =
 
 export type FeedbackType = 'like' | 'dislike';
 
+export type ReliabilityEvaluationStatus = 'pending' | 'completed' | 'insufficient_evidence' | 'not_applicable' | 'failed';
+export type ReliabilityClaimStatus = 'supported' | 'partially_supported' | 'unsupported' | 'contradicted';
+export type ReliabilityClaimImportance = 'critical' | 'major' | 'minor';
+export type ReliabilityLabel = 'strongly_supported' | 'mostly_supported' | 'needs_verification' | 'high_hallucination_risk';
+
+export interface ReliabilityFinding {
+  claim: string;
+  status: ReliabilityClaimStatus;
+  importance: ReliabilityClaimImportance;
+  explanation: string;
+  evidenceIds?: string[];
+}
+
+export interface ReliabilityClaimCounts {
+  total: number;
+  supported: number;
+  partiallySupported: number;
+  unsupported: number;
+  contradicted: number;
+}
+
+export interface ReliabilityEvaluation {
+  status: ReliabilityEvaluationStatus;
+  score?: number;
+  label?: ReliabilityLabel;
+  summary?: string;
+  claimCounts?: ReliabilityClaimCounts;
+  claims?: ReliabilityFinding[];
+  findings?: ReliabilityFinding[];
+  evaluator?: { modelId: string; modelName: string; evaluatorVersion: string; promptVersion: string };
+  requestedAt?: string;
+  evaluatedAt?: string;
+  durationMs?: number;
+  failureCode?: string;
+}
+
 export interface MessageComponent {
   id: string;
   type: ComponentType;
@@ -115,6 +151,7 @@ export interface MessageResponse {
   memberIds?: string[];
   guardrailDecision?: GuardrailDecisionMetadata;
   interaction?: Record<string, unknown>;
+  reliabilityEvaluation?: ReliabilityEvaluation;
   createdAt: string;
   updatedAt: string;
 }

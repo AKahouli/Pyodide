@@ -12,8 +12,8 @@ export const configValidationSchema = Joi.object({
   DATA_ROOM_RECONCILIATION_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_OUTBOX_DISPATCH_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_PERMANENT_SOURCE_DELETION_ENABLED: Joi.boolean().default(false),
-    DATA_ROOM_VALIDITY_INTELLIGENCE_ENABLED: Joi.boolean().default(false),
-    DATA_ROOM_KNOWLEDGE_ASSESSMENT_ENABLED: Joi.boolean().default(false),
+  DATA_ROOM_VALIDITY_INTELLIGENCE_ENABLED: Joi.boolean().default(false),
+  DATA_ROOM_KNOWLEDGE_ASSESSMENT_ENABLED: Joi.boolean().default(false),
   // Application
   APP_NAME: Joi.string().default('YelloStorm'),
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
@@ -165,7 +165,7 @@ export const configValidationSchema = Joi.object({
 
   // Conversation
   CONVERSATION_GRPC_URL: Joi.string().default('localhost:50051'),
-  CONVERSATION_GRPC_TIMEOUT_MS: Joi.number().min(5000).max(300000).default(120000),
+  CONVERSATION_GRPC_TIMEOUT_MS: Joi.number().min(5000).max(1000000).default(300000),
   CONVERSATION_MAX_CONCURRENT_STREAMS: Joi.number().min(1).max(50).default(5),
   CONVERSATION_SSE_HEARTBEAT_MS: Joi.number().min(5000).max(60000).default(15000),
   CONVERSATION_MAX_SSE_CONNECTIONS: Joi.number().min(1).max(20).default(5),

@@ -113,6 +113,7 @@ import {
   AuthProvidersPage,
   ConnectedAppsAdminPage,
   GuardrailsPage,
+  EvaluationSettingsPage,
 } from "./modules/admin";
 
 function RouteErrorFallback() {
@@ -338,6 +339,7 @@ export const router = createHashRouter([
           { path: "reports", element: <ReportsPage /> },
           { path: "models", element: <ModelsPage /> },
           { path: "guardrails", element: <GuardrailsPage /> },
+          { path: 'evaluation-settings', element: <PermissionGuard permissions={['admin.*', '*']}><EvaluationSettingsPage /></PermissionGuard> },
           { path: "tools", element: <ToolsPage /> },
           { path: "skills", element: <SkillsPage /> },
           { path: "connectors", element: <ConnectorsPage /> },

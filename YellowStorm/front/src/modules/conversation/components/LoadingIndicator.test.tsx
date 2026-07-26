@@ -39,10 +39,10 @@ describe('LoadingIndicator', () => {
 
     fireEvent.click(screen.getByRole('button'));
     expect(screen.getByText('Reviewing the document')).toBeInTheDocument();
-    expect(screen.getByText('Activate Skill')).toBeInTheDocument();
+    expect(screen.getByText('1. Activate Skill')).toBeInTheDocument();
     expect(screen.queryByText('workspace-1')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByText('Activate Skill'));
+    fireEvent.click(screen.getByText('1. Activate Skill'));
     expect(screen.getByText(/workspace-1/)).toBeInTheDocument();
     expect(screen.getByText(/secret/)).toBeInTheDocument();
     expect(screen.queryByText('Never show this raw prompt')).not.toBeInTheDocument();
@@ -56,8 +56,8 @@ describe('LoadingIndicator', () => {
 
     fireEvent.click(screen.getByRole('button'));
     expect(screen.queryByText('search_documents')).not.toBeInTheDocument();
-    expect(screen.getByText('Search Documents')).toBeInTheDocument();
-    fireEvent.click(screen.getByText('Search Documents'));
+    expect(screen.getByText('1. Search Documents')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('1. Search Documents'));
     expect(screen.getByText(/contract/)).toBeInTheDocument();
   });
 
@@ -85,7 +85,7 @@ describe('LoadingIndicator', () => {
     }] as never} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'stream.activity.detailsAria' }));
-    fireEvent.click(screen.getByText('Search Documents'));
+    fireEvent.click(screen.getByText('1. Search Documents'));
 
     expect(screen.getByText((content) => content.includes(expectedDate))).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'stream.activity.viewResponse' }));
@@ -101,7 +101,24 @@ describe('LoadingIndicator', () => {
     }] as never} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'stream.activity.detailsAria' }));
-    fireEvent.click(screen.getByText('Search Documents'));
+    fireEvent.click(screen.getByText('1. Search Documents'));
     expect(screen.queryByRole('button', { name: 'stream.activity.viewResponse' })).not.toBeInTheDocument();
+  });
+
+  it('numbers tool executions and calculates duration from the next tool start', () => {
+    const { container } = render(<LoadingIndicator isComplete components={[
+      { id: 'tool-1', type: 'toolInfo', data: { title: 'search_documents', status: 'completed', startedAt: '2026-07-21T10:13:42.000Z' } },
+      { id: 'tool-2', type: 'toolInfo', data: { title: 'create_report', status: 'running', startedAt: '2026-07-21T10:14:00.400Z' } },
+    ] as never} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.detailsAria' }));
+
+    expect(screen.getByText('1. Search Documents')).toBeInTheDocument();
+    expect(screen.getByText('2. Create Report')).toBeInTheDocument();
+    const durations = container.querySelectorAll('[data-duration-seconds]');
+    expect(durations).toHaveLength(1);
+    expect(durations[0]).toHaveAttribute('data-duration-seconds', '18');
+    expect(durations[0].closest('summary')).toHaveTextContent('1. Search Documents');
+    expect(screen.getByText('2. Create Report').closest('summary')).not.toContainElement(durations[0]);
   });
 });

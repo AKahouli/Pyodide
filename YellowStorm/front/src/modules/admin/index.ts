@@ -32,6 +32,7 @@ export {
   ConnectedAppsAdminPage,
   TeamAutoBuilderPage,
   GuardrailsPage,
+  EvaluationSettingsPage,
 } from './pages';
 export { ADMIN_ACCESS_PERMISSIONS, ADMIN_MENU_ITEMS, DEFAULT_FEATURE_VISIBILITY } from './constants';
 export type {
@@ -99,6 +100,7 @@ export type {
   UpdateConversationSettingsRequest,
   ConversationSettingsAgentOption,
   AdminGuardrailsSettings,
+  AdminEvaluationSettings,
   PromptInjectionGuardrailsConfig,
   PlaybookPromptResponse,
   PlaybookPromptListResponse,
@@ -173,6 +175,8 @@ export {
   clearDefaultModel,
   syncModels,
   getDefaultModel,
+  getAdminEvaluationSettings,
+  updateAdminEvaluationSettings,
   getAdminPlaybookSettings,
   updateAdminPlaybookSettings,
   getAdminWorkspaceUploadSettings,

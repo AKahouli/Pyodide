@@ -195,6 +195,43 @@ describe('conversation streaming component updates', () => {
     expect(useConversationStore.getState().messagesTotal).toBe(1);
   });
 
+  it('merges reliability metadata without replacing existing message fields', () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      messages: [{
+        id: 'ai-1',
+        conversationId: 'conv-1',
+        conversationType: 'ai',
+        components: [{ type: 'text', data: { content: 'Complete response' } }],
+        feedback: 'like',
+        durationMs: 100,
+        createdAt: '2026-07-23T10:00:00.000Z',
+      }],
+    });
+
+    useConversationStore.getState().onMessageUpdated({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      message: { reliabilityEvaluation: {
+        status: 'completed',
+        score: 100,
+        label: 'strongly_supported',
+        claims: [{ claim: 'Complete response', status: 'supported', importance: 'major', explanation: 'Matched the source.' }],
+      } },
+    });
+
+    expect(useConversationStore.getState().messages[0]).toMatchObject({
+      feedback: 'like',
+      durationMs: 100,
+      components: [{ type: 'text', data: { content: 'Complete response' } }],
+      reliabilityEvaluation: {
+        status: 'completed',
+        score: 100,
+        claims: [{ claim: 'Complete response', status: 'supported' }],
+      },
+    });
+  });
+
   it('reconciles a persisted completion after the live event was missed', async () => {
     fetchMessageMock.mockResolvedValue({
       id: 'ai-1',

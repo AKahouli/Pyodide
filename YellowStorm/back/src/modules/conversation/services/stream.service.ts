@@ -39,6 +39,7 @@ import {
   createGrpcMetadata,
 } from '../../../common/grpc/grpc-security.util';
 import { randomUUID } from 'node:crypto';
+import { ResponseReliabilityService } from './response-reliability.service';
 
 interface StreamRequest {
   content: string;
@@ -102,6 +103,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly agentService: AgentService,
     private readonly modelsService: ModelsService,
     private readonly skillService: SkillService,
+    private readonly responseReliabilityService: ResponseReliabilityService,
   ) {
     this.logger.setContext('StreamService');
   }
@@ -1208,6 +1210,19 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
                 durationMs,
               },
             },
+          });
+
+          // Informative evaluation starts only after users receive stream_complete.
+          void this.responseReliabilityService.schedule({
+            messageId,
+            conversationId,
+            userId,
+            requestId,
+          }).catch((error) => {
+            this.logger.warn('Unable to schedule response reliability evaluation', {
+              messageId,
+              error: error instanceof Error ? error.message : String(error),
+            }, logOpts);
           });
 
           this.cleanupStream(userId, conversationId, streamKey);
