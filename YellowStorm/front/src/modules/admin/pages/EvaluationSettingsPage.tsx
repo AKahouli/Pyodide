@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertTriangle, Gauge, Info, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -7,19 +7,13 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { getAdminEvaluationSettings, getAllModels, updateAdminEvaluationSettings } from '../api';
-import type { AdminModelResponse } from '../types';
-import {
-  DEFAULT_RESPONSE_CORRECTION_SETTINGS,
-  type AdminEvaluationSettingsV2,
-  type CorrectionFailureBehavior,
-  type EvaluationMode,
-} from '../evaluation-settings.types';
+import type { AdminEvaluationSettings, AdminModelResponse } from '../types';
+import { DEFAULT_RESPONSE_CORRECTION_SETTINGS } from '../evaluation-settings.types';
 
-const defaults: AdminEvaluationSettingsV2 = {
+const defaults: AdminEvaluationSettings = {
   responseReliability: {
     enabled: false,
     mode: 'informative',
@@ -27,23 +21,13 @@ const defaults: AdminEvaluationSettingsV2 = {
     maxConcurrentEvaluations: 3,
     timeoutMs: 30_000,
     maxFindings: 5,
-    correction: {
-      threshold: 70,
-      maxAttempts: 1,
-      maxDurationMs: 60_000,
-      allowAdditionalDocumentRetrieval: false,
-      allowConnectorQueries: false,
-      allowCalculationReruns: false,
-      failureBehavior: 'publish_with_warning',
-      showOriginalAnswer: true,
-    },
+    correction: { ...DEFAULT_RESPONSE_CORRECTION_SETTINGS },
   },
 };
 
 export function EvaluationSettingsPage() {
-  const { t, language } = useModuleTranslation('admin');
-  const copy = useMemo(() => getCopy(language === 'fr'), [language]);
-  const [settings, setSettings] = useState<AdminEvaluationSettingsV2>(defaults);
+  const { t } = useModuleTranslation('admin');
+  const [settings, setSettings] = useState<AdminEvaluationSettings>(defaults);
   const [models, setModels] = useState<AdminModelResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -51,7 +35,7 @@ export function EvaluationSettingsPage() {
   useEffect(() => {
     Promise.all([getAdminEvaluationSettings(), getAllModels()])
       .then(([next, modelResponse]) => {
-        const incoming = next as unknown as Partial<AdminEvaluationSettingsV2>;
+        const incoming = next as Partial<AdminEvaluationSettings>;
         setSettings({
           responseReliability: {
             ...defaults.responseReliability,
@@ -71,7 +55,6 @@ export function EvaluationSettingsPage() {
   }, [t]);
 
   const reliability = settings.responseReliability;
-  const correction = reliability.correction;
   const eligibleModels = models.filter((model) => model.isActive
     && (model.types.includes('chat') || model.types.includes('completion') || model.type === 'chat' || model.type === 'completion'));
   const selectedModelIsValid = !reliability.enabled
@@ -90,10 +73,6 @@ export function EvaluationSettingsPage() {
     }));
   };
   const patchCorrection = (patch: Partial<typeof reliability.correction>) => {
-    patchReliability({ correction: { ...reliability.correction, ...patch } });
-  };
-
-  const patchCorrection = (patch: Partial<typeof correction>) => {
     setSettings((current) => ({
       responseReliability: {
         ...current.responseReliability,
@@ -105,7 +84,7 @@ export function EvaluationSettingsPage() {
   const save = async () => {
     setSaving(true);
     try {
-      const normalized = await updateAdminEvaluationSettings(settings as never) as unknown as AdminEvaluationSettingsV2;
+      const normalized = await updateAdminEvaluationSettings(settings);
       setSettings({
         responseReliability: {
           ...defaults.responseReliability,
@@ -163,20 +142,6 @@ export function EvaluationSettingsPage() {
         </Select>
         {reliability.enabled && !selectedModelIsValid ? <div className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm"><AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />{t('evaluationSettings.noModel')}</div> : null}
       </section>
-
-      {reliability.mode === 'corrective_transparent' ? (
-        <section className="space-y-4 rounded-lg border p-5">
-          <div><h2 className="font-semibold">{copy.correctiveSettings}</h2><p className="text-sm text-muted-foreground">{copy.configurationOnly}</p></div>
-          <NumberField id="correction-threshold" label={copy.threshold} description={copy.thresholdHelp} value={correction.threshold} min={0} max={100} suffix="/100" onChange={(threshold) => patchCorrection({ threshold })} />
-          <NumberField id="correction-attempts" label={copy.maxAttempts} description={copy.maxAttemptsHelp} value={correction.maxAttempts} min={1} max={3} onChange={(maxAttempts) => patchCorrection({ maxAttempts })} />
-          <NumberField id="correction-duration" label={copy.maxDuration} description={copy.maxDurationHelp} value={correction.maxDurationMs / 1000} min={10} max={300} suffix={copy.seconds} onChange={(value) => patchCorrection({ maxDurationMs: value * 1000 })} />
-          <ToggleField label={copy.documentRetrieval} description={copy.documentRetrievalHelp} checked={correction.allowAdditionalDocumentRetrieval} onChange={(allowAdditionalDocumentRetrieval) => patchCorrection({ allowAdditionalDocumentRetrieval })} />
-          <ToggleField label={copy.connectorQueries} description={copy.connectorQueriesHelp} checked={correction.allowConnectorQueries} onChange={(allowConnectorQueries) => patchCorrection({ allowConnectorQueries })} />
-          <ToggleField label={copy.calculationReruns} description={copy.calculationRerunsHelp} checked={correction.allowCalculationReruns} onChange={(allowCalculationReruns) => patchCorrection({ allowCalculationReruns })} />
-          <div className="space-y-2"><Label>{copy.failureBehavior}</Label><RadioGroup value={correction.failureBehavior} onValueChange={(value) => patchCorrection({ failureBehavior: value as CorrectionFailureBehavior })}><ModeOption value="publish_with_warning" title={copy.publishWarning} description={copy.publishWarningHelp} /><ModeOption value="abstain" title={copy.abstain} description={copy.abstainHelp} /><ModeOption value="require_human_review" title={copy.humanReview} description={copy.humanReviewHelp} /></RadioGroup></div>
-          <ToggleField label={copy.showOriginal} description={copy.showOriginalHelp} checked={correction.showOriginalAnswer} onChange={(showOriginalAnswer) => patchCorrection({ showOriginalAnswer })} />
-        </section>
-      ) : null}
 
       <section className="space-y-4 rounded-lg border p-5">
         <h2 className="font-semibold">{t('evaluationSettings.advanced')}</h2>

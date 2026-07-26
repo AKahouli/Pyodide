@@ -4,10 +4,14 @@ import { renderWithProviders } from '@/test/renderWithProviders';
 import { EvaluationSettingsPage } from './EvaluationSettingsPage';
 import { getAdminEvaluationSettings, getAllModels, updateAdminEvaluationSettings } from '../api';
 
+const translationMocks = vi.hoisted(() => ({
+  t: (key: string) => key,
+}));
+
 vi.mock('@/modules/auth/useAuth', () => ({ useAuth: () => ({ isAuthenticated: true, user: { id: 'admin' } }) }));
 vi.mock('@/modules/localization', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/modules/localization')>();
-  return { ...actual, useModuleTranslation: () => ({ t: (key: string) => key }) };
+  return { ...actual, useModuleTranslation: () => ({ t: translationMocks.t }) };
 });
 vi.mock('@/lib/notifications', () => ({ showError: vi.fn(), showSuccess: vi.fn() }));
 vi.mock('../api', () => ({
