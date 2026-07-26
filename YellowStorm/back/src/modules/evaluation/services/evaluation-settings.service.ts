@@ -9,7 +9,26 @@ import {
   EvaluationSettingsDocument,
 } from '../schemas/evaluation-settings.schema';
 
-export type EvaluationMode = 'informative';
+export type EvaluationMode =
+  | 'informative'
+  | 'corrective_transparent'
+  | 'corrective_guarded';
+
+export type CorrectionFailureBehavior =
+  | 'publish_with_warning'
+  | 'abstain'
+  | 'require_human_review';
+
+export interface ResponseCorrectionSettings {
+  threshold: number;
+  maxAttempts: number;
+  maxDurationMs: number;
+  allowAdditionalDocumentRetrieval: boolean;
+  allowConnectorQueries: boolean;
+  allowCalculationReruns: boolean;
+  failureBehavior: CorrectionFailureBehavior;
+  showOriginalAnswer: boolean;
+}
 
 export interface ResponseReliabilitySettings {
   enabled: boolean;
@@ -18,11 +37,23 @@ export interface ResponseReliabilitySettings {
   maxConcurrentEvaluations: number;
   timeoutMs: number;
   maxFindings: number;
+  correction: ResponseCorrectionSettings;
 }
 
 export interface AdminEvaluationSettings {
   responseReliability: ResponseReliabilitySettings;
 }
+
+export const DEFAULT_RESPONSE_CORRECTION_SETTINGS: ResponseCorrectionSettings = {
+  threshold: 70,
+  maxAttempts: 1,
+  maxDurationMs: 60_000,
+  allowAdditionalDocumentRetrieval: false,
+  allowConnectorQueries: false,
+  allowCalculationReruns: false,
+  failureBehavior: 'publish_with_warning',
+  showOriginalAnswer: true,
+};
 
 export const DEFAULT_ADMIN_EVALUATION_SETTINGS: AdminEvaluationSettings = {
   responseReliability: {
@@ -32,16 +63,28 @@ export const DEFAULT_ADMIN_EVALUATION_SETTINGS: AdminEvaluationSettings = {
     maxConcurrentEvaluations: 3,
     timeoutMs: 30_000,
     maxFindings: 5,
+    correction: DEFAULT_RESPONSE_CORRECTION_SETTINGS,
   },
 };
 
+function isEvaluationMode(value: unknown): value is EvaluationMode {
+  return value === 'informative'
+    || value === 'corrective_transparent'
+    || value === 'corrective_guarded';
+}
+
 function normalizeSettings(value?: Partial<AdminEvaluationSettings>): AdminEvaluationSettings {
+  const reliability = value?.responseReliability;
   return {
     responseReliability: {
       ...DEFAULT_ADMIN_EVALUATION_SETTINGS.responseReliability,
-      ...value?.responseReliability,
-      judgeModelId: value?.responseReliability?.judgeModelId?.toString() || null,
-      mode: 'informative',
+      ...reliability,
+      judgeModelId: reliability?.judgeModelId?.toString() || null,
+      mode: isEvaluationMode(reliability?.mode) ? reliability.mode : 'informative',
+      correction: {
+        ...DEFAULT_RESPONSE_CORRECTION_SETTINGS,
+        ...reliability?.correction,
+      },
     },
   };
 }
@@ -61,6 +104,13 @@ export class EvaluationSettingsService {
 
   async updateSettings(input: UpdateEvaluationSettingsDto): Promise<AdminEvaluationSettings> {
     const next = normalizeSettings(input);
+    if (next.responseReliability.mode === 'corrective_guarded') {
+      throw new BadRequestException(
+        ErrorCode.BAD_REQUEST,
+        'Corrective guarded mode is not available yet',
+      );
+    }
+
     if (next.responseReliability.enabled) {
       const modelId = next.responseReliability.judgeModelId;
       if (!modelId) {
