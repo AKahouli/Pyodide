@@ -554,13 +554,12 @@ function PlaybookCanvasInner() {
         ? new URLSearchParams(window.location.search).get('execution') !== null
         : false;
 
-      // Reset execution state when switching playbooks, but preserve panel preference
-      const panelPref = (() => { try { return localStorage.getItem('ys_playbook_exec_panel') === '1'; } catch { return false; } })();
+      // A normal playbook open always starts in the design view. Execution links restore the pane below.
       const workspaceExplorerPref = (() => { try { return localStorage.getItem('ys_workspace_explorer_open') === '1'; } catch { return false; } })();
       usePlaybookUiStore.setState({
         selectedStepId: null,
         selectedIterationIndex: 0,
-        executionPanelOpen: panelPref,
+        executionPanelOpen: false,
         workspaceExplorerOpen: workspaceExplorerPref,
         connectorSidebarOpen: false,
         nodeEditorOpen: false,
@@ -571,14 +570,14 @@ function PlaybookCanvasInner() {
       usePlaybookStore.setState({
         currentExecution: null,
         selectedStepId: null,
-        executionPanelOpen: panelPref,
+        executionPanelOpen: false,
         workspaceExplorerOpen: workspaceExplorerPref,
         executionHistory: [],
         designerOpen: true,
         copilotMode: 'design',
         pageMode: 'design',
       });
-      setExecutionPanelCollapsed(!panelPref);
+      setExecutionPanelCollapsed(true);
       setToolbarCollapsed(true);
       setDataBindingsVisible(false);
       setIntentSuggestions([]);
@@ -592,20 +591,6 @@ function PlaybookCanvasInner() {
         ]);
         if (!cancelled) setLoadedPlaybookId(id);
         if (cancelled || hasExecutionParam) {
-          return;
-        }
-
-        const latestExecutionSummary = usePlaybookStore.getState().executionHistoryByPlaybook[id]?.[0];
-        if (latestExecutionSummary) {
-          setDesignerOpen(false);
-          setPageMode('run');
-          setExecutionPanelOpen(true);
-          setExecutionPanelCollapsed(false);
-          await fetchExecution(id, latestExecutionSummary.id);
-          if (cancelled) {
-            return;
-          }
-          viewExecutionInPanel(latestExecutionSummary.id);
           return;
         }
 
