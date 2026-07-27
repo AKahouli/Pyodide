@@ -286,7 +286,7 @@ export const router = createHashRouter([
       },
       {
         path: 'workspace/:id/artifacts/:artifactId',
-        element: dataRoomFeatures.decisionFlowArtifactsEnabled ? <Suspense fallback={null}><DecisionFlowEditorPage /></Suspense> : <NoMatch />,
+        element:<Suspense fallback={null}><DecisionFlowEditorPage /></Suspense> ,
       },
       {
         path: 'workspace/:id',

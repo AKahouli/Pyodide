@@ -139,6 +139,8 @@ export const API_ENDPOINTS = {
       `/workspaces/${workspaceId}/documents/${docId}/download-url`,
     reindex: (workspaceId: string, docId: string) =>
       `/workspaces/${workspaceId}/documents/${docId}/reindex`,
+    rename: (workspaceId: string, docId: string) =>
+      `/workspaces/${workspaceId}/documents/${docId}/rename`,
     graphData: (workspaceId: string) =>
       `/workspaces/${workspaceId}/graph`,
     bulkDelete: (workspaceId: string) => `/workspaces/${workspaceId}/documents`,

@@ -24,7 +24,6 @@ import { WebsiteCrawlerService } from './services/website-crawler.service';
 import {
   DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS,
 } from '../system/constants/workspace-upload-settings.constants';
-import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
 
 const WS_ID = '507f1f77bcf86cd799439011';
 const USER_ID = '507f191e810c19729de860ea';
@@ -58,7 +57,7 @@ describe('WorkspaceDocumentService.createFromAiArtifact', () => {
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
-        { provide: WebsiteCrawlerService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -166,7 +165,7 @@ describe('WorkspaceDocumentService upload validation', () => {
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
-        { provide: WebsiteCrawlerService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -265,7 +264,7 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
-        { provide: WebsiteCrawlerService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -412,7 +411,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
             deleteAllByWorkspace: jest.fn().mockResolvedValue(undefined),
           },
         },
-        { provide: WebsiteCrawlerService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -617,7 +616,7 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
-        { provide: WebsiteCrawlerService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -764,6 +763,7 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
   };
   let indexingService: { queueDocument: jest.Mock; sendIndexingStatusNotification: jest.Mock };
   let documentService: { upload: jest.Mock };
+  let crawler: { fetchTitle: jest.Mock };
   let urlSafeSpy: jest.SpyInstance;
   let order: string[];
   let events: string[];
@@ -832,6 +832,7 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
         contentHash: 'hash',
       }),
     };
+    crawler = { fetchTitle: jest.fn().mockResolvedValue(undefined) };
 
     const mod = await Test.createTestingModule({
       providers: [
@@ -844,7 +845,7 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
         { provide: IndexingService, useValue: indexingService },
         { provide: UrlToPdfClientService, useValue: { convert } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
-        { provide: WebsiteCrawlerService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: crawler },
         {
           provide: ConfigService,
           useValue: {
@@ -937,5 +938,34 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
 
     expect(order).toEqual(['https://a.example', 'https://b.example']);
     expect(convert).toHaveBeenCalledTimes(2);
+  });
+
+  it('names a link after the fetched page <title> when no name was provided', async () => {
+    crawler.fetchTitle.mockResolvedValue('  Our   Pricing  Page  ');
+    await service.addLinks(WS_ID, USER_ID, ['https://a.example/pricing']);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(crawler.fetchTitle).toHaveBeenCalledWith('https://a.example/pricing');
+    // The completion update renames the doc to the (collapsed) title + .pdf.
+    const updateCall = documentModel.findByIdAndUpdate.mock.calls.at(-1)!;
+    expect(updateCall[1].$set.originalName).toBe('Our Pricing Page.pdf');
+  });
+
+  it('keeps the URL-derived name when no title is found (fallback)', async () => {
+    crawler.fetchTitle.mockResolvedValue(undefined);
+    await service.addLinks(WS_ID, USER_ID, ['https://a.example/pricing']);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const updateCall = documentModel.findByIdAndUpdate.mock.calls.at(-1)!;
+    // No rename → originalName is not set in the completion update.
+    expect(updateCall[1].$set.originalName).toBeUndefined();
+  });
+
+  it('does not fetch a title when a name was provided (uses the provided name)', async () => {
+    await service.addLinks(WS_ID, USER_ID, ['https://a.example/pricing'], {
+      names: { 'https://a.example/pricing': 'Chosen Name' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(crawler.fetchTitle).not.toHaveBeenCalled();
   });
 });

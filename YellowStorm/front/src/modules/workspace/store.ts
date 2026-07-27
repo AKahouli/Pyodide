@@ -233,6 +233,7 @@ interface WorkspaceActions {
   deleteAllDocuments: (workspaceId: string) => Promise<void>;
   getDownloadUrl: (workspaceId: string, docId: string) => Promise<string>;
   reindexDocument: (workspaceId: string, docId: string, deepSearch?: boolean) => Promise<void>;
+  renameDocument: (workspaceId: string, docId: string, name: string) => Promise<void>;
   updateDocumentIndexingStatus: (documentId: string, indexingStatus: string, indexingError?: string, lastIndexedAt?: string, indexingTaskName?: string, indexingTaskId?: string, detected_language?: string, chunk_size?: number) => void;
 
   // Template operations
@@ -935,6 +936,18 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           toast.error(fallback, { description: message });
           throw err;
         }
+      },
+
+      renameDocument: async (workspaceId, docId, name) => {
+        const updated = await workspaceApi.renameDocument(workspaceId, docId, name);
+        // Reflect the new display name locally (the backend preserves the
+        // extension, so use its returned value rather than the raw input).
+        const nextName = (updated as { originalName?: string; name?: string }).originalName
+          ?? (updated as { name?: string }).name
+          ?? name;
+        set((s) => ({
+          pageFiles: s.pageFiles.map((f) => (f.id === docId ? { ...f, name: nextName } : f)),
+        }));
       },
 
       updateDocumentIndexingStatus: (documentId, indexingStatus, indexingError, lastIndexedAt, indexingTaskName, indexingTaskId, detected_language, chunk_size) => {
@@ -1827,7 +1840,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           const [folders, files, artifacts] = await Promise.all([
             pageApi.listFolders(workspaceId),
             pageApi.listFiles(workspaceId),
-            dataRoomFeatures.decisionFlowArtifactsEnabled ? artifactApi.listWorkspaceArtifacts(workspaceId) : Promise.resolve([]),
+            artifactApi.listWorkspaceArtifacts(workspaceId),
           ]);
           set({
             pageFolders: folders,
@@ -1845,7 +1858,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       },
 
       refreshWorkspaceArtifacts: async () => {
-        if (!dataRoomFeatures.decisionFlowArtifactsEnabled) return;
         const workspaceId = get().selectedWorkspaceId;
         if (!workspaceId) return;
         set({ loadingPageArtifacts: true });

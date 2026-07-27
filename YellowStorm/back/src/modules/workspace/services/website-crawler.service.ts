@@ -267,6 +267,16 @@ export class WebsiteCrawlerService {
     return { pages: results, truncated };
   }
 
+  /**
+   * Best-effort single-page `<title>` for naming an indexed link. SSRF-safe
+   * (uses the same guarded fetch as the crawler) and never throws — returns
+   * undefined on any failure so callers can fall back to a URL-derived name.
+   */
+  async fetchTitle(url: string): Promise<string | undefined> {
+    const html = await this.safeGet(url, Date.now() + FETCH_TIMEOUT_MS);
+    return html ? this.extractTitle(html) : undefined;
+  }
+
   private extractTitle(html: string): string | undefined {
     const m = /<title[^>]*>([^<]*)<\/title>/i.exec(html);
     return m ? m[1].trim() : undefined;

@@ -17,15 +17,28 @@ describe('SourceGroupRow', () => {
     expect(screen.getByText('child-a')).toBeInTheDocument();
   });
 
-  it('calls onOpenInNavigator with the root url on double-click', () => {
+  it('calls onOpenInNavigator with the root url from the navigator button, without toggling', () => {
     const onOpen = vi.fn();
     render(
       <SourceGroupRow label='example.com/services' rootUrl='https://example.com/services' count={3} onOpenInNavigator={onOpen}>
         <div>child-a</div>
       </SourceGroupRow>,
     );
-    fireEvent.doubleClick(screen.getByRole('button', { name: 'example.com/services' }));
+    fireEvent.click(screen.getByLabelText('open example.com/services in navigator'));
     expect(onOpen).toHaveBeenCalledWith('https://example.com/services');
+    expect(screen.queryByText('child-a')).not.toBeInTheDocument(); // still collapsed
+  });
+
+  it('does not open the navigator when the header is clicked (expand only)', () => {
+    const onOpen = vi.fn();
+    render(
+      <SourceGroupRow label='example.com/services' rootUrl='https://example.com/services' count={3} onOpenInNavigator={onOpen}>
+        <div>child-a</div>
+      </SourceGroupRow>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'example.com/services' }));
+    expect(screen.getByText('child-a')).toBeInTheDocument(); // expanded
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it('calls onMove from the move button without toggling the group', () => {

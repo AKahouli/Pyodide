@@ -151,6 +151,15 @@ function collectFolderPaths(nodes: TrieNode[], parentKey: string, out: string[])
   }
 }
 
+/** Map each node's tree path → its page url, so a row click can navigate there. */
+function collectPathUrls(nodes: TrieNode[], parentKey: string, out: Map<string, string>): void {
+  for (const node of nodes) {
+    const path = `${parentKey}/${node.segment}`;
+    if (node.url) out.set(path, node.url);
+    if (node.children.length > 0) collectPathUrls(node.children, path, out);
+  }
+}
+
 function TrieNodes({
   nodes, parentKey, selected, indexedUrls, onToggle, onDelete, onEdit, onExplore, exploring,
 }: {
@@ -175,13 +184,17 @@ function TrieNodes({
 
         // Per-page controls, only for nodes that terminate a page (have a `url`).
         const status = url && node.indexingStatus ? <IndexingStatusDot status={node.indexingStatus} /> : null;
+        // Wrapped so toggling the checkbox doesn't bubble to the row's click
+        // (which navigates to the page). The check remains a pure select action.
         const checkbox = url ? (
-          <Checkbox
-            aria-label={displayName}
-            checked={selected.has(url)}
-            disabled={already}
-            onCheckedChange={() => onToggle(url)}
-          />
+          <span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <Checkbox
+              aria-label={displayName}
+              checked={selected.has(url)}
+              disabled={already}
+              onCheckedChange={() => onToggle(url)}
+            />
+          </span>
         ) : null;
         const actions = url ? (
           <FileTreeActions>
@@ -196,7 +209,9 @@ function TrieNodes({
                 {exploring?.has(url) ? <Loader2 className='h-4 w-4 animate-spin' /> : <Compass className='h-4 w-4' />}
               </button>
             )}
-            {onEdit && <EditLeafPopover node={node} onEdit={onEdit} />}
+            {/* Rename is only for links added in this session; an already-indexed
+                link is renamed from the workspace file menu instead. */}
+            {onEdit && !already && <EditLeafPopover node={node} onEdit={onEdit} />}
             <button
               type='button'
               aria-label={`delete ${url}`}
@@ -260,7 +275,7 @@ function TrieNodes({
 }
 
 export function CollectionSidebar({
-  pages, selected, indexedUrls, onToggle, onDelete, onSelectAll, onSelectNone, onAdd, onEdit, onExplore, exploring,
+  pages, selected, indexedUrls, onToggle, onDelete, onSelectAll, onSelectNone, onAdd, onEdit, onExplore, onNavigate, exploring,
 }: {
   pages: CollectedPage[];
   selected: Set<string>;
@@ -272,6 +287,8 @@ export function CollectionSidebar({
   onAdd?: (url: string, name?: string) => boolean;
   onEdit?: (oldUrl: string, patch: { url?: string; name?: string }) => boolean;
   onExplore?: (url: string) => void;
+  /** Clicking a page row (not its checkbox/actions) navigates the browser there. */
+  onNavigate?: (url: string) => void;
   exploring?: Set<string>;
 }) {
   // Track collapsed folders (default: all expanded). Translate to/from the
@@ -283,6 +300,14 @@ export function CollectionSidebar({
   const expanded = new Set(folderPaths.filter((p) => !collapsed.has(p)));
   const onExpandedChange = (next: Set<string>) =>
     setCollapsed(new Set(folderPaths.filter((p) => !next.has(p))));
+
+  // A row click (leaf row or folder name) reports its tree path via FileTree's
+  // onSelect; resolve that back to the page url and navigate there.
+  const pathToUrl = new Map<string, string>();
+  collectPathUrls(roots, '', pathToUrl);
+  const onSelectPath = onNavigate
+    ? (path: string) => { const u = pathToUrl.get(path); if (u) onNavigate(u); }
+    : undefined;
 
   return (
     <div className='flex min-h-0 min-w-0 flex-col rounded border'>
@@ -297,7 +322,7 @@ export function CollectionSidebar({
         {pages.length === 0 ? (
           <p className='p-3 text-sm text-muted-foreground'>Naviguez pour collecter des pages.</p>
         ) : (
-          <FileTree className='border-0 bg-transparent font-sans' expanded={expanded} onExpandedChange={onExpandedChange}>
+          <FileTree className='border-0 bg-transparent font-sans' expanded={expanded} onExpandedChange={onExpandedChange} onSelect={onSelectPath}>
             <TrieNodes
               nodes={roots}
               parentKey=''

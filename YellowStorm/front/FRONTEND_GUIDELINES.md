@@ -165,7 +165,6 @@ Example shared rollout pattern from `dataRoomFeatures.ts`:
 ```ts
 export const dataRoomFeatures = Object.freeze({
   governanceEnabled: import.meta.env.VITE_DATA_ROOM_GOVERNANCE_ENABLED === 'true',
-  decisionFlowArtifactsEnabled: import.meta.env.VITE_DATA_ROOM_DECISION_FLOW_ARTIFACTS_ENABLED === 'true',
 });
 ```
 
