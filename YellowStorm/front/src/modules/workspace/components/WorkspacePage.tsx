@@ -882,6 +882,7 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
   const [isReindexing, setIsReindexing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [expanded, setExpanded] = useState(forceExpanded);
 
   useEffect(() => {
@@ -895,6 +896,7 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
   const deleteDocument = useWorkspaceStore((s) => s.deleteDocument);
   const getDownloadUrl = useWorkspaceStore((s) => s.getDownloadUrl);
   const reindexDocument = useWorkspaceStore((s) => s.reindexDocument);
+  const renameDocument = useWorkspaceStore((s) => s.renameDocument);
   const refreshPageData = useWorkspaceStore((s) => s.refreshPageData);
   const { enabled: deepSearch } = useDeepSearchIndexation();
 
@@ -1011,6 +1013,9 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
                   {isReindexing ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <RefreshCw className='mr-2 h-4 w-4' />}
                   Indexer / Réindexer
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setRenameOpen(true)}>
+                  <Pencil className='mr-2 h-4 w-4' /> Renommer
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={onMove}>
                   <ArrowRight className='mr-2 h-4 w-4' /> Déplacer dans…
                 </DropdownMenuItem>
@@ -1027,7 +1032,56 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
       {expanded && artifacts.map((artifact) => <WorkspaceArtifactRow key={artifact.id} artifact={artifact} canWrite={canWrite} onChanged={refreshPageData} />)}
 
       <ConfirmDeleteFileDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen} fileName={file.name} linkedArtifactCount={totalArtifactCount} isDeleting={isDeleting} onConfirm={handleDelete} />
+
+      <RenameFileDialog open={renameOpen} onOpenChange={setRenameOpen} currentName={file.name} onRename={(name) => renameDocument(file.workspaceId, file.id, name)} />
     </>
+  );
+}
+
+function RenameFileDialog({ open, onOpenChange, currentName, onRename }: { open: boolean; onOpenChange: (open: boolean) => void; currentName: string; onRename: (name: string) => Promise<void> }) {
+  const [name, setName] = useState(currentName);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => { if (open) setName(currentName); }, [open, currentName]);
+
+  const save = useCallback(async () => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === currentName || isSaving) return;
+    setIsSaving(true);
+    try {
+      await onRename(trimmed);
+      toast.success('Fichier renommé');
+      onOpenChange(false);
+    } catch {
+      toast.error('Le renommage a échoué.');
+    } finally {
+      setIsSaving(false);
+    }
+  }, [name, currentName, isSaving, onRename, onOpenChange]);
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !isSaving && onOpenChange(o)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Renommer le fichier</DialogTitle>
+          <DialogDescription>Modifiez le nom d'affichage de ce fichier. L'extension est conservée.</DialogDescription>
+        </DialogHeader>
+        <Input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void save(); } }}
+          aria-label='Nouveau nom du fichier'
+        />
+        <DialogFooter>
+          <Button variant='outline' onClick={() => onOpenChange(false)} disabled={isSaving}>Annuler</Button>
+          <Button onClick={save} disabled={isSaving || !name.trim() || name.trim() === currentName} className='gap-1.5'>
+            {isSaving ? <Loader2 className='h-4 w-4 animate-spin' /> : <Pencil className='h-4 w-4' />}
+            Renommer
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

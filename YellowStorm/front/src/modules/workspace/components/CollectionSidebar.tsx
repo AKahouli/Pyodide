@@ -209,7 +209,9 @@ function TrieNodes({
                 {exploring?.has(url) ? <Loader2 className='h-4 w-4 animate-spin' /> : <Compass className='h-4 w-4' />}
               </button>
             )}
-            {onEdit && <EditLeafPopover node={node} onEdit={onEdit} />}
+            {/* Rename is only for links added in this session; an already-indexed
+                link is renamed from the workspace file menu instead. */}
+            {onEdit && !already && <EditLeafPopover node={node} onEdit={onEdit} />}
             <button
               type='button'
               aria-label={`delete ${url}`}

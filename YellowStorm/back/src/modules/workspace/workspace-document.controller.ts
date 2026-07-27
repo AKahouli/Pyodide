@@ -445,6 +445,22 @@ export class WorkspaceDocumentController {
   }
 
   /**
+   * Rename a document (its display name)
+   */
+  @Patch(':docId/rename')
+  @UseGuards(WritePermissionGuard)
+  @ApiOperation({ summary: 'Rename a document' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  @ApiParam({ name: 'docId', description: 'Document ID' })
+  async renameDocument(
+    @Param('workspaceId') workspaceId: string,
+    @Param('docId') docId: string,
+    @Body() body: { name: string },
+  ) {
+    return this.workspaceDocumentService.renameDocument(workspaceId, docId, body.name);
+  }
+
+  /**
    * Rename a folder
    */
   @Patch('folders/:folderId')

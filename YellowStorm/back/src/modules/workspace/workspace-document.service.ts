@@ -2159,6 +2159,42 @@ export class WorkspaceDocumentService {
   }
 
   /**
+   * Rename a document (its display `originalName`), preserving the file
+   * extension. Only the display name changes — the stored blob path is
+   * untouched, so view/download keep working.
+   */
+  async renameDocument(
+    workspaceId: string,
+    documentId: string,
+    newName: string,
+  ): Promise<DocumentResponse> {
+    if (!Types.ObjectId.isValid(documentId)) {
+      throw new NotFoundException(ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND, 'Document not found');
+    }
+    const doc = await this.documentModel.findById(documentId);
+    if (!doc || doc.workspaceId.toString() !== workspaceId || doc.isFolder) {
+      throw new NotFoundException(ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND, 'Document not found');
+    }
+
+    const trimmed = newName.replace(/\s+/g, ' ').trim();
+    if (!trimmed) {
+      throw new BadRequestException('Document name cannot be empty');
+    }
+
+    // Preserve the current extension (e.g. links are `.pdf`) so the name stays
+    // consistent and never trips the "no extension" heuristics elsewhere.
+    const ext = doc.originalName?.match(/\.[a-z0-9]+$/i)?.[0] ?? '';
+    const base = trimmed.toLowerCase().endsWith(ext.toLowerCase()) && ext
+      ? trimmed.slice(0, trimmed.length - ext.length)
+      : trimmed;
+    doc.originalName = `${base.slice(0, 200).trim()}${ext}`;
+    await doc.save();
+
+    this.logger.log('Document renamed', { documentId, workspaceId, newName: doc.originalName });
+    return this.mapToResponse(doc);
+  }
+
+  /**
    * Delete a folder and all its contents recursively
    */
   async deleteFolder(

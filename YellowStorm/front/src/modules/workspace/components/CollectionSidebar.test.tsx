@@ -235,6 +235,19 @@ it('editing a leaf via the pencil popover calls onEdit', () => {
   expect(onEdit).toHaveBeenCalledWith('https://ex.com/a', { url: 'https://ex.com/b', name: 'B' });
 });
 
+it('hides the rename pencil for an already-indexed link (rename only new links)', () => {
+  render(
+    <CollectionSidebar
+      pages={[{ url: 'https://ex.com/a', title: '', linkText: 'A' }]}
+      {...baseProps}
+      indexedUrls={new Set(['https://ex.com/a'])}
+      onAdd={vi.fn()}
+      onEdit={vi.fn()}
+    />,
+  );
+  expect(screen.queryByLabelText('edit https://ex.com/a')).not.toBeInTheDocument();
+});
+
 it('renders a pencil only on page leaves, not category-only nodes', () => {
   // 'https://ex.com/a/b' makes a category node 'a' (no url) and a leaf 'b' (has url).
   render(<CollectionSidebar pages={[{ url: 'https://ex.com/a/b', title: '', linkText: 'B' }]} {...baseProps} onAdd={vi.fn()} onEdit={vi.fn()} />);
