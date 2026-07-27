@@ -327,6 +327,48 @@ export class WorkyStreamService implements OnModuleInit {
         stream.lastActivityAt = new Date();
       }
     }
+    if (dto.plannerModelId !== undefined) {
+      const next =
+        typeof dto.plannerModelId === 'string' && dto.plannerModelId.trim()
+          ? dto.plannerModelId.trim()
+          : null;
+      if (next !== (stream.plannerModelId ?? null)) {
+        stream.plannerModelId = next;
+        stream.lastActivityAt = new Date();
+      }
+    }
+    if (dto.executorModelId !== undefined) {
+      const next =
+        typeof dto.executorModelId === 'string' && dto.executorModelId.trim()
+          ? dto.executorModelId.trim()
+          : null;
+      if (next !== (stream.executorModelId ?? null)) {
+        stream.executorModelId = next;
+        stream.lastActivityAt = new Date();
+      }
+    }
+    // Prompts store the raw value (whitespace can be meaningful in a prompt);
+    // only the emptiness check is trimmed.
+    if (dto.plannerPrompt !== undefined) {
+      const next =
+        typeof dto.plannerPrompt === 'string' && dto.plannerPrompt.trim()
+          ? dto.plannerPrompt
+          : null;
+      if (next !== (stream.plannerPrompt ?? null)) {
+        stream.plannerPrompt = next;
+        stream.lastActivityAt = new Date();
+      }
+    }
+    if (dto.executorPrompt !== undefined) {
+      const next =
+        typeof dto.executorPrompt === 'string' && dto.executorPrompt.trim()
+          ? dto.executorPrompt
+          : null;
+      if (next !== (stream.executorPrompt ?? null)) {
+        stream.executorPrompt = next;
+        stream.lastActivityAt = new Date();
+      }
+    }
     await stream.save();
     return this.toResponse(stream);
   }

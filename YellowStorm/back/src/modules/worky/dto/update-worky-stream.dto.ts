@@ -44,4 +44,68 @@ export class UpdateWorkyStreamDto {
   @IsString()
   @MaxLength(256)
   workerModelId?: string | null;
+
+  /**
+   * LiteLLM model identifier for the Planner. Sent to the orchestrator as
+   * `planner_model`. Pass null to clear and fall back to the admin default.
+   */
+  @ApiPropertyOptional({
+    description:
+      'LiteLLM model identifier for the Planner. Pass null to clear and fall back to the admin default.',
+    maxLength: 256,
+    nullable: true,
+  })
+  @ValidateIf((_o, v) => v !== null && v !== undefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  plannerModelId?: string | null;
+
+  /**
+   * LiteLLM model identifier for Executors. Sent to the orchestrator as
+   * `executor_model`. Pass null to clear and fall back to the admin default.
+   */
+  @ApiPropertyOptional({
+    description:
+      'LiteLLM model identifier for Executors. Pass null to clear and fall back to the admin default.',
+    maxLength: 256,
+    nullable: true,
+  })
+  @ValidateIf((_o, v) => v !== null && v !== undefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
+  executorModelId?: string | null;
+
+  /**
+   * System-prompt override for the Planner. Sent as `planner_prompt`. Pass
+   * null/empty to use the server default.
+   */
+  @ApiPropertyOptional({
+    description:
+      'System prompt override for the Planner. Pass null/empty to use the server default.',
+    maxLength: 40000,
+    nullable: true,
+  })
+  @ValidateIf((_o, v) => v !== null && v !== undefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(40000)
+  plannerPrompt?: string | null;
+
+  /**
+   * System-prompt override for Executors. Sent as `executor_prompt`. Pass
+   * null/empty to use the server default.
+   */
+  @ApiPropertyOptional({
+    description:
+      'System prompt override for Executors. Pass null/empty to use the server default.',
+    maxLength: 40000,
+    nullable: true,
+  })
+  @ValidateIf((_o, v) => v !== null && v !== undefined)
+  @IsOptional()
+  @IsString()
+  @MaxLength(40000)
+  executorPrompt?: string | null;
 }

@@ -413,6 +413,31 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
     expect(result.workerModelId).toBe('claude-3-5-sonnet-20240620');
     expect(streamDoc.lastActivityAt).toEqual(before);
   });
+
+  it('persists planner/executor models and prompts from the PATCH DTO', async () => {
+    const streamDoc = buildStreamDoc();
+    const { service } = makePatchService(streamDoc);
+    const result = await service.patch(userId, streamObjectId.toString(), {
+      plannerModelId: 'openai/gpt-4o',
+      executorModelId: 'anthropic/claude-3-5-sonnet',
+      plannerPrompt: 'You are the planner.',
+      executorPrompt: 'You are an executor.',
+    } as any);
+    expect(result.plannerModelId).toBe('openai/gpt-4o');
+    expect(result.executorModelId).toBe('anthropic/claude-3-5-sonnet');
+    expect(result.plannerPrompt).toBe('You are the planner.');
+    expect(result.executorPrompt).toBe('You are an executor.');
+    expect(streamDoc.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears a prompt when passed an empty string', async () => {
+    const streamDoc = buildStreamDoc({ plannerPrompt: 'old prompt' });
+    const { service } = makePatchService(streamDoc);
+    const result = await service.patch(userId, streamObjectId.toString(), {
+      plannerPrompt: '   ',
+    } as any);
+    expect(result.plannerPrompt).toBeNull();
+  });
 });
 
 describe('WorkyStreamService.delete', () => {
