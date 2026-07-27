@@ -4,7 +4,7 @@ import { MessageReliabilityCard } from './MessageReliabilityCard';
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
-    t: (key: string, options?: Record<string, number>) => {
+    t: (key: string, options?: Record<string, string | number>) => {
       const values: Record<string, string> = {
         'reliability.pendingTitle': 'Checking sources',
         'reliability.pendingDescription': 'Comparing the answer with its attached sources.',
@@ -26,8 +26,19 @@ vi.mock('@/modules/localization', () => ({
         'reliability.keyClaim': 'Key claim',
         'reliability.legacyFindings': 'Claims needing attention',
         'reliability.disclaimer': 'Source comparison disclaimer',
+        'reliability.timelineTitle': 'Evaluation history',
+        'reliability.originalEvaluation': 'Original evaluation',
+        'reliability.unavailable': 'Reliability check unavailable',
+        'reliability.unavailableDescription': 'The answer could not be checked.',
+        'reliability.notRecorded': 'No reliability evaluation was recorded.',
+        'correction.attemptLabel': `Correction attempt ${options?.count}`,
         'correction.title': 'Answer correction',
         'correction.status.correcting': 'Correcting after verification',
+        'correction.status.failed': 'Correction incomplete',
+        'correction.publishWarning': 'Review each attempt.',
+        'correction.attemptStatus.failed': 'Failed',
+        'correction.reason.candidate_evaluation_failed': 'The generated answer could not be evaluated.',
+        'correction.failureCode': `Diagnostic: ${options?.code}`,
       };
       return values[key] || key;
     },
@@ -109,5 +120,58 @@ describe('MessageReliabilityCard', () => {
     const correctionPane = screen.getByRole('status', { name: 'Answer correction' });
     expect(container.firstChild).toContainElement(correctionPane);
     expect(correctionPane).toHaveTextContent('Correcting after verification');
+  });
+
+  it('renders timestamped original and attempt evaluation occurrences', () => {
+    const onVersionChange = vi.fn();
+    render(<MessageReliabilityCard
+      evaluation={{ ...completedEvaluation, score: 52, evaluatedAt: '2026-07-26T10:01:00.000Z' }}
+      originalEvaluation={{ ...completedEvaluation, score: 30, evaluatedAt: '2026-07-26T10:00:00.000Z' }}
+      correctionWorkflow={{
+        mode: 'corrective_transparent', status: 'failed', activeVersion: 'original', threshold: 70,
+        attemptCount: 1, maxAttempts: 1, failureBehavior: 'publish_with_warning', showOriginalAnswer: true,
+        queuedAt: '2026-07-26T10:00:00.000Z', attempts: [{
+          attemptId: 'attempt-1', attemptNumber: 1, status: 'rejected', decision: 'rejected',
+          policyReasons: ['score_below_threshold'], createdAt: '2026-07-26T10:00:30.000Z',
+          components: [{ id: 'candidate', type: 'text', data: { content: 'Candidate' } }],
+          evaluation: { ...completedEvaluation, score: 52, evaluatedAt: '2026-07-26T10:01:00.000Z' },
+        }],
+      }}
+      displayedVersion='attempt:attempt-1'
+      onVersionChange={onVersionChange}
+    />);
+    fireEvent.click(screen.getByRole('button', { name: 'Review 4 reliability claims' }));
+    expect(screen.getByText('Evaluation history')).toBeInTheDocument();
+    expect(screen.getByText('Original evaluation')).toBeInTheDocument();
+    expect(screen.getAllByText('Correction attempt 1')).toHaveLength(2);
+    expect(screen.getAllByText('52/100').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('keeps correction controls and all history visible for a failed selected attempt', () => {
+    const onVersionChange = vi.fn();
+    render(<MessageReliabilityCard
+      evaluation={{ status: 'failed', failureCode: 'candidate_evaluation_unavailable' }}
+      originalEvaluation={{ ...completedEvaluation, score: 45, evaluatedAt: '2026-07-26T10:00:00.000Z' }}
+      correctionWorkflow={{
+        mode: 'corrective_transparent', status: 'failed', activeVersion: 'original', threshold: 70,
+        attemptCount: 1, maxAttempts: 1, failureBehavior: 'publish_with_warning', showOriginalAnswer: true,
+        queuedAt: '2026-07-26T10:00:00.000Z', attempts: [{
+          attemptId: 'attempt-1', attemptNumber: 1, status: 'failed', decision: 'failed',
+          policyReasons: ['candidate_evaluation_failed'], failureCode: 'candidate_evaluation_unavailable',
+          createdAt: '2026-07-26T10:00:30.000Z', completedAt: '2026-07-26T10:01:00.000Z',
+          components: [{ id: 'candidate', type: 'text', data: { content: 'Candidate' } }],
+          evaluation: { status: 'failed', failureCode: 'candidate_evaluation_unavailable', evaluatedAt: '2026-07-26T10:01:00.000Z' },
+        }],
+      }}
+      displayedVersion='attempt:attempt-1'
+      onVersionChange={onVersionChange}
+    />);
+
+    expect(screen.getByText('Reliability check unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Evaluation history')).toBeInTheDocument();
+    expect(screen.getByText('Original evaluation')).toBeInTheDocument();
+    expect(screen.getByText('Diagnostic: candidate_evaluation_unavailable')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Original evaluation'));
+    expect(onVersionChange).toHaveBeenCalledWith('original');
   });
 });

@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
+import { randomUUID } from 'node:crypto';
 import type { ResponseReliabilitySettings } from '@modules/evaluation/services/evaluation-settings.service';
 import { ModelsService } from '@modules/models/models.service';
 import { LoggerService } from '@modules/logger';
-import type { AppliedCorrection, MessageComponent, ReliabilityEvaluation, ResponseCorrectionWorkflow } from '../interfaces/message.interface';
+import type { AppliedCorrection, MessageComponent, ReliabilityEvaluation, ResponseCorrectionAttempt, ResponseCorrectionWorkflow } from '../interfaces/message.interface';
 import { MessageService } from './message.service';
 import { ResponseReliabilityEvidenceBuilder, ResponseReliabilityInput, type ReliabilityEvidenceItem } from './response-reliability-evidence.builder';
 import { ResponseReliabilityScoringService, type EvaluatedReliabilityClaim } from './response-reliability-scoring.service';
@@ -26,6 +27,7 @@ interface CorrectionJob {
   originalEvaluation: ReliabilityEvaluation;
   settings: ResponseReliabilitySettings;
   queuedAt: string;
+  correctionRunId?: string;
 }
 
 interface CorrectorResponse {
@@ -62,7 +64,11 @@ export class ResponseCorrectionService {
   async schedule(input: Omit<CorrectionJob, 'queuedAt'>): Promise<void> {
     if (this.scheduled.has(input.messageId)) return;
     const queuedAt = new Date().toISOString();
-    const job = { ...input, queuedAt };
+    const correctionRunId = randomUUID();
+    const leaseExpiresAt = new Date(Date.now() + input.settings.correction.maxDurationMs + 30_000).toISOString();
+    const claimed = await this.messageService.claimCorrectionRun(input.messageId, correctionRunId, leaseExpiresAt);
+    if (!claimed) return;
+    const job = { ...input, queuedAt, correctionRunId };
     this.scheduled.add(input.messageId);
     await this.persist(job, { status: 'queued', activeVersion: 'original', attemptCount: 0 });
     if (this.queue.length >= MAX_CORRECTION_QUEUE_SIZE) {
@@ -95,7 +101,10 @@ export class ResponseCorrectionService {
   private async process(job: CorrectionJob): Promise<void> {
     const started = Date.now();
     const deadline = started + job.settings.correction.maxDurationMs;
+    const evaluationBudgetMs = Math.min(60_000, Math.floor(job.settings.correction.maxDurationMs / 4));
+    const generationDeadline = deadline - evaluationBudgetMs;
     let attemptsMade = 0;
+    let activeAttempt: ResponseCorrectionAttempt | undefined;
     try {
       const message = await this.messageService.getMessageDocument(job.messageId);
       const question = await this.messageService.getMessageDocument(job.questionMessageId);
@@ -112,6 +121,15 @@ export class ResponseCorrectionService {
 
       for (let attempt = 1; attempt <= job.settings.correction.maxAttempts; attempt += 1) {
         attemptsMade = attempt;
+        const attemptId = `attempt-${attempt}`;
+        activeAttempt = {
+          attemptId,
+          attemptNumber: attempt,
+          status: 'generating',
+          policyReasons: [],
+          createdAt: new Date().toISOString(),
+        };
+        await this.upsertAttempt(job, activeAttempt);
         this.assertDuration(deadline);
         await this.persist(job, { status: 'correcting', activeVersion: 'original', attemptCount: attempt, startedAt: new Date(started).toISOString() });
         let correctedComponents: MessageComponent[];
@@ -131,7 +149,7 @@ export class ResponseCorrectionService {
               originalComponents: previousCandidateComponents ?? originalComponents,
               evaluation: currentEvaluation,
               attemptNumber: attempt,
-              timeoutMs: this.remaining(deadline),
+              timeoutMs: this.remaining(generationDeadline),
             });
             correctedComponents = replay.components;
             previousCandidateComponents = replay.components;
@@ -154,7 +172,7 @@ export class ResponseCorrectionService {
             });
             ({ correctedComponents, candidateInput, candidate } = await this.buildExistingEvidenceCandidate(
               job, attempt, currentEvaluation, evidenceInput, evidence, originalComponents,
-              previousCandidateSegments, modelName, model.omitTemperature, deadline,
+              previousCandidateSegments, modelName, model.omitTemperature, generationDeadline,
             ));
             previousCandidateSegments = candidate.correctedSegments;
           }
@@ -165,30 +183,95 @@ export class ResponseCorrectionService {
           });
           ({ correctedComponents, candidateInput, candidate } = await this.buildExistingEvidenceCandidate(
             job, attempt, currentEvaluation, evidenceInput, evidence, originalComponents,
-            previousCandidateSegments, modelName, model.omitTemperature, deadline,
+            previousCandidateSegments, modelName, model.omitTemperature, generationDeadline,
           ));
           previousCandidateSegments = candidate.correctedSegments;
         }
+        const correctionModel = {
+          modelId: model.id,
+          modelName,
+          correctorVersion: candidate?.correctorVersion ?? 'corrective-replay-v2',
+          promptVersion: candidate?.promptVersion ?? promptVersion,
+        };
+        activeAttempt = {
+          ...activeAttempt,
+          strategy,
+          status: 'generated',
+          components: correctedComponents,
+          appliedCorrections: candidate?.appliedCorrections,
+          remainingUncertainties: candidate?.remainingUncertainties,
+          generatedAt: new Date().toISOString(),
+          correctionModel,
+        };
+        await this.upsertAttempt(job, activeAttempt);
         await this.persist(job, { status: 're_evaluating', activeVersion: 'original', attemptCount: attempt, startedAt: new Date(started).toISOString() });
-        this.assertDuration(deadline);
-        const finalEvaluation = await this.evaluateCandidate(candidateInput, modelName, model.id, model.omitTemperature, job.settings, this.remaining(deadline));
+        const evaluationRequestedAt = new Date().toISOString();
+        activeAttempt = {
+          ...activeAttempt,
+          status: 'evaluating',
+          evaluation: { status: 'pending', requestedAt: evaluationRequestedAt },
+        };
+        await this.upsertAttempt(job, activeAttempt);
+        const evaluationStarted = Date.now();
+        this.logger.log('Correction candidate evaluation started', {
+          messageId: job.messageId,
+          requestId: job.requestId,
+          attemptNumber: attempt,
+          strategy,
+        });
+        let finalEvaluation: ReliabilityEvaluation;
+        try {
+          finalEvaluation = await this.evaluateCandidate(candidateInput, modelName, model.id, model.omitTemperature, job.settings, this.remaining(deadline));
+          this.logger.log('Correction candidate evaluation completed', {
+            messageId: job.messageId,
+            requestId: job.requestId,
+            attemptNumber: attempt,
+            strategy,
+            status: finalEvaluation.status,
+            score: finalEvaluation.score,
+            durationMs: Date.now() - evaluationStarted,
+          });
+        } catch (error) {
+          const failureCode = this.candidateEvaluationFailureCode(error);
+          this.logger.warn('Correction candidate evaluation failed', {
+            messageId: job.messageId,
+            requestId: job.requestId,
+            attemptNumber: attempt,
+            strategy,
+            failureCode,
+            durationMs: Date.now() - evaluationStarted,
+          });
+          throw new CorrectionFailure(failureCode);
+        }
+        finalEvaluation.requestedAt = evaluationRequestedAt;
         currentEvaluation = finalEvaluation;
         const hasText = correctedComponents.some((component) => component.type === 'text'
           && (typeof component.data.content === 'string' ? component.data.content.trim() : typeof component.data.text === 'string' && component.data.text.trim()));
-        if (this.policy.isSuccessfulCorrection(finalEvaluation, job.settings.correction.threshold, job.originalEvaluation.score ?? 0, Boolean(hasText))) {
+        const policyDecision = this.policy.evaluateCorrection(
+          finalEvaluation,
+          job.settings.correction.threshold,
+          job.originalEvaluation.score ?? 0,
+          Boolean(hasText),
+        );
+        activeAttempt = {
+          ...activeAttempt,
+          status: policyDecision.accepted ? 'accepted' : 'rejected',
+          decision: policyDecision.accepted ? 'accepted' : 'rejected',
+          policyReasons: policyDecision.reasons,
+          evaluation: finalEvaluation,
+          completedAt: new Date().toISOString(),
+        };
+        await this.upsertAttempt(job, activeAttempt);
+        if (policyDecision.accepted) {
           await this.persist(job, {
             status: 'corrected', activeVersion: 'corrected', attemptCount: attempt,
             correctedComponents, finalReliabilityEvaluation: finalEvaluation,
             appliedCorrections: candidate?.appliedCorrections,
             remainingUncertainties: candidate?.remainingUncertainties,
             startedAt: new Date(started).toISOString(), completedAt: new Date().toISOString(), durationMs: Date.now() - started,
-            correctionModel: {
-              modelId: model.id,
-              modelName,
-              correctorVersion: candidate?.correctorVersion ?? 'corrective-replay-v2',
-              promptVersion: candidate?.promptVersion ?? promptVersion,
-            },
+            correctionModel,
             strategy,
+            publishedAttemptId: attemptId,
           });
           return;
         }
@@ -196,6 +279,20 @@ export class ResponseCorrectionService {
       await this.applyFailure(job, 'correction_attempts_exhausted', Date.now() - started, attemptsMade);
     } catch (error) {
       const code = this.failureCode(error);
+      if (activeAttempt && !['accepted', 'rejected', 'failed'].includes(activeAttempt.status)) {
+        const evaluationFailed = activeAttempt.status === 'evaluating';
+        await this.upsertAttempt(job, {
+          ...activeAttempt,
+          status: 'failed',
+          decision: 'failed',
+          policyReasons: [evaluationFailed ? 'candidate_evaluation_failed' : 'candidate_generation_failed'],
+          failureCode: code,
+          evaluation: evaluationFailed
+            ? { ...activeAttempt.evaluation, status: 'failed', failureCode: code, evaluatedAt: new Date().toISOString() }
+            : undefined,
+          completedAt: new Date().toISOString(),
+        });
+      }
       await this.applyFailure(job, code, Date.now() - started, attemptsMade);
     }
   }
@@ -280,7 +377,15 @@ export class ResponseCorrectionService {
     const { data } = await axios.post(`${this.adkBaseUrl()}/response-evaluation/evaluate`, {
       ...input, judgeModel, maxFindings: settings.maxFindings, omitTemperature,
     }, { headers: this.headers(input.requestId), timeout });
-    if (!data || data.applicability !== 'evaluated' || !Array.isArray(data.claims) || data.claims.length > 100) throw new CorrectionFailure('candidate_evaluation_invalid');
+    if (!data || !['evaluated', 'not_applicable'].includes(data.applicability)
+      || !Array.isArray(data.claims) || data.claims.length > 100
+      || typeof data.evaluatorVersion !== 'string' || typeof data.promptVersion !== 'string') {
+      throw new CorrectionFailure('candidate_evaluation_invalid');
+    }
+    const evaluator = { modelId, modelName: judgeModel, evaluatorVersion: data.evaluatorVersion, promptVersion: data.promptVersion };
+    if (data.applicability === 'not_applicable') {
+      return { status: 'not_applicable', evaluator, evaluatedAt: new Date().toISOString() };
+    }
     const evidenceIds = new Set([...input.globalEvidence, ...input.segments.flatMap((segment) => segment.evidence)].map((item) => item.id));
     const statuses = new Set(['supported', 'partially_supported', 'unsupported', 'contradicted']);
     const importance = new Set(['critical', 'major', 'minor']);
@@ -298,7 +403,7 @@ export class ResponseCorrectionService {
     const scored = this.scoringService.scoreClaims(claims, settings.maxFindings);
     return {
       status: 'completed', ...scored, claims,
-      evaluator: { modelId, modelName: judgeModel, evaluatorVersion: String(data.evaluatorVersion), promptVersion: String(data.promptVersion) },
+      evaluator,
       evaluatedAt: new Date().toISOString(),
     };
   }
@@ -316,13 +421,20 @@ export class ResponseCorrectionService {
   }
 
   private async persist(job: CorrectionJob, patch: Partial<ResponseCorrectionWorkflow>): Promise<void> {
-    await this.messageService.updateCorrectionWorkflow(job.messageId, {
+    const workflow: ResponseCorrectionWorkflow = {
       mode: 'corrective_transparent', status: patch.status || 'queued', activeVersion: patch.activeVersion || 'original',
       originalScore: job.originalEvaluation.score, threshold: job.settings.correction.threshold,
       attemptCount: patch.attemptCount ?? 0, maxAttempts: job.settings.correction.maxAttempts,
       failureBehavior: job.settings.correction.failureBehavior, showOriginalAnswer: job.settings.correction.showOriginalAnswer,
       queuedAt: job.queuedAt, ...patch,
-    });
+    };
+    if (job.correctionRunId) await this.messageService.updateCorrectionWorkflow(job.messageId, workflow, job.correctionRunId);
+    else await this.messageService.updateCorrectionWorkflow(job.messageId, workflow);
+  }
+
+  private async upsertAttempt(job: CorrectionJob, attempt: ResponseCorrectionAttempt): Promise<void> {
+    if (job.correctionRunId) await this.messageService.upsertCorrectionAttempt(job.messageId, attempt, job.correctionRunId);
+    else await this.messageService.upsertCorrectionAttempt(job.messageId, attempt);
   }
 
   private remaining(deadline: number): number {
@@ -343,6 +455,19 @@ export class ResponseCorrectionService {
         : 'corrector_unavailable';
     }
     return 'corrector_http_error';
+  }
+  private candidateEvaluationFailureCode(error: unknown): string {
+    if (error instanceof CorrectionFailure) {
+      return error.code === 'correction_duration_exceeded' ? 'candidate_evaluation_timeout' : error.code;
+    }
+    if (!axios.isAxiosError(error)) return 'candidate_evaluation_failed';
+    if (error.code === 'ECONNABORTED') return 'candidate_evaluation_timeout';
+    if (error.response?.status === 502) {
+      return error.response.data?.detail === 'The reliability evaluator returned an invalid response'
+        ? 'candidate_evaluation_invalid_response'
+        : 'candidate_evaluation_unavailable';
+    }
+    return 'candidate_evaluation_http_error';
   }
   private adkBaseUrl(): string { return (this.configService.get<string>('indexing.apiAdk') || 'http://localhost:8001').replace(/\/$/, ''); }
   private headers(requestId: string): Record<string, string> {

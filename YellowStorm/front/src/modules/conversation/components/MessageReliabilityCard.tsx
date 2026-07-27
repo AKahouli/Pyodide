@@ -14,8 +14,9 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import type { ActiveAnswerVersion, ReliabilityClaimStatus, ReliabilityEvaluation, ReliabilityFinding, ResponseCorrectionWorkflow } from '../types';
+import type { DisplayedAnswerVersion, ReliabilityClaimStatus, ReliabilityEvaluation, ReliabilityFinding, ResponseCorrectionWorkflow } from '../types';
 import { MessageCorrectionCard } from './MessageCorrectionCard';
+import { attemptVersion } from '../utils/answer-version';
 
 const panelClassName = 'mx-2 mb-2 shrink-0 rounded-xl border border-border/80 bg-background/95 p-2 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80 md:mx-4';
 
@@ -42,15 +43,23 @@ const groupStyles = {
 
 interface MessageReliabilityCardProps {
   evaluation?: ReliabilityEvaluation;
+  originalEvaluation?: ReliabilityEvaluation;
   correctionWorkflow?: ResponseCorrectionWorkflow;
-  displayedVersion?: ActiveAnswerVersion;
-  onVersionChange?: (version: ActiveAnswerVersion) => void;
+  displayedVersion?: DisplayedAnswerVersion;
+  onVersionChange?: (version: DisplayedAnswerVersion) => void;
 }
 
-export function MessageReliabilityCard({ evaluation, correctionWorkflow, displayedVersion = 'original', onVersionChange }: Readonly<MessageReliabilityCardProps>) {
-  const { t } = useModuleTranslation('conversation');
+export function MessageReliabilityCard({ evaluation, originalEvaluation, correctionWorkflow, displayedVersion = 'original', onVersionChange }: Readonly<MessageReliabilityCardProps>) {
+  const { t, language } = useModuleTranslation('conversation');
   const [open, setOpen] = useState(false);
-  if (!evaluation) return null;
+  const correctionContent = <>
+    <CorrectionPane workflow={correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={onVersionChange} />
+    <EvaluationHistory workflow={correctionWorkflow} originalEvaluation={originalEvaluation} displayedVersion={displayedVersion} onVersionChange={onVersionChange} language={language} />
+  </>;
+  if (!evaluation) {
+    if (!correctionWorkflow) return null;
+    return <ReliabilityPanelHeader icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.notRecorded')}>{correctionContent}</ReliabilityPanelHeader>;
+  }
 
   if (evaluation.status === 'pending') {
     return (
@@ -59,18 +68,18 @@ export function MessageReliabilityCard({ evaluation, correctionWorkflow, display
         title={t('reliability.pendingTitle')}
         description={t('reliability.pendingDescription')}
       >
-        <CorrectionPane workflow={correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={onVersionChange} />
+        {correctionContent}
       </ReliabilityPanelHeader>
     );
   }
   if (evaluation.status === 'insufficient_evidence') {
-    return <ReliabilityPanelHeader title={t('reliability.notScored')} description={t('reliability.insufficientEvidence')}><CorrectionPane workflow={correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={onVersionChange} /></ReliabilityPanelHeader>;
+    return <ReliabilityPanelHeader title={t('reliability.notScored')} description={t('reliability.insufficientEvidence')}>{correctionContent}</ReliabilityPanelHeader>;
   }
   if (evaluation.status === 'not_applicable') {
-    return <ReliabilityPanelHeader title={t('reliability.notApplicable')} description={t('reliability.noClaims')}><CorrectionPane workflow={correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={onVersionChange} /></ReliabilityPanelHeader>;
+    return <ReliabilityPanelHeader title={t('reliability.notApplicable')} description={t('reliability.noClaims')}>{correctionContent}</ReliabilityPanelHeader>;
   }
   if (evaluation.status === 'failed') {
-    return <ReliabilityPanelHeader icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.unavailableDescription')}><CorrectionPane workflow={correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={onVersionChange} /></ReliabilityPanelHeader>;
+    return <ReliabilityPanelHeader icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.unavailableDescription')}>{correctionContent}</ReliabilityPanelHeader>;
   }
   if (evaluation.score === undefined || !evaluation.label || !evaluation.claimCounts) return null;
 
@@ -110,6 +119,7 @@ export function MessageReliabilityCard({ evaluation, correctionWorkflow, display
       </div>
 
       <CorrectionPane workflow={correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={onVersionChange} />
+      <EvaluationHistory workflow={correctionWorkflow} originalEvaluation={originalEvaluation} displayedVersion={displayedVersion} onVersionChange={onVersionChange} language={language} />
 
       <CollapsibleContent className='pt-3'>
         <div className='max-h-96 space-y-3 overflow-y-auto border-t pt-3 pr-1'>
@@ -175,11 +185,60 @@ function LegacyFindings({ findings }: Readonly<{ findings: ReliabilityFinding[] 
 
 function CorrectionPane({ workflow, displayedVersion, onVersionChange }: Readonly<{
   workflow?: ResponseCorrectionWorkflow;
-  displayedVersion: ActiveAnswerVersion;
-  onVersionChange?: (version: ActiveAnswerVersion) => void;
+  displayedVersion: DisplayedAnswerVersion;
+  onVersionChange?: (version: DisplayedAnswerVersion) => void;
 }>) {
   if (!workflow || !onVersionChange) return null;
   return <MessageCorrectionCard workflow={workflow} displayedVersion={displayedVersion} onVersionChange={onVersionChange} />;
+}
+
+function EvaluationHistory({ workflow, originalEvaluation, displayedVersion, onVersionChange, language }: Readonly<{
+  workflow?: ResponseCorrectionWorkflow;
+  originalEvaluation?: ReliabilityEvaluation;
+  displayedVersion: DisplayedAnswerVersion;
+  onVersionChange?: (version: DisplayedAnswerVersion) => void;
+  language?: string;
+}>) {
+  const { t } = useModuleTranslation('conversation');
+  if (!originalEvaluation && !workflow?.attempts?.length) return null;
+  return <div className='mt-2 space-y-1.5 rounded-lg border bg-muted/20 p-2.5'>
+    <p className='text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('reliability.timelineTitle')}</p>
+    {originalEvaluation ? <EvaluationOccurrence
+      label={t('reliability.originalEvaluation')}
+      evaluation={originalEvaluation}
+      selected={displayedVersion === 'original'}
+      timestamp={originalEvaluation.evaluatedAt || originalEvaluation.requestedAt}
+      language={language}
+      onSelect={onVersionChange ? () => onVersionChange('original') : undefined}
+    /> : null}
+    {workflow?.attempts?.map((attempt) => <EvaluationOccurrence
+      key={attempt.attemptId}
+      label={t('correction.attemptLabel', { count: attempt.attemptNumber })}
+      evaluation={attempt.evaluation}
+      fallbackStatus={attempt.status}
+      selected={displayedVersion === attemptVersion(attempt.attemptId)}
+      timestamp={attempt.evaluation?.evaluatedAt || attempt.evaluation?.requestedAt || attempt.completedAt || attempt.generatedAt || attempt.createdAt}
+      language={language}
+      onSelect={attempt.components?.length && onVersionChange ? () => onVersionChange(attemptVersion(attempt.attemptId)) : undefined}
+    />)}
+  </div>;
+}
+
+function EvaluationOccurrence({ label, evaluation, fallbackStatus, selected, timestamp, language, onSelect }: Readonly<{
+  label: string;
+  evaluation?: ReliabilityEvaluation;
+  fallbackStatus?: string;
+  selected: boolean;
+  timestamp?: string;
+  language?: string;
+  onSelect?: () => void;
+}>) {
+  const date = timestamp ? new Date(timestamp) : undefined;
+  const formatted = date && !Number.isNaN(date.getTime())
+    ? new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'medium' }).format(date)
+    : null;
+  const content = <><span className='font-medium text-foreground'>{label}</span><span className='ml-auto tabular-nums text-muted-foreground'>{evaluation?.score === undefined ? (evaluation?.status || fallbackStatus) : `${evaluation.score}/100`}</span>{formatted ? <span className='basis-full text-[11px] text-muted-foreground'>{formatted}</span> : null}</>;
+  return onSelect ? <button type='button' onClick={onSelect} aria-current={selected ? 'true' : undefined} className={cn('flex w-full flex-wrap items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted', selected && 'bg-muted ring-1 ring-border')}>{content}</button> : <div className={cn('flex flex-wrap items-center gap-2 rounded-md px-2 py-1.5 text-xs', selected && 'bg-muted ring-1 ring-border')}>{content}</div>;
 }
 
 function ReliabilityPanelHeader({ icon, title, description, children }: Readonly<{ icon?: React.ReactNode; title: string; description?: string; children?: React.ReactNode }>) {
@@ -194,8 +253,8 @@ function ReliabilityPanelHeader({ icon, title, description, children }: Readonly
           <p className='text-sm font-medium text-foreground'>{title}</p>
           {description && <p className='text-xs leading-relaxed text-muted-foreground'>{description}</p>}
         </div>
-        {children}
       </div>
+      {children}
     </div>
   );
 }

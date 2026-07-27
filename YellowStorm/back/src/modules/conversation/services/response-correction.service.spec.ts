@@ -29,6 +29,8 @@ describe('ResponseCorrectionService', () => {
         .mockResolvedValueOnce({ _id: { toString: () => 'message-1' }, components: originalComponents })
         .mockResolvedValueOnce({ content: 'What is revenue?' }),
       updateCorrectionWorkflow: jest.fn().mockResolvedValue(undefined),
+      upsertCorrectionAttempt: jest.fn().mockResolvedValue(undefined),
+      claimCorrectionRun: jest.fn().mockResolvedValue(true),
     };
     const reportService = { createSystemCorrectionReport: jest.fn().mockResolvedValue({ id: 'report-1' }) };
     const scoringService = {
@@ -37,6 +39,7 @@ describe('ResponseCorrectionService', () => {
         claimCounts: { total: 1, supported: 1, partiallySupported: 0, unsupported: 0, contradicted: 0 }, findings: [],
       }),
     };
+    const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() };
     const service = new ResponseCorrectionService(
       messageService as never,
       { findById: jest.fn().mockResolvedValue({ id: 'model-1', isActive: true, omitTemperature: true }), getModelIdentifier: jest.fn().mockReturnValue('judge-model') } as never,
@@ -65,9 +68,9 @@ describe('ResponseCorrectionService', () => {
           ],
           usage: { inputTokens: 10, outputTokens: 5, durationMs: 100 }, promptVersion: 'corrective-replay-v2',
         }) } as never,
-      { setContext: jest.fn(), warn: jest.fn() } as never,
+      logger as never,
     );
-    return { service, messageService, reportService };
+    return { service, messageService, reportService, logger };
   }
 
   const job = {
@@ -121,6 +124,97 @@ describe('ResponseCorrectionService', () => {
     expect(originalComponents[0].data.content).toBe('Revenue was 20.');
   });
 
+  it('retains a generated replay and its rejection reasons when publication policy fails', async () => {
+    jest.spyOn(axios, 'post').mockResolvedValueOnce({ data: {
+      applicability: 'evaluated',
+      claims: [{ claim: 'Revenue was 10.', status: 'unsupported', importance: 'critical', explanation: 'Still unsupported', evidenceIds: ['evidence-0'] }],
+      evaluatorVersion: 'v1', promptVersion: 'p1',
+    } });
+    const { service, messageService } = createService(true);
+    (service as any).scoringService.scoreClaims.mockReturnValue({
+      score: 52, label: 'needs_verification', summary: 'Unsupported',
+      claimCounts: { total: 1, supported: 0, partiallySupported: 0, unsupported: 1, contradicted: 0 },
+      findings: [{ claim: 'Revenue was 10.', status: 'unsupported', importance: 'critical', explanation: 'Still unsupported' }],
+    });
+
+    await (service as unknown as { process: (input: unknown) => Promise<void> }).process(job);
+
+    expect(messageService.upsertCorrectionAttempt).toHaveBeenCalledWith('message-1', expect.objectContaining({
+      attemptId: 'attempt-1', status: 'generated',
+      components: [{ id: 'replay-text', type: 'text', data: { content: 'Revenue was 10.' } }],
+    }));
+    expect(messageService.upsertCorrectionAttempt).toHaveBeenLastCalledWith('message-1', expect.objectContaining({
+      status: 'rejected', decision: 'rejected',
+      policyReasons: ['score_below_threshold', 'critical_claim_unresolved'],
+      evaluation: expect.objectContaining({ score: 52, evaluatedAt: expect.any(String) }),
+    }));
+    expect(messageService.updateCorrectionWorkflow).toHaveBeenLastCalledWith('message-1', expect.objectContaining({
+      status: 'failed', activeVersion: 'original', failureCode: 'correction_attempts_exhausted',
+    }));
+  });
+
+  it('persists not_applicable as a valid evaluation outcome instead of a technical failure', async () => {
+    jest.spyOn(axios, 'post').mockResolvedValueOnce({ data: {
+      applicability: 'not_applicable', claims: [], evaluatorVersion: 'v1', promptVersion: 'p1',
+    } });
+    const { service, messageService, logger } = createService(true);
+
+    await (service as unknown as { process: (input: unknown) => Promise<void> }).process(job);
+
+    expect(messageService.upsertCorrectionAttempt).toHaveBeenLastCalledWith('message-1', expect.objectContaining({
+      status: 'rejected',
+      policyReasons: ['evaluation_not_applicable'],
+      evaluation: expect.objectContaining({ status: 'not_applicable', evaluatedAt: expect.any(String) }),
+    }));
+    expect(logger.log).toHaveBeenCalledWith('Correction candidate evaluation completed', expect.objectContaining({
+      attemptNumber: 1, status: 'not_applicable',
+    }));
+  });
+
+  it('records and logs evaluator failures with evaluator-specific diagnostics', async () => {
+    jest.spyOn(axios, 'post').mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 502, data: { detail: 'The reliability evaluator is unavailable' } },
+    });
+    jest.spyOn(axios, 'isAxiosError').mockReturnValue(true);
+    const { service, messageService, logger } = createService(true);
+
+    await (service as unknown as { process: (input: unknown) => Promise<void> }).process(job);
+
+    expect(messageService.upsertCorrectionAttempt).toHaveBeenLastCalledWith('message-1', expect.objectContaining({
+      status: 'failed',
+      policyReasons: ['candidate_evaluation_failed'],
+      failureCode: 'candidate_evaluation_unavailable',
+      evaluation: expect.objectContaining({ status: 'failed', failureCode: 'candidate_evaluation_unavailable' }),
+    }));
+    expect(logger.warn).toHaveBeenCalledWith('Correction candidate evaluation failed', expect.objectContaining({
+      attemptNumber: 1, failureCode: 'candidate_evaluation_unavailable', durationMs: expect.any(Number),
+    }));
+  });
+
+  it('records a generated candidate as an evaluation timeout when the correction deadline is exhausted', async () => {
+    const times = [1_000, 1_000, 1_000, 1_000, 2_001];
+    jest.spyOn(Date, 'now').mockImplementation(() => times.shift() ?? 2_001);
+    const { service, messageService, logger } = createService(true);
+    const expiredJob = {
+      ...job,
+      settings: { ...settings, correction: { ...settings.correction, maxDurationMs: 1_000 } },
+    };
+
+    await (service as unknown as { process: (input: unknown) => Promise<void> }).process(expiredJob);
+
+    expect(messageService.upsertCorrectionAttempt).toHaveBeenLastCalledWith('message-1', expect.objectContaining({
+      status: 'failed',
+      components: expect.arrayContaining([expect.objectContaining({ id: 'replay-text' })]),
+      policyReasons: ['candidate_evaluation_failed'],
+      failureCode: 'candidate_evaluation_timeout',
+      evaluation: expect.objectContaining({ status: 'failed', failureCode: 'candidate_evaluation_timeout' }),
+    }));
+    expect(logger.warn).toHaveBeenCalledWith('Correction candidate evaluation failed', expect.objectContaining({
+      failureCode: 'candidate_evaluation_timeout',
+    }));
+  });
+
   it('deduplicates scheduling and applies overflow behavior', async () => {
     const { service, messageService } = createService();
     jest.spyOn(service as any, 'drain').mockImplementation(() => undefined);
@@ -131,6 +225,7 @@ describe('ResponseCorrectionService', () => {
   });
 
   it('uses replay by default and evaluates replay-owned evidence', async () => {
+    jest.spyOn(Date, 'now').mockReturnValue(1_000);
     jest.spyOn(axios, 'post').mockResolvedValueOnce({ data: {
       applicability: 'evaluated', claims: [{ claim: 'Revenue was 10.', status: 'supported', importance: 'critical', explanation: 'Matched', evidenceIds: ['evidence-0'] }],
       evaluatorVersion: 'v1', promptVersion: 'p1',
@@ -143,6 +238,9 @@ describe('ResponseCorrectionService', () => {
     expect(axios.post).toHaveBeenCalledWith('http://adk/response-evaluation/evaluate', expect.objectContaining({
       requestId: 'request-1:replay:1',
     }), expect.any(Object));
+    expect((service as any).replayRunner.run).toHaveBeenCalledWith(expect.objectContaining({
+      timeoutMs: settings.correction.maxDurationMs - Math.min(60_000, Math.floor(settings.correction.maxDurationMs / 4)),
+    }));
     expect(messageService.updateCorrectionWorkflow).toHaveBeenLastCalledWith('message-1', expect.objectContaining({
       status: 'corrected', strategy: 'corrective_replay',
     }));
@@ -200,6 +298,9 @@ describe('ResponseCorrectionService', () => {
     await (service as unknown as { process: (input: unknown) => Promise<void> }).process(job);
     expect(messageService.updateCorrectionWorkflow).toHaveBeenLastCalledWith('message-1', expect.objectContaining({
       status: 'failed', failureCode: 'corrector_invalid_response',
+    }));
+    expect(messageService.upsertCorrectionAttempt).toHaveBeenLastCalledWith('message-1', expect.objectContaining({
+      status: 'failed', policyReasons: ['candidate_generation_failed'], evaluation: undefined,
     }));
   });
 });

@@ -49,4 +49,39 @@ describe('MessageCorrectionCard', () => {
     render(<MessageCorrectionCard workflow={{ ...workflow, status, activeVersion: status === 'abstained' ? 'abstention' : 'original' }} displayedVersion={status === 'abstained' ? 'abstention' : 'original'} onVersionChange={vi.fn()} />);
     expect(screen.getByText(copy)).toBeInTheDocument();
   });
+
+  it('exposes rejected generated attempts and always lets the user return to the original', () => {
+    const onVersionChange = vi.fn();
+    const attempt = {
+      attemptId: 'attempt-1', attemptNumber: 1, status: 'rejected' as const, decision: 'rejected' as const,
+      policyReasons: ['score_below_threshold' as const], createdAt: '2026-07-26T00:00:00.000Z',
+      components: [{ id: 'attempt-text', type: 'text' as const, data: { content: 'Candidate' } }],
+      evaluation: { status: 'completed' as const, score: 52 },
+    };
+    const attemptWorkflow = { ...workflow, status: 'failed' as const, activeVersion: 'original' as const, showOriginalAnswer: false, attempts: [attempt] };
+    const { rerender } = render(<MessageCorrectionCard workflow={attemptWorkflow} displayedVersion="original" onVersionChange={onVersionChange} />);
+    expect(screen.getByText('correction.reason.score_below_threshold')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'correction.viewAttempt:1' }));
+    expect(onVersionChange).toHaveBeenCalledWith('attempt:attempt-1');
+    rerender(<MessageCorrectionCard workflow={attemptWorkflow} displayedVersion="attempt:attempt-1" onVersionChange={onVersionChange} />);
+    fireEvent.click(screen.getByRole('button', { name: 'correction.viewOriginal' }));
+    expect(onVersionChange).toHaveBeenCalledWith('original');
+  });
+
+  it('explains legacy deadline failures accurately when the answer was already generated', () => {
+    render(<MessageCorrectionCard workflow={{
+      ...workflow,
+      status: 'failed',
+      activeVersion: 'original',
+      attempts: [{
+        attemptId: 'attempt-1', attemptNumber: 1, status: 'failed', decision: 'failed',
+        policyReasons: ['candidate_generation_failed'], failureCode: 'correction_duration_exceeded',
+        createdAt: '2026-07-26T00:00:00.000Z',
+        components: [{ id: 'attempt-text', type: 'text', data: { content: 'Candidate' } }],
+      }],
+    }} displayedVersion='original' onVersionChange={vi.fn()} />);
+
+    expect(screen.getByText('correction.reason.candidate_evaluation_not_started')).toBeInTheDocument();
+    expect(screen.queryByText('correction.reason.candidate_generation_failed')).not.toBeInTheDocument();
+  });
 });

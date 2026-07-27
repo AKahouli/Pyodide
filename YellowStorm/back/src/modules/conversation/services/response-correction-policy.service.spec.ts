@@ -35,4 +35,14 @@ describe('ResponseCorrectionPolicyService', () => {
     expect(service.isSuccessfulCorrection({ status: 'completed', score: 59, claims: [] }, 70, 60, true)).toBe(false);
     expect(service.isSuccessfulCorrection({ status: 'completed', score: 80, claims: [{ claim: 'x', status: 'contradicted', importance: 'critical', explanation: 'x' }] }, 70, 60, true)).toBe(false);
   });
+
+  it('returns every reason a generated answer was rejected', () => {
+    expect(service.evaluateCorrection({
+      status: 'completed', score: 52,
+      claims: [{ claim: 'x', status: 'unsupported', importance: 'critical', explanation: 'x' }],
+    }, 70, 60, true)).toEqual({
+      accepted: false,
+      reasons: ['score_below_threshold', 'score_below_original', 'critical_claim_unresolved'],
+    });
+  });
 });

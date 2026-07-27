@@ -286,7 +286,7 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
       const existingStatus = (existing.status as string) || 'running';
       const incomingStatus = (incoming.status as string) || existingStatus;
       const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'failed';
-      const merged = {
+      const merged: Record<string, unknown> = {
         ...existing,
         ...incoming,
         title: (incoming.title as string) || (existing.title as string) || '',

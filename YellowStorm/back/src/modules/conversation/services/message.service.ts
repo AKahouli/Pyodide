@@ -14,6 +14,7 @@ import {
   AttachedFileResponse,
   MessageComponent,
   ReliabilityEvaluation,
+  ResponseCorrectionAttempt,
 } from '../interfaces/message.interface';
 import { ConversationService } from './conversation.service';
 import { StreamGatewayService } from './stream-gateway.service';
@@ -518,16 +519,80 @@ export class MessageService {
     return response;
   }
 
-  async updateCorrectionWorkflow(
-    messageId: string,
-    workflow: NonNullable<MessageResponse['correctionWorkflow']>,
-  ): Promise<MessageResponse> {
-    const message = await this.messageModel.findById(messageId);
+  async updateCorrectionWorkflow(messageId: string, workflow: NonNullable<MessageResponse['correctionWorkflow']>, correctionRunId?: string): Promise<MessageResponse> {
+    let message = await this.messageModel.findById(messageId);
+    if (!message || message.conversationType !== 'ai') throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'AI message not found');
+    if (correctionRunId && message.correctionWorkflow?.correctionRunId !== correctionRunId) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction run ownership lost');
+    const nextWorkflow = { ...(message.correctionWorkflow || {}), ...workflow, attempts: workflow.attempts ?? message.correctionWorkflow?.attempts } as typeof workflow;
+    if (correctionRunId) {
+      message = await this.messageModel.findOneAndUpdate({ _id: messageId, 'correctionWorkflow.correctionRunId': correctionRunId }, { $set: { correctionWorkflow: nextWorkflow } }, { new: true });
+      if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction run ownership lost');
+    } else {
+      message.correctionWorkflow = nextWorkflow;
+      await message.save();
+    }
+    const response = this.mapToResponse(message);
+    await this.broadcastMessage(message.conversationId.toString(), {
+      type: 'message_updated',
+      data: {
+        conversationId: message.conversationId.toString(),
+        messageId,
+        message: { correctionWorkflow: response.correctionWorkflow } as Partial<MessageResponse>,
+      },
+    });
+    return response;
+  }
+
+  async claimCorrectionRun(messageId: string, runId: string, leaseExpiresAt: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    const message = await this.messageModel.findOneAndUpdate({
+      _id: messageId,
+      conversationType: 'ai',
+      $or: [
+        { 'correctionWorkflow.correctionRunId': { $exists: false } },
+        { 'correctionWorkflow.status': { $in: ['corrected', 'failed', 'abstained', 'human_review_required'] } },
+        { 'correctionWorkflow.leaseExpiresAt': { $lt: now } },
+      ],
+    }, {
+      $set: {
+        'correctionWorkflow.correctionRunId': runId,
+        'correctionWorkflow.leaseExpiresAt': leaseExpiresAt,
+        'correctionWorkflow.status': 'queued',
+        'correctionWorkflow.activeVersion': 'original',
+      },
+    }, { new: true });
+    return Boolean(message);
+  }
+
+  async upsertCorrectionAttempt(messageId: string, attempt: ResponseCorrectionAttempt, correctionRunId?: string): Promise<MessageResponse> {
+    let message = await this.messageModel.findById(messageId);
     if (!message || message.conversationType !== 'ai') {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'AI message not found');
     }
-    message.correctionWorkflow = workflow;
-    await message.save();
+    const workflow = message.correctionWorkflow;
+    if (!workflow) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction workflow not found');
+    if (correctionRunId && workflow.correctionRunId !== correctionRunId) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction run ownership lost');
+    }
+    const attempts = [...(workflow.attempts || [])];
+    const index = attempts.findIndex((item) => item.attemptId === attempt.attemptId);
+    const sanitizedAttempt = { ...attempt, components: this.publicComponents(attempt.components) };
+    if (index >= 0) {
+      const existing = attempts[index];
+      attempts[index] = ['accepted', 'rejected', 'failed'].includes(existing.status)
+        ? existing
+        : { ...existing, ...sanitizedAttempt };
+    } else {
+      attempts.push(sanitizedAttempt);
+    }
+    const nextWorkflow = { ...workflow, attempts };
+    if (correctionRunId) {
+      message = await this.messageModel.findOneAndUpdate({ _id: messageId, 'correctionWorkflow.correctionRunId': correctionRunId }, { $set: { correctionWorkflow: nextWorkflow } }, { new: true });
+      if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction run ownership lost');
+    } else {
+      message.correctionWorkflow = nextWorkflow;
+      await message.save();
+    }
     const response = this.mapToResponse(message);
     await this.broadcastMessage(message.conversationId.toString(), {
       type: 'message_updated',
@@ -778,6 +843,12 @@ export class MessageService {
         ...message.correctionWorkflow,
         ...(message.correctionWorkflow.correctedComponents ? {
           correctedComponents: this.publicComponents(message.correctionWorkflow.correctedComponents),
+        } : {}),
+        ...(message.correctionWorkflow.attempts ? {
+          attempts: message.correctionWorkflow.attempts.map((attempt: ResponseCorrectionAttempt) => ({
+            ...attempt,
+            components: this.publicComponents(attempt.components),
+          })),
         } : {}),
       } as MessageResponse['correctionWorkflow'] : undefined,
       agentIds: message.agentIds?.map((id: any) => toStr(id)),

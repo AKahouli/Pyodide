@@ -107,6 +107,37 @@ export interface AppliedCorrection {
   evidenceIds?: string[];
 }
 
+export type CorrectionAttemptStatus = 'generating' | 'generated' | 'evaluating' | 'accepted' | 'rejected' | 'failed';
+export type CorrectionAttemptDecision = 'accepted' | 'rejected' | 'failed';
+export type CorrectionPolicyReason =
+  | 'policy_requirements_met'
+  | 'answer_empty'
+  | 'evaluation_not_applicable'
+  | 'evaluation_not_completed'
+  | 'score_below_threshold'
+  | 'score_below_original'
+  | 'critical_claim_unresolved'
+  | 'candidate_generation_failed'
+  | 'candidate_evaluation_failed';
+
+export interface ResponseCorrectionAttempt {
+  attemptId: string;
+  attemptNumber: number;
+  strategy?: 'existing_evidence' | 'corrective_replay';
+  status: CorrectionAttemptStatus;
+  decision?: CorrectionAttemptDecision;
+  policyReasons: CorrectionPolicyReason[];
+  components?: MessageComponent[];
+  evaluation?: ReliabilityEvaluation;
+  appliedCorrections?: AppliedCorrection[];
+  remainingUncertainties?: string[];
+  failureCode?: string;
+  createdAt: string;
+  generatedAt?: string;
+  completedAt?: string;
+  correctionModel?: { modelId: string; modelName: string; correctorVersion: string; promptVersion: string };
+}
+
 export interface ResponseCorrectionWorkflow {
   mode: 'corrective_transparent';
   status: ResponseCorrectionStatus;
@@ -129,6 +160,10 @@ export interface ResponseCorrectionWorkflow {
   durationMs?: number;
   correctionModel?: { modelId: string; modelName: string; correctorVersion: string; promptVersion: string };
   strategy?: 'existing_evidence' | 'corrective_replay';
+  attempts?: ResponseCorrectionAttempt[];
+  publishedAttemptId?: string;
+  correctionRunId?: string;
+  leaseExpiresAt?: string;
 }
 
 export interface MessageComponent {
