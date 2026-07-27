@@ -241,6 +241,7 @@ export function AddLinkDialog({
                 return ok;
               }}
               onExplore={handleExplore}
+              onNavigate={(u) => session.navigate({ kind: 'goto', url: u })}
               exploring={exploring}
             />
           </div>

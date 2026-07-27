@@ -114,6 +114,51 @@ it('toggles and deletes a leaf by its page name', () => {
   expect(onDelete).toHaveBeenCalledWith('https://ex.com/a/c');
 });
 
+it('navigates when a page row is clicked, but not when its checkbox is clicked', () => {
+  const onNavigate = vi.fn();
+  const onToggle = vi.fn();
+  render(
+    <CollectionSidebar
+      pages={[{ url: 'https://ex.com/services/pricing', title: 'Pricing', linkText: 'See Pricing' }]}
+      selected={new Set()}
+      indexedUrls={new Set()}
+      onToggle={onToggle}
+      onDelete={vi.fn()}
+      onSelectAll={vi.fn()}
+      onSelectNone={vi.fn()}
+      onNavigate={onNavigate}
+    />,
+  );
+  // Clicking the row (its name) navigates to that page.
+  fireEvent.click(screen.getByText('See Pricing'));
+  expect(onNavigate).toHaveBeenCalledWith('https://ex.com/services/pricing');
+  // Clicking the checkbox toggles selection WITHOUT navigating.
+  onNavigate.mockClear();
+  fireEvent.click(screen.getByLabelText('See Pricing'));
+  expect(onToggle).toHaveBeenCalledWith('https://ex.com/services/pricing');
+  expect(onNavigate).not.toHaveBeenCalled();
+});
+
+it('does not navigate when the delete action is clicked', () => {
+  const onNavigate = vi.fn();
+  const onDelete = vi.fn();
+  render(
+    <CollectionSidebar
+      pages={[{ url: 'https://ex.com/a', title: '', linkText: 'Alpha' }]}
+      selected={new Set()}
+      indexedUrls={new Set()}
+      onToggle={vi.fn()}
+      onDelete={onDelete}
+      onSelectAll={vi.fn()}
+      onSelectNone={vi.fn()}
+      onNavigate={onNavigate}
+    />,
+  );
+  fireEvent.click(screen.getByLabelText('delete https://ex.com/a'));
+  expect(onDelete).toHaveBeenCalledWith('https://ex.com/a');
+  expect(onNavigate).not.toHaveBeenCalled();
+});
+
 it('collapses and expands a category, hiding/showing its children', () => {
   render(
     <CollectionSidebar
