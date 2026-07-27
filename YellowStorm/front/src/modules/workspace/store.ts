@@ -1840,7 +1840,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           const [folders, files, artifacts] = await Promise.all([
             pageApi.listFolders(workspaceId),
             pageApi.listFiles(workspaceId),
-            dataRoomFeatures.decisionFlowArtifactsEnabled ? artifactApi.listWorkspaceArtifacts(workspaceId) : Promise.resolve([]),
+            artifactApi.listWorkspaceArtifacts(workspaceId),
           ]);
           set({
             pageFolders: folders,
@@ -1858,7 +1858,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       },
 
       refreshWorkspaceArtifacts: async () => {
-        if (!dataRoomFeatures.decisionFlowArtifactsEnabled) return;
         const workspaceId = get().selectedWorkspaceId;
         if (!workspaceId) return;
         set({ loadingPageArtifacts: true });

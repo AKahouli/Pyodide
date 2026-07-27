@@ -87,7 +87,7 @@ export function WorkspacePage() {
   const folders = useWorkspaceStore((s) => s.pageFolders);
   const files = useWorkspaceStore((s) => s.pageFiles);
   const storedArtifacts = useWorkspaceStore((s) => s.pageArtifacts);
-  const artifacts = dataRoomFeatures.decisionFlowArtifactsEnabled ? storedArtifacts : [];
+  const artifacts =storedArtifacts ;
   const currentFolderId = useWorkspaceStore((s) => s.pageCurrentFolderId);
   const navigateToFolder = useWorkspaceStore((s) => s.navigateToPageFolder);
   const search = useWorkspaceStore((s) => s.pageSearch);
