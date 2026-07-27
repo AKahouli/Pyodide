@@ -465,7 +465,7 @@ export function WorkspacePage() {
                     return (
                       <div className='space-y-1'>
                         {groups.map((group) => (
-                          <SourceGroupRow key={group.key} label={group.label} rootUrl={group.rootUrl} count={group.files.length} status={group.status} onOpenInNavigator={(url) => openAddLink({ url, autoStart: true, sourceGroupId: group.sourceGroupId, seed: group.files.filter((f) => f.sourceUrl).map((f) => ({ url: f.sourceUrl as string, name: f.name, indexingStatus: f.indexingStatus })) })} onMove={() => setMoveTarget({ files: group.files, title: group.label })} onDelete={canWrite ? () => setDeleteGroupTarget({ files: group.files, label: group.label }) : undefined}>
+                          <SourceGroupRow key={group.key} label={group.label} rootUrl={group.rootUrl} count={group.files.length} status={group.status} onOpenInNavigator={(url) => openAddLink({ url, autoStart: true, sourceGroupId: group.key, seed: group.files.filter((f) => f.sourceUrl).map((f) => ({ url: f.sourceUrl as string, name: f.name, indexingStatus: f.indexingStatus })) })} onMove={() => setMoveTarget({ files: group.files, title: group.label })} onDelete={canWrite ? () => setDeleteGroupTarget({ files: group.files, label: group.label }) : undefined}>
                             {group.files.map(renderFileRow)}
                           </SourceGroupRow>
                         ))}
