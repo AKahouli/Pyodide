@@ -962,6 +962,7 @@ async def test_run_step_uses_state_workspace_when_node_inputs_are_resolved(monke
 async def test_run_step_deep_search_merges_dragged_and_returned_files(monkeypatch):
     captured_factory_kwargs = {}
     captured_search = {}
+    captured_completion = {}
 
     def _fake_create_langchain_tools(**kwargs):
         captured_factory_kwargs.update(kwargs)
@@ -971,11 +972,27 @@ async def test_run_step_deep_search_merges_dragged_and_returned_files(monkeypatc
         captured_search.update(query=query, workspace_id=workspace_id)
         return {
             "workspace_id": workspace_id,
-            "total_results": 3,
-            "results": [
-                {"file_name": "DOC-1-cv_kevin_diallo.PDF", "hybrid_score": 0.95},
-                {"file_name": "contract.pdf", "hybrid_score": 0.91},
-                {"file_name": "annex.pdf", "hybrid_score": 0.83},
+            "status": "ROUTED",
+            "total_files": 3,
+            "files": [
+                {
+                    "file_name": "DOC-1-cv_kevin_diallo.PDF",
+                    "routing_decision": "ROUTE",
+                    "search_for": ["candidate CV"],
+                    "reason": "Candidate matches.",
+                },
+                {
+                    "file_name": "contract.pdf",
+                    "routing_decision": "ROUTE",
+                    "search_for": ["contractual penalties"],
+                    "reason": "Contract matches.",
+                },
+                {
+                    "file_name": "annex.pdf",
+                    "routing_decision": "ROUTE",
+                    "search_for": ["penalty schedule"],
+                    "reason": "Annex matches.",
+                },
             ],
         }
 
@@ -995,6 +1012,7 @@ async def test_run_step_deep_search_merges_dragged_and_returned_files(monkeypatc
                 raise StopAsyncIteration from exc
 
     async def _fake_acompletion(*args, **kwargs):
+        captured_completion.update(kwargs)
         return _Stream()
 
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
@@ -1041,14 +1059,22 @@ async def test_run_step_deep_search_merges_dragged_and_returned_files(monkeypatc
         },
     )
 
+    assert captured_search["query"] == "Find the contractual penalties"
     assert captured_search["workspace_id"] == "workspace-1"
-    assert "contractual penalties" in captured_search["query"]
     assert captured_factory_kwargs["input_files"] == [
         "doc-1-CV_Kevin_Diallo.pdf",
         "contract.pdf",
         "annex.pdf",
     ]
     assert captured_factory_kwargs["deep_search"] is False
+    llm_prompt = "\n".join(
+        str(message.get("content") or "")
+        for message in captured_completion["messages"]
+    )
+    assert "<deep_search_routing_plan>" in llm_prompt
+    assert '"file_name": "contract.pdf"' in llm_prompt
+    assert '"search_for": ["contractual penalties"]' in llm_prompt
+    assert "Decide which exact file_name or file_names" in llm_prompt
 
 
 @pytest.mark.anyio

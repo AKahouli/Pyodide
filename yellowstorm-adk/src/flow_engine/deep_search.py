@@ -24,15 +24,21 @@ def merge_file_names(*groups: Iterable[str]) -> list[str]:
     return merged
 
 
-def normalize_response(payload: Any, workspace_id: str) -> dict[str, Any]:
-    """Validate and normalize a relevant-documents API response."""
-    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
-        raise ValueError("Deep search response is missing a results list")
+def normalize_response(payload: Any) -> dict[str, Any]:
+    """Validate the routing response while preserving its LLM guidance."""
+    if not isinstance(payload, dict):
+        raise ValueError("Deep search response must be a JSON object")
 
-    response_workspace_id = str(payload.get("workspace_id") or workspace_id).strip()
-    results: list[dict[str, Any]] = []
+    # /api/query returns routing decisions under ``files``. Keep support for
+    # the former ``results`` response so rolling deployments remain compatible.
+    item_key = "files" if isinstance(payload.get("files"), list) else "results"
+    raw_items = payload.get(item_key)
+    if not isinstance(raw_items, list):
+        raise ValueError("Deep search response is missing a files list")
+
+    normalized_items: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for item in payload["results"]:
+    for item in raw_items:
         if not isinstance(item, dict):
             continue
         file_name = str(item.get("file_name") or item.get("filename") or "").strip()
@@ -40,23 +46,14 @@ def normalize_response(payload: Any, workspace_id: str) -> dict[str, Any]:
         if not file_name or key in seen:
             continue
         seen.add(key)
-        try:
-            hybrid_score = float(item.get("hybrid_score", 0.0))
-        except (TypeError, ValueError):
-            hybrid_score = 0.0
-        results.append(
-            {
-                "description": str(item.get("description") or ""),
-                "file_name": file_name,
-                "hybrid_score": hybrid_score,
-                "workspace_id": str(item.get("workspace_id") or response_workspace_id),
-            }
-        )
-    return {
-        "workspace_id": response_workspace_id,
-        "total_results": len(results),
-        "results": results,
-    }
+        normalized_item = dict(item)
+        normalized_item["file_name"] = file_name
+        normalized_items.append(normalized_item)
+
+    normalized = dict(payload)
+    normalized[item_key] = normalized_items
+    normalized["total_files"] = len(normalized_items)
+    return normalized
 
 
 async def search_relevant_documents(
@@ -66,27 +63,27 @@ async def search_relevant_documents(
     """Call the authenticated community-graph relevant-documents endpoint."""
     settings = get_settings()
     base_url = str(getattr(settings, "COMMUNITY_GRAPH_URL", None) or "").strip()
-    api_key = str(getattr(settings, "MCP_API_KEY_DEEP_SEARCH", None) or "").strip()
-    workspace_id = str(workspace_id or "").strip()
+    api_key = str(getattr(settings, "API_KEY_COMMUNITY_GRAPH", None) or "").strip()
     if not base_url:
         raise RuntimeError("COMMUNITY_GRAPH_URL is required when deep search is enabled")
     if not api_key:
-        raise RuntimeError("MCP_API_KEY_DEEP_SEARCH is required when deep search is enabled")
-    if not workspace_id:
-        raise ValueError("workspace_id is required when deep search is enabled")
+        raise RuntimeError("API_KEY_COMMUNITY_GRAPH is required when deep search is enabled")
+
+    resolved_workspace_id = str(workspace_id or "").strip()
+    if not resolved_workspace_id:
+        raise RuntimeError("A workspace_id is required when deep search is enabled")
 
     request_payload = {
+        "workspace_id": resolved_workspace_id,
         "query": str(query or "").strip(),
-        "workspace_id": workspace_id,
     }
     timeout = float(getattr(settings, "DEEP_SEARCH_TIMEOUT_SECONDS", 30.0) or 30.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
-                f"{base_url.rstrip('/')}/relevant-documents/search",
+                f"{base_url.rstrip('/')}/api/query",
                 headers={
                     "Authorization": f"Bearer {api_key}",
-                    "Workspace-Id": workspace_id,
                     "Content-Type": "application/json",
                 },
                 json=request_payload,
@@ -98,4 +95,4 @@ async def search_relevant_documents(
     except ValueError as exc:
         raise RuntimeError("Deep search returned invalid JSON") from exc
 
-    return normalize_response(payload, workspace_id)
+    return normalize_response(payload)
