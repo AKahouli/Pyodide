@@ -62,12 +62,16 @@ describe('EvaluationSettingsPage', () => {
     });
     const { user } = renderWithProviders(<EvaluationSettingsPage />);
     await screen.findByLabelText('evaluationSettings.correction.maxDuration');
-    expect(screen.getByLabelText('evaluationSettings.correction.maxDuration')).toHaveValue(60);
+    const duration = screen.getByLabelText('evaluationSettings.correction.maxDuration');
+    expect(duration).toHaveValue(60);
+    expect(duration).not.toHaveAttribute('max');
+    fireEvent.change(duration, { target: { value: '301' } });
+    expect(screen.getByRole('button', { name: 'evaluationSettings.save' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: 'evaluationSettings.save' }));
     await waitFor(() => expect(updateAdminEvaluationSettings).toHaveBeenCalledWith(expect.objectContaining({
       responseReliability: expect.objectContaining({
         mode: 'corrective_transparent',
-        correction: expect.objectContaining({ maxDurationMs: 60000 }),
+        correction: expect.objectContaining({ maxDurationMs: 301000 }),
       }),
     })));
   });

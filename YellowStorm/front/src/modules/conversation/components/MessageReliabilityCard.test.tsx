@@ -34,10 +34,24 @@ vi.mock('@/modules/localization', () => ({
         'correction.attemptLabel': `Correction attempt ${options?.count}`,
         'correction.title': 'Answer correction',
         'correction.status.correcting': 'Correcting after verification',
+        'correction.status.re_evaluating': 'Verifying the corrected answer',
+        'correction.status.corrected': 'Corrected after verification',
         'correction.status.failed': 'Correction incomplete',
+        'correction.status.abstained': 'Answer withheld after verification',
+        'correction.status.human_review_required': 'Awaiting human review',
         'correction.publishWarning': 'Review each attempt.',
+        'correction.abstentionReason': 'The available evidence was insufficient or conflicting.',
         'correction.attemptStatus.failed': 'Failed',
+        'correction.attemptStatus.rejected': 'Not published',
+        'correction.viewOriginal': 'View original',
+        'correction.viewCorrected': 'View corrected',
+        'correction.viewAbstention': 'View verification result',
+        'correction.viewAttempt': `View attempt ${options?.count}`,
+        'correction.strategy.correctiveReplay': 'Answer regenerated after verification',
+        'correction.strategy.correctiveReplayDetail': 'The original request was rerun.',
+        'correction.uncertainties': `${options?.count} remaining uncertainties`,
         'correction.reason.candidate_evaluation_failed': 'The generated answer could not be evaluated.',
+        'correction.reason.score_below_threshold': `Score ${options?.score}/100 is below the required ${options?.threshold}/100.`,
         'correction.failureCode': `Diagnostic: ${options?.code}`,
       };
       return values[key] || key;
@@ -78,7 +92,7 @@ describe('MessageReliabilityCard', () => {
   it('groups every claim and opens attention groups by default', () => {
     const { container } = render(<MessageReliabilityCard evaluation={completedEvaluation} />);
     expect(container.firstChild).toHaveClass('mx-2', 'md:mx-4', 'rounded-xl');
-    expect(screen.getByText('72/100')).toBeInTheDocument();
+    expect(screen.getByText('72/100')).toHaveClass('rounded-md');
     const outerTrigger = screen.getByRole('button', { name: 'Review 4 reliability claims' });
     expect(outerTrigger).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(outerTrigger);
@@ -104,10 +118,11 @@ describe('MessageReliabilityCard', () => {
     expect(screen.queryByRole('button', { name: 'Supported by sources (1)' })).not.toBeInTheDocument();
   });
 
-  it('encapsulates correction progress inside the reliability panel', () => {
+  it('removes the separate correction pane and keeps version controls in evaluation history', () => {
     const onVersionChange = vi.fn();
-    const { container } = render(<MessageReliabilityCard
+    render(<MessageReliabilityCard
       evaluation={completedEvaluation}
+      originalEvaluation={completedEvaluation}
       correctionWorkflow={{
         mode: 'corrective_transparent', status: 'correcting', activeVersion: 'original',
         threshold: 70, attemptCount: 1, maxAttempts: 1,
@@ -117,9 +132,9 @@ describe('MessageReliabilityCard', () => {
       displayedVersion='original'
       onVersionChange={onVersionChange}
     />);
-    const correctionPane = screen.getByRole('status', { name: 'Answer correction' });
-    expect(container.firstChild).toContainElement(correctionPane);
-    expect(correctionPane).toHaveTextContent('Correcting after verification');
+    expect(screen.queryByText('Answer correction')).not.toBeInTheDocument();
+    expect(screen.getByText('Evaluation history')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View original' })).toBeDisabled();
   });
 
   it('renders timestamped original and attempt evaluation occurrences', () => {
@@ -143,8 +158,11 @@ describe('MessageReliabilityCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Review 4 reliability claims' }));
     expect(screen.getByText('Evaluation history')).toBeInTheDocument();
     expect(screen.getByText('Original evaluation')).toBeInTheDocument();
-    expect(screen.getAllByText('Correction attempt 1')).toHaveLength(2);
+    expect(screen.getByText('Correction attempt 1')).toBeInTheDocument();
     expect(screen.getAllByText('52/100').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole('button', { name: 'View attempt 1' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'View original' }));
+    expect(onVersionChange).toHaveBeenCalledWith('original');
   });
 
   it('keeps correction controls and all history visible for a failed selected attempt', () => {
@@ -170,8 +188,89 @@ describe('MessageReliabilityCard', () => {
     expect(screen.getByText('Reliability check unavailable')).toBeInTheDocument();
     expect(screen.getByText('Evaluation history')).toBeInTheDocument();
     expect(screen.getByText('Original evaluation')).toBeInTheDocument();
+    expect(screen.getByText('Review each attempt.')).toBeInTheDocument();
+    expect(screen.getByText('The generated answer could not be evaluated.')).toBeInTheDocument();
     expect(screen.getByText('Diagnostic: candidate_evaluation_unavailable')).toBeInTheDocument();
-    fireEvent.click(screen.getByText('Original evaluation'));
+    fireEvent.click(screen.getByRole('button', { name: 'View original' }));
     expect(onVersionChange).toHaveBeenCalledWith('original');
+  });
+
+  it('keeps an unavailable attempt view button visible but disabled', () => {
+    render(<MessageReliabilityCard
+      evaluation={completedEvaluation}
+      originalEvaluation={completedEvaluation}
+      correctionWorkflow={{
+        mode: 'corrective_transparent', status: 'failed', activeVersion: 'original', threshold: 70,
+        attemptCount: 1, maxAttempts: 1, failureBehavior: 'publish_with_warning', showOriginalAnswer: true,
+        queuedAt: '2026-07-26T10:00:00.000Z', attempts: [{
+          attemptId: 'attempt-1', attemptNumber: 1, status: 'failed', decision: 'failed',
+          policyReasons: ['candidate_evaluation_failed'], createdAt: '2026-07-26T10:00:30.000Z',
+        }],
+      }}
+      displayedVersion='original'
+      onVersionChange={vi.fn()}
+    />);
+
+    expect(screen.getByRole('button', { name: 'View original' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'View attempt 1' })).toBeDisabled();
+  });
+
+  it('keeps legacy corrected and abstention versions reachable from history', () => {
+    const onVersionChange = vi.fn();
+    const { rerender } = render(<MessageReliabilityCard
+      evaluation={completedEvaluation}
+      originalEvaluation={completedEvaluation}
+      correctionWorkflow={{
+        mode: 'corrective_transparent', status: 'corrected', activeVersion: 'corrected', strategy: 'corrective_replay',
+        threshold: 70, attemptCount: 1, maxAttempts: 1, failureBehavior: 'publish_with_warning', showOriginalAnswer: true,
+        queuedAt: '2026-07-26T10:00:00.000Z', completedAt: '2026-07-26T10:01:00.000Z',
+        correctedComponents: [{ id: 'corrected', type: 'text', data: { content: 'Corrected' } }],
+        finalReliabilityEvaluation: { ...completedEvaluation, score: 88 },
+      }}
+      displayedVersion='original'
+      onVersionChange={onVersionChange}
+    />);
+
+    expect(screen.getByText('Answer regenerated after verification')).toBeInTheDocument();
+    expect(screen.getByText('88/100')).toHaveClass('rounded-md');
+    fireEvent.click(screen.getByRole('button', { name: 'View corrected' }));
+    expect(onVersionChange).toHaveBeenCalledWith('corrected');
+
+    rerender(<MessageReliabilityCard
+      evaluation={completedEvaluation}
+      originalEvaluation={completedEvaluation}
+      correctionWorkflow={{
+        mode: 'corrective_transparent', status: 'abstained', activeVersion: 'abstention', threshold: 70,
+        attemptCount: 1, maxAttempts: 1, failureBehavior: 'abstain', showOriginalAnswer: true,
+        queuedAt: '2026-07-26T10:00:00.000Z', completedAt: '2026-07-26T10:01:00.000Z',
+      }}
+      displayedVersion='original'
+      onVersionChange={onVersionChange}
+    />);
+
+    expect(screen.getByText('The available evidence was insufficient or conflicting.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View verification result' }));
+    expect(onVersionChange).toHaveBeenCalledWith('abstention');
+  });
+
+  it('announces active correction progress and preserves human-review status', () => {
+    const workflow = {
+      mode: 'corrective_transparent' as const, activeVersion: 'original' as const, threshold: 70,
+      attemptCount: 1, maxAttempts: 1, failureBehavior: 'require_human_review' as const, showOriginalAnswer: true,
+      queuedAt: '2026-07-26T10:00:00.000Z',
+    };
+    const { rerender } = render(<MessageReliabilityCard
+      evaluation={completedEvaluation}
+      originalEvaluation={completedEvaluation}
+      correctionWorkflow={{ ...workflow, status: 're_evaluating' }}
+    />);
+    expect(screen.getByRole('status')).toHaveTextContent('Verifying the corrected answer');
+
+    rerender(<MessageReliabilityCard
+      evaluation={completedEvaluation}
+      originalEvaluation={completedEvaluation}
+      correctionWorkflow={{ ...workflow, status: 'human_review_required' }}
+    />);
+    expect(screen.getByText('Awaiting human review')).toBeInTheDocument();
   });
 });

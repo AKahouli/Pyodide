@@ -65,7 +65,7 @@ export function EvaluationSettingsPage() {
     && Number.isInteger(reliability.maxFindings) && reliability.maxFindings >= 1 && reliability.maxFindings <= 10
     && Number.isInteger(reliability.correction.threshold) && reliability.correction.threshold >= 0 && reliability.correction.threshold <= 100
     && Number.isInteger(reliability.correction.maxAttempts) && reliability.correction.maxAttempts >= 1 && reliability.correction.maxAttempts <= 3
-    && Number.isInteger(reliability.correction.maxDurationMs) && reliability.correction.maxDurationMs >= 10000 && reliability.correction.maxDurationMs <= 300000;
+    && Number.isInteger(reliability.correction.maxDurationMs) && reliability.correction.maxDurationMs >= 10000;
 
   const patchReliability = (patch: Partial<typeof reliability>) => {
     setSettings((current) => ({
@@ -155,7 +155,7 @@ export function EvaluationSettingsPage() {
           <h2 className="font-semibold">{t('evaluationSettings.correction.title')}</h2>
           <NumberField id="correction-threshold" label={t('evaluationSettings.correction.threshold')} description={t('evaluationSettings.correction.thresholdHelp')} value={reliability.correction.threshold} min={0} max={100} onChange={(threshold) => patchCorrection({ threshold })} suffix="/100" />
           <NumberField id="correction-attempts" label={t('evaluationSettings.correction.maxAttempts')} description={reliability.correction.maxAttempts > 1 ? t('evaluationSettings.correction.attemptWarning') : t('evaluationSettings.correction.maxAttemptsHelp')} value={reliability.correction.maxAttempts} min={1} max={3} onChange={(maxAttempts) => patchCorrection({ maxAttempts })} />
-          <NumberField id="correction-duration" label={t('evaluationSettings.correction.maxDuration')} description={t('evaluationSettings.correction.maxDurationHelp')} value={reliability.correction.maxDurationMs / 1000} min={10} max={300} onChange={(seconds) => patchCorrection({ maxDurationMs: seconds * 1000 })} />
+          <NumberField id="correction-duration" label={t('evaluationSettings.correction.maxDuration')} description={t('evaluationSettings.correction.maxDurationHelp')} value={reliability.correction.maxDurationMs / 1000} min={10} onChange={(seconds) => patchCorrection({ maxDurationMs: seconds * 1000 })} />
 
           <div className="space-y-3">
             <h3 className="text-sm font-medium">{t('evaluationSettings.correction.recovery')}</h3>
@@ -186,7 +186,7 @@ export function EvaluationSettingsPage() {
   );
 }
 
-function NumberField({ id, label, description, value, min, max, onChange, suffix }: Readonly<{ id: string; label: string; description: string; value: number; min: number; max: number; onChange: (value: number) => void; suffix?: string }>) {
+function NumberField({ id, label, description, value, min, max, onChange, suffix }: Readonly<{ id: string; label: string; description: string; value: number; min: number; max?: number; onChange: (value: number) => void; suffix?: string }>) {
   return <div className="grid gap-2 md:grid-cols-[1fr_10rem]"><div><Label htmlFor={id}>{label}</Label><p id={`${id}-description`} className="text-xs text-muted-foreground">{description}</p></div><div className="flex items-center gap-2"><Input id={id} name={id} aria-describedby={`${id}-description`} type="number" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />{suffix ? <span className="text-sm text-muted-foreground">{suffix}</span> : null}</div></div>;
 }
 

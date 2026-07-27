@@ -25,10 +25,9 @@ export class UpdateResponseCorrectionSettingsDto {
   @Max(3)
   maxAttempts!: number;
 
-  @ApiProperty({ minimum: 10000, maximum: 300000 })
+  @ApiProperty({ minimum: 10000 })
   @IsInt()
   @Min(10000)
-  @Max(300000)
   maxDurationMs!: number;
 
   @ApiProperty()
