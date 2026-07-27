@@ -247,11 +247,16 @@ export function ConversationContent() {
               </MessageProvider>
             </div>
           )}
+
+          {showStreamingActivity && (
+            <div data-testid='inline-stream-activity' className='mt-3 animate-in fade-in-0 slide-in-from-bottom-1 duration-300'>
+              <LoadingIndicator activity={streamingActivity} components={isActiveStream ? streamingComponents : []} />
+            </div>
+          )}
           </div>
         </ChatConversationContent>
         <ChatScrollButton />
       </ChatConversation>
-      {showStreamingActivity && <LoadingIndicator activity={streamingActivity} components={isActiveStream ? streamingComponents : []} />}
     </>
   );
 }

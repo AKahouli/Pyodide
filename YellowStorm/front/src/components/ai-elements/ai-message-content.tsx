@@ -730,7 +730,7 @@ const ChainOfThoughtPartRenderer = ({ steps }: { steps: string[] }) => {
 // Task Part
 const TaskPartRenderer = ({ title, items, status, isStreaming = false }: { title: string; items: string[]; status?: 'pending' | 'in_progress' | 'completed'; isStreaming?: boolean }) => (
   <Task className='my-2 ' defaultOpen={isStreaming}>
-    <TaskTrigger title={formatLabel(title)} />
+    <TaskTrigger title={formatLabel(title)} active={isStreaming && status === 'in_progress'} />
     <TaskContent>
       {items.map((item, index) => (
         <TaskItem key={index}>{item}</TaskItem>

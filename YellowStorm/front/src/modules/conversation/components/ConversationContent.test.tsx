@@ -59,6 +59,7 @@ describe('ConversationContent', () => {
     storeState.awaitingConversationId = 'conv-1';
     render(<ConversationContent />);
     expect(screen.getByText('loading-thinking')).toBeInTheDocument();
+    expect(screen.getByTestId('inline-stream-activity')).toBeInTheDocument();
     isAwaitingFirstChunk = false;
     storeState.awaitingConversationId = null;
   });

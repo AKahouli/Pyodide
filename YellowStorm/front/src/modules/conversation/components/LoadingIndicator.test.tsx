@@ -9,7 +9,7 @@ describe('LoadingIndicator', () => {
     expect(screen.getByRole('status')).toHaveAttribute('aria-atomic', 'true');
     const spinner = container.querySelector('.animate-spin');
     expect(spinner).toBeInTheDocument();
-    expect(spinner).not.toHaveClass('motion-reduce:animate-none');
+    expect(spinner).toHaveClass('motion-reduce:animate-none');
   });
 
   it('uses a static completion icon after streaming ends', () => {

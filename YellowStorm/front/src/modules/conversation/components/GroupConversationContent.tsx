@@ -380,12 +380,17 @@ export function GroupConversationContent() {
               </MessageProvider>
             </div>
           )}
+
+          {showStreamingActivity && (
+            <div data-testid='inline-stream-activity' className='mt-3 animate-in fade-in-0 slide-in-from-bottom-1 duration-300 md:ml-12'>
+              <LoadingIndicator activity={streamingActivity} components={isActiveStream ? streamingComponents : []} />
+            </div>
+          )}
           </div>
         </ChatConversationContent>
         <MentionMessageJump />
         <ChatScrollButton />
       </ChatConversation>
-      {showStreamingActivity && <LoadingIndicator activity={streamingActivity} components={isActiveStream ? streamingComponents : []} />}
     </>
   );
 }
