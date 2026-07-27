@@ -41,7 +41,7 @@ Mirrors the existing model-override semantics:
 - **Models** (`plannerModelId`, `executorModelId`): a LiteLLM model id, or
   `null` to clear the override (server falls back to the admin default).
 - **Prompts** (`plannerPrompt`, `executorPrompt`): free text, or `null`/empty to
-  use the server default prompt. Max length 20 000 chars.
+  use the server default prompt. Max length 40 000 chars.
 - PATCH semantics: field omitted = unchanged; `null` = clear; string = set.
 
 ## Backend changes
@@ -50,7 +50,7 @@ Mirrors the existing model-override semantics:
 Add four `@Prop`s next to `managerModelId` / `workerModelId`:
 - `plannerModelId?: string | null` — `{ type: String, default: null, trim: true, maxlength: 256 }`
 - `executorModelId?: string | null` — same
-- `plannerPrompt?: string | null` — `{ type: String, default: null, maxlength: 20000 }`
+- `plannerPrompt?: string | null` — `{ type: String, default: null, maxlength: 40000 }`
 - `executorPrompt?: string | null` — same
 
 ### Interface — `interfaces/worky-stream.interface.ts`
@@ -58,7 +58,7 @@ Add the same four fields to `IWorkyStreamResponse`.
 
 ### DTO — `dto/update-worky-stream.dto.ts`
 Add four optional, nullable fields following the existing `managerModelId`
-pattern: models `@IsString`/`@MaxLength(256)`; prompts `@IsString`/`@MaxLength(20000)`.
+pattern: models `@IsString`/`@MaxLength(256)`; prompts `@IsString`/`@MaxLength(40000)`.
 Each `@IsOptional`, nullable (allow clearing).
 
 ### Service — `services/worky-stream.service.ts`
