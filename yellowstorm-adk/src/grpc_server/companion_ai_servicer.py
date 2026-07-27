@@ -55,7 +55,9 @@ def _describe_request(request) -> str:
     ]
     return (
         f"user_id={request.user_id!r} session_id={request.session_id!r} "
-        f"model={request.model!r} "
+        f"executor_model={request.executor_model!r} planner_model={request.planner_model!r} "
+        f"planner_prompt_len={len(request.planner_prompt)} "
+        f"executor_prompt_len={len(request.executor_prompt)} "
         f"message={request.message!r} skills={skills} connectors={connectors}"
     )
 
@@ -119,7 +121,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         # STEP 3 — ack now, run the turn in the background. The client watches
         # progress arrive in the read model, not on this call. Last-answer-wins:
         # hand the in-flight turn (if any) to the new one so it supersedes it.
-        model = request.model or self._default_model
+        model = request.executor_model or self._default_model
         prev = self._running.get(request.session_id)
         task = asyncio.create_task(self._run_turn(request, model, run_id, prev))
         self._bg.add(task)
@@ -174,18 +176,23 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                     else "continue — resume paused plan" if status == "paused"
                     else "new turn — planning")
             logger.info("[worky] 4. %s (session=%s)", mode, request.session_id)
+            executor_prompt = request.executor_prompt or None
             if interrupt_id:
                 await self._svc.resume_turn(
                     session_id=request.session_id, user_id=request.user_id,
-                    answer=request.message, model=model, connectors=connectors)
+                    answer=request.message, model=model, connectors=connectors,
+                    executor_prompt=executor_prompt)
             elif status == "paused":
                 await self._svc.continue_turn(
                     session_id=request.session_id, user_id=request.user_id,
-                    model=model, connectors=connectors)
+                    model=model, connectors=connectors, executor_prompt=executor_prompt)
             else:
                 await self._svc.plan_turn(
                     session_id=request.session_id, user_id=request.user_id,
-                    message=request.message, model=model, connectors=connectors)
+                    message=request.message, model=model, connectors=connectors,
+                    planner_model=request.planner_model or None,
+                    planner_prompt=request.planner_prompt or None,
+                    executor_prompt=executor_prompt)
             logger.info("RunTask turn done (session=%s run=%s)", request.session_id, run_id)
         except asyncio.CancelledError:
             logger.info("RunTask turn superseded/cancelled (session=%s)", request.session_id)
@@ -323,7 +330,8 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 session_id=session_id, user_id=wait["user_id"],
                 answer=request.reply_body, model=model,
                 connectors=_connectors_to_dicts(request.connectors),
-                interrupt_id=wait["interrupt_id"])
+                interrupt_id=wait["interrupt_id"],
+                executor_prompt=request.executor_prompt or None)
             logger.info("[worky] DeliverMailReply turn done (session=%s step=%s)",
                         session_id, wait["step_id"])
         except asyncio.CancelledError:

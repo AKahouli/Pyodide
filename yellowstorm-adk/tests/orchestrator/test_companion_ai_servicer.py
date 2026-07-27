@@ -51,6 +51,20 @@ async def test_runtask_accepts_and_runs_plan():
     service.resume_turn.assert_not_awaited()
 
 
+async def test_runtask_forwards_planner_and_executor_overrides():
+    rm = MagicMock(snapshot=AsyncMock(return_value={"session": {"status": "running", "interrupt_id": None}}))
+    service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+    await s._run_turn(pb.RunRequest(
+        user_id="u", session_id="s1", message="hi", executor_model="exec-model",
+        planner_model="plan-model", planner_prompt="custom planner",
+        executor_prompt="custom executor {description}"), "exec-model", "run1")
+    kw = service.plan_turn.await_args.kwargs
+    assert kw["planner_model"] == "plan-model"
+    assert kw["planner_prompt"] == "custom planner"
+    assert kw["executor_prompt"] == "custom executor {description}"
+
+
 async def test_run_turn_routes_to_resume_when_waiting():
     rm = MagicMock(snapshot=AsyncMock(
         return_value={"session": {"status": "waiting", "interrupt_id": "i1"}}))
@@ -130,6 +144,19 @@ async def test_mail_reply_resumes_the_step_that_was_waiting():
     assert kw["answer"] == "I work at Yellow Systems."
     # Identity comes from the wait row, never from the caller.
     assert (kw["session_id"], kw["user_id"]) == ("s1", "u1")
+
+
+async def test_mail_reply_forwards_executor_prompt_override():
+    rm = MagicMock(claim_mail_wait=AsyncMock(return_value=dict(_WAIT)))
+    service = MagicMock(resume_turn=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+
+    await s.DeliverMailReply(pb.DeliverMailReplyRequest(
+        token="YW-tok", reply_body="reply", executor_prompt="custom {description}"), _ctx())
+    await _drain(s)
+
+    kw = service.resume_turn.await_args.kwargs
+    assert kw["executor_prompt"] == "custom {description}"
 
 
 async def test_a_duplicate_delivery_does_not_resume_the_step_twice():
