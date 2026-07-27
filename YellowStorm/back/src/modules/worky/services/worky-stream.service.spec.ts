@@ -146,6 +146,20 @@ describe('WorkyStreamService.create', () => {
     expect(result.workerModelId).toBeNull();
   });
 
+  it('seeds planner/executor models and prompts to null on create', async () => {
+    const { service, streamCreate } = makeService();
+    const result = await service.create(userId, { title: 'with-agent-config' });
+    const streamInput = streamCreate.mock.calls[0][0];
+    expect(streamInput.plannerModelId).toBeNull();
+    expect(streamInput.executorModelId).toBeNull();
+    expect(streamInput.plannerPrompt).toBeNull();
+    expect(streamInput.executorPrompt).toBeNull();
+    expect(result.plannerModelId).toBeNull();
+    expect(result.executorModelId).toBeNull();
+    expect(result.plannerPrompt).toBeNull();
+    expect(result.executorPrompt).toBeNull();
+  });
+
   it('rejects when the Worky Manager agent type is missing', async () => {
     const { service } = makeService({
       agentTypeFindBySlug: jest.fn().mockResolvedValue(null),

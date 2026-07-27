@@ -122,6 +122,10 @@ export class WorkyStreamService implements OnModuleInit {
       // the per-turn override → stream field → admin default chain.
       managerModelId: null,
       workerModelId: null,
+      plannerModelId: null,
+      executorModelId: null,
+      plannerPrompt: null,
+      executorPrompt: null,
       title,
       status: 'created',
       controlState: 'active',
@@ -501,6 +505,10 @@ export class WorkyStreamService implements OnModuleInit {
       managerAgentId: (doc.managerAgentId as Types.ObjectId).toString(),
       managerModelId: (doc.managerModelId as string | null | undefined) ?? null,
       workerModelId: (doc.workerModelId as string | null | undefined) ?? null,
+      plannerModelId: (doc.plannerModelId as string | null | undefined) ?? null,
+      executorModelId: (doc.executorModelId as string | null | undefined) ?? null,
+      plannerPrompt: (doc.plannerPrompt as string | null | undefined) ?? null,
+      executorPrompt: (doc.executorPrompt as string | null | undefined) ?? null,
       governancePolicyRef: doc.governancePolicyRef
         ? (doc.governancePolicyRef as Types.ObjectId).toString()
         : null,
