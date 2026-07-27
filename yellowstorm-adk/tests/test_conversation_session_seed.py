@@ -40,6 +40,21 @@ async def test_seed_creates_ordered_user_and_model_events():
 
 
 @pytest.mark.asyncio
+async def test_seed_can_create_an_empty_isolated_session():
+    session = type("Session", (), {"state": {}})()
+    storage = AsyncMock()
+    storage.get_session.return_value = None
+    storage.create_session.return_value = session
+    service = ConversationSessionSeedService(storage)
+
+    assert await service.seed(
+        user_id="user-1", session_id="shadow-1", idempotency_key="replay-1", history=[]
+    ) is True
+    storage.create_session.assert_awaited_once()
+    storage.append_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_seed_is_idempotent_for_same_request():
     existing = type("Session", (), {"state": {"branch_seed_idempotency_key": "request-1"}})()
     storage = AsyncMock()

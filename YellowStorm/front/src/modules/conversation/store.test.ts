@@ -376,7 +376,7 @@ describe('conversation streaming component updates', () => {
     expect(useConversationStore.getState().streamingStateCache.has('conv-1')).toBe(false);
   });
 
-  it('merges tool metadata with the terminal response', () => {
+  it('merges public tool metadata without retaining raw results', () => {
     const components = applyChunksToComponents([], [
       {
         action: 'add',
@@ -405,9 +405,22 @@ describe('conversation streaming component updates', () => {
           status: 'completed',
           params: '{"query":"contract"}',
           startedAt: '2026-07-21T10:13:42Z',
-          resultJson: '{"matches":2}',
         },
       },
     ]);
+  });
+
+  it('upserts out-of-order tools without collapsing repeated names or regressing status', () => {
+    const components = applyChunksToComponents([], [
+      { action: 'update', component: { id: 'tool-agent-call-1', type: 'toolInfo', data: { title: 'search', status: 'completed', resultJson: '{"matches":1}' } } },
+      { action: 'add', component: { id: 'tool-agent-call-1', type: 'toolInfo', data: { title: 'search', status: 'running', params: '{"q":"one"}' } } },
+      { action: 'add', component: { id: 'tool-agent-call-2', type: 'toolInfo', data: { title: 'search', status: 'running', params: '{"q":"two"}' } } },
+      { action: 'add', component: { id: 'tool-agent-call-2', type: 'toolInfo', data: { title: 'search', status: 'running', params: '{"q":"two"}' } } },
+    ] as never);
+
+    expect(components).toHaveLength(2);
+    expect(components[0].data).toMatchObject({ status: 'completed', params: '{"q":"one"}' });
+    expect(components[0].data).not.toHaveProperty('resultJson');
+    expect(components[1].data).toMatchObject({ status: 'running', params: '{"q":"two"}' });
   });
 });

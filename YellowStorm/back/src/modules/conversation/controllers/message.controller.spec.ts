@@ -204,6 +204,13 @@ describe('MessageController.sendMessage sticky routing', () => {
     expect(messageService.createUserMessage).toHaveBeenCalledWith(expect.objectContaining({
       content: '{"selectedChoices":[{"submitText":"Analyze profitability","description":"Review margins"}]}',
       interaction: canonicalInteraction,
+      replayContext: expect.objectContaining({
+        content: '{"selectedChoices":[{"submitText":"Analyze profitability","description":"Review margins"}]}',
+        taskSummary: 'Profitability',
+        attachedFileIds: [],
+        deepSearchEnabled: false,
+        skillIds: [],
+      }),
     }));
     expect(streamService.startStream).toHaveBeenCalledWith(
       userId.toString(),

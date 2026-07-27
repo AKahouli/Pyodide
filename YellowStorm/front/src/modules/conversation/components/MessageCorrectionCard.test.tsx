@@ -34,6 +34,13 @@ describe('MessageCorrectionCard', () => {
     expect(screen.getByRole('status')).toHaveTextContent('correction.status.re_evaluating');
   });
 
+  it('describes a verified corrective replay without an empty correction list', () => {
+    render(<MessageCorrectionCard workflow={{ ...workflow, strategy: 'corrective_replay', appliedCorrections: undefined }} displayedVersion="corrected" onVersionChange={vi.fn()} />);
+    expect(screen.getByText('correction.strategy.correctiveReplay')).toBeInTheDocument();
+    expect(screen.getByText('correction.strategy.correctiveReplayDetail')).toBeInTheDocument();
+    expect(screen.queryByText('correction.correctedCount:0')).not.toBeInTheDocument();
+  });
+
   it.each([
     ['failed', 'correction.publishWarning'],
     ['abstained', 'correction.abstentionReason'],

@@ -14,6 +14,7 @@ from src.smart_rag.agents.core.document_helpers import DocumentHelpers
 from src.smart_rag.engines.multi_agent.config import langfuse_client
 from src.smart_rag.engines.multi_agent.team_orchestrator import AutoAgentGenerationTeam
 from src.guardrails.prompt_injection_guardrail import PromptInjectionGuardrail
+from src.corrective_replay import build_corrective_replay_user_message
 
 logger = get_logger("api.routers.agentic_rag.single_agent")
 
@@ -104,8 +105,12 @@ async def handle_single_agent_workflow(
             await q.put(None)
             return
 
+        q.include_private_tool_results = user_request.correction_replay_context is not None
         await team.run_single_agent(
-            user_prompt=guarded.text,
+            user_prompt=build_corrective_replay_user_message(
+                guarded.text,
+                user_request.correction_replay_context,
+            ),
             session_id=session_id,
             q=q,
             parent_trace=single_agent_span,

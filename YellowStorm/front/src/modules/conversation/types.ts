@@ -137,6 +137,7 @@ export interface ResponseCorrectionWorkflow {
   completedAt?: string;
   durationMs?: number;
   correctionModel?: { modelId: string; modelName: string; correctorVersion: string; promptVersion: string };
+  strategy?: 'existing_evidence' | 'corrective_replay';
 }
 
 export interface Message {

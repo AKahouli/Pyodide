@@ -60,6 +60,46 @@ export interface ReliabilityEvaluation {
 export type ResponseCorrectionStatus = 'queued' | 'correcting' | 're_evaluating' | 'corrected' | 'failed' | 'abstained' | 'human_review_required';
 export type ActiveAnswerVersion = 'original' | 'corrected' | 'abstention';
 
+export interface MessageReplayContext {
+  content: string;
+  taskSummary?: string;
+  attachedFileIds: string[];
+  webSearchEnabled: boolean;
+  deepSearchEnabled: boolean;
+  modelId?: string;
+  agentIds: string[];
+  skillIds: string[];
+  connectorRepo?: {
+    connectorId: string;
+    connectorName: string;
+    repoId: string;
+    repoName: string;
+    repoUrl?: string;
+  };
+  governanceOverride?: {
+    runtimeMode: 'governed';
+    primaryAgentId: string;
+    allowedAgentIds: string[];
+    workspaceIds: string[];
+    revisionId: string;
+    scopeId: string;
+  };
+}
+
+export interface CorrectionReplayFinding {
+  claim: string;
+  status: 'partially_supported' | 'unsupported' | 'contradicted';
+  importance: ReliabilityClaimImportance;
+  explanation: string;
+}
+
+export interface CorrectionReplayContext {
+  originalAnswer: string;
+  findings: CorrectionReplayFinding[];
+  attemptNumber: number;
+  instructions: string;
+}
+
 export interface AppliedCorrection {
   claim: string;
   action: 'removed' | 'qualified' | 'replaced' | 'citation_repaired';
@@ -88,6 +128,7 @@ export interface ResponseCorrectionWorkflow {
   completedAt?: string;
   durationMs?: number;
   correctionModel?: { modelId: string; modelName: string; correctorVersion: string; promptVersion: string };
+  strategy?: 'existing_evidence' | 'corrective_replay';
 }
 
 export interface MessageComponent {
@@ -119,6 +160,7 @@ export interface CreateUserMessageData {
   requestId?: string;
   parentMessageId?: string;
   interaction?: Record<string, unknown>;
+  replayContext?: MessageReplayContext;
 }
 
 export interface CreateAIPlaceholderData {

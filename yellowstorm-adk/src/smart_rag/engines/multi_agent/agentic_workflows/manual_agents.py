@@ -6,6 +6,7 @@ from src.smart_rag.agents.core.document_helpers import DocumentHelpers
 from src.smart_rag.engines.multi_agent.config import langfuse_client
 from src.smart_rag.engines.multi_agent.team_orchestrator import AutoAgentGenerationTeam
 from src.guardrails.prompt_injection_guardrail import PromptInjectionGuardrail
+from src.corrective_replay import build_corrective_replay_user_message
 
 logger = get_logger("api.routers.agentic_rag.manual_agents")
 
@@ -175,5 +176,19 @@ async def _run_provided_agent_team(team, user_request, manager_prompt, session_i
         manager_user_prompt = user_request.message
     # Run the agent team with manager_memory configuration
     image_input = user_request.image_input if hasattr(user_request, 'image_input') else None
-    await team.run_agent_team(manager_user_prompt, enhanced_manager_prompt, session_id, manager_memory, q, manager_temperature, None, image_input, user_request.agents)
+    q.include_private_tool_results = user_request.correction_replay_context is not None
+    await team.run_agent_team(
+        build_corrective_replay_user_message(
+            manager_user_prompt,
+            user_request.correction_replay_context,
+        ),
+        enhanced_manager_prompt,
+        session_id,
+        manager_memory,
+        q,
+        manager_temperature,
+        None,
+        image_input,
+        user_request.agents,
+    )
 

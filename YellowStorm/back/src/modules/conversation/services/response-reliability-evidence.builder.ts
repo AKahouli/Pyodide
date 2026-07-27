@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { MessageDocument } from '../schemas/message.schema';
+import type { MessageComponent } from '../interfaces/message.interface';
 
 export const MAX_ANSWER_CHARACTERS = 30_000;
 export const MAX_EVIDENCE_ITEMS = 40;
@@ -35,13 +36,50 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
+const DOCUMENT_EVIDENCE_TOOLS = new Set([
+  'perform_document_search',
+  'perform_filtered_search',
+  'perform_standard_search',
+  'preform_all_brain_search',
+]);
+const MAX_TOOL_RESULT_CHARACTERS = 65_536;
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function parseToolResult(value: unknown): unknown {
+  if (typeof value !== 'string' || !value.trim() || value.length > MAX_TOOL_RESULT_CHARACTERS) return undefined;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
 @Injectable()
 export class ResponseReliabilityEvidenceBuilder {
   build(message: MessageDocument, question: string, requestId: string): ResponseReliabilityInput {
+    return this.buildFromComponents({
+      messageId: message._id.toString(),
+      components: (message.components ?? []) as MessageComponent[],
+      question,
+      requestId,
+    });
+  }
+
+  buildFromComponents(input: {
+    messageId: string;
+    components: MessageComponent[];
+    question: string;
+    requestId: string;
+  }): ResponseReliabilityInput {
     let answerCharacters = 0;
     const segments: ReliabilityAnswerSegment[] = [];
     const segmentById = new Map<string, ReliabilityAnswerSegment>();
-    const components = Array.isArray(message.components) ? message.components : [];
+    const components = Array.isArray(input.components) ? input.components : [];
 
     for (const [index, component] of components.entries()) {
       if (component.type !== 'text') continue;
@@ -100,8 +138,58 @@ export class ResponseReliabilityEvidenceBuilder {
           content: `Output:\n${output}`,
         });
       }
+      if (component.type === 'toolInfo' && data.status === 'completed') {
+        const toolName = stringValue(data.title);
+        const parsed = parseToolResult(data.resultJson ?? data.result_json);
+        if (!toolName || parsed === undefined) continue;
+
+        if (DOCUMENT_EVIDENCE_TOOLS.has(toolName)) {
+          const result = recordValue(parsed);
+          const sources = Array.isArray(result?.sources_text) ? result.sources_text : [];
+          for (const source of sources) {
+            const item = recordValue(source);
+            const content = stringValue(item?.page_content) || stringValue(item?.pageContent);
+            if (!content) continue;
+            appendEvidence({
+              type: 'document',
+              source: stringValue(item?.filename) || stringValue(item?.file_name) || stringValue(item?.source),
+              page: stringValue(item?.page),
+              content,
+              workspaceId: stringValue(item?.workspace_id) || stringValue(item?.workspaceId),
+              reference: stringValue(item?.source_reference) || stringValue(item?.reference),
+            });
+          }
+        } else if (toolName === 'perform_web_search') {
+          const result = recordValue(parsed);
+          const text = stringValue(result?.text);
+          const sources = Array.isArray(result?.sources) ? result.sources.map(recordValue).filter(Boolean) as Record<string, unknown>[] : [];
+          const validSources = sources.filter((source) => {
+            const url = stringValue(source.url);
+            if (!url) return false;
+            try {
+              return new URL(url).protocol === 'https:';
+            } catch {
+              return false;
+            }
+          });
+          if (text && validSources.length) {
+            appendEvidence({
+              type: 'document',
+              source: stringValue(validSources[0].url),
+              content: `${text}\n\nSources:\n${validSources.map((source) => {
+                const title = stringValue(source.title);
+                const url = stringValue(source.url)!;
+                return title ? `${title}: ${url}` : url;
+              }).join('\n')}`,
+            });
+          }
+        } else if (toolName === 'calculator' && (typeof parsed === 'string' || typeof parsed === 'number')) {
+          const output = String(parsed).trim();
+          if (output) appendEvidence({ type: 'calculation', content: `Output:\n${output}` });
+        }
+      }
     }
 
-    return { requestId, messageId: message._id.toString(), question, segments, globalEvidence };
+    return { requestId: input.requestId, messageId: input.messageId, question: input.question, segments, globalEvidence };
   }
 }

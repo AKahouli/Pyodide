@@ -361,6 +361,8 @@ class TestAgentRunner:
         mock_queue = AsyncMock()
         mock_content = types.Content(role="user", parts=[types.Part(text="test")])
 
+        mock_queue.include_private_tool_results = True
+
         # Mock event with function call
         mock_event = MagicMock()
         mock_event.content = MagicMock()
@@ -445,7 +447,7 @@ class TestAgentRunner:
                         "params": '{"arg1": "value1"}',
                     },
                     "message_id": "session_123",
-                    "component_id": "tool-call-1",
+                    "component_id": "tool-agent_123-call-1",
                     "action": "add",
                 },
                 {
@@ -457,7 +459,7 @@ class TestAgentRunner:
                         "result_json": "{}",
                     },
                     "message_id": "session_123",
-                    "component_id": "tool-call-1",
+                    "component_id": "tool-agent_123-call-1",
                     "action": "update",
                 },
             ]

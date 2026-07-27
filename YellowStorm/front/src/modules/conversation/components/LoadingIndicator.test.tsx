@@ -69,7 +69,7 @@ describe('LoadingIndicator', () => {
     expect(screen.getByText('Reviewed the request')).toBeInTheDocument();
   });
 
-  it('shows the tool datetime and opens the complete response dialog', () => {
+  it('shows the tool datetime without exposing a raw tool response', () => {
     const startedAt = '2026-07-21T10:13:42Z';
     const expectedDate = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(startedAt));
     render(<LoadingIndicator isComplete components={[{
@@ -88,9 +88,8 @@ describe('LoadingIndicator', () => {
     fireEvent.click(screen.getByText('1. Search Documents'));
 
     expect(screen.getByText((content) => content.includes(expectedDate))).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.viewResponse' }));
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText(/"id": "doc-1"/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'stream.activity.viewResponse' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/doc-1/)).not.toBeInTheDocument();
   });
 
   it('omits response controls for legacy tool activity', () => {
@@ -119,6 +118,19 @@ describe('LoadingIndicator', () => {
     expect(durations).toHaveLength(1);
     expect(durations[0]).toHaveAttribute('data-duration-seconds', '18');
     expect(durations[0].closest('summary')).toHaveTextContent('1. Search Documents');
-    expect(screen.getByText('2. Create Report').closest('summary')).not.toContainElement(durations[0]);
+    expect(screen.getByText('2. Create Report').closest('summary')).not.toContainElement(durations[0] as HTMLElement);
+  });
+
+  it('renders every occurrence when the same tool is called repeatedly', () => {
+    render(<LoadingIndicator isComplete components={[
+      { id: 'tool-agent-a-call-1', type: 'toolInfo', data: { title: 'perform_document_search', status: 'completed' } },
+      { id: 'tool-agent-a-call-2', type: 'toolInfo', data: { title: 'perform_document_search', status: 'completed' } },
+      { id: 'tool-manager-call-1', type: 'toolInfo', data: { title: 'delegate_to_researcher', status: 'completed' } },
+    ] as never} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.detailsAria' }));
+    expect(screen.getByText('1. Perform Document Search')).toBeInTheDocument();
+    expect(screen.getByText('2. Perform Document Search')).toBeInTheDocument();
+    expect(screen.getByText('3. Delegate To Researcher')).toBeInTheDocument();
   });
 });

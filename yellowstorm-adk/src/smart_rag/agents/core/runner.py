@@ -366,8 +366,9 @@ class AgentRunner:
         cot_steps = []                    # ordered list of tool title strings
         cot_component_id = str(uuid.uuid4())
         cot_sent = False
-        pending_tool_components_by_call_id: Dict[str, str] = {}
+        pending_tool_components_by_call_id: Dict[str, List[str]] = {}
         pending_tool_components_by_name: Dict[str, List[str]] = {}
+        seen_tool_component_ids: set[str] = set()
 
         runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
 
@@ -528,8 +529,12 @@ class AgentRunner:
                             tool_args = dict(part.function_call.args or {})
                             raw_call_id = getattr(part.function_call, "id", None)
                             call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else str(uuid.uuid4())
-                            tool_component_id = f"tool-{call_id}"
-                            pending_tool_components_by_call_id[call_id] = tool_component_id
+                            actor_id = str(agent_id or agent_name or "agent")
+                            tool_component_id = f"tool-{actor_id}-{call_id}"
+                            if tool_component_id in seen_tool_component_ids:
+                                tool_component_id = f"{tool_component_id}-{uuid.uuid4()}"
+                            seen_tool_component_ids.add(tool_component_id)
+                            pending_tool_components_by_call_id.setdefault(call_id, []).append(tool_component_id)
                             pending_tool_components_by_name.setdefault(func_name, []).append(tool_component_id)
                             await q.put(
                                 self.streaming_formatter.format_component_event(
@@ -710,7 +715,10 @@ class AgentRunner:
                         if q:
                             raw_call_id = getattr(part.function_response, "id", None)
                             response_call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else None
-                            tool_component_id = pending_tool_components_by_call_id.pop(response_call_id, None) if response_call_id else None
+                            pending_for_call = pending_tool_components_by_call_id.get(response_call_id, []) if response_call_id else []
+                            tool_component_id = pending_for_call.pop(0) if pending_for_call else None
+                            if response_call_id and not pending_for_call:
+                                pending_tool_components_by_call_id.pop(response_call_id, None)
                             if tool_component_id:
                                 pending_for_name = pending_tool_components_by_name.get(func_name, [])
                                 if tool_component_id in pending_for_name:
@@ -719,14 +727,16 @@ class AgentRunner:
                                 pending_for_name = pending_tool_components_by_name.get(func_name, [])
                                 tool_component_id = pending_for_name.pop(0) if pending_for_name else None
                                 if tool_component_id:
-                                    for call_id, pending_component_id in list(pending_tool_components_by_call_id.items()):
-                                        if pending_component_id == tool_component_id:
-                                            pending_tool_components_by_call_id.pop(call_id)
+                                    for call_id, pending_component_ids in list(pending_tool_components_by_call_id.items()):
+                                        if tool_component_id == (pending_component_ids[0] if pending_component_ids else None):
+                                            pending_component_ids.pop(0)
+                                            if not pending_component_ids:
+                                                pending_tool_components_by_call_id.pop(call_id)
                                             break
 
                             if tool_component_id:
                                 result_json = ""
-                                if func_name != "generate_web_preview":
+                                if getattr(q, "include_private_tool_results", False) and func_name != "generate_web_preview":
                                     try:
                                         candidate_result_json = json.dumps(
                                             part.function_response.response,

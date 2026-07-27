@@ -42,15 +42,18 @@ _CHILD_RESULT_COMPONENT_TYPES = {
 
 
 class _ChildResultQueue:
-    def __init__(self) -> None:
+    def __init__(self, activity_queue: Any = None) -> None:
         self._text_chunks: list[str] = []
         self._components: list[dict[str, Any]] = []
+        self._activity_queue = activity_queue
 
     async def put(self, item: Any) -> None:
         if not isinstance(item, dict):
             return
         component = item.get("component")
         if isinstance(component, dict):
+            if component.get("type") == "tool_info" and self._activity_queue is not None:
+                await self._activity_queue.put(item)
             self._collect_component(component)
             return
         chunk = str(item.get("chunk") or "")
@@ -183,7 +186,7 @@ def make_temporary_child_agent_tool(
             )
             return "Temporary child agent could not be created."
 
-        child_queue = _ChildResultQueue()
+        child_queue = _ChildResultQueue(getattr(team, "current_queue", None))
         resolved_images = image_input if delegate_images and image_input else None
         result = await team.delegation_factory._execute_agent_with_error_handling(
             agent,

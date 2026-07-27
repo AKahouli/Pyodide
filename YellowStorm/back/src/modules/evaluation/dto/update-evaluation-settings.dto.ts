@@ -90,10 +90,6 @@ export class UpdateResponseReliabilitySettingsDto {
   @Type(() => UpdateResponseCorrectionSettingsDto)
   correction!: UpdateResponseCorrectionSettingsDto;
 
-  @ApiProperty({ type: UpdateResponseCorrectionSettingsDto })
-  @ValidateNested()
-  @Type(() => UpdateResponseCorrectionSettingsDto)
-  correction!: UpdateResponseCorrectionSettingsDto;
 }
 
 export class UpdateEvaluationSettingsDto {

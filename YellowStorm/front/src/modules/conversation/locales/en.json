@@ -301,5 +301,7 @@
   "correction.uncertainties": "{{count}} remaining uncertainties",
   "correction.viewOriginal": "View original",
   "correction.viewCorrected": "View corrected",
-  "correction.viewAbstention": "View verification result"
+  "correction.viewAbstention": "View verification result",
+  "correction.strategy.correctiveReplay": "Answer regenerated after verification",
+  "correction.strategy.correctiveReplayDetail": "The original request was rerun to address unsupported or conflicting claims."
 }

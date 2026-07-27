@@ -148,6 +148,20 @@ message ConnectorRepo {
     string repo_url = 5;
 }
 
+message CorrectionReplayFinding {
+    string claim = 1;
+    string status = 2;
+    string importance = 3;
+    string explanation = 4;
+}
+
+message CorrectionReplayContext {
+    string original_answer = 1;
+    repeated CorrectionReplayFinding findings = 2;
+    int32 attempt_number = 3;
+    string instructions = 4;
+}
+
 message RunAgentTeamRequest {
     UserContext user_context = 1;
     string conversation_id = 2;
@@ -161,6 +175,8 @@ message RunAgentTeamRequest {
     bool deep_search_enabled = 13;
     repeated Skill skills = 14;
     string task_summary = 15;                              // Human-readable task UI summary; query remains model input
+    CorrectionReplayContext correction_replay_context = 16;
+    bool web_search_enabled = 17;
 }
 
 // Mono-agent request: a single specialized agent runs directly with its own
@@ -178,6 +194,8 @@ message RunSingleAgentRequest {
     repeated Skill skills = 9;                        // Conversation-level skills selected by the user
     bool deep_search_enabled = 10;                    // When true, enables deep search mode for this request
     string task_summary = 11;                         // Human-readable task UI summary; query remains model input
+    CorrectionReplayContext correction_replay_context = 12;
+    bool web_search_enabled = 13;
 }
 
 message GenerateConversationNameRequest {

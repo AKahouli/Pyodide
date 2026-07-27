@@ -317,7 +317,15 @@ class ChatbotServicer(
         request: "chatbot_pb2.RunAgentTeamRequest",
     ) -> Dict[str, Any]:
         """Convert RunAgentTeam protobuf request to a JSON-safe dict for logging."""
-        return _message_to_dict(request)
+        payload = _message_to_dict(request)
+        replay_context = payload.get("correction_replay_context")
+        if isinstance(replay_context, dict):
+            payload["correction_replay_context"] = {
+                "present": True,
+                "attempt_number": replay_context.get("attempt_number", 0),
+                "finding_count": len(replay_context.get("findings", [])),
+            }
+        return payload
 
     @staticmethod
     def _log_temporary_child_summary(session_id: str, label: str) -> None:
@@ -381,6 +389,12 @@ class ChatbotServicer(
         try:
             # Convert protobuf request to internal V1 Pydantic model (for backward compatibility)
             internal_request = await self._convert_agent_team_request_v2(request)
+
+            if internal_request.correction_replay_context:
+                yield chatbot_pb2.StreamChunk(
+                    action="replay_started",
+                    metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
+                )
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -617,6 +631,12 @@ class ChatbotServicer(
 
         try:
             internal_request = await self._convert_single_agent_request(request)
+
+            if internal_request.correction_replay_context:
+                yield chatbot_pb2.StreamChunk(
+                    action="replay_started",
+                    metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
+                )
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -1176,11 +1196,12 @@ class ChatbotServicer(
             brain_ids=ctx["workspace_ids"],
             brain_documents=ctx["brain_documents"],
             brain_relations=None,
-            search_web=False,
+            search_web=getattr(pb_request, "web_search_enabled", False),
             agent_mode="mono",
             connector_repo=self._build_connector_repo(pb_request),
             skills=self._build_skills(pb_request),
             deep_search_enabled=getattr(pb_request, "deep_search_enabled", False),
+            correction_replay_context=self._build_correction_replay_context(pb_request),
         )
 
     async def _convert_agent_team_request_v2(
@@ -1470,11 +1491,32 @@ class ChatbotServicer(
             brain_ids=workspace_ids,
             brain_documents=brain_documents,
             brain_relations=None,  # V2 removed this field
-            search_web=False,  # V2 removed this field, default to False
+            search_web=getattr(pb_request, "web_search_enabled", False),
             agent_mode=pb_request.agent_mode,
             connector_repo=connector_repo,
+            skills=skills,
             deep_search_enabled=getattr(pb_request, 'deep_search_enabled', False),
+            correction_replay_context=self._build_correction_replay_context(pb_request),
         )
+
+    def _build_correction_replay_context(self, pb_request):
+        if not pb_request.HasField("correction_replay_context"):
+            return None
+        context = pb_request.correction_replay_context
+        return {
+            "original_answer": context.original_answer,
+            "findings": [
+                {
+                    "claim": finding.claim,
+                    "status": finding.status,
+                    "importance": finding.importance,
+                    "explanation": finding.explanation,
+                }
+                for finding in context.findings
+            ],
+            "attempt_number": context.attempt_number,
+            "instructions": context.instructions,
+        }
 
     async def _download_and_encode_images(
         self, filepaths: List[str]

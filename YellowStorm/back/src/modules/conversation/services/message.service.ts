@@ -104,6 +104,7 @@ export class MessageService {
       isComplete: true,
       requestId: data.requestId,
       interaction: data.interaction,
+      replayContext: data.replayContext,
     });
 
     // Update conversation
@@ -752,7 +753,7 @@ export class MessageService {
       conversationId: toStr(message.conversationId),
       conversationType: message.conversationType as 'user' | 'ai',
       content: message.content,
-      components: message.components as any,
+      components: this.publicComponents(message.components) as any,
       attachedFileIds: message.attachedFileIds?.map((id: any) => toStr(id)),
       modelId: message.modelId,
       webSearchEnabled: message.webSearchEnabled,
@@ -773,7 +774,12 @@ export class MessageService {
       guardrailDecision: message.guardrailDecision as any,
       interaction: message.interaction as Record<string, unknown> | undefined,
       reliabilityEvaluation: message.reliabilityEvaluation as ReliabilityEvaluation | undefined,
-      correctionWorkflow: message.correctionWorkflow as MessageResponse['correctionWorkflow'],
+      correctionWorkflow: message.correctionWorkflow ? {
+        ...message.correctionWorkflow,
+        ...(message.correctionWorkflow.correctedComponents ? {
+          correctedComponents: this.publicComponents(message.correctionWorkflow.correctedComponents),
+        } : {}),
+      } as MessageResponse['correctionWorkflow'] : undefined,
       agentIds: message.agentIds?.map((id: any) => toStr(id)),
       memberIds: message.memberIds?.map((id: any) => toStr(id)),
       senderId: toStr(message.senderId),
@@ -781,6 +787,15 @@ export class MessageService {
       createdAt: toISO(message.createdAt),
       updatedAt: toISO(message.updatedAt),
     };
+  }
+
+  private publicComponents(components: unknown): MessageComponent[] | undefined {
+    if (!Array.isArray(components)) return undefined;
+    return components.map((component) => {
+      if (component?.type !== 'toolInfo' || !component.data) return component;
+      const { resultJson: _resultJson, result_json: _resultJsonSnake, ...publicData } = component.data;
+      return { ...component, data: publicData };
+    });
   }
 
   private findGuardrailDecision(components: MessageComponent[]): CompleteAIMessageData['guardrailDecision'] {

@@ -57,6 +57,10 @@ import { ResponseCorrectionPolicyService } from './services/response-correction-
 import { ResponseCorrectionPlannerService } from './services/response-correction-planner.service';
 import { CorrectedResponseComponentBuilder } from './services/corrected-response-component.builder';
 import { ResponseCorrectionService } from './services/response-correction.service';
+import { ConversationAgentRequestBuilder } from './services/conversation-agent-request.builder';
+import { CorrectiveReplayContextService } from './services/corrective-replay-context.service';
+import { CorrectiveReplayPromptBuilder } from './services/corrective-replay-prompt.builder';
+import { CorrectiveReplayRunnerService } from './services/corrective-replay-runner.service';
 
 @Module({
   imports: [
@@ -109,6 +113,10 @@ import { ResponseCorrectionService } from './services/response-correction.servic
     ResponseCorrectionPlannerService,
     CorrectedResponseComponentBuilder,
     ResponseCorrectionService,
+    ConversationAgentRequestBuilder,
+    CorrectiveReplayContextService,
+    CorrectiveReplayPromptBuilder,
+    CorrectiveReplayRunnerService,
     ConversationOwnerGuard,
     SseAuthGuard,
     ComposerSuggestionsRateLimitGuard,

@@ -6,12 +6,14 @@ import { ModelsService } from '@modules/models/models.service';
 import { LoggerService } from '@modules/logger';
 import type { AppliedCorrection, MessageComponent, ReliabilityEvaluation, ResponseCorrectionWorkflow } from '../interfaces/message.interface';
 import { MessageService } from './message.service';
-import { ResponseReliabilityEvidenceBuilder, ResponseReliabilityInput } from './response-reliability-evidence.builder';
+import { ResponseReliabilityEvidenceBuilder, ResponseReliabilityInput, type ReliabilityEvidenceItem } from './response-reliability-evidence.builder';
 import { ResponseReliabilityScoringService, type EvaluatedReliabilityClaim } from './response-reliability-scoring.service';
 import { ResponseCorrectionPlannerService } from './response-correction-planner.service';
 import { CorrectedResponseComponentBuilder } from './corrected-response-component.builder';
 import { ResponseCorrectionPolicyService } from './response-correction-policy.service';
 import { ReportService } from './report.service';
+import { CorrectiveReplayContextService } from './corrective-replay-context.service';
+import { CorrectiveReplayFailure, CorrectiveReplayRunnerService } from './corrective-replay-runner.service';
 
 const MAX_CORRECTION_QUEUE_SIZE = 50;
 
@@ -50,6 +52,8 @@ export class ResponseCorrectionService {
     private readonly componentBuilder: CorrectedResponseComponentBuilder,
     private readonly policy: ResponseCorrectionPolicyService,
     private readonly reportService: ReportService,
+    private readonly replayContextService: CorrectiveReplayContextService,
+    private readonly replayRunner: CorrectiveReplayRunnerService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(ResponseCorrectionService.name);
@@ -103,31 +107,70 @@ export class ResponseCorrectionService {
       const modelName = this.modelsService.getModelIdentifier(model);
       let currentEvaluation = job.originalEvaluation;
       let previousCandidateSegments: Array<{ text: string }> = [];
+      let previousCandidateComponents: MessageComponent[] | undefined;
+      const replayContext = await this.resolveReplayContext(job.questionMessageId, job.messageId);
 
       for (let attempt = 1; attempt <= job.settings.correction.maxAttempts; attempt += 1) {
         attemptsMade = attempt;
         this.assertDuration(deadline);
         await this.persist(job, { status: 'correcting', activeVersion: 'original', attemptCount: attempt, startedAt: new Date(started).toISOString() });
-        const candidate = await this.callCorrector({
-          requestId: job.requestId,
-          messageId: job.messageId,
-          attemptNumber: attempt,
-          question: evidenceInput.question,
-          originalSegments: evidenceInput.segments.map(({ componentId, text }) => ({ componentId, text })),
-          previousCandidateSegments,
-          instructions: this.planner.build(currentEvaluation),
-          evidence,
-          judgeModel: modelName,
-          omitTemperature: model.omitTemperature,
-        }, this.remaining(deadline));
-        const correctedComponents = this.componentBuilder.build(originalComponents, evidenceInput.segments, candidate.correctedSegments);
-        previousCandidateSegments = candidate.correctedSegments;
+        let correctedComponents: MessageComponent[];
+        let candidateInput: ResponseReliabilityInput;
+        let candidate: CorrectorResponse | undefined;
+        let strategy: ResponseCorrectionWorkflow['strategy'] = 'existing_evidence';
+        let promptVersion = '';
+
+        if (replayContext) {
+          try {
+            const replay = await this.replayRunner.run({
+              userId: job.userId,
+              conversationId: job.conversationId,
+              messageId: job.messageId,
+              questionMessageId: job.questionMessageId,
+              request: replayContext.request,
+              originalComponents: previousCandidateComponents ?? originalComponents,
+              evaluation: currentEvaluation,
+              attemptNumber: attempt,
+              timeoutMs: this.remaining(deadline),
+            });
+            correctedComponents = replay.components;
+            previousCandidateComponents = replay.components;
+            promptVersion = replay.promptVersion;
+            strategy = 'corrective_replay';
+            candidateInput = this.evidenceBuilder.buildFromComponents({
+              messageId: job.messageId,
+              components: replay.evidenceComponents,
+              question: replayContext.request.content,
+              requestId: `${job.requestId}:replay:${attempt}`,
+            });
+            const replayEvidenceCount = candidateInput.globalEvidence.length
+              + candidateInput.segments.reduce((count, segment) => count + segment.evidence.length, 0);
+            if (!replayEvidenceCount) throw new CorrectiveReplayFailure('corrective_replay_no_evidence', true);
+          } catch (error) {
+            if (!(error instanceof CorrectiveReplayFailure) || error.replayStarted) throw error;
+            this.logger.warn('Corrective replay unavailable before execution; using existing evidence', {
+              messageId: job.messageId,
+              failureCode: error.code,
+            });
+            ({ correctedComponents, candidateInput, candidate } = await this.buildExistingEvidenceCandidate(
+              job, attempt, currentEvaluation, evidenceInput, evidence, originalComponents,
+              previousCandidateSegments, modelName, model.omitTemperature, deadline,
+            ));
+            previousCandidateSegments = candidate.correctedSegments;
+          }
+        } else {
+          this.logger.warn('Corrective replay context unavailable; using existing evidence', {
+            messageId: job.messageId,
+            failureCode: 'corrective_replay_context_unavailable',
+          });
+          ({ correctedComponents, candidateInput, candidate } = await this.buildExistingEvidenceCandidate(
+            job, attempt, currentEvaluation, evidenceInput, evidence, originalComponents,
+            previousCandidateSegments, modelName, model.omitTemperature, deadline,
+          ));
+          previousCandidateSegments = candidate.correctedSegments;
+        }
         await this.persist(job, { status: 're_evaluating', activeVersion: 'original', attemptCount: attempt, startedAt: new Date(started).toISOString() });
         this.assertDuration(deadline);
-        const candidateInput: ResponseReliabilityInput = {
-          ...evidenceInput,
-          segments: evidenceInput.segments.map((segment, index) => ({ ...segment, text: candidate.correctedSegments[index].text })),
-        };
         const finalEvaluation = await this.evaluateCandidate(candidateInput, modelName, model.id, model.omitTemperature, job.settings, this.remaining(deadline));
         currentEvaluation = finalEvaluation;
         const hasText = correctedComponents.some((component) => component.type === 'text'
@@ -136,10 +179,16 @@ export class ResponseCorrectionService {
           await this.persist(job, {
             status: 'corrected', activeVersion: 'corrected', attemptCount: attempt,
             correctedComponents, finalReliabilityEvaluation: finalEvaluation,
-            appliedCorrections: candidate.appliedCorrections,
-            remainingUncertainties: candidate.remainingUncertainties,
+            appliedCorrections: candidate?.appliedCorrections,
+            remainingUncertainties: candidate?.remainingUncertainties,
             startedAt: new Date(started).toISOString(), completedAt: new Date().toISOString(), durationMs: Date.now() - started,
-            correctionModel: { modelId: model.id, modelName, correctorVersion: candidate.correctorVersion, promptVersion: candidate.promptVersion },
+            correctionModel: {
+              modelId: model.id,
+              modelName,
+              correctorVersion: candidate?.correctorVersion ?? 'corrective-replay-v2',
+              promptVersion: candidate?.promptVersion ?? promptVersion,
+            },
+            strategy,
           });
           return;
         }
@@ -149,6 +198,53 @@ export class ResponseCorrectionService {
       const code = this.failureCode(error);
       await this.applyFailure(job, code, Date.now() - started, attemptsMade);
     }
+  }
+
+  private async resolveReplayContext(questionMessageId: string, messageId: string) {
+    try {
+      return await this.replayContextService.resolve(questionMessageId);
+    } catch (error) {
+      this.logger.warn('Corrective replay context could not be resolved', {
+        messageId,
+        failureCode: 'corrective_replay_context_unavailable',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  }
+
+  private async buildExistingEvidenceCandidate(
+    job: CorrectionJob,
+    attempt: number,
+    currentEvaluation: ReliabilityEvaluation,
+    evidenceInput: ResponseReliabilityInput,
+    evidence: ReliabilityEvidenceItem[],
+    originalComponents: MessageComponent[],
+    previousCandidateSegments: Array<{ text: string }>,
+    modelName: string,
+    omitTemperature: boolean,
+    deadline: number,
+  ): Promise<{ correctedComponents: MessageComponent[]; candidateInput: ResponseReliabilityInput; candidate: CorrectorResponse }> {
+    const candidate = await this.callCorrector({
+      requestId: job.requestId,
+      messageId: job.messageId,
+      attemptNumber: attempt,
+      question: evidenceInput.question,
+      originalSegments: evidenceInput.segments.map(({ componentId, text }) => ({ componentId, text })),
+      previousCandidateSegments,
+      instructions: this.planner.build(currentEvaluation),
+      evidence,
+      judgeModel: modelName,
+      omitTemperature,
+    }, this.remaining(deadline));
+    return {
+      candidate,
+      correctedComponents: this.componentBuilder.build(originalComponents, evidenceInput.segments, candidate.correctedSegments),
+      candidateInput: {
+        ...evidenceInput,
+        segments: evidenceInput.segments.map((segment, index) => ({ ...segment, text: candidate.correctedSegments[index].text })),
+      },
+    };
   }
 
   private async callCorrector(payload: Record<string, unknown>, timeout: number): Promise<CorrectorResponse> {
@@ -237,6 +333,7 @@ export class ResponseCorrectionService {
 
   private assertDuration(deadline: number): void { this.remaining(deadline); }
   private failureCode(error: unknown): string {
+    if (error instanceof CorrectiveReplayFailure) return error.code;
     if (error instanceof CorrectionFailure) return error.code;
     if (!axios.isAxiosError(error)) return 'correction_failed';
     if (error.code === 'ECONNABORTED') return 'correction_duration_exceeded';

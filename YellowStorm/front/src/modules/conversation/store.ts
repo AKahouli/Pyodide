@@ -44,7 +44,13 @@ export function applyChunksToComponents(
           data: component.data,
         });
       }
-      result.push({ ...component, data: initializeStreamingData(component.type, component.data) });
+      const existingIndex = result.findIndex((item) => item.id === component.id);
+      if (component.type === 'toolInfo' && existingIndex >= 0) {
+        const existing = result[existingIndex];
+        result[existingIndex] = { ...existing, data: mergeStreamingData('toolInfo', existing.data, component.data) };
+      } else {
+        result.push({ ...component, data: initializeStreamingData(component.type, component.data) });
+      }
     } else if (action === 'update') {
       if (component.type === 'chart') {
         console.debug('[applyChunksToComponents][update][chart]', {
@@ -52,10 +58,14 @@ export function applyChunksToComponents(
           incomingDataKeys: Object.keys(component.data),
         });
       }
+      const hasExisting = result.some((comp) => comp.id === component.id);
       result = result.map((comp) => {
         if (comp.id !== component.id) return comp;
         return { ...comp, data: mergeStreamingData(comp.type, comp.data, component.data) };
       });
+      if (!hasExisting && component.type === 'toolInfo') {
+        result.push({ ...component, data: initializeStreamingData(component.type, component.data) });
+      }
     } else if (action === 'delete') {
       result = result.filter((comp) => comp.id !== component.id);
     }
@@ -162,6 +172,12 @@ function upsertMessage(messages: Message[], message: Message): { messages: Messa
  * Called on 'add' action.
  */
 function initializeStreamingData(type: string, data: Record<string, unknown>): Record<string, unknown> {
+  if (type === 'toolInfo') {
+    const sanitized = { ...data };
+    delete sanitized.resultJson;
+    delete sanitized.result_json;
+    return sanitized;
+  }
   if (type === 'chart') {
     // Backend sends chart data as an object with:
     // - data: array of data points (or nested object with data.data)
@@ -267,15 +283,20 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
     case 'toolInfo':
       // Terminal tool updates only include status. Retain the arguments from
       // the initial event so the live debug pane matches persisted history.
-      return {
+      const existingStatus = (existing.status as string) || 'running';
+      const incomingStatus = (incoming.status as string) || existingStatus;
+      const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'failed';
+      const merged = {
         ...existing,
         ...incoming,
         title: (incoming.title as string) || (existing.title as string) || '',
-        status: (incoming.status as string) || (existing.status as string) || 'running',
+        status: existingIsTerminal ? existingStatus : incomingStatus,
         params: (incoming.params as string) || (existing.params as string) || '',
         startedAt: (incoming.startedAt as string) || (existing.startedAt as string) || '',
-        resultJson: (incoming.resultJson as string) || (existing.resultJson as string) || '',
       };
+      delete merged.resultJson;
+      delete merged.result_json;
+      return merged;
     case 'chart': {
       // For charts, data is an object with properties (title, data, config, etc.)
       // and chartData is the actual array of data points

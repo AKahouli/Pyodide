@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types, Schema as MongooseSchema } from 'mongoose';
-import type { ReliabilityEvaluation, ResponseCorrectionWorkflow } from '../interfaces/message.interface';
+import type { MessageReplayContext, ReliabilityEvaluation, ResponseCorrectionWorkflow } from '../interfaces/message.interface';
 
 export type MessageDocument = HydratedDocument<Message>;
 
@@ -119,6 +119,10 @@ export class Message extends Document {
 
   @Prop({ type: Object, default: undefined })
   interaction?: Record<string, unknown>;
+
+  // Internal reproducible execution inputs. Never included in MessageResponse.
+  @Prop({ type: Object, default: undefined })
+  replayContext?: MessageReplayContext;
 
   @Prop({ type: Object, default: undefined })
   reliabilityEvaluation?: ReliabilityEvaluation;

@@ -4,6 +4,7 @@ import { ResponseCorrectionService } from './response-correction.service';
 import { ResponseCorrectionPlannerService } from './response-correction-planner.service';
 import { CorrectedResponseComponentBuilder } from './corrected-response-component.builder';
 import { ResponseCorrectionPolicyService } from './response-correction-policy.service';
+import { CorrectiveReplayFailure } from './corrective-replay-runner.service';
 
 describe('ResponseCorrectionService', () => {
   const originalComponents = [
@@ -22,7 +23,7 @@ describe('ResponseCorrectionService', () => {
     judgeModelId: 'model-1',
   };
 
-  function createService() {
+  function createService(useReplay = false, replayFailure?: CorrectiveReplayFailure) {
     const messageService = {
       getMessageDocument: jest.fn()
         .mockResolvedValueOnce({ _id: { toString: () => 'message-1' }, components: originalComponents })
@@ -43,12 +44,27 @@ describe('ResponseCorrectionService', () => {
       { build: jest.fn().mockReturnValue({
         requestId: 'request-1', messageId: 'message-1', question: 'What is revenue?',
         segments: [{ componentId: 'text-1', text: 'Revenue was 20.', evidence: [{ id: 'evidence-0', type: 'document', content: 'Revenue was 10.' }] }], globalEvidence: [],
+      }), buildFromComponents: jest.fn().mockReturnValue({
+        requestId: 'request-1:replay:1', messageId: 'message-1', question: 'What is revenue?',
+        segments: [{ componentId: 'replay-text', text: 'Revenue was 10.', evidence: [{ id: 'evidence-0', type: 'document', content: 'Revenue was 10.' }] }], globalEvidence: [],
       }) } as never,
       scoringService as never,
       new ResponseCorrectionPlannerService(),
       new CorrectedResponseComponentBuilder(),
       new ResponseCorrectionPolicyService(),
       reportService as never,
+      { resolve: jest.fn().mockResolvedValue(useReplay ? { historical: false, request: {
+        content: 'What is revenue?', attachedFileIds: [], webSearchEnabled: false,
+        deepSearchEnabled: false, agentIds: [], skillIds: [],
+      } } : undefined) } as never,
+      { run: replayFailure ? jest.fn().mockRejectedValue(replayFailure) : jest.fn().mockResolvedValue({
+          components: [{ id: 'replay-text', type: 'text', data: { content: 'Revenue was 10.' } }],
+          evidenceComponents: [
+            { id: 'replay-text', type: 'text', data: { content: 'Revenue was 10.' } },
+            { id: 'tool-search', type: 'toolInfo', data: { title: 'perform_document_search', status: 'completed', resultJson: '{"sources_text":[{"page_content":"Revenue was 10."}]}' } },
+          ],
+          usage: { inputTokens: 10, outputTokens: 5, durationMs: 100 }, promptVersion: 'corrective-replay-v2',
+        }) } as never,
       { setContext: jest.fn(), warn: jest.fn() } as never,
     );
     return { service, messageService, reportService };
@@ -60,6 +76,24 @@ describe('ResponseCorrectionService', () => {
   };
 
   afterEach(() => jest.restoreAllMocks());
+
+  it('evaluates private replay evidence while publishing only public components', async () => {
+    jest.spyOn(axios, 'post').mockResolvedValueOnce({ data: {
+      applicability: 'evaluated', claims: [{ claim: 'Revenue was 10.', status: 'supported', importance: 'critical', explanation: 'Matched', evidenceIds: ['evidence-0'] }],
+      evaluatorVersion: 'v1', promptVersion: 'p1',
+    } });
+    const { service, messageService } = createService(true);
+
+    await (service as unknown as { process: (input: unknown) => Promise<void> }).process(job);
+
+    const evidenceBuilder = (service as any).evidenceBuilder;
+    expect(evidenceBuilder.buildFromComponents).toHaveBeenCalledWith(expect.objectContaining({
+      components: expect.arrayContaining([expect.objectContaining({ id: 'tool-search', type: 'toolInfo' })]),
+    }));
+    expect(messageService.updateCorrectionWorkflow).toHaveBeenLastCalledWith('message-1', expect.objectContaining({
+      correctedComponents: [{ id: 'replay-text', type: 'text', data: { content: 'Revenue was 10.' } }],
+    }));
+  });
 
   it('publishes the first successful candidate while preserving original components', async () => {
     jest.spyOn(axios, 'post')
@@ -94,6 +128,48 @@ describe('ResponseCorrectionService', () => {
     await service.schedule({ ...job });
     expect((service as unknown as { queue: unknown[] }).queue).toHaveLength(1);
     expect(messageService.updateCorrectionWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses replay by default and evaluates replay-owned evidence', async () => {
+    jest.spyOn(axios, 'post').mockResolvedValueOnce({ data: {
+      applicability: 'evaluated', claims: [{ claim: 'Revenue was 10.', status: 'supported', importance: 'critical', explanation: 'Matched', evidenceIds: ['evidence-0'] }],
+      evaluatorVersion: 'v1', promptVersion: 'p1',
+    } });
+    const { service, messageService } = createService(true);
+
+    await (service as unknown as { process: (input: unknown) => Promise<void> }).process(job);
+
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    expect(axios.post).toHaveBeenCalledWith('http://adk/response-evaluation/evaluate', expect.objectContaining({
+      requestId: 'request-1:replay:1',
+    }), expect.any(Object));
+    expect(messageService.updateCorrectionWorkflow).toHaveBeenLastCalledWith('message-1', expect.objectContaining({
+      status: 'corrected', strategy: 'corrective_replay',
+    }));
+  });
+
+  it('uses existing evidence when the replay transport cannot start', async () => {
+    jest.spyOn(axios, 'post')
+      .mockResolvedValueOnce({ data: {
+        correctedSegments: [{ text: 'Revenue was 10.', evidenceIds: ['evidence-0'] }],
+        appliedCorrections: [{ claim: 'Revenue was 20.', action: 'replaced', explanation: 'Aligned', evidenceIds: ['evidence-0'] }],
+        remainingUncertainties: [], correctorVersion: 'v1', promptVersion: 'p1',
+      } })
+      .mockResolvedValueOnce({ data: {
+        applicability: 'evaluated', claims: [{ claim: 'Revenue was 10.', status: 'supported', importance: 'critical', explanation: 'Matched', evidenceIds: ['evidence-0'] }],
+        evaluatorVersion: 'v1', promptVersion: 'p1',
+      } });
+    const { service, messageService } = createService(
+      true,
+      new CorrectiveReplayFailure('corrective_replay_grpc_unavailable', false),
+    );
+
+    await (service as unknown as { process: (input: unknown) => Promise<void> }).process(job);
+
+    expect(axios.post).toHaveBeenNthCalledWith(1, 'http://adk/response-evaluation/correct', expect.any(Object), expect.any(Object));
+    expect(messageService.updateCorrectionWorkflow).toHaveBeenLastCalledWith('message-1', expect.objectContaining({
+      status: 'corrected', strategy: 'existing_evidence',
+    }));
   });
 
   it('creates one system report for human-review failure behavior', async () => {

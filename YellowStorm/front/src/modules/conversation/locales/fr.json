@@ -301,5 +301,7 @@
   "correction.uncertainties": "{{count}} incertitude(s) restante(s)",
   "correction.viewOriginal": "Voir l'original",
   "correction.viewCorrected": "Voir la correction",
-  "correction.viewAbstention": "Voir le résultat de la vérification"
+  "correction.viewAbstention": "Voir le résultat de la vérification",
+  "correction.strategy.correctiveReplay": "Réponse régénérée après vérification",
+  "correction.strategy.correctiveReplayDetail": "La demande initiale a été relancée afin de corriger les affirmations non étayées ou contradictoires."
 }

@@ -116,4 +116,18 @@ describe('MessageService createUserMessage agent tagging', () => {
 
     expect(conversationService.updateTaggedAgents).not.toHaveBeenCalled();
   });
+
+  it('removes raw tool results from public message responses', () => {
+    const response = (service as any).mapToResponse({
+      _id: new Types.ObjectId(),
+      conversationId: new Types.ObjectId(conversationId),
+      conversationType: 'ai',
+      components: [{
+        id: 'tool-1', type: 'toolInfo',
+        data: { title: 'connector', status: 'completed', resultJson: '{"secret":"value"}', params: '{"query":"safe"}' },
+      }],
+    });
+
+    expect(response.components[0].data).toEqual({ title: 'connector', status: 'completed', params: '{"query":"safe"}' });
+  });
 });

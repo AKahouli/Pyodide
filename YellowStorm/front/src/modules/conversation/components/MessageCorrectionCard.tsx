@@ -27,7 +27,12 @@ export function MessageCorrectionCard({ workflow, displayedVersion, onVersionCha
             <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t('correction.title')}</p>
             <p className="mt-0.5 text-sm font-medium leading-snug text-foreground">{t(`correction.status.${workflow.status}` as const)}</p>
           {workflow.status === 'corrected' ? (
-            <details className="group mt-1.5 text-xs text-muted-foreground">
+            workflow.strategy === 'corrective_replay' ? (
+              <div className="mt-1.5 text-xs text-muted-foreground">
+                <p className="font-medium text-foreground">{t('correction.strategy.correctiveReplay')}</p>
+                <p className="mt-0.5 leading-relaxed">{t('correction.strategy.correctiveReplayDetail')}</p>
+              </div>
+            ) : <details className="group mt-1.5 text-xs text-muted-foreground">
               <summary className="cursor-pointer rounded-sm font-medium hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{t('correction.correctedCount', { count: workflow.appliedCorrections?.length || 0 })}</summary>
               <ul className="mt-2 space-y-2 border-l border-border pl-3">
                 {workflow.appliedCorrections?.map((correction, index) => <li key={`${correction.claim}-${index}`}><span className="font-medium leading-relaxed text-foreground">{correction.claim}</span><span className="mt-0.5 block leading-relaxed">{correction.explanation}</span></li>)}

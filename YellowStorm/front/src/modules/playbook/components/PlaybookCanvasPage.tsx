@@ -550,9 +550,7 @@ function PlaybookCanvasInner() {
     if (id && !isGeneratingRoute) {
       let cancelled = false;
       setLoadedPlaybookId(null);
-      const hasExecutionParam = typeof window !== 'undefined'
-        ? new URLSearchParams(window.location.search).get('execution') !== null
-        : false;
+      const hasExecutionParam = searchParams.has('execution');
 
       // A normal playbook open always starts in the design view. Execution links restore the pane below.
       const workspaceExplorerPref = (() => { try { return localStorage.getItem('ys_workspace_explorer_open') === '1'; } catch { return false; } })();

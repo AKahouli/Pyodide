@@ -35,8 +35,6 @@ class ConversationSessionSeedService:
         history: Iterable[tuple[str, str]],
     ) -> bool:
         entries = [(role, text.strip()) for role, text in history if text.strip()]
-        if not entries:
-            raise ValueError("Conversation history must contain text")
 
         existing = await self._session_service.get_session(
             app_name=APP_NAME,
