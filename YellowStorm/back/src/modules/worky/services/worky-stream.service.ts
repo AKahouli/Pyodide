@@ -169,10 +169,22 @@ export class WorkyStreamService implements OnModuleInit {
   async ensureKickoffContext(
     streamId: string,
     userId: string,
-  ): Promise<{ aiSessionId: string; managerModelId: string | null }> {
+  ): Promise<{
+    aiSessionId: string;
+    plannerModelId: string | null;
+    executorModelId: string | null;
+    plannerPrompt: string | null;
+    executorPrompt: string | null;
+  }> {
     const doc = await this.streamModel
       .findById(streamId)
-      .lean<{ aiSessionId?: string | null; managerModelId?: string | null }>()
+      .lean<{
+        aiSessionId?: string | null;
+        plannerModelId?: string | null;
+        executorModelId?: string | null;
+        plannerPrompt?: string | null;
+        executorPrompt?: string | null;
+      }>()
       .exec();
     if (!doc) {
       throw new NotFoundException(ErrorCode.WORKY_STREAM_NOT_FOUND, 'Worky stream not found.');
@@ -182,7 +194,13 @@ export class WorkyStreamService implements OnModuleInit {
       aiSessionId = await this.orchestrator.createSession(userId);
       await this.streamModel.updateOne({ _id: streamId }, { $set: { aiSessionId } }).exec();
     }
-    return { aiSessionId, managerModelId: doc.managerModelId ?? null };
+    return {
+      aiSessionId,
+      plannerModelId: doc.plannerModelId ?? null,
+      executorModelId: doc.executorModelId ?? null,
+      plannerPrompt: doc.plannerPrompt ?? null,
+      executorPrompt: doc.executorPrompt ?? null,
+    };
   }
 
   async findByAiSessionId(

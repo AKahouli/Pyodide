@@ -269,12 +269,21 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
   it('returns the existing aiSessionId without creating a new session', async () => {
     const { service, grpcClient, updateOne } = makeEnsureService({
       aiSessionId: 'sess-existing',
-      managerModelId: 'anthropic/claude-3-5-sonnet',
+      plannerModelId: 'anthropic/claude-3-5-sonnet',
+      executorModelId: 'openai/gpt-4o-mini',
+      plannerPrompt: 'plan',
+      executorPrompt: 'exec',
     });
 
     const res = await service.ensureKickoffContext(streamId, userId);
 
-    expect(res).toEqual({ aiSessionId: 'sess-existing', managerModelId: 'anthropic/claude-3-5-sonnet' });
+    expect(res).toEqual({
+      aiSessionId: 'sess-existing',
+      plannerModelId: 'anthropic/claude-3-5-sonnet',
+      executorModelId: 'openai/gpt-4o-mini',
+      plannerPrompt: 'plan',
+      executorPrompt: 'exec',
+    });
     expect(grpcClient.createSession).not.toHaveBeenCalled();
     expect(updateOne).not.toHaveBeenCalled();
   });
@@ -282,14 +291,23 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
   it('lazily creates and persists a session when aiSessionId is null', async () => {
     const { service, grpcClient, updateOne } = makeEnsureService({
       aiSessionId: null,
-      managerModelId: null,
+      plannerModelId: null,
+      executorModelId: null,
+      plannerPrompt: null,
+      executorPrompt: null,
     });
 
     const res = await service.ensureKickoffContext(streamId, userId);
 
     expect(grpcClient.createSession).toHaveBeenCalledWith(userId);
     expect(updateOne).toHaveBeenCalledWith({ _id: streamId }, { $set: { aiSessionId: 'sess-new' } });
-    expect(res).toEqual({ aiSessionId: 'sess-new', managerModelId: null });
+    expect(res).toEqual({
+      aiSessionId: 'sess-new',
+      plannerModelId: null,
+      executorModelId: null,
+      plannerPrompt: null,
+      executorPrompt: null,
+    });
   });
 
   it('throws WORKY_STREAM_NOT_FOUND when the stream does not exist', async () => {
