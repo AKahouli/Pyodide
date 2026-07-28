@@ -23,6 +23,7 @@ import { LoggerService } from '../../logger';
 import { NotFoundException } from '../../exceptions';
 import { AppException } from '../../exceptions/exceptions/base.exception';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { sanitizeTaskDiagnosticItems } from '../utils/task-diagnostics';
 import { StreamEvent } from '../interfaces/stream.interface';
 import { EmailService } from '../../email/email.service';
 
@@ -863,6 +864,9 @@ export class MessageService {
   private publicComponents(components: unknown): MessageComponent[] | undefined {
     if (!Array.isArray(components)) return undefined;
     return components.map((component) => {
+      if (component?.type === 'task' && component.data) {
+        return { ...component, data: { ...component.data, items: sanitizeTaskDiagnosticItems(component.data.items) } };
+      }
       if (component?.type !== 'toolInfo' || !component.data) return component;
       const { resultJson: _resultJson, result_json: _resultJsonSnake, ...publicData } = component.data;
       return { ...component, data: publicData };

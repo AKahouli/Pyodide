@@ -13,8 +13,9 @@ describe('CorrectiveReplayRunnerService', () => {
             { id: 'text-1', type: 'text', data: { content: 'Corrected answer' } },
             { id: 'reasoning-1', type: 'reasoning', data: { content: 'Private' } },
             { id: 'task-1', type: 'task', data: { title: 'Smart Agent', items: ['Raw replay context'], status: 'completed' } },
-            { id: 'thought-1', type: 'chainOfThought', data: { steps: ['Reviewing the request', '<corrective_replay_context>private</corrective_replay_context>'] } },
+            { id: 'thought-1', type: 'chainOfThought', data: { steps: ['search_documents', 'Review request token=private', '<corrective_replay_context>private</corrective_replay_context>'] } },
             { id: 'tool-1', type: 'toolInfo', data: { title: 'search_documents', status: 'completed', params: '{"token":"private"}', resultJson: '{"private":true}', startedAt: '2026-07-28T08:00:00Z' } },
+            { id: 'tool-unsafe', type: 'toolInfo', data: { title: 'token=private', status: 'completed' } },
             { id: 'citation-1', type: 'citation', data: { content: 'Evidence' } },
           ],
           usage: { inputTokens: 12, outputTokens: 8, model: 'model', durationMs: 25 },
@@ -49,9 +50,9 @@ describe('CorrectiveReplayRunnerService', () => {
     );
     expect(streamService.deleteConversationSession).toHaveBeenCalledWith('user-1', seededSession, expect.any(String));
     expect(result.components.map((component) => component.type)).toEqual(['text', 'task', 'chainOfThought', 'toolInfo', 'citation']);
-    expect(result.components.find((component) => component.type === 'chainOfThought')?.data).toEqual({ steps: ['Reviewing the request'] });
+    expect(result.components.find((component) => component.type === 'chainOfThought')?.data).toEqual({ steps: ['search_documents'] });
     expect(result.components.find((component) => component.type === 'toolInfo')?.data).toEqual({ title: 'search_documents', status: 'completed', startedAt: '2026-07-28T08:00:00Z' });
-    expect(result.evidenceComponents.map((component) => component.type)).toEqual(['text', 'reasoning', 'task', 'chainOfThought', 'toolInfo', 'citation']);
+    expect(result.evidenceComponents.map((component) => component.type)).toEqual(['text', 'reasoning', 'task', 'chainOfThought', 'toolInfo', 'toolInfo', 'citation']);
     expect(usageService.recordUsage).toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.objectContaining({ feature: 'response_correction_replay' }),
     }));

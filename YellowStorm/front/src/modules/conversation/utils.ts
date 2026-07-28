@@ -35,7 +35,46 @@ function getComponentType(component: MessageComponent): string {
  * reasoning, tool calls, and unrecognised payloads are never chat content.
  */
 export function mapConversationComponentsToContentParts(components: MessageComponent[]): MessageContentPart[] {
-  return mapComponentsToContentParts(components.filter((component) => conversationVisibleComponentTypes.has(getComponentType(component))));
+  const hasTask = components.some((component) => getComponentType(component) === 'task');
+  const safeToolTitle = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null;
+    const title = value.replace(/\s+/g, ' ').trim();
+    if (!/^[A-Za-z][A-Za-z0-9_. -]{0,119}$/.test(title)) return null;
+    return /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|password|passwd|secret|client[_-]?secret|connection[_-]?string)\s*[:=]/i.test(title) ? null : title;
+  };
+  const activityKey = (value: string) => value.replace(/[_\-.]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  const toolTitles = new Set(components
+    .filter((component) => getComponentType(component) === 'toolInfo')
+    .map((component) => safeToolTitle(component.data?.title))
+    .filter((title): title is string => Boolean(title))
+    .map(activityKey));
+  const projected = components.flatMap((component) => {
+    const type = getComponentType(component);
+    if (conversationVisibleComponentTypes.has(type)) return [component];
+    if (!hasTask) return [];
+
+    if (type === 'chainOfThought') {
+      const steps = Array.isArray(component.data?.steps)
+        ? component.data.steps
+          .filter((step): step is string => typeof step === 'string')
+          .map((step) => step.replace(/\s+/g, ' ').trim())
+          .filter((step) => step.length > 0 && step.length <= 160 && toolTitles.has(activityKey(step)))
+          .slice(0, 20)
+        : [];
+      return steps.length ? [{ ...component, type: 'chainOfThought' as const, data: { steps } }] : [];
+    }
+
+    if (type === 'toolInfo') {
+      const title = safeToolTitle(component.data?.title);
+      if (!title) return [];
+      const status = component.data?.status === 'completed' || component.data?.status === 'failed' ? component.data.status : 'running';
+      const startedAt = typeof component.data?.startedAt === 'string' && !Number.isNaN(Date.parse(component.data.startedAt)) ? component.data.startedAt : undefined;
+      return [{ ...component, type: 'toolInfo' as const, data: { title, status, ...(startedAt ? { startedAt } : {}) } }];
+    }
+
+    return [];
+  });
+  return mapComponentsToContentParts(projected);
 }
 
 export function getConversationStreamActivity(components: MessageComponent[]): ConversationStreamActivity {

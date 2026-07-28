@@ -1,5 +1,6 @@
 import { ComponentType } from '../interfaces/message.interface';
 import { normalizeChoiceComponentData } from './choice-component-normalizer';
+import { redactTaskDiagnosticText } from './task-diagnostics';
 
 const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> = [
   { field: 'text', type: 'text' },
@@ -258,7 +259,7 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
         type,
         data: {
           title: comp.task?.title || '',
-          items: (comp.task?.items || []).map((item: any) => item.text || ''),
+          items: (comp.task?.items || []).map((item: any) => redactTaskDiagnosticText(item.text || '')),
           status: comp.task?.status || 'pending',
         },
       };

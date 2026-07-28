@@ -206,6 +206,7 @@ export type AIMessageContentProps = HTMLAttributes<HTMLDivElement> & {
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
   taskDisplay?: 'raw' | 'activity';
+  showTaskDiagnostics?: boolean;
 };
 
 type TaskActivityStep = {
@@ -224,7 +225,11 @@ function formatActivityLabel(value: string): string {
 }
 
 function buildTaskActivity(parts: MessageContentPart[]): TaskActivityStep[] {
-  const tools = parts.filter((part): part is ToolInfoPart => part.type === 'toolInfo' && Boolean(safeActivityLabel(part.title)));
+  const tools = parts.filter((part): part is ToolInfoPart => {
+    if (part.type !== 'toolInfo') return false;
+    const title = safeActivityLabel(part.title);
+    return Boolean(title && /^[A-Za-z][A-Za-z0-9_. -]{0,119}$/.test(title) && redactDiagnosticText(title) === title);
+  });
   const toolByLabel = new Map(tools.map((tool) => [formatLabel(tool.title).toLowerCase(), tool]));
   const activity: TaskActivityStep[] = [];
   const seen = new Set<string>();
@@ -236,9 +241,11 @@ function buildTaskActivity(parts: MessageContentPart[]): TaskActivityStep[] {
       if (!safeStep) continue;
       const label = formatActivityLabel(safeStep);
       const key = label.toLowerCase();
+      const tool = toolByLabel.get(key);
+      if (!tool) continue;
       if (seen.has(key)) continue;
       seen.add(key);
-      activity.push({ label, status: toolByLabel.get(key)?.status });
+      activity.push({ label, status: tool.status });
     }
   }
 
@@ -256,14 +263,16 @@ function buildTaskActivity(parts: MessageContentPart[]): TaskActivityStep[] {
 function redactDiagnosticText(value: string): string {
   return value
     .slice(0, 30_000)
-    .replace(/(authorization\s*:\s*bearer\s+)[^\s<]+/gi, '$1[REDACTED]')
-    .replace(/((?:api[_-]?key|access[_-]?token|password|secret)\s*["']?\s*[:=]\s*["']?)[^\s"',}<]+/gi, '$1[REDACTED]');
+    .replace(/(authorization\s*:\s*)(?:bearer|basic)\s+[^\s<]+/gi, '$1[REDACTED]')
+    .replace(/(cookie\s*:\s*)[^\r\n<]+/gi, '$1[REDACTED]')
+    .replace(/([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)[^@\s/]+@/gi, '$1[REDACTED]@')
+    .replace(/((?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|password|passwd|secret|client[_-]?secret|connection[_-]?string)\s*["']?\s*[:=]\s*["']?)[^\s"',}<;&]+/gi, '$1[REDACTED]');
 }
 
 /**
  * AIMessageContent - Renders structured AI message content using ai-sdk components
  */
-export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', ...props }: AIMessageContentProps) => {
+export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', showTaskDiagnostics = true, ...props }: AIMessageContentProps) => {
   const choicePrompts = new Set(parts.filter((part): part is ChoicePart => part.type === 'choice' && part.status === 'ready').map((part) => part.prompt.trim()).filter(Boolean));
   const hasTask = parts.some((part) => part.type === 'task');
   const taskActivity = useMemo(() => buildTaskActivity(parts), [parts]);
@@ -275,7 +284,7 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, onComp
   return (
     <div className={cn('space-y-4', className)} {...props}>
       {visibleParts.map((part, index) => (
-        <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} />
+        <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} />
       ))}
     </div>
   );
@@ -292,9 +301,10 @@ type AIMessagePartProps = {
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
   taskDisplay?: 'raw' | 'activity';
   taskActivity?: TaskActivityStep[];
+  showTaskDiagnostics?: boolean;
 };
 
-const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', taskActivity = [] }: AIMessagePartProps) => {
+const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', taskActivity = [], showTaskDiagnostics = true }: AIMessagePartProps) => {
   switch (part.type) {
     case 'text':
       return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} />;
@@ -313,7 +323,7 @@ const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInt
     case 'choice':
       return <ChoicePartRenderer {...part} onAction={onComponentAction} submittedInteraction={choiceInteractions?.get(part.componentId)} externallyDisabled={isStreaming} />;
     case 'task':
-      return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} activity={taskDisplay === 'activity' ? taskActivity : undefined} />;
+      return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} activity={taskDisplay === 'activity' ? taskActivity : undefined} showDiagnostics={showTaskDiagnostics} />;
     case 'error':
       return <ErrorPartRenderer title={part.title} content={part.content} />;
     case 'sources':
@@ -790,7 +800,7 @@ const ChainOfThoughtPartRenderer = ({ steps }: { steps: string[] }) => {
 };
 
 // Task Part
-const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity }: { title: string; items: string[]; status?: 'pending' | 'in_progress' | 'completed'; isStreaming?: boolean; activity?: TaskActivityStep[] }) => {
+const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity, showDiagnostics = true }: { title: string; items: string[]; status?: 'pending' | 'in_progress' | 'completed'; isStreaming?: boolean; activity?: TaskActivityStep[]; showDiagnostics?: boolean }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const activityMode = activity !== undefined;
@@ -808,7 +818,7 @@ const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity 
       <Task className='my-2' defaultOpen={isStreaming}>
         <div className='flex items-center gap-1'>
           <TaskTrigger className='min-w-0 flex-1' title={formatLabel(title)} active={isStreaming && status === 'in_progress'} />
-          {activityMode && <TaskDiagnosticsTrigger aria-label={tCommon('ai.task.diagnostics.open')} title={tCommon('ai.task.diagnostics.open')} onClick={() => setDiagnosticsOpen(true)} />}
+          {activityMode && showDiagnostics && <TaskDiagnosticsTrigger aria-label={tCommon('ai.task.diagnostics.open')} title={tCommon('ai.task.diagnostics.open')} onClick={() => setDiagnosticsOpen(true)} />}
         </div>
         <TaskContent>
           {activityMode ? (
@@ -826,7 +836,7 @@ const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity 
         </TaskContent>
       </Task>
 
-      {activityMode && (
+      {activityMode && showDiagnostics && (
         <Dialog open={diagnosticsOpen} onOpenChange={setDiagnosticsOpen}>
           <DialogContent className='max-h-[80vh] max-w-3xl overflow-hidden'>
             <DialogHeader>

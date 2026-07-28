@@ -36,7 +36,7 @@ function ShareMessageBubble({ message, index }: { message: PublicShareMessage; i
 
   return (
     <MessageProvider isLastAiMessage={false} isStreaming={false}>
-      <ChatMessageBubble message={chatMessage} />
+      <ChatMessageBubble message={chatMessage} showTaskDiagnostics={false} />
     </MessageProvider>
   );
 }

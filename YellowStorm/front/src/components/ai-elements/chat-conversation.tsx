@@ -68,6 +68,7 @@ export type ChatMessageBubbleProps = HTMLAttributes<HTMLDivElement> & {
   assistantAvatar?: ReactNode;
   /** Whether this message is currently streaming. Affects default open state of collapsible components. */
   isStreaming?: boolean;
+  showTaskDiagnostics?: boolean;
 };
 
 /**
@@ -75,7 +76,7 @@ export type ChatMessageBubbleProps = HTMLAttributes<HTMLDivElement> & {
  * User messages appear on the right, AI messages on the left
  * AI messages support structured content with reasoning, queues, plans, etc.
  */
-export const ChatMessageBubble = ({ message, className, showAvatar = true, userAvatar, assistantAvatar, isStreaming = false, ...props }: ChatMessageBubbleProps) => {
+export const ChatMessageBubble = ({ message, className, showAvatar = true, userAvatar, assistantAvatar, isStreaming = false, showTaskDiagnostics = true, ...props }: ChatMessageBubbleProps) => {
   const isUser = message.role === 'user';
   const isStructuredContent = Array.isArray(message.content);
 
@@ -101,14 +102,14 @@ export const ChatMessageBubble = ({ message, className, showAvatar = true, userA
               <>
                 {reasoningParts.length > 0 && (
                   <div className='px-1'>
-                    <AIMessageContent parts={reasoningParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} taskDisplay='activity' />
+                    <AIMessageContent parts={reasoningParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} taskDisplay='activity' showTaskDiagnostics={showTaskDiagnostics} />
                   </div>
                 )}
 
                 {/* Only render bubble if there are other parts */}
                 {otherParts.length > 0 && (
                   <div className={cn('rounded-2xl text-sm shadow-xs', 'rounded-tl-sm border border-border/70 bg-muted/45 px-4 py-4 text-foreground dark:bg-muted/30')}>
-                    <AIMessageContent parts={otherParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} taskDisplay='activity' />
+                    <AIMessageContent parts={otherParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} taskDisplay='activity' showTaskDiagnostics={showTaskDiagnostics} />
                     {message.timestamp && <time className='mt-2 block text-[10px] opacity-50'>{formatMessageTimestamp(message.timestamp)}</time>}
                   </div>
                 )}
