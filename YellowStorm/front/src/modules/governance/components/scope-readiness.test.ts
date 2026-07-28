@@ -33,11 +33,12 @@ describe('scope readiness sequence', () => {
   it('chooses the first incomplete step even when a later step is a blocker', () => {
     const checks = [
       readinessCheck('ownership_assigned', 'failed'),
-      readinessCheck('audience_configured', 'warning'),
+      readinessCheck('agents_mapped', 'warning'),
       readinessCheck('knowledge_mapped', 'passed', 'source'),
     ];
 
-    expect(findNextReadinessCheck(checks)?.key).toBe('audience_configured');
+    // Agents precede ownership in the lifecycle regardless of audience feature flag.
+    expect(findNextReadinessCheck(checks)?.key).toBe('agents_mapped');
   });
 
   it('marks Agents ready as soon as an assistant is mapped', () => {

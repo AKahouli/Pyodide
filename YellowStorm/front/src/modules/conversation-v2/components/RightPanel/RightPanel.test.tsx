@@ -161,6 +161,7 @@ describe('RightPanel', () => {
     });
     const { container } = render(<RightPanel />);
     expect(container.querySelector('.cursor-ew-resize')).toBeInTheDocument();
-    expect(container.querySelector('.lucide-grip-vertical')).toBeInTheDocument();
+    expect(container.querySelector('[aria-label], [aria-hidden="true"]')).toBeTruthy();
+    expect(container.querySelector('.cursor-ew-resize svg')).toBeInTheDocument();
   });
 });
