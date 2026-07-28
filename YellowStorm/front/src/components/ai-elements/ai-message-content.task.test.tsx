@@ -43,7 +43,8 @@ describe('AIMessageContent task activity', () => {
     );
 
     await userEvent.click(screen.getByRole('button', { name: /Smart Agent/ }));
-    expect(screen.getByText('Search Documents')).toBeInTheDocument();
+    expect(screen.getByText('ai.task.activity.completed')).toBeInTheDocument();
+    expect(screen.queryByText('Search Documents')).not.toBeInTheDocument();
     expect(screen.queryByText(/Review request token/)).not.toBeInTheDocument();
     expect(screen.queryByText(/original_user_request/)).not.toBeInTheDocument();
     expect(screen.queryByText(/corrective_replay_context/)).not.toBeInTheDocument();
@@ -58,13 +59,13 @@ describe('AIMessageContent task activity', () => {
   it('redacts common credential forms from diagnostics', async () => {
     render(<AIMessageContent taskDisplay='activity' parts={[{
       type: 'task', title: 'smart_agent', status: 'completed', items: [
-        'token=one refresh_token=two id_token=three\nAuthorization: Basic dXNlcjpwYXNz\nCookie: session=four\nhttps://user:five@example.com',
+        'token=one refresh_token=two id_token=three API key=six access token=seven client secret=eight connection string=nine\nAuthorization: Basic dXNlcjpwYXNz\nCookie: session=four\nhttps://user:five@example.com',
       ],
     }]} />);
 
     await userEvent.click(screen.getByRole('button', { name: 'ai.task.diagnostics.open' }));
     const context = screen.getByText(/token=\[REDACTED\]/);
-    expect(context).not.toHaveTextContent(/one|two|three|dXNlcjpwYXNz|session=four|user:five/);
+    expect(context).not.toHaveTextContent(/one|two|three|six|seven|eight|nine|dXNlcjpwYXNz|session=four|user:five/);
   });
 
   it('can suppress diagnostics for non-participant surfaces', () => {

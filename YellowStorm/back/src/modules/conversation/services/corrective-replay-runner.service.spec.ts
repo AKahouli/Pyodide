@@ -49,9 +49,7 @@ describe('CorrectiveReplayRunnerService', () => {
       'user-1', 'conversation-1', expect.any(Object), undefined, expect.any(Object), expect.any(Object), seededSession,
     );
     expect(streamService.deleteConversationSession).toHaveBeenCalledWith('user-1', seededSession, expect.any(String));
-    expect(result.components.map((component) => component.type)).toEqual(['text', 'task', 'chainOfThought', 'toolInfo', 'citation']);
-    expect(result.components.find((component) => component.type === 'chainOfThought')?.data).toEqual({ steps: ['search_documents'] });
-    expect(result.components.find((component) => component.type === 'toolInfo')?.data).toEqual({ title: 'search_documents', status: 'completed', startedAt: '2026-07-28T08:00:00Z' });
+    expect(result.components.map((component) => component.type)).toEqual(['text', 'task', 'citation']);
     expect(result.evidenceComponents.map((component) => component.type)).toEqual(['text', 'reasoning', 'task', 'chainOfThought', 'toolInfo', 'toolInfo', 'citation']);
     expect(usageService.recordUsage).toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.objectContaining({ feature: 'response_correction_replay' }),

@@ -214,59 +214,13 @@ type TaskActivityStep = {
   status?: ToolInfoPart['status'];
 };
 
-function safeActivityLabel(value: string): string | null {
-  const label = value.replace(/\s+/g, ' ').trim();
-  if (!label || label.length > 160 || /[<>]/.test(label)) return null;
-  return label;
-}
-
-function formatActivityLabel(value: string): string {
-  return /[_-]/.test(value) ? formatLabel(value) : value;
-}
-
-function buildTaskActivity(parts: MessageContentPart[]): TaskActivityStep[] {
-  const tools = parts.filter((part): part is ToolInfoPart => {
-    if (part.type !== 'toolInfo') return false;
-    const title = safeActivityLabel(part.title);
-    return Boolean(title && /^[A-Za-z][A-Za-z0-9_. -]{0,119}$/.test(title) && redactDiagnosticText(title) === title);
-  });
-  const toolByLabel = new Map(tools.map((tool) => [formatLabel(tool.title).toLowerCase(), tool]));
-  const activity: TaskActivityStep[] = [];
-  const seen = new Set<string>();
-
-  for (const part of parts) {
-    if (part.type !== 'chainOfThought') continue;
-    for (const rawStep of part.steps) {
-      const safeStep = safeActivityLabel(rawStep);
-      if (!safeStep) continue;
-      const label = formatActivityLabel(safeStep);
-      const key = label.toLowerCase();
-      const tool = toolByLabel.get(key);
-      if (!tool) continue;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      activity.push({ label, status: tool.status });
-    }
-  }
-
-  for (const tool of tools) {
-    const label = formatLabel(tool.title);
-    const key = label.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    activity.push({ label, status: tool.status });
-  }
-
-  return activity.slice(0, 20);
-}
-
 function redactDiagnosticText(value: string): string {
   return value
     .slice(0, 30_000)
     .replace(/(authorization\s*:\s*)(?:bearer|basic)\s+[^\s<]+/gi, '$1[REDACTED]')
     .replace(/(cookie\s*:\s*)[^\r\n<]+/gi, '$1[REDACTED]')
     .replace(/([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)[^@\s/]+@/gi, '$1[REDACTED]@')
-    .replace(/((?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|password|passwd|secret|client[_-]?secret|connection[_-]?string)\s*["']?\s*[:=]\s*["']?)[^\s"',}<;&]+/gi, '$1[REDACTED]');
+    .replace(/((?:api(?:[\s_-]+)?key|access(?:[\s_-]+)?token|refresh(?:[\s_-]+)?token|id(?:[\s_-]+)?token|token|password|passwd|secret|client(?:[\s_-]+)?secret|connection(?:[\s_-]+)?string)\s*["']?\s*[:=]\s*["']?)[^\s"',}<;&]+/gi, '$1[REDACTED]');
 }
 
 /**
@@ -275,7 +229,7 @@ function redactDiagnosticText(value: string): string {
 export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', showTaskDiagnostics = true, ...props }: AIMessageContentProps) => {
   const choicePrompts = new Set(parts.filter((part): part is ChoicePart => part.type === 'choice' && part.status === 'ready').map((part) => part.prompt.trim()).filter(Boolean));
   const hasTask = parts.some((part) => part.type === 'task');
-  const taskActivity = useMemo(() => buildTaskActivity(parts), [parts]);
+  const taskActivity: TaskActivityStep[] = [];
   const visibleParts = parts.filter((part) => {
     if (part.type === 'text' && choicePrompts.has(part.content.trim())) return false;
     return !(taskDisplay === 'activity' && hasTask && (part.type === 'chainOfThought' || part.type === 'toolInfo'));

@@ -106,21 +106,6 @@ describe('conversation utils', () => {
     expect(getConversationStreamActivity([{ type: 'text', data: { content: 'Public answer' } }] as never)).toBe('responding');
   });
 
-  it('keeps only safe task activity metadata in the conversation projection', () => {
-    const parts = mapConversationComponentsToContentParts([
-      { type: 'task', data: { title: 'Smart Agent', items: ['Raw context'], status: 'completed' } },
-      { type: 'chainOfThought', data: { steps: ['search_documents', 'Review request token=private', '<private>hidden</private>'] } },
-      { type: 'toolInfo', data: { title: 'search_documents', status: 'completed', params: '{"token":"private"}', resultJson: '{"private":true}' } },
-      { type: 'toolInfo', data: { title: 'token=private', status: 'completed' } },
-    ] as never);
-
-    expect(parts).toEqual([
-      { type: 'task', title: 'Smart Agent', items: ['Raw context'], status: 'completed' },
-      { type: 'chainOfThought', steps: ['search_documents'] },
-      { type: 'toolInfo', title: 'search_documents', status: 'completed', params: '', startedAt: undefined },
-    ]);
-  });
-
   it('maps persisted stream errors from the backend contract', () => {
     expect(mapConversationComponentsToContentParts([
       { type: 'error', data: { code: 'ERR_1406', message: 'AI stream failed unexpectedly.' } },

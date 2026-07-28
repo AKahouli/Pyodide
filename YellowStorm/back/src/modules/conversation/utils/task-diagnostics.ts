@@ -1,4 +1,4 @@
-const CREDENTIAL_KEY = '(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|password|passwd|secret|client[_-]?secret|connection[_-]?string)';
+const CREDENTIAL_KEY = '(?:api(?:[\\s_-]+)?key|access(?:[\\s_-]+)?token|refresh(?:[\\s_-]+)?token|id(?:[\\s_-]+)?token|token|password|passwd|secret|client(?:[\\s_-]+)?secret|connection(?:[\\s_-]+)?string)';
 
 export function redactTaskDiagnosticText(value: string): string {
   return value

@@ -6,10 +6,8 @@ import type { MessageComponent, MessageReplayContext, ReliabilityEvaluation } fr
 import { MessageService } from './message.service';
 import { StreamService, type ConversationHistoryEntry } from './stream.service';
 import { CorrectiveReplayPromptBuilder, CORRECTIVE_REPLAY_PROMPT_VERSION } from './corrective-replay-prompt.builder';
-import { redactTaskDiagnosticText } from '../utils/task-diagnostics';
 
-const INTERNAL_COMPONENT_TYPES = new Set(['reasoning', 'queue', 'checkpoint']);
-const TOOL_STATUSES = new Set(['running', 'completed', 'failed']);
+const INTERNAL_COMPONENT_TYPES = new Set(['reasoning', 'chainOfThought', 'queue', 'checkpoint', 'toolInfo']);
 
 export interface CorrectiveReplayResult {
   components: MessageComponent[];
@@ -93,7 +91,7 @@ export class CorrectiveReplayRunnerService {
       }
       replayStarted = true;
       const result = await execution.result;
-      const components = this.participantVisibleComponents(result.components);
+      const components = result.components.filter((component) => !INTERNAL_COMPONENT_TYPES.has(component.type));
       if (!this.visibleText(components)) throw new CorrectiveReplayFailure('corrective_replay_empty_response', true);
 
       await this.recordReplayUsage(input, result.usage, true);
@@ -121,60 +119,6 @@ export class CorrectiveReplayRunnerService {
     } finally {
       if (seeded) await this.cleanupSession(input.userId, sessionId, idempotencyKey, input.messageId, replayRequestId);
     }
-  }
-
-  private participantVisibleComponents(components: MessageComponent[]): MessageComponent[] {
-    const toolTitles = new Set(
-      components
-        .filter((component) => component.type === 'toolInfo')
-        .map((component) => this.safeToolTitle(component.data?.title))
-        .filter((title): title is string => Boolean(title))
-        .map((title) => this.activityKey(title)),
-    );
-    return components.flatMap((component) => this.participantVisibleComponent(component, toolTitles));
-  }
-
-  private participantVisibleComponent(component: MessageComponent, toolTitles: ReadonlySet<string>): MessageComponent[] {
-    if (INTERNAL_COMPONENT_TYPES.has(component.type)) return [];
-
-    if (component.type === 'chainOfThought') {
-      const steps = Array.isArray(component.data?.steps)
-        ? component.data.steps
-          .filter((step): step is string => typeof step === 'string')
-          .map((step) => step.replace(/\s+/g, ' ').trim())
-          .filter((step) => step.length > 0 && step.length <= 160 && toolTitles.has(this.activityKey(step)))
-          .slice(0, 20)
-        : [];
-      return steps.length ? [{ ...component, data: { steps } }] : [];
-    }
-
-    if (component.type === 'toolInfo') {
-      const title = this.safeToolTitle(component.data?.title);
-      if (!title) return [];
-      const status = typeof component.data?.status === 'string' && TOOL_STATUSES.has(component.data.status)
-        ? component.data.status
-        : 'running';
-      const startedAt = typeof component.data?.startedAt === 'string' && !Number.isNaN(Date.parse(component.data.startedAt))
-        ? component.data.startedAt
-        : undefined;
-      return [{
-        ...component,
-        data: { title, status, ...(startedAt ? { startedAt } : {}) },
-      }];
-    }
-
-    return [component];
-  }
-
-  private safeToolTitle(value: unknown): string | undefined {
-    if (typeof value !== 'string') return undefined;
-    const title = value.replace(/\s+/g, ' ').trim();
-    if (!/^[A-Za-z][A-Za-z0-9_. -]{0,119}$/.test(title)) return undefined;
-    return redactTaskDiagnosticText(title) === title ? title : undefined;
-  }
-
-  private activityKey(value: string): string {
-    return value.replace(/[_\-.]+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
   }
 
   private async recordReplayUsage(
