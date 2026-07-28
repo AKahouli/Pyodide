@@ -33,7 +33,7 @@ describe('GovernanceScopeOverviewService', () => {
     const revisionModel = { findById: jest.fn().mockReturnValue(execLean({ _id: revisionId, deploymentId, revisionNumber: 1, status: 'draft', agentId, allowedAgentIds: [agentId, specialistAgentId], workspaceIds: [], sourceIds: [], includedSourceIds: [], excludedSourceIds: [], createdBy: agentId, createdAt: new Date(), updatedAt: new Date() })) };
     const dryRunModel = { findOne: jest.fn().mockReturnValue(sortedLean({ _id: new Types.ObjectId(), programId, scopeId, deploymentId, revisionId, testerId: agentId, status: 'passed', testCases: [], checks: {}, createdAt: new Date(), updatedAt: new Date() })) };
     const membershipModel = { find: jest.fn().mockReturnValue(execLean([{ _id: new Types.ObjectId(), programId, scopeId, role: 'scope_approver', status: 'active' }])) };
-    const agentModel = { find: jest.fn().mockReturnValue(execLean([agentId, specialistAgentId].map((_id) => ({ _id, guardrails: { promptInjection: { inputGuardrailEnabled: false, outputGuardrailEnabled: false, toolCallGuardrailEnabled: false } } })))) };
+    const agentModel = { find: jest.fn().mockReturnValue(execLean([agentId, specialistAgentId].map((_id) => ({ _id, guardrails: { promptInjection: { inputGuardrailEnabled: true, outputGuardrailEnabled: false, toolCallGuardrailEnabled: false } } })))) };
     const metricModel = { find: jest.fn().mockReturnValue(execLean([{ type: 'usage', channel: 'widget', value: 3 }])) };
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -64,18 +64,20 @@ describe('GovernanceScopeOverviewService', () => {
     expect(overview.readiness.checks.map((check) => check.key)).toEqual([
       'scope_active',
       'agents_mapped',
-      'guardrails_reviewed',
       'knowledge_mapped',
-      'audience_configured',
       'ownership_assigned',
+      'guardrails_reviewed',
       'draft_revision',
       'dry_run_passed',
+      'audience_configured',
+      'published_agent_roster_valid',
+      'published_workspace_set_valid',
     ]);
     expect(overview.metricsSummary.byChannel.widget).toBe(3);
     expect(overview.readiness.checks.find((check) => check.key === 'knowledge_mapped')?.status).toBe('passed');
     expect(overview.readiness.checks.find((check) => check.key === 'guardrails_reviewed')?.status).toBe('passed');
-    expect(overview.readiness.checks.map((check) => check.key)).not.toContain('published_agent_roster_valid');
-    expect(overview.readiness.checks.map((check) => check.key)).not.toContain('published_workspace_set_valid');
+    expect(overview.readiness.checks.find((check) => check.key === 'published_agent_roster_valid')?.status).toBe('passed');
+    expect(overview.readiness.checks.find((check) => check.key === 'published_workspace_set_valid')?.status).toBe('passed');
     expect(workspaceBindingModel.find).toHaveBeenCalledWith(expect.objectContaining({ programId, enabled: true, $or: [{ visibility: 'program_shared' }, { scopeIds: scopeId }] }));
   });
 
