@@ -57,8 +57,7 @@ class OrchestratorRuntime:
             max_concurrency=s.ORCHESTRATOR_MAX_CONCURRENCY,
             pool=self._pool, schema=schema,
             mail_wait_timeout_hours=s.MAIL_WAIT_TIMEOUT_HOURS)
-        self.servicer = CompanionAiServicer(
-            service, rm, default_model=s.ORCHESTRATOR_PLANNER_MODEL)
+        self.servicer = CompanionAiServicer(service, rm)
 
         # Nothing else notices a reply that never comes: the step is parked on an
         # interrupt no incoming mail will ever match, so without this sweep the
