@@ -10,6 +10,18 @@ const resendVerificationByTokenMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/modules/auth/useAuth', () => ({ useAuth: useAuthMock }));
 vi.mock('../api', () => ({ resendVerificationByToken: resendVerificationByTokenMock }));
+// Avoid icons ↔ ThemeContext ↔ auth barrel circular import during module collection
+vi.mock('@/components/icons', () => ({
+  Icons: { YellowMind: () => <div>logo</div> },
+  AppLogo: ({ className }: { className?: string }) => (
+    <div data-testid='app-logo' className={className}>
+      logo
+    </div>
+  ),
+}));
+vi.mock('@/modules/conversation/effects/stars-background', () => ({
+  StarsBackground: () => <div data-testid='stars-bg' />,
+}));
 
 describe('EmailVerificationPage', () => {
   const validToken = 'a'.repeat(64);

@@ -87,7 +87,7 @@ describe('AgentWhatsAppIntegrationSection', () => {
       expect(getAgentWhatsAppIntegrationMock).toHaveBeenCalledWith('a1');
     });
 
-    expect(screen.getByTestId('whatsapp-connect')).toBeInTheDocument();
+    expect(await screen.findByTestId('whatsapp-connect')).toBeInTheDocument();
     expect(screen.getByText('createEdit.fields.whatsappStatusNotConnected')).toBeInTheDocument();
   });
 

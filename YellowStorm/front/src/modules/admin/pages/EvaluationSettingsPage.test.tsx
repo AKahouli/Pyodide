@@ -52,8 +52,12 @@ describe('EvaluationSettingsPage', () => {
     const { user } = renderWithProviders(<EvaluationSettingsPage />);
     const guarded = await screen.findByLabelText(/evaluationSettings.correctiveGuarded/);
     expect(guarded).toBeDisabled();
-    fireEvent.click(screen.getByRole('radio', { name: /evaluationSettings.correctiveTransparent/ }));
-    await waitFor(() => expect(screen.getAllByRole('switch').filter((item) => item.hasAttribute('disabled')).length).toBeGreaterThanOrEqual(3));
+
+    await user.click(screen.getByLabelText(/evaluationSettings.correctiveTransparent/));
+
+    expect(await screen.findByLabelText('evaluationSettings.correction.additionalRetrieval')).toBeDisabled();
+    expect(screen.getByLabelText('evaluationSettings.correction.connectorQueries')).toBeDisabled();
+    expect(screen.getByLabelText('evaluationSettings.correction.calculationReruns')).toBeDisabled();
   });
 
   it('saves transparent correction settings in milliseconds', async () => {

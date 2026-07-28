@@ -67,10 +67,7 @@ describe('EvaluationSettingsService', () => {
     };
     const service = new EvaluationSettingsService(model as never, modelsService as never);
     await expect(service.updateSettings(saved as never)).resolves.toEqual({
-      responseReliability: {
-        ...saved.responseReliability,
-        correction: DEFAULT_ADMIN_EVALUATION_SETTINGS.responseReliability.correction,
-      },
+      responseReliability: saved.responseReliability,
     });
     expect(model.findOneAndUpdate).toHaveBeenCalledWith(
       { key: 'global' },

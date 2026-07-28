@@ -41,6 +41,24 @@ vi.mock('../query/hooks', () => ({
     },
     isPending: false,
   }),
+  useStopTurn: () => ({
+    mutateAsync: async (input: { streamId: string }) => {
+      mutationCalls.push({ name: 'stopTurn', args: input });
+    },
+    isPending: false,
+  }),
+  usePauseTurn: () => ({
+    mutateAsync: async (input: { streamId: string }) => {
+      mutationCalls.push({ name: 'pauseTurn', args: input });
+    },
+    isPending: false,
+  }),
+  useResumeTurn: () => ({
+    mutateAsync: async (input: { streamId: string }) => {
+      mutationCalls.push({ name: 'resumeTurn', args: input });
+    },
+    isPending: false,
+  }),
 }));
 
 function TestProviders({ children }: { children: ReactNode }): JSX.Element {

@@ -9,8 +9,6 @@ export * from './decorators/current-user.decorator';
 export * from './schemas/session.schema';
 export * from './interfaces/auth.interface';
 export * from './interfaces/jwt-payload.interface';
-export * from './interfaces/session.interface';
 export * from './dto/register.dto';
 export * from './dto/login.dto';
 export * from './dto/verify-email.dto';
-export * from './dto/microsoft-auth.dto';

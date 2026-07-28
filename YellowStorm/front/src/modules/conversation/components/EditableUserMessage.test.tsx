@@ -18,6 +18,10 @@ vi.mock('@/modules/agent', () => ({
   },
 }));
 
+vi.mock('@/modules/auth/useAuth', () => ({
+  useAuth: () => ({ user: { id: 'user-1' } }),
+}));
+
 vi.mock('../store', () => ({
   useConversationStore: Object.assign(
     (selector: (state: Record<string, unknown>) => unknown) =>
@@ -25,6 +29,7 @@ vi.mock('../store', () => ({
         updateUserMessage: updateUserMessageMock,
         setEditingMessage: setEditingMessageMock,
         regenerateMessage: regenerateMessageMock,
+        currentConversation: null,
       }),
     {
       getState: () => ({ messages: [] }),
