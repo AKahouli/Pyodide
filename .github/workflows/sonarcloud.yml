@@ -57,8 +57,14 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          # Unset PR env vars so the scanner runs in branch mode, not PR mode.
+          GITHUB_EVENT_NAME: workflow_dispatch
+          SONAR_SCANNER_OPTS: ""
         with:
           args: >
             -Dsonar.branch.name=${{ inputs.branch }}
             -Dsonar.newCode.definition=NUMBER_OF_DAYS
             -Dsonar.newCode.numberOfDays=365
+            -Dsonar.pullrequest.key=
+            -Dsonar.pullrequest.branch=
+            -Dsonar.pullrequest.base=
