@@ -5,6 +5,7 @@
   "notFound.back": "Back to Home",
   "header.tooltips.workspaces": "Manage workspaces",
   "header.tooltips.share": "Share conversation",
+  "header.actions.back": "Back to conversations",
   "header.actions.rename": "Rename",
   "header.actions.delete": "Delete",
   "branchNavigation.previous": "Previous response",

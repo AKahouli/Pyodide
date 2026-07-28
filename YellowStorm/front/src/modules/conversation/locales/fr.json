@@ -21,6 +21,7 @@
   "notFound.back": "Retourner à l'accueil",
   "header.tooltips.workspaces": "Gérer les workspaces",
   "header.tooltips.share": "Partager la conversation",
+  "header.actions.back": "Retour aux conversations",
   "header.actions.rename": "Renommer",
   "header.actions.delete": "Supprimer",
   "branchNavigation.previous": "Réponse précédente",

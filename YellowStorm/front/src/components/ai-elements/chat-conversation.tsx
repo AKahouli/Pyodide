@@ -88,8 +88,8 @@ export const ChatMessageBubble = ({ message, className, showAvatar = true, userA
   }, [message.content, isUser, isStructuredContent]);
 
   return (
-    <div className={cn('flex w-full gap-2 md:gap-3', isUser ? 'flex-row-reverse' : 'flex-row', className)} {...props}>
-      <div className={cn('flex flex-col gap-1', isUser ? 'max-w-[95%] md:max-w-[80%]' : 'w-full md:max-w-[80%] md:min-w-[24rem]')}>
+    <div data-message-role={message.role} className={cn('flex w-full gap-2 md:gap-3', isUser ? 'flex-row-reverse' : 'flex-row', className)} {...props}>
+      <div className={cn('flex min-w-0 flex-col gap-1', isUser ? 'max-w-[92%] md:max-w-[72%]' : 'w-full')}>
         {/* Logic to separate reasoning from other content for AI messages */}
         {isStructuredContent &&
           !isUser &&
@@ -107,7 +107,7 @@ export const ChatMessageBubble = ({ message, className, showAvatar = true, userA
 
                 {/* Only render bubble if there are other parts */}
                 {otherParts.length > 0 && (
-                  <div className={cn('rounded-2xl text-sm shadow-sm', 'bg-muted/70 dark:bg-muted/40 text-foreground rounded-tl-none border border-border px-4 py-3')}>
+                  <div className={cn('rounded-2xl text-sm shadow-xs', 'rounded-tl-sm border border-border/70 bg-muted/45 px-4 py-4 text-foreground dark:bg-muted/30')}>
                     <AIMessageContent parts={otherParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} />
                     {message.timestamp && <time className='mt-2 block text-[10px] opacity-50'>{formatMessageTimestamp(message.timestamp)}</time>}
                   </div>
@@ -118,7 +118,7 @@ export const ChatMessageBubble = ({ message, className, showAvatar = true, userA
 
         {/* Legacy handling for unstructured or user messages, or fallback */}
         {(!isStructuredContent || isUser) && (
-          <div className={cn('rounded-2xl text-sm shadow-sm', isUser ? 'bg-primary text-primary-foreground rounded-tr-none px-4 py-3' : 'bg-muted/70 dark:bg-muted/40 text-foreground rounded-tl-none border border-border px-4 py-3')}>
+          <div className={cn('rounded-2xl text-sm shadow-xs', isUser ? 'rounded-tr-sm bg-primary px-4 py-3 text-primary-foreground' : 'rounded-tl-sm border border-border/70 bg-muted/45 px-4 py-4 text-foreground dark:bg-muted/30')}>
             {/* Render content based on type */}
             {parsedContent ? (
               // Plain string AI message with code parsing

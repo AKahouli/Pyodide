@@ -186,7 +186,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
                   <ChatMessageBubble 
                     message={chatMessage} 
                     isStreaming={isStreaming}
-                    className="[&>div:first-child]:w-auto [&>div:first-child]:min-w-0"
+                    className={isUser ? '[&>div:first-child]:w-auto [&>div:first-child]:min-w-0' : undefined}
                   />
                 </div>
               </>
