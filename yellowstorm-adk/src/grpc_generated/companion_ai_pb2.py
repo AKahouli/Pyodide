@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12\x63ompanion_ai.proto\x12\x1byellowstorm.orchestrator.v1\"\'\n\x14\x43reateSessionRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\"+\n\x15\x43reateSessionResponse\x12\x12\n\nsession_id\x18\x01 \x01(\t\"\xdf\x01\n\nRunRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\x12\r\n\x05model\x18\x04 \x01(\t\x12\x32\n\x06skills\x18\x05 \x03(\x0b\x32\".yellowstorm.orchestrator.v1.Skill\x12\x41\n\nconnectors\x18\x06 \x03(\x0b\x32-.yellowstorm.orchestrator.v1.ConnectorBindingJ\x04\x08\x07\x10\x08R\x0fidempotency_key\"C\n\x0bRunResponse\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x02 \x01(\x08\x12\x0e\n\x06run_id\x18\x03 \x01(\t\"8\n\x11GetSessionRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\"x\n\x12GetSessionResponse\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x0e\n\x06status\x18\x03 \x01(\t\x12/\n\x04plan\x18\x04 \x01(\x0b\x32!.yellowstorm.orchestrator.v1.Plan\"9\n\x12StopSessionRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\"&\n\x13StopSessionResponse\x12\x0f\n\x07stopped\x18\x01 \x01(\x08\":\n\x13PauseSessionRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\"&\n\x14PauseSessionResponse\x12\x0e\n\x06paused\x18\x01 \x01(\x08\"\xa2\x01\n\x17\x44\x65liverMailReplyRequest\x12\r\n\x05token\x18\x01 \x01(\t\x12\x12\n\nreply_body\x18\x02 \x01(\t\x12\x12\n\nreply_from\x18\x03 \x01(\t\x12\r\n\x05model\x18\x04 \x01(\t\x12\x41\n\nconnectors\x18\x05 \x03(\x0b\x32-.yellowstorm.orchestrator.v1.ConnectorBinding\"R\n\x18\x44\x65liverMailReplyResponse\x12\x11\n\tdelivered\x18\x01 \x01(\x08\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x0f\n\x07step_id\x18\x03 \x01(\t\"q\n\x04Plan\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x0c\n\x04goal\x18\x03 \x01(\t\x12\x0e\n\x06status\x18\x04 \x01(\t\x12\x30\n\x05steps\x18\x05 \x03(\x0b\x32!.yellowstorm.orchestrator.v1.Step\"\x9f\x01\n\x04Step\x12\n\n\x02id\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x0e\n\x06status\x18\x03 \x01(\t\x12\x12\n\ndepends_on\x18\x04 \x03(\t\x12\x0c\n\x04wave\x18\x05 \x01(\x05\x12\r\n\x05\x61gent\x18\x06 \x01(\t\x12\x0e\n\x06result\x18\x07 \x01(\t\x12\r\n\x05\x65rror\x18\x08 \x01(\t\x12\x16\n\x0e\x62locked_reason\x18\t \x01(\t\"\xb7\x02\n\x05Skill\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\x14\n\x0cinstructions\x18\x04 \x01(\t\x12\x0f\n\x07license\x18\x05 \x01(\t\x12\x15\n\rcompatibility\x18\x06 \x01(\t\x12\x42\n\x08metadata\x18\x07 \x03(\x0b\x32\x30.yellowstorm.orchestrator.v1.Skill.MetadataEntry\x12\x15\n\rallowed_tools\x18\x08 \x03(\t\x12\x35\n\x05\x66iles\x18\t \x03(\x0b\x32&.yellowstorm.orchestrator.v1.SkillFile\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"K\n\tSkillFile\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0c\n\x04kind\x18\x02 \x01(\t\x12\x11\n\tmime_type\x18\x03 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x04 \x01(\t\"\xdb\x03\n\x10\x43onnectorBinding\x12\x14\n\x0c\x63onnector_id\x18\x01 \x01(\t\x12\x16\n\x0e\x63onnector_name\x18\x02 \x01(\t\x12\x1a\n\x12mcp_transport_type\x18\x03 \x01(\t\x12\x16\n\x0emcp_server_url\x18\x04 \x01(\t\x12T\n\x0c\x61uth_headers\x18\x05 \x03(\x0b\x32>.yellowstorm.orchestrator.v1.ConnectorBinding.AuthHeadersEntry\x12L\n\x08\x61uth_env\x18\x06 \x03(\x0b\x32:.yellowstorm.orchestrator.v1.ConnectorBinding.AuthEnvEntry\x12=\n\x07\x61\x63tions\x18\x07 \x03(\x0b\x32,.yellowstorm.orchestrator.v1.ConnectorAction\x12\x1e\n\x16mcp_server_config_json\x18\x08 \x01(\t\x1a\x32\n\x10\x41uthHeadersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\x1a.\n\x0c\x41uthEnvEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"h\n\x0f\x43onnectorAction\x12\x12\n\naction_key\x18\x01 \x01(\t\x12\r\n\x05label\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\x1d\n\x15parameter_schema_json\x18\x04 \x01(\t2\xba\x05\n\x0b\x43ompanionAi\x12v\n\rCreateSession\x12\x31.yellowstorm.orchestrator.v1.CreateSessionRequest\x1a\x32.yellowstorm.orchestrator.v1.CreateSessionResponse\x12\\\n\x07RunTask\x12\'.yellowstorm.orchestrator.v1.RunRequest\x1a(.yellowstorm.orchestrator.v1.RunResponse\x12m\n\nGetSession\x12..yellowstorm.orchestrator.v1.GetSessionRequest\x1a/.yellowstorm.orchestrator.v1.GetSessionResponse\x12p\n\x0bStopSession\x12/.yellowstorm.orchestrator.v1.StopSessionRequest\x1a\x30.yellowstorm.orchestrator.v1.StopSessionResponse\x12s\n\x0cPauseSession\x12\x30.yellowstorm.orchestrator.v1.PauseSessionRequest\x1a\x31.yellowstorm.orchestrator.v1.PauseSessionResponse\x12\x7f\n\x10\x44\x65liverMailReply\x12\x34.yellowstorm.orchestrator.v1.DeliverMailReplyRequest\x1a\x35.yellowstorm.orchestrator.v1.DeliverMailReplyResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12\x63ompanion_ai.proto\x12\x1byellowstorm.orchestrator.v1\"\'\n\x14\x43reateSessionRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\"+\n\x15\x43reateSessionResponse\x12\x12\n\nsession_id\x18\x01 \x01(\t\"\xb0\x02\n\nRunRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\x12\x16\n\x0e\x65xecutor_model\x18\x04 \x01(\t\x12\x32\n\x06skills\x18\x05 \x03(\x0b\x32\".yellowstorm.orchestrator.v1.Skill\x12\x41\n\nconnectors\x18\x06 \x03(\x0b\x32-.yellowstorm.orchestrator.v1.ConnectorBinding\x12\x15\n\rplanner_model\x18\x08 \x01(\t\x12\x16\n\x0eplanner_prompt\x18\t \x01(\t\x12\x17\n\x0f\x65xecutor_prompt\x18\n \x01(\tJ\x04\x08\x07\x10\x08R\x0fidempotency_key\"C\n\x0bRunResponse\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x02 \x01(\x08\x12\x0e\n\x06run_id\x18\x03 \x01(\t\"8\n\x11GetSessionRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\"x\n\x12GetSessionResponse\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x0e\n\x06status\x18\x03 \x01(\t\x12/\n\x04plan\x18\x04 \x01(\x0b\x32!.yellowstorm.orchestrator.v1.Plan\"9\n\x12StopSessionRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\"&\n\x13StopSessionResponse\x12\x0f\n\x07stopped\x18\x01 \x01(\x08\":\n\x13PauseSessionRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\"&\n\x14PauseSessionResponse\x12\x0e\n\x06paused\x18\x01 \x01(\x08\"\xbb\x01\n\x17\x44\x65liverMailReplyRequest\x12\r\n\x05token\x18\x01 \x01(\t\x12\x12\n\nreply_body\x18\x02 \x01(\t\x12\x12\n\nreply_from\x18\x03 \x01(\t\x12\r\n\x05model\x18\x04 \x01(\t\x12\x41\n\nconnectors\x18\x05 \x03(\x0b\x32-.yellowstorm.orchestrator.v1.ConnectorBinding\x12\x17\n\x0f\x65xecutor_prompt\x18\x06 \x01(\t\"R\n\x18\x44\x65liverMailReplyResponse\x12\x11\n\tdelivered\x18\x01 \x01(\x08\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x0f\n\x07step_id\x18\x03 \x01(\t\"q\n\x04Plan\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x0c\n\x04goal\x18\x03 \x01(\t\x12\x0e\n\x06status\x18\x04 \x01(\t\x12\x30\n\x05steps\x18\x05 \x03(\x0b\x32!.yellowstorm.orchestrator.v1.Step\"\x9f\x01\n\x04Step\x12\n\n\x02id\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x0e\n\x06status\x18\x03 \x01(\t\x12\x12\n\ndepends_on\x18\x04 \x03(\t\x12\x0c\n\x04wave\x18\x05 \x01(\x05\x12\r\n\x05\x61gent\x18\x06 \x01(\t\x12\x0e\n\x06result\x18\x07 \x01(\t\x12\r\n\x05\x65rror\x18\x08 \x01(\t\x12\x16\n\x0e\x62locked_reason\x18\t \x01(\t\"\xb7\x02\n\x05Skill\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\x14\n\x0cinstructions\x18\x04 \x01(\t\x12\x0f\n\x07license\x18\x05 \x01(\t\x12\x15\n\rcompatibility\x18\x06 \x01(\t\x12\x42\n\x08metadata\x18\x07 \x03(\x0b\x32\x30.yellowstorm.orchestrator.v1.Skill.MetadataEntry\x12\x15\n\rallowed_tools\x18\x08 \x03(\t\x12\x35\n\x05\x66iles\x18\t \x03(\x0b\x32&.yellowstorm.orchestrator.v1.SkillFile\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"K\n\tSkillFile\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0c\n\x04kind\x18\x02 \x01(\t\x12\x11\n\tmime_type\x18\x03 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x04 \x01(\t\"\xdb\x03\n\x10\x43onnectorBinding\x12\x14\n\x0c\x63onnector_id\x18\x01 \x01(\t\x12\x16\n\x0e\x63onnector_name\x18\x02 \x01(\t\x12\x1a\n\x12mcp_transport_type\x18\x03 \x01(\t\x12\x16\n\x0emcp_server_url\x18\x04 \x01(\t\x12T\n\x0c\x61uth_headers\x18\x05 \x03(\x0b\x32>.yellowstorm.orchestrator.v1.ConnectorBinding.AuthHeadersEntry\x12L\n\x08\x61uth_env\x18\x06 \x03(\x0b\x32:.yellowstorm.orchestrator.v1.ConnectorBinding.AuthEnvEntry\x12=\n\x07\x61\x63tions\x18\x07 \x03(\x0b\x32,.yellowstorm.orchestrator.v1.ConnectorAction\x12\x1e\n\x16mcp_server_config_json\x18\x08 \x01(\t\x1a\x32\n\x10\x41uthHeadersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\x1a.\n\x0c\x41uthEnvEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"h\n\x0f\x43onnectorAction\x12\x12\n\naction_key\x18\x01 \x01(\t\x12\r\n\x05label\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\x1d\n\x15parameter_schema_json\x18\x04 \x01(\t2\xba\x05\n\x0b\x43ompanionAi\x12v\n\rCreateSession\x12\x31.yellowstorm.orchestrator.v1.CreateSessionRequest\x1a\x32.yellowstorm.orchestrator.v1.CreateSessionResponse\x12\\\n\x07RunTask\x12\'.yellowstorm.orchestrator.v1.RunRequest\x1a(.yellowstorm.orchestrator.v1.RunResponse\x12m\n\nGetSession\x12..yellowstorm.orchestrator.v1.GetSessionRequest\x1a/.yellowstorm.orchestrator.v1.GetSessionResponse\x12p\n\x0bStopSession\x12/.yellowstorm.orchestrator.v1.StopSessionRequest\x1a\x30.yellowstorm.orchestrator.v1.StopSessionResponse\x12s\n\x0cPauseSession\x12\x30.yellowstorm.orchestrator.v1.PauseSessionRequest\x1a\x31.yellowstorm.orchestrator.v1.PauseSessionResponse\x12\x7f\n\x10\x44\x65liverMailReply\x12\x34.yellowstorm.orchestrator.v1.DeliverMailReplyRequest\x1a\x35.yellowstorm.orchestrator.v1.DeliverMailReplyResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -42,43 +42,43 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_CREATESESSIONRESPONSE']._serialized_start=92
   _globals['_CREATESESSIONRESPONSE']._serialized_end=135
   _globals['_RUNREQUEST']._serialized_start=138
-  _globals['_RUNREQUEST']._serialized_end=361
-  _globals['_RUNRESPONSE']._serialized_start=363
-  _globals['_RUNRESPONSE']._serialized_end=430
-  _globals['_GETSESSIONREQUEST']._serialized_start=432
-  _globals['_GETSESSIONREQUEST']._serialized_end=488
-  _globals['_GETSESSIONRESPONSE']._serialized_start=490
-  _globals['_GETSESSIONRESPONSE']._serialized_end=610
-  _globals['_STOPSESSIONREQUEST']._serialized_start=612
-  _globals['_STOPSESSIONREQUEST']._serialized_end=669
-  _globals['_STOPSESSIONRESPONSE']._serialized_start=671
-  _globals['_STOPSESSIONRESPONSE']._serialized_end=709
-  _globals['_PAUSESESSIONREQUEST']._serialized_start=711
-  _globals['_PAUSESESSIONREQUEST']._serialized_end=769
-  _globals['_PAUSESESSIONRESPONSE']._serialized_start=771
-  _globals['_PAUSESESSIONRESPONSE']._serialized_end=809
-  _globals['_DELIVERMAILREPLYREQUEST']._serialized_start=812
-  _globals['_DELIVERMAILREPLYREQUEST']._serialized_end=974
-  _globals['_DELIVERMAILREPLYRESPONSE']._serialized_start=976
-  _globals['_DELIVERMAILREPLYRESPONSE']._serialized_end=1058
-  _globals['_PLAN']._serialized_start=1060
-  _globals['_PLAN']._serialized_end=1173
-  _globals['_STEP']._serialized_start=1176
-  _globals['_STEP']._serialized_end=1335
-  _globals['_SKILL']._serialized_start=1338
-  _globals['_SKILL']._serialized_end=1649
-  _globals['_SKILL_METADATAENTRY']._serialized_start=1602
-  _globals['_SKILL_METADATAENTRY']._serialized_end=1649
-  _globals['_SKILLFILE']._serialized_start=1651
-  _globals['_SKILLFILE']._serialized_end=1726
-  _globals['_CONNECTORBINDING']._serialized_start=1729
-  _globals['_CONNECTORBINDING']._serialized_end=2204
-  _globals['_CONNECTORBINDING_AUTHHEADERSENTRY']._serialized_start=2106
-  _globals['_CONNECTORBINDING_AUTHHEADERSENTRY']._serialized_end=2156
-  _globals['_CONNECTORBINDING_AUTHENVENTRY']._serialized_start=2158
-  _globals['_CONNECTORBINDING_AUTHENVENTRY']._serialized_end=2204
-  _globals['_CONNECTORACTION']._serialized_start=2206
-  _globals['_CONNECTORACTION']._serialized_end=2310
-  _globals['_COMPANIONAI']._serialized_start=2313
-  _globals['_COMPANIONAI']._serialized_end=3011
+  _globals['_RUNREQUEST']._serialized_end=442
+  _globals['_RUNRESPONSE']._serialized_start=444
+  _globals['_RUNRESPONSE']._serialized_end=511
+  _globals['_GETSESSIONREQUEST']._serialized_start=513
+  _globals['_GETSESSIONREQUEST']._serialized_end=569
+  _globals['_GETSESSIONRESPONSE']._serialized_start=571
+  _globals['_GETSESSIONRESPONSE']._serialized_end=691
+  _globals['_STOPSESSIONREQUEST']._serialized_start=693
+  _globals['_STOPSESSIONREQUEST']._serialized_end=750
+  _globals['_STOPSESSIONRESPONSE']._serialized_start=752
+  _globals['_STOPSESSIONRESPONSE']._serialized_end=790
+  _globals['_PAUSESESSIONREQUEST']._serialized_start=792
+  _globals['_PAUSESESSIONREQUEST']._serialized_end=850
+  _globals['_PAUSESESSIONRESPONSE']._serialized_start=852
+  _globals['_PAUSESESSIONRESPONSE']._serialized_end=890
+  _globals['_DELIVERMAILREPLYREQUEST']._serialized_start=893
+  _globals['_DELIVERMAILREPLYREQUEST']._serialized_end=1080
+  _globals['_DELIVERMAILREPLYRESPONSE']._serialized_start=1082
+  _globals['_DELIVERMAILREPLYRESPONSE']._serialized_end=1164
+  _globals['_PLAN']._serialized_start=1166
+  _globals['_PLAN']._serialized_end=1279
+  _globals['_STEP']._serialized_start=1282
+  _globals['_STEP']._serialized_end=1441
+  _globals['_SKILL']._serialized_start=1444
+  _globals['_SKILL']._serialized_end=1755
+  _globals['_SKILL_METADATAENTRY']._serialized_start=1708
+  _globals['_SKILL_METADATAENTRY']._serialized_end=1755
+  _globals['_SKILLFILE']._serialized_start=1757
+  _globals['_SKILLFILE']._serialized_end=1832
+  _globals['_CONNECTORBINDING']._serialized_start=1835
+  _globals['_CONNECTORBINDING']._serialized_end=2310
+  _globals['_CONNECTORBINDING_AUTHHEADERSENTRY']._serialized_start=2212
+  _globals['_CONNECTORBINDING_AUTHHEADERSENTRY']._serialized_end=2262
+  _globals['_CONNECTORBINDING_AUTHENVENTRY']._serialized_start=2264
+  _globals['_CONNECTORBINDING_AUTHENVENTRY']._serialized_end=2310
+  _globals['_CONNECTORACTION']._serialized_start=2312
+  _globals['_CONNECTORACTION']._serialized_end=2416
+  _globals['_COMPANIONAI']._serialized_start=2419
+  _globals['_COMPANIONAI']._serialized_end=3117
 # @@protoc_insertion_point(module_scope)

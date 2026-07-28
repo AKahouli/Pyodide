@@ -58,6 +58,25 @@ export class WorkyStream extends Document {
   workerModelId?: string | null;
 
   /**
+   * Per-stream Planner / Executor selection sent to the orchestrator over gRPC
+   * (`planner_model` / `executor_model` / `planner_prompt` / `executor_prompt`
+   * on `RunTask`). Models store a LiteLLM identifier; prompts are system-prompt
+   * overrides. Null / empty = server default. Independent of the manager /
+   * worker fields above, which feed the HTTP planning-turn path.
+   */
+  @Prop({ type: String, default: null, trim: true, maxlength: 256 })
+  plannerModelId?: string | null;
+
+  @Prop({ type: String, default: null, trim: true, maxlength: 256 })
+  executorModelId?: string | null;
+
+  @Prop({ type: String, default: null, maxlength: 40000 })
+  plannerPrompt?: string | null;
+
+  @Prop({ type: String, default: null, maxlength: 40000 })
+  executorPrompt?: string | null;
+
+  /**
    * CompanionAi session id for this stream. Created via the gRPC
    * `CreateSession` RPC when the stream is created, and used as the
    * `session_id` on every `RunTask` kickoff and as the Electric shape

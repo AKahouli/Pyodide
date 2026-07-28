@@ -60,11 +60,12 @@ message RunRequest {
   string user_id    = 1;
   string session_id = 2;
   string message    = 3;
-  string model      = 4;
+  string executor_model = 4;
   repeated Skill skills = 5;
-  // Per-user MCP servers exposed as tools; auth already resolved upstream.
-  // These are also the source of long-running MCP tasks.
   repeated ConnectorBinding connectors = 6;
+  string planner_model = 8;
+  string planner_prompt = 9;
+  string executor_prompt = 10;
 }
 
 message RunResponse {
@@ -104,6 +105,8 @@ message DeliverMailReplyRequest {
   // from the caller.
   string model = 4;
   repeated ConnectorBinding connectors = 5;
+  // Same override as RunRequest.executor_prompt. Empty = server default.
+  string executor_prompt = 6;
 }
 
 message DeliverMailReplyResponse {

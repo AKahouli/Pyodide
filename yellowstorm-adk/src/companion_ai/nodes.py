@@ -106,7 +106,7 @@ def make_llm_node_factory(
     model_name: str,
     tools: Optional[List] = None,
     temperature: float = 0.0,
-    instruction_for: Optional[Callable[[Step], str]] = None,
+    custom_instruction: Optional[str] = None,
     tools_for_step: Optional[Callable[[Step, List], List]] = None,
 ) -> NodeFactory:
     """Build a NodeFactory that creates one LlmAgent per step.
@@ -120,10 +120,13 @@ def make_llm_node_factory(
     the planner to be a complete, standalone instruction on its own.
 
     tools: ADK tools available to every executor (e.g. the request's MCP
-    connectors materialized as tools). `instruction_for` overrides the default
-    per-step prompt if given. `tools_for_step` may swap a step's tools for
-    step-specific ones — used to stamp the routing token into a mail whose reply
-    another step is waiting on.
+    connectors materialized as tools). `custom_instruction`, if given, is
+    prepended to the standard per-step instruction — the actual step
+    description is always appended by us, never left to the caller to
+    interpolate, so a client prompt that forgets to reference it can't produce
+    a step that doesn't know its own task. `tools_for_step` may swap a step's
+    tools for step-specific ones — used to stamp the routing token into a mail
+    whose reply another step is waiting on.
     """
     from . import hitl
 
@@ -140,10 +143,9 @@ def make_llm_node_factory(
         if step.kind == "await_reply":
             return hitl.make_await_reply_node(
                 name, step.question or step.description or "Awaiting an email reply.")
+        base_instruction = EXECUTOR_INSTRUCTION.format(description=step.description)
         instruction = (
-            instruction_for(step)
-            if instruction_for is not None
-            else EXECUTOR_INSTRUCTION.format(description=step.description)
+            f"{custom_instruction}\n\n{base_instruction}" if custom_instruction else base_instruction
         )
         step_tools = tools_for_step(step, shared_tools) if tools_for_step else shared_tools
         tool_names = [getattr(getattr(t, "func", None), "__name__", "?") for t in step_tools]

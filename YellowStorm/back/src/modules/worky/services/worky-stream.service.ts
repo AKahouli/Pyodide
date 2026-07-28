@@ -122,6 +122,10 @@ export class WorkyStreamService implements OnModuleInit {
       // the per-turn override → stream field → admin default chain.
       managerModelId: null,
       workerModelId: null,
+      plannerModelId: null,
+      executorModelId: null,
+      plannerPrompt: null,
+      executorPrompt: null,
       title,
       status: 'created',
       controlState: 'active',
@@ -165,10 +169,22 @@ export class WorkyStreamService implements OnModuleInit {
   async ensureKickoffContext(
     streamId: string,
     userId: string,
-  ): Promise<{ aiSessionId: string; managerModelId: string | null }> {
+  ): Promise<{
+    aiSessionId: string;
+    plannerModelId: string | null;
+    executorModelId: string | null;
+    plannerPrompt: string | null;
+    executorPrompt: string | null;
+  }> {
     const doc = await this.streamModel
       .findById(streamId)
-      .lean<{ aiSessionId?: string | null; managerModelId?: string | null }>()
+      .lean<{
+        aiSessionId?: string | null;
+        plannerModelId?: string | null;
+        executorModelId?: string | null;
+        plannerPrompt?: string | null;
+        executorPrompt?: string | null;
+      }>()
       .exec();
     if (!doc) {
       throw new NotFoundException(ErrorCode.WORKY_STREAM_NOT_FOUND, 'Worky stream not found.');
@@ -178,7 +194,13 @@ export class WorkyStreamService implements OnModuleInit {
       aiSessionId = await this.orchestrator.createSession(userId);
       await this.streamModel.updateOne({ _id: streamId }, { $set: { aiSessionId } }).exec();
     }
-    return { aiSessionId, managerModelId: doc.managerModelId ?? null };
+    return {
+      aiSessionId,
+      plannerModelId: doc.plannerModelId ?? null,
+      executorModelId: doc.executorModelId ?? null,
+      plannerPrompt: doc.plannerPrompt ?? null,
+      executorPrompt: doc.executorPrompt ?? null,
+    };
   }
 
   async findByAiSessionId(
@@ -320,6 +342,48 @@ export class WorkyStreamService implements OnModuleInit {
           : null;
       if (next !== (stream.workerModelId ?? null)) {
         stream.workerModelId = next;
+        stream.lastActivityAt = new Date();
+      }
+    }
+    if (dto.plannerModelId !== undefined) {
+      const next =
+        typeof dto.plannerModelId === 'string' && dto.plannerModelId.trim()
+          ? dto.plannerModelId.trim()
+          : null;
+      if (next !== (stream.plannerModelId ?? null)) {
+        stream.plannerModelId = next;
+        stream.lastActivityAt = new Date();
+      }
+    }
+    if (dto.executorModelId !== undefined) {
+      const next =
+        typeof dto.executorModelId === 'string' && dto.executorModelId.trim()
+          ? dto.executorModelId.trim()
+          : null;
+      if (next !== (stream.executorModelId ?? null)) {
+        stream.executorModelId = next;
+        stream.lastActivityAt = new Date();
+      }
+    }
+    // Prompts store the raw value (whitespace can be meaningful in a prompt);
+    // only the emptiness check is trimmed.
+    if (dto.plannerPrompt !== undefined) {
+      const next =
+        typeof dto.plannerPrompt === 'string' && dto.plannerPrompt.trim()
+          ? dto.plannerPrompt
+          : null;
+      if (next !== (stream.plannerPrompt ?? null)) {
+        stream.plannerPrompt = next;
+        stream.lastActivityAt = new Date();
+      }
+    }
+    if (dto.executorPrompt !== undefined) {
+      const next =
+        typeof dto.executorPrompt === 'string' && dto.executorPrompt.trim()
+          ? dto.executorPrompt
+          : null;
+      if (next !== (stream.executorPrompt ?? null)) {
+        stream.executorPrompt = next;
         stream.lastActivityAt = new Date();
       }
     }
@@ -501,6 +565,10 @@ export class WorkyStreamService implements OnModuleInit {
       managerAgentId: (doc.managerAgentId as Types.ObjectId).toString(),
       managerModelId: (doc.managerModelId as string | null | undefined) ?? null,
       workerModelId: (doc.workerModelId as string | null | undefined) ?? null,
+      plannerModelId: (doc.plannerModelId as string | null | undefined) ?? null,
+      executorModelId: (doc.executorModelId as string | null | undefined) ?? null,
+      plannerPrompt: (doc.plannerPrompt as string | null | undefined) ?? null,
+      executorPrompt: (doc.executorPrompt as string | null | undefined) ?? null,
       governancePolicyRef: doc.governancePolicyRef
         ? (doc.governancePolicyRef as Types.ObjectId).toString()
         : null,
