@@ -147,6 +147,8 @@ export const API_ENDPOINTS = {
       `/workspaces/${workspaceId}/documents/${docId}/download-url`,
     reindex: (workspaceId: string, docId: string) =>
       `/workspaces/${workspaceId}/documents/${docId}/reindex`,
+    rename: (workspaceId: string, docId: string) =>
+      `/workspaces/${workspaceId}/documents/${docId}/rename`,
     graphData: (workspaceId: string) =>
       `/workspaces/${workspaceId}/graph`,
     bulkDelete: (workspaceId: string) => `/workspaces/${workspaceId}/documents`,
@@ -167,6 +169,7 @@ export const API_ENDPOINTS = {
     validateUrl: (workspaceId: string) => `/workspaces/${workspaceId}/documents/validate-url`,
     links: (workspaceId: string) => `/workspaces/${workspaceId}/documents/links`,
     checkUrls: (workspaceId: string) => `/workspaces/${workspaceId}/documents/check-urls`,
+    crawl: (workspaceId: string) => `/workspaces/${workspaceId}/documents/crawl`,
   },
   workspaceSettings: {
     list: '/workspace-settings',
@@ -626,6 +629,15 @@ export const API_ENDPOINTS = {
     streamPause: (id: string) => `/worky/streams/${id}/pause`,
     streamResume: (id: string) => `/worky/streams/${id}/resume`,
     streamStop: (id: string) => `/worky/streams/${id}`,
+    // Cancels the running orchestrator turn (StopSession RPC), vs streamStop
+    // which tears down the whole stream lifecycle.
+    streamStopTurn: (id: string) => `/worky/streams/${id}/stop`,
+    // Pauses the running orchestrator turn (PauseSession RPC); continue via a
+    // new message. ':id/pause' is the legacy stream pause, hence '-turn'.
+    streamPauseTurn: (id: string) => `/worky/streams/${id}/pause-turn`,
+    // Resumes a paused orchestrator session (continue via RunTask). ':id/resume'
+    // is the legacy stream resume, hence '-turn'.
+    streamResumeTurn: (id: string) => `/worky/streams/${id}/resume-turn`,
     streamDelete: (id: string) => `/worky/streams/${id}/delete`,
     respondInteraction: (id: string) => `/worky/interactions/${id}/respond`,
     taskById: (id: string) => `/worky/tasks/${id}`,

@@ -33,4 +33,15 @@ export default registerAs('worky', () => ({
   ttsProvider: process.env.WORKY_TTS_PROVIDER || '', // e.g. 'google-vertex'
   ttsTimeoutMs: parseInt(process.env.WORKY_TTS_TIMEOUT_MS || '30000', 10),
   ttsMaxChars: parseInt(process.env.WORKY_TTS_MAX_CHARS || '2000', 10),
+
+  // Electric SQL sync (manager-owned Postgres → Nest consumer).
+  electricUrl: process.env.WORKY_ELECTRIC_URL || 'http://electric:3000/v1/shape',
+  // Shared secret appended as `&secret=<...>` to every Electric shape request.
+  electricSecret: process.env.ELECTRIC_SECRET || '',
+  electricMessagesTable: process.env.WORKY_ELECTRIC_MESSAGES_TABLE || 'messages',
+  electricPlansTable: process.env.WORKY_ELECTRIC_PLANS_TABLE || 'plans',
+  electricPlanStepsTable: process.env.WORKY_ELECTRIC_PLAN_STEPS_TABLE || 'plan_steps',
+  // Gated payload logging for the Electric consumer (row/control/applied
+  // debug logs include row payloads, which may contain PII) — off by default.
+  electricDebug: process.env.WORKY_ELECTRIC_DEBUG === 'true',
 }));

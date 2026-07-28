@@ -10,4 +10,7 @@ export default registerAs('browserSession', () => ({
   viewportHeight: Number.parseInt(process.env.BROWSER_SESSION_VIEWPORT_H || '720', 10),
   screencastQuality: Number.parseInt(process.env.BROWSER_SESSION_SCREENCAST_QUALITY || '80', 10),
   chromiumExecutablePath: process.env.BROWSER_SESSION_CHROMIUM_PATH || '',
+  // How long (ms) after a click its captured link/button text stays eligible to
+  // name the resulting navigation. Single-use; explicit navigations clear it.
+  clickLabelTtlMs: Number.parseInt(process.env.BROWSER_SESSION_CLICK_LABEL_TTL_MS || '5000', 10),
 }));

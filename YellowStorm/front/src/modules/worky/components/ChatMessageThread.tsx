@@ -3,7 +3,7 @@ import { Bot, User, Volume2, VolumeX } from 'lucide-react';
 import { format } from 'date-fns';
 import { useModuleTranslation } from '@/modules/localization';
 import { synthesizeSpeech } from '../api';
-import { useWorkyAssistantText, useWorkyMessages, useWorkyStore } from '../store';
+import { useWorkyMessages, useWorkyStore } from '../store';
 import { cn } from '@/lib/utils';
 import { ChatClarificationCard } from './ChatClarificationCard';
 import type { WorkyMessage, WorkyPendingClarification } from '../types';
@@ -114,7 +114,6 @@ const TTS_VOICES = ['Kore', 'Puck', 'Zephyr', 'Charon', 'Fenrir', 'Aoede', 'Leda
 export function ChatMessageThread({ streamId }: { streamId?: string } = {}): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const messages = useWorkyMessages();
-  const assistantText = useWorkyAssistantText();
   const streaming = useWorkyStore((s) => s.streaming);
   const pendingClarifications = useWorkyStore((s) => s.pendingClarifications) ?? [];
   const showClarifications = Boolean(streamId) && pendingClarifications.length > 0;
@@ -179,8 +178,8 @@ export function ChatMessageThread({ streamId }: { streamId?: string } = {}): JSX
     const node = containerRef.current;
     if (!node) return;
     node.scrollTop = node.scrollHeight;
-  }, [threadItems.length, assistantText, streaming]);
-  const hasContent = messages.length > 0 || assistantText.length > 0 || showClarifications;
+  }, [threadItems.length]);
+  const hasContent = messages.length > 0 || showClarifications;
 
   return (
     <section
@@ -244,26 +243,6 @@ export function ChatMessageThread({ streamId }: { streamId?: string } = {}): JSX
               />
             ),
           )}
-          {streaming && assistantText ? (
-            <li
-              data-testid='worky-message-streaming'
-              className='flex w-full justify-start gap-1.5'
-            >
-              <div className='flex-none pt-0.5'>
-                <Bot className='h-3.5 w-3.5 text-primary' aria-hidden />
-              </div>
-              <div className='min-w-0 max-w-[85%] rounded-2xl rounded-bl-sm border border-primary/30 bg-primary/5 px-2.5 py-1.5 shadow-sm'>
-                <div className='flex items-baseline justify-between gap-2'>
-                  <span className='text-[10px] font-semibold uppercase tracking-wide text-primary'>
-                    {t('messages.role.manager')}
-                  </span>
-                </div>
-                <p className='mt-0.5 whitespace-pre-wrap break-words text-xs italic leading-snug text-foreground/90'>
-                  {assistantText}
-                </p>
-              </div>
-            </li>
-          ) : null}
         </ul>
       ) : (
         <p className='m-auto text-center text-xs text-muted-foreground'>

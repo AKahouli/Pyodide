@@ -46,6 +46,8 @@ describe('WorkyStreamService.create', () => {
     workspaceFindOne?: jest.Mock;
     agentFindOne?: jest.Mock;
     agentTypeFindBySlug?: jest.Mock;
+    streamFindOne?: jest.Mock;
+    grpcClient?: { createSession: jest.Mock };
   } = {}) => {
     const streamCreate =
       overrides.streamCreate ?? jest.fn((doc) => Promise.resolve({ _id: new Types.ObjectId(), ...doc }));
@@ -59,7 +61,12 @@ describe('WorkyStreamService.create', () => {
       overrides.agentTypeFindBySlug ??
       jest.fn().mockResolvedValue({ id: new Types.ObjectId().toString(), name: 'Manager' });
 
-    const streamModel = { create: streamCreate, findById: jest.fn(), find: jest.fn(), findOne: jest.fn() };
+    const streamModel = {
+      create: streamCreate,
+      findById: jest.fn(),
+      find: jest.fn(),
+      findOne: overrides.streamFindOne ?? jest.fn(),
+    };
     const workspaceModel = { create: workspaceCreate, findOne: workspaceFindOne };
     const agentModel = { create: agentCreate, findOne: agentFindOne };
     const agentTypeService = { findBySlug: agentTypeFindBySlug };
@@ -74,6 +81,7 @@ describe('WorkyStreamService.create', () => {
       error: jest.fn(),
       debug: jest.fn(),
     };
+    const grpcClient = overrides.grpcClient ?? { createSession: jest.fn().mockResolvedValue('sess-xyz') };
 
     const service = new WorkyStreamService(
       streamModel as any,
@@ -85,8 +93,9 @@ describe('WorkyStreamService.create', () => {
       workspaceDocuments as any,
       config,
       logger as any,
+      grpcClient as any,
     );
-    return { service, streamCreate, workspaceCreate, agentCreate, workspaceFindOne, agentFindOne };
+    return { service, streamCreate, workspaceCreate, agentCreate, workspaceFindOne, agentFindOne, streamModel, grpcClient };
   };
 
   it('provisions a dedicated artifact workspace and a per-stream Manager agent', async () => {
@@ -174,6 +183,109 @@ describe('WorkyStreamService.create', () => {
 
     expect(workspaceCreate.mock.calls[0][0].alias).toBe('worky-dup-2');
   });
+
+  it('does not eagerly create an orchestrator session on create()', async () => {
+    const { service, streamCreate, grpcClient } = makeService();
+
+    await service.create(userId, { title: 'My stream' } as any);
+
+    expect(grpcClient.createSession).not.toHaveBeenCalled();
+    const createdArg = streamCreate.mock.calls[0][0];
+    expect(createdArg.aiSessionId).toBeUndefined();
+  });
+
+  it('findByAiSessionId returns streamId + ownerUserId', async () => {
+    const { service, streamModel } = makeService();
+    streamModel.findOne.mockReturnValue({
+      lean: () => ({ exec: () => Promise.resolve({ _id: 'stream-1', ownerUserId: 'owner-1' }) }),
+    } as any);
+
+    const res = await service.findByAiSessionId('sess-xyz');
+
+    expect(res).toEqual({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+  });
+
+});
+
+describe('WorkyStreamService.ensureKickoffContext', () => {
+  const userId = new Types.ObjectId().toString();
+  const streamId = new Types.ObjectId().toString();
+
+  const makeEnsureService = (findByIdResolved: unknown) => {
+    const updateOne = jest.fn(() => writeQuery({ acknowledged: true }));
+    const streamModel = {
+      create: jest.fn(),
+      findById: jest.fn().mockReturnValue({
+        lean: () => ({ exec: () => Promise.resolve(findByIdResolved) }),
+      }),
+      find: jest.fn(),
+      findOne: jest.fn(),
+      updateOne,
+    };
+    const workspaceModel = { create: jest.fn(), findOne: jest.fn() };
+    const agentModel = { create: jest.fn(), findOne: jest.fn() };
+    const agentTypeService = { findBySlug: jest.fn() };
+    const connection = makeConnection();
+    const workspaceService = { delete: jest.fn() };
+    const workspaceDocuments = { deleteAllByWorkspace: jest.fn() };
+    const config = { get: jest.fn((_k: string, fb?: number) => fb ?? 0) } as unknown as ConfigService;
+    const logger = {
+      setContext: jest.fn(),
+      log: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    };
+    const grpcClient = { createSession: jest.fn().mockResolvedValue('sess-new') };
+    const service = new WorkyStreamService(
+      streamModel as any,
+      workspaceModel as any,
+      agentModel as any,
+      connection as any,
+      agentTypeService as any,
+      workspaceService as any,
+      workspaceDocuments as any,
+      config,
+      logger as any,
+      grpcClient as any,
+    );
+    return { service, streamModel, grpcClient, updateOne };
+  };
+
+  it('returns the existing aiSessionId without creating a new session', async () => {
+    const { service, grpcClient, updateOne } = makeEnsureService({
+      aiSessionId: 'sess-existing',
+      managerModelId: 'anthropic/claude-3-5-sonnet',
+    });
+
+    const res = await service.ensureKickoffContext(streamId, userId);
+
+    expect(res).toEqual({ aiSessionId: 'sess-existing', managerModelId: 'anthropic/claude-3-5-sonnet' });
+    expect(grpcClient.createSession).not.toHaveBeenCalled();
+    expect(updateOne).not.toHaveBeenCalled();
+  });
+
+  it('lazily creates and persists a session when aiSessionId is null', async () => {
+    const { service, grpcClient, updateOne } = makeEnsureService({
+      aiSessionId: null,
+      managerModelId: null,
+    });
+
+    const res = await service.ensureKickoffContext(streamId, userId);
+
+    expect(grpcClient.createSession).toHaveBeenCalledWith(userId);
+    expect(updateOne).toHaveBeenCalledWith({ _id: streamId }, { $set: { aiSessionId: 'sess-new' } });
+    expect(res).toEqual({ aiSessionId: 'sess-new', managerModelId: null });
+  });
+
+  it('throws WORKY_STREAM_NOT_FOUND when the stream does not exist', async () => {
+    const { service, grpcClient } = makeEnsureService(null);
+
+    await expect(service.ensureKickoffContext(streamId, userId)).rejects.toMatchObject({
+      code: 'ERR_3500',
+    });
+    expect(grpcClient.createSession).not.toHaveBeenCalled();
+  });
 });
 
 describe('WorkyStreamService.patch (per-stream model selection)', () => {
@@ -234,6 +346,7 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
       error: jest.fn(),
       debug: jest.fn(),
     };
+    const grpcClient = { createSession: jest.fn().mockResolvedValue('sess-xyz') };
     const service = new WorkyStreamService(
       streamModel as any,
       workspaceModel as any,
@@ -244,6 +357,7 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
       workspaceDocuments as any,
       config,
       logger as any,
+      grpcClient as any,
     );
     return { service, streamDoc };
   };
@@ -316,6 +430,7 @@ describe('WorkyStreamService.delete', () => {
       error: jest.fn(),
       debug: jest.fn(),
     };
+    const grpcClient = { createSession: jest.fn().mockResolvedValue('sess-xyz') };
     const service = new WorkyStreamService(
       streamModel as any,
       workspaceModel as any,
@@ -326,6 +441,7 @@ describe('WorkyStreamService.delete', () => {
       workspaceDocuments as any,
       config,
       logger as any,
+      grpcClient as any,
     );
     return { service, streamModel, agentModel, connection, workspaceService, workspaceDocuments };
   };

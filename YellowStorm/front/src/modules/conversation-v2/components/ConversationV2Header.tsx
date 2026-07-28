@@ -15,6 +15,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { Badge } from '@/components/ui/badge';
+import {
+  ConversationV2SessionPermissions,
+  hasConversationV2SessionPermission,
+  type ConversationV2SessionPermission,
+} from '../session-permissions';
 import { useConversationV2Store } from '../store';
 import { useTypewriter } from '../hooks/useTypewriter';
 import { useConversationV2Translation } from '../translation';
@@ -22,7 +28,12 @@ import { RenameDialog } from './RenameDialog';
 import { DeleteConversationDialog } from './DeleteConversationDialog';
 import { WorkspaceManagerSheet } from './WorkspaceManagerSheet';
 
-export function ConversationV2Header() {
+interface ConversationV2HeaderProps {
+  readOnly?: boolean;
+  permissions?: ConversationV2SessionPermission[];
+}
+
+export function ConversationV2Header({ readOnly = false, permissions = [] }: ConversationV2HeaderProps) {
   const navigate = useNavigate();
   const sessionId = useConversationV2Store((s) => s.sessionId);
   const title = useConversationV2Store((s) => s.title);
@@ -46,6 +57,23 @@ export function ConversationV2Header() {
 
   const displayedTitle =
     isTypewriting && typed ? typed : title && title.length > 0 ? title : t('page.newChat');
+
+  const canManageWorkspaces = hasConversationV2SessionPermission(
+    permissions,
+    ConversationV2SessionPermissions.SESSION_WRITE,
+  );
+  const canBrowseFiles = hasConversationV2SessionPermission(
+    permissions,
+    ConversationV2SessionPermissions.WORKSPACE_DOCUMENTS_READ,
+  );
+  const canRename = hasConversationV2SessionPermission(
+    permissions,
+    ConversationV2SessionPermissions.SESSION_WRITE,
+  );
+  const canDelete = hasConversationV2SessionPermission(
+    permissions,
+    ConversationV2SessionPermissions.SESSION_DELETE,
+  );
 
   const handleRename = async (newTitle: string) => {
     try {
@@ -78,97 +106,118 @@ export function ConversationV2Header() {
         >
           <ArrowLeft className='h-4 w-4' />
         </Button>
-        <h1 className='flex-1 font-medium text-lg truncate'>{displayedTitle}</h1>
+        <h1 className='flex-1 truncate text-lg font-medium'>{displayedTitle}</h1>
+        {readOnly && (
+          <Badge variant='secondary' className='shrink-0'>
+            {t('header.readOnly')}
+          </Badge>
+        )}
 
         <div className='flex items-center gap-1'>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
+          {canManageWorkspaces && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant='ghost'
+                    size='icon'
+                    onClick={() => setWorkspaceSheetOpen(true)}
+                    className='shrink-0'
+                    aria-label={t('header.tooltips.workspaces')}
+                  >
+                    <Library className='h-4 w-4' />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{t('header.tooltips.workspaces')}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+
+          {canBrowseFiles && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant='ghost'
+                    size='icon'
+                    onClick={() => setFilesSheetOpen(true)}
+                    disabled={!systemWorkspaceId}
+                    className='shrink-0'
+                    aria-label={t('header.tooltips.files')}
+                    title={!systemWorkspaceId ? t('files.unavailable') : undefined}
+                  >
+                    <Paperclip className='h-4 w-4' />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{t('header.tooltips.files')}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+
+          {(canRename || canDelete) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
                 <Button
                   variant='ghost'
                   size='icon'
-                  onClick={() => setWorkspaceSheetOpen(true)}
                   className='shrink-0'
-                  aria-label={t('header.tooltips.workspaces')}
+                  aria-label={t('header.actions.more')}
                 >
-                  <Library className='h-4 w-4' />
+                  <MoreHorizontal className='h-4 w-4' />
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('header.tooltips.workspaces')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant='ghost'
-                  size='icon'
-                  onClick={() => setFilesSheetOpen(true)}
-                  disabled={!systemWorkspaceId}
-                  className='shrink-0'
-                  aria-label={t('header.tooltips.files')}
-                  title={!systemWorkspaceId ? t('files.unavailable') : undefined}
-                >
-                  <Paperclip className='h-4 w-4' />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('header.tooltips.files')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant='ghost'
-                size='icon'
-                className='shrink-0'
-                aria-label={t('header.actions.more')}
-              >
-                <MoreHorizontal className='h-4 w-4' />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align='end'>
-              <DropdownMenuItem onClick={() => setRenameOpen(true)} className='cursor-pointer'>
-                <Pencil className='mr-2 h-4 w-4' />
-                {t('header.actions.rename')}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setDeleteOpen(true)}
-                className='cursor-pointer text-destructive focus:text-destructive'
-              >
-                <Trash2 className='mr-2 h-4 w-4' />
-                {t('header.actions.delete')}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align='end'>
+                {canRename && (
+                  <DropdownMenuItem onClick={() => setRenameOpen(true)} className='cursor-pointer'>
+                    <Pencil className='mr-2 h-4 w-4' />
+                    {t('header.actions.rename')}
+                  </DropdownMenuItem>
+                )}
+                {canDelete && (
+                  <DropdownMenuItem
+                    onClick={() => setDeleteOpen(true)}
+                    className='cursor-pointer text-destructive focus:text-destructive'
+                  >
+                    <Trash2 className='mr-2 h-4 w-4' />
+                    {t('header.actions.delete')}
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
 
-      <RenameDialog
-        open={renameOpen}
-        onOpenChange={setRenameOpen}
-        currentTitle={title ?? ''}
-        onRename={handleRename}
-      />
+      {canRename && (
+        <RenameDialog
+          open={renameOpen}
+          onOpenChange={setRenameOpen}
+          currentTitle={title ?? ''}
+          onRename={handleRename}
+        />
+      )}
 
-      <DeleteConversationDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        onConfirm={handleDelete}
-        title={title ?? undefined}
-      />
+      {canDelete && (
+        <DeleteConversationDialog
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          onConfirm={handleDelete}
+          title={title ?? undefined}
+        />
+      )}
 
-      <WorkspaceManagerSheet
-        open={workspaceSheetOpen}
-        onOpenChange={setWorkspaceSheetOpen}
-        sessionId={sessionId}
-        workspaceIds={workspaceIds}
-      />
+      {canManageWorkspaces && (
+        <WorkspaceManagerSheet
+          open={workspaceSheetOpen}
+          onOpenChange={setWorkspaceSheetOpen}
+          sessionId={sessionId}
+          workspaceIds={workspaceIds}
+        />
+      )}
     </>
   );
 }

@@ -390,6 +390,52 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].agent_type).toBe('worker');
   });
 
+  it('resolves an agent shared *with* the user when it is the one tagged', async () => {
+    const { service, agentModel, agentShareService } = createService();
+
+    // The user's own roster: one owned/default agent. The shared agent is NOT
+    // here — getAgentsForUser only returns owned + default agents.
+    const ownedAgent: IAgentForStream = {
+      id: 'agent-owned', name: 'Owned Agent', agentTypeName: 'Worker', agentTypeSlug: 'worker',
+      agentTypeId: 'type-worker', role: 'Role', description: '', temperature: 0, model: '',
+      instruction: '', ignorePrePrompt: false, knowledgeBases: [], toolIds: [], guardrails: defaultGuardrails,
+      connectorIds: [], connectorActionSelections: [], skillIds: [], disabledSkillIds: [], agentTypeSkillIds: [],
+      enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: true, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([ownedAgent]);
+
+    const sharedAgentId = '666666666666666666666666';
+
+    // The user has a share grant for the tagged agent.
+    agentShareService.getShareInfoMapForUser.mockResolvedValue(
+      new Map([[sharedAgentId, { shareId: 'share-1', permission: 'read', sharedBy: { id: 'owner-1', email: 'owner@x.io' } }]]),
+    );
+
+    // The agent doc is fetched by _id from the shared-with-user grant.
+    agentModel.find.mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue([
+            {
+              _id: new Types.ObjectId(sharedAgentId),
+              name: 'Shared Agent', role: 'Role', description: '', temperature: 0, llmModel: '',
+              instruction: '', ignorePrePrompt: false, knowledgeBases: [], tools: [], skills: [],
+              disabledSkills: [], connectors: [], isDefault: false, isDefaultForType: false,
+              agentType: { _id: new Types.ObjectId('333333333333333333333333'), name: 'Worker', slug: 'worker', skills: [] },
+            },
+          ]),
+        }),
+      }),
+    });
+
+    const result = await service.buildAgentsForStream(userId, undefined, [sharedAgentId], undefined, undefined, undefined);
+
+    // The tagged shared agent must be the one that runs — not a silent fallback
+    // to the owned/default mono-agent.
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe('Shared Agent');
+  });
+
   it('injects connector skills into playbook agent runtime', async () => {
     const { service, agentModel, skillService, connectorService } = createService();
     const objectId = new Types.ObjectId();

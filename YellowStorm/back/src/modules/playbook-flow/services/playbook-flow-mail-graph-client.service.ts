@@ -91,6 +91,35 @@ export class PlaybookFlowMailGraphClientService {
     }
   }
 
+  /**
+   * Inbox messages received since `since`, newest first.
+   *
+   * Graph notifications are best-effort: it drops them, and a subscription can
+   * be briefly dead around renewal. Polling the inbox directly is the only way
+   * to find what a webhook never told us about.
+   */
+  async listInboxMessagesSince(
+    userId: string,
+    mailboxAppKey: string,
+    since: Date,
+    top = 50,
+  ): Promise<Array<Record<string, any>>> {
+    const { token: accessToken } =
+      await this.connectedAppTokenService.getM365ValidToken(userId, mailboxAppKey);
+    const filter = encodeURIComponent(`receivedDateTime ge ${since.toISOString()}`);
+    const url =
+      `${GRAPH_BASE}/me/mailFolders('inbox')/messages` +
+      `?$filter=${filter}&$top=${top}&$orderby=receivedDateTime desc&${MSG_SELECT}`;
+
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Graph inbox list failed: ${response.status} ${body}`);
+    }
+    const payload = (await response.json()) as { value?: Array<Record<string, any>> };
+    return payload.value ?? [];
+  }
+
   async listAttachments(userId: string, mailboxAppKey: string, messageId: string) {
     const { token: accessToken } =
       await this.connectedAppTokenService.getM365ValidToken(userId, mailboxAppKey);

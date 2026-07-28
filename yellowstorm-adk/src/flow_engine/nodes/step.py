@@ -10,7 +10,9 @@ Output is stored into task_outputs[(node_id, iteration)].
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from typing import Any
 
 import litellm
@@ -66,8 +68,10 @@ Temporary child agents are enabled, and the required first temporary child resul
 has already been provided in your task context. Call
 `create_temporary_child_agent` again only when you decide more evidence or
 verification is needed, until the evidence is sufficient or the child limit is
-reached. You may create additional children sequentially, or in parallel if
-supported.
+reached. You may provide one task for a sequential child, or multiple `tasks`
+with `execution_mode="parallel"` when independent work should run concurrently.
+The configured child limit is a hard total limit across the required child and
+all additional sequential or parallel children.
 
 Your role is only to evaluate, compare, and synthesize the temporary child
 results. Do not use skills, MCP connector tools, retrieval tools, code tools, or
@@ -79,12 +83,23 @@ task. Evaluate all child results and return the best final answer.
 
 class _TemporaryChildAgentInput(BaseModel):
     task_description: str = Field(
-        ...,
-        description="One focused subtask for the temporary child agent.",
+        "",
+        description="One focused subtask for a sequential temporary child.",
     )
     expected_output: str = Field(
         "",
         description="Optional description of the evidence or answer format needed.",
+    )
+    tasks: list[dict[str, str]] = Field(
+        default_factory=list,
+        description=(
+            "Optional additional child tasks. Each item has task_description and "
+            "optional expected_output. Use this when creating several children."
+        ),
+    )
+    execution_mode: str = Field(
+        "sequential",
+        description="Run multiple tasks sequentially or in parallel.",
     )
 
 
@@ -151,12 +166,14 @@ def _temporary_child_limit(agent_params: dict[str, Any]) -> int:
 class _TemporaryChildAgentTool:
     name = "create_temporary_child_agent"
     description = (
-        "Create one temporary cloned child agent for a focused subtask. "
+        "Create temporary cloned child agents for focused subtasks. Provide one "
+        "task_description for a sequential child, or provide tasks and choose "
+        "sequential/parallel execution. "
         "The child inherits this agent's tools/connectors/skills but cannot "
         "create more child agents. The child receives the same file names, "
         "workspace IDs, connector context, headers, and fixed params available "
-        "to this parent. Call this only when more evidence or verification is "
-        "needed after the required first child result."
+        "to this parent. The hard total child limit includes the required first "
+        "child. Call this only when more evidence or verification is needed."
     )
     args_schema = _TemporaryChildAgentInput
 
@@ -184,11 +201,82 @@ class _TemporaryChildAgentTool:
         self._count = 0
 
     async def ainvoke(self, args: dict[str, Any]) -> str:
-        if self._count >= self._max_children:
+        raw_tasks = args.get("tasks")
+        tasks = (
+            [
+                item
+                for item in raw_tasks
+                if isinstance(item, dict)
+                and str(item.get("task_description") or "").strip()
+            ]
+            if isinstance(raw_tasks, list)
+            else []
+        )
+        if not tasks:
+            task_description = str(args.get("task_description") or "").strip()
+            if not task_description:
+                return "At least one temporary child task is required."
+            tasks = [
+                {
+                    "task_description": task_description,
+                    "expected_output": str(
+                        args.get("expected_output") or ""
+                    ).strip(),
+                }
+            ]
+
+        remaining = self._max_children - self._count
+        if remaining <= 0:
             logger.info("[TEMP CHILD] Flow child limit reached", max=self._max_children)
             return f"Temporary child-agent limit reached ({self._max_children})."
+        accepted_tasks = tasks[:remaining]
+        rejected_count = len(tasks) - len(accepted_tasks)
+        start_index = self._count + 1
+        self._count += len(accepted_tasks)
+        indexed_tasks = [
+            (start_index + offset, task)
+            for offset, task in enumerate(accepted_tasks)
+        ]
+        execution_mode = (
+            str(args.get("execution_mode") or "sequential").strip().lower()
+        )
+        if execution_mode == "parallel" and len(indexed_tasks) > 1:
+            results = await asyncio.gather(
+                *[
+                    self._run_child(child_index, task, "parallel")
+                    for child_index, task in indexed_tasks
+                ],
+                return_exceptions=True,
+            )
+        else:
+            results = []
+            for child_index, task in indexed_tasks:
+                try:
+                    results.append(
+                        await self._run_child(child_index, task, "sequential")
+                    )
+                except Exception as exc:
+                    results.append(exc)
 
-        self._count += 1
+        formatted_results = []
+        for (child_index, _), result in zip(indexed_tasks, results):
+            if isinstance(result, Exception):
+                formatted_results.append(f"Child {child_index} failed: {result}")
+            else:
+                formatted_results.append(f"Child {child_index} result:\n{result}")
+        if rejected_count:
+            formatted_results.append(
+                f"Skipped {rejected_count} requested child task(s) because the hard "
+                f"limit is {self._max_children}."
+            )
+        return "\n\n".join(formatted_results)
+
+    async def _run_child(
+        self,
+        child_index: int,
+        args: dict[str, Any],
+        execution_mode: str,
+    ) -> str:
         task_description = str(args.get("task_description") or "").strip()
         expected_output = str(args.get("expected_output") or "").strip()
         child_prompt = (
@@ -205,17 +293,17 @@ class _TemporaryChildAgentTool:
         )
         logger.info(
             "[TEMP CHILD] Flow creating temporary child",
-            child_index=self._count,
+            child_index=child_index,
             max=self._max_children,
         )
-        child_id = f"{self._parent_name}:flow_tmp_{self._count}"
+        child_id = f"{self._parent_name}:flow_tmp_{child_index}"
         record_temporary_child_start(
             session_id=self._session_id,
             parent=self._parent_name,
             child=child_id,
             task_description=task_description,
             expected_output=expected_output,
-            execution_mode="model_tool_call_sequential",
+            execution_mode=f"model_tool_call_{execution_mode}",
         )
         result = await run_step_with_tools(
             model_id=self._model_id,
@@ -228,7 +316,7 @@ class _TemporaryChildAgentTool:
             trace_collector=self._trace_collector,
             on_trace_update=self._on_trace_update,
         )
-        logger.info("[TEMP CHILD] Flow child completed", child_index=self._count)
+        logger.info("[TEMP CHILD] Flow child completed", child_index=child_index)
         record_temporary_child_result(
             session_id=self._session_id,
             child=child_id,
@@ -242,10 +330,11 @@ def _build_temporary_child_inherited_context(
     tools: list[Any],
     agent_config: dict[str, Any],
     output_workspace_id: str,
+    file_names: list[str] | None = None,
 ) -> str:
     payload = {
         "available_tool_names": [str(getattr(tool, "name", "")) for tool in tools],
-        "file_names": tool_scope.file_names,
+        "file_names": list(file_names if file_names is not None else tool_scope.file_names),
         "workspace_ids": tool_scope.binding_workspace_ids,
         "documents_by_port": tool_scope.documents_by_port,
         "workspace_context": tool_scope.workspace_context,
@@ -259,6 +348,16 @@ def _build_temporary_child_inherited_context(
         "workspace_id, file_name, headers, or document identifiers if they appear here.\n"
         f"{json.dumps(payload, ensure_ascii=False, default=str)}\n"
         "</inherited_parent_context>"
+    )
+
+
+def _build_available_file_context(file_names: list[str]) -> str:
+    payload = {"file_names": list(file_names)}
+    return (
+        "<available_mcp_file_names>\n"
+        f"{json.dumps(payload, ensure_ascii=False)}\n"
+        "These are the exact workspace filenames available for MCP tool calls. Decide whether to use them from the selected tool's schema, preprompt, skill instructions, and MCP docstring. Only send file_name or file_names when that tool declares the parameter. Preserve filenames exactly and choose the relevant file or files for the call. If the list is empty, do not send a filename parameter. Sandbox-local filenames, when applicable, are listed separately under Sandbox Files.\n"
+        "</available_mcp_file_names>"
     )
 
 
@@ -449,19 +548,11 @@ async def run_step(
     if deep_search:
         system_prompt += (
             "\n\n<deep_search_mode>\n"
-            "You are in DEEP SEARCH mode. You MUST follow this two-phase search strategy:\n\n"
-            "Phase 1 — Find relevant documents:\n"
-            "- Call search_relevant_documents(query=\"your search query\", workspace_id=\"...\") FIRST\n"
-            "- This returns top candidate documents with: document_id, file_name, hybrid_score, matched concepts\n"
-            "- Use the results to identify the most relevant documents for the user's question\n\n"
-            "Phase 2 — Extract detailed information:\n"
-            "- Using the file_name from Phase 1 results, call search_sections() or read_section()\n"
-            "  to get detailed content from those specific documents\n"
-            "- Cross-reference information across multiple documents when relevant\n"
-            "- Use matched_hl_concepts and matched_ll_concepts to guide follow-up searches\n\n"
-            "IMPORTANT: Always start with search_relevant_documents before using other search tools.\n"
-            "This ensures you find the most semantically relevant documents across the entire workspace first,\n"
-            "then dive deep into those specific documents for detailed answers.\n"
+            "The runtime performs relevant-document discovery before normal MCP or "
+            "retrieval work. It merges those selected filenames with user-provided "
+            "files and supplies the combined scope to the normal tools. Do not call "
+            "deep search again. Gather detailed evidence from the scoped documents "
+            "and cross-reference them when relevant.\n"
             "</deep_search_mode>"
         )
     system_prompt = inject_skill_catalog(system_prompt, agent_config.get("skills", []))
@@ -759,11 +850,92 @@ async def _execute_step(
         input_context if isinstance(input_context, dict) else {},
         state,
     )
+    deep_search_workspace_id = next(
+        (workspace_id for workspace_id in tool_scope.binding_workspace_ids if workspace_id),
+        output_workspace_id,
+    )
+
+    effective_file_names = list(tool_scope.file_names)
+    deep_search_result: dict[str, Any] | None = None
+    if deep_search:
+        from src.flow_engine.deep_search import (
+            merge_file_names,
+            search_relevant_documents,
+        )
+
+        deep_search_query = str(node_description or "").strip()
+        if not deep_search_query:
+            deep_search_query = user_msg
+
+        started_at = time.perf_counter()
+        try:
+            deep_search_result = await search_relevant_documents(
+                deep_search_query,
+                deep_search_workspace_id,
+            )
+            routed_files = deep_search_result.get("files")
+            if not isinstance(routed_files, list):
+                routed_files = deep_search_result.get("results", [])
+            deep_search_file_names = [
+                str(item.get("file_name") or "")
+                for item in routed_files
+                if isinstance(item, dict)
+            ]
+            effective_file_names = merge_file_names(
+                tool_scope.file_names,
+                deep_search_file_names,
+            )
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            trace_collector.record_tool_call(
+                tool_name="search_relevant_documents",
+                args={
+                    "query": deep_search_query,
+                    "workspace_id": deep_search_workspace_id,
+                },
+                output_summary=json.dumps(deep_search_result, ensure_ascii=False, default=str),
+                status="completed",
+                duration_ms=duration_ms,
+                agent_name=agent_config.get("name") or node_id,
+                agent_role="preflight",
+            )
+            emit_trace_update()
+        except Exception as exc:
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            trace_collector.record_tool_call(
+                tool_name="search_relevant_documents",
+                args={
+                    "query": deep_search_query,
+                    "workspace_id": deep_search_workspace_id,
+                },
+                output_summary=None,
+                status="failed",
+                duration_ms=duration_ms,
+                error=str(exc),
+                agent_name=agent_config.get("name") or node_id,
+                agent_role="preflight",
+            )
+            emit_trace_update()
+            raise
+
+        user_msg = (
+            f"{user_msg}\n\n<deep_search_routing_plan>\n"
+            "The community-graph routing step is complete. Review each returned "
+            "file's routing_decision, reason, and search_for guidance. Decide which "
+            "exact file_name or file_names are needed for each next MCP call; do not "
+            "assume every candidate must be used. Pass selected filenames only when "
+            "the MCP tool schema supports file_name or file_names. If the status is "
+            "NO_RELEVANT_FILES, do not invent filenames; use only user-provided files "
+            "or explain that no relevant indexed file was found.\n"
+            f"{json.dumps(deep_search_result, ensure_ascii=False, default=str)}\n"
+            "</deep_search_routing_plan>"
+        )
+
+    user_msg = f"{user_msg}\n\n{_build_available_file_context(effective_file_names)}"
 
     tools, collector = create_langchain_tools(
         agent_config=agent_config,
         workspace_context=tool_scope.workspace_context,
-        input_files=tool_scope.file_names,
+        input_files=effective_file_names,
         documents_by_port=tool_scope.documents_by_port,
         code_interpreter_files=tool_scope.code_interpreter_files,
         output_ports=(output_contract or {}).get("ports") if isinstance(output_contract, dict) else None,
@@ -772,8 +944,9 @@ async def _execute_step(
         workspace_context_mode=tool_scope.workspace_context_mode,
         user_id=str(state.get("evaluation_user_id") or ""),
         workspace_ceph_paths=workspace_ceph_paths,
-        deep_search=deep_search,
+        deep_search=False,
         binding_workspace_ids=tool_scope.binding_workspace_ids,
+        execution_id=str(state.get("execution_id") or ""),
     )
     if _temporary_child_enabled(agent_config["agent_params"]):
         temporary_child_tool = _TemporaryChildAgentTool(
@@ -788,6 +961,7 @@ async def _execute_step(
                 tools=tools,
                 agent_config=agent_config,
                 output_workspace_id=output_workspace_id,
+                file_names=effective_file_names,
             ),
             trace_collector=trace_collector,
             on_trace_update=emit_trace_update,
