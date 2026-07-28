@@ -219,6 +219,10 @@ function safeActivityLabel(value: string): string | null {
   return label;
 }
 
+function formatActivityLabel(value: string): string {
+  return /[_-]/.test(value) ? formatLabel(value) : value;
+}
+
 function buildTaskActivity(parts: MessageContentPart[]): TaskActivityStep[] {
   const tools = parts.filter((part): part is ToolInfoPart => part.type === 'toolInfo' && Boolean(safeActivityLabel(part.title)));
   const toolByLabel = new Map(tools.map((tool) => [formatLabel(tool.title).toLowerCase(), tool]));
@@ -230,7 +234,7 @@ function buildTaskActivity(parts: MessageContentPart[]): TaskActivityStep[] {
     for (const rawStep of part.steps) {
       const safeStep = safeActivityLabel(rawStep);
       if (!safeStep) continue;
-      const label = formatLabel(safeStep);
+      const label = formatActivityLabel(safeStep);
       const key = label.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
