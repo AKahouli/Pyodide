@@ -107,6 +107,7 @@
   "scopes.nameLabel": "Scope name",
   "scopes.namePlaceholder": "Scope name",
   "scopes.create": "Create scope",
+  "scopes.createDescription": "Give the new scope a name. You can configure knowledge, agents, access, and publication afterward.",
   "scopes.createError": "Could not create the scope",
   "scopes.empty": "No scopes yet.",
   "scopes.newDefaultName": "New scope",
@@ -786,5 +787,9 @@
   "scopeShell.audience.save": "Save audience",
   "scopeShell.audience.saving": "Saving…",
   "scopeShell.audience.saved": "Audience saved",
-  "scopeShell.audience.saveError": "Audience could not be saved"
+  "scopeShell.audience.saveError": "Audience could not be saved",
+  "scopeShell.audience.searching": "Searching…",
+  "scopeShell.audience.searchMinimum": "Enter at least 3 characters to search the directory.",
+  "scopeShell.audience.searchError": "User search could not be completed. Try again.",
+  "scopeShell.audience.searchNoResults": "No users found."
 }
