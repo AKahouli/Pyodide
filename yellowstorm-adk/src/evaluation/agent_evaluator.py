@@ -18,6 +18,7 @@ import os
 import re
 from datetime import datetime
 from src.logger.logging import get_logger
+from src.smart_rag.infrastructure.model_parameters import normalize_messages_for_model
 import traceback
 
 logger = get_logger("api.evaluation.agent_evaluator")
@@ -221,6 +222,7 @@ def apply_litellm_debug_patch():
             model_str = str(model_arg or "").strip()
             if not model_str or model_str in ("/", "None", "None/None") or model_str.startswith("None/"):
                 model_str = "gpt-5.4-mini"
+            capability_model_str = model_str
 
             logger.info(f"[ADK LLM CALL START] model: {model_str}")
             
@@ -231,10 +233,21 @@ def apply_litellm_debug_patch():
             if "/" not in model_str and not model_str.startswith("azure/"):
                 model_str = f"azure/{model_str}"
             
-            kwargs["model"] = model_str
+            if "messages" in kwargs:
+                kwargs["messages"] = normalize_messages_for_model(
+                    capability_model_str, kwargs["messages"]
+                )
+            elif len(args) > 1:
+                args = (
+                    args[0],
+                    normalize_messages_for_model(capability_model_str, args[1]),
+                    *args[2:],
+                )
             # If model was passed as the first positional argument, override it
             if args and isinstance(args[0], str):
                 args = (model_str,) + args[1:]
+            else:
+                kwargs["model"] = model_str
             
             kwargs["timeout"] = 300 # Increase timeout for judge
             
@@ -265,15 +278,27 @@ def apply_litellm_debug_patch():
             model_str = str(model_arg or "").strip()
             if not model_str or model_str in ("/", "None", "None/None") or model_str.startswith("None/"):
                 model_str = "gpt-5.4-mini"
+            capability_model_str = model_str
 
             logger.info(f"[ADK LLM SYNC CALL START] model: {model_str}")
             
             if "/" not in model_str and not model_str.startswith("azure/"):
                 model_str = f"azure/{model_str}"
             
-            kwargs["model"] = model_str
+            if "messages" in kwargs:
+                kwargs["messages"] = normalize_messages_for_model(
+                    capability_model_str, kwargs["messages"]
+                )
+            elif len(args) > 1:
+                args = (
+                    args[0],
+                    normalize_messages_for_model(capability_model_str, args[1]),
+                    *args[2:],
+                )
             if args and isinstance(args[0], str):
                 args = (model_str,) + args[1:]
+            else:
+                kwargs["model"] = model_str
             
             kwargs["timeout"] = 300
             

@@ -20,6 +20,10 @@ const ConnectedAppsPage = React.lazy(() => import('./modules/connected-app/compo
 // Lazy-loaded app marketplace
 const AppMarketplacePage = React.lazy(() => import('./modules/app-marketplace/components/AppMarketplacePage').then((m) => ({ default: m.AppMarketplacePage })));
 
+const PlatformOverviewPage = React.lazy(() =>
+  import('@/modules/platform-overview').then((m) => ({ default: m.PlatformOverviewPage }))
+);
+
 // Lazy-loaded playbook routes
 const PlaybookListPage = React.lazy(() =>
   import("./modules/playbook/components/PlaybookListPage").then((m) => ({ default: m.PlaybookListPage }))
@@ -101,12 +105,15 @@ import {
   AgentTypesPage,
   DefaultAgentsPage,
   PlaybookPromptsPage,
+  PlaybookSettingsPage,
   WorkspaceSettingsPage,
+  ConversationSettingsPage,
   TeamAutoBuilderPage,
   PermissionGuard,
   AuthProvidersPage,
   ConnectedAppsAdminPage,
   GuardrailsPage,
+  EvaluationSettingsPage,
 } from "./modules/admin";
 
 function RouteErrorFallback() {
@@ -133,6 +140,14 @@ export const router = createHashRouter([
       {
         index: true,
         element: null, // RootGuard handles this
+      },
+      {
+        path: 'platform',
+        element: (
+          <Suspense fallback={null}>
+            <PlatformOverviewPage />
+          </Suspense>
+        ),
       },
       {
         path: 'conversation/:id',
@@ -324,6 +339,7 @@ export const router = createHashRouter([
           { path: "reports", element: <ReportsPage /> },
           { path: "models", element: <ModelsPage /> },
           { path: "guardrails", element: <GuardrailsPage /> },
+          { path: 'evaluation-settings', element: <PermissionGuard permissions={['admin.*', '*']}><EvaluationSettingsPage /></PermissionGuard> },
           { path: "tools", element: <ToolsPage /> },
           { path: "skills", element: <SkillsPage /> },
           { path: "connectors", element: <ConnectorsPage /> },
@@ -334,13 +350,25 @@ export const router = createHashRouter([
           { path: "system", element: <SystemPage /> },
           {
             path: 'playbook-settings',
-            element: <Navigate to="/admin/playbook-prompts" replace />,
+            element: (
+              <PermissionGuard permissions={['system.maintenance', 'system.*', '*']}>
+                <PlaybookSettingsPage />
+              </PermissionGuard>
+            ),
           },
           {
             path: 'workspace-settings',
             element: (
               <PermissionGuard permissions={['workspaces.*', '*']}>
                 <WorkspaceSettingsPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'conversation-settings',
+            element: (
+              <PermissionGuard permissions={['conversations.settings.manage', 'conversations.*', '*']}>
+                <ConversationSettingsPage />
               </PermissionGuard>
             ),
           },

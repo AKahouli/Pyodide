@@ -20,6 +20,7 @@ __all__ = [
     'inject_images_before_model',
     'add_diagram_context_before_tool',
     'catch_diagram_after_tool',
+    'prepare_web_preview_after_tool',
 ]
 
 
@@ -40,6 +41,7 @@ def __getattr__(name: str):
         'inject_images_before_model',
         'add_diagram_context_before_tool',
         'catch_diagram_after_tool',
+        'prepare_web_preview_after_tool',
     }:
         from .callback_helper import __dict__ as callback_dict
         return callback_dict[name]

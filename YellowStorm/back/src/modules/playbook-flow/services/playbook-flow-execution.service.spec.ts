@@ -983,7 +983,7 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     agentService.buildGrpcConnectorRuntimeForPlaybook.mockResolvedValue({
       connectorIds: ['conn-2'],
       connector_bindings: [{ connector_id: 'conn-2', connector_name: 'GitHub', actions: [{ action_key: 'issues', description: 'List issues' }] }],
-      tools: [{ name: 'connector_conn-2_issues', description: 'GitHub connector action issues' }],
+      tools: [{ name: 'github_issues', description: 'GitHub connector action issues' }],
       skills: [{ id: 'skill-2', name: 'Connector skill', description: 'Added via connector' }],
     });
 
@@ -1012,7 +1012,7 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       agent_tools: structFields({
         agent_tools: [
           { name: 'calculator', description: 'Math helper' },
-          { name: 'connector_conn-2_issues', description: 'GitHub connector action issues' },
+          { name: 'github_issues', description: 'GitHub connector action issues' },
         ],
       }).agent_tools,
       agent_params: structFields({

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, mapComponentsToContentParts, mapConversationComponentsToContentParts, normalizeChoiceComponentData } from './utils';
+import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, mapComponentsToContentParts, mapConversationComponentsToContentParts, messageToChat, normalizeChoiceComponentData } from './utils';
 
 describe('conversation utils', () => {
   it('formats timing values', () => {
@@ -11,6 +11,23 @@ describe('conversation utils', () => {
   it('preserves choice list fields for the interactive renderer', () => {
     const choice = normalizeChoiceComponentData({ schemaVersion: 1, questionId: 'q1', prompt: 'Pick', presentation: 'list', selectionMode: 'multiple', submitBehavior: 'immediate', status: 'ready', labels: { submit: 'Continue' }, progress: { current: 1, total: 2 }, otherOption: { enabled: true, label: 'Other', maxLength: 100 }, options: [{ id: 'a', label: 'A', submitText: 'Choose A' }, { id: 'b', label: 'B', submitText: 'Choose B' }] });
     expect(choice).toMatchObject({ submitBehavior: 'explicit', labels: { submit: 'Continue' }, progress: { current: 1, total: 2 }, otherOption: { enabled: true } });
+  });
+
+  it('uses concise canonical display text for submitted choice messages', () => {
+    const message = messageToChat({
+      id: 'message-1',
+      conversationId: 'conversation-1',
+      conversationType: 'user',
+      content: '{"selectedChoices":[{"submitText":"Analyze profitability"}]}',
+      interaction: {
+        type: 'choice', componentId: 'choice-1', questionId: 'q1', selectionMode: 'single',
+        selectedOptions: [{ optionId: 'profitability', label: 'Profitability' }],
+        displayText: 'Profitability',
+      },
+      createdAt: '2026-07-22T00:00:00.000Z',
+    });
+
+    expect(message.content).toBe('Profitability');
   });
 
   it('maps components and attaches citation to parent text', () => {
@@ -87,6 +104,14 @@ describe('conversation utils', () => {
     expect(getConversationStreamActivity([])).toBe('thinking');
     expect(getConversationStreamActivity([{ type: 'toolInfo', data: { title: 'activate_skill' } }] as never)).toBe('usingTools');
     expect(getConversationStreamActivity([{ type: 'text', data: { content: 'Public answer' } }] as never)).toBe('responding');
+  });
+
+  it('maps persisted stream errors from the backend contract', () => {
+    expect(mapConversationComponentsToContentParts([
+      { type: 'error', data: { code: 'ERR_1406', message: 'AI stream failed unexpectedly.' } },
+    ] as never)).toEqual([
+      { type: 'error', title: 'ERR_1406', content: 'AI stream failed unexpectedly.' },
+    ]);
   });
 
   it('maps snake_case sandbox and artifact component fields', () => {

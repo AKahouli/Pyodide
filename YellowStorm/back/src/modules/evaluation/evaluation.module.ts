@@ -9,6 +9,10 @@ import { Dataset, DatasetSchema } from './schemas/dataset.schema';
 import { Scenario, ScenarioSchema } from './schemas/scenario.schema';
 import { AgentModule } from '../agent/agent.module';
 import { AuthModule } from '../auth/auth.module';
+import { ModelsModule } from '../models/models.module';
+import { EvaluationSettings, EvaluationSettingsSchema } from './schemas/evaluation-settings.schema';
+import { EvaluationSettingsService } from './services/evaluation-settings.service';
+import { AdminEvaluationSettingsController } from './controllers/admin-evaluation-settings.controller';
 
 @Module({
     imports: [
@@ -16,12 +20,14 @@ import { AuthModule } from '../auth/auth.module';
             { name: Evaluation.name, schema: EvaluationSchema },
             { name: Dataset.name, schema: DatasetSchema },
             { name: Scenario.name, schema: ScenarioSchema },
+            { name: EvaluationSettings.name, schema: EvaluationSettingsSchema },
         ]),
         AgentModule,
         AuthModule,
+        ModelsModule,
     ],
-    controllers: [EvaluationController, ScenarioController],
-    providers: [EvaluationService, ScenarioService],
-    exports: [EvaluationService, ScenarioService],
+    controllers: [EvaluationController, ScenarioController, AdminEvaluationSettingsController],
+    providers: [EvaluationService, ScenarioService, EvaluationSettingsService],
+    exports: [EvaluationService, ScenarioService, EvaluationSettingsService],
 })
 export class EvaluationModule { }

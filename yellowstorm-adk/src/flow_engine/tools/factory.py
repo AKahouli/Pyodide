@@ -5,6 +5,7 @@ Ported and simplified from the legacy flow runtime playbook_tool_factory.
 
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.connector_tool_name import build_connector_tool_name
 from src.flow_engine.mcp import call_mcp_tool
 
 
@@ -24,6 +25,7 @@ async def create_tools_for_node(
     connector_bindings = node_config.get("connector_bindings") or []
     for binding in connector_bindings:
         connector_name = binding.get("connector_name", "connector")
+        connector_slug = binding.get("connector_slug") or connector_name
         transport_type = binding.get("mcp_transport_type", "streamable_http")
         server_url = binding.get("mcp_server_url", "")
         server_config = binding.get("mcp_server_config", {}) or {}
@@ -32,7 +34,7 @@ async def create_tools_for_node(
             action_key = action if isinstance(action, str) else action.get("action_key", "")
             if not action_key:
                 continue
-            tool_name = f"{connector_name}_{action_key}"
+            tool_name = build_connector_tool_name(connector_slug, action_key)
 
             async def _call_tool(params: Dict[str, Any], _key=action_key, _transport=transport_type,
                                 _url=server_url, _config=server_config) -> Any:

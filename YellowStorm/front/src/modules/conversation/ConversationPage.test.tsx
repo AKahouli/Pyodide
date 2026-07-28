@@ -1,5 +1,6 @@
-import { render } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { StrictMode } from 'react';
+import { act, render } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConversationPage } from './ConversationPage';
 
 const closeViewerMock = vi.hoisted(() => vi.fn());
@@ -44,6 +45,12 @@ vi.mock('./GroupConversationPage', () => ({ GroupConversationPage: () => null })
 describe('ConversationPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    act(() => vi.runOnlyPendingTimers());
+    vi.useRealTimers();
   });
 
   it('keeps the viewer open while mounted and closes it when leaving', () => {
@@ -54,5 +61,43 @@ describe('ConversationPage', () => {
 
     unmount();
     expect(closeViewerMock).toHaveBeenCalledOnce();
+  });
+
+  it('preserves message state during the StrictMode effect replay and cleans up on real unmount', () => {
+    const { unmount } = render(<StrictMode><ConversationPage /></StrictMode>);
+
+    act(() => vi.runOnlyPendingTimers());
+    expect(clearMessagesMock).not.toHaveBeenCalled();
+
+    unmount();
+    expect(clearMessagesMock).not.toHaveBeenCalled();
+    act(() => vi.runOnlyPendingTimers());
+    expect(clearMessagesMock).toHaveBeenCalledOnce();
+  });
+
+  it('cancels pending message cleanup when the conversation page immediately remounts', () => {
+    const firstMount = render(<ConversationPage />);
+    firstMount.unmount();
+
+    const secondMount = render(<ConversationPage />);
+    act(() => vi.runOnlyPendingTimers());
+    expect(clearMessagesMock).not.toHaveBeenCalled();
+
+    secondMount.unmount();
+    act(() => vi.runOnlyPendingTimers());
+    expect(clearMessagesMock).toHaveBeenCalledOnce();
+  });
+
+  it('does not clear shared message state while another conversation page remains mounted', () => {
+    const firstMount = render(<ConversationPage />);
+    const secondMount = render(<ConversationPage />);
+
+    firstMount.unmount();
+    act(() => vi.runOnlyPendingTimers());
+    expect(clearMessagesMock).not.toHaveBeenCalled();
+
+    secondMount.unmount();
+    act(() => vi.runOnlyPendingTimers());
+    expect(clearMessagesMock).toHaveBeenCalledOnce();
   });
 });

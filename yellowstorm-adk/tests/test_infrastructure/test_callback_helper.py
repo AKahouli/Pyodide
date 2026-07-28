@@ -15,6 +15,7 @@ from src.smart_rag.infrastructure.processing.callback_helper import (
   catch_images_after_tool,
   extract_html,
   modify_suggested_agents,
+  prepare_web_preview_after_tool,
 )
 
 
@@ -181,3 +182,29 @@ class TestCallbackHelperExtended:
 
     assert "[diagram_1]" in result["result"]
     mock_tracker.store_diagram.assert_awaited_once()
+
+  @pytest.mark.asyncio
+  async def test_prepare_web_preview_after_tool_returns_structured_html(self):
+    tool = MagicMock()
+    tool.name = "generate_web_preview"
+
+    result = await prepare_web_preview_after_tool(
+      tool, {}, MagicMock(), "```html\n<html><body>Preview</body></html>\n```"
+    )
+
+    assert result == {
+      "schemaVersion": 1,
+      "status": "ready",
+      "content": "<html><body>Preview</body></html>",
+    }
+
+  @pytest.mark.asyncio
+  async def test_prepare_web_preview_after_tool_ignores_other_tools(self):
+    tool = MagicMock()
+    tool.name = "other_tool"
+
+    result = await prepare_web_preview_after_tool(
+      tool, {}, MagicMock(), "<html><body>Preview</body></html>"
+    )
+
+    assert result is None

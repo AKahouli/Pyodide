@@ -86,6 +86,11 @@ export interface ConversationResponse {
     pinnedAt: string;
     runtimeDefinition: { primaryAgentId: string; allowedAgentIds: string[]; workspaceIds: string[] };
   };
+  branchProvenance?: {
+    sourceConversationId: string;
+    sourceTargetMessageId: string;
+    branchedAt: string;
+  };
 }
 
 export interface PaginatedConversations {

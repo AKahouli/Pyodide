@@ -344,15 +344,19 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
 
       return { type: 'citation' as ComponentType, data: sourceData };
     }
-    case 'toolInfo':
+    case 'toolInfo': {
+      const toolInfo = comp.tool_info;
       return {
         type,
         data: {
-          title: comp.tool_info?.title || '',
-          status: comp.tool_info?.status || 'running',
-          params: comp.tool_info?.params || '',
+          title: toolInfo?.title || '',
+          status: toolInfo?.status || 'running',
+          params: toolInfo?.params || '',
+          ...(toolInfo?.result_json ? { resultJson: toolInfo.result_json } : {}),
+          ...(toolInfo?.started_at ? { startedAt: toolInfo.started_at } : {}),
         },
       };
+    }
     case 'chainOfThought':
       return {
         type,

@@ -1,7 +1,7 @@
 import { memo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ThumbsUp, ThumbsDown, Copy, RotateCcw, MoreHorizontal, FileText, Flag, Reply } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, Copy, RotateCcw, MoreHorizontal, FileText, Flag, GitBranch, Loader2 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import { useModuleTranslation } from '@/modules/localization';
@@ -10,6 +10,9 @@ import { componentsToMarkdown } from '../utils';
 import type { Message } from '../types';
 import { ReportDialog } from './ReportDialog';
 import { TimingIndicator } from './TimingIndicator';
+import { useNavigate } from 'react-router-dom';
+import { useApiAction } from '@/lib/use-api-action';
+import { branchConversation } from '../api';
 
 import { cn } from '@/lib/utils';
 
@@ -25,9 +28,26 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const regenerateMessage = useConversationStore((s) => s.regenerateMessage);
   const setReplyingToMessage = useConversationStore((s) => s.setReplyingToMessage);
   const currentConversation = useConversationStore((s) => s.currentConversation);
+  const messages = useConversationStore((s) => s.messages);
+  const activeBranches = useConversationStore((s) => s.activeBranches);
+  const fetchConversations = useConversationStore((s) => s.fetchConversations);
   const isGroup = !!currentConversation?.groupMeta?.isGroup;
   const [reportOpen, setReportOpen] = useState(false);
   const { t } = useModuleTranslation('conversation');
+  const navigate = useNavigate();
+  const canBranch = !!currentConversation
+    && message.isComplete
+    && !message.isStreaming
+    && !isGroup
+    && currentConversation?.runtimeMode !== 'governed';
+  const { execute: createBranch, isLoading: isBranching } = useApiAction(branchConversation, {
+    showSuccessToast: true,
+    successMessage: t('toasts.branch.success'),
+    onSuccess: (conversation) => {
+      void fetchConversations({ reset: true });
+      navigate(`/conversation/${conversation.id}`);
+    },
+  });
 
   const handleLike = () => {
     // Don't allow removing feedback (clicking same button twice)
@@ -57,6 +77,22 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
 
   const handleReply = () => {
     setReplyingToMessage(message);
+  };
+
+  const handleBranch = () => {
+    const targetIndex = messages.findIndex((item) => item.id === message.id);
+    const prefixIds = new Set(messages.slice(0, targetIndex + 1).map((item) => item.id));
+    const selected = Object.fromEntries(
+      Array.from(activeBranches.entries()).filter(([questionId, answerId]) => (
+        prefixIds.has(questionId) && prefixIds.has(answerId)
+      )),
+    );
+    if (message.questionMessageId) selected[message.questionMessageId] = message.id;
+    void createBranch(conversationId, {
+      requestId: crypto.randomUUID(),
+      targetMessageId: message.id,
+      activeBranches: selected,
+    });
   };
 
   return (
@@ -109,6 +145,14 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align='start'>
+            {canBranch && (
+              <DropdownMenuItem onClick={handleBranch} disabled={isBranching}>
+                {isBranching
+                  ? <Loader2 className='h-3.5 w-3.5 mr-2 animate-spin' />
+                  : <GitBranch className='h-3.5 w-3.5 mr-2' />}
+                {isBranching ? t('messageActions.branching') : t('messageActions.branch')}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem disabled>
               <FileText className='h-3.5 w-3.5 mr-2' />
               {t('messageActions.export')}

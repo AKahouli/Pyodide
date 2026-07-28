@@ -105,7 +105,9 @@ export function formatTimingMs(ms: number | undefined): string {
 export function messageToChat(msg: Message): ChatMessage {
   let content: string | MessageContentPart[];
   if (msg.conversationType === 'user') {
-    content = msg.content || '';
+    content = msg.interaction?.type === 'choice' && msg.interaction.displayText
+      ? msg.interaction.displayText
+      : msg.content || '';
   } else {
     content = mapConversationComponentsToContentParts(msg.components || []);
   }
@@ -250,8 +252,8 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
     case 'error':
       return {
         type: 'error',
-        title: (data.title as string) || '',
-        content: (data.content as string) || '',
+        title: (data.title as string) || (data.code as string) || '',
+        content: (data.content as string) || (data.message as string) || '',
       };
     case 'sources':
       return {
@@ -283,6 +285,7 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         title: (data.title as string) || '',
         status: (data.status as 'running' | 'completed' | 'failed') || 'running',
         params: (data.params as string) || '',
+        startedAt: (data.startedAt as string) || undefined,
       };
     case 'chainOfThought':
       return {

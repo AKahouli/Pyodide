@@ -6,6 +6,8 @@ import { ModelsService } from '../../models/models.service';
 import { AgentService } from '../../agent/agent.service';
 import { AgentTypeService } from '../../agent-type/agent-type.service';
 import type { IAgentResponse } from '../../agent/interfaces/agent.interface';
+import { ConversationSettingsService } from '../../system/conversation-settings.service';
+import { BadRequestException, ErrorCode, ForbiddenException } from '../../exceptions';
 
 /** Same LiteLLM/OpenAI identifier shape as playbooks and other backend callers. */
 const resolveAdkModelName = (defaultModel: Awaited<ReturnType<ModelsService['getDefaultModel']>>) =>
@@ -27,6 +29,7 @@ export class ComposerSuggestionsService {
     private readonly logger: LoggerService,
     private readonly agentService: AgentService,
     private readonly agentTypeService: AgentTypeService,
+    private readonly conversationSettings: ConversationSettingsService,
   ) {
     this.logger.setContext(ComposerSuggestionsService.name);
   }
@@ -44,12 +47,11 @@ export class ComposerSuggestionsService {
 
   /**
    * Get the agent to use for composer suggestions.
-   * Priority: 1) specific agentId, 2) agent named "Suggestions", 3) composer-suggestions default agent, 4) any default agent
+   * Priority: 1) configured agent, 2) agent named "Suggestions", 3) composer-suggestions default agent, 4) any default agent
    */
-  private async getAgentForComposer(agentId?: string): Promise<IAgentResponse> {
-    // If agentId provided, fetch specific agent
+  private async getAgentForComposer(agentId: string | null): Promise<IAgentResponse> {
     if (agentId) {
-      this.logger.warn('Using provided agentId for composer suggestions', { agentId });
+      await this.agentService.assertActiveDefaultAgent(agentId);
       return this.agentService.findDefaultAgentById(agentId);
     }
 
@@ -151,13 +153,16 @@ export class ComposerSuggestionsService {
     return { model: modelName, omitTemperature: defaultModel?.omitTemperature ?? false };
   }
 
-  async fetchSuggestions(partialText: string, agentId?: string): Promise<ComposerSuggestionsAdkResult> {
-    this.logger.warn('fetchSuggestions called', {
-      partialTextLength: partialText.length,
-      partialTextPreview: partialText.substring(0, 50),
-      agentId,
-      hasAgentId: !!agentId,
-    });
+  async fetchSuggestions(partialText: string): Promise<ComposerSuggestionsAdkResult> {
+    const settings = (await this.conversationSettings.getSettings()).composerSuggestions;
+    if (!settings.enabled) {
+      throw new ForbiddenException(ErrorCode.CHAT_FORBIDDEN, 'Composer suggestions are disabled');
+    }
+    if (partialText.trim().length < settings.minimumDraftLength) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, `Draft must contain at least ${settings.minimumDraftLength} characters`);
+    }
+
+    this.logger.debug('Composer suggestions requested', { partialTextLength: partialText.length });
 
     const adkUrl = (this.configService.get<string>('indexing.apiAdk') || 'http://localhost:8001').replace(
       /\/$/,
@@ -165,7 +170,7 @@ export class ComposerSuggestionsService {
     );
 
     // Get agent and build prompt
-    const agent = await this.getAgentForComposer(agentId);
+    const agent = await this.getAgentForComposer(settings.agentId);
     const agentPrompt = await this.buildAgentPrompt(agent);
     const resolvedModel = await this.resolveModel(agent);
     const model = resolvedModel.model;
@@ -201,7 +206,7 @@ export class ComposerSuggestionsService {
           message,
           model,
           temperature: resolvedModel.omitTemperature ? null : 0,
-          max_tokens: 10000,
+          max_tokens: settings.maxOutputTokens,
         },
         {
           headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },

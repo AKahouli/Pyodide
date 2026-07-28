@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAutosave } from './useAutosave';
-import type { DataBinding, PlaybookTask } from '../types';
+import type { ControlEdge, DataBinding, PlaybookTask } from '../types';
 
 const actorSendMock = vi.hoisted(() => vi.fn());
 const parseApiErrorMock = vi.hoisted(() => vi.fn(() => ({ code: 'ERR_0000' })));
@@ -16,7 +16,8 @@ const storeState = vi.hoisted(() => ({
   currentPlaybook: {
     tasks: [] as PlaybookTask[],
     dataBindings: [] as DataBinding[],
-  },
+    controlEdges: [] as ControlEdge[],
+  } as { tasks: PlaybookTask[]; dataBindings: DataBinding[]; controlEdges?: ControlEdge[] },
 }));
 
 vi.mock('../store', () => ({
@@ -256,6 +257,38 @@ describe('useAutosave', () => {
       portId: 'prompt',
       reason: 'missing_required_binding',
     })]);
+  });
+
+  it('does not block manual save when a router edge targets the required port', async () => {
+    storeState.currentPlaybook = {
+      tasks: [
+        { id: 'router-1', nodeType: 'router', inputPorts: [], outputPorts: [] } as unknown as PlaybookTask,
+        {
+          id: 'task-1',
+          type: 'agent',
+          name: 'Task 1',
+          position: { x: 0, y: 0 },
+          inputPorts: [{ id: 'prompt', name: 'Prompt', artifactKind: 'text', required: true }],
+        } as unknown as PlaybookTask,
+      ],
+      dataBindings: [],
+      controlEdges: [{
+        id: 'edge-1',
+        kind: 'conditional',
+        source: 'router-1',
+        target: 'task-1',
+        routerLabel: 'continue',
+        targetInputPortId: 'prompt',
+      }],
+    };
+
+    const { result } = renderHook(() => useAutosave());
+    await act(async () => {
+      await result.current.saveNow();
+    });
+
+    expect(result.current.validationIssues).toEqual([]);
+    expect(storeState.saveCurrentPlaybook).toHaveBeenCalledWith({ reason: 'manual' });
   });
 
   it('reports autosave conflicts to the autosave actor', async () => {

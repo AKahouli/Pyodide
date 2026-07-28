@@ -32,7 +32,10 @@ export class ConversationOwnerGuard implements CanActivate {
     }
 
     const conversation = await this.conversationModel
-      .findById(conversationId)
+      .findOne({
+        _id: conversationId,
+        initializationStatus: { $nin: ['pending', 'seeding', 'cleanup_pending'] },
+      })
       .lean()
       .exec();
 

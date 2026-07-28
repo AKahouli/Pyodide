@@ -12,21 +12,11 @@ vi.mock('@/components/ui/tooltip', () => ({
   TooltipContent: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
-vi.mock('@/components/ui/dropdown-menu', () => ({
-  DropdownMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
-  DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
-  DropdownMenuContent: ({ children }: { children: ReactNode }) => <>{children}</>,
-  DropdownMenuItem: ({ children, onClick }: { children: ReactNode; onClick?: () => void }) => (
-    <button type='button' onClick={onClick}>
-      {children}
-    </button>
-  ),
-}));
-
 vi.mock('./RenameDialog', () => ({ RenameDialog: ({ open }: { open: boolean }) => <div>{open ? 'rename-open' : 'rename-closed'}</div> }));
 vi.mock('./DeleteConversationDialog', () => ({ DeleteConversationDialog: ({ open }: { open: boolean }) => <div>{open ? 'delete-open' : 'delete-closed'}</div> }));
 vi.mock('./ShareDialog', () => ({ ShareDialog: ({ open }: { open: boolean }) => <div>{open ? 'share-open' : 'share-closed'}</div> }));
 vi.mock('./WorkspaceManagerSheet', () => ({ WorkspaceManagerSheet: ({ open }: { open: boolean }) => <div>{open ? 'workspace-open' : 'workspace-closed'}</div> }));
+vi.mock('./CreateGroupConversationDialog', () => ({ CreateGroupConversationDialog: () => null }));
 
 vi.mock('../hooks/useTypewriter', () => ({
   useTypewriter: () => '',
@@ -58,14 +48,27 @@ describe('ConversationHeader', () => {
 
     expect(screen.getByText('Conversation title')).toBeInTheDocument();
 
-    const buttons = screen.getAllByRole('button');
-    await userEvent.click(buttons[0]);
+    await userEvent.click(screen.getByRole('button', { name: 'header.actions.back' }));
     expect(mockNavigate).toHaveBeenCalledWith('/');
 
-    await userEvent.click(buttons[1]);
+    await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.workspaces' }));
     expect(screen.getByText('workspace-open')).toBeInTheDocument();
 
-    await userEvent.click(buttons[2]);
+    await userEvent.click(screen.getByRole('button', { name: 'header.tooltips.share' }));
     expect(screen.getByText('share-open')).toBeInTheDocument();
+  });
+
+  it('places rename beside the title and exposes delete as a direct action', async () => {
+    render(<ConversationHeader />);
+
+    const title = screen.getByRole('heading', { name: 'Conversation title' });
+    const rename = screen.getByRole('button', { name: 'header.actions.rename' });
+    expect(title.parentElement).toContainElement(rename);
+
+    await userEvent.click(rename);
+    expect(screen.getByText('rename-open')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'header.actions.delete' }));
+    expect(screen.getByText('delete-open')).toBeInTheDocument();
   });
 });

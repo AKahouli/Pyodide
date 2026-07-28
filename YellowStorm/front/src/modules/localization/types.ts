@@ -13,6 +13,7 @@ import type governance from '../governance/locales/en.json';
 import type groups from '../groups/locales/en.json';
 import type models from '../models/locales/en.json';
 import type notifications from '../notifications/locales/en.json';
+import type platformOverview from '../platform-overview/locales/en.json';
 import type playbook from '../playbook/locales/en.json';
 import type profile from '../profile/locales/en.json';
 import type sidebar from '../sidebar/locales/en.json';
@@ -39,6 +40,7 @@ export type NamespaceResourceMap = {
   groups: typeof groups;
   models: typeof models;
   notifications: typeof notifications;
+  'platform-overview': typeof platformOverview;
   playbook: typeof playbook;
   profile: typeof profile;
   sidebar: typeof sidebar;

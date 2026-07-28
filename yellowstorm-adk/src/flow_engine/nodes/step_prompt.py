@@ -158,7 +158,10 @@ def build_step_prompt(
             "Must always generate markdown For text outputs ; Whenever the response includes numerical data, categories, comparisons, or structured lists, format the output as a Markdown table to maximize readability.",
             "For data outputs, use `content` for the structured JSON payload.; generate just the JSON noextra text.",
             "`reasoning_trace` is an array of objects describing your reasoning steps.",
-            'Each item has: id (string), type (string), label (string), description (string), confidence (number 0-1, optional)'
+            'Each item has: id (string), type (string), label (string), description (string), confidence (number 0-1, optional)',
+            "Must use only the given resolved inputs, don't try to fall back by using other files workspaces & files",
+            "The default playbook workspace is intented to be used only when no given indication to write down artifact in.",
+            "in the generated response, Must always specify the filename full path including the workspace and subfolders (if exists) (/mnt/workspace/<workspace_name>/<folder_1>/<folder...n>/filename) when it comes to reference files in output ports"
         ])
     else:
       lines.extend([

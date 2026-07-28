@@ -54,6 +54,7 @@ export interface GovernanceScopeReviewChecklistItem {
 }
 
 export interface GovernanceScopeMetadata {
+  description?: string;
   classification?: {
     audience?: GovernanceScopeAudience;
     riskLevel?: GovernanceScopeRiskLevel;
@@ -260,8 +261,6 @@ export interface GovernanceDeploymentRevision {
   scopeSnapshot: Record<string, unknown>;
   audienceSnapshot: Record<string, unknown>;
   previousAudienceSnapshot: Record<string, unknown>;
-  ownershipSnapshot: Record<string, { scopeId?: string; userId?: string; groupId?: string; role?: GovernanceMembershipRole; status?: string }>;
-  guardrailSnapshot: Record<string, { name?: string; guardrails?: Record<string, unknown> }>;
   createdBy: string;
   createdByUser?: { id: string; displayName: string; email: string };
   publishedBy?: string;
@@ -287,7 +286,7 @@ export interface GovernanceDryRun {
   conversationId?: string;
   testerId: string;
   status: 'running' | 'passed' | 'failed' | 'needs_review';
-  executionMode?: 'conversation' | 'manual';
+  executionMode: 'conversation' | 'manual';
   testCases: Array<Record<string, unknown>>;
   checks: Record<string, unknown>;
   createdAt: string;
@@ -301,6 +300,8 @@ export interface CreateGovernanceDryRunPayload {
   conversationId?: string;
   agentId?: string;
   workspaceIds?: string[];
+  testCases?: Array<Record<string, unknown>>;
+  checks?: Record<string, unknown>;
 }
 
 export interface GovernanceMetric {
@@ -327,7 +328,7 @@ export interface GovernanceScopeOverview {
     reviewBlockers: GovernanceReadinessCheck[];
   };
   agents: {
-    mappedAgents: Array<{ id: string; name: string; isPrimary: boolean; isActive: boolean; isDefault: boolean }>;
+    mappedAgents: Array<{ id: string; isPrimary: boolean }>;
     primaryAgentId?: string;
     missingAgent: boolean;
   };

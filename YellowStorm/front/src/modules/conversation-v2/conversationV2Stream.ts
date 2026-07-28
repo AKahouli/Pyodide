@@ -1,4 +1,4 @@
-import { AUTH_STORAGE_KEYS, API_CONFIG } from '@/lib/api';
+import { AUTH_STORAGE_KEYS, API_CONFIG } from '@/lib/api/config';
 import type { AgentEvent } from './types';
 
 /**
@@ -12,6 +12,7 @@ export interface PipeEvent {
 }
 
 type Listener = (event: PipeEvent) => void;
+type ConnectionListener = () => void;
 
 const EVENT_TYPES: AgentEvent['type'][] = [
   'message', 'tool', 'step', 'plan', 'title', 'done', 'wait', 'error', 'application_component',
@@ -30,6 +31,7 @@ const EVENT_TYPES: AgentEvent['type'][] = [
 class ConversationV2StreamService {
   private eventSource: EventSource | null = null;
   private listeners = new Set<Listener>();
+  private connectionListeners = new Set<ConnectionListener>();
   private reconnectAttempts = 0;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
@@ -76,6 +78,20 @@ class ConversationV2StreamService {
     return this.isConnected;
   }
 
+  subscribeConnected(listener: ConnectionListener): () => void {
+    this.connectionListeners.add(listener);
+    return () => this.connectionListeners.delete(listener);
+  }
+
+  reconnectWithNewToken(): void {
+    this.clearTimers();
+    this.eventSource?.close();
+    this.eventSource = null;
+    this.isConnected = false;
+    this.reconnectAttempts = 0;
+    this.connect();
+  }
+
   // ==================== internals ====================
 
   private setupEventHandlers(): void {
@@ -86,6 +102,7 @@ class ConversationV2StreamService {
       this.isConnected = true;
       this.reconnectAttempts = 0;
       this.resetHeartbeatTimer();
+      for (const listener of this.connectionListeners) listener();
     });
 
     es.addEventListener('heartbeat', () => {
@@ -135,6 +152,7 @@ class ConversationV2StreamService {
     this.heartbeatTimer = setTimeout(() => {
       console.warn('[ConversationV2Stream] Heartbeat timeout, reconnecting...');
       this.disconnect();
+      if (typeof document !== 'undefined' && document.hidden) return;
       this.scheduleReconnect();
     }, this.heartbeatTimeout);
   }

@@ -73,6 +73,30 @@ describe('required-port-validation', () => {
     ]);
   });
 
+  it('accepts a conditional router edge as control-only coverage for its exact target port', () => {
+    const tasks = [
+      makeTask({ id: 'router-1', nodeType: 'router' }),
+      makeTask({
+        id: 'target-1',
+        inputPorts: [
+          { id: 'approved', name: 'Approved', artifactKind: 'text', required: true },
+          { id: 'context', name: 'Context', artifactKind: 'text', required: true },
+        ],
+      }),
+    ];
+
+    expect(getUnboundRequiredPorts(tasks, [], [{
+      id: 'edge-1',
+      kind: 'conditional',
+      source: 'router-1',
+      target: 'target-1',
+      routerLabel: 'approved',
+      targetInputPortId: 'approved',
+    }])).toEqual([
+      { taskId: 'target-1', portId: 'context', portName: 'Context' },
+    ]);
+  });
+
   it('checks only changed task ids when validating intent-created required ports', () => {
     const tasks = [
       makeTask({

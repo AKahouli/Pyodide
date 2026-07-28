@@ -6,6 +6,7 @@ const getAllAgentsMock = vi.hoisted(() => vi.fn());
 const getAgentTypesMock = vi.hoisted(() => vi.fn());
 const createAgentMock = vi.hoisted(() => vi.fn());
 const updateAgentMock = vi.hoisted(() => vi.fn());
+const updateDefaultAgentMock = vi.hoisted(() => vi.fn());
 const deleteAgentMock = vi.hoisted(() => vi.fn());
 const toastSuccessMock = vi.hoisted(() => vi.fn());
 
@@ -14,6 +15,7 @@ vi.mock('./api', () => ({
   getAgentTypes: getAgentTypesMock,
   createAgent: createAgentMock,
   updateAgent: updateAgentMock,
+  updateDefaultAgent: updateDefaultAgentMock,
   deleteAgent: deleteAgentMock,
 }));
 
@@ -122,6 +124,28 @@ describe('agent store', () => {
     expect(updated.name).toBe('Updated');
     expect(useAgentStore.getState().agents[0].name).toBe('Updated');
     expect(toastSuccessMock).toHaveBeenCalled();
+  });
+
+  it('routes default agent updates through the admin endpoint', async () => {
+    const defaultAgent = { ...baseAgent, isDefault: true };
+    useAgentStore.setState({ agents: [defaultAgent] });
+    updateDefaultAgentMock.mockResolvedValue({
+      ...defaultAgent,
+      connectors: ['connector-1'],
+      connectorActionSelections: [{ connectorId: 'connector-1', actionKeys: ['search'] }],
+    });
+
+    await useAgentStore.getState().updateAgent('a1', {
+      connectors: ['connector-1'],
+      connectorActionSelections: [{ connectorId: 'connector-1', actionKeys: ['search'] }],
+    });
+
+    expect(updateDefaultAgentMock).toHaveBeenCalledWith('a1', {
+      connectors: ['connector-1'],
+      connectorActionSelections: [{ connectorId: 'connector-1', actionKeys: ['search'] }],
+    });
+    expect(updateAgentMock).not.toHaveBeenCalled();
+    expect(useAgentStore.getState().agents[0].connectors).toEqual(['connector-1']);
   });
 
   it('deletes agent and removes from state', async () => {

@@ -62,6 +62,9 @@ export enum ErrorCode {
   CHAT_WORKSPACE_FAILED = 'ERR_1418',
   CHAT_SHARE_REVOKED = 'ERR_1419',
   CHAT_GRPC_UNAUTHENTICATED = 'ERR_1420',
+  CHAT_BRANCH_INVALID = 'ERR_1421',
+  CHAT_BRANCH_UNSUPPORTED = 'ERR_1422',
+  CHAT_BRANCH_SEED_FAILED = 'ERR_1423',
 
   // External service errors (1500-1599)
   EXTERNAL_SERVICE_ERROR = 'ERR_1500',
@@ -477,6 +480,9 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CHAT_SHARE_REVOKED]: 'This shared conversation has been revoked.',
   [ErrorCode.CHAT_GRPC_UNAUTHENTICATED]:
     'AI service rejected the request (authentication failed).',
+  [ErrorCode.CHAT_BRANCH_INVALID]: 'The selected conversation branch is invalid.',
+  [ErrorCode.CHAT_BRANCH_UNSUPPORTED]: 'This conversation cannot be branched.',
+  [ErrorCode.CHAT_BRANCH_SEED_FAILED]: 'Failed to initialize the branched conversation.',
 
   [ErrorCode.EXTERNAL_SERVICE_ERROR]: 'External service error.',
   [ErrorCode.AI_SERVICE_ERROR]: 'AI service encountered an error.',

@@ -57,8 +57,8 @@ import {
   clearDefaultModel,
   syncModels,
 } from '../api';
-import type { AdminModelResponse, AdminModelsListResponse, ModelType } from '../types';
-import { MODEL_TYPES } from '../types';
+import type { AdminModelResponse, AdminModelsListResponse, ModelInputModality, ModelType } from '../types';
+import { MODEL_INPUT_MODALITIES, MODEL_TYPES } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 
@@ -112,6 +112,9 @@ function normalizeModel(model: AdminModelResponse): AdminModelResponse {
   return {
     ...model,
     types: Array.isArray(model.types) ? model.types : model.type ? [model.type] : [],
+    inputModalities: Array.isArray(model.inputModalities) && model.inputModalities.includes('text')
+      ? model.inputModalities
+      : ['text'],
   };
 }
 
@@ -133,6 +136,7 @@ export function ModelsPage() {
     chefSlug: '',
     types: [] as ModelType[],
     omitTemperature: false,
+    inputModalities: ['text'] as ModelInputModality[],
   });
 
   const fetchModels = async () => {
@@ -229,6 +233,7 @@ export function ModelsPage() {
       chefSlug: model.chefSlug,
       types: (model.types.length > 0 ? model.types : model.type ? [model.type] : []) as ModelType[],
       omitTemperature: model.omitTemperature,
+      inputModalities: model.inputModalities,
     });
     setShowEditDialog(true);
   };
@@ -255,6 +260,7 @@ export function ModelsPage() {
         providers,
         types: editFormData.types,
         omitTemperature: editFormData.omitTemperature,
+        inputModalities: editFormData.inputModalities,
       });
 
       setModels((prev) =>
@@ -447,6 +453,7 @@ export function ModelsPage() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          aria-label={t('models.table.actions.edit')}
                           onClick={() => openEditDialog(model)}
                         >
                           <Pencil className="h-4 w-4" />
@@ -463,7 +470,7 @@ export function ModelsPage() {
 
       {/* Edit Dialog */}
       <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-md overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t('models.edit.title')}</DialogTitle>
             <DialogDescription>
@@ -550,6 +557,30 @@ export function ModelsPage() {
                 </Select>
                 <p className="text-xs text-muted-foreground">
                   {t('models.edit.fields.primaryProviderHelper')}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label>{t('models.edit.fields.inputModalities')}</Label>
+                <div className="grid grid-cols-2 gap-2 rounded-md border p-3">
+                  {MODEL_INPUT_MODALITIES.map((modality) => (
+                    <Label key={modality} htmlFor={`input-modality-${modality}`} className="flex items-center gap-2 font-normal">
+                      <Checkbox
+                        id={`input-modality-${modality}`}
+                        checked={editFormData.inputModalities.includes(modality)}
+                        disabled={modality === 'text'}
+                        onCheckedChange={(checked) => setEditFormData((prev) => ({
+                          ...prev,
+                          inputModalities: checked === true
+                            ? [...new Set([...prev.inputModalities, modality])]
+                            : prev.inputModalities.filter((value) => value !== modality),
+                        }))}
+                      />
+                      {t(`models.edit.fields.inputModalities.${modality}`)}
+                    </Label>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {t('models.edit.fields.inputModalitiesHelper')}
                 </p>
               </div>
               <div className="space-y-2">

@@ -78,6 +78,7 @@ interface InputProps {
   members?: Array<{ id: string; name: string }>;
   autoMention?: { id: string; name: string; isMember?: boolean; _msgId?: string };
   showWorkspaceSelect?: boolean;
+  preserveWorkspaceSelectionOnSubmit?: boolean;
   showModelSelector?: boolean;
   governedMode?: boolean;
   mentionAgents?: MentionAgent[];
@@ -91,7 +92,7 @@ interface InputProps {
   onTextChange?: (text: string) => void;
 }
 
-const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, showModelSelector = false, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
+const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, preserveWorkspaceSelectionOnSubmit = false, showModelSelector = false, governedMode = false, mentionAgents, enableTeamMentions = true, workspaceOptions, belowTextarea, extraTools, onTextChange }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -531,7 +532,9 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
           teamIds.length > 0 ? teamIds : undefined,
         );
         setMentionMap(new Map());
-        resetSelectedWorkspaceIds();
+        if (!preserveWorkspaceSelectionOnSubmit) {
+          resetSelectedWorkspaceIds();
+        }
         return;
       }
 
@@ -547,7 +550,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
 
       setMentionMap(new Map());
     },
-    [submitDisabled, derivedStatus, mentionMap, memoizedAgents, memoizedTeams, members, workspaceOptions, externalSubmit, model, selectedWorkspaceIds, resetSelectedWorkspaceIds, selectedConnectorRepo],
+    [submitDisabled, derivedStatus, mentionMap, memoizedAgents, memoizedTeams, members, workspaceOptions, externalSubmit, model, selectedWorkspaceIds, preserveWorkspaceSelectionOnSubmit, resetSelectedWorkspaceIds, selectedConnectorRepo],
   );
 
   return (
