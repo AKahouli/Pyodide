@@ -10,6 +10,7 @@ describe('LoadingIndicator', () => {
     const spinner = container.querySelector('.animate-spin');
     expect(spinner).toBeInTheDocument();
     expect(spinner).toHaveClass('motion-reduce:animate-none');
+    expect(container.firstChild).toHaveClass('mx-2', 'md:mx-4', 'w-auto', 'rounded-xl', 'p-2');
   });
 
   it('uses a static completion icon after streaming ends', () => {

@@ -72,10 +72,10 @@ export class UpdateResponseReliabilitySettingsDto {
   @Max(10)
   maxConcurrentEvaluations!: number;
 
-  @ApiProperty({ minimum: 5000, maximum: 120000 })
+  @ApiProperty({ minimum: 5000, maximum: 600000 })
   @IsInt()
   @Min(5000)
-  @Max(120000)
+  @Max(600000)
   timeoutMs!: number;
 
   @ApiProperty({ minimum: 1, maximum: 10 })

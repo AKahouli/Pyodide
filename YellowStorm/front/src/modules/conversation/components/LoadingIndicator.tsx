@@ -4,6 +4,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { useModuleTranslation } from '@/modules/localization';
 import type { ConversationStreamActivity } from '../utils';
 import type { MessageComponent } from '../types';
+import { conversationPanelClassName } from './conversation-panel-styles';
 
 type StreamDetail =
   | { type: 'thought'; label: string }
@@ -103,7 +104,7 @@ export function LoadingIndicator({ activity = 'thinking', components = [], isCom
   if (isComplete && details.length === 0) return null;
 
   return (
-    <Collapsible open={isOpen} onOpenChange={setIsOpen} className='w-full max-w-2xl rounded-2xl rounded-tl-sm border border-border/70 bg-muted/35 p-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/75'>
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className={conversationPanelClassName}>
       <div className='flex min-w-0 items-center gap-3 px-1'>
         <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
           <span className='absolute inset-1 rounded-full bg-primary/20 ring-1 ring-primary/40' />
