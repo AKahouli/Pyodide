@@ -285,6 +285,7 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         title: (data.title as string) || '',
         status: (data.status as 'running' | 'completed' | 'failed') || 'running',
         params: (data.params as string) || '',
+        startedAt: (data.startedAt as string) || undefined,
       };
     case 'chainOfThought':
       return {

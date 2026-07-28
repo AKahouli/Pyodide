@@ -101,14 +101,14 @@ export const ChatMessageBubble = ({ message, className, showAvatar = true, userA
               <>
                 {reasoningParts.length > 0 && (
                   <div className='px-1'>
-                    <AIMessageContent parts={reasoningParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} />
+                    <AIMessageContent parts={reasoningParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} taskDisplay='activity' />
                   </div>
                 )}
 
                 {/* Only render bubble if there are other parts */}
                 {otherParts.length > 0 && (
                   <div className={cn('rounded-2xl text-sm shadow-xs', 'rounded-tl-sm border border-border/70 bg-muted/45 px-4 py-4 text-foreground dark:bg-muted/30')}>
-                    <AIMessageContent parts={otherParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} />
+                    <AIMessageContent parts={otherParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} taskDisplay='activity' />
                     {message.timestamp && <time className='mt-2 block text-[10px] opacity-50'>{formatMessageTimestamp(message.timestamp)}</time>}
                   </div>
                 )}

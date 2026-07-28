@@ -12,7 +12,7 @@ import { Reasoning, ReasoningTrigger, ReasoningContent } from './reasoning';
 import { Queue, QueueSection, QueueSectionTrigger, QueueSectionLabel, QueueSectionContent, QueueList, QueueItem, QueueItemIndicator, QueueItemContent } from './queue';
 import { Plan, PlanHeader, PlanTitle, PlanDescription, PlanContent, PlanFooter } from './plan';
 import { Checkpoint, CheckpointIcon, CheckpointTrigger } from './checkpoint';
-import { Task, TaskTrigger, TaskContent, TaskItem } from './task';
+import { Task, TaskTrigger, TaskContent, TaskItem, TaskDiagnosticsTrigger } from './task';
 import { Tool, ToolHeader, ToolContent, ToolInput } from './tool';
 import type { ToolUIPart } from 'ai';
 import { ChainOfThought, ChainOfThoughtHeader, ChainOfThoughtContent, ChainOfThoughtStep } from './chain-of-thought';
@@ -33,6 +33,7 @@ import { ChoicePartRenderer, type ChoiceComponentAction } from './choice/ChoiceP
 import { useModuleTranslation } from '@/modules/localization';
 import { isViewableFilename } from '@/modules/file-viewer/renderers';
 import { Separator } from '../ui/separator';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
 import { rehypeCitationMarkers } from '@/lib/rehype-citation-markers';
 import { remarkAssistantCitationLinks } from '@/lib/remark-assistant-citation-links';
 
@@ -183,6 +184,7 @@ export interface ToolInfoPart {
   status: 'running' | 'completed' | 'failed';
   /** JSON string of the tool-call arguments, e.g. '{"query":"..."}'. */
   params?: string;
+  startedAt?: string;
 }
 
 export interface ChainOfThoughtPart {
@@ -203,19 +205,73 @@ export type AIMessageContentProps = HTMLAttributes<HTMLDivElement> & {
   isStreaming?: boolean;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
+  taskDisplay?: 'raw' | 'activity';
 };
+
+type TaskActivityStep = {
+  label: string;
+  status?: ToolInfoPart['status'];
+};
+
+function safeActivityLabel(value: string): string | null {
+  const label = value.replace(/\s+/g, ' ').trim();
+  if (!label || label.length > 160 || /[<>]/.test(label)) return null;
+  return label;
+}
+
+function buildTaskActivity(parts: MessageContentPart[]): TaskActivityStep[] {
+  const tools = parts.filter((part): part is ToolInfoPart => part.type === 'toolInfo' && Boolean(safeActivityLabel(part.title)));
+  const toolByLabel = new Map(tools.map((tool) => [formatLabel(tool.title).toLowerCase(), tool]));
+  const activity: TaskActivityStep[] = [];
+  const seen = new Set<string>();
+
+  for (const part of parts) {
+    if (part.type !== 'chainOfThought') continue;
+    for (const rawStep of part.steps) {
+      const safeStep = safeActivityLabel(rawStep);
+      if (!safeStep) continue;
+      const label = formatLabel(safeStep);
+      const key = label.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      activity.push({ label, status: toolByLabel.get(key)?.status });
+    }
+  }
+
+  for (const tool of tools) {
+    const label = formatLabel(tool.title);
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    activity.push({ label, status: tool.status });
+  }
+
+  return activity.slice(0, 20);
+}
+
+function redactDiagnosticText(value: string): string {
+  return value
+    .slice(0, 30_000)
+    .replace(/(authorization\s*:\s*bearer\s+)[^\s<]+/gi, '$1[REDACTED]')
+    .replace(/((?:api[_-]?key|access[_-]?token|password|secret)\s*["']?\s*[:=]\s*["']?)[^\s"',}<]+/gi, '$1[REDACTED]');
+}
 
 /**
  * AIMessageContent - Renders structured AI message content using ai-sdk components
  */
-export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, choiceInteractions, ...props }: AIMessageContentProps) => {
+export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', ...props }: AIMessageContentProps) => {
   const choicePrompts = new Set(parts.filter((part): part is ChoicePart => part.type === 'choice' && part.status === 'ready').map((part) => part.prompt.trim()).filter(Boolean));
-  const visibleParts = parts.filter((part) => part.type !== 'text' || !choicePrompts.has(part.content.trim()));
+  const hasTask = parts.some((part) => part.type === 'task');
+  const taskActivity = useMemo(() => buildTaskActivity(parts), [parts]);
+  const visibleParts = parts.filter((part) => {
+    if (part.type === 'text' && choicePrompts.has(part.content.trim())) return false;
+    return !(taskDisplay === 'activity' && hasTask && (part.type === 'chainOfThought' || part.type === 'toolInfo'));
+  });
 
   return (
     <div className={cn('space-y-4', className)} {...props}>
       {visibleParts.map((part, index) => (
-        <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} />
+        <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} />
       ))}
     </div>
   );
@@ -230,9 +286,11 @@ type AIMessagePartProps = {
   isStreaming?: boolean;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
+  taskDisplay?: 'raw' | 'activity';
+  taskActivity?: TaskActivityStep[];
 };
 
-const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInteractions }: AIMessagePartProps) => {
+const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', taskActivity = [] }: AIMessagePartProps) => {
   switch (part.type) {
     case 'text':
       return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} />;
@@ -251,7 +309,7 @@ const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInt
     case 'choice':
       return <ChoicePartRenderer {...part} onAction={onComponentAction} submittedInteraction={choiceInteractions?.get(part.componentId)} externallyDisabled={isStreaming} />;
     case 'task':
-      return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} />;
+      return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} activity={taskDisplay === 'activity' ? taskActivity : undefined} />;
     case 'error':
       return <ErrorPartRenderer title={part.title} content={part.content} />;
     case 'sources':
@@ -728,16 +786,72 @@ const ChainOfThoughtPartRenderer = ({ steps }: { steps: string[] }) => {
 };
 
 // Task Part
-const TaskPartRenderer = ({ title, items, status, isStreaming = false }: { title: string; items: string[]; status?: 'pending' | 'in_progress' | 'completed'; isStreaming?: boolean }) => (
-  <Task className='my-2 ' defaultOpen={isStreaming}>
-    <TaskTrigger title={formatLabel(title)} active={isStreaming && status === 'in_progress'} />
-    <TaskContent>
-      {items.map((item, index) => (
-        <TaskItem key={index}>{item}</TaskItem>
-      ))}
-    </TaskContent>
-  </Task>
-);
+const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity }: { title: string; items: string[]; status?: 'pending' | 'in_progress' | 'completed'; isStreaming?: boolean; activity?: TaskActivityStep[] }) => {
+  const { t: tCommon } = useModuleTranslation('common');
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const activityMode = activity !== undefined;
+  const diagnostics = items.map(redactDiagnosticText).filter(Boolean);
+
+  const statusIcon = (stepStatus: TaskActivityStep['status'], index: number) => {
+    const resolvedStatus = stepStatus ?? (status === 'completed' ? 'completed' : isStreaming && index === (activity?.length ?? 0) - 1 ? 'running' : 'completed');
+    if (resolvedStatus === 'failed') return <XCircle className='size-4 shrink-0 text-destructive' />;
+    if (resolvedStatus === 'running') return <Loader2 className='size-4 shrink-0 animate-spin text-primary motion-reduce:animate-none' />;
+    return <CheckCircle2 className='size-4 shrink-0 text-primary' />;
+  };
+
+  return (
+    <>
+      <Task className='my-2' defaultOpen={isStreaming}>
+        <div className='flex items-center gap-1'>
+          <TaskTrigger className='min-w-0 flex-1' title={formatLabel(title)} active={isStreaming && status === 'in_progress'} />
+          {activityMode && <TaskDiagnosticsTrigger aria-label={tCommon('ai.task.diagnostics.open')} title={tCommon('ai.task.diagnostics.open')} onClick={() => setDiagnosticsOpen(true)} />}
+        </div>
+        <TaskContent>
+          {activityMode ? (
+            activity.length > 0 ? activity.map((step, index) => (
+              <TaskItem key={`${step.label}-${index}`} className='flex items-center gap-2'>
+                {statusIcon(step.status, index)}
+                <span>{step.label}</span>
+              </TaskItem>
+            )) : (
+              <TaskItem>{tCommon(isStreaming ? 'ai.task.activity.running' : 'ai.task.activity.completed')}</TaskItem>
+            )
+          ) : items.map((item, index) => (
+            <TaskItem key={index}>{item}</TaskItem>
+          ))}
+        </TaskContent>
+      </Task>
+
+      {activityMode && (
+        <Dialog open={diagnosticsOpen} onOpenChange={setDiagnosticsOpen}>
+          <DialogContent className='max-h-[80vh] max-w-3xl overflow-hidden'>
+            <DialogHeader>
+              <DialogTitle>{tCommon('ai.task.diagnostics.title')}</DialogTitle>
+              <DialogDescription>{tCommon('ai.task.diagnostics.description')}</DialogDescription>
+            </DialogHeader>
+            <div className='min-h-0 space-y-4 overflow-y-auto'>
+              <section className='space-y-2'>
+                <h3 className='text-sm font-medium'>{tCommon('ai.task.diagnostics.activity')}</h3>
+                {activity.length > 0 ? (
+                  <ol className='space-y-1.5 text-sm text-muted-foreground'>
+                    {activity.map((step, index) => <li key={`${step.label}-diagnostic-${index}`}>{index + 1}. {step.label}</li>)}
+                  </ol>
+                ) : <p className='text-sm text-muted-foreground'>{tCommon('ai.task.diagnostics.emptyActivity')}</p>}
+              </section>
+              <section className='space-y-2'>
+                <h3 className='text-sm font-medium'>{tCommon('ai.task.diagnostics.input')}</h3>
+                <p className='text-xs text-muted-foreground'>{tCommon('ai.task.diagnostics.redactedNotice')}</p>
+                {diagnostics.length > 0 ? diagnostics.map((item, index) => (
+                  <pre key={index} className='max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-muted/40 p-3 font-mono text-xs leading-relaxed'>{item}</pre>
+                )) : <p className='text-sm text-muted-foreground'>{tCommon('ai.task.diagnostics.emptyInput')}</p>}
+              </section>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
+  );
+};
 
 // Error Part
 const ErrorPartRenderer = ({ title, content }: { title: string; content: string }) => {

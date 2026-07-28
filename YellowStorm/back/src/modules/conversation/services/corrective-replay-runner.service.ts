@@ -7,7 +7,8 @@ import { MessageService } from './message.service';
 import { StreamService, type ConversationHistoryEntry } from './stream.service';
 import { CorrectiveReplayPromptBuilder, CORRECTIVE_REPLAY_PROMPT_VERSION } from './corrective-replay-prompt.builder';
 
-const INTERNAL_COMPONENT_TYPES = new Set(['reasoning', 'chainOfThought', 'queue', 'checkpoint', 'toolInfo']);
+const INTERNAL_COMPONENT_TYPES = new Set(['reasoning', 'queue', 'checkpoint']);
+const TOOL_STATUSES = new Set(['running', 'completed', 'failed']);
 
 export interface CorrectiveReplayResult {
   components: MessageComponent[];
@@ -91,7 +92,7 @@ export class CorrectiveReplayRunnerService {
       }
       replayStarted = true;
       const result = await execution.result;
-      const components = result.components.filter((component) => !INTERNAL_COMPONENT_TYPES.has(component.type));
+      const components = result.components.flatMap((component) => this.participantVisibleComponent(component));
       if (!this.visibleText(components)) throw new CorrectiveReplayFailure('corrective_replay_empty_response', true);
 
       await this.recordReplayUsage(input, result.usage, true);
@@ -119,6 +120,40 @@ export class CorrectiveReplayRunnerService {
     } finally {
       if (seeded) await this.cleanupSession(input.userId, sessionId, idempotencyKey, input.messageId, replayRequestId);
     }
+  }
+
+  private participantVisibleComponent(component: MessageComponent): MessageComponent[] {
+    if (INTERNAL_COMPONENT_TYPES.has(component.type)) return [];
+
+    if (component.type === 'chainOfThought') {
+      const steps = Array.isArray(component.data?.steps)
+        ? component.data.steps
+          .filter((step): step is string => typeof step === 'string')
+          .map((step) => step.replace(/\s+/g, ' ').trim())
+          .filter((step) => step.length > 0 && step.length <= 160 && !/[<>]/.test(step))
+          .slice(0, 20)
+        : [];
+      return steps.length ? [{ ...component, data: { steps } }] : [];
+    }
+
+    if (component.type === 'toolInfo') {
+      const title = typeof component.data?.title === 'string'
+        ? component.data.title.replace(/\s+/g, ' ').trim().slice(0, 120)
+        : '';
+      if (!title) return [];
+      const status = typeof component.data?.status === 'string' && TOOL_STATUSES.has(component.data.status)
+        ? component.data.status
+        : 'running';
+      const startedAt = typeof component.data?.startedAt === 'string' && !Number.isNaN(Date.parse(component.data.startedAt))
+        ? component.data.startedAt
+        : undefined;
+      return [{
+        ...component,
+        data: { title, status, ...(startedAt ? { startedAt } : {}) },
+      }];
+    }
+
+    return [component];
   }
 
   private async recordReplayUsage(

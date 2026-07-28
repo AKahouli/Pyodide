@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { Task, TaskTrigger } from './task';
+import { Task, TaskDiagnosticsTrigger, TaskTrigger } from './task';
 
 describe('TaskTrigger', () => {
   it('animates an active task with reduced-motion fallbacks', () => {
@@ -25,5 +25,19 @@ describe('TaskTrigger', () => {
     expect(screen.getByText('Smart Agent').parentElement).not.toHaveAttribute('data-active');
     expect(container.querySelector('.animate-agent-scan')).not.toBeInTheDocument();
     expect(container.querySelector('.animate-ping')).not.toBeInTheDocument();
+  });
+
+  it('renders diagnostics as an independent accessible control', () => {
+    render(
+      <Task>
+        <div>
+          <TaskTrigger title='Smart Agent' />
+          <TaskDiagnosticsTrigger aria-label='Open diagnostics' />
+        </div>
+      </Task>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Open diagnostics' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button')).toHaveLength(2);
   });
 });
