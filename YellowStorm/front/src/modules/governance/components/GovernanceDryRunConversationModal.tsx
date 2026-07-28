@@ -38,6 +38,7 @@ export function GovernanceDryRunConversationModal({ open, onOpenChange, deployme
   const [activeConversationId, setActiveConversationId] = useState(conversationId ?? null);
   const loadTokenRef = useRef(0);
   const wasOpenRef = useRef(false);
+  const activeWorkspaceKeyRef = useRef<string | null>(null);
   const previousWorkspaceIdsRef = useRef<string[]>([]);
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
   const setSelectedWorkspaceIds = useSetSelectedWorkspaceIds();
@@ -71,12 +72,16 @@ export function GovernanceDryRunConversationModal({ open, onOpenChange, deployme
       if (!wasOpenRef.current) {
         previousWorkspaceIdsRef.current = selectedWorkspaceIds;
         wasOpenRef.current = true;
+      }
+      if (activeWorkspaceKeyRef.current !== initialWorkspaceKey) {
+        activeWorkspaceKeyRef.current = initialWorkspaceKey;
         setSelectedWorkspaceIds(initialWorkspaceIds);
       }
       return;
     }
     if (!wasOpenRef.current) return;
     wasOpenRef.current = false;
+    activeWorkspaceKeyRef.current = null;
     setSelectedWorkspaceIds(previousWorkspaceIdsRef.current);
     resetConversationState();
   }, [initialWorkspaceIds, initialWorkspaceKey, open, selectedWorkspaceIds, setSelectedWorkspaceIds]);
@@ -84,6 +89,7 @@ export function GovernanceDryRunConversationModal({ open, onOpenChange, deployme
   useEffect(() => () => {
     if (wasOpenRef.current) {
       wasOpenRef.current = false;
+      activeWorkspaceKeyRef.current = null;
       setSelectedWorkspaceIds(previousWorkspaceIdsRef.current);
       resetConversationState();
     }
@@ -92,10 +98,11 @@ export function GovernanceDryRunConversationModal({ open, onOpenChange, deployme
   const handleSubmit = (message: PromptInputMessage, _modelId: string, mentionedAgentIds?: string[], _memberIds?: string[], selectedWorkspaceIds?: string[]) => {
     const text = message.text?.trim() ?? '';
     if (!text || !agentId) return;
-    const workspaceIds = selectedWorkspaceIds?.length ? selectedWorkspaceIds : scopedWorkspaces.map((workspace) => workspace.id);
+    const selectedDraftWorkspaceIds = selectedWorkspaceIds?.filter((workspaceId) => initialWorkspaceIds.includes(workspaceId));
+    const workspaceIds = selectedDraftWorkspaceIds?.length ? selectedDraftWorkspaceIds : initialWorkspaceIds;
     const requestedAgentId = mentionedAgentIds?.find((mentionedAgentId) => scopedAgents.some((agent) => agent.id === mentionedAgentId)) ?? agentId;
     createDryRun.mutate(
-      { input: text, simulatedChannel: 'widget', conversationId: activeConversationId ?? undefined, agentId: requestedAgentId, workspaceIds },
+      { input: text, simulatedChannel: 'widget', conversationId: activeConversationId ?? undefined, agentId: requestedAgentId, ...(!activeConversationId && { workspaceIds }) },
       {
         onSuccess: (dryRun) => {
           setSelectedWorkspaceIds(workspaceIds);
@@ -135,7 +142,7 @@ export function GovernanceDryRunConversationModal({ open, onOpenChange, deployme
             </ChatConversation>
           )}
           <div className='shrink-0 border-t bg-background/80 p-4 backdrop-blur-xs'>
-            <Input governedMode onSubmit={handleSubmit} status={status} disabled={!agentId || isBusy} submitDisabled={!agentId || isBusy} placeholder={t('dryRun.inputPlaceholder')} mentionAgents={scopedAgents} enableTeamMentions={false} workspaceOptions={scopedWorkspaces} showWorkspaceSelect={true} />
+            <Input governedMode onSubmit={handleSubmit} status={status} disabled={!agentId || isBusy} submitDisabled={!agentId || isBusy} placeholder={t('dryRun.inputPlaceholder')} mentionAgents={scopedAgents} enableTeamMentions={false} workspaceOptions={scopedWorkspaces} showWorkspaceSelect={!activeConversationId} />
           </div>
         </div>
       </DialogContent>

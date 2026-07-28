@@ -99,7 +99,14 @@ class TestTeamOrchestratorExtended2:
         search_config = MagicMock()
         search_config.type = "search"
         search_config.name = "SearchAgent"
-        search_config.tools = [{"name": "search", "top_k": 5}]
+        search_config.tools = [
+            {"name": "search", "top_k": 5},
+            {
+                "name": "generate_web_preview",
+                "prompt": "Use previews.",
+                "instructions": "Return HTML.",
+            },
+        ]
         search_config.prompt = "find docs"
         search_config.agent_params = {}
         team_config = MagicMock()
@@ -119,3 +126,5 @@ class TestTeamOrchestratorExtended2:
             created = await team._create_agent_team(team_config, "sess-1")
         assert created.manager is not None
         assert len(created.agents) == 1
+        mock_factory.set_web_preview_tool_config.assert_called_once_with(search_config.tools[1])
+        assert mock_factory.create_search_agent.call_args.kwargs["generate_web_preview"] is True

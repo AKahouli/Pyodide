@@ -160,6 +160,22 @@ async def test_child_result_queue_keeps_visible_citations_without_tool_context()
 
 
 @pytest.mark.asyncio
+async def test_child_result_queue_forwards_only_tool_activity():
+    forwarded = []
+
+    class ActivityQueue:
+        async def put(self, item):
+            forwarded.append(item)
+
+    queue = _ChildResultQueue(ActivityQueue())
+    tool_event = {"action": "add", "component": {"id": "tool-child-call", "type": "tool_info", "data": {"title": "search"}}}
+    await queue.put(tool_event)
+    await queue.put({"action": "add", "component": {"id": "text", "type": "text", "data": {"content": "private child text"}}})
+
+    assert forwarded == [tool_event]
+
+
+@pytest.mark.asyncio
 async def test_temporary_child_agent_tool_uses_default_for_invalid_limit():
     parent_config = {
         "id": "parent",

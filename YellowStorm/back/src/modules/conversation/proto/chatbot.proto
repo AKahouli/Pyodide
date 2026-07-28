@@ -41,6 +41,7 @@ message AttachedFile {
 
 message Chatbot {
     string model = 1;  // Full LiteLLM model identifier (e.g., "anthropic/claude-sonnet-4-5", "azure/gpt-4.1")
+    repeated string input_modalities = 2; // Supported request inputs: "text", optionally "image"
 }
 
 message Tool {
@@ -147,6 +148,20 @@ message ConnectorRepo {
     string repo_url = 5;
 }
 
+message CorrectionReplayFinding {
+    string claim = 1;
+    string status = 2;
+    string importance = 3;
+    string explanation = 4;
+}
+
+message CorrectionReplayContext {
+    string original_answer = 1;
+    repeated CorrectionReplayFinding findings = 2;
+    int32 attempt_number = 3;
+    string instructions = 4;
+}
+
 message RunAgentTeamRequest {
     UserContext user_context = 1;
     string conversation_id = 2;
@@ -159,6 +174,9 @@ message RunAgentTeamRequest {
     ConnectorRepo connector_repo = 12;
     bool deep_search_enabled = 13;
     repeated Skill skills = 14;
+    string task_summary = 15;                              // Human-readable task UI summary; query remains model input
+    CorrectionReplayContext correction_replay_context = 16;
+    bool web_search_enabled = 17;
 }
 
 // Mono-agent request: a single specialized agent runs directly with its own
@@ -175,6 +193,9 @@ message RunSingleAgentRequest {
     ConnectorRepo connector_repo = 8;
     repeated Skill skills = 9;                        // Conversation-level skills selected by the user
     bool deep_search_enabled = 10;                    // When true, enables deep search mode for this request
+    string task_summary = 11;                         // Human-readable task UI summary; query remains model input
+    CorrectionReplayContext correction_replay_context = 12;
+    bool web_search_enabled = 13;
 }
 
 message GenerateConversationNameRequest {
@@ -259,6 +280,7 @@ message ToolInfoComponent {
     string status = 2;           // running | completed | failed
     optional string params = 3;  // JSON object of tool-call arguments {name: value}; omitted when empty
     optional string result_json = 4; // Bounded structured tool result for trusted backend consumers
+    optional string started_at = 5; // RFC 3339 UTC instant captured when the tool call starts
 }
 
 enum ChartKind {
@@ -453,6 +475,39 @@ message StreamChunk {
     Usage usage = 4;             // Token usage data (optional)
 }
 
+enum ConversationHistoryRole {
+    CONVERSATION_HISTORY_ROLE_UNSPECIFIED = 0;
+    CONVERSATION_HISTORY_ROLE_USER = 1;
+    CONVERSATION_HISTORY_ROLE_ASSISTANT = 2;
+}
+
+message ConversationHistoryEntry {
+    ConversationHistoryRole role = 1;
+    string text = 2;
+}
+
+message SeedConversationSessionRequest {
+    string user_id = 1;
+    string session_id = 2;
+    string idempotency_key = 3;
+    repeated ConversationHistoryEntry history = 4;
+}
+
+message SeedConversationSessionResponse {
+    string session_id = 1;
+    bool created = 2;
+}
+
+message DeleteConversationSessionRequest {
+    string user_id = 1;
+    string session_id = 2;
+    string idempotency_key = 3;
+}
+
+message DeleteConversationSessionResponse {
+    bool deleted = 1;
+}
+
 // ===== SERVICES =====
 
 service ChatbotService {
@@ -463,6 +518,8 @@ service ChatbotService {
     rpc GeneratePlaybook(GeneratePlaybookRequest) returns (GeneratePlaybookResponse);
     rpc EvaluateTask(TaskAdvisorRequest) returns (TaskAdvisorResult);
     rpc AdvisePlaybookNode(AdvisePlaybookNodeRequest) returns (AdvisePlaybookNodeResponse);
+    rpc SeedConversationSession(SeedConversationSessionRequest) returns (SeedConversationSessionResponse);
+    rpc DeleteConversationSession(DeleteConversationSessionRequest) returns (DeleteConversationSessionResponse);
 }
 
 // ===== PLAYBOOK LANGGRAPH SERVICE =====
@@ -954,5 +1011,3 @@ message AdvisePlaybookNodeResponse {
     string task_id = 2;
     repeated NodeAdvisorSuggestion suggestions = 3;
 }
-
- 

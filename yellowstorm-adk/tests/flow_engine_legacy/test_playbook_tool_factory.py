@@ -6,7 +6,9 @@ import pytest
 
 sys.modules.setdefault(
     "src.smart_rag.tools.utilities.connector_tools",
-    SimpleNamespace(import_connector_items_to_workspace_request=lambda *args, **kwargs: None),
+    SimpleNamespace(
+        import_connector_items_to_workspace_request=lambda *args, **kwargs: None,
+    ),
 )
 
 from src.flow_engine.tools.langchain_factory import (
@@ -387,7 +389,7 @@ def test_code_interpreter_generated_xlsx_emits_explicit_output_port(
     }
 
 
-def test_code_interpreter_generated_file_uses_object_key_fallback(
+def test_code_interpreter_generated_file_prefers_object_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeResponse:
@@ -403,6 +405,8 @@ def test_code_interpreter_generated_file_uses_object_key_fallback(
                 "generated_files": [
                     {
                         "object_key": "user/session/report.xlsx",
+                        "azure_path": "https://legacy.example/report.xlsx",
+                        "file_path": "/tmp/report.xlsx",
                         "filename": "report.xlsx",
                     }
                 ],
@@ -720,6 +724,8 @@ def test_python_interpreter_reuses_workspace_name_for_generated_follow_up(
                     {
                         "name": "chart.png",
                         "azure_path": "https://example.com/generated/chart.png",
+                        "file_path": "/tmp/chart.png",
+                        "object_key": "owner-123/workspace-prefix/chart.png",
                     }
                 ]
             )
@@ -745,6 +751,9 @@ def test_python_interpreter_reuses_workspace_name_for_generated_follow_up(
 
     asyncio.run(python_interpreter("print('first')", timeout_seconds=5, tool_context=tool_context))
 
+    assert tool_context.state["_code_interpreter_generated_files"][0]["file_path"] == "owner-123/workspace-prefix/chart.png"
+    assert tool_context.state["_code_interpreter_generated_files"][0]["object_key"] == "owner-123/workspace-prefix/chart.png"
+    assert tool_context.state["_code_interpreter_generated_files"][0]["azure_path"] == "https://example.com/generated/chart.png"
     assert tool_context.state["_code_interpreter_generated_files"][0]["workspace_name"] == "workspace-prefix"
     assert tool_context.state["_code_interpreter_brain_docs"][-1]["workspace_name"] == "workspace-prefix"
 
@@ -761,6 +770,7 @@ def test_python_interpreter_reuses_workspace_name_for_generated_follow_up(
 
     assert captured_requests[0]["workspace_name"] == "workspace-prefix"
     assert captured_requests[1]["workspace_name"] == "workspace-prefix"
+    assert captured_requests[1]["file_names"] == ["chart.png"]
 
 
 def test_python_interpreter_reuses_generated_file_workspace_name_without_brain_docs(

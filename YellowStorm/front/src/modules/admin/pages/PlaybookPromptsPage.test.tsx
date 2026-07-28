@@ -3,17 +3,12 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PlaybookPromptsPage } from './PlaybookPromptsPage';
-import { updatePlaybookNodeTemplate, getAdminPlaybookSettings, getAllModels, updateAdminPlaybookSettings, getPlaybookPrompts } from '../api';
+import { updatePlaybookNodeTemplate } from '../api';
 import { mockApiClient } from '@/test/setup';
 
 const fetchAgents = vi.fn();
 const invalidateNodeTemplates = vi.fn();
 const useAgents = vi.fn(() => []);
-const hasAnyPermission = vi.fn(() => true);
-
-vi.mock('../hooks', () => ({
-  usePermissions: () => ({ hasAnyPermission }),
-}));
 
 vi.mock('../api', () => ({
   getPlaybookPrompts: vi.fn().mockResolvedValue({ items: [] }),
@@ -87,28 +82,6 @@ vi.mock('../api', () => ({
   })),
   deletePlaybookNodeTemplate: vi.fn(),
   importPlaybookNodeTemplates: vi.fn(),
-  getAdminPlaybookSettings: vi.fn().mockResolvedValue({
-    inferenceModelId: 'model-inference',
-    advisorEvaluationModelId: null,
-    replayEvaluationModelId: null,
-    nodeSuggestionsMode: 'manual',
-    approvalSuggestionMode: 'auto',
-    intentNormalizationLimits: {
-      maxWorkflowPlanChanges: 500,
-      maxInputPorts: 4,
-      maxOutputPorts: 4,
-      maxIteratorBodySteps: 12,
-      maxIteratorBodyEdges: 24,
-    },
-    replayEligibilityConfidenceThreshold: 70,
-    useDeterministicBlueprintBuilder: true,
-  }),
-  getAllModels: vi.fn().mockResolvedValue({
-    models: [
-      { id: 'model-inference', name: 'Inference Model', isActive: true },
-    ],
-  }),
-  updateAdminPlaybookSettings: vi.fn().mockImplementation(async (settings) => settings),
 }));
 
 vi.mock('@/modules/playbook', async () => {
@@ -198,11 +171,6 @@ vi.mock('@/components/ui/searchable-select', () => ({
 }));
 
 describe('PlaybookPromptsPage', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    hasAnyPermission.mockReturnValue(true);
-  });
-
   it('normalizes iterator templates and persists iteratorConfig on save', async () => {
     mockApiClient.get.mockResolvedValue({ data: { data: [] } });
 
@@ -254,7 +222,7 @@ describe('PlaybookPromptsPage', () => {
     });
 
     expect(screen.getAllByDisplayValue('invoice').length).toBeGreaterThan(0);
-    expect(screen.getAllByDisplayValue('4').length).toBeGreaterThan(0);
+    expect(screen.getByDisplayValue('4')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /playbook\.templates\.actions\.saveTemplate/i }));
 
@@ -278,43 +246,5 @@ describe('PlaybookPromptsPage', () => {
     expect(payload.iteratorConfig).toBeNull();
     expect(payload.assignedAgentId).toBeNull();
     expect(payload.selectedAction).toBeNull();
-  });
-
-  it('loads and saves playbook settings when authorized', async () => {
-    hasAnyPermission.mockReturnValue(true);
-    mockApiClient.get.mockResolvedValue({ data: { data: [] } });
-
-    render(<PlaybookPromptsPage />);
-
-    await waitFor(() => {
-      expect(getAdminPlaybookSettings).toHaveBeenCalled();
-      expect(getAllModels).toHaveBeenCalled();
-    });
-
-    await waitFor(() => {
-      const saveButtons = screen.getAllByRole('button', { name: /playbookSettings\.actions\.save/i });
-      expect(saveButtons.length).toBeGreaterThan(0);
-    });
-
-    fireEvent.click(screen.getAllByRole('button', { name: /playbookSettings\.actions\.save/i })[0]);
-
-    await waitFor(() => {
-      expect(updateAdminPlaybookSettings).toHaveBeenCalled();
-    });
-  });
-
-  it('hides the settings section when the user lacks system.maintenance', async () => {
-    hasAnyPermission.mockReturnValue(false);
-    mockApiClient.get.mockResolvedValue({ data: { data: [] } });
-
-    render(<PlaybookPromptsPage />);
-
-    await waitFor(() => {
-      expect(getPlaybookPrompts).toHaveBeenCalled();
-    });
-
-    // The settings section must not be mounted, so its API is never called.
-    expect(getAdminPlaybookSettings).not.toHaveBeenCalled();
-    expect(screen.queryByText('playbookSettings.title')).not.toBeInTheDocument();
   });
 });

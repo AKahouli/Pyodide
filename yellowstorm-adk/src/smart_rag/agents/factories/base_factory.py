@@ -37,6 +37,7 @@ from src.smart_rag.infrastructure.processing import (
     add_timestamp_to_agent,
     catch_diagram_after_tool,
     add_diagram_context_before_tool,
+    prepare_web_preview_after_tool,
 )
 from src.smart_rag.tools import (
     generate_brain_tree_schema,
@@ -74,6 +75,11 @@ class AgentFactory:
         self.tool_factory = ToolFactory()
         self.citation_manager = citation_manager
         self.diagram_tool_config = {"prompt": "", "instructions": ""}
+        self.web_preview_tool_config = {
+            "prompt": "",
+            "instructions": "Generate a complete, self-contained HTML document for the requested preview.",
+            "description": "Generate an interactive HTML preview for the user.",
+        }
 
     def set_diagram_tool_config(self, diagram_tool_config: dict):
         """Set the configuration for the diagram tool.
@@ -82,6 +88,9 @@ class AgentFactory:
             diagram_tool_config (dict): Configuration dictionary for the diagram tool.
         """
         self.diagram_tool_config = diagram_tool_config
+
+    def set_web_preview_tool_config(self, tool_config: dict):
+        self.web_preview_tool_config.update(tool_config)
 
     def _create_html_diagram_tool(
         self, chatbot_name: str, instructions: Optional[str] = None, temperature: Optional[float] = 0.0
@@ -101,6 +110,18 @@ class AgentFactory:
         )
 
         return AgentTool(diagramming_agent, skip_summarization=False)
+
+    def create_web_preview_tool(
+        self, chatbot_name: str, temperature: Optional[float] = 0.0
+    ) -> AgentTool:
+        preview_agent = self.create_html_diagram_agent(
+            instructions=self.web_preview_tool_config["instructions"],
+            chatbot_name=chatbot_name,
+            name="generate_web_preview",
+            description=self.web_preview_tool_config["description"],
+            temperature=temperature,
+        )
+        return AgentTool(preview_agent, skip_summarization=False)
 
     @staticmethod
     def _resolve_connector_workspace_id(
@@ -124,6 +145,7 @@ class AgentFactory:
         in_memory_tool: bool = False,
         in_memory_tool_description: Optional[str] = None,
         html_design: Optional[bool] = False,
+        generate_web_preview: bool = False,
         search_tool: bool = False,
         code_interpreter_tool: bool = False,
         snowflake_tool: bool = False,
@@ -199,6 +221,9 @@ class AgentFactory:
         # Add HTML diagram tool if requested
         if html_design:
             tools.append(self._create_html_diagram_tool(chatbot_name, temperature=temperature))
+
+        if generate_web_preview:
+            tools.append(self.create_web_preview_tool(chatbot_name, temperature=temperature))
 
         # Add search tools if requested
         if search_tool and doc_tree and brain_ids:
@@ -336,6 +361,8 @@ class AgentFactory:
         ):
             diagram_instruction = self.diagram_tool_config["instructions"]
             instruction += self.diagram_tool_config["prompt"]
+        if generate_web_preview and self.web_preview_tool_config["prompt"]:
+            instruction += self.web_preview_tool_config["prompt"]
 
         # Use appropriate LLM based on whether tools are available
         if tools:
@@ -367,6 +394,10 @@ class AgentFactory:
             agent_kwargs["before_tool_callback"] = add_diagram_context_before_tool
             # Add after_tool_callback to catch and store diagram HTML
             after_tool_callbacks.append(catch_diagram_after_tool)
+
+        if generate_web_preview:
+            agent_kwargs["before_tool_callback"] = add_diagram_context_before_tool
+            after_tool_callbacks.append(prepare_web_preview_after_tool)
 
         if connector_bindings:
             after_tool_callbacks.append(catch_images_after_tool)
@@ -557,6 +588,7 @@ class AgentFactory:
         logical_search_only: bool = False,
         deep_search: bool = False,
         render_chart_tool: bool = False,
+        generate_web_preview: bool = False,
         skills: Optional[List[Dict]] = None,
     ) -> Tuple[Agent, SearchToolkit, str]:
         """Create a search agent with appropriate tools."""
@@ -577,6 +609,9 @@ class AgentFactory:
 
         if render_chart_tool:
             tools.append(render_chart)
+
+        if generate_web_preview:
+            tools.append(self.create_web_preview_tool(chatbot_name, temperature=temperature))
 
         tree_info = ""
         if doc_tree:
@@ -611,6 +646,8 @@ class AgentFactory:
             str(search_agent_prompt) + str(web_search_prompt) + str(tree_info),
             skills,
         )
+        if generate_web_preview and self.web_preview_tool_config["prompt"]:
+            instruction += self.web_preview_tool_config["prompt"]
         activate_skill_tool = make_activate_skill_tool(skills)
         if activate_skill_tool:
             tools.append(activate_skill_tool)
@@ -707,16 +744,21 @@ class AgentFactory:
             except Exception as e:
                 logger.exception(f"Error auto-enabling vectorstore toolset: {e}")
 
+        agent_kwargs = {
+            "name": name,
+            "model": model,
+            "instruction": instruction + "\n\n the current timestamp is {time}. \n",
+            "tools": tools,
+            "before_agent_callback": add_timestamp_to_agent,
+            "after_tool_callback": [catch_images_after_tool],
+            "before_model_callback": inject_images_before_model,
+        }
+        if generate_web_preview:
+            agent_kwargs["before_tool_callback"] = add_diagram_context_before_tool
+            agent_kwargs["after_tool_callback"].append(prepare_web_preview_after_tool)
+
         return (
-            Agent(
-                name=name,
-                model=model,
-                instruction=instruction + "\n\n the current timestamp is {time}. \n",
-                tools=tools,
-                before_agent_callback=add_timestamp_to_agent,
-                after_tool_callback=[catch_images_after_tool],
-                before_model_callback=inject_images_before_model,
-            ),
+            Agent(**agent_kwargs),
             toolkit,
             instruction,
         )
@@ -726,6 +768,7 @@ class AgentFactory:
         instructions: str = None,
         chatbot_name: str = None,
         name: Optional[str] = "HtmlAgent",
+        description: Optional[str] = None,
         temperature: Optional[float] = 0.0,
     ) -> Agent:
         """Create a visualizer agent capable of generating HTML.
@@ -743,6 +786,7 @@ class AgentFactory:
         model = self.llm_factory.create_no_tool_calls_llm(chatbot_name, temperature=temperature)
         return Agent(
             name=name,
+            description=description or "",
             model=model,
             instruction=instructions + "\n\nCurrent timestamp is {time}. \n",
             before_agent_callback=add_timestamp_to_agent,

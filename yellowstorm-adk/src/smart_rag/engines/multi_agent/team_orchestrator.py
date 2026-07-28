@@ -11,6 +11,7 @@ Classes:
 import asyncio
 import time
 from typing import Dict, Any, Optional, List, Union, Tuple
+from src.smart_rag.infrastructure.model_parameters import resolve_model_config
 
 
 
@@ -121,9 +122,7 @@ class AutoAgentGenerationTeam:
         self.streaming_formatter = streaming_formatter
         self.event_extractor = event_extractor
         self.current_queue = None
-        if isinstance(chatbot_name, dict):
-            chatbot_name = str(chatbot_name.get('provider'))
-        self.chatbot_name = chatbot_name
+        self.chatbot_name = resolve_model_config(chatbot_name)
 
         # Initialize components only if config is provided
         if config is not None:
@@ -715,7 +714,8 @@ Do not render charts for single values or non-numeric content.
 
     async def run_single_agent(self, user_prompt: str, session_id: str,
                                q: Optional[asyncio.Queue[dict]] = None,
-                               parent_trace=None, image_input: Optional[List[Dict]] = None) -> Optional[str]:
+                               parent_trace=None, image_input: Optional[List[Dict]] = None,
+                               task_summary: Optional[str] = None) -> Optional[str]:
         """Run a single specialized agent directly, with no manager/delegation.
 
         The one agent registered in the repository is built with its real tools
@@ -823,6 +823,7 @@ Do not render charts for single values or non-numeric content.
                 agent_config=agent_config,
                 image_input=image_input,
                 session_id=session_id_for_agent,
+                task_summary=task_summary,
             )
 
             # Stream any files produced by the python_interpreter tool
@@ -905,6 +906,12 @@ Do not render charts for single values or non-numeric content.
                         agent_name= getattr(agent_config, 'name', 'Search Agent')
                         agent_max_tokens= getattr(agent_config, 'agent_params', {}).get('max_tokens', 20000)
                         agent_temp= getattr(agent_config, 'agent_params', {}).get('agent_temp', 0.0)
+                        preview_tool_config = next((
+                            tool for tool in agent_config.tools
+                            if tool.get('name') == 'generate_web_preview' and tool.get('enabled', True)
+                        ), None)
+                        if preview_tool_config:
+                            agent_factory.set_web_preview_tool_config(preview_tool_config)
 
                         agent, _, _ = agent_factory.create_search_agent(
                             doc_tree=doc_tree,
@@ -919,7 +926,8 @@ Do not render charts for single values or non-numeric content.
                             max_tokens=agent_max_tokens,
                             temperature=agent_temp,
                             name=agent_name,
-                            citation_manager=self.citation_manager
+                            citation_manager=self.citation_manager,
+                            generate_web_preview=preview_tool_config is not None,
                         )
                         team.agents.append(agent)
                     elif agent_config.type == 'report':

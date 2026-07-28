@@ -42,6 +42,9 @@ export const MODEL_TYPES = [
 
 export type ModelType = (typeof MODEL_TYPES)[number];
 
+export const MODEL_INPUT_MODALITIES = ['text', 'image'] as const;
+export type ModelInputModality = (typeof MODEL_INPUT_MODALITIES)[number];
+
 // Internal types
 export interface ModelResponse {
   id: string;
@@ -55,6 +58,7 @@ export interface ModelResponse {
   isActive: boolean;
   isDefault: boolean;
   omitTemperature: boolean;
+  inputModalities: ModelInputModality[];
 }
 
 export interface ModelsListResponse {

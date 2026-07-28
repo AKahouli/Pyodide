@@ -41,8 +41,6 @@ import {
   importPlaybookNodeTemplates,
 } from '../api';
 import type { PlaybookPromptImportPayload, PlaybookPromptResponse, PlaybookNodeTemplateImportPayload, PlaybookNodeTemplateResponse, PlaybookNodeTemplatePort } from '../types';
-import { PlaybookSettingsSection } from '../components/PlaybookSettingsSection';
-import { usePermissions } from '../hooks';
 import * as Icons from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -192,8 +190,6 @@ function readJsonFile<T>(file: File): Promise<T> {
 
 export function PlaybookPromptsPage() {
   const { t } = useModuleTranslation('admin');
-  const { hasAnyPermission } = usePermissions();
-  const canManagePlaybookSettings = hasAnyPermission(['system.maintenance', 'system.*', '*']);
   const invalidateNodeTemplates = usePlaybookStore((s) => s.invalidateNodeTemplates);
   const agents = useAgents();
   const fetchAgents = useAgentStore((s) => s.fetchAgents);
@@ -1382,24 +1378,6 @@ export function PlaybookPromptsPage() {
           </div>
         </CollapsibleContent>
       </Collapsible>
-
-      {/* Settings Pane */}
-      {canManagePlaybookSettings && (
-        <Collapsible defaultOpen={false} className="rounded-lg border bg-background">
-          <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5" />
-              <span className="text-lg font-semibold">{t('playbookSettings.title')}</span>
-            </div>
-            <ChevronDown className="h-5 w-5 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
-          </CollapsibleTrigger>
-          <CollapsibleContent className="border-t data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-            <div className="p-4">
-              <PlaybookSettingsSection />
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
-      )}
 
       {/* Delete Prompt Confirmation Dialog */}
       <Dialog open={promptDeleteDialogOpen} onOpenChange={setPromptDeleteDialogOpen}>

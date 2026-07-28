@@ -62,6 +62,7 @@ export const API_ENDPOINTS = {
     registration: '/experimental/system/registration',
     appearance: '/experimental/system/appearance',
     cors: '/experimental/system/cors',
+    features: '/experimental/system/features',
   },
   workspaceUploadSettings: {
     current: '/workspace-settings/uploads',
@@ -85,11 +86,18 @@ export const API_ENDPOINTS = {
     base: '/admin/workspace-settings/transformations',
     agents: '/admin/workspace-settings/transformations/agents',
   },
+  adminConversationSettings: {
+    base: '/admin/conversation-settings',
+    agents: '/admin/conversation-settings/agents',
+  },
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
   },
   adminGuardrails: {
     base: '/admin/guardrails',
+  },
+  adminEvaluationSettings: {
+    base: '/admin/evaluation-settings',
   },
   adminWorkyWhatsAppSystemBot: {
     base: '/admin/worky/whatsapp-system-bot',
@@ -179,6 +187,7 @@ export const API_ENDPOINTS = {
     create: '/conversations',
     createGoverned: '/conversations/governed',
     byId: (id: string) => `/conversations/${id}`,
+    branch: (id: string) => `/conversations/${id}/branches`,
     join: (id: string) => `/conversations/${id}/join`,
     taggedAgents: (id: string) => `/conversations/${id}/tagged-agents`,
     messages: (id: string) => `/conversations/${id}/messages`,
@@ -197,6 +206,7 @@ export const API_ENDPOINTS = {
     stream: '/conversations/stream',
     artifactUrl: '/conversations/artifact-url',
     composerSuggestions: '/conversations/suggestions',
+    settings: '/conversations/settings',
     // Share endpoints
     shares: (id: string) => `/conversations/${id}/shares`,
     share: (id: string) => `/conversations/${id}/share`,

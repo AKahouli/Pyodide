@@ -1,7 +1,10 @@
+from types import SimpleNamespace
+
 import pytest
+from google.adk.tools.function_tool import FunctionTool
 from pydantic import ValidationError
 
-from src.smart_rag.tools.utilities.present_choices import PresentChoicesInput
+from src.smart_rag.tools.utilities.present_choices import PresentChoicesInput, present_choices
 
 
 def payload(options):
@@ -62,3 +65,39 @@ def test_rejects_non_object_text_envelopes():
             {"$text": "not json"},
             option("other"),
         ]))
+
+
+def test_exposes_the_free_text_alternative_schema_to_the_model():
+    schema = FunctionTool(present_choices)._get_declaration().parameters_json_schema
+
+    other_schema = schema["$defs"]["ChoiceOtherOptionInput"]
+    assert other_schema["required"] == ["enabled", "label"]
+    assert set(other_schema["properties"]) == {"enabled", "label", "placeholder", "maxLength"}
+    submit_description = schema["$defs"]["ChoiceOptionInput"]["properties"]["submitText"]["description"]
+    assert "Imperative, standalone action" in submit_description
+
+
+@pytest.mark.asyncio
+async def test_valid_choices_end_the_agent_turn():
+    context = SimpleNamespace(actions=SimpleNamespace(skip_summarization=False))
+
+    result = await present_choices(
+        **payload([option("one"), option("two")]),
+        tool_context=context,
+    )
+
+    assert result["status"] == "ready"
+    assert context.actions.skip_summarization is True
+
+
+@pytest.mark.asyncio
+async def test_invalid_choices_allow_the_model_to_retry():
+    context = SimpleNamespace(actions=SimpleNamespace(skip_summarization=False))
+
+    result = await present_choices(
+        **payload([option("only")]),
+        tool_context=context,
+    )
+
+    assert result["error"] == "invalid_choice_payload"
+    assert context.actions.skip_summarization is False

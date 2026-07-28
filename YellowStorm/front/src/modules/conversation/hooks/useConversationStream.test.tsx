@@ -6,6 +6,8 @@ import { useConversationStream } from './useConversationStream';
 const connectMock = vi.hoisted(() => vi.fn());
 const disconnectMock = vi.hoisted(() => vi.fn());
 const subscribeMock = vi.hoisted(() => vi.fn());
+const reconnectMock = vi.hoisted(() => vi.fn());
+const getIsConnectedMock = vi.hoisted(() => vi.fn(() => false));
 
 const fetchUsageStatusMock = vi.hoisted(() => vi.fn());
 
@@ -17,6 +19,7 @@ const storeHandlers = vi.hoisted(() => ({
   onStreamComplete: vi.fn(),
   onStreamError: vi.fn(),
   onConversationNameGenerated: vi.fn(),
+  reconcilePendingStream: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../stream', () => ({
@@ -24,6 +27,8 @@ vi.mock('../stream', () => ({
     connect: connectMock,
     disconnect: disconnectMock,
     subscribe: subscribeMock,
+    reconnectWithNewToken: reconnectMock,
+    getIsConnected: getIsConnectedMock,
   },
 }));
 
@@ -31,7 +36,7 @@ vi.mock('@/modules/auth', () => ({
   useAuth: () => ({ isAuthenticated: true }),
 }));
 
-vi.mock('@/modules/usage', () => ({
+vi.mock('@/modules/usage/UsageContext', () => ({
   useUsage: () => ({ fetchUsageStatus: fetchUsageStatusMock }),
 }));
 
@@ -55,8 +60,9 @@ describe('useConversationStream', () => {
 
     renderHook(() => useConversationStream());
 
-    expect(connectMock).toHaveBeenCalledTimes(1);
     expect(subscribeMock).toHaveBeenCalledTimes(1);
+    expect(connectMock).toHaveBeenCalledTimes(1);
+    expect(subscribeMock.mock.invocationCallOrder[0]).toBeLessThan(connectMock.mock.invocationCallOrder[0]);
 
     listener!({ type: 'connected', data: { connectionId: 'cid' } });
     expect(storeHandlers.onSSEConnected).toHaveBeenCalledTimes(1);
@@ -66,7 +72,7 @@ describe('useConversationStream', () => {
     expect(fetchUsageStatusMock).toHaveBeenCalled();
   });
 
-  it('preserves chart arrays from the mock stream path', () => {
+  it('preserves chart data arrays from the mock stream path', () => {
     let listener: ((event: StreamSSEEvent) => void) | null = null;
     subscribeMock.mockImplementation((cb: (event: StreamSSEEvent) => void) => {
       listener = cb;
@@ -102,12 +108,22 @@ describe('useConversationStream', () => {
           type: 'chart',
             data: expect.objectContaining({
               data: [{ month: 'Jan', revenue: 42 }],
-              chartData: [{ month: 'Jan', revenue: 42 }],
-            kind: 'line',
-            layout: 'horizontal',
-          }),
+              kind: 'line',
+              layout: 'horizontal',
+            }),
         }),
       }),
     );
+  });
+
+  it('reconnects and reconciles when a hidden tab becomes visible', () => {
+    subscribeMock.mockReturnValue(vi.fn());
+    renderHook(() => useConversationStream());
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    expect(storeHandlers.reconcilePendingStream).toHaveBeenCalledTimes(1);
+    expect(reconnectMock).toHaveBeenCalledTimes(1);
   });
 });

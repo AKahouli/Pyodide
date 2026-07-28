@@ -4,10 +4,11 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { useModuleTranslation } from '@/modules/localization';
 import type { ConversationStreamActivity } from '../utils';
 import type { MessageComponent } from '../types';
+import { conversationPanelClassName } from './conversation-panel-styles';
 
 type StreamDetail =
   | { type: 'thought'; label: string }
-  | { type: 'tool'; title: string; status: 'running' | 'completed' | 'failed'; data: Record<string, unknown> };
+  | { type: 'tool'; occurrenceId: string; title: string; status: 'running' | 'completed' | 'failed'; data: Record<string, unknown>; startedAt?: string; sequence: number; durationSeconds?: number };
 
 function formatLabel(value: string): string {
   return value.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/\b\w/g, (character) => character.toUpperCase());
@@ -21,6 +22,17 @@ function formatDebugData(data: Record<string, unknown>): string {
   }
 }
 
+function formatToolDate(value: string | undefined, locale: string): { label: string; tooltip: string } | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+
+  return {
+    label: new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'medium' }).format(date),
+    tooltip: new Intl.DateTimeFormat(locale, { dateStyle: 'full', timeStyle: 'long' }).format(date),
+  };
+}
+
 function getStreamDetails(components: readonly MessageComponent[]): StreamDetail[] {
   const toolNames = new Set(
     components
@@ -28,7 +40,7 @@ function getStreamDetails(components: readonly MessageComponent[]): StreamDetail
       .map((component) => component.data.title as string),
   );
 
-  return components.flatMap<StreamDetail>((component): StreamDetail[] => {
+  const details = components.flatMap<StreamDetail>((component, componentIndex): StreamDetail[] => {
     if (component.type === 'chainOfThought') {
       const steps = component.data.steps;
       return Array.isArray(steps)
@@ -41,18 +53,34 @@ function getStreamDetails(components: readonly MessageComponent[]): StreamDetail
       const status = component.data.status;
       return [{
         type: 'tool' as const,
+        occurrenceId: component.id || `legacy-tool-${componentIndex}`,
         title: formatLabel(title),
         status: status === 'completed' || status === 'failed' ? status : 'running',
-        data: component.data,
+        data: Object.fromEntries(Object.entries(component.data).filter(([key]) => key !== 'resultJson' && key !== 'result_json')),
+        startedAt: typeof component.data.startedAt === 'string' ? component.data.startedAt : undefined,
+        sequence: 0,
       }];
     }
 
     return [];
   });
+
+  const tools = details.filter((detail): detail is Extract<StreamDetail, { type: 'tool' }> => detail.type === 'tool');
+  tools.forEach((tool, index) => {
+    tool.sequence = index + 1;
+    const startedAt = tool.startedAt ? Date.parse(tool.startedAt) : Number.NaN;
+    const nextStartedAtValue = tools[index + 1]?.startedAt;
+    const nextStartedAt = nextStartedAtValue ? Date.parse(nextStartedAtValue) : Number.NaN;
+    if (Number.isFinite(startedAt) && Number.isFinite(nextStartedAt) && nextStartedAt >= startedAt) {
+      tool.durationSeconds = Math.round((nextStartedAt - startedAt) / 1000);
+    }
+  });
+
+  return details;
 }
 
 export function LoadingIndicator({ activity = 'thinking', components = [], isComplete = false }: Readonly<{ activity?: ConversationStreamActivity; components?: readonly MessageComponent[]; isComplete?: boolean }>) {
-  const { t } = useModuleTranslation('conversation');
+  const { t, language } = useModuleTranslation('conversation');
   const [isOpen, setIsOpen] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const details = useMemo(() => getStreamDetails(components), [components]);
@@ -76,14 +104,14 @@ export function LoadingIndicator({ activity = 'thinking', components = [], isCom
   if (isComplete && details.length === 0) return null;
 
   return (
-    <Collapsible open={isOpen} onOpenChange={setIsOpen} className='mx-2 mb-2 shrink-0 rounded-xl border border-border/80 bg-background/95 p-2 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80 md:mx-4'>
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className={conversationPanelClassName}>
       <div className='flex min-w-0 items-center gap-3 px-1'>
         <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
           <span className='absolute inset-1 rounded-full bg-primary/20 ring-1 ring-primary/40' />
           {isComplete ? (
             <Sparkles className='size-4 text-primary' />
           ) : (
-            <Loader2 className='size-5 animate-spin text-primary [animation-duration:1.1s]' />
+            <Loader2 className='size-5 animate-spin text-primary [animation-duration:1.1s] motion-reduce:animate-none' />
           )}
         </span>
         <div className='min-w-0 flex-1'>
@@ -111,22 +139,36 @@ export function LoadingIndicator({ activity = 'thinking', components = [], isCom
       {details.length > 0 && (
         <CollapsibleContent className='pt-3'>
           <div className='max-h-48 space-y-3 overflow-auto border-t pt-3 pr-1'>
-            {details.map((detail, index) => detail.type === 'thought' ? (
-              <div key={`thought-${index}`} className='flex gap-2 text-sm text-muted-foreground'>
-                <span className='mt-2 size-1.5 shrink-0 rounded-full bg-primary/70' aria-hidden='true' />
-                <span className='break-words'>{detail.label}</span>
-              </div>
-            ) : (
-              <details key={`tool-${index}`} className='rounded-lg bg-muted/60 p-2.5'>
-                <summary className='flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden'>
-                  <Wrench className='size-3.5 text-primary' aria-hidden='true' />
-                  <span className='min-w-0 flex-1 break-words'>{detail.title || t('stream.activity.toolFallback')}</span>
-                  <span className='text-xs font-normal text-muted-foreground'>{toolStatusLabels[detail.status]}</span>
-                </summary>
-                <p className='mt-2 text-xs text-muted-foreground'>{t('stream.activity.debugData')}</p>
-                <pre className='mt-2 max-h-40 overflow-auto rounded-md border bg-background p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words'>{formatDebugData(detail.data)}</pre>
-              </details>
-            ))}
+            {details.map((detail, index) => {
+              if (detail.type === 'thought') {
+                return (
+                  <div key={`thought-${index}`} className='flex gap-2 text-sm text-muted-foreground'>
+                    <span className='mt-2 size-1.5 shrink-0 rounded-full bg-primary/70' aria-hidden='true' />
+                    <span className='break-words'>{detail.label}</span>
+                  </div>
+                );
+              }
+
+              const toolDate = formatToolDate(detail.startedAt, language);
+              const toolTitle = detail.title || t('stream.activity.toolFallback');
+              return (
+                <details key={detail.occurrenceId} className='rounded-lg bg-muted/60 p-2.5'>
+                  <summary className='flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden'>
+                    <Wrench className='size-3.5 text-primary' aria-hidden='true' />
+                    <span className='min-w-0 flex-1 break-words'>{detail.sequence}. {toolTitle}</span>
+                    {detail.durationSeconds !== undefined && (
+                      <span data-duration-seconds={detail.durationSeconds} className='text-xs font-normal tabular-nums text-muted-foreground'>{t('stream.activity.toolDuration', { seconds: detail.durationSeconds })}</span>
+                    )}
+                    <span className='text-xs font-normal text-muted-foreground'>{toolStatusLabels[detail.status]}</span>
+                  </summary>
+                  <div className='mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground'>
+                    <span>{t('stream.activity.debugData')}</span>
+                    {toolDate && <span className='truncate' title={toolDate.tooltip}>· {toolDate.label}</span>}
+                  </div>
+                  <pre className='mt-2 max-h-40 overflow-auto rounded-md border bg-background p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words'>{formatDebugData(detail.data)}</pre>
+                </details>
+              );
+            })}
             <p className='text-xs text-muted-foreground'>{t('stream.activity.sensitiveNotice')}</p>
           </div>
         </CollapsibleContent>

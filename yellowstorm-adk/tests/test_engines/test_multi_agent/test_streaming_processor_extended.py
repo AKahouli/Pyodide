@@ -96,6 +96,23 @@ class TestStreamingProcessorFunctionCalls:
 
 class TestStreamingProcessorResponses:
     @pytest.mark.asyncio
+    async def test_handle_event_parts_web_preview_response(self, processor):
+        queue = AsyncMock()
+        event = _event_with_function_response(
+            "generate_web_preview",
+            {
+                "schemaVersion": 1,
+                "status": "ready",
+                "content": "<html><body>Preview</body></html>",
+            },
+        )
+
+        await processor._handle_event_parts(event, None, "msg-1", queue)
+
+        queue.put.assert_awaited_once()
+        assert queue.put.call_args.args[0]["component"]["type"] == "web_preview"
+
+    @pytest.mark.asyncio
     async def test_handle_dataviz_response(self, processor):
         queue = AsyncMock()
         response = SimpleNamespace(response={"ui": {"title": "Chart"}})

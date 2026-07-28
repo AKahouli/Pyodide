@@ -18,11 +18,11 @@ import { SelectedConnectorRepo } from './SelectedConnectorRepo';
 
 interface ConversationInputProps {
   conversationId: string;
-  onWorkspaceUpdate?: (workspaceIds: string[]) => void;
 }
 
-export function ConversationInput({ conversationId, onWorkspaceUpdate }: ConversationInputProps) {
+export function ConversationInput({ conversationId }: ConversationInputProps) {
   const sendMessage = useConversationStore((s) => s.sendMessage);
+  const updateConversation = useConversationStore((s) => s.updateConversation);
   const { accept } = useAllowedUploadExtensions();
   const stopStream = useConversationStore((s) => s.stopStream);
   const replyingToMessage = useReplyingToMessage();
@@ -84,12 +84,12 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
   );
 
   const handleSubmit = useCallback(
-    async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => {
+    async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], _workspaceIds?: string[], connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string }, teamIds?: string[]) => {
       if (!message.text?.trim() && !completedFileIds.length) return;
 
-      // Update conversation workspaces if workspaces are selected
-      if (workspaceIds && workspaceIds.length > 0 && onWorkspaceUpdate) {
-        onWorkspaceUpdate(workspaceIds);
+      const persistedWorkspaceIds = currentConversation?.workspaces ?? [];
+      if (!governedMode && (selectedWorkspaceIds.length !== persistedWorkspaceIds.length || selectedWorkspaceIds.some((id) => !persistedWorkspaceIds.includes(id)))) {
+        await updateConversation(conversationId, { workspaces: selectedWorkspaceIds });
       }
 
       // Build optimistic attachedFiles from the upload hook state
@@ -122,7 +122,7 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
       clearAll();
       clearReplyingTo();
     },
-    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, onWorkspaceUpdate],
+    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, currentConversation?.workspaces, governedMode, selectedWorkspaceIds, updateConversation, deepSearchEnabled],
   );
 
   const senderDisplayName = useMemo(() => {
@@ -200,7 +200,8 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
         maxFiles={5}
         members={membersToTag}
         autoMention={autoMention}
-        showWorkspaceSelect={false}
+        showWorkspaceSelect={!governedMode}
+        preserveWorkspaceSelectionOnSubmit
         showModelSelector
         governedMode={governedMode}
         enableTeamMentions={!governedMode}

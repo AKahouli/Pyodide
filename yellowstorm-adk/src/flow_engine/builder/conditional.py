@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from langgraph.graph import StateGraph
+from langgraph.graph import END, StateGraph
 from structlog import get_logger
 
 from src.flow_engine.state import ExecutionState
@@ -47,6 +47,11 @@ def add_conditional_edges(
         for e in edges:
             label = e.get("router_label", "continue")
             label_map[label] = e.get("target", "")
+
+        router_node = next((node for node in raw_nodes if node.get("id") == source), None)
+        declared_labels = (router_node or {}).get("router_config", {}).get("output_labels", [])
+        for label in declared_labels:
+            label_map.setdefault(label, END)
 
         def _router_path(state: ExecutionState, _source: str = source) -> str:
             return state.get("router_decisions", {}).get(_source, "continue")

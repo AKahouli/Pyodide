@@ -16,6 +16,7 @@ from src.smart_rag.agents.factories.delegation_factory import AgentDelegationFac
 from src.smart_rag.agents.core.runner import AgentRunner
 from src.smart_rag.agents.core.helpers import AgentHelper
 from src.smart_rag.agents.core.repository import AgentRepository
+from src.smart_rag.infrastructure.model_parameters import resolve_model_config
 from src.smart_rag.tools.infrastructure.tool_descriptions import ToolDescriptionProvider
 from google.adk.sessions import DatabaseSessionService
 from src.smart_rag.infrastructure.processing import PromptProcessor
@@ -184,7 +185,7 @@ class PlaybookStepExecutor:
         # Extract chatbot_name from agent config
         chatbot_name = request.agent.chatbot_name
         if isinstance(chatbot_name, dict):
-            chatbot_name = chatbot_name.get('provider', chatbot_name.get('name', DEFAULT_MODEL))
+            chatbot_name = resolve_model_config(chatbot_name) or DEFAULT_MODEL
         elif not chatbot_name:
             # Fallback to a default model if chatbot_name is not provided
             chatbot_name = DEFAULT_MODEL
@@ -817,7 +818,7 @@ class PlaybookStepExecutor:
                 # Create config object for manager executor
                 chatbot_name = request.manager_agent.chatbot_name
                 if isinstance(chatbot_name, dict):
-                    chatbot_name = chatbot_name.get('provider', chatbot_name.get('name', DEFAULT_MODEL))
+                    chatbot_name = resolve_model_config(chatbot_name) or DEFAULT_MODEL
 
                 config = AgentTeamConfig(
                     session_id=new_session_id,

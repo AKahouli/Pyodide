@@ -265,6 +265,7 @@ export interface IGrpcAgent {
   brain_context: IGrpcWorkspaceContext[];
   chatbot: {
     model: string;
+    input_modalities: string[];
   };
   agent_params?: {
     params: Record<string, string>;

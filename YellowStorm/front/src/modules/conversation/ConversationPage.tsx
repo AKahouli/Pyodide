@@ -12,6 +12,9 @@ import { useModuleTranslation } from '@/modules/localization';
 import { GroupConversationPage } from './GroupConversationPage';
 import { GovernedConversationBanner } from '@/modules/governance/components/consumer/GovernedConversationBanner';
 
+let pendingMessageCleanup: ReturnType<typeof setTimeout> | null = null;
+let mountedConversationPages = 0;
+
 export function ConversationPage() {
   const { id } = useParams<{ id: string }>();
   const setCurrentConversation = useConversationStore((s) => s.setCurrentConversation);
@@ -58,8 +61,22 @@ export function ConversationPage() {
   }, [id, currentConversationId, fetchMessages]);
 
   useEffect(() => {
+    mountedConversationPages += 1;
+    if (pendingMessageCleanup) {
+      clearTimeout(pendingMessageCleanup);
+      pendingMessageCleanup = null;
+    }
+
     return () => {
-      clearMessages();
+      mountedConversationPages = Math.max(0, mountedConversationPages - 1);
+      if (mountedConversationPages > 0) return;
+
+      // StrictMode replays effects on mount. Defer cleanup so an immediate
+      // remount can preserve the first message's active stream state.
+      pendingMessageCleanup = setTimeout(() => {
+        pendingMessageCleanup = null;
+        if (mountedConversationPages === 0) clearMessages();
+      }, 0);
     };
   }, [clearMessages]);
 

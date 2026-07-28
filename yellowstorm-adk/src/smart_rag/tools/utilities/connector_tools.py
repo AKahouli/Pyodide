@@ -11,6 +11,7 @@ import jwt
 import requests
 from google.adk.tools.tool_context import ToolContext
 
+from src.connector_tool_name import build_connector_tool_name
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
 from src.smart_rag.tools.search.tools import SearchToolADK
@@ -880,9 +881,9 @@ def create_connector_tools(
     backend_url = getattr(settings, "API_URL", None)
 
     for binding in bindings or []:
-        connector_id = str(binding.get("connector_id") or "").strip()
+        connector_id = str(binding.get("connector_id") or "")
         connector_name = str(binding.get("connector_name") or connector_id).strip()
-        connector_slug = str(binding.get("connector_slug") or connector_name).strip()
+        connector_slug = str(binding.get("connector_slug") or connector_name)
         transport_type = str(binding.get("mcp_transport_type") or "").strip()
         server_url = str(binding.get("mcp_server_url") or "").strip()
         server_config = binding.get("mcp_server_config") or {}
@@ -890,7 +891,7 @@ def create_connector_tools(
         binding_auth_headers = binding.get("auth_headers") or {}
         binding_auth_env = binding.get("auth_env") or {}
 
-        if not connector_id:
+        if not connector_id.strip():
             continue
 
         if context.workspace_id and binding_auth_headers.get("Authorization"):
@@ -1031,12 +1032,12 @@ def create_connector_tools(
             tools.append(SearchToolADK(_import_tool, schema))
 
         for action in binding.get("actions") or []:
-            action_key = str(action.get("action_key") or "").strip()
-            if not action_key:
+            action_key = str(action.get("action_key") or "")
+            if not action_key.strip():
                 continue
 
             # NestJS advertises connector actions with this exact runtime name.
-            tool_name = f"connector_{connector_id}_{action_key}"
+            tool_name = build_connector_tool_name(connector_slug, action_key)
             description = str(
                 action.get("description")
                 or f"Connector action '{action_key}' from {connector_name}"
@@ -1150,3 +1151,98 @@ def create_connector_tools(
         )
 
     return tools
+
+
+def create_save_file_to_workspace(agent_params: Dict[str, Any]) -> Optional[Any]:
+    """Bind trusted platform credentials to the native workspace file tool."""
+    platform_api_url = agent_params.get("platform_api_url", "")
+    platform_api_token = agent_params.get("platform_api_token", "")
+    user_id = agent_params.get("user_id", "")
+
+    if not platform_api_url or not platform_api_token:
+        return None
+
+    def redact_runtime_context(message: str) -> str:
+        for value in (platform_api_token, platform_api_url, user_id):
+            if value:
+                message = message.replace(value, "[REDACTED]")
+        return message
+
+    async def save_file_to_workspace(
+        download_url: str,
+        workspace_id: str,
+        filename: str,
+        mime_type: Optional[str] = None,
+        auth_headers: Optional[Dict[str, Any]] = None,
+        source_meta: Optional[Dict[str, Any]] = None,
+        tool_context: ToolContext = None,
+    ) -> str:
+        """Save an external file in a workspace for later agent processing."""
+        endpoint = f"{platform_api_url}/workspaces/{workspace_id}/documents/ingest-url"
+        body: Dict[str, Any] = {
+            "downloadUrl": download_url,
+            "filename": filename,
+            "userId": user_id,
+        }
+        if mime_type:
+            body["mimeType"] = mime_type
+        if auth_headers:
+            body["authHeaders"] = auth_headers
+        if source_meta:
+            body["sourceMeta"] = source_meta
+
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    endpoint,
+                    json=body,
+                    headers={
+                        "X-Internal-Token": platform_api_token,
+                        "Content-Type": "application/json",
+                    },
+                )
+                if resp.status_code >= 400:
+                    response_error = redact_runtime_context(resp.text)
+                    return f"Error saving file to workspace: HTTP {resp.status_code} - {response_error}"
+                data = resp.json()
+                doc = data.get("document", {})
+
+                # Make the saved file available to code interpreter in this session.
+                if tool_context and doc:
+                    file_path = doc.get("filePath") or doc.get("azurePath") or ""
+                    saved_filename = doc.get("originalName") or filename
+                    if file_path and workspace_id:
+                        try:
+                            brain_docs = tool_context.state.get(_STATE_KEY_BRAIN_DOCS, [])
+                            existing_paths = {d.get("filepath") for d in brain_docs}
+                            if file_path not in existing_paths:
+                                brain_docs.append({
+                                    "filename": saved_filename,
+                                    "filepath": file_path,
+                                    "workspace_id": workspace_id,
+                                })
+                                tool_context.state[_STATE_KEY_BRAIN_DOCS] = brain_docs
+                                logger.info(
+                                    "save_file_to_workspace propagated file to brain_docs: "
+                                    "filename=%s, workspace_id=%s",
+                                    saved_filename, workspace_id,
+                                )
+                        except Exception as state_err:
+                            logger.warning("Failed to update brain_docs state: %s", state_err)
+
+                return (
+                    f"File saved to workspace successfully. "
+                    f"Document ID: {doc.get('id')}, "
+                    f"Filename: {doc.get('originalName')}, "
+                    f"Size: {doc.get('size')} bytes"
+                )
+        except Exception as e:
+            error_message = redact_runtime_context(str(e))
+            logger.error(
+                "save_file_to_workspace failed error=%s", error_message
+            )
+            return f"Error saving file to workspace: {error_message}"
+
+    return save_file_to_workspace

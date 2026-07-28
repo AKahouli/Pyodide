@@ -17,7 +17,7 @@ describe('GovernanceDryRunService', () => {
 
   let lastCreatedDryRun: Record<string, unknown> | undefined;
 
-  function buildService(deployment: Record<string, unknown> | null, scopeAccessError?: Error, streamError?: Error, revisionWorkspaceIds: string[] = [], revisionAgentIds: string[] = [agentId]) {
+  function buildService(deployment: Record<string, unknown> | null, scopeAccessError?: Error, streamError?: Error, revisionWorkspaceIds: string[] = [], revisionAgentIds: string[] = [agentId], scopeRoleError?: Error) {
     lastCreatedDryRun = undefined;
     const deploymentModel = { findById: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(deployment) }) };
     const revisionModel = { findById: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ _id: revisionId, agentId, allowedAgentIds: revisionAgentIds.map((id) => new Types.ObjectId(id)), workspaceIds: revisionWorkspaceIds.map((id) => new Types.ObjectId(id)) }) }) }) };
@@ -30,7 +30,10 @@ describe('GovernanceDryRunService', () => {
       findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }) }),
     };
     const programService = { assertOwnedProgram: jest.fn().mockResolvedValue(undefined) };
-    const accessService = { assertScopeAccess: jest.fn().mockImplementation(async () => { if (scopeAccessError) throw scopeAccessError; }) };
+    const accessService = {
+      assertScopeAccess: jest.fn().mockImplementation(async () => { if (scopeAccessError) throw scopeAccessError; }),
+      assertScopeRole: jest.fn().mockImplementation(async () => { if (scopeRoleError) throw scopeRoleError; }),
+    };
     const conversationService = { create: jest.fn().mockResolvedValue({ id: conversationId }), findById: jest.fn().mockResolvedValue({ id: conversationId, workspaces: [] }) };
     const messageService = {
       createUserMessage: jest.fn().mockResolvedValue({ id: userMessageId }),
@@ -87,12 +90,13 @@ describe('GovernanceDryRunService', () => {
 
   it('records an explicit manual pass without creating a conversation or invoking the runtime', async () => {
     const workspaceId = '507f1f77bcf86cd7994390f1';
-    const { service, conversationService, messageService, streamService, dryRunModel } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId }, undefined, undefined, [workspaceId]);
+    const { service, accessService, conversationService, messageService, streamService, dryRunModel } = buildService({ _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId }, undefined, undefined, [workspaceId]);
 
     const result = await service.create(actorId, actorEmail, deploymentId, { executionMode: 'manual', workspaceIds: [workspaceId] });
 
     expect(result.status).toBe('passed');
     expect(result.executionMode).toBe('manual');
+    expect(accessService.assertScopeRole).toHaveBeenCalledWith(actorId, programId, scopeId, ['scope_admin', 'scope_editor', 'scope_reviewer']);
     expect(conversationService.create).not.toHaveBeenCalled();
     expect(messageService.createUserMessage).not.toHaveBeenCalled();
     expect(streamService.startStream).not.toHaveBeenCalled();
@@ -102,6 +106,21 @@ describe('GovernanceDryRunService', () => {
       testCases: [],
       checks: expect.objectContaining({ executionMode: 'manual', workspaceIds: [workspaceId] }),
     }));
+  });
+
+  it('rejects manual passes without a mutating scope role', async () => {
+    const denied = Object.assign(new Error('denied'), { code: ErrorCode.GOVERNANCE_ACCESS_DENIED });
+    const { service, dryRunModel } = buildService(
+      { _id: deploymentId, programId, scopeId, currentDraftRevisionId: revisionId },
+      undefined,
+      undefined,
+      [],
+      [agentId],
+      denied,
+    );
+
+    await expect(service.create(actorId, actorEmail, deploymentId, { executionMode: 'manual' })).rejects.toMatchObject({ code: ErrorCode.GOVERNANCE_ACCESS_DENIED });
+    expect(dryRunModel.create).not.toHaveBeenCalled();
   });
 
   it('rejects an agent outside the draft revision roster', async () => {

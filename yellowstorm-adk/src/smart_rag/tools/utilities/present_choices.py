@@ -17,7 +17,11 @@ class ChoiceOptionInput(BaseModel):
 
     id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
     label: str = Field(min_length=1, max_length=160)
-    submitText: str = Field(min_length=1, max_length=1000)
+    submitText: str = Field(
+        min_length=1,
+        max_length=1000,
+        description="Imperative, standalone action for the agent. Include the option's intent and necessary context; do not repeat only the visible label.",
+    )
     value: Optional[str] = Field(default=None, max_length=200)
     description: Optional[str] = Field(default=None, max_length=1000)
     disabled: bool = False
@@ -175,19 +179,19 @@ def _validation_details(error: ValidationError) -> list[dict[str, str]]:
 async def present_choices(
     questionId: str,
     prompt: str,
-    options: list[dict[str, Any]],
+    options: list[ChoiceOptionInput],
     presentation: ChoicePresentation = "quick_replies",
     selectionMode: ChoiceSelectionMode = "single",
     submitBehavior: Optional[ChoiceSubmitBehavior] = None,
     description: Optional[str] = None,
-    otherOption: Optional[dict[str, Any]] = None,
-    labels: Optional[dict[str, str]] = None,
-    progress: Optional[dict[str, Any]] = None,
+    otherOption: Optional[ChoiceOtherOptionInput] = None,
+    labels: Optional[ChoiceLabelsInput] = None,
+    progress: Optional[ChoiceProgressInput] = None,
     dismissible: bool = False,
     fallbackText: Optional[str] = None,
     tool_context: ToolContext = None,
 ) -> dict[str, Any]:
-    """Present a structured choice component."""
+    """Present structured choices with actionable submitText values and optional free-text otherOption."""
     try:
         payload = PresentChoicesInput.model_validate(
             {
@@ -211,4 +215,6 @@ async def present_choices(
     data = payload.model_dump(exclude_none=True)
     data["schemaVersion"] = 1
     data["status"] = "ready"
+    if tool_context:
+        tool_context.actions.skip_summarization = True
     return data

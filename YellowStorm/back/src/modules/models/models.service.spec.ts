@@ -98,8 +98,20 @@ describe('ModelsService', () => {
       await svc.syncModels();
 
       expect(create).toHaveBeenCalledWith(
-        expect.objectContaining({ modelId: 'text-embedding-3', type: 'embedding', types: ['embedding'] }),
+        expect.objectContaining({ modelId: 'text-embedding-3', type: 'embedding', types: ['embedding'], inputModalities: ['text'] }),
       );
+    });
+
+    it('does not overwrite administrator-selected input modalities on re-sync', async () => {
+      fetchModels.mockResolvedValue([entry('vision-model', 'chat', 'openai')]);
+      findOne.mockResolvedValue({
+        modelId: 'vision-model', chefSlug: 'azure', litellmModel: 'azure/old',
+        inputModalities: ['text', 'image'], isActive: true,
+      });
+
+      await svc.syncModels();
+
+      expect(updateOne.mock.calls[0][1].$set).not.toHaveProperty('inputModalities');
     });
 
     it('leaves type empty for a model that has no mode', async () => {
@@ -166,7 +178,21 @@ describe('ModelsService', () => {
 
       const result = await svc.findAll(false, false);
 
-      expect(result.models[0]).toEqual(expect.objectContaining({ type: 'chat', types: ['chat'] }));
+      expect(result.models[0]).toEqual(expect.objectContaining({
+        type: 'chat', types: ['chat'], inputModalities: ['text'],
+      }));
+    });
+
+    it('returns valid persisted input modalities', async () => {
+      mockFindResult([{
+        modelId: 'vision', name: 'Vision', chef: 'OpenAI', chefSlug: 'openai',
+        litellmModel: 'openai/vision', providers: ['openai'], type: 'chat', types: ['chat'],
+        inputModalities: ['text', 'image', 'invalid'], isActive: true,
+      }]);
+
+      const result = await svc.findAll(false, false);
+
+      expect(result.models[0].inputModalities).toEqual(['text', 'image']);
     });
 
     it('keeps the legacy type synchronized with the first selected type', async () => {

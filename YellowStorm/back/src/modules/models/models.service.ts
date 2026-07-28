@@ -7,6 +7,7 @@ import { AiModel, AiModelDocument } from './schemas/model.schema';
 import {
   LiteLLMModelInfoEntry,
   LiteLLMHealthStatus,
+  ModelInputModality,
   ModelResponse,
   ModelsListResponse,
 } from './interfaces/model.interface';
@@ -285,6 +286,7 @@ export class ModelsService implements OnApplicationBootstrap {
       // re-sync never overwrites an existing model's type (admin choice wins).
       type: entry.model_info?.mode || '',
       types: entry.model_info?.mode ? [entry.model_info.mode] : [],
+      inputModalities: ['text'],
     };
   }
 
@@ -332,7 +334,7 @@ export class ModelsService implements OnApplicationBootstrap {
 
   async updateModel(
     id: string,
-    data: Partial<{ name: string; chef: string; chefSlug: string; providers: string[]; type: string; types: string[]; isActive: boolean; omitTemperature: boolean }>,
+    data: Partial<{ name: string; chef: string; chefSlug: string; providers: string[]; type: string; types: string[]; isActive: boolean; omitTemperature: boolean; inputModalities: ModelInputModality[] }>,
   ): Promise<ModelResponse | null> {
     const update = { ...data };
     if (update.types) {
@@ -458,6 +460,12 @@ export class ModelsService implements OnApplicationBootstrap {
     const types = Array.isArray(doc.types)
       ? doc.types.filter((type): type is string => typeof type === 'string' && type.length > 0)
       : legacyType ? [legacyType] : [];
+    const storedInputModalities = Array.isArray(doc.inputModalities)
+      ? doc.inputModalities.filter((modality): modality is ModelInputModality => modality === 'text' || modality === 'image')
+      : [];
+    const inputModalities: ModelInputModality[] = storedInputModalities.includes('text')
+      ? [...new Set(storedInputModalities)]
+      : ['text'];
 
     return {
       id: doc.modelId as string,
@@ -471,6 +479,7 @@ export class ModelsService implements OnApplicationBootstrap {
       isActive: doc.isActive as boolean,
       isDefault: (doc.isDefault as boolean) || false,
       omitTemperature: (doc.omitTemperature as boolean) || false,
+      inputModalities,
     };
   }
 }

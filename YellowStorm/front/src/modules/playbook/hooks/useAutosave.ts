@@ -53,7 +53,7 @@ export function useAutosave(options?: { paused?: boolean }) {
   const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
   const validationIssues = useMemo(
     () => currentPlaybook
-      ? getPlaybookValidationIssues(currentPlaybook.tasks, currentPlaybook.dataBindings ?? [])
+      ? getPlaybookValidationIssues(currentPlaybook.tasks, currentPlaybook.dataBindings ?? [], currentPlaybook.controlEdges ?? [])
       : [],
     [currentPlaybook],
   );

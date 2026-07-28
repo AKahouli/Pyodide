@@ -1,4 +1,5 @@
-import type { ArtifactKind, PlaybookTask, DataBinding } from '../types';
+import type { ArtifactKind, ControlEdge, PlaybookTask, DataBinding } from '../types';
+import { getEffectiveNodeType } from './node-type';
 
 export type PlaybookValidationReason =
   | 'missing_required_binding'
@@ -67,6 +68,7 @@ function getIncompleteBindingReason(binding: DataBinding): PlaybookValidationRea
 export function getPlaybookValidationIssues(
   tasks: PlaybookTask[],
   dataBindings: DataBinding[],
+  controlEdges: ControlEdge[] = [],
 ): PlaybookValidationIssue[] {
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const issues: PlaybookValidationIssue[] = [];
@@ -90,7 +92,7 @@ export function getPlaybookValidationIssues(
     });
   }
 
-  for (const unboundPort of getUnboundRequiredPorts(tasks, dataBindings)) {
+  for (const unboundPort of getUnboundRequiredPorts(tasks, dataBindings, controlEdges)) {
     const targetKey = `${unboundPort.taskId}:${unboundPort.portId}`;
     if (representedTargets.has(targetKey)) continue;
     const task = taskById.get(unboundPort.taskId);
@@ -112,8 +114,12 @@ export function getPlaybookValidationIssues(
 export function getUnboundRequiredPorts(
   tasks: PlaybookTask[],
   dataBindings: DataBinding[],
+  controlEdges: ControlEdge[] = [],
 ): UnboundPort[] {
   const result: UnboundPort[] = [];
+  const routerIds = new Set(
+    tasks.filter((task) => getEffectiveNodeType(task) === 'router').map((task) => task.id),
+  );
 
   for (const task of tasks) {
     if (!task.inputPorts) continue;
@@ -122,7 +128,11 @@ export function getUnboundRequiredPorts(
       const hasBinding = dataBindings.some(
         (b) => b.targetNode === task.id && b.targetPort === port.id && isDataBindingResolved(b),
       );
-      if (!hasBinding) {
+      const hasRouterControlEdge = controlEdges.some((edge) => edge.kind === 'conditional'
+        && routerIds.has(edge.source)
+        && edge.target === task.id
+        && (edge.targetInputPortId || 'default') === port.id);
+      if (!hasBinding && !hasRouterControlEdge) {
         result.push({
           taskId: task.id,
           portId: port.id,
@@ -139,9 +149,11 @@ export function getUnboundRequiredPortsForTaskIds(
   tasks: PlaybookTask[],
   dataBindings: DataBinding[],
   taskIds: Set<string>,
+  controlEdges: ControlEdge[] = [],
 ): UnboundPort[] {
   return getUnboundRequiredPorts(
-    tasks.filter((task) => taskIds.has(task.id)),
+    tasks,
     dataBindings,
-  );
+    controlEdges,
+  ).filter((port) => taskIds.has(port.taskId));
 }

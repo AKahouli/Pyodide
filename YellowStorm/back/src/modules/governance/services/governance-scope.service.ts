@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { ConflictException, ForbiddenException, NotFoundException } from '@modules/exceptions';
+import { ConflictException, ForbiddenException, NotFoundException, ValidationException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { UserGroupService } from '@modules/user-group';
@@ -59,7 +59,8 @@ export class GovernanceScopeService {
     await this.programService.assertOwnedProgram(ownerUserId, programId);
     await this.assertNoDuplicate(programId, dto.name.trim());
     await this.assertValidParent(programId, dto.parentScopeId);
-    const scope = await this.scopeModel.create({ ...dto, name: dto.name.trim(), programId: new Types.ObjectId(programId) });
+    const metadata = dto.metadata ? this.normalizeDescription(dto.metadata) : undefined;
+    const scope = await this.scopeModel.create({ ...dto, metadata, name: dto.name.trim(), programId: new Types.ObjectId(programId) });
     return this.toResponse(scope);
   }
 
@@ -100,8 +101,9 @@ export class GovernanceScopeService {
     }
     if (dto.agentIds !== undefined) scope.agentIds = dto.agentIds.map((id) => new Types.ObjectId(id));
     if (dto.metadata !== undefined) {
-      this.assertMetadataUpdateAllowed(dto.metadata);
-      scope.metadata = this.mergeMetadata(scope.metadata, dto.metadata);
+      const metadata = this.normalizeDescription(dto.metadata);
+      this.assertMetadataUpdateAllowed(metadata);
+      scope.metadata = this.mergeMetadata(scope.metadata, metadata);
     }
     await scope.save();
     const materialChange = dto.name !== undefined || dto.parentScopeId !== undefined || dto.type !== undefined || dto.status !== undefined || dto.agentIds !== undefined || dto.metadata?.classification !== undefined;
@@ -200,6 +202,15 @@ export class GovernanceScopeService {
     if (review && typeof review === 'object' && 'status' in review && (review as { status?: unknown }).status === 'approved') {
       throw new ForbiddenException(ErrorCode.GOVERNANCE_ACCESS_DENIED);
     }
+  }
+
+  private normalizeDescription(metadata: Record<string, unknown>): Record<string, unknown> {
+    const description = metadata.description;
+    if (description === undefined) return metadata;
+    if (typeof description !== 'string' || description.length > 2000) {
+      throw new ValidationException([{ field: 'metadata.description', message: 'Scope description must be a string of at most 2000 characters', value: description }]);
+    }
+    return { ...metadata, description: description.trim() };
   }
 
   private mergeMetadata(current: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {

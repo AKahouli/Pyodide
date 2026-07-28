@@ -40,6 +40,7 @@ export const Permissions = {
 
   // Conversation Admin
   CONVERSATIONS_ADMIN_DELETE: 'conversations.admin_delete',
+  CONVERSATIONS_SETTINGS_MANAGE: 'conversations.settings.manage',
   CONVERSATIONS_ALL: 'conversations.*',
 
   // Model Management
@@ -192,6 +193,7 @@ const ALL_PERMISSIONS = new Set<string>([
 
   // Conversation Admin
   'conversations.admin_delete',
+  'conversations.settings.manage',
   'conversations.*',
 
   // Model Management

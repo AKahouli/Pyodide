@@ -3,11 +3,11 @@ litellm==1.77.0
 azure-storage-file-datalake==12.21.0
 aiofiles==24.1.0
 psycopg2-binary==2.9.10
-google-re2==1.1.20240702
-ddtrace==2.5.2
+google-re2>=1.1.20240702
+ddtrace>=2.5.2
 structlog==25.4.0
 elasticsearch==9.1.0
-pymupdf==1.24.1
+pymupdf>=1.24.1
 openai==1.99.5
 langfuse==2.60.10
 linkup-sdk== 0.2.8
@@ -28,7 +28,7 @@ azure-identity==1.15.0
 qdrant-client==1.17.0
 langcodes==3.4.0
 langdetect==1.0.8
-tiktoken==0.7.0
+tiktoken>=0.7.0
 langchain==0.3.27
 langchain-community==0.3.31
 langchain-core==0.3.79

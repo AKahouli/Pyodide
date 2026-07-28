@@ -129,6 +129,7 @@ export function useUpdateGovernanceScope(programId: string | null, scopeId: stri
     onSuccess: () => {
       if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.scopes(programId) });
       if (programId && scopeId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.scopeOverview(programId, scopeId) });
+      void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.availableScopes() });
     },
   });
 }

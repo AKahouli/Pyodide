@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Optional, Any, Dict, List
 
 from google.adk.agents import RunConfig
@@ -134,6 +135,9 @@ class StreamingEventProcessor:
 
         # Initialize ComponentTracker for plan components (isolated from text tracking)
         component_tracker = ComponentTracker(session_id)
+        self._manager_pending_tools_by_call_id: Dict[str, List[str]] = {}
+        self._manager_pending_tools_by_name: Dict[str, List[str]] = {}
+        self._manager_seen_tool_ids: set[str] = set()
 
         event_count = 0
         stream = agent_runner.run_async(
@@ -295,6 +299,30 @@ class StreamingEventProcessor:
                 delegation_count += 1
                 func_name = part.function_call.name
 
+                if q:
+                    raw_call_id = getattr(part.function_call, "id", None)
+                    call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else str(uuid.uuid4())
+                    manager_id, _ = self._get_manager_info(manager_agent)
+                    tool_component_id = f"tool-{manager_id}-{call_id}"
+                    if tool_component_id in self._manager_seen_tool_ids:
+                        tool_component_id = f"{tool_component_id}-{uuid.uuid4()}"
+                    self._manager_seen_tool_ids.add(tool_component_id)
+                    self._manager_pending_tools_by_call_id.setdefault(call_id, []).append(tool_component_id)
+                    self._manager_pending_tools_by_name.setdefault(func_name, []).append(tool_component_id)
+                    await q.put(self.streaming_formatter.format_component_event(
+                        agent_id=manager_id,
+                        component_type="tool_info",
+                        component_data={
+                            "title": func_name,
+                            "status": "running",
+                            "params": json.dumps(dict(part.function_call.args or {}), default=str, sort_keys=True),
+                            "started_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        },
+                        message_id=current_message_id,
+                        component_id=tool_component_id,
+                        action="add",
+                    ))
+
                 # Handle dataviz generate_ui function call
                 if func_name == "generate_ui" and q:
                     ui_chunk = self.streaming_formatter.format_streaming_event(
@@ -417,6 +445,49 @@ class StreamingEventProcessor:
 
             elif part.function_response:
                 func_name = part.function_response.name
+                if q:
+                    raw_call_id = getattr(part.function_response, "id", None)
+                    response_call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else None
+                    pending_for_call = self._manager_pending_tools_by_call_id.get(response_call_id, []) if response_call_id else []
+                    tool_component_id = pending_for_call.pop(0) if pending_for_call else None
+                    if response_call_id and not pending_for_call:
+                        self._manager_pending_tools_by_call_id.pop(response_call_id, None)
+                    if tool_component_id:
+                        pending_for_name = self._manager_pending_tools_by_name.get(func_name, [])
+                        if tool_component_id in pending_for_name:
+                            pending_for_name.remove(tool_component_id)
+                    else:
+                        pending_for_name = self._manager_pending_tools_by_name.get(func_name, [])
+                        tool_component_id = pending_for_name.pop(0) if pending_for_name else None
+                        if tool_component_id:
+                            for call_id, pending_component_ids in list(self._manager_pending_tools_by_call_id.items()):
+                                if tool_component_id == (pending_component_ids[0] if pending_component_ids else None):
+                                    pending_component_ids.pop(0)
+                                    if not pending_component_ids:
+                                        self._manager_pending_tools_by_call_id.pop(call_id)
+                                    break
+                    if tool_component_id:
+                        result_json = ""
+                        if getattr(q, "include_private_tool_results", False) and func_name != "generate_web_preview" and not func_name.startswith("delegate_to_"):
+                            try:
+                                candidate = json.dumps(part.function_response.response, default=str, separators=(",", ":"))
+                                if len(candidate.encode("utf-8")) <= 65536:
+                                    result_json = candidate
+                            except (TypeError, ValueError):
+                                logger.warning("manager_tool_result_serialization_failed tool=%s", func_name)
+                        manager_id, _ = self._get_manager_info(manager_agent)
+                        await q.put(self.streaming_formatter.format_component_event(
+                            agent_id=manager_id,
+                            component_type="tool_info",
+                            component_data={
+                                "title": func_name,
+                                "status": "failed" if getattr(part.function_response, "is_error", False) else "completed",
+                                **({"result_json": result_json} if result_json else {}),
+                            },
+                            message_id=current_message_id,
+                            component_id=tool_component_id,
+                            action="update",
+                        ))
                 if func_name == "generate_ui" and q:
                     await self._handle_dataviz_response(
                         part.function_response, current_message_id, q
@@ -441,7 +512,7 @@ class StreamingEventProcessor:
                     await self._handle_render_chart_response(
                         part.function_response, current_message_id, q
                     )
-                if func_name == "present_choices" and q:
+                if func_name in UI_TOOL_COMPONENT_REGISTRY and func_name != "render_chart" and q:
                     await self._handle_ui_tool_response(part.function_response, current_message_id, q)
 
             elif event.is_final_response() and event.content and event.content.parts:
