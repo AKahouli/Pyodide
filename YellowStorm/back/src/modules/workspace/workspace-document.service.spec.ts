@@ -24,7 +24,6 @@ import { WebsiteCrawlerService } from './services/website-crawler.service';
 import {
   DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS,
 } from '../system/constants/workspace-upload-settings.constants';
-import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
 
 const WS_ID = '507f1f77bcf86cd799439011';
 const USER_ID = '507f191e810c19729de860ea';
