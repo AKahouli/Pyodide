@@ -1,12 +1,18 @@
 import { PlayIcon, XIcon, CodeIcon, EyeIcon } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { Button } from '@/components/ui/button';
+import { ResizablePanel } from '@/components/ui/resizable-panel';
 import { cn } from '@/lib/utils';
 import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
 import { ToolDetailDispatch } from './tool-views/ToolDetailDispatch';
 import { ApplicationComponentView } from './ApplicationComponentView';
 import { DeployControls } from './DeployControls';
+
+const RIGHT_PANEL_STORAGE_KEY = 'conversation-v2-right-panel-width';
+const RIGHT_PANEL_DEFAULT_WIDTH = 560;
+const RIGHT_PANEL_MIN_WIDTH = 448;
+const RIGHT_PANEL_MAX_WIDTH_RATIO = 0.75;
 
 export function RightPanel() {
   const { t } = useConversationV2Translation();
@@ -58,60 +64,71 @@ export function RightPanel() {
     );
 
   return (
-    <aside className='flex h-full w-[44%] min-w-[28rem] max-w-[44rem] shrink-0 flex-col border-l bg-card/40'>
-      <header className='flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3'>
-        {canToggle ? (
-          <div className='inline-flex items-center rounded-lg border bg-muted/40 p-0.5'>
-            <button type='button' onClick={() => setRightPanelView('code')} className={tabClass(!showPreview)}>
-              <CodeIcon className='size-3.5' />
-              {t('rightPanel.tabCode')}
-            </button>
-            <button type='button' onClick={() => setRightPanelView('preview')} className={tabClass(showPreview)}>
-              <EyeIcon className='size-3.5' />
-              {t('rightPanel.tabPreview')}
-            </button>
+    <ResizablePanel
+      storageKey={RIGHT_PANEL_STORAGE_KEY}
+      defaultWidth={RIGHT_PANEL_DEFAULT_WIDTH}
+      minWidth={RIGHT_PANEL_MIN_WIDTH}
+      maxWidthRatio={RIGHT_PANEL_MAX_WIDTH_RATIO}
+      handlePosition='left'
+      withHandle
+      resizeHandleLabel={t('rightPanel.resizeHandle')}
+      className='border-l bg-card/40'
+    >
+      <aside className='flex h-full min-w-0 flex-col'>
+        <header className='flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3'>
+          {canToggle ? (
+            <div className='inline-flex items-center rounded-lg border bg-muted/40 p-0.5'>
+              <button type='button' onClick={() => setRightPanelView('code')} className={tabClass(!showPreview)}>
+                <CodeIcon className='size-3.5' />
+                {t('rightPanel.tabCode')}
+              </button>
+              <button type='button' onClick={() => setRightPanelView('preview')} className={tabClass(showPreview)}>
+                <EyeIcon className='size-3.5' />
+                {t('rightPanel.tabPreview')}
+              </button>
+            </div>
+          ) : (
+            <span className='truncate text-sm font-semibold'>
+              {showPreview ? applicationComponent!.title || t('rightPanel.title') : t('rightPanel.title')}
+            </span>
+          )}
+          <div className='flex shrink-0 items-center gap-1'>
+            {hasPreview && <DeployControls />}
+            <Button variant='ghost' size='icon-sm' aria-label={t('rightPanel.close')} onClick={close}>
+              <XIcon className='size-4' />
+            </Button>
           </div>
-        ) : (
-          <span className='truncate text-sm font-semibold'>
-            {showPreview ? applicationComponent!.title || t('rightPanel.title') : t('rightPanel.title')}
-          </span>
-        )}
-        <div className='flex shrink-0 items-center gap-1'>
-          {hasPreview && <DeployControls />}
-          <Button variant='ghost' size='icon-sm' aria-label={t('rightPanel.close')} onClick={close}>
-            <XIcon className='size-4' />
-          </Button>
+        </header>
+        <div className='relative flex min-h-0 flex-1 flex-col'>
+          {showPreview ? (
+            // Key on the URL so a newly-pushed preview remounts the iframe on the
+            // new address (WebPreview reads defaultUrl only on mount).
+            <ApplicationComponentView
+              key={`${applicationComponent!.url}:${lastDeployedAt ?? ''}`}
+              url={applicationComponent!.url}
+              title={applicationComponent!.title}
+            />
+          ) : (
+            <div className='relative flex min-h-0 flex-1 flex-col p-3'>
+              <ToolDetailDispatch />
+              {showJumpToLive && (
+                <div className='pointer-events-none absolute inset-x-0 bottom-3 flex justify-center'>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    onClick={jumpToLive}
+                    className='pointer-events-auto gap-1 rounded-full shadow-md'
+                  >
+                    <PlayIcon className='size-4' />
+                    {t('rightPanel.jumpToLive')}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
-      </header>
-      <div className='relative flex min-h-0 flex-1 flex-col'>
-        {showPreview ? (
-          // Key on the URL so a newly-pushed preview remounts the iframe on the
-          // new address (WebPreview reads defaultUrl only on mount).
-          <ApplicationComponentView
-            key={`${applicationComponent!.url}:${lastDeployedAt ?? ''}`}
-            url={applicationComponent!.url}
-            title={applicationComponent!.title}
-          />
-        ) : (
-          <div className='relative flex min-h-0 flex-1 flex-col p-3'>
-            <ToolDetailDispatch />
-            {showJumpToLive && (
-              <div className='pointer-events-none absolute inset-x-0 bottom-3 flex justify-center'>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  onClick={jumpToLive}
-                  className='pointer-events-auto gap-1 rounded-full shadow-md'
-                >
-                  <PlayIcon className='size-4' />
-                  {t('rightPanel.jumpToLive')}
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </aside>
+      </aside>
+    </ResizablePanel>
   );
 }

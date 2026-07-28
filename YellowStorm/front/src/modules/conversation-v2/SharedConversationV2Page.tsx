@@ -29,7 +29,7 @@ export default function SharedConversationV2Page() {
   return (
     <div className='mx-auto max-w-3xl p-6'>
       <h1 className='mb-4 text-lg font-semibold'>{session.title || 'Shared session'}</h1>
-      <MessageList events={events} readOnly />
+      <MessageList events={events} canOpenAttachments />
     </div>
   );
 }

@@ -25,6 +25,18 @@ jobs:
           fi
           echo "Proto files match"
 
+          if ! diff -q \
+            YellowStorm/back/src/modules/worky/proto/companion_ai.proto \
+            yellowstorm-adk/grpc/proto/companion_ai/companion_ai.proto
+          then
+            echo "::error::Proto drift detected! The backend and ADK companion_ai proto copies differ."
+            diff -u \
+              YellowStorm/back/src/modules/worky/proto/companion_ai.proto \
+              yellowstorm-adk/grpc/proto/companion_ai/companion_ai.proto
+            exit 1
+          fi
+          echo "companion_ai proto files match"
+
   backend-tests:
     runs-on: ubuntu-latest
     defaults:
@@ -57,6 +69,20 @@ jobs:
     defaults:
       run:
         working-directory: yellowstorm-adk
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: manus
+          POSTGRES_PASSWORD: manus
+          POSTGRES_DB: manus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python 3.11
@@ -73,8 +99,16 @@ jobs:
           pip install -r requirements.txt
       - name: Generate gRPC stubs
         run: python grpc/generate_proto.py
-      - name: Run flow engine tests
-        run: python -m pytest src/flow_engine/tests/ -v --cov=src/flow_engine --cov=grpc --cov-fail-under=0 --cov-report=xml:coverage.xml
+      - name: Generate CompanionAi gRPC stubs
+        run: python grpc/proto/companion_ai/generate.py
+      - name: Run flow engine + orchestrator tests
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: manus
+          PGPASSWORD: manus
+          PGDATABASE: manus
+        run: python -m pytest src/flow_engine/tests/ tests/orchestrator/ -v --cov=src/flow_engine --cov=grpc --cov=src/companion_ai --cov=src/grpc_server --cov-fail-under=0 --cov-report=xml:coverage.xml
       - name: Upload python coverage
         if: always()
         uses: actions/upload-artifact@v4

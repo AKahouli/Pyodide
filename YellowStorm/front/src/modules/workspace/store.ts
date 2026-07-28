@@ -51,6 +51,8 @@ import type {
   WorkspaceArtifact,
 } from './types';
 
+export type SeedPage = { url: string; name?: string; indexingStatus?: string };
+
 /**
  * Extract user-friendly error message from API error
  * Uses error code mapping when available, falls back to error message
@@ -154,6 +156,7 @@ interface WorkspaceState {
   workspaceCreatedCallback: ((workspace: Workspace) => void) | null;
   isCreateTemplateModalOpen: boolean;
   isSettingsModalOpen: boolean;
+  addLinkDialog: { open: boolean; initialUrl: string; autoStart: boolean; seed: SeedPage[]; sourceGroupId?: string };
   createModalStep: 1 | 2;
   createTemplateModalStep: 1 | 2;
   isMobileSidebarOpen: boolean;
@@ -204,6 +207,8 @@ interface WorkspaceActions {
   closeCreateTemplateModal: () => void;
   openSettingsModal: (workspace?: Workspace) => void;
   closeSettingsModal: () => void;
+  openAddLink: (options?: { url?: string; autoStart?: boolean; seed?: SeedPage[]; sourceGroupId?: string }) => void;
+  closeAddLink: () => void;
   setCreateModalStep: (step: 1 | 2) => void;
   setCreateTemplateModalStep: (step: 1 | 2) => void;
   toggleMobileSidebar: () => void;
@@ -228,6 +233,7 @@ interface WorkspaceActions {
   deleteAllDocuments: (workspaceId: string) => Promise<void>;
   getDownloadUrl: (workspaceId: string, docId: string) => Promise<string>;
   reindexDocument: (workspaceId: string, docId: string, deepSearch?: boolean) => Promise<void>;
+  renameDocument: (workspaceId: string, docId: string, name: string) => Promise<void>;
   updateDocumentIndexingStatus: (documentId: string, indexingStatus: string, indexingError?: string, lastIndexedAt?: string, indexingTaskName?: string, indexingTaskId?: string, detected_language?: string, chunk_size?: number) => void;
 
   // Template operations
@@ -301,7 +307,7 @@ interface WorkspaceActions {
   setFileFolderAssignment: (fileId: string, folderId: string | null) => Promise<void>;
   uploadPageFiles: (files: File[], options?: { autoIndex?: boolean; deepSearch?: boolean }) => Promise<void>;
   addPageLink: (workspaceId: string, url: string, options?: { deepSearch?: boolean; autoIndex?: boolean }) => Promise<void>;
-  addPageLinks: (workspaceId: string, urls: string[], options?: { deepSearch?: boolean; autoIndex?: boolean }) => Promise<void>;
+  addPageLinks: (workspaceId: string, urls: string[], options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string; names?: Record<string, string>; roots?: Record<string, string>; sourceGroupId?: string }) => Promise<void>;
   runClassification: (input: StartClassificationRunInput) => Promise<void>;
   pollClassificationRun: (runId: string) => Promise<void>;
 
@@ -366,6 +372,7 @@ const initialState: WorkspaceState = {
   workspaceCreatedCallback: null,
   isCreateTemplateModalOpen: false,
   isSettingsModalOpen: false,
+  addLinkDialog: { open: false, initialUrl: '', autoStart: false, seed: [] },
   createModalStep: 1,
   createTemplateModalStep: 1,
   isMobileSidebarOpen: true,
@@ -477,6 +484,12 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           settingsTargetWorkspace: null,
           currentWorkspaceSettings: null,
         }),
+
+      openAddLink: (options) =>
+        set({ addLinkDialog: { open: true, initialUrl: options?.url ?? '', autoStart: options?.autoStart ?? false, seed: options?.seed ?? [], sourceGroupId: options?.sourceGroupId } }),
+
+      closeAddLink: () =>
+        set({ addLinkDialog: { open: false, initialUrl: '', autoStart: false, seed: [] } }),
 
       setCreateModalStep: (step) => set({ createModalStep: step }),
       setCreateTemplateModalStep: (step) => set({ createTemplateModalStep: step }),
@@ -923,6 +936,18 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           toast.error(fallback, { description: message });
           throw err;
         }
+      },
+
+      renameDocument: async (workspaceId, docId, name) => {
+        const updated = await workspaceApi.renameDocument(workspaceId, docId, name);
+        // Reflect the new display name locally (the backend preserves the
+        // extension, so use its returned value rather than the raw input).
+        const nextName = (updated as { originalName?: string; name?: string }).originalName
+          ?? (updated as { name?: string }).name
+          ?? name;
+        set((s) => ({
+          pageFiles: s.pageFiles.map((f) => (f.id === docId ? { ...f, name: nextName } : f)),
+        }));
       },
 
       updateDocumentIndexingStatus: (documentId, indexingStatus, indexingError, lastIndexedAt, indexingTaskName, indexingTaskId, detected_language, chunk_size) => {
@@ -1815,7 +1840,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           const [folders, files, artifacts] = await Promise.all([
             pageApi.listFolders(workspaceId),
             pageApi.listFiles(workspaceId),
-            dataRoomFeatures.decisionFlowArtifactsEnabled ? artifactApi.listWorkspaceArtifacts(workspaceId) : Promise.resolve([]),
+            artifactApi.listWorkspaceArtifacts(workspaceId),
           ]);
           set({
             pageFolders: folders,
@@ -1833,7 +1858,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       },
 
       refreshWorkspaceArtifacts: async () => {
-        if (!dataRoomFeatures.decisionFlowArtifactsEnabled) return;
         const workspaceId = get().selectedWorkspaceId;
         if (!workspaceId) return;
         set({ loadingPageArtifacts: true });
@@ -1972,7 +1996,13 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       },
 
       addPageLinks: async (workspaceId, urls, options) => {
-        await workspaceApi.addLinks(workspaceId, urls, options);
+        const targetFolderId = get().pageCurrentFolderId;
+        const docs = await workspaceApi.addLinks(workspaceId, urls, options);
+        if (targetFolderId && docs.length > 0) {
+          await Promise.allSettled(
+            docs.map((doc) => pageApi.assignFileToFolder(workspaceId, doc.id, targetFolderId)),
+          );
+        }
         await get().refreshPageData();
       },
 

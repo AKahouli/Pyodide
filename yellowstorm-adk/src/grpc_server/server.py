@@ -119,6 +119,24 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
         pf_grpc.add_PlaybookFlowRuntimeServicer_to_server(pf_servicer, server)
         logger.info("[gRPC] PlaybookFlowRuntimeServicer registered")
 
+    # Agent Orchestrator (parallel multi-agent) — always registered.
+    orchestrator_runtime = None
+    try:
+        from src.grpc_generated import companion_ai_pb2_grpc as orch_grpc
+        from src.companion_ai.bootstrap import OrchestratorRuntime
+
+        orchestrator_runtime = await OrchestratorRuntime().start()
+        orch_grpc.add_CompanionAiServicer_to_server(
+            orchestrator_runtime.servicer, server)
+        from src.grpc_generated import companion_ai_pb2 as orch_pb
+        svc = orch_pb.DESCRIPTOR.services_by_name["CompanionAi"]
+        logger.info("[gRPC] CompanionAiServicer registered: %s [%s]",
+                    svc.full_name,
+                    ", ".join(m.name for m in svc.methods))
+    except Exception as e:
+        logger.error(f"[gRPC] Failed to start Agent Orchestrator: {e}", exc_info=True)
+        orchestrator_runtime = None
+
     # Bind the server to port. Secure by default (TLS); plaintext only under the
     # explicit GRPC_ALLOW_INSECURE opt-out (server_credentials is None then).
     if server_credentials is None:
@@ -143,6 +161,10 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
         logger.info("  - playbook_flow.PlaybookFlowRuntime/ResumeApproval (unary)")
         logger.info("  - playbook_flow.PlaybookFlowRuntime/ResumeFromStep (unary)")
         logger.info("  - playbook_flow.PlaybookFlowRuntime/RunFromCheckpoint (streaming)")
+    if orchestrator_runtime is not None:
+        logger.info("  - yellowstorm.orchestrator.v1.CompanionAi "
+                    "(CreateSession / RunTask / GetSession / StopSession / PauseSession"
+                    " / DeliverMailReply) [%s]", orchestrator_runtime.describe())
 
     # Keep the server running until terminated
     try:
@@ -150,6 +172,8 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
     except asyncio.CancelledError:
         logger.info("[gRPC] Server shutdown requested")
         await server.stop(grace=5)
+        if orchestrator_runtime is not None:
+            await orchestrator_runtime.stop()
         await close_checkpointer()
         logger.info("✅ [gRPC] Server stopped gracefully")
         raise

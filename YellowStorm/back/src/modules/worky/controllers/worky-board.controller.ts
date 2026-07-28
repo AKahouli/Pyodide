@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, UseGuards, Logger } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -29,6 +29,8 @@ export interface WorkyBoardResponse {
 @UseGuards(WorkyStreamAccessGuard)
 @Controller('worky/streams')
 export class WorkyBoardController {
+  private readonly logger = new Logger('WorkyBoard');
+
   constructor(
     private readonly tasks: WorkyTaskService,
     @InjectModel(WorkyInteraction.name)
@@ -61,6 +63,13 @@ export class WorkyBoardController {
       }
     }
     const lanes = await this.tasks.projectForBoard(streamId, blockersByTaskId);
+    const total = Object.values(lanes).reduce((n, arr) => n + arr.length, 0);
+    // Raw task count for this stream (bypasses the lane filter) to tell apart
+    // "read returns nothing" from "frontend didn't render".
+    const rawCount = await this.tasks.countByStream(streamId);
+    this.logger.log(
+      `[worky-board] read streamId=${streamId} rawTasks=${rawCount} projected=${total} pending=${pending.length}`,
+    );
     const emptyLanes = Object.fromEntries(
       BOARD_LANES.map((l) => [l, [] as IBoardTaskView[]]),
     ) as unknown as Record<BoardLane, IBoardTaskView[]>;

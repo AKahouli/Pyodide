@@ -3,10 +3,9 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useWorkyBoard, useWorkyBoardLoading, useWorkyBoardError } from '../store';
 import { useTaskOps } from '../query/hooks';
 import { KanbanCard } from './KanbanCard';
-import type { WorkyBoardLane, WorkyTask } from '../types';
+import type { WorkyTask } from '../types';
+import { ORCH_LANES, toOrchColumns, orchDropLane, type OrchStepStatus } from '../status';
 import { cn } from '@/lib/utils';
-
-const VISIBLE_LANES: WorkyBoardLane[] = ['backlog', 'ready', 'running', 'review', 'blocked', 'done'];
 
 interface KanbanBoardProps {
   streamId: string;
@@ -20,12 +19,17 @@ export function KanbanBoard({ streamId, onTaskClick }: KanbanBoardProps): JSX.El
   const error = useWorkyBoardError();
   const taskOps = useTaskOps(streamId);
 
-  const handleDrop = (lane: WorkyBoardLane, event: DragEvent<HTMLElement>) => {
+  // Columns are the orchestrator step statuses; tasks are aggregated from the
+  // legacy lanes. A drop maps the orchestrator column back to a canonical
+  // legacy lane so the backend move API is unchanged.
+  const columns = toOrchColumns(board);
+
+  const handleDrop = (lane: OrchStepStatus, event: DragEvent<HTMLElement>) => {
     event.preventDefault();
     const taskId = event.dataTransfer.getData('application/x-worky-task-id');
     const sourceLane = event.dataTransfer.getData('application/x-worky-source-lane');
     if (!taskId || sourceLane === lane) return;
-    taskOps.move.mutate({ taskId, lane, reason: 'owner-kanban-move' });
+    taskOps.move.mutate({ taskId, lane: orchDropLane(lane), reason: 'owner-kanban-move' });
   };
 
   if (loading && !board) {
@@ -47,8 +51,8 @@ export function KanbanBoard({ streamId, onTaskClick }: KanbanBoardProps): JSX.El
       data-testid='worky-kanban-board'
       className='flex h-full flex-1 items-stretch gap-2 overflow-x-auto p-4'
     >
-      {VISIBLE_LANES.map((lane) => {
-        const tasks: WorkyTask[] = (board?.[lane] ?? []) as WorkyTask[];
+      {ORCH_LANES.map((lane) => {
+        const tasks: WorkyTask[] = columns[lane];
         const isEmpty = tasks.length === 0;
         return (
           <section
@@ -80,7 +84,7 @@ export function KanbanBoard({ streamId, onTaskClick }: KanbanBoardProps): JSX.El
                     draggable
                     onDragStart={(event) => {
                       event.dataTransfer.setData('application/x-worky-task-id', task.id);
-                      event.dataTransfer.setData('application/x-worky-source-lane', task.lane);
+                      event.dataTransfer.setData('application/x-worky-source-lane', lane);
                       event.dataTransfer.effectAllowed = 'move';
                     }}
                     onClick={() => onTaskClick?.(task)}

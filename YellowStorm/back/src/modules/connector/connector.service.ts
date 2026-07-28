@@ -243,7 +243,7 @@ export class ConnectorService {
         try {
           const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
             authSourceType: connector.authSourceType,
-            connectedAppKey: connector.connectedAppKey,
+            connectedAppKey: connector.connectedAppKey || '',
             runtimeAuthConfig: connector.runtimeAuthConfig || {},
             connectorId: connector.id,
           });
@@ -279,6 +279,7 @@ export class ConnectorService {
         mcp_server_url: connector.mcpServerUrl || '',
         auth_headers: authHeaders,
         auth_env: authEnv,
+        mcp_server_config_json: JSON.stringify(connector.mcpServerConfig || {}),
         actions,
       });
     }

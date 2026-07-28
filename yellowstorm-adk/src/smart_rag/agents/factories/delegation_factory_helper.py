@@ -739,13 +739,20 @@ def create_standard_agent_with_tools(
     # Catalogue assignment controls native UI tools; metadata alone never makes a
     # Python callable available to an agent.
     from src.smart_rag.tools.native_tool_registry import FACTORY_MANAGED_NATIVE_TOOLS, resolve_native_tools
-    agent.tools.extend(resolve_native_tools(
-        [
-            tool for tool in agent_config.get("tools", [])
-            if (tool if isinstance(tool, str) else tool.get("name")) not in FACTORY_MANAGED_NATIVE_TOOLS
-        ],
-        runtime_context=agent_params,
+    agent.tools.extend(resolve_native_tools([
+        tool for tool in agent_config.get("tools", [])
+        if (tool if isinstance(tool, str) else tool.get("name")) not in FACTORY_MANAGED_NATIVE_TOOLS
+    ],
+    runtime_context=agent_params,
     ))
+
+    # Platform tools (save_file_to_workspace)
+    agent_params = agent_config.get("agent_params") or {}
+    if agent_params.get("platform_api_url"):
+        try:
+            agent.tools.extend(create_platform_tools(agent_params))
+        except Exception as e:
+            logger.exception("Error adding platform tools to standard agent: %s", e)
 
     _attach_mcp_search_state(agent, config, agent_config)
     _attach_mcp_toolset(agent, config, agent_config)

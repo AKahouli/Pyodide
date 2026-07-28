@@ -47,6 +47,7 @@ import { BulkDeleteDocumentsDto } from './dto/bulk-delete-documents.dto';
 import { AddLinkDto } from './dto/add-link.dto';
 import { AddLinksDto } from './dto/add-links.dto';
 import { CheckUrlsDto } from './dto/check-urls.dto';
+import { CrawlUrlDto } from './dto/crawl-url.dto';
 
 @ApiTags('Workspace Documents')
 @Controller('workspaces/:workspaceId/documents')
@@ -143,7 +144,7 @@ export class WorkspaceDocumentController {
       workspaceId,
       user._id.toString(),
       body.urls,
-      { deepSearch: body.deepSearch, autoIndex: body.autoIndex },
+      { deepSearch: body.deepSearch, autoIndex: body.autoIndex, sourceRootUrl: body.sourceRootUrl, names: body.names, roots: body.roots, sourceGroupId: body.sourceGroupId },
     );
   }
 
@@ -151,6 +152,17 @@ export class WorkspaceDocumentController {
   @ApiOperation({ summary: 'Check URL duplicates across the complete workspace' })
   async checkUrls(@Param('workspaceId') workspaceId: string, @Body() body: CheckUrlsDto) {
     return this.workspaceDocumentService.checkUrls(workspaceId, body.urls);
+  }
+
+  @Post('crawl')
+  @UseGuards(WritePermissionGuard)
+  @ApiOperation({ summary: 'Crawl a link and return sublinks under its path' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  async crawl(
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: CrawlUrlDto,
+  ) {
+    return this.workspaceDocumentService.crawlSite(workspaceId, body.url);
   }
 
   /**
@@ -430,6 +442,22 @@ export class WorkspaceDocumentController {
       body.name,
       body.parentId,
     );
+  }
+
+  /**
+   * Rename a document (its display name)
+   */
+  @Patch(':docId/rename')
+  @UseGuards(WritePermissionGuard)
+  @ApiOperation({ summary: 'Rename a document' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  @ApiParam({ name: 'docId', description: 'Document ID' })
+  async renameDocument(
+    @Param('workspaceId') workspaceId: string,
+    @Param('docId') docId: string,
+    @Body() body: { name: string },
+  ) {
+    return this.workspaceDocumentService.renameDocument(workspaceId, docId, body.name);
   }
 
   /**

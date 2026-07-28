@@ -18,6 +18,7 @@ class A2AAgent(Base):
 
     __tablename__ = "a2a_agents"
 
+
     agent_id = Column(String(255), primary_key=True)
     name = Column(String(255), nullable=False, default="")
     # Full `Agent` proto serialized as JSON (proto-json names).

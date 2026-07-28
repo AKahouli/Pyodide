@@ -58,6 +58,7 @@ import { normalizeWorkspaceUrl } from './services/url-normalization';
 import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
 import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
 import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
+import { WebsiteCrawlerService } from './services/website-crawler.service';
 
 @Injectable()
 export class WorkspaceDocumentService {
@@ -84,6 +85,7 @@ export class WorkspaceDocumentService {
     private readonly urlToPdfClient: UrlToPdfClientService,
     private readonly logger: LoggerService,
     private readonly workspaceArtifacts: WorkspaceArtifactCleanupService,
+    private readonly websiteCrawler: WebsiteCrawlerService,
     @Optional() private readonly outbox?: IntegrationEventOutboxService,
   ) {
     this.logger.setContext('WorkspaceDocumentService');
@@ -703,7 +705,7 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     userId: string,
     urls: string[],
-    options?: { deepSearch?: boolean; autoIndex?: boolean },
+    options?: { deepSearch?: boolean; autoIndex?: boolean; sourceRootUrl?: string; names?: Record<string, string>; roots?: Record<string, string>; sourceGroupId?: string },
   ): Promise<DocumentResponse[]> {
     // Nominal size of 0: the converted PDF's size is unknown until conversion
     // runs, but we can still reject early if the workspace is already over
@@ -716,11 +718,24 @@ export class WorkspaceDocumentService {
       );
     }
 
+    // One group per index batch: reuse the caller's id (continue mode) or mint a
+    // fresh one, so two separate sessions on the same URL form two distinct groups.
+    const groupId = options?.sourceGroupId ?? new Types.ObjectId().toString();
+
     // Create all docs first (fast; each PROCESSING with a unique placeholder path).
-    const created: Array<{ response: DocumentResponse; id: string; url: string; name: string }> =
+    const created: Array<{ response: DocumentResponse; id: string; url: string; name: string; nameFromUrl: boolean }> =
       [];
     for (const url of urls) {
-      const filename = this.deriveFilenameFromUrl(url);
+      // Prefer the clicked link/button text (the same label shown in the browse
+      // sidebar) as the document name; fall back to the URL-derived filename when
+      // the page carried no link text. When we fall back, `nameFromUrl` lets the
+      // background conversion try the real page <title> before settling for the URL.
+      const providedName = options?.names?.[url]?.replace(/\s+/g, ' ').trim();
+      const nameFromUrl = !providedName;
+      const filename = this.ensurePdfExtension(
+        providedName ? providedName.slice(0, 200) : this.deriveFilenameFromUrl(url),
+      );
+      const root = options?.roots?.[url] ?? options?.sourceRootUrl;
       const effectiveName = await this.resolveUniqueOriginalName(workspaceId, filename);
       const documentId = new Types.ObjectId();
 
@@ -735,6 +750,13 @@ export class WorkspaceDocumentService {
           deepSearchRequested: String(Boolean(options?.deepSearch)),
           autoIndexRequested: String(options?.autoIndex !== false),
           normalizedSourceUrl: normalizeWorkspaceUrl(url),
+          sourceGroupId: groupId,
+          ...(root
+            ? {
+                sourceRootUrl: root,
+                normalizedSourceRootUrl: normalizeWorkspaceUrl(root),
+              }
+            : {}),
         },
         // The collection enforces a unique index on `path`. A link has no blob
         // yet at creation, so assign a unique placeholder (mirroring the folder
@@ -759,6 +781,7 @@ export class WorkspaceDocumentService {
         id: document._id.toString(),
         url,
         name: effectiveName,
+        nameFromUrl,
       });
     }
 
@@ -769,7 +792,7 @@ export class WorkspaceDocumentService {
     void (async () => {
       for (let idx = 0; idx < created.length; idx++) {
         const item = created[idx];
-        await this.convertAndStore(item.id, workspaceId, item.url, item.name, options).catch((err) => {
+        await this.convertAndStore(item.id, workspaceId, item.url, item.name, item.nameFromUrl, options).catch((err) => {
           this.logger.error('convertAndStore failed', {
             documentId: item.id,
             error: err instanceof Error ? err.message : 'Unknown error',
@@ -807,6 +830,24 @@ export class WorkspaceDocumentService {
     };
   }
 
+  /**
+   * Crawl a seed URL and return the discovered pages that live UNDER the seed's
+   * path (so "Explore" on /docs yields /docs/*; a root seed yields the whole site).
+   */
+  async crawlSite(_workspaceId: string, url: string): Promise<{ pages: Array<{ url: string; title?: string }>; truncated: boolean }> {
+    const { pages, truncated } = await this.websiteCrawler.crawl(url);
+    let seedPath = '/';
+    try { seedPath = new URL(url).pathname.replace(/\/+$/, '') || '/'; } catch { /* keep '/' */ }
+    const underSeed = (candidate: string): boolean => {
+      try {
+        const p = new URL(candidate).pathname;
+        if (seedPath === '/') return true;
+        return p === seedPath || p.startsWith(`${seedPath}/`);
+      } catch { return false; }
+    };
+    return { pages: pages.filter((p) => underSeed(p.url)), truncated };
+  }
+
   private async recordWorkspaceEvent(eventType: string, document: WorkspaceDocumentDoc): Promise<void> {
     if (!this.outbox || !this.configService.get<boolean>('dataRoom.workspaceEventsEnabled')) return;
     await this.outbox.record({ eventId: uuidv4(), eventType, aggregateType: 'workspace_document', aggregateId: document._id.toString(), payload: { workspaceId: document.workspaceId.toString(), documentId: document._id.toString(), createdBy: document.createdBy.toString(), documentType: document.type, originalName: document.originalName, mimeType: document.mimeType, sourceUrl: document.sourceUrl, normalizedSourceUrl: document.sourceUrl ? normalizeWorkspaceUrl(document.sourceUrl) : undefined, contentHash: document.contentHash, documentStatus: document.status, indexingStatus: document.indexingStatus, indexingTaskId: document.indexingTaskId, deepSearchRequested: document.metadata?.deepSearchRequested === 'true', metadata: document.metadata }, occurredAt: new Date() });
@@ -821,12 +862,29 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     url: string,
     filename: string,
+    nameFromUrl: boolean,
     options?: { deepSearch?: boolean; autoIndex?: boolean },
   ): Promise<void> {
     try {
       await this.assertUrlIsSafe(url);
 
-      const pdf = await this.urlToPdfClient.convert(url, filename);
+      // The name only came from the URL (no clicked link text / provided title).
+      // Try the real page <title> so the doc is named after the page, falling
+      // back to the URL-derived name when the page has no usable title.
+      let effectiveName = filename;
+      let renamedOriginal: string | undefined;
+      if (nameFromUrl) {
+        const title = (await this.websiteCrawler.fetchTitle(url).catch(() => undefined))
+          ?.replace(/\s+/g, ' ')
+          .trim();
+        if (title) {
+          const titleName = this.ensurePdfExtension(title.slice(0, 200));
+          renamedOriginal = await this.resolveUniqueOriginalName(workspaceId, titleName);
+          effectiveName = renamedOriginal;
+        }
+      }
+
+      const pdf = await this.urlToPdfClient.convert(url, effectiveName);
       const size = pdf.length;
 
       const quota = await this.workspaceService.checkStorageQuota(workspaceId, size);
@@ -837,8 +895,8 @@ export class WorkspaceDocumentService {
       const { ownerUserId, storagePrefix } = await this.workspaceService.getStorageContext(
         workspaceId,
       );
-      const sanitizedName = this.sanitizeFilename(filename);
-      const uploaded = await this.documentService.upload(pdf, filename, 'application/pdf', {
+      const sanitizedName = this.sanitizeFilename(effectiveName);
+      const uploaded = await this.documentService.upload(pdf, effectiveName, 'application/pdf', {
         folder: `${ownerUserId}/${storagePrefix}`,
         generateUniqueName: false,
         customFileName: sanitizedName,
@@ -853,6 +911,8 @@ export class WorkspaceDocumentService {
           size,
           status: DocumentStatus.COMPLETED,
           uploadedAt: new Date(),
+          // Only when we resolved a real page title (else keep the URL-derived name).
+          ...(renamedOriginal ? { originalName: renamedOriginal } : {}),
         },
       }, { new: true });
 
@@ -893,6 +953,17 @@ export class WorkspaceDocumentService {
    * segment), falling back to the host for the site root. Collisions are
    * resolved upstream by resolveUniqueOriginalName ("page (1).pdf").
    */
+  /**
+   * A link is always converted to a PDF, so its filename must carry a `.pdf`
+   * extension. Without it the stored blob key has no dot, and DocumentService
+   * .generateSasUrl rejects it as a "folder" — breaking view/download. The
+   * URL-derived name already ends in `.pdf`; this guards the clicked-link-text
+   * name (e.g. "Our Services" → "Our Services.pdf").
+   */
+  private ensurePdfExtension(name: string): string {
+    return /\.pdf$/i.test(name) ? name : `${name}.pdf`;
+  }
+
   private deriveFilenameFromUrl(url: string): string {
     try {
       const u = new URL(url);
@@ -2085,6 +2156,42 @@ export class WorkspaceDocumentService {
     });
 
     return this.mapToResponse(folder);
+  }
+
+  /**
+   * Rename a document (its display `originalName`), preserving the file
+   * extension. Only the display name changes — the stored blob path is
+   * untouched, so view/download keep working.
+   */
+  async renameDocument(
+    workspaceId: string,
+    documentId: string,
+    newName: string,
+  ): Promise<DocumentResponse> {
+    if (!Types.ObjectId.isValid(documentId)) {
+      throw new NotFoundException(ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND, 'Document not found');
+    }
+    const doc = await this.documentModel.findById(documentId);
+    if (!doc || doc.workspaceId.toString() !== workspaceId || doc.isFolder) {
+      throw new NotFoundException(ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND, 'Document not found');
+    }
+
+    const trimmed = newName.replace(/\s+/g, ' ').trim();
+    if (!trimmed) {
+      throw new BadRequestException('Document name cannot be empty');
+    }
+
+    // Preserve the current extension (e.g. links are `.pdf`) so the name stays
+    // consistent and never trips the "no extension" heuristics elsewhere.
+    const ext = doc.originalName?.match(/\.[a-z0-9]+$/i)?.[0] ?? '';
+    const base = trimmed.toLowerCase().endsWith(ext.toLowerCase()) && ext
+      ? trimmed.slice(0, trimmed.length - ext.length)
+      : trimmed;
+    doc.originalName = `${base.slice(0, 200).trim()}${ext}`;
+    await doc.save();
+
+    this.logger.log('Document renamed', { documentId, workspaceId, newName: doc.originalName });
+    return this.mapToResponse(doc);
   }
 
   /**

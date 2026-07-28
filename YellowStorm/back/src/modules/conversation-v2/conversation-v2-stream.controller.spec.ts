@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Response } from 'express';
 import { ConversationV2StreamController } from './conversation-v2-stream.controller';
 import { ConversationV2SessionService } from './services/conversation-v2-session.service';
+import { ConversationV2SessionAccessService } from './services/conversation-v2-session-access.service';
 import { ConversationV2EventStoreService } from './services/conversation-v2-event-store.service';
 import { ConversationV2StreamGatewayService } from './services/conversation-v2-stream-gateway.service';
 import { ConversationV2StreamService } from './services/conversation-v2-stream.service';
@@ -49,7 +50,8 @@ describe('ConversationV2StreamController', () => {
       controllers: [ConversationV2StreamController],
       providers: [
         { provide: ConfigService, useValue: { get: (k: string) => config.get(k) } },
-        { provide: ConversationV2SessionService, useValue: { getOne: jest.fn() } },
+        { provide: ConversationV2SessionService, useValue: { getOne: jest.fn(), getById: jest.fn() } },
+        { provide: ConversationV2SessionAccessService, useValue: { resolveSession: jest.fn() } },
         { provide: ConversationV2EventStoreService, useValue: { listSince: jest.fn() } },
         { provide: ConversationV2StreamGatewayService, useValue: gateway },
         { provide: ConversationV2StreamService, useValue: streamService },

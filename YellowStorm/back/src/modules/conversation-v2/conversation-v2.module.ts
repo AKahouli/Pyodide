@@ -15,6 +15,8 @@ import { ConversationV2StreamService } from './services/conversation-v2-stream.s
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
+import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-session-access.guard';
+import { ConversationV2SessionAccessService } from './services/conversation-v2-session-access.service';
 import { SseAuthGuard } from '@modules/conversation/guards/stream-auth.guard';
 import { AuthModule } from '@modules/auth/auth.module';
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
@@ -58,7 +60,7 @@ import {
     ]),
   ],
   controllers: [ConversationV2Controller, ConversationV2StreamController],
-  providers: [ConversationV2GrpcClientService, ConversationV2SessionService, SseAuthGuard, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2StreamGatewayService, ConversationV2StreamService, ConversationV2OwnerGuard, ConversationV2NameGeneratorService, ConversationV2DeployService, ConversationV2AppShareService],
-  exports: [ConversationV2GrpcClientService, ConversationV2SessionService, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2OwnerGuard],
+  providers: [ConversationV2GrpcClientService, ConversationV2SessionService, SseAuthGuard, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2StreamGatewayService, ConversationV2StreamService, ConversationV2OwnerGuard, ConversationV2SessionAccessGuard, ConversationV2SessionAccessService, ConversationV2NameGeneratorService, ConversationV2DeployService, ConversationV2AppShareService],
+  exports: [ConversationV2GrpcClientService, ConversationV2SessionService, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2OwnerGuard, ConversationV2SessionAccessGuard, ConversationV2SessionAccessService],
 })
 export class ConversationV2Module {}

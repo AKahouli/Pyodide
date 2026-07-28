@@ -14,12 +14,16 @@ export type InputEvent =
 export interface NavigatedEvent {
   url: string;
   title: string;
+  /** Text of the link/button clicked to reach this page, when the navigation was click-driven. */
+  linkText?: string;
 }
 
 /** One live browser page, abstracted so the service is testable without Chromium. */
 export interface EngineSession {
   onFrame(cb: (jpegBase64: string) => void): void;
   onNavigated(cb: (nav: NavigatedEvent) => void): void;
+  /** Fires `true` when the main frame starts navigating, `false` when it finishes loading. */
+  onLoading(cb: (loading: boolean) => void): void;
   dispatchInput(event: InputEvent): Promise<void>;
   navigate(action: NavAction): Promise<void>;
   currentUrl(): string;
@@ -39,5 +43,6 @@ export const URL_SAFETY = Symbol('URL_SAFETY');
 export type ClientEvent =
   | { event: 'frame'; payload: { data: string } }
   | { event: 'navigated'; payload: NavigatedEvent }
+  | { event: 'loading'; payload: { loading: boolean } }
   | { event: 'blocked'; payload: { url: string; reason: string } }
   | { event: 'closed'; payload: { reason: string } };

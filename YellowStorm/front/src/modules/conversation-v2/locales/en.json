@@ -39,7 +39,8 @@
     "empty": "Select a tool to inspect.",
     "jumpToLive": "Jump to live",
     "tabCode": "Code",
-    "tabPreview": "Preview"
+    "tabPreview": "Preview",
+    "resizeHandle": "Drag to resize preview"
   },
   "vnc": {
     "unavailable": "No VM attached to this session",
@@ -76,6 +77,7 @@
   },
   "header": {
     "back": "Back",
+    "readOnly": "Read-only",
     "tooltips": {
       "workspaces": "Manage workspaces",
       "files": "Files"
@@ -97,7 +99,7 @@
     "menu": "Deployment options"
   },
   "share": {
-    "title": "Share the app",
+    "title": "Share app & conversation",
     "searchPlaceholder": "Search a user by email…",
     "searching": "Searching…",
     "noResults": "No user found",
@@ -159,7 +161,7 @@
       "copyError": "Failed to copy link"
     },
     "share": {
-      "success": "App shared by email",
+      "success": "App and conversation shared by email",
       "error": "Failed to share the app"
     }
   }

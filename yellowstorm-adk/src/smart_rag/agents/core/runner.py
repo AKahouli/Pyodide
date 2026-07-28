@@ -1024,42 +1024,37 @@ class AgentRunner:
                 if not event.content or not event.content.parts:
                     continue
                 for part in event.content.parts:
-                    if part.text:
-                        accumulated_text += part.text or ""
+                    if part.text and getattr(part, "thought", False) is not True:
+                        accumulated_text += part.text
 
-                    if (
-                        event.is_final_response()
-                        and event.content
-                        and event.content.parts
-                    ):
-                        event_text = part.text or ""
-                        recorder.record_chunk(event_text)
+                if event.is_final_response():
+                    recorder.record_chunk(accumulated_text)
 
-                        # Send entire HTML as web_preview component (new component format)
-                        logger.info(
-                            f"[HTML AGENT] Sending HTML as web_preview component - agent_name: {agent.name}, session_id: {session_id}, length: {len(accumulated_text)} chars"
-                        )
+                    # Send entire HTML as web_preview component (new component format)
+                    logger.info(
+                        f"[HTML AGENT] Sending HTML as web_preview component - agent_name: {agent.name}, session_id: {session_id}, length: {len(accumulated_text)} chars"
+                    )
 
-                        web_preview_chunk = self.streaming_formatter.format_component_event(
-                            agent_id=agent_id,
-                            component_type="web_preview",
-                            component_data={
-                                "content": accumulated_text  # Send entire HTML at once
-                            },
-                            message_id=session_id,
-                        )
-                        await q.put(web_preview_chunk)
-                        logger.info(
-                            f"[HTML AGENT] Sending WEB_PREVIEW component to client - agent: {agent.name}"
-                        )
+                    web_preview_chunk = self.streaming_formatter.format_component_event(
+                        agent_id=agent_id,
+                        component_type="web_preview",
+                        component_data={
+                            "content": accumulated_text  # Send entire HTML at once
+                        },
+                        message_id=session_id,
+                    )
+                    await q.put(web_preview_chunk)
+                    logger.info(
+                        f"[HTML AGENT] Sending WEB_PREVIEW component to client - agent: {agent.name}"
+                    )
 
-                        final_result = (
-                            "html was generated successfully and sent to the user"
-                        )
-                        recorder.record_final_result(final_result)
-                        execution_summary = recorder.get_execution_summary()
+                    final_result = (
+                        "html was generated successfully and sent to the user"
+                    )
+                    recorder.record_final_result(final_result)
+                    execution_summary = recorder.get_execution_summary()
 
-                        return (final_result, [], execution_summary, [])
+                    return (final_result, [], execution_summary, [])
 
             return (None, [], recorder.get_execution_summary(), [])
 

@@ -593,7 +593,11 @@ export class IndexingService {
 
   async getCommunityGraphData(workspaceId: string): Promise<unknown> {
     const url = this.configService.get<string>('indexing.communityGraphUrl', 'http://localhost:8000');
+    const apiKey = this.configService.get<string>('indexing.communityGraphApiKey', '');
     const response = await axios.get(`${url}/api/graph-data`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
       params: { workspace_id: workspaceId },
       timeout: 30000,
     });

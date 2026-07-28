@@ -69,7 +69,7 @@ jobs:
       - name: Update Compose and deploy
         run: |
           export IMAGE_TAG=${{ needs.build.outputs.image_tag }}
-          sed -i "s|image: .*$|image: $IMAGE_NAME:$IMAGE_TAG|" ~/yellowstorm/${ENV_NAME}/api/yellowstorm-api-adk/docker-compose.yaml
+          sed -i "s|image: ${IMAGE_NAME}:.*$|image: ${IMAGE_NAME}:${IMAGE_TAG}|" ~/yellowstorm/${ENV_NAME}/api/yellowstorm-api-adk/docker-compose.yaml
 
           docker compose -f ~/yellowstorm/${ENV_NAME}/api/yellowstorm-api-adk/docker-compose.yaml down
           docker compose -f ~/yellowstorm/${ENV_NAME}/api/yellowstorm-api-adk/docker-compose.yaml up -d

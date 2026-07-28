@@ -602,6 +602,7 @@ def create_langchain_tools(
     workspace_ceph_paths: Optional[List[str]] = None,
     deep_search: bool = False,
     binding_workspace_ids: Optional[List[str]] = None,
+    execution_id: str = "",
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
@@ -656,48 +657,32 @@ def create_langchain_tools(
         )
         if not connector_workspace_ids and output_workspace_id:
             connector_workspace_ids = [output_workspace_id]
+        connector_file_paths = [
+            str(doc.get("filepath") or "")
+            for doc in (code_interpreter_files or [])
+            if doc.get("filepath")
+        ]
         mcp_tools = _create_connector_mcp_tools(
             step_connector_bindings,
             collector,
             output_workspace_id=output_workspace_id,
             workspace_ids=connector_workspace_ids,
             file_names=effective_file_names,
+            file_paths=connector_file_paths,
             user_id=user_id,
             external_ids=input_files,
             session_id=session_id,
             workspace_paths=workspace_paths,
             deep_search=deep_search,
+            execution_id=execution_id,
         )
-
-    # --- Platform tools (e.g. save_file_to_workspace) ---
-    platform_tools = _create_platform_tools(agent_config, collector)
-    mcp_tools.extend(platform_tools)
 
     tool_configs = agent_config.get("tools", [])
-
-    # If agent has no native tools, return only connector MCP tools
-    if not tool_configs:
-        logger.info(
-            "Created LangChain tools for playbook agent (connectors only)",
-            agent=agent_config.get("name"),
-            tool_count=len(mcp_tools),
-            tool_names=[t.name for t in mcp_tools],
-        )
-        return mcp_tools, collector
+    tools: List[StructuredTool] = list(mcp_tools)
 
     tool_names = {
         t["name"] for t in tool_configs if isinstance(t, dict) and t.get("name")
     }
-    if not tool_names:
-        logger.info(
-            "Created LangChain tools for playbook agent (connectors only, empty tool configs)",
-            agent=agent_config.get("name"),
-            tool_count=len(mcp_tools),
-            tool_names=[t.name for t in mcp_tools],
-        )
-        return mcp_tools, collector
-
-    tools: List[StructuredTool] = list(mcp_tools)
 
     # Merge workspace context into agent brain data
     workspace_names, brain_documents = _merge_brain_data(agent_config, workspace_context)
@@ -779,7 +764,11 @@ def create_langchain_tools(
             tools.append(activate_skill_tool)
 
     if deep_search:
-        deep_search_tool = _create_deep_search_tool()
+        deep_search_workspace_id = next(
+            (workspace_id for workspace_id in (binding_workspace_ids or []) if workspace_id),
+            output_workspace_id,
+        )
+        deep_search_tool = _create_deep_search_tool(deep_search_workspace_id)
         if deep_search_tool:
             tools.append(deep_search_tool)
 
@@ -1667,35 +1656,16 @@ def _create_plan_tool() -> StructuredTool:
 
 class DeepSearchInput(BaseModel):
     query: str = Field(description="The search query string.")
-    workspace_id: str = Field(description="The workspace ID to search in.")
-    top_k: int = Field(default=5, description="Maximum number of results to return.")
 
 
-def _create_deep_search_tool() -> Optional[StructuredTool]:
-    """Create a deep search tool that calls the MCP indexation server."""
-    from src.config.settings import get_settings
-
-    app_settings = get_settings()
-
-    mcp_url = getattr(app_settings, "COMMUNITY_GRAPH_MCP_URL", None) or getattr(app_settings, "VECTORSTORE_MCP_URL", None)
-    if not mcp_url:
-        logger.warning("VECTORSTORE_MCP_URL not configured, skipping deep search tool")
-        return None
-
-    async def _deep_search(query: str, workspace_id: str, top_k: int = 5) -> str:
-        from src.flow_engine.mcp import call_mcp_tool
+def _create_deep_search_tool(workspace_id: str) -> Optional[StructuredTool]:
+    """Create the relevant-document tool for compatible non-preflight callers."""
+    async def _deep_search(query: str) -> str:
+        from src.flow_engine.deep_search import search_relevant_documents
 
         try:
-            result = await call_mcp_tool(
-                "streamable_http",
-                mcp_url,
-                {"headers": {"X-Deep-Search": "true"}},
-                "search_relevant_documents",
-                {"query": query, "workspace_id": workspace_id, "top_k": top_k},
-            )
-            if isinstance(result, dict):
-                return json.dumps(result, ensure_ascii=False)
-            return str(result)
+            result = await search_relevant_documents(query, workspace_id)
+            return json.dumps(result, ensure_ascii=False)
         except Exception as e:
             logger.error("deep_search_tool_failed", error=str(e))
             return f"Deep search failed: {str(e)}"
@@ -1704,8 +1674,7 @@ def _create_deep_search_tool() -> Optional[StructuredTool]:
         name="search_relevant_documents",
         description=(
             "Search for relevant documents across the knowledge base using semantic search. "
-            "Use this to find information in indexed documents by providing a natural language query "
-            "and the target workspace name."
+            "Use this to find information in indexed documents by providing a natural language query."
         ),
         func=None,
         coroutine=_deep_search,
@@ -1756,12 +1725,14 @@ def _create_connector_mcp_tools(
     output_workspace_id: str = "",
     workspace_ids: Optional[List[str]] = None,
     file_names: Optional[List[str]] = None,
+    file_paths: Optional[List[str]] = None,
     user_id: Optional[str] = None,
     brain_ids: Optional[List[str]] = None,
     external_ids: Optional[List[str]] = None,
     session_id: str = "",
     workspace_paths: Optional[List[str]] = None,
     deep_search: bool = False,
+    execution_id: str = "",
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1868,9 +1839,10 @@ def _create_connector_mcp_tools(
                 ae: Dict[str, str] = binding_auth_env,
                 _uid: Optional[str] = user_id,
                 _wi: Optional[List[str]] = workspace_ids,
-                _fn: Optional[List[str]] = file_names,
                 sid: str = session_id,
+                eid: str = execution_id,
                 wsp: List[str] = list(workspace_paths or []),
+                fpths: List[str] = list(file_paths or []),
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
@@ -1894,21 +1866,19 @@ def _create_connector_mcp_tools(
 
                         merged_params = {**fp, **params}
                         merged_params.pop("user_id", None)
+                        for filename_param in ("file_name", "file_names"):
+                            if params.get(filename_param) in (None, "", []):
+                                merged_params.pop(filename_param, None)
 
                         effective_auth_headers = dict(ah)
                         if tt == "streamable_http":
-                            # Always override workspace_name / file_name with known-good
-                            # values so LLM-guessed or fixed_params values can't reach the backend.
-                            if _fn:
-                                effective_auth_headers["file_name"] = json.dumps(_fn) if len(_fn) > 1 else _fn[0]
-                                merged_params["file_name"] = _fn[0] if len(_fn) == 1 else _fn
-                            else:
-                                llm_file_name = merged_params.get("file_name")
-                                if isinstance(llm_file_name, str) and llm_file_name.strip() and llm_file_name != "*":
-                                    effective_auth_headers["file_name"] = llm_file_name
-                                else:
-                                    merged_params.pop("file_name", None)
-                                    effective_auth_headers.pop("file_name", None)
+                            # Filenames are model-visible context, not runtime scope.
+                            # Let each MCP action's schema, instructions, and docstring
+                            # determine whether the model sends file_name/file_names.
+                            # In particular, do not add a dropped/deep-search filename
+                            # to actions whose schema does not accept one.
+                            effective_auth_headers.pop("file_name", None)
+                            effective_auth_headers.pop("file_names", None)
                             if _wi:
                                 effective_auth_headers["workspace_id"] = json.dumps(_wi) if len(_wi) > 1 else _wi[0]
                                 effective_auth_headers["Workspace-Id"] = ",".join(_wi)
@@ -1917,11 +1887,14 @@ def _create_connector_mcp_tools(
                                 effective_auth_headers.pop("workspace_name", None)
                             if sid:
                                 effective_auth_headers["x-conversation-id"] = sid
+                            if eid:
+                                effective_auth_headers["x-execution-id"] = eid
                             if wsp:
                                 effective_auth_headers["x-workspace-paths"] = ",".join(wsp)
+                            if fpths:
+                                effective_auth_headers["x-file-paths"] = ",".join(fpths)
                             logger.info(
-                                "playbook_connector_mcp_context_headers file_name=%s workspace_id=%s",
-                                effective_auth_headers.get("file_name"),
+                                "playbook_connector_mcp_context_headers workspace_id=%s",
                                 effective_auth_headers.get("workspace_id"),
                             )
 
@@ -1994,130 +1967,6 @@ def _create_connector_mcp_tools(
             workspace_ids=workspace_ids,
             file_names=file_names,
         )
-
-    return tools
-
-
-# ---------------------------------------------------------------------------
-# Platform tools (save_file_to_workspace)
-# ---------------------------------------------------------------------------
-
-
-class _SaveFileToWorkspaceInput(BaseModel):
-    """Input schema for save_file_to_workspace tool."""
-
-    download_url: str = Field(description="URL to download the file from")
-    workspace_id: str = Field(description="Target workspace ID to save the file into")
-    filename: str = Field(description="Target filename (e.g. 'report.xlsx')")
-    mime_type: Optional[str] = Field(
-        default=None,
-        description="File MIME type. If omitted, inferred from the download response.",
-    )
-    auth_headers: Optional[Dict[str, str]] = Field(
-        default=None,
-        description="Optional authorization headers to include when downloading the file",
-    )
-    source_meta: Optional[Dict[str, str]] = Field(
-        default=None,
-        description="Optional metadata about the source (e.g. connector name, item ID)",
-    )
-
-
-def _create_platform_tools(
-    agent_config: dict,
-    collector: "ToolResultCollector",
-) -> List[StructuredTool]:
-    """Create platform tools (e.g. save_file_to_workspace) from agent_params.
-
-    Reads platform_api_url and platform_api_token from agent_params to allow
-    the agent to call back into the NestJS backend for operations like
-    downloading an external file and saving it to a workspace.
-    """
-    agent_params = agent_config.get("agent_params") or {}
-    platform_api_url = agent_params.get("platform_api_url", "")
-    platform_api_token = agent_params.get("platform_api_token", "")
-    user_id = agent_params.get("user_id", "")
-
-    if not platform_api_url or not platform_api_token:
-        return []
-
-    tools: List[StructuredTool] = []
-
-    def _make_save_file_tool(
-        api_url: str = platform_api_url,
-        api_token: str = platform_api_token,
-        uid: str = user_id,
-    ) -> StructuredTool:
-        async def _save_file_to_workspace(
-            download_url: str,
-            workspace_id: str,
-            filename: str,
-            mime_type: Optional[str] = None,
-            auth_headers: Optional[Dict[str, str]] = None,
-            source_meta: Optional[Dict[str, str]] = None,
-        ) -> str:
-            import httpx
-
-            endpoint = f"{api_url}/workspaces/{workspace_id}/documents/ingest-url"
-            body: Dict[str, Any] = {
-                "downloadUrl": download_url,
-                "filename": filename,
-                "userId": uid,
-            }
-            if mime_type:
-                body["mimeType"] = mime_type
-            if auth_headers:
-                body["authHeaders"] = auth_headers
-            if source_meta:
-                body["sourceMeta"] = source_meta
-
-            try:
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    resp = await client.post(
-                        endpoint,
-                        json=body,
-                        headers={
-                            "X-Internal-Token": api_token,
-                            "Content-Type": "application/json",
-                        },
-                    )
-                    if resp.status_code >= 400:
-                        return f"Error saving file to workspace: HTTP {resp.status_code} - {resp.text}"
-                    data = resp.json()
-                    doc = data.get("document", {})
-                    return (
-                        f"File saved to workspace successfully. "
-                        f"Document ID: {doc.get('id')}, "
-                        f"Filename: {doc.get('originalName')}, "
-                        f"Size: {doc.get('size')} bytes"
-                    )
-            except Exception as e:
-                logger.error("save_file_to_workspace failed", error=str(e))
-                return f"Error saving file to workspace: {str(e)}"
-
-        _save_file_to_workspace.__name__ = "save_file_to_workspace"
-
-        return StructuredTool(
-            name="save_file_to_workspace",
-            description=(
-                "Save an external file to a workspace by providing its download URL. "
-                "Use this when you receive a download_url from an MCP tool (e.g. SharePoint, "
-                "Google Drive) and need to make the file available in the workspace for "
-                "further processing like code interpreter. The platform will download "
-                "the file and store it in the workspace."
-            ),
-            func=None,
-            coroutine=_save_file_to_workspace,
-            args_schema=_SaveFileToWorkspaceInput,
-        )
-
-    tools.append(_make_save_file_tool())
-
-    logger.info(
-        "platform_tools_created",
-        tool_count=len(tools),
-        tool_names=[t.name for t in tools],
-    )
 
     return tools
 

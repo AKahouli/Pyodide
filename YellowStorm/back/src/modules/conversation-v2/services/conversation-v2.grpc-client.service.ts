@@ -75,6 +75,7 @@ interface RawProtoEvent {
   wait?: Record<string, never>;
   error?: { error: string };
   application_component?: { url: string; title?: string };
+  heartbeat?: Record<string, never>;
 }
 
 @Injectable()
@@ -267,6 +268,29 @@ export class ConversationV2GrpcClientService
         createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
         this.unaryDeadline,
         (err: grpc.ServiceError | null) => (err ? reject(err) : resolve()),
+      );
+    });
+  }
+
+  async worky(
+    userId: string,
+    sessionId: string,
+    message: string,
+    opts: { model?: string; skills?: unknown[]; connectors?: unknown[] } = {},
+  ): Promise<{ sessionId: string; accepted: boolean }> {
+    const request: Record<string, unknown> = { user_id: userId, session_id: sessionId, message };
+    if (opts.model) request.model = opts.model;
+    if (opts.skills?.length) request.skills = opts.skills;
+    if (opts.connectors?.length) request.connectors = opts.connectors;
+    return new Promise((resolve, reject) => {
+      this.client.Worky(
+        request,
+        createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
+        this.unaryDeadline,
+        (err: grpc.ServiceError | null, response: { session_id: string; accepted: boolean }) => {
+          if (err) return reject(err);
+          resolve({ sessionId: response.session_id, accepted: !!response.accepted });
+        },
       );
     });
   }
@@ -473,6 +497,8 @@ export class ConversationV2GrpcClientService
         return { type: 'done', payload: base };
       case 'wait':
         return { type: 'wait', payload: base };
+      case 'heartbeat':
+        return { type: 'heartbeat', payload: base };
       case 'error':
         return { type: 'error', payload: { ...base, error: raw.error!.error } };
       case 'application_component':

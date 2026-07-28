@@ -509,7 +509,7 @@ async def call_mcp_tool(
     Returns:
         Text result, structured dict result, or an error string.
     """
-    merged_headers = _build_headers(server_config, auth_headers)
+    merged_headers = _build_headers(server_config, auth_headers, action_key=action_key)
     merged_env = _build_env(server_config, auth_env)
 
     logger.info(
@@ -668,15 +668,41 @@ async def call_mcp_tool(
 def _build_headers(
     server_config: Optional[Dict[str, Any]],
     auth_headers: Optional[Dict[str, str]],
+    *,
+    action_key: str = "",
 ) -> Optional[Dict[str, str]]:
+    """Merge the connector's own static server config headers with resolved
+    per-user auth headers.
+
+    config_headers wins on a name collision. Some connectors (linkup,
+    code-interpreter) put a static MCP-gateway secret in
+    server_config["headers"]["Authorization"] — that's what gets the request
+    *accepted by the gateway at all*, independent of any specific user. If
+    that same connector also resolves a per-user credential under the same
+    header name (e.g. a saved API credential), letting auth_headers win
+    silently replaces the gateway secret with a value the gateway was never
+    issued -> 401, with no error at binding time to point at why.
+    """
     config_headers = (server_config or {}).get("headers", {})
     if not config_headers and not auth_headers:
         return None
+    colliding = sorted(set(config_headers or {}) & set(auth_headers or {}))
+    if colliding:
+        # Not necessarily wrong — but a resolved per-user header is about to be
+        # discarded in favor of the connector's static config for these names,
+        # and that's easy to miss until a call starts failing for no visible
+        # reason. Surface it once, here, rather than let someone rediscover it
+        # from a 401 the way this one was found.
+        logger.warning(
+            "mcp_header_collision action=%s colliding_headers=%s "
+            "(server_config wins; the resolved auth header for these names is discarded)",
+            action_key, colliding,
+        )
     merged = {}
-    if config_headers:
-        merged.update(config_headers)
     if auth_headers:
         merged.update(auth_headers)
+    if config_headers:
+        merged.update(config_headers)
     return merged
 
 

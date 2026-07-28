@@ -8,6 +8,17 @@ const workspaceApiMock = vi.hoisted(() => ({
   getWorkspaces: vi.fn(),
   getWorkspace: vi.fn(),
   getDocuments: vi.fn(),
+  addLinks: vi.fn(),
+}));
+
+const pageApiMock = vi.hoisted(() => ({
+  listFolders: vi.fn().mockResolvedValue([]),
+  listFiles: vi.fn().mockResolvedValue([]),
+  assignFileToFolder: vi.fn().mockResolvedValue({}),
+}));
+
+const artifactApiMock = vi.hoisted(() => ({
+  listWorkspaceArtifacts: vi.fn().mockResolvedValue([]),
 }));
 
 const toastMock = vi.hoisted(() => ({
@@ -17,6 +28,8 @@ const toastMock = vi.hoisted(() => ({
 }));
 
 vi.mock('./api', () => workspaceApiMock);
+vi.mock('./page-api', () => pageApiMock);
+vi.mock('./artifact-api', () => artifactApiMock);
 vi.mock('sonner', () => ({ toast: toastMock }));
 
 function makeWorkspace(id: string, name: string): Workspace {
@@ -159,5 +172,48 @@ describe('workspace store', () => {
     const state = useWorkspaceStore.getState();
     expect(state.selectedWorkspace?.name).toBe('Workspace One Updated');
     expect(state.workspaces.get(1)?.[0]?.name).toBe('Workspace One Updated');
+  });
+
+  it('openAddLink opens the dialog with url and autoStart, closeAddLink resets it', () => {
+    act(() => { useWorkspaceStore.getState().openAddLink({ url: 'https://ex.com/services', autoStart: true }); });
+    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: true, initialUrl: 'https://ex.com/services', autoStart: true, seed: [] });
+    act(() => { useWorkspaceStore.getState().closeAddLink(); });
+    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: false, initialUrl: '', autoStart: false, seed: [] });
+  });
+
+  it('openAddLink defaults to an empty url and no autoStart', () => {
+    act(() => { useWorkspaceStore.getState().openAddLink(); });
+    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: true, initialUrl: '', autoStart: false, seed: [] });
+    act(() => { useWorkspaceStore.getState().closeAddLink(); });
+  });
+
+  it('openAddLink carries a seed and closeAddLink clears it', () => {
+    const seed = [{ url: 'https://a.com/x', name: 'X', indexingStatus: 'ready' }];
+    act(() => { useWorkspaceStore.getState().openAddLink({ url: 'https://a.com', autoStart: true, seed }); });
+    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: true, initialUrl: 'https://a.com', autoStart: true, seed });
+    act(() => { useWorkspaceStore.getState().closeAddLink(); });
+    expect(useWorkspaceStore.getState().addLinkDialog).toEqual({ open: false, initialUrl: '', autoStart: false, seed: [] });
+  });
+
+  it('openAddLink defaults seed to empty', () => {
+    act(() => { useWorkspaceStore.getState().openAddLink(); });
+    expect(useWorkspaceStore.getState().addLinkDialog.seed).toEqual([]);
+    act(() => { useWorkspaceStore.getState().closeAddLink(); });
+  });
+
+  it('addPageLinks assigns new links to the current folder', async () => {
+    workspaceApiMock.addLinks.mockResolvedValue([{ id: 'd1' }, { id: 'd2' }]);
+    useWorkspaceStore.setState({ selectedWorkspaceId: 'w1', pageCurrentFolderId: 'folder1' });
+    await useWorkspaceStore.getState().addPageLinks('w1', ['https://a.com/x', 'https://b.com/y'], {});
+    expect(pageApiMock.assignFileToFolder).toHaveBeenCalledWith('w1', 'd1', 'folder1');
+    expect(pageApiMock.assignFileToFolder).toHaveBeenCalledWith('w1', 'd2', 'folder1');
+  });
+
+  it('addPageLinks does not assign when no folder is open', async () => {
+    pageApiMock.assignFileToFolder.mockClear();
+    workspaceApiMock.addLinks.mockResolvedValue([{ id: 'd1' }]);
+    useWorkspaceStore.setState({ selectedWorkspaceId: 'w1', pageCurrentFolderId: null });
+    await useWorkspaceStore.getState().addPageLinks('w1', ['https://a.com/x'], {});
+    expect(pageApiMock.assignFileToFolder).not.toHaveBeenCalled();
   });
 });

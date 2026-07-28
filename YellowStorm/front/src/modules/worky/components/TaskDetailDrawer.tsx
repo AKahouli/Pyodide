@@ -101,7 +101,13 @@ export function TaskDetailDrawer({
             ) : null}
           </TabsContent>
           <TabsContent value='results' className='space-y-3'>
-            {results.isLoading ? (
+            {task.result ? (
+              <div className='rounded-md border border-border bg-background px-3 py-2'>
+                <MessageProvider>
+                  <AIMessageContent parts={[{ type: 'text', content: task.result }]} />
+                </MessageProvider>
+              </div>
+            ) : results.isLoading ? (
               <p className='text-xs text-muted-foreground'>{tWorky('taskDetail.results.loading')}</p>
             ) : latestResult ? (
               <TaskResultPanel result={latestResult} />
