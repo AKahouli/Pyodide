@@ -190,4 +190,3 @@ message ConnectorAction {
   string description           = 3;
   string parameter_schema_json = 4;        // JSON Schema of the action params
 }
- 
