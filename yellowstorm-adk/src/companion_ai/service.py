@@ -560,7 +560,8 @@ class OrchestratorService:
         planner = LlmAgent(
             name="planner",
             model=self._build_planner_model(planner_model),
-            instruction=planner_prompt or PLANNER_INSTRUCTION,
+            instruction=(f"{planner_prompt}\n\n{PLANNER_INSTRUCTION}"
+                         if planner_prompt else PLANNER_INSTRUCTION),
         )
         runner = self._runner_factory(planner, f"planner_{session_id}")
         await _ensure_session(runner, f"planner_{session_id}", user_id, session_id + "_plan")
