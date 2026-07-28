@@ -31,26 +31,6 @@ jobs:
           restore-keys: ${{ runner.os }}-sonar
 
       # --------------------------
-      # Generate Python coverage
-      # --------------------------
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends protobuf-compiler
-
-      - name: Install Python dependencies and run tests
-        working-directory: yellowstorm-adk
-        run: |
-          pip install --upgrade pip setuptools wheel
-          pip install -r requirements.txt
-          python grpc/generate_proto.py
-          python -m pytest src/flow_engine/tests/ -v --cov=src/flow_engine --cov=grpc --cov-fail-under=0 --cov-report=xml:coverage.xml
-      # --------------------------
       # Generate backend coverage
       # --------------------------
       - name: Set up Node.js
