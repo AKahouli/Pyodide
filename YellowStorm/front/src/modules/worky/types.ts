@@ -152,6 +152,8 @@ export interface WorkyTask {
   priority: WorkyPriority;
   assigneeType: WorkyAssigneeType;
   assigneeId: string | null;
+  /** Executor sub-agent that handled this task (Electric plan_steps.agent). Null when unattributed. */
+  agentKey?: string | null;
   actionCategory: WorkyActionCategory;
   dependsOn: string[];
   /** Parallel wave index (plan_steps.wave via Electric); null outside a plan. */
