@@ -3,13 +3,14 @@ import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { WorkyAgentStatus } from '../../agents/agentModel';
 
-// Full literal class names so Tailwind's scanner emits them.
-const PILL: Record<WorkyAgentStatus, { wrap: string; dot: string; key: string }> = {
+// Full literal class names so Tailwind's scanner emits them. `as const` keeps
+// the i18n keys as literals for the typed `t()`.
+const PILL = {
   working: { wrap: 'bg-worky-working/15 text-worky-working', dot: 'bg-worky-working', key: 'agents.status.working' },
   blocked: { wrap: 'bg-worky-blocked/15 text-worky-blocked', dot: 'bg-worky-blocked', key: 'agents.status.blocked' },
   idle: { wrap: 'bg-worky-idle/15 text-worky-idle', dot: 'bg-worky-idle', key: 'agents.status.idle' },
   done: { wrap: 'bg-worky-done/15 text-worky-done', dot: 'bg-worky-done', key: 'agents.status.done' },
-};
+} as const satisfies Record<WorkyAgentStatus, { wrap: string; dot: string; key: string }>;
 
 export function AgentStatusPill({ status, className }: { status: WorkyAgentStatus; className?: string }): JSX.Element {
   const { t } = useModuleTranslation('worky');

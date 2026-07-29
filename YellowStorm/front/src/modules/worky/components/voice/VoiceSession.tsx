@@ -5,12 +5,12 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useVoiceSession, type VoiceState } from '../../voice/useVoiceSession';
 import { VoiceOrb } from './VoiceOrb';
 
-const STATE_LABEL: Record<VoiceState, string> = {
+const STATE_LABEL = {
   idle: 'voice.idle',
   listening: 'voice.listening',
   thinking: 'voice.thinking',
   speaking: 'voice.speaking',
-};
+} as const satisfies Record<VoiceState, string>;
 
 function ControlButton({
   label,

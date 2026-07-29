@@ -4,17 +4,11 @@ import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { WorkyMobileTab } from '../../uiStore';
 
-interface TabDef {
-  tab: WorkyMobileTab;
-  icon: typeof Home;
-  labelKey: string;
-}
-
-const TABS: TabDef[] = [
+const TABS = [
   { tab: 'agents', icon: LayoutGrid, labelKey: 'nav.agents' },
   { tab: 'chat', icon: MessageCircle, labelKey: 'nav.chat' },
   { tab: 'more', icon: Menu, labelKey: 'nav.more' },
-];
+] as const satisfies ReadonlyArray<{ tab: WorkyMobileTab; icon: typeof Home; labelKey: string }>;
 
 function TabButton({
   icon: Icon,

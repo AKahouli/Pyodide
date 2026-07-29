@@ -29,7 +29,6 @@ beforeEach(() => {
   audio.instances = [];
   api.transcribe.mockResolvedValue({ text: 'hello' });
   api.synth.mockResolvedValue(new Blob());
-  // @ts-expect-error jsdom test doubles
   global.URL.createObjectURL = vi.fn(() => 'blob:x');
   class FakeAudio {
     onended: (() => void) | null = null;
