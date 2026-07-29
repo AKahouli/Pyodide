@@ -37,13 +37,6 @@ export function applyChunksToComponents(
   let result = [...components];
   for (const { action, component } of chunks) {
     if (action === 'add') {
-      if (component.type === 'chart') {
-        console.debug('[applyChunksToComponents][add][chart]', {
-          id: component.id,
-          dataKeys: Object.keys(component.data),
-          data: component.data,
-        });
-      }
       const existingIndex = result.findIndex((item) => item.id === component.id);
       if (component.type === 'toolInfo' && existingIndex >= 0) {
         const existing = result[existingIndex];
@@ -52,12 +45,6 @@ export function applyChunksToComponents(
         result.push({ ...component, data: initializeStreamingData(component.type, component.data) });
       }
     } else if (action === 'update') {
-      if (component.type === 'chart') {
-        console.debug('[applyChunksToComponents][update][chart]', {
-          id: component.id,
-          incomingDataKeys: Object.keys(component.data),
-        });
-      }
       const hasExisting = result.some((comp) => comp.id === component.id);
       result = result.map((comp) => {
         if (comp.id !== component.id) return comp;
@@ -219,15 +206,6 @@ function initializeStreamingData(type: string, data: Record<string, unknown>): R
       actualData = parseJsonArray(data.data) || parseJsonArray(data.chartData);
     }
 
-    console.debug('[ConversationStream][chart][init]', {
-      id: (data as { id?: string }).id,
-      hasData: actualData.length > 0,
-      dataKeys: Object.keys(data),
-      actualDataLength: actualData.length,
-      dataDataType: typeof data.data,
-      chartDataDataType: typeof data.chartData,
-    });
-
     // Return the data structure with chartData set to the actual data array
     return {
       ...data,
@@ -327,14 +305,6 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
       const chartDataObj = typeof incoming.data === 'object' && incoming.data !== null
         ? { ...(typeof existing.data === 'object' && existing.data !== null ? existing.data as Record<string, unknown> : {}), ...(incoming.data as Record<string, unknown>) }
         : (typeof existing.data === 'object' && existing.data !== null ? existing.data as Record<string, unknown> : {});
-
-      console.debug('[ConversationStream][chart][merge]', {
-        id: (existing as { id?: string }).id,
-        incomingHasChartData: Array.isArray(incomingChartData) ? incomingChartData.length : 0,
-        existingHasChartData: Array.isArray(existingChartData) ? existingChartData.length : 0,
-        resultHasChartData: finalChartData.length,
-        chartDataObjKeys: Object.keys(chartDataObj),
-      });
 
       return {
         ...existing,

@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
-import { AUTH_STORAGE_KEYS, getSocketBaseUrl } from '@/lib/api/config';
+import { getSocketBaseUrl } from '@/lib/api/config';
 import { getAccessToken } from '@/lib/api/token';
 import type { IndexingStatus } from '../types';
 
@@ -79,8 +79,6 @@ export function useBrowserSession() {
     // never reaches the backend — surface that instead of spinning forever. Logging
     // the exact target URL is the fastest way to diagnose a bad deploy.
     const target = `${getSocketBaseUrl()}/browser-session`;
-    // eslint-disable-next-line no-console
-    console.info('[browser-session] connecting to', target);
 
     const socket = io(target, {
       auth: { token },
