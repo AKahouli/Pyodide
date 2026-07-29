@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { conversationStreamService } from './stream';
+import { setAccessToken, clearAccessToken } from '@/lib/api/token';
 
 vi.mock('@/lib/api/config', () => ({
   AUTH_STORAGE_KEYS: {
@@ -65,6 +66,7 @@ describe('conversationStreamService', () => {
   beforeEach(() => {
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource;
     localStorage.clear();
+    clearAccessToken();
     MockEventSource.reset();
     conversationStreamService.disconnect();
   });
@@ -85,7 +87,7 @@ describe('conversationStreamService', () => {
   });
 
   it('connects and emits stream events to listeners', () => {
-    localStorage.setItem('accessToken', 'token-123');
+    setAccessToken( 'token-123');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
 
@@ -117,7 +119,7 @@ describe('conversationStreamService', () => {
   });
 
   it('handles Nest named SSE events', () => {
-    localStorage.setItem('accessToken', 'token-123');
+    setAccessToken( 'token-123');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
 
@@ -135,7 +137,7 @@ describe('conversationStreamService', () => {
   });
 
   it('resolves a pending connection wait when the server confirms the pipe', async () => {
-    localStorage.setItem('accessToken', 'token-123');
+    setAccessToken( 'token-123');
 
     const ready = conversationStreamService.waitForConnection();
     MockEventSource.instances[0]?.emitNamed('connected', { connectionId: 'conn-1' });
@@ -144,11 +146,11 @@ describe('conversationStreamService', () => {
   });
 
   it('replaces the existing EventSource when the token is refreshed', () => {
-    localStorage.setItem('accessToken', 'old-token');
+    setAccessToken( 'old-token');
     conversationStreamService.connect();
     const original = MockEventSource.instances[0];
 
-    localStorage.setItem('accessToken', 'new-token');
+    setAccessToken( 'new-token');
     conversationStreamService.reconnectWithNewToken();
 
     expect(original.closed).toBe(true);
@@ -157,12 +159,12 @@ describe('conversationStreamService', () => {
   });
 
   it('replaces a connected pipe when another singleton changes the shared token', async () => {
-    localStorage.setItem('accessToken', 'old-token');
+    setAccessToken( 'old-token');
     conversationStreamService.connect();
     const original = MockEventSource.instances[0];
     original.emitNamed('connected', { connectionId: 'old-connection' });
 
-    localStorage.setItem('accessToken', 'new-token');
+    setAccessToken( 'new-token');
     const ready = conversationStreamService.waitForConnection();
 
     expect(original.closed).toBe(true);
@@ -175,12 +177,12 @@ describe('conversationStreamService', () => {
 
   it('closes native CONNECTING retries so reconnects can read the latest token', () => {
     vi.useFakeTimers();
-    localStorage.setItem('accessToken', 'old-token');
+    setAccessToken( 'old-token');
     conversationStreamService.connect();
     const original = MockEventSource.instances[0];
     original.emitNamed('connected', { connectionId: 'old-connection' });
 
-    localStorage.setItem('accessToken', 'new-token');
+    setAccessToken( 'new-token');
     original.readyState = MockEventSource.CONNECTING;
     original.emitError();
     vi.advanceTimersByTime(1000);
@@ -191,7 +193,7 @@ describe('conversationStreamService', () => {
   });
 
   it('keeps chart data arrays when chart payload arrives as JSON strings', () => {
-    localStorage.setItem('accessToken', 'token-123');
+    setAccessToken( 'token-123');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
 
@@ -246,7 +248,7 @@ describe('conversationStreamService', () => {
   });
 
   it('emits rejected connection_failed when socket closes before connected', () => {
-    localStorage.setItem('accessToken', 'token-abc');
+    setAccessToken( 'token-abc');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
 

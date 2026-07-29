@@ -13,6 +13,7 @@
 
 import { useEffect } from 'react';
 import { API_CONFIG, AUTH_STORAGE_KEYS, API_ENDPOINTS } from '@/lib/api/config';
+import { getAccessToken } from '@/lib/api/token';
 import { playbookFeatures } from '../features';
 import { usePlaybookStore } from '../store';
 import { dispatchPlaybookStreamEvent } from '../stream/queryEventDispatcher';
@@ -327,7 +328,7 @@ function closeEventSource() {
 function openEventSource() {
   closeEventSource();
 
-  const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+  const token = getAccessToken();
   if (!token) return;
 
   const url = `${API_CONFIG.baseURL}${API_ENDPOINTS.playbooks.stream}?token=${encodeURIComponent(token)}`;

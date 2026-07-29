@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { io, type Socket } from 'socket.io-client';
 
 import { AUTH_STORAGE_KEYS, getSocketBaseUrl } from '@/lib/api/config';
+import { getAccessToken } from '@/lib/api/token';
 
 export interface WorkyWhatsAppPairingEventPayload {
   streamId: string;
@@ -53,7 +54,7 @@ export function useWorkyWhatsAppPairingSocket({
       return;
     }
 
-    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    const token = getAccessToken();
     if (!token) {
       return;
     }

@@ -1,4 +1,5 @@
 import { AUTH_STORAGE_KEYS, API_CONFIG } from '@/lib/api/config';
+import { getAccessToken } from '@/lib/api/token';
 import type { AgentEvent } from './types';
 
 /**
@@ -45,7 +46,7 @@ class ConversationV2StreamService {
   connect(): void {
     if (this.eventSource) return; // already connected/connecting
 
-    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    const token = getAccessToken();
     if (!token) return;
 
     const url = `${API_CONFIG.baseURL}/conversation-v2/stream?token=${encodeURIComponent(token)}`;

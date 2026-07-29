@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUTH_STORAGE_KEYS } from '@/lib/api';
+import { setAccessToken, clearAccessToken, getAccessToken } from '@/lib/api/token';
 import { AuthProvider } from './AuthContext';
 import type { User } from './types';
 import { useAuth } from './useAuth';
@@ -52,6 +53,7 @@ describe('AuthProvider', () => {
   const testPassword = String.fromCharCode(80, 97, 115, 115, 119, 48, 114, 100, 33);
   beforeEach(() => {
     localStorage.clear();
+    clearAccessToken();
     vi.clearAllMocks();
 
     authApiMock.getRegistrationStatus.mockResolvedValue({ enabled: true });
@@ -64,7 +66,7 @@ describe('AuthProvider', () => {
     authApiMock.logout.mockResolvedValue(undefined);
   });
 
-  it('logs in and persists token/user in localStorage', async () => {
+  it('logs in and stores token in memory', async () => {
     const { result } = renderHook(() => useAuth(), {
       wrapper: AuthProvider,
     });
@@ -78,12 +80,12 @@ describe('AuthProvider', () => {
     expect(authApiMock.login).toHaveBeenCalledWith({ email: 'user@example.com', password: testPassword });
     expect(result.current.isAuthenticated).toBe(true);
     expect(result.current.user?.email).toBe('user@example.com');
-    expect(localStorage.getItem(AUTH_STORAGE_KEYS.accessToken)).toBe('access-token');
-    expect(localStorage.getItem(AUTH_STORAGE_KEYS.user)).toBe(JSON.stringify(baseUser));
+    expect(getAccessToken()).toBe('access-token');
+    expect(result.current.user).toEqual(baseUser);
   });
 
   it('clears local auth data on logout even if API logout fails', async () => {
-    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'old-token');
+    setAccessToken('old-token');
     localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
     authApiMock.logout.mockRejectedValueOnce(new Error('network fail'));
 
@@ -99,6 +101,7 @@ describe('AuthProvider', () => {
 
     expect(result.current.isAuthenticated).toBe(false);
     expect(result.current.user).toBeNull();
+    expect(getAccessToken()).toBeNull();
     expect(localStorage.getItem(AUTH_STORAGE_KEYS.accessToken)).toBeNull();
     expect(localStorage.getItem(AUTH_STORAGE_KEYS.user)).toBeNull();
   });

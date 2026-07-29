@@ -4,7 +4,7 @@
  * and event distribution
  */
 
-import { AUTH_STORAGE_KEYS, API_CONFIG, API_ENDPOINTS } from "@/lib/api";
+import { AUTH_STORAGE_KEYS, API_CONFIG, API_ENDPOINTS, getAccessToken, setAccessToken } from "@/lib/api";
 import type { Notification, SSEEvent, SSEEventType } from "./types";
 import { toast } from "sonner";
 import { i18nInstance } from '@/modules/localization/i18nInstance';
@@ -47,7 +47,7 @@ export class NotificationsService {
       return;
     }
 
-    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    const token = getAccessToken();
     toast.loading(tNotification("service.toasts.connecting", "Connecting to real time notification services"), { id: "sse-connection" });
     if (!token) {
       console.warn(
@@ -266,7 +266,7 @@ export class NotificationsService {
 
   private async refreshTokenAndConnect(): Promise<void> {
     try {
-      const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+      const token = getAccessToken();
       const response = await fetch(`${API_CONFIG.baseURL}${API_ENDPOINTS.auth.refresh}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -277,7 +277,7 @@ export class NotificationsService {
         const body = await response.json();
         const newToken = body?.data?.accessToken;
         if (newToken) {
-          localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, newToken);
+          setAccessToken(newToken);
         }
       }
     } catch {

@@ -17,10 +17,14 @@ vi.mock('@/modules/localization/i18nInstance', () => ({
   i18nInstance: { isInitialized: false },
 }));
 
+const getAccessTokenMock = vi.hoisted(() => vi.fn(() => 'test-token'));
+
 vi.mock('@/lib/api', () => ({
   AUTH_STORAGE_KEYS: { accessToken: 'token-key' },
   API_CONFIG: { baseURL: 'https://api.test' },
   API_ENDPOINTS: { auth: { refresh: '/auth/refresh' } },
+  getAccessToken: getAccessTokenMock,
+  setAccessToken: vi.fn(),
 }));
 
 // Minimal EventSource mock
@@ -44,7 +48,7 @@ class EventSourceMock {
 describe('NotificationsService', () => {
   beforeEach(() => {
     vi.stubGlobal('EventSource', EventSourceMock);
-    localStorage.setItem('token-key', 'abc123');
+    getAccessTokenMock.mockReturnValue('abc123');
     toastMock.loading.mockReset();
     toastMock.success.mockReset();
     toastMock.error.mockReset();

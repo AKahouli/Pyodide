@@ -1,4 +1,5 @@
 import { AUTH_STORAGE_KEYS, API_CONFIG } from '@/lib/api/config';
+import { getAccessToken } from '@/lib/api/token';
 import type { StreamSSEEvent } from './types';
 import { translateConversation } from './translation';
 
@@ -51,7 +52,7 @@ class ConversationStreamService {
   connect(): void {
     if (this.isEvicted) return;
 
-    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    const token = getAccessToken();
     if (!token) {
       this.resolveConnectionWaiters(false);
       this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.noToken') } });
@@ -108,7 +109,7 @@ class ConversationStreamService {
 
   /** Wait briefly for the shared pipe before starting a new stream-producing request. */
   waitForConnection(timeoutMs = 2000): Promise<boolean> {
-    const currentToken = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    const currentToken = getAccessToken();
     if (this.isConnected && this.connectionToken === currentToken) return Promise.resolve(true);
 
     return new Promise((resolve) => {

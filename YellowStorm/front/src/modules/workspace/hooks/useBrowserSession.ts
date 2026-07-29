@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { AUTH_STORAGE_KEYS, getSocketBaseUrl } from '@/lib/api/config';
+import { getAccessToken } from '@/lib/api/token';
 import type { IndexingStatus } from '../types';
 
 // 16:9 remote viewport. Must stay in sync with the backend `browserSession`
@@ -66,7 +67,7 @@ export function useBrowserSession() {
   }, []);
 
   const start = useCallback((url: string, seed: CollectedPage[] = []) => {
-    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    const token = getAccessToken();
     if (!token) { setStatus('error'); setErrorReason("Vous n'êtes pas authentifié."); return; }
     setStatus('connecting');
     setErrorReason(null);
