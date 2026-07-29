@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintainer"
+  short_description: "Update vault memory and preserve behavior"
+  default_prompt: "Use the maintainer instructions for Obsidian vault memory updates and behavior-preserving refactors. If a model must be pinned externally, use gpt-5.4-mini."
