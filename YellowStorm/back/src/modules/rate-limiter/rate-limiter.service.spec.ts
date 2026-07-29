@@ -1,23 +1,29 @@
 import { RateLimiterService } from './rate-limiter.service';
 import { MemoryStore } from './stores/memory.store';
+import { RedisStore } from './stores/redis.store';
 import { ConfigService } from '@nestjs/config';
 
 describe('RateLimiterService', () => {
   let service: RateLimiterService;
   let store: MemoryStore;
+  let redisStore: RedisStore;
 
   beforeEach(() => {
     store = new MemoryStore();
 
     const mockConfigService = {
-      get: jest.fn((key: string, defaultValue: number) => {
+      get: jest.fn((key: string, defaultValue: number | string) => {
         if (key === 'app.throttleLimit') return 5;
         if (key === 'app.throttleTtl') return 60; // seconds
+        if (key === 'REDIS_URL') return undefined;
+        if (key === 'REDIS_HOST') return 'localhost';
+        if (key === 'REDIS_KEY_PREFIX') return 'rl:';
         return defaultValue;
       }),
     } as unknown as ConfigService;
 
-    service = new RateLimiterService(mockConfigService, store);
+    redisStore = new RedisStore(mockConfigService as ConfigService);
+    service = new RateLimiterService(mockConfigService as ConfigService, store, redisStore);
   });
 
   afterEach(() => {
