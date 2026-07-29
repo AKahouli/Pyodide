@@ -1,6 +1,5 @@
 import type { AgentWhatsAppIntegration } from '../types';
 import { AUTH_STORAGE_KEYS, API_CONFIG, API_ENDPOINTS } from '@/lib/api/config';
-import { getAccessToken } from '@/lib/api/token';
 
 export type WhatsAppIntegrationStatusHandler = (integration: AgentWhatsAppIntegration) => void;
 export type WhatsAppIntegrationSseUnsubscribe = () => void;
@@ -16,7 +15,13 @@ interface SseConfig {
 
 const defaultConfig: SseConfig = {
   baseURL: API_CONFIG.baseURL,
-  getAccessToken,
+  getAccessToken: () => {
+    try {
+      return window.localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    } catch {
+      return null;
+    }
+  },
 };
 
 interface WhatsAppIntegrationSseEnvelope {
@@ -102,6 +107,11 @@ export function subscribeToWhatsAppIntegrationEvents(
                 const envelope = JSON.parse(data) as WhatsAppIntegrationSseEnvelope;
                 if (envelope.type === 'status' && envelope.agentId === agentId) {
                   const integration = envelope.data as AgentWhatsAppIntegration;
+                  console.log('[WhatsApp integration SSE] status', {
+                    agentId,
+                    status: integration.status,
+                    integration,
+                  });
                   onStatus(integration);
                 }
               } catch {

@@ -1,8 +1,5 @@
 import { StreamService } from './stream.service';
-import { StreamComponentBufferService } from './buffer/stream-component-buffer.service';
 import type { MessageComponent } from '../interfaces/message.interface';
-
-const mockBufferService = new StreamComponentBufferService();
 
 describe('StreamService guardrail metadata buffering', () => {
   it('rejects both private replay lifecycle promises when grpc-js throws synchronously', async () => {
@@ -23,7 +20,6 @@ describe('StreamService guardrail metadata buffering', () => {
 
   it('preserves guardrail metadata on text update chunks', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
-    Object.assign(service as object, { componentBufferService: mockBufferService });
     const buffer = new Map<string, MessageComponent>();
     const decision = {
       phase: 'output',
@@ -54,7 +50,6 @@ describe('StreamService guardrail metadata buffering', () => {
 
   it('merges tool arguments and start time with the terminal result', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
-    Object.assign(service as object, { componentBufferService: mockBufferService });
     const buffer = new Map<string, MessageComponent>();
 
     (service as any).applyChunkToBuffer(buffer, 'add', {
@@ -79,7 +74,6 @@ describe('StreamService guardrail metadata buffering', () => {
 
   it('strips raw tool results from public stream buffers', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
-    Object.assign(service as object, { componentBufferService: mockBufferService });
     const buffer = new Map<string, MessageComponent>();
 
     (service as any).applyChunkToBuffer(buffer, 'add', {
@@ -92,7 +86,6 @@ describe('StreamService guardrail metadata buffering', () => {
 
   it('upserts tool occurrences and never regresses a terminal status', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
-    Object.assign(service as object, { componentBufferService: mockBufferService });
     const buffer = new Map<string, MessageComponent>();
     const apply = (action: string, id: string, data: Record<string, unknown>) => (service as any).applyChunkToBuffer(buffer, action, {
       id, type: 'toolInfo', data,

@@ -9,7 +9,6 @@ import axios, {
   InternalAxiosRequestConfig,
 } from 'axios';
 import { API_CONFIG, AUTH_STORAGE_KEYS, API_ENDPOINTS } from './config';
-import { getAccessToken, setAccessToken, clearAccessToken } from './token';
 import { notificationsService } from '@/modules/notifications';
 import { conversationStreamService } from '@/modules/conversation/stream';
 import { translateConversation } from '@/modules/conversation/translation';
@@ -94,7 +93,7 @@ const apiClient: AxiosInstance = axios.create({
 // Request interceptor - Add auth token to requests
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
-    const token = getAccessToken();
+    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -173,7 +172,7 @@ apiClient.interceptors.response.use(
         );
 
         const { accessToken } = response.data.data;
-        setAccessToken(accessToken);
+        localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, accessToken);
 
         // Reconnect SSE with new token
         notificationsService.reconnectWithNewToken();
@@ -209,7 +208,7 @@ apiClient.interceptors.response.use(
 
 // Helper function to clear auth data
 function clearAuthData() {
-  clearAccessToken();
+  localStorage.removeItem(AUTH_STORAGE_KEYS.accessToken);
   localStorage.removeItem(AUTH_STORAGE_KEYS.user);
 }
 

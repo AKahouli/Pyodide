@@ -26,6 +26,7 @@ vi.mock('../api', () => ({
 
 vi.mock('@/lib/api/config', () => ({
   API_CONFIG: { baseURL: 'http://api.local' },
+  AUTH_STORAGE_KEYS: { accessToken: 'token-key' },
   API_ENDPOINTS: { playbooks: { stream: '/playbook/stream' } },
 }));
 
@@ -61,6 +62,7 @@ describe('playbookStreamService (BroadcastChannel leader election)', () => {
     BroadcastChannelMock.instances = [];
     vi.stubGlobal('EventSource', EventSourceMock as unknown as typeof EventSource);
     vi.stubGlobal('BroadcastChannel', BroadcastChannelMock as unknown as typeof BroadcastChannel);
+    localStorage.setItem('token-key', 'abc');
   });
 
   afterEach(() => { vi.useRealTimers(); });
@@ -79,7 +81,7 @@ describe('playbookStreamService (BroadcastChannel leader election)', () => {
     // Now should be leader with an EventSource
     expect(EventSourceMock.instances).toHaveLength(1);
     const es = EventSourceMock.instances[0];
-    expect(es.url).toBe('http://api.local/playbook/stream');
+    expect(es.url).toContain('/playbook/stream?token=abc');
 
     // Simulate named SSE event — should handle locally and broadcast to followers
     const bc = BroadcastChannelMock.instances[0];

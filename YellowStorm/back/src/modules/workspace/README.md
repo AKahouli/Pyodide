@@ -9,7 +9,6 @@ The Workspace module provides document management capabilities, allowing users t
 - [Schemas](#schemas)
 - [API Endpoints](#api-endpoints)
 - [Upload Flows](#upload-flows)
-- [URL Ingest (Internal)](#url-ingest-internal)
 - [Document Indexing](#document-indexing)
 - [Storage Allocation](#storage-allocation)
 - [Configuration](#configuration)
@@ -24,7 +23,6 @@ The Workspace module provides document management capabilities, allowing users t
 
 - **Workspace Management**: Create, update, delete workspaces with auto-generated URL-friendly aliases
 - **Document Upload**: Support for small files (direct upload) and large files (presigned URLs)
-- **URL Ingest (Internal)**: Agent/brain can ingest connector download URLs into a workspace behind an SSRF-hardened downloader
 - **Bulk Upload**: Upload up to 50 files in parallel with progress tracking
 - **Real-time Progress**: Upload progress notifications via existing SSE (NotificationsService)
 - **Workspace Settings**: Configurable RAG settings with public template support
@@ -42,7 +40,6 @@ workspace/
 ├── workspace-setting.service.ts
 ├── workspace-document.controller.ts
 ├── workspace-document.service.ts
-├── workspace-ingest.controller.ts   # Internal ingest-from-URL (service token)
 ├── schemas/
 │   ├── workspace.schema.ts
 │   ├── workspace-document.schema.ts
@@ -60,13 +57,7 @@ workspace/
 │   ├── initiate-bulk-upload.dto.ts
 │   ├── report-progress.dto.ts
 │   ├── document-query.dto.ts
-│   ├── bulk-delete-documents.dto.ts
-│   └── ingest-url.dto.ts            # HTTPS-only download URL + auth header allowlist
-├── services/
-│   ├── url-safety.ts                # Shared SSRF guard (DNS + private IP reject)
-│   ├── website-crawler.service.ts
-│   ├── url-to-pdf-client.service.ts
-│   └── …
+│   └── bulk-delete-documents.dto.ts
 ├── interfaces/
 │   ├── workspace.interface.ts
 │   ├── workspace-document.interface.ts
@@ -90,8 +81,6 @@ workspace/
 3. **Existing SSE for Progress**: Uses `NotificationsService.sendToUser()` for upload progress notifications instead of creating a separate SSE endpoint.
 
 4. **Plan-based Storage**: Each workspace has storage limits based on user's subscription plan, tracked in workspace's `allocatedStorage` and `usedStorage` fields.
-
-5. **SSRF-hardened URL fetch**: Server-side downloads triggered by caller-supplied URLs (`ingestFromUrl`, link reachability, website crawl) go through `assertUrlIsSafe` (HTTPS/HTTP protocol check, DNS resolution, reject private/loopback/link-local/CGNAT/cloud-metadata). Redirects are followed manually with `maxRedirects: 0` so every hop is re-validated.
 
 ### Blob Storage Organization
 
@@ -251,14 +240,6 @@ workspace/
 | `DELETE` | `/workspaces/:id/documents/:docId` | Delete document |
 | `DELETE` | `/workspaces/:id/documents` | Bulk delete documents |
 
-### Internal URL Ingest (service token)
-
-Protected by `InternalServiceGuard` (shared internal bearer). Not a user JWT route.
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/workspaces/:workspaceId/documents/ingest-url` | Download a remote file and store it in the workspace |
-
 ---
 
 ## Upload Flows
@@ -406,58 +387,6 @@ curl -X POST /workspaces/{id}/documents/bulk/{sessionId}/complete \
 
 ---
 
-## URL Ingest (Internal)
-
-Used by the agent/brain (and other internal callers) to pull a connector download URL (e.g. SharePoint) into a workspace. Entry point: `WorkspaceIngestController` → `WorkspaceDocumentService.ingestFromUrl()`.
-
-### Auth & ownership
-
-- Guard: `InternalServiceGuard` (`@Public()` for JWT, but requires the internal service token).
-- Body must include `userId`; the controller rejects the call if that user does not own the target workspace (`ERR_1902`).
-
-### Request body (`IngestUrlDto`)
-
-| Field | Rules |
-|-------|--------|
-| `downloadUrl` | Required. **HTTPS only**, `require_tld: true` (no localhost-style hosts via DTO). |
-| `filename` | Required, max 255. |
-| `userId` | Required (trusted via service auth). |
-| `mimeType` | Optional; otherwise taken from response `Content-Type`. |
-| `authHeaders` | Optional. Transform keeps **only** `Authorization`; other header names are stripped. |
-| `sourceMeta` | Optional string map stored on the document metadata. |
-
-### SSRF / credential controls (`downloadUrlGuarded`)
-
-Before and during download:
-
-1. **`assertUrlIsSafe(url)`** on the initial URL and **every redirect hop** (`services/url-safety.ts`): DNS lookup; reject private, loopback, link-local, CGNAT, and cloud-metadata addresses (e.g. `169.254.169.254`).
-2. **HTTPS only** at the ingest layer (even if the shared guard allows `http` for other callers).
-3. **`maxRedirects: 0`** — axios does not auto-follow; hops are followed manually (max 5).
-4. **Authorization** is the only forwarded header; it is **cleared on cross-origin redirects** so credentials are not leaked to a different origin.
-5. Logs record `downloadHost` only (not the full URL, which may contain tokens).
-
-Successful download then goes through the normal `uploadSmallFile` path (quota + storage).
-
-### Example
-
-```bash
-curl -X POST /workspaces/{workspaceId}/documents/ingest-url \
-  -H "Authorization: Bearer {INTERNAL_SERVICE_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "downloadUrl": "https://contoso.sharepoint.com/.../download",
-    "filename": "quarterly-report.xlsx",
-    "userId": "507f191e810c19729de860ea",
-    "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "authHeaders": { "Authorization": "Bearer eyJ..." },
-    "sourceMeta": { "source": "sharepoint", "itemId": "123" }
-  }'
-```
-
-Download / validation failures surface as `ERR_1923` (`WORKSPACE_DOCUMENT_UPLOAD_FAILED`) or a generic bad-request from `assertUrlIsSafe`.
-
----
-
 ## Document Indexing
 
 Documents are automatically indexed after upload completes for **regular workspaces only**. Files uploaded to **system workspaces** (conversation file attachments) are **not indexed** — they are stored for display/download purposes only. Indexing is non-blocking - documents are usable immediately, and indexing status is informational.
@@ -589,7 +518,7 @@ Default allowed MIME types:
 | ERR_1920 | `WORKSPACE_DOCUMENT_NOT_FOUND` | Document does not exist |
 | ERR_1921 | `WORKSPACE_DOCUMENT_FORBIDDEN` | No access to document |
 | ERR_1922 | `WORKSPACE_DOCUMENT_INVALID_TYPE` | File type not allowed |
-| ERR_1923 | `WORKSPACE_DOCUMENT_UPLOAD_FAILED` | Upload or URL-ingest download failed (incl. blocked redirect / non-HTTPS) |
+| ERR_1923 | `WORKSPACE_DOCUMENT_UPLOAD_FAILED` | Upload failed |
 | ERR_1924 | `WORKSPACE_DOCUMENT_NOT_IN_BLOB` | Blob not found on confirm |
 | ERR_1930 | `WORKSPACE_STORAGE_QUOTA_EXCEEDED` | Insufficient storage |
 | ERR_1931 | `WORKSPACE_STORAGE_FILE_TOO_LARGE` | Single file too large |

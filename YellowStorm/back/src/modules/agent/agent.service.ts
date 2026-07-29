@@ -32,8 +32,6 @@ import {
   normalizePromptInjectionGuardrails,
 } from '../guardrails/services/guardrails-settings.service';
 import { normalizeWidgetSettings } from './constants/widget-default-settings';
-import { AgentMapperService } from './mappers/agent-mapper.service';
-import { AgentConnectorRuntimeBuilderService } from './services/agent-connector-runtime-builder.service';
 
 /** Agent-type slug of the orchestrating manager agent. */
 const MANAGER_SLUG = 'manager';
@@ -59,8 +57,6 @@ export class AgentService {
     private readonly teamService: TeamService,
     private readonly agentShareService: AgentShareService,
     private readonly guardrailsSettingsService: GuardrailsSettingsService,
-    private readonly agentMapperService: AgentMapperService,
-    private readonly connectorRuntimeBuilder: AgentConnectorRuntimeBuilderService,
   ) {
     this.logger.setContext(AgentService.name);
   }
@@ -111,7 +107,7 @@ export class AgentService {
       skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
       disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
       connectors: (dto.connectors ?? []).map((id) => new Types.ObjectId(id)),
-      connectorActionSelections: this.agentMapperService.normalizeConnectorActionSelections(
+      connectorActionSelections: this.normalizeConnectorActionSelections(
         dto.connectors,
         dto.connectorActionSelections,
       ),
@@ -131,7 +127,7 @@ export class AgentService {
       userId,
     });
 
-    return this.agentMapperService.toResponse(agent, { id: agentType.id, name: agentType.name });
+    return this.toResponse(agent, { id: agentType.id, name: agentType.name });
   }
 
   async findUserAgents(userId: string, query: QueryAgentDto): Promise<PaginatedResponseDto<IAgentResponse>> {
@@ -169,7 +165,7 @@ export class AgentService {
     ]);
 
     return new PaginatedResponseDto(
-      agents.map((a) => this.agentMapperService.toResponse(a)),
+      agents.map((a) => this.toResponse(a)),
       total,
       page,
       limit,
@@ -189,7 +185,7 @@ export class AgentService {
 
     const isOwner = agent.createdBy.toString() === userId;
     if (agent.isDefault) {
-      return this.agentMapperService.toResponse(agent);
+      return this.toResponse(agent);
     }
     let shareInfo: ISharedAgentInfo | undefined;
     if (!isOwner) {
@@ -201,7 +197,7 @@ export class AgentService {
       shareInfo = info;
     }
 
-    const response = this.agentMapperService.toResponse(agent);
+    const response = this.toResponse(agent);
     if (shareInfo) response.shareInfo = shareInfo;
     return response;
   }
@@ -288,7 +284,7 @@ export class AgentService {
       updateData.connectors = dto.connectors.map((id) => new Types.ObjectId(id));
     }
     if (dto.connectorActionSelections) {
-      updateData.connectorActionSelections = this.agentMapperService.normalizeConnectorActionSelections(
+      updateData.connectorActionSelections = this.normalizeConnectorActionSelections(
         dto.connectors ?? ((agent.connectors as Array<{ toString(): string }>) || []).map((id) => id.toString()),
         dto.connectorActionSelections,
       );
@@ -313,7 +309,7 @@ export class AgentService {
       changes: Object.keys(dto),
     });
 
-    return this.agentMapperService.toResponse(updated);
+    return this.toResponse(updated);
   }
 
   async deletePersonal(userId: string, agentId: string): Promise<void> {
@@ -391,7 +387,7 @@ export class AgentService {
       skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
       disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
       connectors: (dto.connectors ?? []).map((id) => new Types.ObjectId(id)),
-      connectorActionSelections: this.agentMapperService.normalizeConnectorActionSelections(
+      connectorActionSelections: this.normalizeConnectorActionSelections(
         dto.connectors,
         dto.connectorActionSelections,
       ),
@@ -410,7 +406,7 @@ export class AgentService {
       name: agent.name,
     });
 
-    return this.agentMapperService.toResponse(agent, { id: agentType.id, name: agentType.name });
+    return this.toResponse(agent, { id: agentType.id, name: agentType.name });
   }
 
   async findDefaultAgents(query: QueryAgentDto): Promise<PaginatedResponseDto<IAgentResponse>> {
@@ -445,7 +441,7 @@ export class AgentService {
     ]);
 
     return new PaginatedResponseDto(
-      agents.map((a) => this.agentMapperService.toResponse(a)),
+      agents.map((a) => this.toResponse(a)),
       total,
       page,
       limit,
@@ -463,7 +459,7 @@ export class AgentService {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
 
-    return this.agentMapperService.toResponse(agent);
+    return this.toResponse(agent);
   }
 
   async findDefaultByAgentType(agentTypeId: string): Promise<IAgentResponse | null> {
@@ -479,7 +475,7 @@ export class AgentService {
     if (!agent) return null;
     // After
     const populatedType = agent.agentType as unknown as { _id: { toString(): string }; name: string };
-    return this.agentMapperService.toResponse(agent, { id: populatedType._id.toString(), name: populatedType.name });
+    return this.toResponse(agent, { id: populatedType._id.toString(), name: populatedType.name });
   }
 
   async findDefaultAgentByName(name: string): Promise<IAgentResponse | null> {
@@ -494,7 +490,7 @@ export class AgentService {
       .exec();
     if (!agent) return null;
     const populatedType = agent.agentType as unknown as { _id: { toString(): string }; name: string };
-    return this.agentMapperService.toResponse(agent, { id: populatedType._id.toString(), name: populatedType.name });
+    return this.toResponse(agent, { id: populatedType._id.toString(), name: populatedType.name });
   }
 
   async updateDefault(agentId: string, dto: UpdateAgentDto): Promise<IAgentResponse> {
@@ -562,7 +558,7 @@ export class AgentService {
       updateData.connectors = dto.connectors.map((id) => new Types.ObjectId(id));
     }
     if (dto.connectorActionSelections) {
-      updateData.connectorActionSelections = this.agentMapperService.normalizeConnectorActionSelections(
+      updateData.connectorActionSelections = this.normalizeConnectorActionSelections(
         dto.connectors ?? ((agent.connectors as Array<{ toString(): string }>) || []).map((id) => id.toString()),
         dto.connectorActionSelections,
       );
@@ -586,7 +582,7 @@ export class AgentService {
       changes: Object.keys(dto),
     });
 
-    return this.agentMapperService.toResponse(updated);
+    return this.toResponse(updated);
   }
 
   async deleteDefault(agentId: string): Promise<void> {
@@ -621,7 +617,7 @@ export class AgentService {
       .lean()
       .exec();
 
-    return agents.map((agent) => this.agentMapperService.toStreamAgent(agent));
+    return agents.map((agent) => this.toStreamAgent(agent));
   }
 
   /**
@@ -664,7 +660,7 @@ export class AgentService {
           .lean()
           .exec();
 
-        const streamSharedAgents = sharedAgents.map((agent) => this.agentMapperService.toStreamAgent(agent));
+        const streamSharedAgents = sharedAgents.map((agent) => this.toStreamAgent(agent));
         finalUserAgents = [...finalUserAgents, ...streamSharedAgents];
 
         this.logger.log('Shared agents fetched for stream', {
@@ -702,7 +698,7 @@ export class AgentService {
 
           finalUserAgents = [
             ...finalUserAgents,
-            ...sharedWithUserAgents.map((agent) => this.agentMapperService.toStreamAgent(agent)),
+            ...sharedWithUserAgents.map((agent) => this.toStreamAgent(agent)),
           ];
 
           this.logger.log('Shared-with-user agents resolved for stream', {
@@ -833,10 +829,10 @@ export class AgentService {
           .filter(Boolean) as string[],
       ),
     ];
-    const connectorsMap = await this.connectorRuntimeBuilder.buildConnectorsMap(allConnectorIds);
+    const connectorsMap = await this.buildConnectorsMap(allConnectorIds);
     const agentsWithConnectorSkills = filteredAgents.map((agent) => ({
       ...agent,
-      connectorSkillIds: this.agentMapperService.getConnectorSkillIds(connectorsMap, [
+      connectorSkillIds: this.getConnectorSkillIds(connectorsMap, [
         ...(agent.connectorIds || []),
         ...(selectedConnectorId ? [selectedConnectorId] : []),
       ]),
@@ -876,17 +872,17 @@ export class AgentService {
       const effectiveModelId = effectiveModelIdForAgent(agent);
       const resolvedModel = modelMap.get(effectiveModelId);
       const proxyModel = resolvedModel?.model || effectiveModelId;
-      const effectiveSkills = this.agentMapperService.resolveEffectiveSkills(agent, skillsMap);
+      const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
       const effectiveConnectorIds = [
         ...new Set([...(agent.connectorIds || []), ...(selectedConnectorId ? [selectedConnectorId] : [])]),
       ];
-      const connectorBindings = await this.connectorRuntimeBuilder.buildConnectorBindings(
+      const connectorBindings = await this.buildConnectorBindings(
         connectorsMap,
         effectiveConnectorIds,
         userId,
-        this.agentMapperService.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
+        this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
       );
-      const connectorToolDefs = this.connectorRuntimeBuilder.buildConnectorToolDefs(connectorBindings);
+      const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
       // Build prompt using batch-resolved prompts
       let prompt = '';
@@ -919,7 +915,7 @@ export class AgentService {
         agent_type: agent.agentTypeName.toLowerCase(),
         save_memory: false,
         tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
-        skills: effectiveSkills.map((skill) => this.connectorRuntimeBuilder.toGrpcSkill(skill)),
+        skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
         brain_context: agent.knowledgeBases.map((wsId) => ({
           workspace_id: wsId,
           workspace_documents: [],
@@ -1004,7 +1000,7 @@ export class AgentService {
       .lean()
       .exec();
 
-    const streamAgents = agents.map((agent) => this.agentMapperService.toStreamAgent(agent));
+    const streamAgents = agents.map((agent) => this.toStreamAgent(agent));
 
     // Resolve the admin's default model once so inherited (empty) agent.model
     // values fall back to it instead of becoming a hardcoded "gpt-4o-mini"
@@ -1048,10 +1044,10 @@ export class AgentService {
     const allConnectorIds = [
       ...new Set(streamAgents.flatMap((agent) => agent.connectorIds || []).filter(Boolean) as string[]),
     ];
-    const connectorsMap = await this.connectorRuntimeBuilder.buildConnectorsMap(allConnectorIds);
+    const connectorsMap = await this.buildConnectorsMap(allConnectorIds);
     const agentsWithConnectorSkills = streamAgents.map((agent) => ({
       ...agent,
-      connectorSkillIds: this.agentMapperService.getConnectorSkillIds(connectorsMap, agent.connectorIds || []),
+      connectorSkillIds: this.getConnectorSkillIds(connectorsMap, agent.connectorIds || []),
     }));
     const allSkillIds = [
       ...new Set(
@@ -1077,18 +1073,18 @@ export class AgentService {
         const agentTools = agent.toolIds
           .map((id) => toolsMap.get(id))
           .filter(Boolean) as IToolResponse[];
-        const connectorBindings = await this.connectorRuntimeBuilder.buildConnectorBindings(
+        const connectorBindings = await this.buildConnectorBindings(
           connectorsMap,
           agent.connectorIds || [],
           userId,
-          this.agentMapperService.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
+          this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
         );
-        const connectorToolDefs = this.connectorRuntimeBuilder.buildConnectorToolDefs(connectorBindings);
+        const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
         const effectiveModelId = agent.model || inheritedDefaultModelId;
         const resolvedModel = modelMap.get(effectiveModelId);
         const proxyModel = resolvedModel?.model || effectiveModelId;
-        const effectiveSkills = this.agentMapperService.resolveEffectiveSkills(agent, skillsMap);
+        const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
 
         let prompt = '';
         if (!agent.ignorePrePrompt && agent.agentTypeId) {
@@ -1110,7 +1106,7 @@ export class AgentService {
           agent_type: agent.agentTypeName.toLowerCase(),
           save_memory: false,
           tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
-          skills: effectiveSkills.map((skill) => this.connectorRuntimeBuilder.toGrpcSkill(skill)),
+          skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
           brain_context: agent.knowledgeBases.map((wsId) => ({
             workspace_id: wsId,
             workspace_documents: [],
@@ -1183,11 +1179,103 @@ export class AgentService {
     tools: Record<string, unknown>[];
     skills: Record<string, unknown>[];
   }> {
-    return this.connectorRuntimeBuilder.buildGrpcConnectorRuntimeForPlaybook(userId, toolBindings);
+    const normalizedBindings = toolBindings
+      .filter((binding) => binding && typeof binding === 'object')
+      .map((binding) => binding as Record<string, unknown>);
+
+    if (normalizedBindings.length === 0) {
+      return { connectorIds: [], connector_bindings: [], tools: [], skills: [] };
+    }
+
+    const connectorIds: string[] = [];
+    const actionKeysByConnectorId = new Map<string, Set<string>>();
+    const fixedParamsByConnectorId = new Map<string, Record<string, unknown>>();
+
+    for (const binding of normalizedBindings) {
+      if (binding.isEnabled === false) {
+        continue;
+      }
+
+      const connectorId = String(binding.connectorId || '').trim();
+      if (!connectorId) {
+        this.logger.warn('Skipping playbook connector binding without connector id', { userId });
+        continue;
+      }
+
+      const enabledActionKeys = new Set(
+        (Array.isArray(binding.actions) ? binding.actions : [])
+          .filter((action) => action && typeof action === 'object' && (action as Record<string, unknown>).isEnabled !== false)
+          .map((action) => String((action as Record<string, unknown>).actionKey || '').trim())
+          .filter(Boolean),
+      );
+
+      if (enabledActionKeys.size === 0) {
+        this.logger.warn('Skipping playbook connector binding without enabled actions', { userId, connectorId });
+        continue;
+      }
+
+      connectorIds.push(connectorId);
+      actionKeysByConnectorId.set(connectorId, enabledActionKeys);
+
+      if (binding.fixedParams && typeof binding.fixedParams === 'object' && !Array.isArray(binding.fixedParams)) {
+        fixedParamsByConnectorId.set(connectorId, binding.fixedParams as Record<string, unknown>);
+      }
+    }
+
+    const uniqueConnectorIds = [...new Set(connectorIds)];
+    if (uniqueConnectorIds.length === 0) {
+      return { connectorIds: [], connector_bindings: [], tools: [], skills: [] };
+    }
+
+    const connectorsMap = await this.buildConnectorsMap(uniqueConnectorIds);
+    for (const [connectorId, fixedParams] of fixedParamsByConnectorId) {
+      const connector = connectorsMap.get(connectorId);
+      if (!connector) continue;
+
+      const allowedActionKeys = actionKeysByConnectorId.get(connectorId);
+      const selectedActions = (connector.actions || [])
+        .filter((action) => action.isEnabled !== false)
+        .filter((action) => !allowedActionKeys || allowedActionKeys.has(action.key))
+        .map((action) => ({
+          key: action.key,
+          parameterSchema: action.parameterSchema || {},
+        }));
+      fixedParamsByConnectorId.set(
+        connectorId,
+        filterConnectorFixedParams(fixedParams, selectedActions),
+      );
+    }
+    const connectorBindings = await this.buildConnectorBindings(
+      connectorsMap,
+      uniqueConnectorIds,
+      userId,
+      actionKeysByConnectorId,
+      fixedParamsByConnectorId,
+    );
+    const connectorSkillIds = this.getConnectorSkillIds(connectorsMap, uniqueConnectorIds);
+    const skills = await this.buildGrpcSkillsForPlaybook(connectorSkillIds);
+
+    return {
+      connectorIds: uniqueConnectorIds,
+      connector_bindings: connectorBindings,
+      tools: this.buildConnectorToolDefs(connectorBindings),
+      skills,
+    };
   }
 
   async buildGrpcSkillsForPlaybook(skillIds: string[]): Promise<Record<string, unknown>[]> {
-    return this.connectorRuntimeBuilder.buildGrpcSkillsForPlaybook(skillIds);
+    const uniqueSkillIds = [...new Set(skillIds.map((skillId) => skillId.trim()).filter(Boolean))];
+    if (uniqueSkillIds.length === 0) {
+      return [];
+    }
+
+    const skills = await this.skillService.findByIds(uniqueSkillIds);
+    const resolvedSkillIds = new Set(skills.map((skill) => skill.id));
+    const missingSkillIds = uniqueSkillIds.filter((skillId) => !resolvedSkillIds.has(skillId));
+    if (missingSkillIds.length > 0) {
+      this.logger.warn('Missing playbook runtime skills', { skillIds: missingSkillIds });
+    }
+    return skills.map((skill) => this.toGrpcSkill(skill));
   }
 
   async getAllForUserResponse(userId: string): Promise<IAgentResponse[]> {
@@ -1207,7 +1295,7 @@ export class AgentService {
       this.agentShareService.getShareInfoMapForUser(userId),
     ]);
 
-    const owned = agents.map((a) => this.agentMapperService.toResponse(a));
+    const owned = agents.map((a) => this.toResponse(a));
 
     // Append agents shared with the user (active only), tagged with shareInfo.
     if (shareMap.size > 0) {
@@ -1222,7 +1310,7 @@ export class AgentService {
         .exec();
 
       for (const doc of sharedAgents) {
-        const response = this.agentMapperService.toResponse(doc);
+        const response = this.toResponse(doc);
         response.shareInfo = shareMap.get(response.id);
         owned.push(response);
       }
@@ -1289,7 +1377,7 @@ export class AgentService {
       .lean()
       .exec();
 
-    return agents.map((a) => this.agentMapperService.toResponse(a));
+    return agents.map((a) => this.toResponse(a));
   }
 
   /**
@@ -1308,7 +1396,7 @@ export class AgentService {
       .lean()
       .exec();
 
-    return agents.map((a) => this.agentMapperService.toResponse(a));
+    return agents.map((a) => this.toResponse(a));
   }
 
   // ==========================================
@@ -1462,7 +1550,7 @@ export class AgentService {
       return undefined;
     }
 
-    return this.agentMapperService.toStreamAgent(monoAgentDoc);
+    return this.toStreamAgent(monoAgentDoc);
   }
 
   private resolveDefaultAgentBySlug(
@@ -1550,7 +1638,268 @@ export class AgentService {
     return agent?._id.toString() ?? null;
   }
 
-  /* Delegated to AgentMapperService */
+  private toResponse(
+    doc: AgentDocument | Record<string, unknown>,
+    agentTypeDoc?: { id: string; name: string },
+  ): IAgentResponse {
+    const d = doc as Record<string, unknown>;
+    const populatedAgentType = d.agentType as Record<string, unknown> | undefined;
+    let agentTypeInfo: { id: string; name: string };
+
+    if (agentTypeDoc) {
+      agentTypeInfo = agentTypeDoc;
+    } else if (populatedAgentType && typeof populatedAgentType === 'object' && populatedAgentType._id) {
+      agentTypeInfo = {
+        id: (populatedAgentType._id as { toString(): string }).toString(),
+        name: (populatedAgentType.name as string) || '',
+      };
+    } else {
+      agentTypeInfo = {
+        id: d.agentType ? (d.agentType as { toString(): string }).toString() : '',
+        name: '',
+      };
+    }
+
+    return {
+      id: (d._id as { toString(): string }).toString(),
+      name: d.name as string,
+      slug: ((d.slug as string) || this.normalizeSlug(d.name as string)),
+      agentType: agentTypeInfo,
+      role: d.role as string,
+      description: (d.description as string) || '',
+      temperature: (d.temperature as number) ?? 0,
+      model: d.llmModel as string | undefined,
+      instruction: (d.instruction as string) || '',
+      ignorePrePrompt: (d.ignorePrePrompt as boolean) || false,
+      knowledgeBases: ((d.knowledgeBases as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
+      tools: ((d.tools as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
+      skills: ((d.skills as Array<{ toString(): string }>) || []).map((id) => id.toString()),
+      disabledSkills: ((d.disabledSkills as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
+      connectors: ((d.connectors as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
+      connectorActionSelections: this.toConnectorActionSelectionResponses(d.connectorActionSelections),
+      guardrails: {
+        promptInjection: normalizePromptInjectionGuardrails(
+          (d.guardrails as { promptInjection?: unknown } | undefined)?.promptInjection as Parameters<typeof normalizePromptInjectionGuardrails>[0],
+        ),
+      },
+      deploymentSettings: {
+        embedEnabled: ((d.deploymentSettings as { embedEnabled?: boolean } | undefined)?.embedEnabled) ?? false,
+        restEnabled: ((d.deploymentSettings as { restEnabled?: boolean } | undefined)?.restEnabled) ?? false,
+        widget: normalizeWidgetSettings(
+          (d.deploymentSettings as { widget?: Parameters<typeof normalizeWidgetSettings>[0] } | undefined)?.widget,
+        ),
+      },
+      enable_temporary_child_agents: (d.enable_temporary_child_agents as boolean) ?? false,
+      max_temporary_child_agents: (d.max_temporary_child_agents as number) ?? 4,
+      hasSmartMemory: false,
+      isDefault: (d.isDefault as boolean) || false,
+      isDefaultForType: (d.isDefaultForType as boolean) || false,
+      isActive: (d.isActive as boolean) ?? true,
+      a2aPublished: (d.a2aPublished as boolean) || false,
+      a2aAgentCardUrl: (d.a2aAgentCardUrl as string) || undefined,
+      createdBy: d.createdBy ? (d.createdBy as { toString(): string }).toString() : '',
+      createdAt: d.createdAt as Date,
+      updatedAt: d.updatedAt as Date,
+    };
+  }
+
+  private toStreamAgent(doc: AgentDocument | Record<string, unknown>): IAgentForStream {
+    const d = doc as Record<string, unknown>;
+    const populatedAgentType = d.agentType as Record<string, unknown> | undefined;
+    const agentTypeName =
+      populatedAgentType && typeof populatedAgentType === 'object' && populatedAgentType.name
+        ? (populatedAgentType.name as string)
+        : '';
+    const agentTypeSlug =
+      populatedAgentType && typeof populatedAgentType === 'object' && populatedAgentType.slug
+        ? (populatedAgentType.slug as string)
+        : '';
+    const agentTypeId =
+      populatedAgentType && typeof populatedAgentType === 'object' && populatedAgentType._id
+        ? (populatedAgentType._id as { toString(): string }).toString()
+        : '';
+    const agentTypeSkillIds =
+      populatedAgentType && typeof populatedAgentType === 'object' && Array.isArray(populatedAgentType.skills)
+        ? (populatedAgentType.skills as Array<{ toString(): string }>).map((id) => id.toString())
+        : [];
+
+    return {
+      id: (d._id as { toString(): string }).toString(),
+      name: d.name as string,
+      agentTypeName,
+      agentTypeSlug,
+      agentTypeId,
+      role: d.role as string,
+      description: (d.description as string) || '',
+      temperature: (d.temperature as number) ?? 0,
+      model: d.llmModel as string | undefined,
+      instruction: (d.instruction as string) || '',
+      ignorePrePrompt: (d.ignorePrePrompt as boolean) || false,
+      knowledgeBases: ((d.knowledgeBases as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
+      toolIds: ((d.tools as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
+      skillIds: ((d.skills as Array<{ toString(): string }>) || []).map((id) => id.toString()),
+      disabledSkillIds: ((d.disabledSkills as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
+      connectorIds: ((d.connectors as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
+      connectorActionSelections: this.toConnectorActionSelectionResponses(d.connectorActionSelections),
+      guardrails: {
+        promptInjection: normalizePromptInjectionGuardrails(
+          (d.guardrails as { promptInjection?: unknown } | undefined)?.promptInjection as Parameters<typeof normalizePromptInjectionGuardrails>[0],
+        ),
+      },
+      agentTypeSkillIds,
+      enable_temporary_child_agents: (d.enable_temporary_child_agents as boolean) ?? false,
+      max_temporary_child_agents: (d.max_temporary_child_agents as number) ?? 4,
+      isDefault: (d.isDefault as boolean) || false,
+      isDefaultForType: (d.isDefaultForType as boolean) || false,
+    };
+  }
+
+
+  private resolveEffectiveSkills(
+    agent: IAgentForStream,
+    skillsMap: Map<string, ISkillResponse>,
+  ): ISkillResponse[] {
+    const disabled = new Set(agent.disabledSkillIds ?? []);
+    const skillIds = [
+      ...new Set([...(agent.agentTypeSkillIds ?? []), ...(agent.skillIds ?? []), ...(agent.connectorSkillIds ?? [])]),
+    ];
+
+    return skillIds
+      .filter((id) => !disabled.has(id))
+      .map((id) => skillsMap.get(id))
+      .filter(Boolean) as ISkillResponse[];
+  }
+
+  private getConnectorSkillIds(
+    connectorsMap: Map<string, IConnectorResponse>,
+    connectorIds: string[],
+  ): string[] {
+    return [...new Set(
+      connectorIds
+        .map((connectorId) => connectorsMap.get(connectorId)?.referencedSkillIds || [])
+        .flat()
+        .filter(Boolean) as string[],
+    )];
+  }
+
+  private toConnectorActionSelectionResponses(
+    value: unknown,
+  ): Array<{ connectorId: string; actionKeys: string[] }> {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') {
+          return null;
+        }
+
+        const record = entry as {
+          connector?: { toString(): string } | string;
+          connectorId?: string;
+          actionKeys?: unknown;
+        };
+        const connectorId = record.connectorId || record.connector?.toString() || '';
+        const actionKeys = Array.isArray(record.actionKeys)
+          ? [...new Set(record.actionKeys.filter((key): key is string => typeof key === 'string' && key.trim().length > 0))]
+          : [];
+
+        if (!connectorId || actionKeys.length === 0) {
+          this.logger.warn('Dropping invalid connector action selection response', {
+            connectorId: connectorId || '<missing-connector-id>',
+            reason: !connectorId ? 'missing_connector_id' : 'missing_action_keys',
+          });
+          return null;
+        }
+
+        return { connectorId, actionKeys };
+      })
+      .filter(Boolean) as Array<{ connectorId: string; actionKeys: string[] }>;
+  }
+
+  private normalizeConnectorActionSelections(
+    connectorIds: string[] | undefined,
+    selections?: Array<{ connectorId: string; actionKeys: string[] }>,
+  ): Array<{ connector: Types.ObjectId; actionKeys: string[] }> {
+    if (!connectorIds?.length || !selections?.length) {
+      return [];
+    }
+
+    const allowedConnectorIds = new Set(connectorIds);
+    return selections
+      .map((selection) => {
+        if (!allowedConnectorIds.has(selection.connectorId)) {
+          this.logger.warn('Dropping connector action selection outside attached connectors', {
+            connectorId: selection.connectorId,
+            reason: 'connector_not_attached',
+          });
+          return null;
+        }
+
+        const actionKeys = [...new Set((selection.actionKeys || []).filter((key) => key?.trim()))];
+        if (actionKeys.length === 0) {
+          this.logger.warn('Dropping connector action selection without action keys', {
+            connectorId: selection.connectorId,
+            reason: 'missing_action_keys',
+          });
+          return null;
+        }
+
+        return {
+          connector: new Types.ObjectId(selection.connectorId),
+          actionKeys,
+        };
+      })
+      .filter(Boolean) as Array<{ connector: Types.ObjectId; actionKeys: string[] }>;
+  }
+
+  private buildConnectorActionKeysByConnectorId(
+    selections?: Array<{ connectorId: string; actionKeys: string[] }>,
+  ): Map<string, Set<string>> | undefined {
+    if (!selections?.length) {
+      return undefined;
+    }
+
+    return new Map(
+      selections.map((selection) => [selection.connectorId, new Set(selection.actionKeys)]),
+    );
+  }
+
+  private toGrpcSkill(skill: ISkillResponse): Record<string, unknown> {
+    return {
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      instructions: skill.instructions,
+      license: skill.license,
+      compatibility: skill.compatibility,
+      metadata: skill.metadata,
+      allowed_tools: skill.allowedTools,
+      files: skill.files.map((file) => ({
+        path: file.path,
+        kind: file.kind,
+        mime_type: file.mimeType,
+        content: file.content,
+      })),
+    };
+  }
 
   /**
    * Build tool objects for gRPC with accessToken injection for tools that require connected apps.
@@ -1585,6 +1934,25 @@ export class AgentService {
         return toolObj;
       }),
     );
+  }
+
+  private async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, IConnectorResponse>> {
+    const connectorsMap = new Map<string, IConnectorResponse>();
+    if (connectorIds.length === 0) {
+      return connectorsMap;
+    }
+
+    const fetchedConnectors = await this.connectorService.findByIds(connectorIds);
+    for (const connector of fetchedConnectors) {
+      connectorsMap.set(connector.id, connector);
+    }
+
+    const missingConnectorIds = connectorIds.filter((connectorId) => !connectorsMap.has(connectorId));
+    if (missingConnectorIds.length > 0) {
+      this.logger.warn('Missing playbook runtime connectors', { connectorIds: missingConnectorIds });
+    }
+
+    return connectorsMap;
   }
 
   private async buildConnectorBindings(
@@ -1694,7 +2062,7 @@ export class AgentService {
         const description = String(normalizedAction.description || '');
 
         return {
-          name: this.connectorRuntimeBuilder.buildConnectorToolName(connectorSlug, actionKey),
+          name: this.buildConnectorToolName(connectorSlug, actionKey),
           description: description || `${connectorName} connector action ${label}`,
           prompt: '',
           top_k: 0,

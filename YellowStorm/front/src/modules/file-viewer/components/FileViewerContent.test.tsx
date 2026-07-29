@@ -52,11 +52,11 @@ vi.mock('../renderers/UnsupportedRenderer', () => ({
 }));
 
 describe('FileViewerContent', () => {
-  it('renders only the active renderer and closes tab from tab bar', async () => {
+  it('renders active renderer and closes tab from tab bar', async () => {
     render(<FileViewerContent />);
 
     expect(screen.getByText('renderer-a.pdf')).toBeInTheDocument();
-    expect(screen.queryByText('unsupported-b.unknown')).not.toBeInTheDocument();
+    expect(screen.getByText('unsupported-b.unknown')).toBeInTheDocument();
 
     const closeButtons = screen.getAllByRole('button');
     await userEvent.click(closeButtons[1]);

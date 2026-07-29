@@ -30,6 +30,12 @@ export function RootGuard() {
   useConversationStream();
   useConversationV2StreamConnection();
 
+  // TEMP deploy marker — open the browser console on the homepage to confirm the
+  // latest front build is live. Remove after verifying.
+  React.useEffect(() => {
+    console.log('🚀 DEPLOY-CHECK indexation-status front build is live');
+  }, []);
+
   // Initialize models when authenticated
   React.useEffect(() => {
     if (isAuthenticated && !requiresEmailVerification && !requiresProfileCompletion) {

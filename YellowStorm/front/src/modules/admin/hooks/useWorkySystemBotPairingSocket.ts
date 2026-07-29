@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react';
 import { io, type Socket } from 'socket.io-client';
 
 import { AUTH_STORAGE_KEYS, getSocketBaseUrl } from '@/lib/api/config';
-import { getAccessToken } from '@/lib/api/token';
 
 export interface WorkySystemBotPairingEventPayload {
   sessionId: string;
@@ -52,7 +51,7 @@ export function useWorkySystemBotPairingSocket({
       return;
     }
 
-    const token = getAccessToken();
+    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
     if (!token) {
       return;
     }

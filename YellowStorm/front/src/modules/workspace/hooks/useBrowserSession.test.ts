@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 
 const handlers: Record<string, (p: unknown) => void> = {};
@@ -15,20 +15,12 @@ vi.mock('socket.io-client', () => ({
 }));
 vi.mock('@/lib/api/config', () => ({
   getSocketBaseUrl: () => 'http://x',
+  AUTH_STORAGE_KEYS: { accessToken: 'at' },
 }));
 
-import { setAccessToken, clearAccessToken } from '@/lib/api/token';
 import { useBrowserSession, normalizeUrl } from './useBrowserSession';
 
-beforeEach(() => {
-  setAccessToken('tok');
-  emit.mockClear();
-  for (const key of Object.keys(handlers)) delete handlers[key];
-});
-
-afterEach(() => {
-  clearAccessToken();
-});
+beforeEach(() => { localStorage.setItem('at', 'tok'); emit.mockClear(); });
 
 describe('normalizeUrl', () => {
   it('strips hash and trailing slash and lowercases host', () => {

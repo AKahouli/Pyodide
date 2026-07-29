@@ -222,12 +222,9 @@ describe('RateLimitGuard', () => {
       );
     });
 
-    it('should use request.ip regardless of headers', async () => {
+    it('should extract IP from x-forwarded-for header', async () => {
       await guard.canActivate(
-        createMockContext({
-          ip: '203.0.113.50',
-          headers: { 'x-forwarded-for': '1.2.3.4, 5.6.7.8' },
-        }),
+        createMockContext({ headers: { 'x-forwarded-for': '203.0.113.50, 70.41.3.18' } }),
       );
 
       expect(rateLimiterService.generateKey).toHaveBeenCalledWith(
@@ -237,17 +234,31 @@ describe('RateLimitGuard', () => {
       );
     });
 
-    it('should use request.ip when x-real-ip header is present', async () => {
+    it('should extract IP from x-real-ip header', async () => {
       await guard.canActivate(
-        createMockContext({
-          ip: '10.0.0.5',
-          headers: { 'x-real-ip': '192.168.1.1' },
-        }),
+        createMockContext({ headers: { 'x-real-ip': '10.0.0.5' } }),
       );
 
       expect(rateLimiterService.generateKey).toHaveBeenCalledWith(
         undefined,
         '10.0.0.5',
+        expect.any(String),
+      );
+    });
+
+    it('should prefer x-forwarded-for over x-real-ip', async () => {
+      await guard.canActivate(
+        createMockContext({
+          headers: {
+            'x-forwarded-for': '1.2.3.4',
+            'x-real-ip': '5.6.7.8',
+          },
+        }),
+      );
+
+      expect(rateLimiterService.generateKey).toHaveBeenCalledWith(
+        undefined,
+        '1.2.3.4',
         expect.any(String),
       );
     });
@@ -262,14 +273,26 @@ describe('RateLimitGuard', () => {
       );
     });
 
-    it('should fallback to socket.remoteAddress when ip is default', async () => {
+    it('should handle array x-forwarded-for header', async () => {
       await guard.canActivate(
-        createMockContext({ ip: '::1', socket: { remoteAddress: '10.0.0.1' } }),
+        createMockContext({ headers: { 'x-forwarded-for': ['9.8.7.6, 1.1.1.1'] } }),
       );
 
       expect(rateLimiterService.generateKey).toHaveBeenCalledWith(
         undefined,
-        '::1',
+        '9.8.7.6',
+        expect.any(String),
+      );
+    });
+
+    it('should handle array x-real-ip header', async () => {
+      await guard.canActivate(
+        createMockContext({ headers: { 'x-real-ip': ['11.22.33.44'] } }),
+      );
+
+      expect(rateLimiterService.generateKey).toHaveBeenCalledWith(
+        undefined,
+        '11.22.33.44',
         expect.any(String),
       );
     });

@@ -110,6 +110,21 @@ export function WorkspacePage() {
     }
   }, [routeWorkspaceId, selectedWorkspaceId, selectPageWorkspace]);
 
+  // TEMP diagnostic: log the indexing statuses the workspace page receives.
+  useEffect(() => {
+    if (!files.length) return;
+    const counts = files.reduce<Record<string, number>>((acc, f) => {
+      const s = f.indexingStatus ?? 'undefined';
+      acc[s] = (acc[s] ?? 0) + 1;
+      return acc;
+    }, {});
+    console.log('[indexing-status] received files', {
+      total: files.length,
+      counts,
+      sample: files.slice(0, 5).map((f) => ({ name: f.name, indexingStatus: f.indexingStatus })),
+    });
+  }, [files]);
+
   // While any file is still indexing, poll so its status dot updates to
   // green/red on its own without a manual refresh. Stops once all settle.
   const hasIndexingInFlight = files.some(

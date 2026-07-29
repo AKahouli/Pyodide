@@ -7,8 +7,6 @@ import { AgentA2AController } from './controllers/agent-a2a.controller';
 import { AgentShareController } from './controllers/agent-share.controller';
 import { AgentService } from './agent.service';
 import { AgentShareService } from './services/agent-share.service';
-import { AgentMapperService } from './mappers/agent-mapper.service';
-import { AgentConnectorRuntimeBuilderService } from './services/agent-connector-runtime-builder.service';
 import { AgentPermissionGuard } from './guards/agent-permission.guard';
 import { A2AAdminGrpcClientService } from './services/a2a-admin.grpc-client.service';
 import { A2APublishService } from './services/a2a-publish.service';
@@ -54,12 +52,10 @@ import { PlaybookAssistantConnectorReconcilerService } from './services/playbook
     forwardRef(() => UsageModule),
   ],
   controllers: [AgentController, AdminAgentController, AgentA2AController, AgentShareController],
-  providers: [AgentService, AgentShareService, AgentMapperService, AgentConnectorRuntimeBuilderService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, PlaybookAssistantConnectorReconcilerService],
+  providers: [AgentService, AgentShareService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, PlaybookAssistantConnectorReconcilerService],
   exports: [
     AgentService,
     AgentShareService,
-    AgentMapperService,
-    AgentConnectorRuntimeBuilderService,
     AgentPermissionGuard,
     A2AAdminGrpcClientService,
     A2APublishService,

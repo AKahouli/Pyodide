@@ -12,7 +12,7 @@
  */
 
 import { useEffect } from 'react';
-import { API_CONFIG, API_ENDPOINTS } from '@/lib/api/config';
+import { API_CONFIG, AUTH_STORAGE_KEYS, API_ENDPOINTS } from '@/lib/api/config';
 import { playbookFeatures } from '../features';
 import { usePlaybookStore } from '../store';
 import { dispatchPlaybookStreamEvent } from '../stream/queryEventDispatcher';
@@ -327,8 +327,11 @@ function closeEventSource() {
 function openEventSource() {
   closeEventSource();
 
-  const url = `${API_CONFIG.baseURL}${API_ENDPOINTS.playbooks.stream}`;
-  const es = new EventSource(url, { withCredentials: true });
+  const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+  if (!token) return;
+
+  const url = `${API_CONFIG.baseURL}${API_ENDPOINTS.playbooks.stream}?token=${encodeURIComponent(token)}`;
+  const es = new EventSource(url);
 
   es.onmessage = (event: MessageEvent) => {
     handleSsePayload(event.data);
