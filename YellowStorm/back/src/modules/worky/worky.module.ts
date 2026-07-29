@@ -146,6 +146,7 @@ import workyConfig from '../../config/worky.config';
 import workyOrchestratorConfig from '../../config/worky-orchestrator.config';
 import workyOrchestratorSecurityConfig from '../../config/grpc-security-worky-orchestrator.config';
 import { AgentTypeModule } from '../agent-type/agent-type.module';
+import { AgentModule } from '../agent/agent.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { LoggerModule } from '../logger';
 import { EmailModule } from '../email/email.module';
@@ -177,6 +178,7 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     LoggerModule,
     AuthorizationModule,
     AgentTypeModule,
+    AgentModule,
     EmailModule,
     UserModule,
     WorkspaceModule,

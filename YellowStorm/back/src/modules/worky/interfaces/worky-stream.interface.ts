@@ -10,10 +10,6 @@ export interface IWorkyStreamResponse {
   managerAgentId: string;
   managerModelId?: string | null;
   workerModelId?: string | null;
-  plannerModelId?: string | null;
-  executorModelId?: string | null;
-  plannerPrompt?: string | null;
-  executorPrompt?: string | null;
   governancePolicyRef?: string | null;
   title: string;
   status: string;

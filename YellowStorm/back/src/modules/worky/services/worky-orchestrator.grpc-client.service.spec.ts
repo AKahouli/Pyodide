@@ -75,16 +75,15 @@ describe('WorkyOrchestratorGrpcClientService', () => {
   });
 
   describe('runTask', () => {
-    it('calls RunTask with snake_case planner/executor fields and resolves the mapped response', async () => {
+    it('calls RunTask with the agents array and resolves the mapped response', async () => {
       mockGrpcClient.RunTask.mockImplementation((_req, _md, _opts, cb) =>
         cb(null, { session_id: 'sess-1', accepted: true, run_id: 'run-1' }),
       );
 
+      const agents = [{ id: 'planner-1' }, { id: 'executor-1' }];
       const result = await service.runTask('user-1', 'sess-1', 'do the thing', {
-        plannerModel: 'openai/gpt-4o',
-        executorModel: 'anthropic/claude-sonnet-4-5',
-        plannerPrompt: 'plan well',
-        executorPrompt: 'execute well',
+        agents,
+        connectors: [{ connector_id: 'c1' }],
       });
 
       expect(result).toEqual({ sessionId: 'sess-1', accepted: true, runId: 'run-1' });
@@ -93,17 +92,17 @@ describe('WorkyOrchestratorGrpcClientService', () => {
         user_id: 'user-1',
         session_id: 'sess-1',
         message: 'do the thing',
-        planner_model: 'openai/gpt-4o',
-        executor_model: 'anthropic/claude-sonnet-4-5',
-        planner_prompt: 'plan well',
-        executor_prompt: 'execute well',
+        agents,
+        connectors: [{ connector_id: 'c1' }],
       });
+      expect(req).not.toHaveProperty('planner_model');
+      expect(req).not.toHaveProperty('executor_model');
       expect(req).not.toHaveProperty('model');
       expect(md).toBeDefined();
       expect(opts).toHaveProperty('deadline');
     });
 
-    it('omits planner/executor/skills/connectors when not provided', async () => {
+    it('omits agents/skills/connectors when not provided', async () => {
       mockGrpcClient.RunTask.mockImplementation((_req, _md, _opts, cb) =>
         cb(null, { session_id: 'sess-1', accepted: true, run_id: 'run-1' }),
       );

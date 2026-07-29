@@ -87,7 +87,7 @@ export class WorkyMailCatchupService {
     // Resolved lazily, once, only if a token actually turns up: almost every
     // swept mail carries none (the sweep re-reads the WHOLE inbox, not just
     // replies), so most sweeps would otherwise pay for a resolution nothing uses.
-    let context: { model?: string; connectors: unknown[] } | null = null;
+    let context: { agents: unknown[]; connectors: unknown[] } | null = null;
 
     let recovered = 0;
     for (const message of messages) {
@@ -98,14 +98,14 @@ export class WorkyMailCatchupService {
       if (!token) continue;
 
       if (!context) {
-        // Without this the resumed plan gets zero tools for every not-yet-run
-        // step -- a step needing one silently fabricates a "done" result and
-        // never calls it, instead of actually acting.
-        const [model, connectors] = await Promise.all([
-          this.turnContext.resolveManagerModel(null),
+        // Without this the resumed plan gets zero agents/tools for every
+        // not-yet-run step -- a step needing one silently fabricates a "done"
+        // result and never calls it, instead of actually acting.
+        const [agents, connectors] = await Promise.all([
+          this.turnContext.resolveWorkyAgents(subscription.userId),
           this.turnContext.resolveConnectors(subscription.userId),
         ]);
-        context = { model, connectors };
+        context = { agents, connectors };
       }
 
       const result = await this.orchestrator.deliverMailReply({
@@ -116,7 +116,7 @@ export class WorkyMailCatchupService {
             '').trim(),
         replyFrom:
           ((message.from as Record<string, any>)?.emailAddress?.address as string) ?? '',
-        model: context.model,
+        agents: context.agents,
         connectors: context.connectors,
       });
       // delivered=false is the normal answer here: almost every token we re-offer

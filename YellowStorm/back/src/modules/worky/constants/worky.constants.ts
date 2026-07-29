@@ -98,5 +98,14 @@ export type WorkyPlanPhase = (typeof WORKY_PLAN_PHASES)[number];
  */
 export const WORKY_MANAGER_AGENT_TYPE_SLUG = 'manager';
 
+/**
+ * Agent-type slugs for the two agents worky forwards to the orchestrator on
+ * every turn. The admin creates exactly one default agent of each type; worky
+ * resolves those defaults and sends them as `chatbot.Agent` on RunTask /
+ * DeliverMailReply (replacing the old planner/executor model + prompt fields).
+ */
+export const WORKY_PLANNER_AGENT_TYPE_SLUG = 'worky-planner';
+export const WORKY_EXECUTOR_AGENT_TYPE_SLUG = 'worky-executer';
+
 export const WORKY_STREAM_TITLE_MIN = 1;
 export const WORKY_STREAM_TITLE_MAX = 200;

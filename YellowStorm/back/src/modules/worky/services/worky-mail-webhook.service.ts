@@ -91,11 +91,12 @@ export class WorkyMailWebhookService {
       (((message.from as Record<string, any>)?.emailAddress?.address as string) ?? '').trim();
 
     // Without these the resumed plan rebuilds every not-yet-run step with NO
-    // tools at all: a step needing none (writing a report) looks fine, but a
-    // step that needed one (sending that report onward) silently fabricates a
-    // "done" result and never calls the real tool -- completed, nothing sent.
-    const [model, connectors] = await Promise.all([
-      this.turnContext.resolveManagerModel(null),
+    // agents/tools at all: a step needing none (writing a report) looks fine,
+    // but a step that needed one (sending that report onward) silently
+    // fabricates a "done" result and never calls the real tool -- completed,
+    // nothing sent.
+    const [agents, connectors] = await Promise.all([
+      this.turnContext.resolveWorkyAgents(subscription.userId),
       this.turnContext.resolveConnectors(subscription.userId),
     ]);
 
@@ -105,7 +106,7 @@ export class WorkyMailWebhookService {
       token,
       replyBody: replyText,
       replyFrom,
-      model,
+      agents,
       connectors,
     });
 

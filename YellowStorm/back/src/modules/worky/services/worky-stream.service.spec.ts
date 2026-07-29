@@ -146,20 +146,6 @@ describe('WorkyStreamService.create', () => {
     expect(result.workerModelId).toBeNull();
   });
 
-  it('seeds planner/executor models and prompts to null on create', async () => {
-    const { service, streamCreate } = makeService();
-    const result = await service.create(userId, { title: 'with-agent-config' });
-    const streamInput = streamCreate.mock.calls[0][0];
-    expect(streamInput.plannerModelId).toBeNull();
-    expect(streamInput.executorModelId).toBeNull();
-    expect(streamInput.plannerPrompt).toBeNull();
-    expect(streamInput.executorPrompt).toBeNull();
-    expect(result.plannerModelId).toBeNull();
-    expect(result.executorModelId).toBeNull();
-    expect(result.plannerPrompt).toBeNull();
-    expect(result.executorPrompt).toBeNull();
-  });
-
   it('rejects when the Worky Manager agent type is missing', async () => {
     const { service } = makeService({
       agentTypeFindBySlug: jest.fn().mockResolvedValue(null),
@@ -269,21 +255,11 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
   it('returns the existing aiSessionId without creating a new session', async () => {
     const { service, grpcClient, updateOne } = makeEnsureService({
       aiSessionId: 'sess-existing',
-      plannerModelId: 'anthropic/claude-3-5-sonnet',
-      executorModelId: 'openai/gpt-4o-mini',
-      plannerPrompt: 'plan',
-      executorPrompt: 'exec',
     });
 
     const res = await service.ensureKickoffContext(streamId, userId);
 
-    expect(res).toEqual({
-      aiSessionId: 'sess-existing',
-      plannerModelId: 'anthropic/claude-3-5-sonnet',
-      executorModelId: 'openai/gpt-4o-mini',
-      plannerPrompt: 'plan',
-      executorPrompt: 'exec',
-    });
+    expect(res).toEqual({ aiSessionId: 'sess-existing' });
     expect(grpcClient.createSession).not.toHaveBeenCalled();
     expect(updateOne).not.toHaveBeenCalled();
   });
@@ -291,23 +267,13 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
   it('lazily creates and persists a session when aiSessionId is null', async () => {
     const { service, grpcClient, updateOne } = makeEnsureService({
       aiSessionId: null,
-      plannerModelId: null,
-      executorModelId: null,
-      plannerPrompt: null,
-      executorPrompt: null,
     });
 
     const res = await service.ensureKickoffContext(streamId, userId);
 
     expect(grpcClient.createSession).toHaveBeenCalledWith(userId);
     expect(updateOne).toHaveBeenCalledWith({ _id: streamId }, { $set: { aiSessionId: 'sess-new' } });
-    expect(res).toEqual({
-      aiSessionId: 'sess-new',
-      plannerModelId: null,
-      executorModelId: null,
-      plannerPrompt: null,
-      executorPrompt: null,
-    });
+    expect(res).toEqual({ aiSessionId: 'sess-new' });
   });
 
   it('throws WORKY_STREAM_NOT_FOUND when the stream does not exist', async () => {
@@ -432,30 +398,6 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
     expect(streamDoc.lastActivityAt).toEqual(before);
   });
 
-  it('persists planner/executor models and prompts from the PATCH DTO', async () => {
-    const streamDoc = buildStreamDoc();
-    const { service } = makePatchService(streamDoc);
-    const result = await service.patch(userId, streamObjectId.toString(), {
-      plannerModelId: 'openai/gpt-4o',
-      executorModelId: 'anthropic/claude-3-5-sonnet',
-      plannerPrompt: 'You are the planner.',
-      executorPrompt: 'You are an executor.',
-    } as any);
-    expect(result.plannerModelId).toBe('openai/gpt-4o');
-    expect(result.executorModelId).toBe('anthropic/claude-3-5-sonnet');
-    expect(result.plannerPrompt).toBe('You are the planner.');
-    expect(result.executorPrompt).toBe('You are an executor.');
-    expect(streamDoc.save).toHaveBeenCalledTimes(1);
-  });
-
-  it('clears a prompt when passed an empty string', async () => {
-    const streamDoc = buildStreamDoc({ plannerPrompt: 'old prompt' });
-    const { service } = makePatchService(streamDoc);
-    const result = await service.patch(userId, streamObjectId.toString(), {
-      plannerPrompt: '   ',
-    } as any);
-    expect(result.plannerPrompt).toBeNull();
-  });
 });
 
 describe('WorkyStreamService.delete', () => {

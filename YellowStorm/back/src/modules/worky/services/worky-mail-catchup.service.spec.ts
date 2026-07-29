@@ -33,7 +33,7 @@ function build(messages: Array<Record<string, unknown>>, delivered = true) {
       .mockResolvedValue({ delivered, sessionId: 's1', stepId: 'wait' }),
   };
   const turnContext = {
-    resolveManagerModel: jest.fn().mockResolvedValue('openai/gpt-4o-mini'),
+    resolveWorkyAgents: jest.fn().mockResolvedValue([{ id: 'planner-1' }, { id: 'executor-1' }]),
     resolveConnectors: jest.fn().mockResolvedValue([{ connector_id: 'c1' }]),
   };
   const logger = {
@@ -63,17 +63,18 @@ describe('WorkyMailCatchupService', () => {
     );
   });
 
-  it('resolves real connectors and a model for the mailbox owner, not none', async () => {
+  it('resolves real connectors and agents for the mailbox owner, not none', async () => {
     // Same bug as the webhook path: without this, resume_turn rebuilds every
     // not-yet-run step with ZERO tools -- a step needing one silently
     // fabricates a "done" result instead of actually acting.
     const { service, turnContext, orchestrator } = build([mail(`Re: Q [${TOKEN}]`)]);
     await service.sweep();
 
+    expect(turnContext.resolveWorkyAgents).toHaveBeenCalledWith(SUB.userId);
     expect(turnContext.resolveConnectors).toHaveBeenCalledWith(SUB.userId);
     expect(orchestrator.deliverMailReply).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'openai/gpt-4o-mini',
+        agents: [{ id: 'planner-1' }, { id: 'executor-1' }],
         connectors: [{ connector_id: 'c1' }],
       }),
     );

@@ -11,7 +11,6 @@ import { HumanTaskPanel } from './HumanTaskPanel';
 import { MemoryProposalCard } from './MemoryProposalCard';
 import { OrchestratorStatusHeader } from './OrchestratorStatusHeader';
 import { PromptBar } from './PromptBar';
-import { StreamModelsControl } from './StreamModelsControl';
 import { cn } from '@/lib/utils';
 import type { WorkyStream, WorkyTask } from '../types';
 
@@ -122,7 +121,7 @@ export function OrchestratorPanel({
           whatsappConnected={whatsappConnected}
         />
       ) : (
-        <DetailsPanel streamId={streamId} stream={streamQuery.data} humanTasks={humanTasks} />
+        <DetailsPanel streamId={streamId} humanTasks={humanTasks} />
       )}
     </aside>
   );
@@ -196,10 +195,9 @@ function ChatPanel({
   );
 }
 
-function DetailsPanel({ streamId, stream, humanTasks }: { streamId: string; stream?: WorkyStream; humanTasks: WorkyTask[] }): JSX.Element {
+function DetailsPanel({ streamId, humanTasks }: { streamId: string; humanTasks: WorkyTask[] }): JSX.Element {
   return (
     <div id='worky-orchestrator-details' role='tabpanel' aria-labelledby='worky-orchestrator-details-tab' className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1'>
-      {stream ? <StreamModelsControl stream={stream} /> : null}
       <BudgetControl streamId={streamId} />
       <HumanTaskPanel streamId={streamId} tasks={humanTasks} />
       <MemoryProposalCard />
