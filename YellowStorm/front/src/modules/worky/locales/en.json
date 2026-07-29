@@ -86,6 +86,7 @@
   "kanban.lanes.canceled": "Canceled",
   "kanban.lanes.superseded": "Superseded",
   "kanban.lanes.archived": "Archived",
+  "kanban.view.agents": "Agents",
   "kanban.view.status": "Status",
   "kanban.view.graph": "Graph",
   "kanban.graph.wave": "Wave {{n}}",
