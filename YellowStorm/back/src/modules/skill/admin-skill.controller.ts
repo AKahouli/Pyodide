@@ -14,6 +14,8 @@ import {
   UploadedFile,
   UseGuards,
   UseInterceptors,
+  ParseFilePipe,
+  MaxFileSizeValidator,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -96,7 +98,7 @@ export class AdminSkillController {
   @Post('import')
   @HttpCode(HttpStatus.CREATED)
   @RequirePermissions(Permissions.SKILLS_CREATE)
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024, files: 1 } }))
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -109,7 +111,7 @@ export class AdminSkillController {
   })
   @ApiOperation({ summary: 'Import a skill from SKILL.md or a zipped skill package' })
   async importSkill(
-    @UploadedFile() file: MulterFile,
+    @UploadedFile(new ParseFilePipe({ validators: [new MaxFileSizeValidator({ maxSize: 10 * 1024 * 1024 })] })) file: MulterFile,
     @CurrentUser() user: UserDocument,
     @Req() req: Request,
   ): Promise<ISkillResponse> {

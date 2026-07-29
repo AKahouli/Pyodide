@@ -12,6 +12,8 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  ParseFilePipe,
+  MaxFileSizeValidator,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { decodeMultipartFilename } from '@common/utils';
@@ -63,7 +65,7 @@ export class WorkspaceDocumentController {
    */
   @Post()
   @UseGuards(WritePermissionGuard)
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024, files: 1 } }))
   @ApiOperation({ summary: 'Upload a small file directly (< 10MB recommended)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -85,7 +87,7 @@ export class WorkspaceDocumentController {
   async uploadSmallFile(
     @CurrentUser() user: UserDocument,
     @Param('workspaceId') workspaceId: string,
-    @UploadedFile() file: MulterFile,
+    @UploadedFile(new ParseFilePipe({ validators: [new MaxFileSizeValidator({ maxSize: 10 * 1024 * 1024 })] })) file: MulterFile,
     @Body() body?: { folderId?: string; deepSearch?: string; autoIndex?: string },
   ) {
     // multer decodes the multipart filename as latin1; restore the real UTF-8 name.

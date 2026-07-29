@@ -7,6 +7,8 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  ParseFilePipe,
+  MaxFileSizeValidator,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
@@ -72,11 +74,11 @@ export class ConversationFileController {
   }
 
   @Post('upload')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024, files: 1 } }))
   async uploadSmallFile(
     @CurrentUser() user: { _id: string },
     @Param('conversationId') conversationId: string,
-    @UploadedFile() file: MulterFile,
+    @UploadedFile(new ParseFilePipe({ validators: [new MaxFileSizeValidator({ maxSize: 10 * 1024 * 1024 })] })) file: MulterFile,
   ) {
     // multer decodes the multipart filename as latin1; restore the real UTF-8 name.
     file.originalname = decodeMultipartFilename(file.originalname);
