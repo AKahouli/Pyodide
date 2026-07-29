@@ -1,4 +1,8 @@
 {
+  "agents.status.working": "Working",
+  "agents.status.blocked": "Blocked",
+  "agents.status.idle": "Idle",
+  "agents.status.done": "Done",
   "sidebar.title": "Worky",
   "sidebar.subtitle": "Chief of Staff streams",
   "sidebar.searchPlaceholder": "Search streams",

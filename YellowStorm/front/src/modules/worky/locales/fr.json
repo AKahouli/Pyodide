@@ -1,4 +1,8 @@
 {
+  "agents.status.working": "En cours",
+  "agents.status.blocked": "Bloqué",
+  "agents.status.idle": "En attente",
+  "agents.status.done": "Terminé",
   "sidebar.title": "Worky",
   "sidebar.subtitle": "Flux Chief of Staff",
   "sidebar.searchPlaceholder": "Rechercher des flux",
