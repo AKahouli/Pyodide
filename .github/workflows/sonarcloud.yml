@@ -1,6 +1,9 @@
 name: SonarCloud Analysis
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       branch:
@@ -19,7 +22,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch }}
+          ref: ${{ inputs.branch || github.ref_name }}
           fetch-depth: 0
 
       - name: Cache SonarCloud packages
@@ -47,5 +50,5 @@ jobs:
           sonar-scanner \
             -Dsonar.host.url=https://sonarcloud.io \
             -Dsonar.token="${SONAR_TOKEN}" \
-            -Dsonar.branch.name=${{ inputs.branch }} \
+            -Dsonar.branch.name=${{ inputs.branch || github.ref_name }} \
             -Dsonar.scm.revision="${{ github.sha }}"
