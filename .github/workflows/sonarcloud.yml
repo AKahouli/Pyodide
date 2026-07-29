@@ -11,7 +11,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   sonarscan:
@@ -44,27 +43,27 @@ jobs:
         continue-on-error: true
         working-directory: YellowStorm/back
         env:
-          # ts-jest + v8 coverage over a large NestJS suite exceeds Node's
-          # default ~2GB heap during the coverage merge; raise the ceiling.
           NODE_OPTIONS: --max-old-space-size=4096
         run: |
           npm ci
           npm test -- --ci --forceExit --detectOpenHandles --coverage --coverageProvider=v8
+
       # --------------------------
-      # SonarCloud full scan
+      # SonarCloud scan (direct CLI — no PR auto-detection)
       # --------------------------
-      - name: Run SonarCloud Scan (full — manual dispatch)
-        uses: SonarSource/sonarqube-scan-action@v6
+      - name: Install sonar-scanner
+        run: |
+          curl -sSLo /tmp/sonar-scanner.zip \
+            https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-6.2.1.4610-linux-x64.zip
+          unzip -q /tmp/sonar-scanner.zip -d /opt/
+          echo "/opt/sonar-scanner-6.2.1.4610-linux-x64/bin" >> $GITHUB_PATH
+
+      - name: Run SonarCloud scan
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          # Unset PR env vars so the scanner runs in branch mode, not PR mode.
-          GITHUB_EVENT_NAME: workflow_dispatch
-          SONAR_SCANNER_OPTS: ""
-        with:
-          args: >
-            -Dsonar.branch.name=${{ inputs.branch }}
-            -Dsonar.newCode.definition=NUMBER_OF_DAYS
-            -Dsonar.newCode.numberOfDays=365
-            -Dsonar.pullrequest.key=
-            -Dsonar.pullrequest.branch=
-            -Dsonar.pullrequest.base=
+        run: |
+          sonar-scanner \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.token="${SONAR_TOKEN}" \
+            -Dsonar.branch.name=${{ inputs.branch }} \
+            -Dsonar.scm.revision="${{ github.sha }}"
