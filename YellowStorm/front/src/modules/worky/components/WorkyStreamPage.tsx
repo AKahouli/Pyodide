@@ -26,7 +26,9 @@ import {
   useWorkyWhatsAppIntegration,
 } from '../query/hooks';
 import { isWhatsAppConnected } from '@/lib/whatsapp-integration-utils';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
+import { WorkyMobileStream } from './mobile/WorkyMobileStream';
 import type { WorkyEvent, WorkyMessage, WorkyPendingClarification, WorkyTask } from '../types';
 
 function summarizeDelta(event: WorkyEvent, fallback: string): string {
@@ -64,6 +66,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const [approvalFor, setApprovalFor] = useState<WorkyPendingClarification | null>(null);
   const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
   const whatsappQuery = useWorkyWhatsAppIntegration(streamId);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     setWhatsappModalOpen(false);
@@ -253,6 +256,16 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   useEffect(() => {
     setOrchestratorOpen(false);
   }, [streamId, setOrchestratorOpen]);
+
+  if (isMobile) {
+    return (
+      <WorkyMobileStream
+        streamId={streamId}
+        approvalFor={approvalFor}
+        onApprovalClose={() => setApprovalFor(null)}
+      />
+    );
+  }
 
   return (
     <div className='flex h-full w-full overflow-hidden'>

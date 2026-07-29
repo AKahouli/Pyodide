@@ -1,0 +1,63 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+
+vi.mock('@/modules/localization', () => ({
+  useModuleTranslation: () => ({
+    t: (k: string, opts?: Record<string, unknown>) => {
+      if (k === 'agents.team.count') return `${opts?.count} agents`;
+      return k;
+    },
+    language: 'en',
+    ready: true,
+  }),
+}));
+
+vi.mock('../../agents/useStreamAgents', () => ({ useStreamAgents: vi.fn() }));
+// Sheets are covered by their own specs; stub them here to keep this wiring
+// test light (their real import chains pull in ai-elements + audio recorder).
+vi.mock('./TaskDetailSheet', () => ({ TaskDetailSheet: () => null }));
+vi.mock('./BudgetSheet', () => ({ BudgetSheet: () => null }));
+vi.mock('./ApprovalSheet', () => ({ ApprovalSheet: () => null }));
+vi.mock('./ManagerChatSheet', () => ({ ManagerChatSheet: () => null }));
+vi.mock('../PlanDeltaToast', () => ({ PlanDeltaToast: () => null }));
+
+import { useStreamAgents } from '../../agents/useStreamAgents';
+import { WorkyMobileStream } from './WorkyMobileStream';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const asMock = (fn: unknown) => fn as any;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  asMock(useStreamAgents).mockReturnValue({
+    agents: [
+      {
+        key: 'a',
+        name: 'Atlas',
+        role: 'Research',
+        initials: 'A',
+        colorSeed: 'x',
+        status: 'working',
+        currentTask: null,
+        tasks: [],
+        doneCount: 0,
+        totalCount: 1,
+      },
+    ],
+    ungrouped: [],
+  });
+});
+
+describe('WorkyMobileStream', () => {
+  it('renders the agent team and the bottom nav', () => {
+    render(
+      <MemoryRouter>
+        <WorkyMobileStream streamId="s1" approvalFor={null} onApprovalClose={() => {}} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Atlas')).toBeTruthy();
+    expect(screen.getByText('nav.agents')).toBeTruthy();
+    expect(screen.getByLabelText('nav.voice')).toBeTruthy();
+  });
+});
