@@ -1,8 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { AgentService } from './agent.service';
-import { AgentMapperService } from './mappers/agent-mapper.service';
-import { AgentConnectorRuntimeBuilderService } from './services/agent-connector-runtime-builder.service';
 import { IAgentForStream } from './interfaces/agent.interface';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
 
@@ -110,16 +108,6 @@ describe('AgentService connector skill inheritance', () => {
         },
       }),
     };
-    const agentMapperService = new AgentMapperService(logger as any);
-    const connectorRuntimeBuilder = new AgentConnectorRuntimeBuilderService(
-      logger as any,
-      connectorService as any,
-      connectorAuthService as any,
-      connectedAppTokenService as any,
-      configService as unknown as ConfigService,
-      skillService as any,
-      agentMapperService,
-    );
 
     const service = new AgentService(
       agentModel as any,
@@ -135,8 +123,6 @@ describe('AgentService connector skill inheritance', () => {
       teamService as any,
       agentShareService as any,
       guardrailsSettingsService as any,
-      agentMapperService,
-      connectorRuntimeBuilder,
     );
 
     jest.spyOn(service as any, 'buildToolsWithTokens').mockResolvedValue([]);

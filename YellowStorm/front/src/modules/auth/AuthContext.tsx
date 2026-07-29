@@ -3,7 +3,7 @@
  */
 
 import * as React from 'react';
-import { AUTH_STORAGE_KEYS, getAccessToken, setAccessToken, clearAccessToken } from '@/lib/api';
+import { AUTH_STORAGE_KEYS } from '@/lib/api';
 import * as authApi from './api';
 import { notificationsService } from '@/modules/notifications';
 import type { AuthContextType, AuthState, LoginCredentials, RegisterCredentials, CompleteProfileData, User } from './types';
@@ -51,14 +51,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const initializeAuth = async () => {
       try {
         const globalAppearance = await fetchGlobalAppearance();
-        const registrationEnabled = await fetchRegistration();
+        const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+        const userJson = localStorage.getItem(AUTH_STORAGE_KEYS.user);
 
-        const token = getAccessToken();
-
-        if (token) {
-          const user = await authApi.getCurrentUser().catch(() => null);
+        if (token && userJson) {
+          // Fetch registration status in parallel with auth validation
+          const [registrationEnabled, user] = await Promise.all([fetchRegistration(), authApi.getCurrentUser().catch(() => null)]);
 
           if (user) {
+            localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(user));
             setInitialColorTheme(user.appearance?.colorTheme ?? globalAppearance);
             setState({
               user,
@@ -71,7 +72,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
             return;
           }
 
-          clearAccessToken();
+          // The shared axios client owns token refresh. If the bootstrap user
+          // lookup fails here, avoid issuing a second concurrent refresh call.
+          clearLocalAuthData();
           setInitialColorTheme('default');
           setState({
             ...initialState,
@@ -79,11 +82,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
             registrationEnabled,
           });
         } else {
+          // No token - guest user, fetch registration status before finishing load
+          const registrationEnabled = await fetchRegistration();
           setInitialColorTheme(globalAppearance);
           setState({ ...initialState, isLoading: false, registrationEnabled });
         }
       } catch {
-        clearAccessToken();
+        // Clear invalid storage data
+        clearLocalAuthData();
         setInitialColorTheme('default');
         setState({ ...initialState, isLoading: false });
       }
@@ -95,7 +101,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const login = React.useCallback(async (credentials: LoginCredentials): Promise<void> => {
     const response = await authApi.login(credentials);
 
-    setAccessToken(response.accessToken);
+    // Store access token and user data
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, response.accessToken);
+    localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(response.user));
 
     setState((prev) => ({
       ...prev,
@@ -125,7 +133,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch {
       // Even if API call fails, clear local auth data
     } finally {
-      clearAccessToken();
       clearLocalAuthData();
       setState({
         ...initialState,
@@ -150,6 +157,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setState((prev) => {
       if (prev.user) {
         const updatedUser = { ...prev.user, emailVerified: true };
+        localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(updatedUser));
         return {
           ...prev,
           user: updatedUser,
@@ -172,6 +180,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     try {
       const updatedUser = await authApi.completeProfile(data);
+      localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(updatedUser));
 
       setState((prev) => ({
         ...prev,
@@ -223,5 +232,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
 // Helper function to clear local auth data
 function clearLocalAuthData() {
+  localStorage.removeItem(AUTH_STORAGE_KEYS.accessToken);
   localStorage.removeItem(AUTH_STORAGE_KEYS.user);
 }

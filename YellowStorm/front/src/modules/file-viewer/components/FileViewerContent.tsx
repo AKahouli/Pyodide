@@ -1,6 +1,6 @@
 /**
  * File Viewer Content
- * Custom tab bar + renderer instance for the active tab only.
+ * Custom tab bar + renderer instances (one per tab, all mounted, only active visible)
  */
 
 import { useRef } from 'react';
@@ -21,8 +21,6 @@ export function FileViewerContent() {
   const closeTab = useFileViewerStore((s) => s.closeTab);
 
   const registryMap = useRef<Map<string, PluginRegistry>>(new Map());
-
-  const activeTab = tabs.find((tab) => tab.id === activeTabId);
 
   return (
     <div className='flex flex-col flex-1 min-h-0'>
@@ -47,27 +45,35 @@ export function FileViewerContent() {
           ))}
         </div>
       )}
-      {activeTab && <div className='flex justify-end border-b p-2'><FileTransformationTools key={activeTabId} tab={activeTab} /></div>}
+      {tabs.find((tab) => tab.id === activeTabId) && <div className='flex justify-end border-b p-2'><FileTransformationTools key={activeTabId} tab={tabs.find((tab) => tab.id === activeTabId)!} /></div>}
 
-      {/* Renderer instance — only the active tab is mounted */}
-      <div className='flex-1 min-h-0'>
-        {activeTab && (() => {
-          const Renderer = getRenderer(activeTab.mimeType);
-          const isLoading = activeTab.isLoading || !activeTab.url;
+      {/* Renderer instances - all mounted, only active visible */}
+      <div className='flex-1 min-h-0 relative'>
+        {tabs.map((tab) => {
+          const Renderer = getRenderer(tab.mimeType);
+          const isActive = tab.id === activeTabId;
+          const isLoading = tab.isLoading || !tab.url;
 
+          let content;
           if (isLoading) {
-            return (
+            content = (
               <div className='flex flex-col items-center justify-center h-full gap-3 text-muted-foreground'>
                 <Loader2 className='h-8 w-8 animate-spin' />
-                <p className='text-sm'>{t('loading')} {activeTab.fileName}...</p>
+                <p className='text-sm'>{t('loading')} {tab.fileName}...</p>
               </div>
             );
+          } else if (Renderer) {
+            content = <Renderer tab={tab} isActive={isActive} registryRef={registryMap} />;
+          } else {
+            content = <UnsupportedRenderer tab={tab} isActive={isActive} />;
           }
-          if (Renderer) {
-            return <Renderer key={activeTab.id} tab={activeTab} isActive registryRef={registryMap} />;
-          }
-          return <UnsupportedRenderer tab={activeTab} isActive />;
-        })()}
+
+          return (
+            <div key={tab.id} className={`absolute inset-0 ${isActive ? 'visible' : 'invisible'}`}>
+              {content}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

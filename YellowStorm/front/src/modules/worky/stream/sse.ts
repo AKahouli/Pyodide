@@ -11,7 +11,6 @@
  */
 import type { WorkyEvent, WorkyEventType } from '../types';
 import { AUTH_STORAGE_KEYS, API_CONFIG, API_ENDPOINTS } from '@/lib/api/config';
-import { getAccessToken } from '@/lib/api/token';
 
 export type WorkyEventHandler = (event: WorkyEvent) => void;
 export type WorkyEventUnsubscribe = () => void;
@@ -27,7 +26,13 @@ interface SseConfig {
 
 const defaultConfig: SseConfig = {
   baseURL: API_CONFIG.baseURL,
-  getAccessToken,
+  getAccessToken: () => {
+    try {
+      return window.localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    } catch {
+      return null;
+    }
+  },
 };
 
 export function subscribeToStreamEvents(

@@ -129,8 +129,6 @@ import { PlaybookFlowHitlMemoryService } from './services/playbook-flow-hitl-mem
 import { PlaybookFlowHitlPromptService } from './services/playbook-flow-hitl-prompt.service';
 import { PlaybookFlowReplaySemanticJudgeService } from './services/playbook-flow-replay-semantic-judge.service';
 import { PlaybookFlowReplayPostRunEvaluationService } from './services/playbook-flow-replay-post-run-evaluation.service';
-import { PlaybookHitlApprovalService } from './services/hitl/playbook-hitl-approval.service';
-import { PlaybookSnapshotMapperService } from './services/snapshot/playbook-snapshot-mapper.service';
 import { FlowAccessService } from './domain/flow-access.service';
 import { FlowResponseAssemblerService } from './domain/flow-response-assembler.service';
 import { FlowWorkspacePolicyService } from './domain/flow-workspace-policy.service';
@@ -292,8 +290,6 @@ import { PlaybookAssistantOperationService } from './assistant/playbook-assistan
     PlaybookFlowHitlPromptService,
     PlaybookFlowReplaySemanticJudgeService,
     PlaybookFlowReplayPostRunEvaluationService,
-    PlaybookHitlApprovalService,
-    PlaybookSnapshotMapperService,
     PlaybookAssistantContextService,
     PlaybookAssistantService,
     PlaybookAssistantOperationService,

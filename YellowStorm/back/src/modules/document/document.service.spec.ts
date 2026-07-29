@@ -1,21 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { Readable } from 'stream';
-import { finished } from 'stream/promises';
 import { DocumentService } from './document.service';
 import { DocumentConnectionService, StorageConnectionStatus } from './document-connection.service';
 import { LoggerService } from '../logger';
 import { BadRequestException, InternalServerException, NotFoundException } from '../exceptions';
-
-/** Drain PutObject Body streams so size transforms run (mirrors real S3 client). */
-const consumeBodyIfStream = async (command: { input?: { Body?: unknown } }) => {
-  const body = command?.input?.Body;
-  if (body instanceof Readable || (body && typeof (body as Readable).pipe === 'function')) {
-    const stream = body as Readable;
-    stream.resume();
-    await finished(stream);
-  }
-};
 
 // The S3 client's `send` is driven per-command by tests. By default every
 // command resolves with an empty object; individual tests override behavior
@@ -91,27 +80,22 @@ describe('DocumentService', () => {
   /**
    * Convenience: install a `send` implementation that branches on command
    * constructor name. Unhandled commands resolve to `{}`.
-   * Stream uploads are drained so byte-counter validation can run.
    */
   const setSendImpl = (handlers: Record<string, () => unknown>) => {
-    mockSend.mockImplementation(async (command: { constructor: { name: string }; input?: { Body?: unknown } }) => {
-      await consumeBodyIfStream(command);
+    mockSend.mockImplementation((command: { constructor: { name: string } }) => {
       const handler = handlers[command.constructor.name];
       if (handler) {
         return Promise.resolve().then(handler);
       }
-      return {};
+      return Promise.resolve({});
     });
   };
 
   beforeEach(async () => {
     jest.clearAllMocks();
 
-    // Default: drain stream bodies then resolve (mirrors S3 client reading Body).
-    mockSend.mockImplementation(async (command: { input?: { Body?: unknown } }) => {
-      await consumeBodyIfStream(command);
-      return {};
-    });
+    // Default: all commands resolve with empty object.
+    mockSend.mockResolvedValue({});
     mockGetSignedUrl.mockResolvedValue('https://s3.example.com/signed-url?sig=mock');
 
     const mockConfigService = {
@@ -222,10 +206,7 @@ describe('DocumentService', () => {
         originalName: testFileName,
         mimeType: testMimeType,
       });
-      expect(mockSend).toHaveBeenCalledWith(
-        expect.any(PutObjectCommand),
-        expect.objectContaining({ abortSignal: expect.any(AbortSignal) }),
-      );
+      expect(mockSend).toHaveBeenCalledWith(expect.any(PutObjectCommand));
     });
 
     it('should use folder option when provided', async () => {

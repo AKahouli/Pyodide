@@ -1,7 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MemoryStore } from './stores/memory.store';
-import { RedisStore } from './stores/redis.store';
 import {
   RateLimitResult,
   RateLimitOptions,
@@ -10,31 +9,17 @@ import {
 
 @Injectable()
 export class RateLimiterService {
-  private readonly logger = new Logger(RateLimiterService.name);
-  readonly store: RateLimitStore;
+  private readonly store: RateLimitStore;
   private readonly defaultLimit: number;
   private readonly defaultWindowMs: number;
 
   constructor(
     private readonly configService: ConfigService,
     memoryStore: MemoryStore,
-    redisStore: RedisStore,
   ) {
-    this.store = this.selectStore(redisStore, memoryStore);
+    this.store = memoryStore;
     this.defaultLimit = this.configService.get<number>('app.throttleLimit', 100);
     this.defaultWindowMs = this.configService.get<number>('app.throttleTtl', 60) * 1000;
-  }
-
-  private selectStore(redisStore: RedisStore, fallback: MemoryStore): RateLimitStore {
-    const redisUrl = this.configService.get<string>('REDIS_URL');
-    const redisHost = this.configService.get<string>('REDIS_HOST', 'localhost');
-    const hasRedisConfig = !!redisUrl || redisHost !== 'localhost';
-    if (!hasRedisConfig) {
-      this.logger.log('No Redis configured — using in-memory rate-limit store');
-      return fallback;
-    }
-    this.logger.log('Using Redis rate-limit store');
-    return redisStore;
   }
 
   async check(

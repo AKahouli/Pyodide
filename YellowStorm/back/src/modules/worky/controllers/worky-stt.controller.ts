@@ -43,7 +43,7 @@ export class WorkySttController {
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Transcribe a recorded audio clip (EN/FR) to text' })
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 50 * 1024 * 1024, files: 1 } }))
+  @UseInterceptors(FileInterceptor('file'))
   async transcribe(
     @UploadedFile() file: MulterFile,
   ): Promise<{ text: string; language?: string }> {

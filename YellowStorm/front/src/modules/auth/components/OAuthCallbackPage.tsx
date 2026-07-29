@@ -6,7 +6,6 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '../useAuth';
 import { exchangeOAuthToken } from '../api';
 import { AUTH_STORAGE_KEYS } from '@/lib/api/config';
-import { setAccessToken } from '@/lib/api/token';
 
 export function OAuthCallbackPage() {
   const [searchParams] = useSearchParams();
@@ -68,7 +67,7 @@ export function OAuthCallbackPage() {
     try {
       const response = await exchangeOAuthToken(token);
       // Store access token
-      setAccessToken(response.accessToken);
+      localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, response.accessToken);
       if (response.user) {
         localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(response.user));
       }

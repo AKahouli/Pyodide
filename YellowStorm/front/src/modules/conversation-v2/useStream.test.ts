@@ -19,7 +19,7 @@ vi.mock('./api', () => ({
 import { useConversationV2StreamConnection } from './useStream';
 import { useConversationV2Store } from './store';
 import { conversationV2StreamService } from './conversationV2Stream';
-import { setAccessToken } from '@/lib/api/token';
+import { AUTH_STORAGE_KEYS } from '@/lib/api';
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
@@ -56,6 +56,7 @@ function mountConnection() {
 describe('conversation-v2 per-user stream pipe', () => {
   beforeEach(() => {
     MockEventSource.instances.length = 0;
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'test-token');
     useConversationV2Store.getState().reset();
     sendMessageMock.mockClear();
     listEventsMock.mockReset();
@@ -71,21 +72,20 @@ describe('conversation-v2 per-user stream pipe', () => {
     expect(MockEventSource.instances).toHaveLength(1);
     const es = MockEventSource.instances.at(-1)!;
     expect(es.url).toContain('/conversation-v2/stream');
-    expect(es.url).not.toContain('token=');
+    expect(es.url).toContain('token=test-token');
     // No conversation id in the URL — the pipe carries all conversations.
     expect(es.url).not.toMatch(/sessions\//);
   });
 
-  it('replaces the per-user pipe on reconnectWithNewToken', () => {
+  it('replaces the per-user pipe when the token changes', () => {
     mountConnection();
     const original = MockEventSource.instances.at(-1)!;
-    setAccessToken('refreshed-token');
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'refreshed-token');
 
     conversationV2StreamService.reconnectWithNewToken();
 
     expect(original.closed).toBe(true);
-    expect(MockEventSource.instances.at(-1)?.url).toContain('/conversation-v2/stream');
-    expect(MockEventSource.instances.at(-1)?.url).not.toContain('token=');
+    expect(MockEventSource.instances.at(-1)?.url).toContain('token=refreshed-token');
   });
 
   it('reconciles a missed final event when the pipe reconnects', async () => {

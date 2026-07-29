@@ -23,6 +23,7 @@ export function UpgradePage() {
 
   const handleSelectPlan = (plan: Plan) => {
     // TODO: Implement plan selection/upgrade flow
+    console.log('Selected plan:', plan);
     // This would typically redirect to a payment page or call an API
   };
 

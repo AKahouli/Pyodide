@@ -1,4 +1,4 @@
-import { API_CONFIG } from '@/lib/api/config';
+import { AUTH_STORAGE_KEYS, API_CONFIG } from '@/lib/api/config';
 import type { AgentEvent } from './types';
 
 /**
@@ -45,9 +45,12 @@ class ConversationV2StreamService {
   connect(): void {
     if (this.eventSource) return; // already connected/connecting
 
-    const url = `${API_CONFIG.baseURL}/conversation-v2/stream`;
+    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    if (!token) return;
+
+    const url = `${API_CONFIG.baseURL}/conversation-v2/stream?token=${encodeURIComponent(token)}`;
     try {
-      this.eventSource = new EventSource(url, { withCredentials: true });
+      this.eventSource = new EventSource(url);
       this.setupEventHandlers();
     } catch (err) {
       console.error('[ConversationV2Stream] Failed to create EventSource:', err);

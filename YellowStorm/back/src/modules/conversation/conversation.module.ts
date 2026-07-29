@@ -23,8 +23,6 @@ import { ComposerSuggestionsController } from './controllers/composer-suggestion
 import { ConversationService } from './services/conversation.service';
 import { MessageService } from './services/message.service';
 import { StreamService } from './services/stream.service';
-import { StreamGrpcClientService } from './services/grpc/stream-grpc-client.service';
-import { StreamComponentBufferService } from './services/buffer/stream-component-buffer.service';
 import { StreamGatewayService } from './services/stream-gateway.service';
 import { ShareService } from './services/share.service';
 import { ReportService } from './services/report.service';
@@ -102,8 +100,6 @@ import { CorrectiveReplayRunnerService } from './services/corrective-replay-runn
     ConversationService,
     MessageService,
     StreamService,
-    StreamGrpcClientService,
-    StreamComponentBufferService,
     StreamGatewayService,
     ShareService,
     ReportService,

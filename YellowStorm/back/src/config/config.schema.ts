@@ -49,14 +49,6 @@ export const configValidationSchema = Joi.object({
   // CORS
   CORS_ORIGIN: Joi.string().default('http://localhost:5173'),
 
-  // Redis
-  REDIS_URL: Joi.string().optional(),
-  REDIS_HOST: Joi.string().default('localhost'),
-  REDIS_PORT: Joi.number().default(6379),
-  REDIS_PASSWORD: Joi.string().optional().allow(''),
-  REDIS_DB: Joi.number().min(0).default(0),
-  REDIS_KEY_PREFIX: Joi.string().default('rl:'),
-
   // Rate Limiting
   THROTTLE_TTL: Joi.number().default(60),
   THROTTLE_LIMIT: Joi.number().default(100),
