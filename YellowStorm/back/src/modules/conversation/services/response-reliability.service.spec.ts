@@ -63,6 +63,7 @@ describe('ResponseReliabilityService lifecycle', () => {
       getModelIdentifier: jest.fn().mockReturnValue('judge-model'),
     };
     const logger = { setContext: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    const correctionService = { schedule: jest.fn() };
     const service = new ResponseReliabilityService(
       {} as never,
       messageService as never,
@@ -70,8 +71,8 @@ describe('ResponseReliabilityService lifecycle', () => {
       {} as never,
       evidenceBuilder as never,
       scoringService as never,
-      {} as never,
-      { shouldCorrect: jest.fn().mockReturnValue(false) } as never,
+      correctionService as never,
+      { shouldCorrect: jest.fn().mockReturnValue(true) } as never,
       logger as never,
     );
     jest.spyOn(service as never, 'callEvaluator' as never).mockResolvedValue({
@@ -89,6 +90,7 @@ describe('ResponseReliabilityService lifecycle', () => {
       requestId: 'request-1',
       requestedAt: '2026-07-26T10:00:00.000Z',
       settings: { enabled: true, mode: 'informative', judgeModelId: 'model-1', maxConcurrentEvaluations: 1, timeoutMs: 30000, maxFindings: 1 },
+      manual: true,
     });
 
     expect(scoringService.scoreClaims).toHaveBeenCalledWith(claims, 1);
@@ -97,5 +99,58 @@ describe('ResponseReliabilityService lifecycle', () => {
       claims,
       findings,
     }));
+    expect(correctionService.schedule).not.toHaveBeenCalled();
+  });
+
+  it('queues a manual rerun even when automatic evaluation is disabled', async () => {
+    const settingsService = { getSettings: jest.fn().mockResolvedValue({ responseReliability: { enabled: false, mode: 'informative', judgeModelId: 'model-1', maxConcurrentEvaluations: 1, timeoutMs: 30000, maxFindings: 1 } }) };
+    const messageService = {
+      rerunReliabilityEvaluation: jest.fn().mockResolvedValue({
+        questionMessageId: 'question-1',
+        reliabilityEvaluation: { status: 'pending', requestedAt: '2026-07-29T10:00:00.000Z' },
+      }),
+    };
+    const logger = { setContext: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    const service = new ResponseReliabilityService(
+      settingsService as never,
+      messageService as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      logger as never,
+    );
+    jest.spyOn(service as unknown as { drainQueue: () => void }, 'drainQueue').mockImplementation(() => {});
+
+    await expect(service.rerun({ messageId: 'message-1', conversationId: 'conversation-1', userId: 'user-1', requestId: 'request-1' })).resolves.toEqual({
+      messageId: 'message-1', reliabilityEvaluation: { status: 'pending', requestedAt: '2026-07-29T10:00:00.000Z' },
+    });
+
+    expect(messageService.rerunReliabilityEvaluation).toHaveBeenCalledWith('conversation-1', 'message-1');
+    expect((service as unknown as { queue: Array<{ manual: boolean }> }).queue).toEqual([expect.objectContaining({ manual: true })]);
+  });
+
+  it('does not enqueue automatic work after a manual claim has won', async () => {
+    const settingsService = { getSettings: jest.fn().mockResolvedValue({ responseReliability: { enabled: true } }) };
+    const messageService = { claimReliabilityEvaluation: jest.fn().mockResolvedValue(null) };
+    const logger = { setContext: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    const service = new ResponseReliabilityService(
+      settingsService as never,
+      messageService as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      logger as never,
+    );
+
+    await service.schedule({ messageId: 'message-1', conversationId: 'conversation-1', userId: 'user-1' });
+
+    expect(messageService.claimReliabilityEvaluation).toHaveBeenCalledWith('conversation-1', 'message-1', false);
+    expect((service as unknown as { queue: unknown[] }).queue).toHaveLength(0);
   });
 });

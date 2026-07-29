@@ -106,6 +106,11 @@ export interface ReliabilityEvaluation {
   failureCode?: string;
 }
 
+export interface ReliabilityRerunResponse {
+  messageId: string;
+  reliabilityEvaluation: ReliabilityEvaluation;
+}
+
 export type ResponseCorrectionStatus = 'queued' | 'correcting' | 're_evaluating' | 'corrected' | 'failed' | 'abstained' | 'human_review_required';
 export type ActiveAnswerVersion = 'original' | 'corrected' | 'abstention';
 export type DisplayedAnswerVersion = ActiveAnswerVersion | `attempt:${string}`;

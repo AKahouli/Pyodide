@@ -15,6 +15,8 @@ import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
+import { useApiAction } from '@/lib/use-api-action';
+import { rerunReliabilityEvaluation } from '../api';
 import type { DisplayedAnswerVersion, ReliabilityClaimStatus, ReliabilityEvaluation, ReliabilityFinding, ResponseCorrectionAttempt, ResponseCorrectionWorkflow } from '../types';
 import { attemptVersion } from '../utils/answer-version';
 import { conversationPanelClassName } from './conversation-panel-styles';
@@ -41,6 +43,8 @@ const groupStyles = {
 } as const;
 
 interface MessageReliabilityCardProps {
+  conversationId?: string;
+  messageId?: string;
   evaluation?: ReliabilityEvaluation;
   originalEvaluation?: ReliabilityEvaluation;
   correctionWorkflow?: ResponseCorrectionWorkflow;
@@ -48,12 +52,32 @@ interface MessageReliabilityCardProps {
   onVersionChange?: (version: DisplayedAnswerVersion) => void;
 }
 
-export function MessageReliabilityCard({ evaluation, originalEvaluation, correctionWorkflow, displayedVersion = 'original', onVersionChange }: Readonly<MessageReliabilityCardProps>) {
+export function MessageReliabilityCard({ conversationId, messageId, evaluation, originalEvaluation, correctionWorkflow, displayedVersion = 'original', onVersionChange }: Readonly<MessageReliabilityCardProps>) {
   const { t, language } = useModuleTranslation('conversation');
+  const { execute: rerun, isLoading: isRerunning } = useApiAction(rerunReliabilityEvaluation, {
+    showSuccessToast: true,
+    successMessage: t('reliability.rerunQueued'),
+  });
+  const correctionInProgress = correctionWorkflow?.status === 'queued'
+    || correctionWorkflow?.status === 'correcting'
+    || correctionWorkflow?.status === 're_evaluating';
+  const rerunDisabled = isRerunning || evaluation?.status === 'pending' || correctionInProgress;
+  const rerunAction = conversationId && messageId ? <Button
+    type='button'
+    variant='outline'
+    size='sm'
+    className='h-7 shrink-0 px-2 text-xs'
+    onClick={() => void rerun(conversationId, messageId)}
+    disabled={rerunDisabled}
+    aria-label={t('reliability.rerunAria')}
+  >
+    {isRerunning && <Loader2 className='mr-1 size-3 animate-spin' aria-hidden='true' />}
+    {t('reliability.rerun')}
+  </Button> : null;
   const history = <EvaluationHistory workflow={correctionWorkflow} originalEvaluation={originalEvaluation} fallbackEvaluation={evaluation} displayedVersion={displayedVersion} onVersionChange={onVersionChange} language={language} />;
   if (!evaluation) {
-    if (!correctionWorkflow) return null;
-    return <ReliabilityPanelHeader icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.notRecorded')}>{history}</ReliabilityPanelHeader>;
+    if (!correctionWorkflow && !rerunAction) return null;
+    return <ReliabilityPanelHeader action={rerunAction} icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.notRecorded')}>{history}</ReliabilityPanelHeader>;
   }
 
   if (evaluation.status === 'pending') {
@@ -62,19 +86,20 @@ export function MessageReliabilityCard({ evaluation, originalEvaluation, correct
         icon={<Loader2 className='size-5 animate-spin text-primary [animation-duration:1.1s]' />}
         title={t('reliability.pendingTitle')}
         description={t('reliability.pendingDescription')}
+        action={rerunAction}
       >
         {history}
       </ReliabilityPanelHeader>
     );
   }
   if (evaluation.status === 'insufficient_evidence') {
-    return <ReliabilityPanelHeader title={t('reliability.notScored')} description={t('reliability.insufficientEvidence')}>{history}</ReliabilityPanelHeader>;
+    return <ReliabilityPanelHeader action={rerunAction} title={t('reliability.notScored')} description={t('reliability.insufficientEvidence')}>{history}</ReliabilityPanelHeader>;
   }
   if (evaluation.status === 'not_applicable') {
-    return <ReliabilityPanelHeader title={t('reliability.notApplicable')} description={t('reliability.noClaims')}>{history}</ReliabilityPanelHeader>;
+    return <ReliabilityPanelHeader action={rerunAction} title={t('reliability.notApplicable')} description={t('reliability.noClaims')}>{history}</ReliabilityPanelHeader>;
   }
   if (evaluation.status === 'failed') {
-    return <ReliabilityPanelHeader icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.unavailableDescription')}>{history}</ReliabilityPanelHeader>;
+    return <ReliabilityPanelHeader action={rerunAction} icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.unavailableDescription')}>{history}</ReliabilityPanelHeader>;
   }
   if (evaluation.score === undefined || !evaluation.label || !evaluation.claimCounts) return null;
 
@@ -90,6 +115,7 @@ export function MessageReliabilityCard({ evaluation, originalEvaluation, correct
           <p className='truncate text-sm font-medium text-foreground'>{t('reliability.title')}</p>
           <p className='text-xs text-muted-foreground'>{t('reliability.supportedCount', { supported: counts.supported, total: counts.total })}</p>
         </div>
+        {rerunAction}
         <ScoreIndicator score={evaluation.score} size='large' />
       </div>
       {history}
@@ -379,7 +405,7 @@ function EvaluationOccurrence({ label, sequence, evaluation, fallbackStatus, sel
   </Collapsible>;
 }
 
-function ReliabilityPanelHeader({ icon, title, description, children }: Readonly<{ icon?: React.ReactNode; title: string; description?: string; children?: React.ReactNode }>) {
+function ReliabilityPanelHeader({ action, icon, title, description, children }: Readonly<{ action?: React.ReactNode; icon?: React.ReactNode; title: string; description?: string; children?: React.ReactNode }>) {
   return (
     <div className={conversationPanelClassName}>
       <div className='flex min-w-0 items-center gap-3 px-1'>
@@ -391,6 +417,7 @@ function ReliabilityPanelHeader({ icon, title, description, children }: Readonly
           <p className='text-sm font-medium text-foreground'>{title}</p>
           {description && <p className='text-xs leading-relaxed text-muted-foreground'>{description}</p>}
         </div>
+        {action}
       </div>
       {children}
     </div>

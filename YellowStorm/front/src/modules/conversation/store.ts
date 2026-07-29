@@ -1346,12 +1346,39 @@ export const useConversationStore = create<ConversationState>()(
           return { streamingComponents: reordered };
         });
 
-        // Fetch the completed message to get the persisted version
+        // completeAIMessage broadcasts the canonical message before stream_complete.
+        // Prefer that ordered SSE update; REST is only recovery for a missed update.
+        const completedMessage = get().messages.find((message) => message.id === event.messageId && message.isComplete);
+        if (completedMessage) {
+          const cleanedCache = new Map(get().streamingStateCache);
+          cleanedCache.delete(event.conversationId);
+          set({
+            isStreaming: false,
+            streamingConversationId: null,
+            streamingMessageId: null,
+            streamingQuestionMessageId: null,
+            streamingComponents: [],
+            isAwaitingFirstChunk: false,
+            awaitingConversationId: null,
+            pendingAssistantMessageId: null,
+            streamingStateCache: cleanedCache,
+          });
+
+          if (completedMessage.questionMessageId) {
+            get().fetchBranches(event.conversationId, completedMessage.questionMessageId, true);
+          }
+          get().fetchConversations({ reset: true });
+          return;
+        }
+
+        // Recover the persisted message if its ordered SSE update was missed.
         try {
           const message = await api.fetchMessage(event.conversationId, event.messageId);
+          let resolvedMessage = message;
 
           set((s) => {
-            const result = upsertMessage(s.messages, message);
+            resolvedMessage = s.messages.find((candidate) => candidate.id === event.messageId && candidate.isComplete) ?? message;
+            const result = upsertMessage(s.messages, resolvedMessage);
 
             // Clean stale cache entry to prevent fetchMessages from restoring it
             const cleanedCache = new Map(s.streamingStateCache);
@@ -1373,8 +1400,8 @@ export const useConversationStore = create<ConversationState>()(
           });
 
           // Refresh branches if this AI message has a questionMessageId — select latest
-          if (message.questionMessageId) {
-            get().fetchBranches(event.conversationId, message.questionMessageId, true);
+          if (resolvedMessage.questionMessageId) {
+            get().fetchBranches(event.conversationId, resolvedMessage.questionMessageId, true);
           }
 
           // Refresh conversations list to update sidebar order (reset to get fresh order)

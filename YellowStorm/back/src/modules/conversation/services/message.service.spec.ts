@@ -2,7 +2,7 @@ import { Types } from 'mongoose';
 import { MessageService } from './message.service';
 
 describe('MessageService createUserMessage agent tagging', () => {
-  let messageModel: { create: jest.Mock; findById?: jest.Mock };
+  let messageModel: { create: jest.Mock; findById?: jest.Mock; findOne?: jest.Mock; findOneAndUpdate?: jest.Mock };
   let conversationService: {
     addMessageRef: jest.Mock;
     updateLastMessageAt: jest.Mock;
@@ -118,17 +118,148 @@ describe('MessageService createUserMessage agent tagging', () => {
   });
 
   it('removes raw tool results from public message responses', () => {
+    const toolComponent = {
+      id: 'tool-1',
+      data: { title: 'connector', status: 'completed', resultJson: '{"secret":"value"}', params: '{"query":"safe"}' },
+    };
+    // Mongoose subdocuments expose schema paths without making all of them enumerable.
+    Object.defineProperty(toolComponent, 'type', { value: 'toolInfo', enumerable: false });
     const response = (service as any).mapToResponse({
       _id: new Types.ObjectId(),
       conversationId: new Types.ObjectId(conversationId),
       conversationType: 'ai',
-      components: [{
-        id: 'tool-1', type: 'toolInfo',
-        data: { title: 'connector', status: 'completed', resultJson: '{"secret":"value"}', params: '{"query":"safe"}' },
-      }],
+      components: [toolComponent],
     });
 
-    expect(response.components[0].data).toEqual({ title: 'connector', status: 'completed', params: '{"query":"safe"}' });
+    expect(response.components[0]).toEqual({
+      id: 'tool-1',
+      type: 'toolInfo',
+      data: { title: 'connector', status: 'completed', params: '{"query":"safe"}' },
+    });
+  });
+
+  it('waits for the canonical completion update to broadcast', async () => {
+    let finishBroadcast: () => void = () => undefined;
+    streamGateway.broadcastToConversation.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finishBroadcast = resolve;
+    }));
+    const messageId = new Types.ObjectId();
+    const document: any = {
+      _id: messageId,
+      conversationId: new Types.ObjectId(conversationId),
+      conversationType: 'ai',
+      components: [],
+      createdAt: new Date(),
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    messageModel.findById = jest.fn().mockResolvedValue(document);
+
+    let completed = false;
+    const completion = service.completeAIMessage({
+      messageId: messageId.toString(),
+      components: [{ id: 'tool-1', type: 'toolInfo', data: { title: 'search', status: 'completed', resultJson: '{"secret":true}', startedAt: '2026-07-29T08:00:00.000Z' } }],
+      inputTokens: 10,
+      outputTokens: 20,
+      durationMs: 1000,
+    }).then(() => { completed = true; });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(streamGateway.broadcastToConversation).toHaveBeenCalledWith(
+      [senderId],
+      expect.objectContaining({
+        type: 'message_updated',
+        data: expect.objectContaining({
+          messageId: messageId.toString(),
+          message: expect.objectContaining({
+            isComplete: true,
+            components: [expect.objectContaining({ data: expect.not.objectContaining({ resultJson: expect.anything() }) })],
+          }),
+        }),
+      }),
+    );
+    expect(completed).toBe(false);
+
+    finishBroadcast();
+    await completion;
+    expect(completed).toBe(true);
+  });
+
+  it('atomically claims a completed answer for a reliability rerun', async () => {
+    const messageId = new Types.ObjectId();
+    const document: any = {
+      _id: messageId,
+      conversationId: new Types.ObjectId(conversationId),
+      conversationType: 'ai',
+      isComplete: true,
+      isStreaming: false,
+      questionMessageId: new Types.ObjectId(),
+      components: [{ id: 'answer', type: 'text', data: { content: 'Answer with a source.' } }],
+      createdAt: new Date(),
+    };
+    messageModel.findOne = jest.fn().mockResolvedValue(document);
+    messageModel.findOneAndUpdate = jest.fn().mockResolvedValue({
+      ...document,
+      reliabilityEvaluation: { status: 'pending', requestedAt: '2026-07-29T10:00:00.000Z' },
+    });
+
+    const result = await service.rerunReliabilityEvaluation(conversationId, messageId.toString());
+
+    expect(result.reliabilityEvaluation).toMatchObject({ status: 'pending' });
+    expect(messageModel.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: expect.objectContaining({ toString: expect.any(Function) }),
+        conversationId: expect.objectContaining({ toString: expect.any(Function) }),
+        'reliabilityEvaluation.status': { $ne: 'pending' },
+      }),
+      expect.objectContaining({ $set: expect.objectContaining({ reliabilityEvaluation: expect.objectContaining({ status: 'pending' }) }) }),
+      { new: true },
+    );
+    expect(streamGateway.broadcastToConversation).toHaveBeenCalledWith(
+      [senderId],
+      expect.objectContaining({ type: 'message_updated' }),
+    );
+  });
+
+  it('uses an absent-evaluation claim for automatic scheduling', async () => {
+    const messageId = new Types.ObjectId();
+    const document: any = {
+      _id: messageId,
+      conversationId: new Types.ObjectId(conversationId),
+      conversationType: 'ai',
+      isComplete: true,
+      isStreaming: false,
+      questionMessageId: new Types.ObjectId(),
+      components: [{ id: 'answer', type: 'text', data: { content: 'Answer with a source.' } }],
+      createdAt: new Date(),
+    };
+    messageModel.findOne = jest.fn().mockResolvedValue(document);
+    messageModel.findOneAndUpdate = jest.fn().mockResolvedValue({
+      ...document,
+      reliabilityEvaluation: { status: 'pending', requestedAt: '2026-07-29T10:00:00.000Z' },
+    });
+
+    await service.claimReliabilityEvaluation(conversationId, messageId.toString(), false);
+
+    expect(messageModel.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ reliabilityEvaluation: { $exists: false } }),
+      expect.anything(),
+      { new: true },
+    );
+  });
+
+  it('rejects a correction claim after a manual evaluation claim is pending', async () => {
+    messageModel.findOneAndUpdate = jest.fn().mockResolvedValue(null);
+
+    await expect(service.claimCorrectionRun('message-1', 'correction-run-1', '2026-07-29T10:00:00.000Z')).resolves.toBe(false);
+
+    expect(messageModel.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: 'message-1',
+        'reliabilityEvaluation.status': { $ne: 'pending' },
+      }),
+      expect.anything(),
+      { new: true },
+    );
   });
 
   it('upserts one sanitized correction attempt and protects its terminal decision', async () => {

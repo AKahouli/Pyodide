@@ -1,6 +1,10 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { MessageReliabilityCard } from './MessageReliabilityCard';
+
+const rerunReliabilityEvaluationMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../api', () => ({ rerunReliabilityEvaluation: rerunReliabilityEvaluationMock }));
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
@@ -34,6 +38,9 @@ vi.mock('@/modules/localization', () => ({
         'reliability.unavailable': 'Reliability check unavailable',
         'reliability.unavailableDescription': 'The answer could not be checked.',
         'reliability.notRecorded': 'No reliability evaluation was recorded.',
+        'reliability.rerun': 'Rerun evaluation',
+        'reliability.rerunAria': 'Rerun the original answer reliability evaluation',
+        'reliability.rerunQueued': 'Reliability evaluation queued.',
         'correction.attemptLabel': `Correction attempt ${options?.count}`,
         'correction.title': 'Answer correction',
         'correction.status.correcting': 'Correcting after verification',
@@ -91,6 +98,50 @@ describe('MessageReliabilityCard', () => {
     rerender(<MessageReliabilityCard evaluation={{ status: 'insufficient_evidence' }} />);
     expect(screen.getByText('Not enough source information')).toBeInTheDocument();
     expect(screen.queryByText(/0\/100/)).not.toBeInTheDocument();
+  });
+
+  it('renders a dedicated rerun action and disables it while evaluation is pending', () => {
+    const { rerender } = render(<MessageReliabilityCard
+      conversationId='conversation-1'
+      messageId='message-1'
+      evaluation={{ status: 'insufficient_evidence' }}
+    />);
+    expect(screen.getByRole('button', { name: 'Rerun the original answer reliability evaluation' })).toBeEnabled();
+
+    rerender(<MessageReliabilityCard
+      conversationId='conversation-1'
+      messageId='message-1'
+      evaluation={{ status: 'pending' }}
+    />);
+    expect(screen.getByRole('button', { name: 'Rerun the original answer reliability evaluation' })).toBeDisabled();
+  });
+
+  it('queues the original answer evaluation from the dedicated action', async () => {
+    rerunReliabilityEvaluationMock.mockResolvedValueOnce({ messageId: 'message-1', reliabilityEvaluation: { status: 'pending' } });
+    render(<MessageReliabilityCard
+      conversationId='conversation-1'
+      messageId='message-1'
+      evaluation={{ status: 'failed' }}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rerun the original answer reliability evaluation' }));
+
+    await waitFor(() => expect(rerunReliabilityEvaluationMock).toHaveBeenCalledWith('conversation-1', 'message-1'));
+  });
+
+  it('disables a rerun while corrective work is active', () => {
+    render(<MessageReliabilityCard
+      conversationId='conversation-1'
+      messageId='message-1'
+      evaluation={{ status: 'failed' }}
+      correctionWorkflow={{
+        mode: 'corrective_transparent', status: 'correcting', activeVersion: 'original', threshold: 70,
+        attemptCount: 1, maxAttempts: 1, failureBehavior: 'publish_with_warning', showOriginalAnswer: true,
+        queuedAt: '2026-07-26T10:00:00.000Z',
+      }}
+    />);
+
+    expect(screen.getByRole('button', { name: 'Rerun the original answer reliability evaluation' })).toBeDisabled();
   });
 
   it('groups every claim with statement groups collapsed by default', () => {

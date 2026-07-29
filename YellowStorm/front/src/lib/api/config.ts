@@ -193,6 +193,7 @@ export const API_ENDPOINTS = {
     messages: (id: string) => `/conversations/${id}/messages`,
     messageById: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}`,
     feedback: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/feedback`,
+    rerunReliabilityEvaluation: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/reliability-evaluation/rerun`,
     regenerate: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/regenerate`,
     stop: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/stop`,
     branches: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/branches`,
