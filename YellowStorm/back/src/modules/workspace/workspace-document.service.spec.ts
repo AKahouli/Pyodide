@@ -765,10 +765,47 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: { findByIdAndUpdate: jest.fn() } },
+        {
+          provide: getModelToken(WorkspaceDoc.name),
+          useValue: {
+            create: jest.fn().mockImplementation((data: Record<string, unknown>) => {
+              const now = new Date();
+              return {
+                _id: new Types.ObjectId(),
+                workspaceId: data.workspaceId ?? new Types.ObjectId(),
+                createdBy: data.createdBy ?? new Types.ObjectId(),
+                originalName: data.originalName ?? 'file.bin',
+                mimeType: data.mimeType ?? 'application/octet-stream',
+                size: data.size ?? 0,
+                path: data.path ?? '',
+                storedName: data.storedName ?? '',
+                contentHash: data.contentHash ?? undefined,
+                status: data.status ?? DocumentStatus.COMPLETED,
+                createdAt: now,
+                updatedAt: now,
+              };
+            }),
+            findByIdAndUpdate: jest.fn(),
+          },
+        },
         { provide: getModelToken(UploadSession.name), useValue: {} },
         { provide: WorkspaceService, useValue: {} },
-        { provide: DocumentService, useValue: {} },
+        {
+          provide: DocumentService,
+          useValue: {
+            upload: jest.fn().mockResolvedValue({
+              id: 'uploaded-id',
+              originalName: 'file.bin',
+              storedName: 'stored-file.bin',
+              blobPath: 'user-id/ingest/stored-file.bin',
+              mimeType: 'application/octet-stream',
+              size: 4,
+              contentHash: 'abc123',
+              url: 'https://storage.example.com/key',
+              uploadedAt: new Date(),
+            }),
+          },
+        },
         { provide: NotificationsService, useValue: {} },
         { provide: IndexingService, useValue: {} },
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
@@ -798,11 +835,6 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     }).compile();
 
     service = mod.get(WorkspaceDocumentService);
-    jest.spyOn(service, 'uploadSmallFile').mockResolvedValue({
-      id: 'doc1',
-      originalName: 'file.bin',
-      size: 4,
-    } as any);
   });
 
   it('rejects private / loopback download URLs before calling axios', async () => {

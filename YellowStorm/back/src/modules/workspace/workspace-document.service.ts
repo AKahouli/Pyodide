@@ -5,6 +5,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import axios from 'axios';
+import { Readable } from 'stream';
 import { DEFAULT_CRAWL_USER_AGENT } from '../../config/indexing.config';
 import { IngestUrlDto } from './dto/ingest-url.dto';
 import {
@@ -635,12 +636,12 @@ export class WorkspaceDocumentService {
       hasAuthHeaders: !!dto.authHeaders,
     });
 
-    let buffer: Buffer;
     let resolvedMimeType = dto.mimeType || 'application/octet-stream';
 
+    let downloadStream: Readable;
     try {
       const downloaded = await this.downloadUrlGuarded(dto.downloadUrl, dto.authHeaders);
-      buffer = downloaded.buffer;
+      downloadStream = downloaded.stream;
       if (!dto.mimeType && downloaded.contentType) {
         resolvedMimeType = downloaded.contentType;
       }
@@ -664,28 +665,35 @@ export class WorkspaceDocumentService {
       throw new BadRequestException(ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED, message);
     }
 
-    const doc = await this.uploadSmallFile(
-      workspaceId,
-      dto.userId,
-      buffer,
+    const uploaded = await this.documentService.upload(
+      downloadStream,
       dto.filename,
       resolvedMimeType,
+      { folder: `${dto.userId}/ingest` },
     );
 
-    if (dto.sourceMeta) {
-      await this.documentModel.findByIdAndUpdate(doc.id, {
-        $set: { metadata: dto.sourceMeta },
-      });
-    }
-
-    this.logger.debug('File ingested from URL', {
-      documentId: doc.id,
-      workspaceId,
-      filename: doc.originalName,
-      size: doc.size,
+    const document = await this.documentModel.create({
+      workspaceId: new Types.ObjectId(workspaceId),
+      createdBy: new Types.ObjectId(dto.userId),
+      originalName: dto.filename,
+      mimeType: resolvedMimeType,
+      size: uploaded.size,
+      path: uploaded.blobPath,
+      storedName: uploaded.storedName,
+      contentHash: uploaded.contentHash || undefined,
+      status: DocumentStatus.COMPLETED,
+      indexingStatus: IndexingStatus.NONE,
+      metadata: dto.sourceMeta || {},
     });
 
-    return doc;
+    this.logger.debug('File ingested from URL', {
+      documentId: document._id,
+      workspaceId,
+      filename: document.originalName,
+      size: document.size,
+    });
+
+    return this.mapToResponse(document);
   }
 
   /**
@@ -1040,9 +1048,8 @@ export class WorkspaceDocumentService {
   private async downloadUrlGuarded(
     url: string,
     authHeaders?: Record<string, string>,
-  ): Promise<{ buffer: Buffer; contentType?: string }> {
+  ): Promise<{ stream: Readable; contentType?: string }> {
     const MAX_HOPS = 5;
-    const maxBytes = this.maxFileSizeMb * 1024 * 1024;
     let currentUrl = url;
     let headers = this.pickIngestAuthHeaders(authHeaders);
 
@@ -1066,9 +1073,8 @@ export class WorkspaceDocumentService {
       }
 
       const response = await axios.get(currentUrl, {
-        responseType: 'arraybuffer',
+        responseType: hop < MAX_HOPS ? 'arraybuffer' : 'stream',
         timeout: 30_000,
-        maxContentLength: maxBytes,
         maxRedirects: 0,
         validateStatus: () => true,
         headers,
@@ -1102,7 +1108,7 @@ export class WorkspaceDocumentService {
       const rawType = response.headers?.['content-type'] as string | undefined;
       const contentType = rawType?.split(';')[0]?.trim();
       return {
-        buffer: Buffer.from(response.data as ArrayBuffer),
+        stream: response.data as Readable,
         contentType: contentType || undefined,
       };
     }
