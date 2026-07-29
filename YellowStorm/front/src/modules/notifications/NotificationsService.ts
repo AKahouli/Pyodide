@@ -4,7 +4,7 @@
  * and event distribution
  */
 
-import { AUTH_STORAGE_KEYS, API_CONFIG, API_ENDPOINTS, getAccessToken, setAccessToken } from "@/lib/api";
+import { API_CONFIG, API_ENDPOINTS, getAccessToken, setAccessToken } from "@/lib/api";
 import type { Notification, SSEEvent, SSEEventType } from "./types";
 import { toast } from "sonner";
 import { i18nInstance } from '@/modules/localization/i18nInstance';
@@ -42,30 +42,15 @@ export class NotificationsService {
    * Connect to SSE stream
    */
   connect(): void {
-    // Don't reconnect if evicted due to connection limit
-    if (this.isEvicted) {
-      return;
-    }
-
-    const token = getAccessToken();
-    toast.loading(tNotification("service.toasts.connecting", "Connecting to real time notification services"), { id: "sse-connection" });
-    if (!token) {
-      console.warn(
-        "[NotificationsService] No token available, skipping connection"
-      );
-      this.emit({ type: "error", data: { connectionId: "no-token" } });
-      return;
-    }
+    if (this.isEvicted) return;
 
     if (this.eventSource) {
       this.disconnect();
     }
 
-    const url = `${
-      API_CONFIG.baseURL
-    }${"/notifications/stream"}?token=${encodeURIComponent(token)}`;
+    const url = `${API_CONFIG.baseURL}/notifications/stream`;
     try {
-      this.eventSource = new EventSource(url);
+      this.eventSource = new EventSource(url, { withCredentials: true });
       this.setupEventHandlers();
     } catch (error) {
       toast.error(tNotification("service.toasts.connectionFailed", "Failed to connect to real time services"), {

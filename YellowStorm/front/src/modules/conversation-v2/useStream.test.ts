@@ -56,7 +56,6 @@ function mountConnection() {
 describe('conversation-v2 per-user stream pipe', () => {
   beforeEach(() => {
     MockEventSource.instances.length = 0;
-    setAccessToken('test-token');
     useConversationV2Store.getState().reset();
     sendMessageMock.mockClear();
     listEventsMock.mockReset();
@@ -72,12 +71,12 @@ describe('conversation-v2 per-user stream pipe', () => {
     expect(MockEventSource.instances).toHaveLength(1);
     const es = MockEventSource.instances.at(-1)!;
     expect(es.url).toContain('/conversation-v2/stream');
-    expect(es.url).toContain('token=test-token');
+    expect(es.url).not.toContain('token=');
     // No conversation id in the URL — the pipe carries all conversations.
     expect(es.url).not.toMatch(/sessions\//);
   });
 
-  it('replaces the per-user pipe when the token changes', () => {
+  it('replaces the per-user pipe on reconnectWithNewToken', () => {
     mountConnection();
     const original = MockEventSource.instances.at(-1)!;
     setAccessToken('refreshed-token');
@@ -85,7 +84,8 @@ describe('conversation-v2 per-user stream pipe', () => {
     conversationV2StreamService.reconnectWithNewToken();
 
     expect(original.closed).toBe(true);
-    expect(MockEventSource.instances.at(-1)?.url).toContain('token=refreshed-token');
+    expect(MockEventSource.instances.at(-1)?.url).toContain('/conversation-v2/stream');
+    expect(MockEventSource.instances.at(-1)?.url).not.toContain('token=');
   });
 
   it('reconciles a missed final event when the pipe reconnects', async () => {
