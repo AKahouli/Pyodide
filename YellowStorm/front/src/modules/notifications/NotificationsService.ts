@@ -4,7 +4,7 @@
  * and event distribution
  */
 
-import { AUTH_STORAGE_KEYS, API_CONFIG, API_ENDPOINTS } from "@/lib/api";
+import { API_CONFIG, API_ENDPOINTS, getAccessToken, setAccessToken } from "@/lib/api";
 import type { Notification, SSEEvent, SSEEventType } from "./types";
 import { toast } from "sonner";
 import { i18nInstance } from '@/modules/localization/i18nInstance';
@@ -42,30 +42,15 @@ export class NotificationsService {
    * Connect to SSE stream
    */
   connect(): void {
-    // Don't reconnect if evicted due to connection limit
-    if (this.isEvicted) {
-      return;
-    }
-
-    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
-    toast.loading(tNotification("service.toasts.connecting", "Connecting to real time notification services"), { id: "sse-connection" });
-    if (!token) {
-      console.warn(
-        "[NotificationsService] No token available, skipping connection"
-      );
-      this.emit({ type: "error", data: { connectionId: "no-token" } });
-      return;
-    }
+    if (this.isEvicted) return;
 
     if (this.eventSource) {
       this.disconnect();
     }
 
-    const url = `${
-      API_CONFIG.baseURL
-    }${"/notifications/stream"}?token=${encodeURIComponent(token)}`;
+    const url = `${API_CONFIG.baseURL}/notifications/stream`;
     try {
-      this.eventSource = new EventSource(url);
+      this.eventSource = new EventSource(url, { withCredentials: true });
       this.setupEventHandlers();
     } catch (error) {
       toast.error(tNotification("service.toasts.connectionFailed", "Failed to connect to real time services"), {
@@ -266,7 +251,7 @@ export class NotificationsService {
 
   private async refreshTokenAndConnect(): Promise<void> {
     try {
-      const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+      const token = getAccessToken();
       const response = await fetch(`${API_CONFIG.baseURL}${API_ENDPOINTS.auth.refresh}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -277,7 +262,7 @@ export class NotificationsService {
         const body = await response.json();
         const newToken = body?.data?.accessToken;
         if (newToken) {
-          localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, newToken);
+          setAccessToken(newToken);
         }
       }
     } catch {

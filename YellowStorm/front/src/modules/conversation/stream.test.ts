@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { conversationStreamService } from './stream';
+import { clearAccessToken } from '@/lib/api/token';
 
 vi.mock('@/lib/api/config', () => ({
   AUTH_STORAGE_KEYS: {
@@ -65,34 +66,19 @@ describe('conversationStreamService', () => {
   beforeEach(() => {
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource;
     localStorage.clear();
+    clearAccessToken();
     MockEventSource.reset();
     conversationStreamService.disconnect();
   });
 
-  it('emits connection_failed when token is missing', () => {
-    const listener = vi.fn();
-    const unsubscribe = conversationStreamService.subscribe(listener);
-
-    conversationStreamService.connect();
-
-    expect(MockEventSource.instances).toHaveLength(0);
-    expect(listener).toHaveBeenCalledWith({
-      type: 'connection_failed',
-      data: { reason: 'sse.connectionErrors.noToken' },
-    });
-
-    unsubscribe();
-  });
-
   it('connects and emits stream events to listeners', () => {
-    localStorage.setItem('accessToken', 'token-123');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
 
     conversationStreamService.connect();
 
     expect(MockEventSource.instances).toHaveLength(1);
-    expect(MockEventSource.instances[0]?.url).toContain('/conversations/stream?token=token-123');
+    expect(MockEventSource.instances[0]?.url).toBe('https://api.example.test/conversations/stream');
 
     MockEventSource.instances[0]?.emitMessage({
       type: 'connected',
@@ -117,7 +103,6 @@ describe('conversationStreamService', () => {
   });
 
   it('handles Nest named SSE events', () => {
-    localStorage.setItem('accessToken', 'token-123');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
 
@@ -135,63 +120,39 @@ describe('conversationStreamService', () => {
   });
 
   it('resolves a pending connection wait when the server confirms the pipe', async () => {
-    localStorage.setItem('accessToken', 'token-123');
-
     const ready = conversationStreamService.waitForConnection();
     MockEventSource.instances[0]?.emitNamed('connected', { connectionId: 'conn-1' });
 
     await expect(ready).resolves.toBe(true);
   });
 
-  it('replaces the existing EventSource when the token is refreshed', () => {
-    localStorage.setItem('accessToken', 'old-token');
+  it('replaces the existing EventSource on reconnectWithNewToken', () => {
     conversationStreamService.connect();
     const original = MockEventSource.instances[0];
 
-    localStorage.setItem('accessToken', 'new-token');
     conversationStreamService.reconnectWithNewToken();
 
     expect(original.closed).toBe(true);
     expect(MockEventSource.instances).toHaveLength(2);
-    expect(MockEventSource.instances[1].url).toContain('token=new-token');
+    expect(MockEventSource.instances[1].url).toBe('https://api.example.test/conversations/stream');
   });
 
-  it('replaces a connected pipe when another singleton changes the shared token', async () => {
-    localStorage.setItem('accessToken', 'old-token');
-    conversationStreamService.connect();
-    const original = MockEventSource.instances[0];
-    original.emitNamed('connected', { connectionId: 'old-connection' });
-
-    localStorage.setItem('accessToken', 'new-token');
-    const ready = conversationStreamService.waitForConnection();
-
-    expect(original.closed).toBe(true);
-    expect(MockEventSource.instances).toHaveLength(2);
-    expect(MockEventSource.instances[1].url).toContain('token=new-token');
-
-    MockEventSource.instances[1].emitNamed('connected', { connectionId: 'new-connection' });
-    await expect(ready).resolves.toBe(true);
-  });
-
-  it('closes native CONNECTING retries so reconnects can read the latest token', () => {
+  it('closes native CONNECTING retries to force a fresh connection', () => {
     vi.useFakeTimers();
-    localStorage.setItem('accessToken', 'old-token');
     conversationStreamService.connect();
     const original = MockEventSource.instances[0];
     original.emitNamed('connected', { connectionId: 'old-connection' });
 
-    localStorage.setItem('accessToken', 'new-token');
     original.readyState = MockEventSource.CONNECTING;
     original.emitError();
     vi.advanceTimersByTime(1000);
 
     expect(original.closed).toBe(true);
-    expect(MockEventSource.instances[1].url).toContain('token=new-token');
+    expect(MockEventSource.instances[1].url).toBe('https://api.example.test/conversations/stream');
     vi.useRealTimers();
   });
 
   it('keeps chart data arrays when chart payload arrives as JSON strings', () => {
-    localStorage.setItem('accessToken', 'token-123');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
 
@@ -246,7 +207,6 @@ describe('conversationStreamService', () => {
   });
 
   it('emits rejected connection_failed when socket closes before connected', () => {
-    localStorage.setItem('accessToken', 'token-abc');
     const listener = vi.fn();
     const unsubscribe = conversationStreamService.subscribe(listener);
 

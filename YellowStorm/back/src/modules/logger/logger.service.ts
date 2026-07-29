@@ -294,6 +294,18 @@ export class LoggerService implements NestLoggerService {
     return colors[level] || '\x1b[0m';
   }
 
+  private sanitizeValue(value: unknown): unknown {
+    if (typeof value === 'string' && (value.startsWith('http://') || value.startsWith('https://'))) {
+      try {
+        const u = new URL(value);
+        return `${u.protocol}//${u.host}${u.pathname}[QUERY_REDACTED]`;
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
+
   private sanitize(data: Record<string, unknown>, depth = 0): Record<string, unknown> {
     const MAX_DEPTH = 10;
     const sensitiveKeys = [
@@ -309,6 +321,11 @@ export class LoggerService implements NestLoggerService {
       'sessionId',
       'cookie',
       'set-cookie',
+      'downloadUrl',
+      'authHeaders',
+      'signature',
+      'code',
+      'state',
     ];
 
     if (depth >= MAX_DEPTH) {
@@ -324,12 +341,12 @@ export class LoggerService implements NestLoggerService {
         sanitized[key] = value.slice(0, 100).map((item) =>
           typeof item === 'object' && item !== null
             ? this.sanitize(item as Record<string, unknown>, depth + 1)
-            : item,
+            : this.sanitizeValue(item),
         );
       } else if (typeof value === 'object' && value !== null) {
         sanitized[key] = this.sanitize(value as Record<string, unknown>, depth + 1);
       } else {
-        sanitized[key] = value;
+        sanitized[key] = this.sanitizeValue(value);
       }
     }
 

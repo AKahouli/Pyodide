@@ -5,6 +5,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import axios from 'axios';
+import { Readable } from 'stream';
 import { DEFAULT_CRAWL_USER_AGENT } from '../../config/indexing.config';
 import { IngestUrlDto } from './dto/ingest-url.dto';
 import {
@@ -610,38 +611,46 @@ export class WorkspaceDocumentService {
 
   /**
    * Ingest a file from an external download URL into a workspace.
-   * Downloads the file, then delegates to uploadSmallFile for storage.
+   * Downloads the file behind the SSRF guard (assertUrlIsSafe on every hop,
+   * maxRedirects:0, Authorization stripped on cross-origin redirects), then
+   * delegates to uploadSmallFile for storage.
    * Used by the brain/agent to save MCP-sourced files (e.g., SharePoint download URLs).
    */
   async ingestFromUrl(
     workspaceId: string,
     dto: IngestUrlDto,
   ): Promise<DocumentResponse> {
+    const downloadHost = (() => {
+      try {
+        return new URL(dto.downloadUrl).host;
+      } catch {
+        return 'invalid-url';
+      }
+    })();
+
     this.logger.log('Ingesting file from URL', {
       workspaceId,
       userId: dto.userId,
       filename: dto.filename,
+      downloadHost,
       hasAuthHeaders: !!dto.authHeaders,
     });
 
-    let buffer: Buffer;
     let resolvedMimeType = dto.mimeType || 'application/octet-stream';
 
+    let downloadStream: Readable;
     try {
-      const response = await axios.get(dto.downloadUrl, {
-        responseType: 'arraybuffer',
-        timeout: 30_000,
-        maxContentLength: this.maxFileSizeMb * 1024 * 1024,
-        headers: dto.authHeaders || {},
-      });
-
-      buffer = Buffer.from(response.data);
-
-      if (!dto.mimeType && response.headers['content-type']) {
-        resolvedMimeType = response.headers['content-type'].split(';')[0].trim();
+      const downloaded = await this.downloadUrlGuarded(dto.downloadUrl, dto.authHeaders);
+      downloadStream = downloaded.stream;
+      if (!dto.mimeType && downloaded.contentType) {
+        resolvedMimeType = downloaded.contentType;
       }
     } catch (error) {
-      const err = error as any;
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      const err = error as { response?: { status?: number }; message?: string };
       const status = err.response?.status;
       const message = status
         ? `Failed to download file: HTTP ${status}`
@@ -649,35 +658,42 @@ export class WorkspaceDocumentService {
 
       this.logger.error('File download failed during ingest', {
         workspaceId,
-        downloadUrl: dto.downloadUrl,
+        downloadHost,
         error: message,
       });
 
       throw new BadRequestException(ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED, message);
     }
 
-    const doc = await this.uploadSmallFile(
-      workspaceId,
-      dto.userId,
-      buffer,
+    const uploaded = await this.documentService.upload(
+      downloadStream,
       dto.filename,
       resolvedMimeType,
+      { folder: `${dto.userId}/ingest` },
     );
 
-    if (dto.sourceMeta) {
-      await this.documentModel.findByIdAndUpdate(doc.id, {
-        $set: { metadata: dto.sourceMeta },
-      });
-    }
-
-    this.logger.debug('File ingested from URL', {
-      documentId: doc.id,
-      workspaceId,
-      filename: doc.originalName,
-      size: doc.size,
+    const document = await this.documentModel.create({
+      workspaceId: new Types.ObjectId(workspaceId),
+      createdBy: new Types.ObjectId(dto.userId),
+      originalName: dto.filename,
+      mimeType: resolvedMimeType,
+      size: uploaded.size,
+      path: uploaded.blobPath,
+      storedName: uploaded.storedName,
+      contentHash: uploaded.contentHash || undefined,
+      status: DocumentStatus.COMPLETED,
+      indexingStatus: IndexingStatus.NONE,
+      metadata: dto.sourceMeta || {},
     });
 
-    return doc;
+    this.logger.debug('File ingested from URL', {
+      documentId: document._id,
+      workspaceId,
+      filename: document.originalName,
+      size: document.size,
+    });
+
+    return this.mapToResponse(document);
   }
 
   /**
@@ -1020,6 +1036,101 @@ export class WorkspaceDocumentService {
       const err = error as { message?: string };
       return { reachable: false, error: err?.message ?? 'unreachable' };
     }
+  }
+
+  /**
+   * Downloads a URL for workspace ingest with SSRF controls:
+   * - assertUrlIsSafe on the initial URL and every redirect hop
+   * - HTTPS only (ingest forwards credentials; plaintext HTTP is rejected)
+   * - maxRedirects: 0 with manual hop following (max 5)
+   * - only Authorization may be sent; stripped on cross-origin redirects
+   */
+  private async downloadUrlGuarded(
+    url: string,
+    authHeaders?: Record<string, string>,
+  ): Promise<{ stream: Readable; contentType?: string }> {
+    const MAX_HOPS = 5;
+    let currentUrl = url;
+    let headers = this.pickIngestAuthHeaders(authHeaders);
+
+    for (let hop = 0; hop <= MAX_HOPS; hop++) {
+      await this.assertUrlIsSafe(currentUrl);
+
+      let parsed: URL;
+      try {
+        parsed = new URL(currentUrl);
+      } catch {
+        throw new BadRequestException(
+          ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+          'Only HTTPS URLs are allowed for URL ingest',
+        );
+      }
+      if (parsed.protocol !== 'https:') {
+        throw new BadRequestException(
+          ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+          'Only HTTPS URLs are allowed for URL ingest',
+        );
+      }
+
+      const response = await axios.get(currentUrl, {
+        responseType: hop < MAX_HOPS ? 'arraybuffer' : 'stream',
+        timeout: 30_000,
+        maxRedirects: 0,
+        validateStatus: () => true,
+        headers,
+      });
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers?.location as string | undefined;
+        if (!location) {
+          throw new BadRequestException(
+            ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+            `Failed to download file: HTTP ${response.status}`,
+          );
+        }
+
+        const previousOrigin = parsed.origin;
+        const nextUrl = new URL(location, currentUrl).toString();
+        if (new URL(nextUrl).origin !== previousOrigin) {
+          headers = {};
+        }
+        currentUrl = nextUrl;
+        continue;
+      }
+
+      if (response.status < 200 || response.status >= 300) {
+        throw new BadRequestException(
+          ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+          `Failed to download file: HTTP ${response.status}`,
+        );
+      }
+
+      const rawType = response.headers?.['content-type'] as string | undefined;
+      const contentType = rawType?.split(';')[0]?.trim();
+      return {
+        stream: response.data as Readable,
+        contentType: contentType || undefined,
+      };
+    }
+
+    throw new BadRequestException(
+      ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+      'Too many redirects while downloading file',
+    );
+  }
+
+  /** Restrict forwarded ingest headers to Authorization only. */
+  private pickIngestAuthHeaders(
+    headers?: Record<string, string>,
+  ): Record<string, string> {
+    if (!headers) return {};
+    const result: Record<string, string> = {};
+    for (const [key, value] of Object.entries(headers)) {
+      if (key.toLowerCase() === 'authorization' && typeof value === 'string' && value.trim()) {
+        result.Authorization = value;
+      }
+    }
+    return result;
   }
 
   /**

@@ -662,13 +662,6 @@ function invalidateFlowOutputFormatTemplateRead(flowId: string, taskId: string):
   void playbookQueryClient.invalidateQueries({ queryKey: playbookKeys.flowOutputFormatTemplate(flowId, taskId) });
 }
 
-function logPlaybookPerfMetric(
-  metric: string,
-  fields: Record<string, string | number | boolean | null | undefined>,
-): void {
-  console.info(`[playbook_perf] ${metric}`, fields);
-}
-
 function getAutosaveRetryDelayMs(backoffUntil: number | null): number {
   if (!backoffUntil) {
     return 2000;
@@ -1745,14 +1738,6 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
               [id]: savedRequestBody,
             },
           }));
-          logPlaybookPerfMetric('playbook_autosave_payload_bytes', {
-            mode: effectiveSaveMode,
-            playbookId: id,
-            payloadBytes: effectiveSaveMode === 'delta'
-              ? api.measureSerializedBytes(deltaPatch)
-              : payloadTelemetry.payloadBytes,
-            reason: latestState.lastSaveReason,
-          });
           if (isLatestSaveRequest && latestState.pendingAutosaveAfterCurrent && hasNewerLocalChanges) {
             void Promise.resolve().then(() => get().saveCurrentPlaybook({ reason: 'autosave' }));
           }
@@ -2110,12 +2095,6 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         const payloadTelemetry = api.getPlaybookUpdateTelemetry(savePayload);
         const lastSavedPayloadHash = get().lastSavedPayloadHashByPlaybookId[currentPlaybook.id];
         const shouldSkipSave = lastSavedPayloadHash === payloadTelemetry.payloadHash;
-
-        logPlaybookPerfMetric('playbook_autosave_skipped_hash_match', {
-          playbookId: currentPlaybook.id,
-          skipped: shouldSkipSave,
-          reason: options?.reason ?? 'manual',
-        });
 
         if (shouldSkipSave) {
           set({

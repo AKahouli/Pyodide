@@ -173,7 +173,6 @@ export function AgentWhatsAppIntegrationSection({
     autoRecoverRequestedRef.current = recoveryKey;
     recoveryCompleteNotifiedRef.current = false;
 
-    console.log('[WhatsApp integration] notify auto-recover (FAILED)', { agentId, sessionId });
     void notifyAgentWhatsAppAutoRecover(agentId).catch(() => {
       autoRecoverRequestedRef.current = null;
     });

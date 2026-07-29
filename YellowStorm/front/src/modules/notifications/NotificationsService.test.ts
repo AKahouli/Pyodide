@@ -17,10 +17,13 @@ vi.mock('@/modules/localization/i18nInstance', () => ({
   i18nInstance: { isInitialized: false },
 }));
 
+const getAccessTokenMock = vi.hoisted(() => vi.fn(() => 'test-token'));
+
 vi.mock('@/lib/api', () => ({
-  AUTH_STORAGE_KEYS: { accessToken: 'token-key' },
   API_CONFIG: { baseURL: 'https://api.test' },
   API_ENDPOINTS: { auth: { refresh: '/auth/refresh' } },
+  getAccessToken: () => null,
+  setAccessToken: vi.fn(),
 }));
 
 // Minimal EventSource mock
@@ -44,7 +47,6 @@ class EventSourceMock {
 describe('NotificationsService', () => {
   beforeEach(() => {
     vi.stubGlobal('EventSource', EventSourceMock);
-    localStorage.setItem('token-key', 'abc123');
     toastMock.loading.mockReset();
     toastMock.success.mockReset();
     toastMock.error.mockReset();
@@ -54,10 +56,10 @@ describe('NotificationsService', () => {
     notificationsService.disconnect();
   });
 
-  it('constructs EventSource with token and sets connection on connected event', () => {
+  it('constructs EventSource with withCredentials and sets connection on connected event', () => {
     notificationsService.connect();
 
-    expect(eventSourceCtor).toHaveBeenCalledWith('https://api.test/notifications/stream?token=abc123');
+    expect(eventSourceCtor).toHaveBeenCalledWith('https://api.test/notifications/stream');
 
     const es = (notificationsService as unknown as { eventSource: EventSourceMock }).eventSource!;
 

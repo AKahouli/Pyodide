@@ -150,11 +150,7 @@ export function usePlaybookCanvasOutputFormatHandlers({
       });
       try {
         await grabOutputFormatTemplate(id, nodeId, { executionId: executionForNodeActions.id });
-      } catch (error) {
-        if (process.env.NODE_ENV === 'development') {
-          console.debug('Failed to refresh output format after baseline save', error);
-        }
-      }
+      } catch {}
       onBaselineSaved?.(nodeId);
     },
     [executionForNodeActions, getTaskResultForNode, id, grabOutputFormatTemplate, onBaselineSaved, validateTaskReplay],
@@ -199,11 +195,7 @@ export function usePlaybookCanvasOutputFormatHandlers({
                 resolve();
                 return;
               }
-            } catch (error) {
-              if (process.env.NODE_ENV === 'development') {
-                console.debug('Failed to fetch output format template while generating, retrying', error);
-              }
-            }
+            } catch {}
             setTimeout(poll, 2000);
           };
           setTimeout(poll, 2000);

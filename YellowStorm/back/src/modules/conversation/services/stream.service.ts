@@ -16,12 +16,8 @@ import { StreamGatewayService } from './stream-gateway.service';
 import { MessageService } from './message.service';
 import { ConversationService } from './conversation.service';
 import { MessageComponent, ComponentType, type CorrectionReplayContext, type MessageReplayContext } from '../interfaces/message.interface';
-import {
-  getComponentType as sharedGetComponentType,
-  extractComponentData as sharedExtractComponentData,
-  mapTaskStatus as sharedMapTaskStatus,
-} from '../utils/component-mapper';
 import { GrpcHealthStatus } from '../interfaces/stream.interface';
+import { StreamComponentBufferService } from './buffer/stream-component-buffer.service';
 import { LoggerService, LogOptions } from '../../logger';
 import { ServiceUnavailableException, ConflictException } from '../../exceptions';
 import { AppException } from '../../exceptions/exceptions/base.exception';
@@ -106,6 +102,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly skillService: SkillService,
     private readonly responseReliabilityService: ResponseReliabilityService,
     private readonly agentRequestBuilder: ConversationAgentRequestBuilder,
+    private readonly componentBufferService: StreamComponentBufferService,
   ) {
     this.logger.setContext('StreamService');
   }
@@ -1489,16 +1486,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   }
 
   private parseGuardrailDecision(value?: string): Record<string, unknown> | undefined {
-    if (!value) return undefined;
-    try {
-      const parsed = JSON.parse(value);
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : undefined;
-    } catch (error) {
-      this.logger.warn('Invalid guardrail decision metadata from stream', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      return undefined;
-    }
+    return this.componentBufferService.parseGuardrailDecision(value);
   }
 
   private async sendErrorEvent(userId: string, conversationId: string, errorCode: ErrorCode): Promise<void> {
@@ -1528,22 +1516,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getComponentType(comp: any): ComponentType {
-    return sharedGetComponentType(comp);
+    return this.componentBufferService.getComponentType(comp);
   }
 
   private extractComponentData(comp: any): { type: ComponentType; data: Record<string, unknown> } {
-    return sharedExtractComponentData(comp);
+    return this.componentBufferService.extractComponentData(comp);
   }
 
-  /**
-   * Applies a chunk to the component buffer.
-   * - 'add': Creates a new component entry
-   * - 'update': Merges data into existing component
-   *
-   * Type-specific behavior:
-   * - text/code/reasoning: Append to content string
-   * - queue/plan/checkpoint/task: Replace entire data (arrives in one chunk)
-   */
   private applyChunkToBuffer(
     buffer: Map<string, MessageComponent>,
     action: string,
@@ -1551,129 +1530,19 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     guardrailDecision?: Record<string, unknown>,
     includePrivateToolResult = false,
   ): void {
-    const componentId = comp.id;
-    const { type, data } = this.extractComponentData(comp);
-    if (guardrailDecision) {
-      data.guardrailDecision = guardrailDecision;
-    }
-    if (type === 'toolInfo' && !includePrivateToolResult) {
-      delete data.resultJson;
-      delete data.result_json;
-    }
-
-    if (action === 'add') {
-      const existing = buffer.get(componentId);
-      if (existing && type === 'toolInfo') {
-        existing.data = this.mergeComponentData(type, existing.data, data);
-        if (!includePrivateToolResult) {
-          delete existing.data.resultJson;
-          delete existing.data.result_json;
-        }
-        return;
-      }
-      buffer.set(componentId, {
-        id: componentId,
-        type,
-        data: { ...data },
-      });
-    } else if (action === 'update') {
-      const existing = buffer.get(componentId);
-      if (existing) {
-        existing.data = this.mergeComponentData(type, existing.data, data);
-        if (type === 'toolInfo' && !includePrivateToolResult) {
-          delete existing.data.resultJson;
-          delete existing.data.result_json;
-        }
-        if (guardrailDecision) {
-          existing.data.guardrailDecision = guardrailDecision;
-        }
-      } else if (type === 'toolInfo') {
-        const merged = this.mergeComponentData(type, {}, data);
-        if (!includePrivateToolResult) {
-          delete merged.resultJson;
-          delete merged.result_json;
-        }
-        buffer.set(componentId, { id: componentId, type, data: merged });
-      }
-    }
+    this.componentBufferService.applyChunkToBuffer(buffer, action, comp, guardrailDecision, includePrivateToolResult);
   }
 
-  /**
-   * Merge incoming data into existing component data based on type.
-   */
   private mergeComponentData(
     type: ComponentType,
     existing: Record<string, unknown>,
     incoming: Record<string, unknown>,
   ): Record<string, unknown> {
-    switch (type) {
-      case 'text':
-      case 'reasoning': {
-        if (incoming.guardrailDecision) {
-          return { ...existing, ...incoming };
-        }
-        // Append content for streaming text types
-        const existingContent = (existing.content as string) || '';
-        const newContent = (incoming.content as string) || '';
-        return {
-          ...existing,
-          content: existingContent + newContent,
-        };
-      }
-      case 'code': {
-        // Append content, preserve language/filename from first chunk
-        const existingContent = (existing.content as string) || '';
-        const newContent = (incoming.content as string) || '';
-        return {
-          ...existing,
-          content: existingContent + newContent,
-          // Only update language/filename if incoming has non-empty values
-          language: (incoming.language as string) || existing.language,
-          filename: (incoming.filename as string) || existing.filename,
-        };
-      }
-      case 'queue':
-      case 'plan':
-      case 'checkpoint':
-      case 'task':
-      case 'chart':
-      case 'sources':
-      case 'webPreview':
-      case 'artifact':
-      case 'citation':
-      case 'chainOfThought':
-      case 'choice':
-        // These arrive fully formed - replace with incoming data
-        return { ...incoming };
-      case 'toolInfo':
-        // The 'update' chunk carries the final status (completed/failed) that
-        // supersedes the initial 'running', but params (the tool-call args) are
-        // only sent on the initial 'add' — preserve them when the update omits them.
-        const existingStatus = (existing.status as string) || 'running';
-        const incomingStatus = (incoming.status as string) || existingStatus;
-        const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'failed';
-        return {
-          title: (incoming.title as string) || (existing.title as string) || '',
-          status: existingIsTerminal ? existingStatus : incomingStatus,
-          params: (incoming.params as string) || (existing.params as string) || '',
-          startedAt: (incoming.startedAt as string) || (existing.startedAt as string) || '',
-          resultJson: (incoming.resultJson as string) || (existing.resultJson as string) || '',
-        };
-      case 'sandbox':
-        // Sandbox: merge code from first chunk with output/error from update
-        return {
-          code: (incoming.code as string) || (existing.code as string) || '',
-          output: (incoming.output as string) || (existing.output as string) || '',
-          error: (incoming.error as string) || (existing.error as string) || '',
-          outputAvailable: incoming.outputAvailable ?? existing.outputAvailable ?? false,
-        };
-      default:
-        return { ...existing, ...incoming };
-    }
+    return this.componentBufferService.mergeComponentData(type, existing, incoming);
   }
 
   private mapTaskStatus(status: string | undefined): string {
-    return sharedMapTaskStatus(status);
+    return this.componentBufferService.mapTaskStatus(status);
   }
 
   private getErrorMessage(code: ErrorCode): string {

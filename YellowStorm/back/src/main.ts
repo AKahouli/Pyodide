@@ -125,6 +125,11 @@ async function bootstrap() {
   app.use(json({ limit: '10mb' }));
   app.use(urlencoded({ extended: true, limit: '10mb' }));
 
+  // Trust proxy — required so req.ip reflects the real client IP
+  // from a trusted reverse proxy rather than attacker-supplied headers.
+  const trustProxyValue = configService.get<string | number>('TRUST_PROXY', 1);
+  app.getHttpAdapter().getInstance().set('trust proxy', trustProxyValue);
+
   // Cookie Parser - Required for refresh token cookies
   app.use(cookieParser());
 

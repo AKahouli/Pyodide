@@ -13,7 +13,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHash } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
-import { Readable } from 'stream';
+import { Readable, PassThrough, Transform } from 'stream';
 import { LoggerService } from '../logger';
 import {
   UploadedDocument,
@@ -97,65 +97,163 @@ export class DocumentService {
     const folder = options.folder ? this.sanitizePath(options.folder) : '';
     const objectKey = folder ? `${folder}/${storedName}` : storedName;
 
-    let uploadData: Buffer;
-    if (file instanceof Buffer) {
-      uploadData = file;
-    } else {
-      uploadData = await this.streamToBuffer(file as Readable);
-    }
-
-    const size = uploadData.length;
-    if (size > this.maxFileSizeBytes) {
-      throw new BadRequestException(
-        `File size ${Math.round(size / 1024 / 1024)}MB exceeds maximum ${Math.round(
-          this.maxFileSizeBytes / 1024 / 1024,
-        )}MB`,
-      );
-    }
-
-    const contentHash = this.calculateHash(uploadData);
-
     const metadata: Record<string, string> = {
       originalname: encodeURIComponent(originalName),
       uploadedat: new Date().toISOString(),
-      contenthash: contentHash,
       ...this.normalizeMetadata(options.metadata),
     };
+
+    if (file instanceof Buffer) {
+      const size = file.length;
+      if (size > this.maxFileSizeBytes) {
+        throw new BadRequestException(
+          `File size ${Math.round(size / 1024 / 1024)}MB exceeds maximum ${Math.round(
+            this.maxFileSizeBytes / 1024 / 1024,
+          )}MB`,
+        );
+      }
+
+      metadata.contenthash = this.calculateHash(file);
+
+      try {
+        await this.getS3Client().send(
+          new PutObjectCommand({
+            Bucket: this.getBucket(),
+            Key: objectKey,
+            Body: file,
+            ContentType: mimeType,
+            CacheControl: 'max-age=31536000',
+            Metadata: metadata,
+          }),
+        );
+
+        this.logger.log('Document uploaded', {
+          id,
+          objectKey,
+          size,
+          mimeType,
+        });
+
+        return {
+          id,
+          originalName,
+          storedName,
+          blobPath: objectKey,
+          mimeType,
+          size,
+          contentHash: metadata.contenthash,
+          url: this.getObjectUrl(objectKey),
+          uploadedAt: new Date(),
+          metadata: options.metadata,
+        };
+      } catch (error) {
+        const err = error as Error;
+        this.logger.error('Failed to upload document', {
+          message: err.message,
+          objectKey,
+        });
+        throw new InternalServerException(err, 'Failed to upload document');
+      }
+    }
+
+    return this.uploadStream(file as Readable, originalName, mimeType, objectKey, metadata, options);
+  }
+
+  private async uploadStream(
+    stream: Readable,
+    originalName: string,
+    mimeType: string,
+    objectKey: string,
+    metadata: Record<string, string>,
+    options: UploadOptions,
+  ): Promise<UploadedDocument> {
+    let size = 0;
+    const maxBytes = this.maxFileSizeBytes;
+    const byteCounter = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        size += chunk.length;
+        if (size > maxBytes) {
+          callback(new BadRequestException(
+            `File size exceeds maximum ${Math.round(maxBytes / 1024 / 1024)}MB`,
+          ));
+          return;
+        }
+        callback(null, chunk);
+      },
+      highWaterMark: 65536,
+    });
+
+    const passThrough = new PassThrough({ highWaterMark: 65536 });
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), 300_000);
+
+    stream.on('error', (err) => {
+      passThrough.destroy(err);
+      abortController.abort();
+    });
+
+    stream.on('end', () => clearTimeout(timeout));
+
+    // Pipe errors do not auto-forward; surface size/transform failures on the Body stream
+    // so the S3 upload rejects with the original BadRequestException.
+    byteCounter.on('error', (err) => {
+      stream.unpipe(byteCounter);
+      stream.destroy();
+      passThrough.destroy(err);
+    });
+
+    stream.pipe(byteCounter).pipe(passThrough);
 
     try {
       await this.getS3Client().send(
         new PutObjectCommand({
           Bucket: this.getBucket(),
           Key: objectKey,
-          Body: uploadData,
+          Body: passThrough,
           ContentType: mimeType,
           CacheControl: 'max-age=31536000',
           Metadata: metadata,
         }),
+        { abortSignal: abortController.signal },
       );
 
-      this.logger.log('Document uploaded', {
-        id,
+      clearTimeout(timeout);
+
+      this.logger.log('Document uploaded via stream', {
         objectKey,
         size,
         mimeType,
       });
 
       return {
-        id,
+        id: objectKey.split('/').pop()?.split('-')[0] ?? '',
         originalName,
-        storedName,
+        storedName: objectKey.split('/').pop() ?? '',
         blobPath: objectKey,
         mimeType,
         size,
-        contentHash,
+        contentHash: '',
         url: this.getObjectUrl(objectKey),
         uploadedAt: new Date(),
         metadata: options.metadata,
       };
     } catch (error) {
+      clearTimeout(timeout);
+      byteCounter.destroy();
+      passThrough.destroy();
+      stream.destroy();
+
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
       const err = error as Error;
-      this.logger.error('Failed to upload document', {
+      if (err.name === 'AbortError') {
+        throw new BadRequestException(
+          'Upload timed out or was aborted',
+        );
+      }
+      this.logger.error('Failed to upload streamed document', {
         message: err.message,
         objectKey,
       });

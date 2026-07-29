@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsString,
   IsUrl,
@@ -7,12 +8,32 @@ import {
   IsObject,
 } from 'class-validator';
 
+/** Only Authorization may be forwarded to the download URL (SSRF / credential leak mitigation). */
+function pickIngestAuthHeaders(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const result: Record<string, string> = {};
+  for (const [key, headerValue] of Object.entries(value as Record<string, unknown>)) {
+    if (
+      key.toLowerCase() === 'authorization' &&
+      typeof headerValue === 'string' &&
+      headerValue.trim().length > 0
+    ) {
+      result.Authorization = headerValue;
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 export class IngestUrlDto {
   @ApiProperty({
-    description: 'URL to download the file from',
+    description: 'HTTPS URL to download the file from',
     example: 'https://example.sharepoint.com/download?token=abc',
   })
-  @IsUrl({ require_tld: false })
+  @IsUrl({ require_tld: true, protocols: ['https'] })
   downloadUrl!: string;
 
   @ApiProperty({
@@ -40,11 +61,13 @@ export class IngestUrlDto {
   mimeType?: string;
 
   @ApiPropertyOptional({
-    description: 'Authorization headers to include when downloading the file (e.g., Bearer token)',
+    description:
+      'Optional Authorization header for the download. Other header names are stripped. Credentials are not forwarded across cross-origin redirects.',
     example: { Authorization: 'Bearer eyJ...' },
   })
   @IsOptional()
   @IsObject()
+  @Transform(({ value }) => pickIngestAuthHeaders(value))
   authHeaders?: Record<string, string>;
 
   @ApiPropertyOptional({
