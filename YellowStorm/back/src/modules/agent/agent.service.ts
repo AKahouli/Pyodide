@@ -9,6 +9,7 @@ import { AgentShareService } from './services/agent-share.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { QueryAgentDto } from './dto/query-agent.dto';
+import { PublicQueryAgentDto } from './dto/public-query-agent.dto';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { NotFoundException, ConflictException, ForbiddenException, BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
@@ -36,6 +37,8 @@ import { normalizeWidgetSettings } from './constants/widget-default-settings';
 const MANAGER_SLUG = 'manager';
 /** Agent-type slug of the single default agent sent when no agent is tagged. */
 const MONO_AGENT_SLUG = 'mono-agent';
+/** Agent-type slug for human agents exposed to third-party integrations. */
+const HUMAIN_AGENT_TYPE_SLUG = 'humain';
 
 @Injectable()
 export class AgentService {
@@ -149,6 +152,62 @@ export class AgentService {
 
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
+    const skip = (page - 1) * limit;
+
+    const [agents, total] = await Promise.all([
+      this.agentModel
+        .find(filter)
+        .populate('agentType', 'name skills')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
+      this.agentModel.countDocuments(filter).exec(),
+    ]);
+
+    return new PaginatedResponseDto(
+      agents.map((a) => this.toResponse(a)),
+      total,
+      page,
+      limit,
+    );
+  }
+
+  /**
+   * Public listing for third-party integrations. Returns only agents of the
+   * "humain" agent type, with optional case-insensitive substring filters on
+   * name, role and description. The type constraint is fixed and cannot be
+   * overridden by the caller. If the "humain" agent type does not exist yet,
+   * an empty page is returned instead of an error.
+   */
+  async findHumainAgentsPublic(
+    query: PublicQueryAgentDto,
+  ): Promise<PaginatedResponseDto<IAgentResponse>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+
+    const humainType = await this.agentTypeService.findBySlug(HUMAIN_AGENT_TYPE_SLUG);
+    if (!humainType) {
+      return new PaginatedResponseDto([], 0, page, limit);
+    }
+
+    const filter: FilterQuery<AgentDocument> = {
+      agentType: new Types.ObjectId(humainType.id),
+    };
+
+    if (query.name) {
+      filter.name = { $regex: escapeRegex(query.name), $options: 'i' };
+    }
+
+    if (query.role) {
+      filter.role = { $regex: escapeRegex(query.role), $options: 'i' };
+    }
+
+    if (query.description) {
+      filter.description = { $regex: escapeRegex(query.description), $options: 'i' };
+    }
+
     const skip = (page - 1) * limit;
 
     const [agents, total] = await Promise.all([
