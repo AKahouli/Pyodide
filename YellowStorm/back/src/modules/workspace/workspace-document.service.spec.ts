@@ -753,6 +753,189 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
   });
 });
 
+describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', () => {
+  let service: WorkspaceDocumentService;
+  const mockLookup = lookup as jest.MockedFunction<typeof lookup>;
+  const mockedAxios = axios as jest.Mocked<typeof axios>;
+
+  beforeEach(async () => {
+    mockLookup.mockReset();
+    mockedAxios.get.mockReset();
+
+    const mod = await Test.createTestingModule({
+      providers: [
+        WorkspaceDocumentService,
+        { provide: getModelToken(WorkspaceDoc.name), useValue: { findByIdAndUpdate: jest.fn() } },
+        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: WorkspaceService, useValue: {} },
+        { provide: DocumentService, useValue: {} },
+        { provide: NotificationsService, useValue: {} },
+        { provide: IndexingService, useValue: {} },
+        { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
+        { provide: WorkspaceArtifactCleanupService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn() } },
+        { provide: ConfigService, useValue: { get: (_: string, dflt?: unknown) => dflt } },
+        {
+          provide: WorkspaceUploadSettingsService,
+          useValue: {
+            getAllowedExtensions: jest.fn().mockResolvedValue([...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS]),
+            getAllowedMimeTypesForExtension: jest.fn(() => []),
+            ensureDefaultSettings: jest.fn().mockResolvedValue(undefined),
+            getSettings: jest.fn().mockResolvedValue({ allowedExtensions: [...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS] }),
+          },
+        },
+        {
+          provide: LoggerService,
+          useValue: {
+            setContext: jest.fn(),
+            log: jest.fn(),
+            warn: jest.fn(),
+            error: jest.fn(),
+            debug: jest.fn(),
+          },
+        },
+      ],
+    }).compile();
+
+    service = mod.get(WorkspaceDocumentService);
+    jest.spyOn(service, 'uploadSmallFile').mockResolvedValue({
+      id: 'doc1',
+      originalName: 'file.bin',
+      size: 4,
+    } as any);
+  });
+
+  it('rejects private / loopback download URLs before calling axios', async () => {
+    mockLookup.mockResolvedValue([{ address: '169.254.169.254', family: 4 }] as any);
+
+    await expect(
+      service.ingestFromUrl(WS_ID, {
+        downloadUrl: 'https://metadata.example/latest/meta-data/',
+        filename: 'x.bin',
+        userId: USER_ID,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(mockedAxios.get).not.toHaveBeenCalled();
+  });
+
+  it('rejects plain HTTP ingest URLs', async () => {
+    mockLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }] as any);
+
+    await expect(
+      service.ingestFromUrl(WS_ID, {
+        downloadUrl: 'http://example.com/file.bin',
+        filename: 'x.bin',
+        userId: USER_ID,
+      }),
+    ).rejects.toThrow(/HTTPS/i);
+
+    expect(mockedAxios.get).not.toHaveBeenCalled();
+  });
+
+  it('forwards only Authorization and disables axios auto-redirects', async () => {
+    mockLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }] as any);
+    mockedAxios.get.mockResolvedValue({
+      status: 200,
+      data: Buffer.from('data'),
+      headers: { 'content-type': 'application/octet-stream' },
+    } as any);
+
+    await service.ingestFromUrl(WS_ID, {
+      downloadUrl: 'https://files.example.com/doc.bin',
+      filename: 'doc.bin',
+      userId: USER_ID,
+      authHeaders: {
+        Authorization: 'Bearer secret',
+        Cookie: 'session=abc',
+        'X-Custom': 'nope',
+      },
+    });
+
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://files.example.com/doc.bin',
+      expect.objectContaining({
+        maxRedirects: 0,
+        headers: { Authorization: 'Bearer secret' },
+      }),
+    );
+  });
+
+  it('re-validates redirect hops and strips Authorization on cross-origin redirects', async () => {
+    mockLookup.mockImplementation((hostname: unknown) => {
+      if (hostname === 'evil.internal') {
+        return Promise.resolve([{ address: '10.0.0.9', family: 4 }] as any);
+      }
+      return Promise.resolve([{ address: '93.184.216.34', family: 4 }] as any);
+    });
+
+    mockedAxios.get
+      .mockResolvedValueOnce({
+        status: 302,
+        headers: { location: 'https://cdn.example.com/file.bin' },
+        data: Buffer.alloc(0),
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/pdf' },
+        data: Buffer.from('%PDF'),
+      } as any);
+
+    await service.ingestFromUrl(WS_ID, {
+      downloadUrl: 'https://files.example.com/start',
+      filename: 'doc.pdf',
+      userId: USER_ID,
+      authHeaders: { Authorization: 'Bearer secret' },
+    });
+
+    expect(mockedAxios.get).toHaveBeenNthCalledWith(
+      1,
+      'https://files.example.com/start',
+      expect.objectContaining({
+        maxRedirects: 0,
+        headers: { Authorization: 'Bearer secret' },
+      }),
+    );
+    expect(mockedAxios.get).toHaveBeenNthCalledWith(
+      2,
+      'https://cdn.example.com/file.bin',
+      expect.objectContaining({
+        maxRedirects: 0,
+        headers: {},
+      }),
+    );
+  });
+
+  it('blocks a redirect hop that resolves to a private address', async () => {
+    mockLookup.mockImplementation((hostname: unknown) => {
+      if (hostname === 'evil.internal') {
+        return Promise.resolve([{ address: '10.0.0.9', family: 4 }] as any);
+      }
+      return Promise.resolve([{ address: '93.184.216.34', family: 4 }] as any);
+    });
+
+    mockedAxios.get.mockResolvedValueOnce({
+      status: 302,
+      headers: { location: 'https://evil.internal/secret' },
+      data: Buffer.alloc(0),
+    } as any);
+
+    await expect(
+      service.ingestFromUrl(WS_ID, {
+        downloadUrl: 'https://files.example.com/start',
+        filename: 'x.bin',
+        userId: USER_ID,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(mockedAxios.get).toHaveBeenCalledTimes(1);
+    expect(mockedAxios.get).not.toHaveBeenCalledWith(
+      'https://evil.internal/secret',
+      expect.anything(),
+    );
+  });
+});
+
 describe('WorkspaceDocumentService.addLinks sequencing', () => {
   let service: WorkspaceDocumentService;
   let documentModel: { create: jest.Mock; findByIdAndUpdate: jest.Mock };
