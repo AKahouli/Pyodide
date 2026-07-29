@@ -194,6 +194,14 @@ export class DocumentService {
 
     stream.on('end', () => clearTimeout(timeout));
 
+    // Pipe errors do not auto-forward; surface size/transform failures on the Body stream
+    // so the S3 upload rejects with the original BadRequestException.
+    byteCounter.on('error', (err) => {
+      stream.unpipe(byteCounter);
+      stream.destroy();
+      passThrough.destroy(err);
+    });
+
     stream.pipe(byteCounter).pipe(passThrough);
 
     try {
@@ -234,6 +242,10 @@ export class DocumentService {
       byteCounter.destroy();
       passThrough.destroy();
       stream.destroy();
+
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
 
       const err = error as Error;
       if (err.name === 'AbortError') {
