@@ -10,6 +10,7 @@ import { TaskDetailSheet } from './TaskDetailSheet';
 import { BudgetSheet } from './BudgetSheet';
 import { ApprovalSheet } from './ApprovalSheet';
 import { ManagerChatSheet } from './ManagerChatSheet';
+import { VoiceSession } from '../voice/VoiceSession';
 import { PlanDeltaToast } from '../PlanDeltaToast';
 
 /**
@@ -18,9 +19,9 @@ import { PlanDeltaToast } from '../PlanDeltaToast';
  * task / budget / approval / chat. All SSE wiring lives in the parent
  * WorkyStreamBody and runs for this branch too.
  *
- * NOTE (flag): `onVoice`/`onTalk` open the chat sheet for now — Phase D swaps
- * them to the turn-based voice session. The "More" tab opens the budget sheet
- * as an interim entry point.
+ * The voice button + banner mic open the turn-based voice session; Keyboard
+ * inside it falls back to the chat sheet. NOTE (flag): the "More" tab opens the
+ * budget sheet as an interim entry point until a full "more" menu exists.
  */
 export function WorkyMobileStream({
   streamId,
@@ -36,6 +37,8 @@ export function WorkyMobileStream({
   const setMobileTab = useWorkyUiStore((s) => s.setMobileTab);
   const activeSheet = useWorkyUiStore((s) => s.activeSheet);
   const setActiveSheet = useWorkyUiStore((s) => s.setActiveSheet);
+  const voiceOpen = useWorkyUiStore((s) => s.voiceOpen);
+  const setVoiceOpen = useWorkyUiStore((s) => s.setVoiceOpen);
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
 
   const openAgent = (agent: WorkyAgent): void => {
@@ -47,7 +50,7 @@ export function WorkyMobileStream({
     <div className="flex h-full w-full flex-col overflow-hidden">
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-3 pb-4">
         <div className="mb-4">
-          <ManagerVoiceBanner onTalk={() => setActiveSheet('chat')} />
+          <ManagerVoiceBanner onTalk={() => setVoiceOpen(true)} />
         </div>
         <AgentTeamView onOpenAgent={openAgent} />
       </div>
@@ -60,7 +63,7 @@ export function WorkyMobileStream({
             if (tab === 'chat') setActiveSheet('chat');
             else if (tab === 'more') setActiveSheet('budget');
           }}
-          onVoice={() => setActiveSheet('chat')}
+          onVoice={() => setVoiceOpen(true)}
           onHome={() => navigate('/worky')}
         />
       </div>
@@ -88,6 +91,12 @@ export function WorkyMobileStream({
         onOpenChange={(o) => {
           if (!o) onApprovalClose();
         }}
+      />
+      <VoiceSession
+        streamId={streamId}
+        open={voiceOpen}
+        onOpenChange={setVoiceOpen}
+        onKeyboard={() => setActiveSheet('chat')}
       />
       <PlanDeltaToast />
     </div>

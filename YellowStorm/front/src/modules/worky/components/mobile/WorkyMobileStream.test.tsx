@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { useWorkyUiStore } from '../../uiStore';
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
@@ -21,6 +23,9 @@ vi.mock('./BudgetSheet', () => ({ BudgetSheet: () => null }));
 vi.mock('./ApprovalSheet', () => ({ ApprovalSheet: () => null }));
 vi.mock('./ManagerChatSheet', () => ({ ManagerChatSheet: () => null }));
 vi.mock('../PlanDeltaToast', () => ({ PlanDeltaToast: () => null }));
+vi.mock('../voice/VoiceSession', () => ({
+  VoiceSession: ({ open }: { open: boolean }) => (open ? <div>voice-session-open</div> : null),
+}));
 
 import { useStreamAgents } from '../../agents/useStreamAgents';
 import { WorkyMobileStream } from './WorkyMobileStream';
@@ -30,6 +35,7 @@ const asMock = (fn: unknown) => fn as any;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useWorkyUiStore.getState().reset();
   asMock(useStreamAgents).mockReturnValue({
     agents: [
       {
@@ -59,5 +65,16 @@ describe('WorkyMobileStream', () => {
     expect(screen.getByText('Atlas')).toBeTruthy();
     expect(screen.getByText('nav.agents')).toBeTruthy();
     expect(screen.getByLabelText('nav.voice')).toBeTruthy();
+  });
+
+  it('opens the voice session from the nav voice button', async () => {
+    render(
+      <MemoryRouter>
+        <WorkyMobileStream streamId="s1" approvalFor={null} onApprovalClose={() => {}} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText('voice-session-open')).toBeNull();
+    await userEvent.click(screen.getByLabelText('nav.voice'));
+    expect(screen.getByText('voice-session-open')).toBeTruthy();
   });
 });
