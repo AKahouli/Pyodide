@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { AgentController } from './controllers/agent.controller';
+import { PublicAgentController } from './controllers/public-agent.controller';
 import { AdminAgentController } from './controllers/admin-agent.controller';
 import { AgentA2AController } from './controllers/agent-a2a.controller';
 import { AgentShareController } from './controllers/agent-share.controller';
@@ -51,7 +52,7 @@ import { PlaybookAssistantConnectorReconcilerService } from './services/playbook
     forwardRef(() => ConversationModule),
     forwardRef(() => UsageModule),
   ],
-  controllers: [AgentController, AdminAgentController, AgentA2AController, AgentShareController],
+  controllers: [AgentController, PublicAgentController, AdminAgentController, AgentA2AController, AgentShareController],
   providers: [AgentService, AgentShareService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, PlaybookAssistantConnectorReconcilerService],
   exports: [
     AgentService,

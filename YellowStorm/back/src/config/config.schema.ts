@@ -116,6 +116,9 @@ export const configValidationSchema = Joi.object({
   AUTH_REFRESH_TOKEN_COOKIE_NAME: Joi.string().default('refresh_token'),
   AUTH_COOKIE_SAME_SITE: Joi.string().valid('strict', 'lax', 'none').default('strict'),
 
+  // Third-party API key (static key for the public /agents endpoint, X-API-Key header)
+  THIRD_PARTY_API_KEY: Joi.string().min(8).optional(),
+
   // Microsoft OAuth
   MICROSOFT_CLIENT_ID: Joi.string().optional(),
   MICROSOFT_CLIENT_SECRET: Joi.string().optional(),
