@@ -846,6 +846,71 @@ async def test_run_step_with_tools_forwards_mcp_image_parts(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_run_step_with_tools_limits_total_mcp_images_across_iterations(monkeypatch):
+    from src.flow_engine.nodes.step_tools import run_step_with_tools
+
+    class _ManyMcpImagesTool:
+        name = "read_content"
+        description = "Read document images"
+        args_schema = _CalculatorArgs
+
+        async def ainvoke(self, args):
+            return {
+                "result": "images",
+                "__mcp_content_parts": [
+                    {
+                        "type": "image",
+                        "data": "YWJjMTIz",
+                        "mimeType": "image/png",
+                        "decodedByteSize": 6,
+                    }
+                    for _ in range(30)
+                ],
+            }
+
+    calls = []
+
+    async def _fake_acompletion(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) < 3:
+            return _ToolCallResponse(
+                "",
+                [{
+                    "id": f"call-{len(calls)}",
+                    "type": "function",
+                    "function": {
+                        "name": "read_content",
+                        "arguments": '{"expression":"ignored"}',
+                    },
+                }],
+            )
+        return _ToolCallResponse("Done.")
+
+    monkeypatch.setattr(
+        "src.flow_engine.nodes.step_tools.litellm.acompletion",
+        _fake_acompletion,
+    )
+
+    output = await run_step_with_tools(
+        model_id="gpt-test",
+        system_prompt="system",
+        user_msg="read the document",
+        tools=[_ManyMcpImagesTool()],
+    )
+
+    assert output == "Done."
+    final_messages = calls[2]["messages"]
+    image_blocks = [
+        block
+        for message in final_messages
+        if isinstance(message.get("content"), list)
+        for block in message["content"]
+        if isinstance(block, dict) and block.get("type") == "image_url"
+    ]
+    assert len(image_blocks) == 50
+
+
+@pytest.mark.anyio
 async def test_run_step_with_tools_keeps_parallel_tool_responses_adjacent(monkeypatch):
     from src.flow_engine.nodes.step_tools import run_step_with_tools
 
@@ -974,26 +1039,30 @@ async def test_run_step_deep_search_merges_dragged_and_returned_files(monkeypatc
             "workspace_id": workspace_id,
             "status": "ROUTED",
             "total_files": 3,
-            "files": [
-                {
-                    "file_name": "DOC-1-cv_kevin_diallo.PDF",
-                    "routing_decision": "ROUTE",
-                    "search_for": ["candidate CV"],
-                    "reason": "Candidate matches.",
-                },
-                {
-                    "file_name": "contract.pdf",
-                    "routing_decision": "ROUTE",
-                    "search_for": ["contractual penalties"],
-                    "reason": "Contract matches.",
-                },
-                {
-                    "file_name": "annex.pdf",
-                    "routing_decision": "ROUTE",
-                    "search_for": ["penalty schedule"],
-                    "reason": "Annex matches.",
-                },
-            ],
+            "files": {
+                "required": [
+                    {
+                        "file_name": "DOC-1-cv_kevin_diallo.PDF",
+                        "routing_decision": "ROUTE",
+                        "search_for": ["candidate CV"],
+                        "reason": "Candidate matches.",
+                    },
+                    {
+                        "file_name": "contract.pdf",
+                        "routing_decision": "ROUTE",
+                        "search_for": ["contractual penalties"],
+                        "reason": "Contract matches.",
+                    },
+                ],
+                "optional": [
+                    {
+                        "file_name": "annex.pdf",
+                        "routing_decision": "ROUTE",
+                        "search_for": ["penalty schedule"],
+                        "reason": "Annex matches.",
+                    },
+                ],
+            },
         }
 
     class _Chunk:
@@ -1034,7 +1103,10 @@ async def test_run_step_deep_search_merges_dragged_and_returned_files(monkeypatc
         state={
             "execution_id": "exec-1",
             "flow_id": "flow-1",
-            "inputs": {"__playbook_default_workspace_id": "workspace-default"},
+            "inputs": {
+                "query": "What penalties apply to late delivery?",
+                "__playbook_default_workspace_id": "workspace-default",
+            },
             "task_outputs": {},
             "iterations": {},
             "router_decisions": {},
@@ -1059,7 +1131,7 @@ async def test_run_step_deep_search_merges_dragged_and_returned_files(monkeypatc
         },
     )
 
-    assert captured_search["query"] == "Find the contractual penalties"
+    assert captured_search["query"] == "What penalties apply to late delivery?"
     assert captured_search["workspace_id"] == "workspace-1"
     assert captured_factory_kwargs["input_files"] == [
         "doc-1-CV_Kevin_Diallo.pdf",
@@ -1074,6 +1146,8 @@ async def test_run_step_deep_search_merges_dragged_and_returned_files(monkeypatc
     assert "<deep_search_routing_plan>" in llm_prompt
     assert '"file_name": "contract.pdf"' in llm_prompt
     assert '"search_for": ["contractual penalties"]' in llm_prompt
+    assert '"required": [' in llm_prompt
+    assert '"optional": [' in llm_prompt
     assert "Decide which exact file_name or file_names" in llm_prompt
 
 

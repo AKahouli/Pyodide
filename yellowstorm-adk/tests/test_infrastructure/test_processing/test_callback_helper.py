@@ -2,6 +2,7 @@
 
 import pytest
 import base64
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch, AsyncMock
 
 from src.smart_rag.infrastructure.processing.callback_helper import (
@@ -109,6 +110,36 @@ class TestCallbackHelper:
         assert llm_request.contents[0].parts[1].inline_data.mime_type == "image/png"
         assert llm_request.contents[0].parts[1].inline_data.data == b"\x89PNG\r\n\x1a\nfake"
         assert state["_pending_tool_images_response-1"] == []
+
+    def test_inject_images_before_model_limits_total_images_to_50(self):
+        """Test MCP forwarding uses only capacity left in the whole request."""
+        image_base64 = base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode("ascii")
+        image = {"mime": "image/png", "data": image_base64}
+        state = {
+            "_pending_tool_images_response-1": [image] * 30,
+            "_list_of_filenames_response-1": [f"first-{i}" for i in range(30)],
+            "_pending_tool_images_response-2": [image] * 21,
+            "_list_of_filenames_response-2": [f"second-{i}" for i in range(21)],
+        }
+        callback_context = MagicMock()
+        callback_context.state.to_dict.return_value = dict(state)
+        callback_context.state.get.side_effect = lambda key, default=None: state.get(
+            key, default
+        )
+        callback_context.state.__setitem__.side_effect = state.__setitem__
+        llm_request = MagicMock()
+        existing_image_part = SimpleNamespace(
+            inline_data=SimpleNamespace(mime_type="image/png")
+        )
+        llm_request.contents = [
+            SimpleNamespace(parts=[existing_image_part, existing_image_part])
+        ]
+
+        inject_images_before_model(callback_context, llm_request)
+
+        assert len(llm_request.contents) == 49
+        assert state["_pending_tool_images_response-1"] == []
+        assert state["_pending_tool_images_response-2"] == []
 
     def test_get_structured_context_multiple_events(self):
         """Test get_structured_context with multiple events."""

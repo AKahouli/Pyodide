@@ -5,8 +5,12 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 import httpx
+import structlog
 
 from src.config.settings import get_settings
+
+
+logger = structlog.get_logger(__name__)
 
 
 def merge_file_names(*groups: Iterable[str]) -> list[str]:
@@ -24,36 +28,116 @@ def merge_file_names(*groups: Iterable[str]) -> list[str]:
     return merged
 
 
+def _unwrap_response(payload: dict[str, Any]) -> dict[str, Any]:
+    """Unwrap common API response envelopes without discarding routing metadata."""
+    current = payload
+    for _ in range(3):
+        files = current.get("files")
+        if (
+            isinstance(files, list)
+            or (
+                isinstance(files, dict)
+                and any(isinstance(files.get(group), list) for group in ("required", "optional"))
+            )
+            or any(isinstance(current.get(key), list) for key in ("results", "documents"))
+        ):
+            return current
+        nested = next(
+            (
+                current.get(key)
+                for key in ("data", "result", "response")
+                if isinstance(current.get(key), dict)
+            ),
+            None,
+        )
+        if nested is None:
+            return current
+        current = nested
+    return current
+
+
 def normalize_response(payload: Any) -> dict[str, Any]:
     """Validate the routing response while preserving its LLM guidance."""
     if not isinstance(payload, dict):
         raise ValueError("Deep search response must be a JSON object")
 
-    # /api/query returns routing decisions under ``files``. Keep support for
-    # the former ``results`` response so rolling deployments remain compatible.
-    item_key = "files" if isinstance(payload.get("files"), list) else "results"
-    raw_items = payload.get(item_key)
-    if not isinstance(raw_items, list):
-        raise ValueError("Deep search response is missing a files list")
+    response = _unwrap_response(payload)
+    # Support both the routing API's ``files`` and the semantic-search API's
+    # historical ``results``/``documents`` names during rolling deployments.
+    raw_files = response.get("files")
+    grouped_files = isinstance(raw_files, dict)
+    item_key = "files" if grouped_files or isinstance(raw_files, list) else next(
+        (
+            key
+            for key in ("results", "documents")
+            if isinstance(response.get(key), list)
+        ),
+        "",
+    )
+    if grouped_files:
+        raw_groups = {
+            group: raw_files.get(group, [])
+            for group in ("required", "optional")
+        }
+        if not all(isinstance(items, list) for items in raw_groups.values()):
+            raw_groups = {}
+    else:
+        raw_items = response.get(item_key) if item_key else None
+        raw_groups = {"all": raw_items} if isinstance(raw_items, list) else {}
 
-    normalized_items: list[dict[str, Any]] = []
+    if not raw_groups:
+        top_level_keys = sorted(str(key) for key in payload)
+        response_keys = sorted(str(key) for key in response)
+        raise ValueError(
+            "Deep search response is missing a files/results list "
+            f"(top_level_keys={top_level_keys}, response_keys={response_keys})"
+        )
+
+    normalized_groups: dict[str, list[dict[str, Any]]] = {
+        group: [] for group in raw_groups
+    }
     seen: set[str] = set()
-    for item in raw_items:
-        if not isinstance(item, dict):
-            continue
-        file_name = str(item.get("file_name") or item.get("filename") or "").strip()
-        key = file_name.casefold()
-        if not file_name or key in seen:
-            continue
-        seen.add(key)
-        normalized_item = dict(item)
-        normalized_item["file_name"] = file_name
-        normalized_items.append(normalized_item)
+    for group, raw_items in raw_groups.items():
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            file_name = str(item.get("file_name") or item.get("filename") or "").strip()
+            key = file_name.casefold()
+            if not file_name or key in seen:
+                continue
+            seen.add(key)
+            normalized_item = dict(item)
+            normalized_item["file_name"] = file_name
+            normalized_groups[group].append(normalized_item)
 
-    normalized = dict(payload)
-    normalized[item_key] = normalized_items
-    normalized["total_files"] = len(normalized_items)
+    normalized = dict(response)
+    if grouped_files:
+        # Preserve required/optional routing guidance for the LLM.
+        normalized["files"] = normalized_groups
+    else:
+        normalized_items = normalized_groups["all"]
+        # Expose one stable key to callers of historical flat responses.
+        normalized["files"] = normalized_items
+        if item_key != "files":
+            normalized[item_key] = normalized_items
+    normalized["total_files"] = sum(len(items) for items in normalized_groups.values())
     return normalized
+
+
+def routed_file_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return all required and optional routed files in priority order."""
+    files = payload.get("files")
+    if isinstance(files, list):
+        return [item for item in files if isinstance(item, dict)]
+    if isinstance(files, dict):
+        return [
+            item
+            for group in ("required", "optional")
+            for item in files.get(group, [])
+            if isinstance(item, dict)
+        ]
+    results = payload.get("results")
+    return [item for item in results if isinstance(item, dict)] if isinstance(results, list) else []
 
 
 async def search_relevant_documents(
@@ -77,7 +161,16 @@ async def search_relevant_documents(
         "workspace_id": resolved_workspace_id,
         "query": str(query or "").strip(),
     }
+    if not request_payload["query"]:
+        raise RuntimeError("A query is required when deep search is enabled")
+
     timeout = float(getattr(settings, "DEEP_SEARCH_TIMEOUT_SECONDS", 30.0) or 30.0)
+    logger.info(
+        "deep_search_request",
+        endpoint=f"{base_url.rstrip('/')}/api/query",
+        query=request_payload["query"],
+        workspace_id=resolved_workspace_id,
+    )
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
@@ -90,6 +183,15 @@ async def search_relevant_documents(
             )
             response.raise_for_status()
             payload = response.json()
+            logger.info(
+                "deep_search_response",
+                status_code=getattr(response, "status_code", None),
+                top_level_keys=sorted(str(key) for key in payload)
+                if isinstance(payload, dict)
+                else [],
+                response_type=type(payload).__name__,
+                workspace_id=resolved_workspace_id,
+            )
     except httpx.HTTPError as exc:
         raise RuntimeError(f"Deep search request failed: {exc}") from exc
     except ValueError as exc:
