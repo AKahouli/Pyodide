@@ -32,6 +32,8 @@
   "dashboard.kpi.attention": "Attention requise",
   "sidebar.title": "Worky",
   "sidebar.subtitle": "Flux Chief of Staff",
+  "sidebar.collapse": "Réduire la barre latérale",
+  "sidebar.expand": "Développer la barre latérale",
   "sidebar.searchPlaceholder": "Rechercher des flux",
   "sidebar.newStream": "Nouveau flux",
   "sidebar.newStreamPlaceholder": "Titre du flux",
