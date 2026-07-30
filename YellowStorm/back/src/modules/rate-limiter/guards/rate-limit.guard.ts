@@ -5,9 +5,10 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request, Response } from 'express';
+import { getClientIp } from '@common/utils';
 import { RateLimiterService } from '../rate-limiter.service';
 import { RATE_LIMIT_KEY, RateLimitMetadata } from '../decorators/rate-limit.decorator';
-import { TooManyRequestsException, ErrorCode } from '../../exceptions';
+import { TooManyRequestsException } from '../../exceptions';
 
 interface AuthenticatedRequest extends Request {
   user?: { sub?: string; id?: string };
@@ -58,25 +59,10 @@ export class RateLimitGuard implements CanActivate {
 
   private getIdentifier(request: AuthenticatedRequest, context: ExecutionContext): string {
     const userId = request.user?.sub ?? request.user?.id;
-    const ip = this.getClientIp(request);
+    const ip = getClientIp(request);
     const endpoint = `${request.method}:${context.getClass().name}:${context.getHandler().name}`;
 
     return this.rateLimiterService.generateKey(userId, ip, endpoint);
-  }
-
-  private getClientIp(request: Request): string {
-    const forwardedFor = request.headers['x-forwarded-for'];
-    if (forwardedFor) {
-      const ips = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
-      return ips.split(',')[0].trim();
-    }
-
-    const realIp = request.headers['x-real-ip'];
-    if (realIp) {
-      return Array.isArray(realIp) ? realIp[0] : realIp;
-    }
-
-    return request.ip ?? request.socket.remoteAddress ?? 'unknown';
   }
 
   private setHeaders(

@@ -10,7 +10,11 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
-import { decodeMultipartFilename } from '@common/utils';
+import {
+  decodeMultipartFilename,
+  MULTIPART_SMALL_FILE_MAX_BYTES,
+  multipartFileInterceptorOptions,
+} from '@common/utils';
 import { ConversationService } from '../services/conversation.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import {
@@ -72,7 +76,9 @@ export class ConversationFileController {
   }
 
   @Post('upload')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', multipartFileInterceptorOptions(MULTIPART_SMALL_FILE_MAX_BYTES)),
+  )
   async uploadSmallFile(
     @CurrentUser() user: { _id: string },
     @Param('conversationId') conversationId: string,

@@ -61,7 +61,6 @@ import {
   FlowLlmPromptTraceItem,
   FlowUsageSummary,
   FlowSemanticMatchSummary,
-  FlowCompletedResultPayload,
 } from '../interfaces/playbook-flow-observability.interface';
 import { PublicReasoningTraceItem } from '../interfaces/playbook-flow-reasoning.interface';
 import { PlaybookFlowReplayPostRunEvaluationService } from './playbook-flow-replay-post-run-evaluation.service';
@@ -75,6 +74,11 @@ import { PlaybookExecutionDispatcherService } from '../execution/runtime/playboo
 import { PlaybookExecutionEventHandlerService } from '../execution/runtime/playbook-execution-event-handler.service';
 import { PlaybookExecutionReplayRuntimeService } from '../execution/runtime/playbook-execution-replay-runtime.service';
 import { PlaybookExecutionStreamFinalizerService } from '../execution/runtime/playbook-execution-stream-finalizer.service';
+import { PlaybookExecutionHitlResumeService } from '../execution/runtime/playbook-execution-hitl-resume.service';
+import {
+  PlaybookExecutionSingleStepPrepService,
+  SeededTaskOutput,
+} from '../execution/runtime/playbook-execution-single-step-prep.service';
 import { FlowHitlMemory, FlowHitlMemoryDocument } from '../schemas/playbook-flow-hitl-memory.schema';
 import { FlowAccessService } from '../domain/flow-access.service';
 
@@ -103,10 +107,6 @@ function stripRuntimeAgentMetadata(metadata: Record<string, unknown>): Record<st
     delete sanitizedMetadata[key];
   }
   return sanitizedMetadata;
-}
-
-function isNodeEnabled(node: Pick<FlowNode, 'metadata'>): boolean {
-  return node.metadata?.enabled !== false;
 }
 
 function getConnectorIdsFromRuntimeBindings(bindings: unknown): Set<string> {
@@ -178,14 +178,6 @@ export function buildGrpcNodeMetadata(node: Record<string, unknown>, snapshot: R
   };
 }
 
-const SINGLE_STEP_UNSUPPORTED_MESSAGE = 'Single-step execution only supports step nodes outside iterators. Dependent nodes require completed upstream results.';
-
-interface SeededTaskOutput {
-  nodeId: string;
-  iteration: number;
-  payload: FlowCompletedResultPayload;
-}
-
 interface RuntimeHitlMemory {
   id: string;
   node_id: string | null;
@@ -211,6 +203,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   private fallbackExecutionDispatcherService?: PlaybookExecutionDispatcherService;
   private fallbackEventHandlerService?: PlaybookExecutionEventHandlerService;
   private fallbackReplayRuntimeService?: PlaybookExecutionReplayRuntimeService;
+  private fallbackSingleStepPrepService?: PlaybookExecutionSingleStepPrepService;
 
   constructor(
     @InjectModel(FlowExecution.name)
@@ -256,7 +249,32 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     @InjectModel(FlowHitlMemory.name)
     private readonly hitlMemoryModel?: Model<FlowHitlMemoryDocument>,
     @Optional() private readonly accessService?: FlowAccessService,
-  ) {}
+    @Optional() private readonly hitlResumeService?: PlaybookExecutionHitlResumeService,
+    @Optional() private readonly singleStepPrepService?: PlaybookExecutionSingleStepPrepService,
+  ) {
+    this.hitlResumeService?.bindExecutionHost({
+      isRuntimeAvailable: () => this.isRuntimeAvailable(),
+      resumeApprovalRuntime: (request, callback) => this.resumeApprovalRuntime(request, callback),
+      resumeFromStepRuntime: (request, callback) => this.resumeFromStepRuntime(request, callback),
+      startDurableResumeStream: (execution, resumePayload) => {
+        this.callGrpcRun(
+          String(execution._id),
+          String(execution.flowId),
+          String(execution.ownerId),
+          null,
+          {
+            ...(execution.inputContext ?? {}),
+            __playbook_resume: resumePayload,
+          },
+          execution.snapshot,
+        ).catch((err) => {
+          this.logger.error(
+            `Durable HITL resume stream failed for execution ${String(execution._id)}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      },
+    });
+  }
 
   private requireAccessService(): FlowAccessService {
     if (!this.accessService) {
@@ -716,11 +734,17 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     this.playbookFlowClient?.Cancel?.(request, callback) ?? this.runtimeClient.cancel(request, callback);
   }
 
-  private resumeApprovalRuntime(request: Record<string, unknown>, callback: (err: Error | null) => void): void {
+  private resumeApprovalRuntime(
+    request: Record<string, unknown>,
+    callback: (err: Error | null, response?: { resumed?: boolean }) => void,
+  ): void {
     this.playbookFlowClient?.ResumeApproval?.(request, callback) ?? this.runtimeClient.resumeApproval(request, callback);
   }
 
-  private resumeFromStepRuntime(request: Record<string, unknown>, callback: (err: Error | null) => void): void {
+  private resumeFromStepRuntime(
+    request: Record<string, unknown>,
+    callback: (err: Error | null, response?: { resumed?: boolean }) => void,
+  ): void {
     this.playbookFlowClient?.ResumeFromStep?.(request, callback) ?? this.runtimeClient.resumeFromStep(request, callback);
   }
 
@@ -966,72 +990,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     nodes: FlowNode[],
     singleStepTaskId: string,
   ): void {
-    const targetNode = nodes.find((node) => node.id === singleStepTaskId);
-    if (!targetNode) {
-      throw new BadRequestException(
-        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
-        `Single-step target node ${singleStepTaskId} not found`,
-      );
-    }
-
-    if (!isNodeEnabled(targetNode)) {
-      throw new BadRequestException(
-        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
-        `Single-step target node ${singleStepTaskId} is disabled`,
-      );
-    }
-
-    const kind = targetNode.kind;
-    const containerConfig = (targetNode.metadata as { containerConfig?: { parentIteratorId?: string | null } } | undefined)?.containerConfig;
-
-    if (kind !== 'step' || containerConfig?.parentIteratorId) {
-      throw new BadRequestException(
-        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
-        SINGLE_STEP_UNSUPPORTED_MESSAGE,
-      );
-    }
+    this.requireSingleStepPrepService().assertSingleStepSupported(nodes, singleStepTaskId);
   }
 
   private buildExecutableSnapshot(snapshot: FlowSnapshot, flowId: string): FlowSnapshot {
-    const nodes = snapshot.nodes ?? [];
-    const controlEdges = snapshot.controlEdges ?? [];
-    const dataBindings = snapshot.dataBindings ?? [];
-
-    const enabledNodes = nodes.filter((node) => {
-      const enabled = isNodeEnabled(node);
-      if (!enabled) {
-        this.logger.warn(`Dropping disabled node ${node.id} from execution snapshot for flow ${flowId}`);
-      }
-      return enabled;
-    });
-
-    if (enabledNodes.length === nodes.length) {
-      return snapshot;
-    }
-
-    const enabledNodeIds = new Set(enabledNodes.map((node) => node.id));
-    const executableControlEdges = controlEdges.filter((edge) => {
-      const keep = enabledNodeIds.has(edge.source) && enabledNodeIds.has(edge.target);
-      if (!keep) {
-        this.logger.warn(`Dropping control edge ${edge.id} from execution snapshot because it references a disabled node`);
-      }
-      return keep;
-    });
-    const executableDataBindings = dataBindings.filter((binding) => {
-      const keep = enabledNodeIds.has(binding.targetNode)
-        && (binding.sourceNode ? enabledNodeIds.has(binding.sourceNode) : true);
-      if (!keep) {
-        this.logger.warn(`Dropping data binding ${binding.id} from execution snapshot because it references a disabled node`);
-      }
-      return keep;
-    });
-
-    return {
-      ...snapshot,
-      nodes: enabledNodes,
-      controlEdges: executableControlEdges,
-      dataBindings: executableDataBindings,
-    };
+    return this.requireSingleStepPrepService().buildExecutableSnapshot(snapshot, flowId);
   }
 
   /**
@@ -1116,22 +1079,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     controlEdges: ControlEdge[],
     singleStepTaskId: string,
   ): void {
-    const incomingEdges = controlEdges.filter((edge) => edge.target === singleStepTaskId);
-    const unsupportedEdge = incomingEdges.find((edge) => {
-      if (edge.kind !== 'sequential') {
-        return true;
-      }
-
-      const sourceNode = nodes.find((node) => node.id === edge.source);
-      return !sourceNode || sourceNode.kind !== 'step';
-    });
-
-    if (unsupportedEdge) {
-      throw new BadRequestException(
-        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
-        'Single-step execution only supports nodes reached by sequential step dependencies.',
-      );
-    }
+    this.requireSingleStepPrepService().assertSingleStepControlDependenciesSupported(
+      nodes,
+      controlEdges,
+      singleStepTaskId,
+    );
   }
 
   private async buildSeededTaskOutputsForSingleStep(
@@ -1141,132 +1093,24 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     currentSnapshot: FlowSnapshot,
     bindings: DataBinding[],
   ): Promise<SeededTaskOutput[]> {
-    const requiredBindingHistory = new Map<string, number>();
-    for (const binding of bindings) {
-      if (binding.sourceKind !== 'node-output' || typeof binding.sourceNode !== 'string' || !binding.sourceNode.trim()) {
-        continue;
-      }
-
-      const sourceNodeId = binding.sourceNode.trim();
-      const requiredCount = binding.iteration === 'previous' ? 2 : 1;
-      requiredBindingHistory.set(sourceNodeId, Math.max(requiredBindingHistory.get(sourceNodeId) ?? 0, requiredCount));
-    }
-
-    const requiredSourceNodeIds = [...requiredBindingHistory.keys()];
-
-    if (requiredSourceNodeIds.length === 0) {
-      return [];
-    }
-
-    const currentSnapshotNodes = Array.isArray(currentSnapshot.nodes)
-      ? currentSnapshot.nodes as unknown as Array<Record<string, unknown>>
-      : [];
-
-    const completedExecutions = await this.executionModel.find({
+    return this.requireSingleStepPrepService().buildSeededTaskOutputsForSingleStep(
       flowId,
       ownerId,
-      status: 'completed',
-    }).select('+snapshot').sort({ createdAt: -1 }).limit(20).lean().exec();
-
-    let matchingExecution: Record<string, unknown> | null = null;
-    for (const exec of completedExecutions) {
-      const execSnapshot = (exec as Record<string, unknown>).snapshot;
-      const execSnapshotNodes = Array.isArray(execSnapshot && (execSnapshot as Record<string, unknown>).nodes)
-        ? ((execSnapshot as Record<string, unknown>).nodes as Array<Record<string, unknown>>)
-        : [];
-      const allUpstreamMatch = requiredSourceNodeIds.every((sourceNodeId) => {
-        const priorNode = execSnapshotNodes.find((node) => node.id === sourceNodeId);
-        const currentNode = currentSnapshotNodes.find((node) => node.id === sourceNodeId);
-        return priorNode && currentNode && JSON.stringify(priorNode) === JSON.stringify(currentNode);
-      });
-      if (allUpstreamMatch) {
-        matchingExecution = exec as unknown as Record<string, unknown>;
-        break;
-      }
-    }
-
-    if (!matchingExecution) {
-      throw new BadRequestException(
-        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
-        `Single-step execution for node ${singleStepTaskId} requires a previous completed execution with matching upstream node snapshots.`,
-      );
-    }
-
-    const taskResults = await this.taskResultModel.find({
-      executionId: matchingExecution._id?.toString() ?? matchingExecution.id,
-      taskId: { $in: requiredSourceNodeIds },
-      status: 'completed',
-    }).sort({ iteration: -1, endedAt: -1 }).lean().exec();
-
-    const resultsByTaskId = new Map<string, Array<Record<string, unknown>>>();
-    for (const result of taskResults) {
-      const existing = resultsByTaskId.get(result.taskId) ?? [];
-      existing.push(result as unknown as Record<string, unknown>);
-      resultsByTaskId.set(result.taskId, existing);
-    }
-
-    const missingSourceNodeIds = requiredSourceNodeIds.filter((taskId) => {
-      const requiredCount = requiredBindingHistory.get(taskId) ?? 1;
-      return (resultsByTaskId.get(taskId)?.length ?? 0) < requiredCount;
-    });
-    if (missingSourceNodeIds.length > 0) {
-      throw new BadRequestException(
-        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
-        `Single-step execution for node ${singleStepTaskId} requires completed upstream results for: ${missingSourceNodeIds.join(', ')}`,
-      );
-    }
-
-    return requiredSourceNodeIds.flatMap((taskId) => {
-      const requiredCount = requiredBindingHistory.get(taskId) ?? 1;
-      const results = (resultsByTaskId.get(taskId) ?? []).slice(0, requiredCount);
-      return results.map((result) => ({
-        nodeId: taskId,
-        iteration: Number(result.iteration ?? 0),
-        payload: this.mapTaskResultToSeedPayload(result),
-      }));
-    });
+      singleStepTaskId,
+      currentSnapshot,
+      bindings,
+    );
   }
 
-  private mapTaskResultToSeedPayload(result: Record<string, unknown>): FlowCompletedResultPayload {
-    const displayText = typeof result.displayText === 'string' ? result.displayText : undefined;
-    const rawOutput = result.output;
-    const output = typeof rawOutput === 'string'
-      ? rawOutput
-      : displayText && displayText.length > 0
-        ? displayText
-        : JSON.stringify(rawOutput ?? '');
-
-    const outputRecord = rawOutput && typeof rawOutput === 'object'
-      ? rawOutput as Record<string, unknown>
-      : null;
-
-    let outputs: Record<string, unknown> | undefined;
-    if (result.outputs && typeof result.outputs === 'object') {
-      outputs = result.outputs as Record<string, unknown>;
-    } else if (outputRecord && typeof outputRecord.outputs === 'object' && outputRecord.outputs !== null) {
-      outputs = outputRecord.outputs as Record<string, unknown>;
-    } else if (typeof result.output === 'string') {
-      try {
-        const parsed = JSON.parse(result.output);
-        if (parsed && typeof parsed === 'object' && parsed.outputs && typeof parsed.outputs === 'object') {
-          outputs = parsed.outputs as Record<string, unknown>;
-        }
-      } catch { /* not JSON or no outputs field */ }
+  private requireSingleStepPrepService(): PlaybookExecutionSingleStepPrepService {
+    if (this.singleStepPrepService) {
+      return this.singleStepPrepService;
     }
-
-    return {
-      output,
-      ...(displayText ? { displayText } : {}),
-      ...(outputs ? { outputs } : {}),
-      ...(Array.isArray(result.artifacts) ? { artifacts: result.artifacts as Array<Record<string, unknown>> } : {}),
-      ...(Array.isArray(result.components) ? { components: result.components as Array<Record<string, unknown>> } : {}),
-      ...(Array.isArray(result.toolTrace) ? { toolTrace: result.toolTrace as unknown as FlowToolTraceItem[] } : {}),
-      ...(Array.isArray(result.reasoningChain) ? { reasoningChain: result.reasoningChain as PublicReasoningTraceItem[] } : {}),
-      ...(Array.isArray(result.llmPromptTrace) ? { llmPromptTrace: result.llmPromptTrace as unknown as FlowLlmPromptTraceItem[] } : {}),
-      ...(result.usage ? { usage: result.usage as FlowUsageSummary } : {}),
-      ...(result.semanticMatch ? { semanticMatch: result.semanticMatch as FlowSemanticMatchSummary } : {}),
-      ...(result.traceMetadata ? { traceMetadata: result.traceMetadata as Record<string, unknown> } : {}),
-    };
+    this.fallbackSingleStepPrepService ??= new PlaybookExecutionSingleStepPrepService(
+      this.executionModel,
+      this.taskResultModel,
+    );
+    return this.fallbackSingleStepPrepService;
   }
 
   private async callGrpcRun(
@@ -2066,125 +1910,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     ownerId: string,
     payload: IResumeApprovalPayload,
   ): Promise<IFlowExecutionResponse> {
-    const execution = await this.findExecutionWithSnapshot(executionId);
-    if (!execution) {
-      throw new NotFoundException(
-        ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
-        'Execution not found',
-      );
-    }
-    if (String(execution.ownerId) !== String(ownerId)) {
-      await this.requireAccessService().assertExecutionAccess(String(execution.flowId), ownerId, 'write');
-    }
-    if (execution.status !== 'pending_approval') {
-      throw new BadRequestException(
-        ErrorCode.PLAYBOOK_FLOW_APPROVAL_NOT_FOUND,
-        'No pending approval for this execution',
-      );
-    }
-
-    if (!this.isRuntimeAvailable()) {
-      throw new ServiceUnavailableException(
-        ErrorCode.PLAYBOOK_FLOW_GRPC_UNAVAILABLE,
-        'Flow runtime is currently unavailable',
-      );
-    }
-
-    const resumed = await new Promise<boolean>((resolve, reject) => {
-      this.resumeApprovalRuntime(
-        {
-          execution_id: executionId,
-          decision: payload.decision,
-          payload: toGrpcStruct(payload.payload || {}),
-        },
-        (err: Error | null, response?: { resumed?: boolean }) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          resolve(Boolean(response?.resumed));
-        },
-      );
-    });
-
-    if (!resumed) {
-      const restarted = await this.restartDurableApprovalResume({
-        execution,
-        executionId,
-        ownerId,
-        resumePayload: { decision: payload.decision, payload: payload.payload || {} },
-        response: {
-          action: payload.decision,
-          ...(payload.payload ?? {}),
-        },
-      });
-      if (restarted) {
-        return restarted;
-      }
-      throw new ConflictException(
-        ErrorCode.CONFLICT,
-        'Execution could not be resumed because the runtime no longer has the pending approval state.',
-      );
-    }
-
-    const resumeUpdate = await this.executionModel.updateOne(
-      { _id: executionId, status: 'pending_approval' },
-      {
-        $set: {
-          status: 'running',
-          pendingApproval: null,
-          'hitlEvents.$[event].status': 'answered',
-          'hitlEvents.$[event].response': {
-            action: payload.decision,
-            ...(payload.payload ?? {}),
-          },
-          'hitlEvents.$[event].respondedAt': new Date(),
-        },
-      },
-      { arrayFilters: [{ 'event.interruptId': execution.pendingApproval?.interruptId ?? '' }] },
-    ).exec();
-
-    if (!(resumeUpdate as { modifiedCount?: number }).modifiedCount) {
-      const latestExecution = await this.executionModel.findById(executionId);
-      if (!latestExecution) {
-        throw new NotFoundException(
-          ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
-          'Execution not found',
-        );
-      }
-      return latestExecution.toJSON() as unknown as IFlowExecutionResponse;
-    }
-
-    const resolvedApproval = execution.pendingApproval;
-    await this.createFutureHitlMemoryIfRequested({
-      executionId,
-      ownerId,
-      flowId: String(execution.flowId),
-      taskId: resolvedApproval?.nodeId ?? '',
-      interruptId: resolvedApproval?.interruptId ?? '',
-      interruptType: resolvedApproval?.interruptType ?? 'approval_request',
-      taskTitle: resolvedApproval?.taskTitle,
-      response: {
-        action: payload.decision,
-        message: typeof payload.payload?.message === 'string' ? payload.payload.message : null,
-        feedback: typeof payload.payload?.feedback === 'string' ? payload.payload.feedback : null,
-        reason: typeof payload.payload?.reason === 'string' ? payload.payload.reason : null,
-        scope: typeof payload.payload?.scope === 'string'
-          ? payload.payload.scope
-          : resolvedApproval?.feedbackScopeDefault ?? 'step_only',
-        remember: payload.payload?.remember === true,
-      },
-      riskLevel: resolvedApproval?.riskLevel,
-    });
-    execution.pendingApproval = null;
-    execution.status = 'running';
-    this.streamEvents.emitHitlInterruptResolved(executionId, resolvedApproval?.interruptId ?? '', {
-      action: payload.decision,
-      taskId: resolvedApproval?.nodeId,
-      scope: typeof payload.payload?.scope === 'string' ? payload.payload.scope : undefined,
-      remember: payload.payload?.remember === true ? true : undefined,
-    });
-    return execution.toJSON() as unknown as IFlowExecutionResponse;
+    return this.requireHitlResumeService().resumeApproval(executionId, ownerId, payload);
   }
 
   async resumeFromStep(
@@ -2192,158 +1918,14 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     ownerId: string,
     payload: IResumeFromStepPayload,
   ): Promise<IFlowExecutionResponse> {
-    const execution = await this.findExecutionWithSnapshot(executionId);
-    if (!execution) {
-      throw new NotFoundException(
-        ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
-        'Execution not found',
-      );
-    }
-    if (String(execution.ownerId) !== String(ownerId)) {
-      throw new NotFoundException(
-        ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
-        'Execution not found',
-      );
-    }
-    if (execution.status !== 'pending_approval' || !execution.pendingApproval) {
-      throw new BadRequestException(
-        ErrorCode.PLAYBOOK_FLOW_APPROVAL_NOT_FOUND,
-        'No pending approval for this execution',
-      );
-    }
-    if (execution.pendingApproval.nodeId !== payload.taskId) {
-      throw new ConflictException(
-        ErrorCode.CONFLICT,
-        'Execution is waiting on a different step interrupt.',
-      );
-    }
+    return this.requireHitlResumeService().resumeFromStep(executionId, ownerId, payload);
+  }
 
-    if (!this.isRuntimeAvailable()) {
-      throw new ServiceUnavailableException(
-        ErrorCode.PLAYBOOK_FLOW_GRPC_UNAVAILABLE,
-        'Flow runtime is currently unavailable',
-      );
+  private requireHitlResumeService(): PlaybookExecutionHitlResumeService {
+    if (!this.hitlResumeService) {
+      throw new Error('PlaybookExecutionHitlResumeService is required for HITL resume');
     }
-
-    const resumePayload = {
-      ...(payload.payload || {}),
-      ...(payload.action ? { action: payload.action } : {}),
-      ...(payload.message ? { message: payload.message } : {}),
-      ...(payload.approved !== undefined ? { approved: payload.approved } : {}),
-      ...(payload.reason ? { reason: payload.reason } : {}),
-      ...(payload.feedback ? { feedback: payload.feedback } : {}),
-      ...(payload.scope ? { scope: payload.scope } : {}),
-      ...(payload.remember !== undefined ? { remember: payload.remember } : {}),
-    };
-
-    const resumed = await new Promise<boolean>((resolve, reject) => {
-      this.resumeFromStepRuntime(
-        {
-          execution_id: executionId,
-          node_id: payload.taskId,
-          iteration: payload.iteration ?? execution.pendingApproval?.iteration ?? 0,
-          interrupt_id: payload.interruptId || '',
-          action: payload.action || '',
-          payload: toGrpcStruct(resumePayload),
-        },
-        (err: Error | null, response?: { resumed?: boolean }) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          resolve(Boolean(response?.resumed));
-        },
-      );
-    });
-
-    if (!resumed) {
-      const restarted = await this.restartDurableStepResume({
-        execution,
-        executionId,
-        ownerId,
-        taskId: payload.taskId,
-        interruptId: payload.interruptId || execution.pendingApproval.interruptId || '',
-        resumePayload,
-        response: {
-          action: payload.action ?? 'reply',
-          message: payload.message ?? null,
-          approved: payload.approved ?? null,
-          reason: payload.reason ?? null,
-          feedback: payload.feedback ?? null,
-          scope: payload.scope ?? execution.pendingApproval.feedbackScopeDefault ?? 'step_only',
-          remember: payload.remember ?? false,
-        },
-      });
-      if (restarted) {
-        return restarted;
-      }
-      throw new ConflictException(
-        ErrorCode.CONFLICT,
-        'Execution could not be resumed because the runtime no longer has the pending step interrupt state.',
-      );
-    }
-
-    const resumeUpdate = await this.executionModel.updateOne(
-      { _id: executionId, status: 'pending_approval' },
-      {
-        $set: {
-          status: 'running',
-          pendingApproval: null,
-          'hitlEvents.$[event].status': 'answered',
-          'hitlEvents.$[event].response': {
-            action: payload.action ?? 'reply',
-            message: payload.message ?? null,
-            approved: payload.approved ?? null,
-            reason: payload.reason ?? null,
-            feedback: payload.feedback ?? null,
-            scope: payload.scope ?? execution.pendingApproval.feedbackScopeDefault ?? 'step_only',
-            remember: payload.remember ?? false,
-          },
-          'hitlEvents.$[event].respondedAt': new Date(),
-        },
-      },
-      { arrayFilters: [{ 'event.interruptId': payload.interruptId || execution.pendingApproval.interruptId || '' }] },
-    ).exec();
-
-    if (!(resumeUpdate as { modifiedCount?: number }).modifiedCount) {
-      const latestExecution = await this.executionModel.findById(executionId);
-      if (!latestExecution) {
-        throw new NotFoundException(
-          ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
-          'Execution not found',
-        );
-      }
-      return latestExecution.toJSON() as unknown as IFlowExecutionResponse;
-    }
-
-    const resolvedApproval = execution.pendingApproval;
-    await this.createFutureHitlMemoryIfRequested({
-      executionId,
-      ownerId,
-      flowId: String(execution.flowId),
-      taskId: payload.taskId,
-      interruptId: payload.interruptId || resolvedApproval?.interruptId || '',
-      interruptType: resolvedApproval?.interruptType,
-      taskTitle: resolvedApproval?.taskTitle,
-      response: {
-        action: payload.action ?? 'reply',
-        message: payload.message ?? null,
-        feedback: payload.feedback ?? null,
-        reason: payload.reason ?? null,
-        scope: payload.scope ?? resolvedApproval?.feedbackScopeDefault ?? 'step_only',
-        remember: payload.remember ?? false,
-      },
-      riskLevel: resolvedApproval?.riskLevel,
-    });
-    execution.pendingApproval = null;
-    execution.status = 'running';
-    this.streamEvents.emitHitlInterruptResolved(executionId, payload.interruptId || resolvedApproval?.interruptId || '', {
-      action: payload.action ?? 'reply',
-      taskId: payload.taskId,
-      scope: payload.scope,
-      remember: payload.remember,
-    });
-    return execution.toJSON() as unknown as IFlowExecutionResponse;
+    return this.hitlResumeService;
   }
 
   private async findExecutionWithSnapshot(executionId: string): Promise<FlowExecutionDocument | null> {
@@ -2354,197 +1936,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       return queryOrDocument.select('+snapshot');
     }
     return queryOrDocument as Promise<FlowExecutionDocument | null>;
-  }
-
-  private async restartDurableApprovalResume(params: {
-    execution: FlowExecutionDocument;
-    executionId: string;
-    ownerId: string;
-    resumePayload: Record<string, unknown>;
-    response: Record<string, unknown>;
-  }): Promise<IFlowExecutionResponse | null> {
-    const pendingApproval = params.execution.pendingApproval;
-    if (!params.execution.snapshot || !pendingApproval) {
-      return null;
-    }
-    const resumed = await this.persistDurableResume(params.executionId, pendingApproval.interruptId ?? '', params.response);
-    if (!resumed) return null;
-
-    await this.createFutureHitlMemoryIfRequested({
-      executionId: params.executionId,
-      ownerId: params.ownerId,
-      flowId: String(params.execution.flowId),
-      taskId: pendingApproval.nodeId ?? '',
-      interruptId: pendingApproval.interruptId ?? '',
-      interruptType: pendingApproval.interruptType ?? 'approval_request',
-      taskTitle: pendingApproval.taskTitle,
-      response: {
-        action: String(params.response.action ?? ''),
-        message: typeof params.response.message === 'string' ? params.response.message : null,
-        feedback: typeof params.response.feedback === 'string' ? params.response.feedback : null,
-        reason: typeof params.response.reason === 'string' ? params.response.reason : null,
-        scope: typeof params.response.scope === 'string' ? params.response.scope : pendingApproval.feedbackScopeDefault ?? 'step_only',
-        remember: params.response.remember === true,
-      },
-      riskLevel: pendingApproval.riskLevel,
-    });
-    this.startDurableResumeStream(params.execution, params.resumePayload);
-    this.streamEvents.emitHitlInterruptResolved(params.executionId, pendingApproval.interruptId ?? '', {
-      action: String(params.response.action ?? ''),
-      taskId: pendingApproval.nodeId,
-      scope: typeof params.response.scope === 'string' ? params.response.scope : undefined,
-      remember: params.response.remember === true ? true : undefined,
-    });
-    params.execution.pendingApproval = null;
-    params.execution.status = 'running';
-    return params.execution.toJSON() as unknown as IFlowExecutionResponse;
-  }
-
-  private async restartDurableStepResume(params: {
-    execution: FlowExecutionDocument;
-    executionId: string;
-    ownerId: string;
-    taskId: string;
-    interruptId: string;
-    resumePayload: Record<string, unknown>;
-    response: Record<string, unknown>;
-  }): Promise<IFlowExecutionResponse | null> {
-    const pendingApproval = params.execution.pendingApproval;
-    if (!params.execution.snapshot || !pendingApproval) {
-      return null;
-    }
-    const resumed = await this.persistDurableResume(params.executionId, params.interruptId, params.response);
-    if (!resumed) return null;
-
-    await this.createFutureHitlMemoryIfRequested({
-      executionId: params.executionId,
-      ownerId: params.ownerId,
-      flowId: String(params.execution.flowId),
-      taskId: params.taskId,
-      interruptId: params.interruptId,
-      interruptType: pendingApproval.interruptType,
-      taskTitle: pendingApproval.taskTitle,
-      response: {
-        action: String(params.response.action ?? 'reply'),
-        message: typeof params.response.message === 'string' ? params.response.message : null,
-        feedback: typeof params.response.feedback === 'string' ? params.response.feedback : null,
-        reason: typeof params.response.reason === 'string' ? params.response.reason : null,
-        scope: typeof params.response.scope === 'string' ? params.response.scope : pendingApproval.feedbackScopeDefault ?? 'step_only',
-        remember: params.response.remember === true,
-      },
-      riskLevel: pendingApproval.riskLevel,
-    });
-    this.startDurableResumeStream(params.execution, params.resumePayload);
-    this.streamEvents.emitHitlInterruptResolved(params.executionId, params.interruptId, {
-      action: String(params.response.action ?? 'reply'),
-      taskId: params.taskId,
-      scope: typeof params.response.scope === 'string' ? params.response.scope : undefined,
-      remember: params.response.remember === true ? true : undefined,
-    });
-    params.execution.pendingApproval = null;
-    params.execution.status = 'running';
-    return params.execution.toJSON() as unknown as IFlowExecutionResponse;
-  }
-
-  private async persistDurableResume(
-    executionId: string,
-    interruptId: string,
-    response: Record<string, unknown>,
-  ): Promise<boolean> {
-    const resumeUpdate = await this.executionModel.updateOne(
-      { _id: executionId, status: 'pending_approval' },
-      {
-        $set: {
-          status: 'running',
-          pendingApproval: null,
-          'hitlEvents.$[event].status': 'answered',
-          'hitlEvents.$[event].response': response,
-          'hitlEvents.$[event].respondedAt': new Date(),
-        },
-      },
-      { arrayFilters: [{ 'event.interruptId': interruptId }] },
-    ).exec();
-    return Boolean((resumeUpdate as { modifiedCount?: number }).modifiedCount);
-  }
-
-  private startDurableResumeStream(
-    execution: FlowExecutionDocument,
-    resumePayload: Record<string, unknown>,
-  ): void {
-    this.callGrpcRun(
-      String(execution._id),
-      String(execution.flowId),
-      String(execution.ownerId),
-      null,
-      {
-        ...(execution.inputContext ?? {}),
-        __playbook_resume: resumePayload,
-      },
-      execution.snapshot,
-    ).catch((err) => {
-      this.logger.error(`Durable HITL resume stream failed for execution ${String(execution._id)}: ${err instanceof Error ? err.message : String(err)}`);
-    });
-  }
-
-  private async createFutureHitlMemoryIfRequested(params: {
-    executionId: string;
-    ownerId: string;
-    flowId: string;
-    taskId: string;
-    interruptId: string;
-    interruptType?: string;
-    taskTitle?: string;
-    response: {
-      action: string;
-      message?: string | null;
-      feedback?: string | null;
-      reason?: string | null;
-      scope: string;
-      remember: boolean;
-    };
-    riskLevel?: string;
-  }): Promise<void> {
-    if (!this.hitlMemoryModel || !params.response.remember) {
-      return;
-    }
-    if (params.response.scope !== 'future_node_runs' && params.response.scope !== 'future_workflow_runs') {
-      return;
-    }
-
-    const content = params.response.feedback || params.response.message || params.response.reason || '';
-    if (!content.trim()) {
-      return;
-    }
-
-    await this.hitlMemoryModel.create({
-      ownerId: params.ownerId,
-      flowId: params.flowId,
-      nodeId: params.response.scope === 'future_node_runs' ? params.taskId : null,
-      memoryType: params.interruptType === 'approval_request' ? 'approval_policy' : 'procedural',
-      source: 'hitl_feedback',
-      title: this.buildHitlMemoryTitle(params.taskTitle, params.response.scope),
-      content,
-      normalizedInstruction: content,
-      appliesTo: params.response.scope === 'future_node_runs' ? 'node' : 'workflow',
-      status: 'active',
-      sensitivity: params.interruptType === 'approval_request' || params.riskLevel === 'high' || params.riskLevel === 'critical'
-        ? 'sensitive'
-        : 'normal',
-      createdFromExecutionId: params.executionId,
-      createdFromInterruptId: params.interruptId || undefined,
-    });
-    this.streamEvents.emitHitlMemorySaved(params.executionId, {
-      taskId: params.taskId,
-      scope: params.response.scope,
-      interruptId: params.interruptId,
-    });
-  }
-
-  private buildHitlMemoryTitle(taskTitle: string | undefined, scope: string): string {
-    const target = taskTitle?.trim() || 'workflow step';
-    return scope === 'future_node_runs'
-      ? `HITL guidance for ${target}`
-      : 'Workflow HITL guidance';
   }
 
   async runFromStep(

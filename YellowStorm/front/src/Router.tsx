@@ -3,16 +3,13 @@ import { createHashRouter, Navigate } from 'react-router-dom';
 
 import NoMatch from './pages/NoMatch';
 import MaintenancePage from './pages/MaintenancePage';
-import { SharedConversationPage } from './pages/SharedConversationPage';
-import { ConversationPage } from './modules/conversation';
-import { ConversationV2Page, ConversationV2SessionPage, SharedConversationV2Page } from './modules/conversation-v2';
 import { EmailVerificationPage, ResetPasswordPage, ProfileCompletionPage } from './modules/auth';
 import { OAuthCallbackPage } from './modules/auth/components/OAuthCallbackPage';
-import { UpgradePage } from './modules/usage/components/UpgradePage';
 import { RootGuard } from './modules/auth/components/RootGuard';
-import { PlaybookExecutionListPage as PlaybookExecutionListRoute } from './modules/playbook/components/PlaybookExecutionListPage';
-import { PlaybookExecutionComparePage as PlaybookExecutionCompareRoute } from './modules/playbook/components/PlaybookExecutionComparePage';
 import { dataRoomFeatures } from './config/dataRoomFeatures';
+import { AdminGuard } from './modules/admin/components/AdminGuard';
+import { AdminLayout } from './modules/admin/components/AdminLayout';
+import { PermissionGuard } from './modules/admin/components/PermissionGuard';
 
 // Lazy-loaded connected apps
 const ConnectedAppsPage = React.lazy(() => import('./modules/connected-app/components/ConnectedAppsPage').then((m) => ({ default: m.ConnectedAppsPage })));
@@ -24,6 +21,25 @@ const PlatformOverviewPage = React.lazy(() =>
   import('@/modules/platform-overview').then((m) => ({ default: m.PlatformOverviewPage }))
 );
 
+const ConversationPage = React.lazy(() =>
+  import('./modules/conversation/ConversationPage').then((m) => ({ default: m.ConversationPage }))
+);
+const ConversationV2Page = React.lazy(() =>
+  import('./modules/conversation-v2/ConversationV2Page')
+);
+const ConversationV2SessionPage = React.lazy(() =>
+  import('./modules/conversation-v2/ConversationV2SessionPage')
+);
+const SharedConversationPage = React.lazy(() =>
+  import('./pages/SharedConversationPage').then((m) => ({ default: m.SharedConversationPage }))
+);
+const SharedConversationV2Page = React.lazy(() =>
+  import('./modules/conversation-v2/SharedConversationV2Page')
+);
+const UpgradePage = React.lazy(() =>
+  import('./modules/usage/components/UpgradePage').then((m) => ({ default: m.UpgradePage }))
+);
+
 // Lazy-loaded playbook routes
 const PlaybookListPage = React.lazy(() =>
   import("./modules/playbook/components/PlaybookListPage").then((m) => ({ default: m.PlaybookListPage }))
@@ -33,6 +49,12 @@ const PlaybookCanvasPage = React.lazy(() =>
 );
 const PlaybookExecutionPage = React.lazy(() =>
   import("./modules/playbook/components/PlaybookExecutionPage").then((m) => ({ default: m.PlaybookExecutionPage }))
+);
+const PlaybookExecutionListRoute = React.lazy(() =>
+  import('./modules/playbook/components/PlaybookExecutionListPage').then((m) => ({ default: m.PlaybookExecutionListPage }))
+);
+const PlaybookExecutionCompareRoute = React.lazy(() =>
+  import('./modules/playbook/components/PlaybookExecutionComparePage').then((m) => ({ default: m.PlaybookExecutionComparePage }))
 );
 
 // Lazy-loaded Worky routes
@@ -74,47 +96,101 @@ const ProjectPage = React.lazy(() =>
   import("./modules/project").then((m) => ({ default: m.ProjectPage }))
 );
 const WorkspacePage = React.lazy(() =>
-  import("./modules/workspace").then((m) => ({ default: m.WorkspacePage }))
+  import('./modules/workspace/components/WorkspacePage').then((m) => ({ default: m.WorkspacePage }))
 );
 const WorkspaceHubPage = React.lazy(() =>
-  import("./modules/workspace").then((m) => ({ default: m.WorkspaceHubPage }))
+  import('./modules/workspace/components/WorkspaceHubPage').then((m) => ({
+    default: m.WorkspaceHubPage,
+  }))
 );
 const DecisionFlowEditorPage = React.lazy(() =>
-  import('./modules/workspace').then((m) => ({ default: m.DecisionFlowEditorPage }))
+  import('./modules/workspace/components/decision-flow/DecisionFlowEditorPage').then((m) => ({
+    default: m.DecisionFlowEditorPage,
+  }))
 );
 const GovernancePage = React.lazy(() =>
   import('./modules/governance').then((m) => ({ default: m.GovernancePage }))
 );
-import {
-  AdminGuard,
-  AdminLayout,
-  AdminDashboard,
-  AppearancePage,
-  UsersPage,
-  RolesPage,
-  AuditLogsPage,
-  LogsPage,
-  PlansPage,
-  AnalyticsPage,
-  SystemPage,
-  ReportsPage,
-  ModelsPage,
-  ToolsPage,
-  SkillsPage,
-  ConnectorsPage,
-  AgentTypesPage,
-  DefaultAgentsPage,
-  PlaybookPromptsPage,
-  PlaybookSettingsPage,
-  WorkspaceSettingsPage,
-  ConversationSettingsPage,
-  TeamAutoBuilderPage,
-  PermissionGuard,
-  AuthProvidersPage,
-  ConnectedAppsAdminPage,
-  GuardrailsPage,
-  EvaluationSettingsPage,
-} from "./modules/admin";
+
+const AdminDashboard = React.lazy(() =>
+  import('./modules/admin/components/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
+);
+const AppearancePage = React.lazy(() =>
+  import('./modules/admin/pages/AppearancePage').then((m) => ({ default: m.AppearancePage }))
+);
+const UsersPage = React.lazy(() =>
+  import('./modules/admin/pages/UsersPage').then((m) => ({ default: m.UsersPage }))
+);
+const RolesPage = React.lazy(() =>
+  import('./modules/admin/pages/RolesPage').then((m) => ({ default: m.RolesPage }))
+);
+const AuditLogsPage = React.lazy(() =>
+  import('./modules/admin/pages/AuditLogsPage').then((m) => ({ default: m.AuditLogsPage }))
+);
+const LogsPage = React.lazy(() =>
+  import('./modules/admin/pages/LogsPage').then((m) => ({ default: m.LogsPage }))
+);
+const PlansPage = React.lazy(() =>
+  import('./modules/admin/pages/PlansPage').then((m) => ({ default: m.PlansPage }))
+);
+const AnalyticsPage = React.lazy(() =>
+  import('./modules/admin/pages/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage }))
+);
+const SystemPage = React.lazy(() =>
+  import('./modules/admin/pages/SystemPage').then((m) => ({ default: m.SystemPage }))
+);
+const ReportsPage = React.lazy(() =>
+  import('./modules/admin/pages/ReportsPage').then((m) => ({ default: m.ReportsPage }))
+);
+const ModelsPage = React.lazy(() =>
+  import('./modules/admin/pages/ModelsPage').then((m) => ({ default: m.ModelsPage }))
+);
+const ToolsPage = React.lazy(() =>
+  import('./modules/admin/pages/ToolsPage').then((m) => ({ default: m.ToolsPage }))
+);
+const SkillsPage = React.lazy(() =>
+  import('./modules/admin/pages/SkillsPage').then((m) => ({ default: m.SkillsPage }))
+);
+const ConnectorsPage = React.lazy(() =>
+  import('./modules/admin/pages/connectors/ConnectorsPage').then((m) => ({ default: m.ConnectorsPage }))
+);
+const AgentTypesPage = React.lazy(() =>
+  import('./modules/admin/pages/AgentTypesPage').then((m) => ({ default: m.AgentTypesPage }))
+);
+const DefaultAgentsPage = React.lazy(() =>
+  import('./modules/admin/pages/DefaultAgentsPage').then((m) => ({ default: m.DefaultAgentsPage }))
+);
+const PlaybookPromptsPage = React.lazy(() =>
+  import('./modules/admin/pages/PlaybookPromptsPage').then((m) => ({ default: m.PlaybookPromptsPage }))
+);
+const PlaybookSettingsPage = React.lazy(() =>
+  import('./modules/admin/pages/PlaybookSettingsPage').then((m) => ({ default: m.PlaybookSettingsPage }))
+);
+const WorkspaceSettingsPage = React.lazy(() =>
+  import('./modules/admin/pages/WorkspaceSettingsPage').then((m) => ({ default: m.WorkspaceSettingsPage }))
+);
+const ConversationSettingsPage = React.lazy(() =>
+  import('./modules/admin/pages/ConversationSettingsPage').then((m) => ({ default: m.ConversationSettingsPage }))
+);
+const TeamAutoBuilderPage = React.lazy(() =>
+  import('./modules/admin/pages/TeamAutoBuilderPage').then((m) => ({ default: m.TeamAutoBuilderPage }))
+);
+const AuthProvidersPage = React.lazy(() =>
+  import('./modules/admin/pages/AuthProvidersPage').then((m) => ({ default: m.AuthProvidersPage }))
+);
+const ConnectedAppsAdminPage = React.lazy(() =>
+  import('./modules/admin/pages/ConnectedAppsAdminPage').then((m) => ({ default: m.ConnectedAppsAdminPage }))
+);
+const GuardrailsPage = React.lazy(() =>
+  import('./modules/admin/pages/GuardrailsPage').then((m) => ({ default: m.GuardrailsPage }))
+);
+const EvaluationSettingsPage = React.lazy(() =>
+  import('./modules/admin/pages/EvaluationSettingsPage').then((m) => ({ default: m.EvaluationSettingsPage }))
+);
+
+function lazyPage(element: React.ReactNode) {
+  return <Suspense fallback={null}>{element}</Suspense>;
+}
 
 function RouteErrorFallback() {
   return (
@@ -151,15 +227,15 @@ export const router = createHashRouter([
       },
       {
         path: 'conversation/:id',
-        element: <ConversationPage />,
+        element: lazyPage(<ConversationPage />),
       },
       {
         path: 'conversation-v2',
-        element: <ConversationV2Page />,
+        element: lazyPage(<ConversationV2Page />),
       },
       {
         path: 'conversation-v2/:sessionId',
-        element: <ConversationV2SessionPage />,
+        element: lazyPage(<ConversationV2SessionPage />),
       },
       {
         path: 'apps',
@@ -319,7 +395,7 @@ export const router = createHashRouter([
   },
   {
     path: 'upgrade',
-    element: <UpgradePage />,
+    element: lazyPage(<UpgradePage />),
   },
   // Admin routes - protected by AdminGuard
   {
@@ -329,28 +405,28 @@ export const router = createHashRouter([
       {
         element: <AdminLayout />,
         children: [
-          { index: true, element: <AdminDashboard /> },
-          { path: 'appearance', element: <AppearancePage /> },
-          { path: "users", element: <UsersPage /> },
-          { path: "roles", element: <RolesPage /> },
-          { path: "audit", element: <AuditLogsPage /> },
-          { path: "logs", element: <LogsPage /> },
-          { path: "plans", element: <PlansPage /> },
-          { path: "reports", element: <ReportsPage /> },
-          { path: "models", element: <ModelsPage /> },
-          { path: "guardrails", element: <GuardrailsPage /> },
-          { path: 'evaluation-settings', element: <PermissionGuard permissions={['admin.*', '*']}><EvaluationSettingsPage /></PermissionGuard> },
-          { path: "tools", element: <ToolsPage /> },
-          { path: "skills", element: <SkillsPage /> },
-          { path: "connectors", element: <ConnectorsPage /> },
-          { path: "agent-types", element: <AgentTypesPage /> },
-          { path: "agents", element: <DefaultAgentsPage /> },
-          { path: "playbook-prompts", element: <PlaybookPromptsPage /> },
-          { path: "analytics", element: <AnalyticsPage /> },
-          { path: "system", element: <SystemPage /> },
+          { index: true, element: lazyPage(<AdminDashboard />) },
+          { path: 'appearance', element: lazyPage(<AppearancePage />) },
+          { path: "users", element: lazyPage(<UsersPage />) },
+          { path: "roles", element: lazyPage(<RolesPage />) },
+          { path: "audit", element: lazyPage(<AuditLogsPage />) },
+          { path: "logs", element: lazyPage(<LogsPage />) },
+          { path: "plans", element: lazyPage(<PlansPage />) },
+          { path: "reports", element: lazyPage(<ReportsPage />) },
+          { path: "models", element: lazyPage(<ModelsPage />) },
+          { path: "guardrails", element: lazyPage(<GuardrailsPage />) },
+          { path: 'evaluation-settings', element: lazyPage(<PermissionGuard permissions={['admin.*', '*']}><EvaluationSettingsPage /></PermissionGuard>) },
+          { path: "tools", element: lazyPage(<ToolsPage />) },
+          { path: "skills", element: lazyPage(<SkillsPage />) },
+          { path: "connectors", element: lazyPage(<ConnectorsPage />) },
+          { path: "agent-types", element: lazyPage(<AgentTypesPage />) },
+          { path: "agents", element: lazyPage(<DefaultAgentsPage />) },
+          { path: "playbook-prompts", element: lazyPage(<PlaybookPromptsPage />) },
+          { path: "analytics", element: lazyPage(<AnalyticsPage />) },
+          { path: "system", element: lazyPage(<SystemPage />) },
           {
             path: 'playbook-settings',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['system.maintenance', 'system.*', '*']}>
                 <PlaybookSettingsPage />
               </PermissionGuard>
@@ -358,7 +434,7 @@ export const router = createHashRouter([
           },
           {
             path: 'workspace-settings',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['workspaces.*', '*']}>
                 <WorkspaceSettingsPage />
               </PermissionGuard>
@@ -366,7 +442,7 @@ export const router = createHashRouter([
           },
           {
             path: 'conversation-settings',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['conversations.settings.manage', 'conversations.*', '*']}>
                 <ConversationSettingsPage />
               </PermissionGuard>
@@ -394,7 +470,7 @@ export const router = createHashRouter([
           },
           {
             path: 'team-auto-builder',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['team_auto_builder.read', 'team_auto_builder.*', '*']}>
                 <TeamAutoBuilderPage />
               </PermissionGuard>
@@ -402,7 +478,7 @@ export const router = createHashRouter([
           },
           {
             path: 'users',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['users.read', 'users.*', '*']}>
                 <UsersPage />
               </PermissionGuard>
@@ -410,7 +486,7 @@ export const router = createHashRouter([
           },
           {
             path: 'roles',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['admin.roles.read', 'admin.*', '*']}>
                 <RolesPage />
               </PermissionGuard>
@@ -418,7 +494,7 @@ export const router = createHashRouter([
           },
           {
             path: 'audit',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['admin.audit.read', 'admin.*', '*']}>
                 <AuditLogsPage />
               </PermissionGuard>
@@ -426,7 +502,7 @@ export const router = createHashRouter([
           },
           {
             path: 'logs',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['admin.logs.read', 'admin.*', '*']}>
                 <LogsPage />
               </PermissionGuard>
@@ -434,7 +510,7 @@ export const router = createHashRouter([
           },
           {
             path: 'plans',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['plans.read_all', 'plans.*', '*']}>
                 <PlansPage />
               </PermissionGuard>
@@ -442,7 +518,7 @@ export const router = createHashRouter([
           },
           {
             path: 'reports',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['reports.read', 'reports.*', '*']}>
                 <ReportsPage />
               </PermissionGuard>
@@ -450,7 +526,7 @@ export const router = createHashRouter([
           },
           {
             path: 'models',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['models.read_all', 'models.*', '*']}>
                 <ModelsPage />
               </PermissionGuard>
@@ -458,7 +534,7 @@ export const router = createHashRouter([
           },
           {
             path: 'guardrails',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['admin.*', '*']}>
                 <GuardrailsPage />
               </PermissionGuard>
@@ -466,7 +542,7 @@ export const router = createHashRouter([
           },
           {
             path: 'tools',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['tools.read', 'tools.*', '*']}>
                 <ToolsPage />
               </PermissionGuard>
@@ -474,7 +550,7 @@ export const router = createHashRouter([
           },
           {
             path: 'auth-providers',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['auth_providers.read', 'auth_providers.*', '*']}>
                 <AuthProvidersPage />
               </PermissionGuard>
@@ -482,7 +558,7 @@ export const router = createHashRouter([
           },
           {
             path: 'connected-apps',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['connected_apps.read', 'connected_apps.*', '*']}>
                 <ConnectedAppsAdminPage />
               </PermissionGuard>
@@ -490,7 +566,7 @@ export const router = createHashRouter([
           },
           {
             path: 'agent-types',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['agent_types.read', 'agent_types.*', '*']}>
                 <AgentTypesPage />
               </PermissionGuard>
@@ -498,7 +574,7 @@ export const router = createHashRouter([
           },
           {
             path: 'agents',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['agents.read', 'agents.*', '*']}>
                 <DefaultAgentsPage />
               </PermissionGuard>
@@ -506,7 +582,7 @@ export const router = createHashRouter([
           },
           {
             path: 'analytics',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['analytics.read', 'analytics.*', '*']}>
                 <AnalyticsPage />
               </PermissionGuard>
@@ -514,7 +590,7 @@ export const router = createHashRouter([
           },
           {
             path: 'system',
-            element: (
+            element: lazyPage(
               <PermissionGuard permissions={['system.maintenance', 'system.registration', 'system.*', '*']}>
                 <SystemPage />
               </PermissionGuard>
@@ -560,13 +636,13 @@ export const router = createHashRouter([
   // Public share view - accessible by anyone (no auth required)
   {
     path: '/share/:accessToken',
-    element: <SharedConversationPage />,
+    element: lazyPage(<SharedConversationPage />),
   },
 
   // Public v2 share view - accessible by anyone (no auth required)
   {
     path: '/share/v2/:token',
-    element: <SharedConversationV2Page />,
+    element: lazyPage(<SharedConversationV2Page />),
   },
 
   // Catch-all for 404

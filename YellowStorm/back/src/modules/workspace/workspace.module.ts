@@ -35,6 +35,8 @@ import { WorkspaceInitializerService } from './workspace-initializer.service';
 import { WorkspaceShareService } from './workspace-share.service';
 import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
 import { WebsiteCrawlerService } from './services/website-crawler.service';
+import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
+import { GuardedUrlDownloaderService } from './services/guarded-url-downloader.service';
 import {
   WorkspaceOwnerGuard,
   WorkspaceAccessGuard,
@@ -50,7 +52,6 @@ import { IndexingModule } from '../indexing/indexing.module';
 import { UserModule } from '../user/user.module';
 import workspaceConfig from '../../config/workspace.config';
 import { IntegrationEventsModule } from '../integration-events/integration-events.module';
-import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
 
 @Module({
   imports: [
@@ -96,6 +97,7 @@ import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-c
     InternalServiceGuard,
     UrlToPdfClientService,
     WorkspaceArtifactCleanupService,
+    GuardedUrlDownloaderService,
   ],
   exports: [
     MongooseModule,

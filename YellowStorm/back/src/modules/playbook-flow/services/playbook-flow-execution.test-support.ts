@@ -1,6 +1,8 @@
 import {
   PlaybookFlowExecutionService,
 } from './playbook-flow-execution.service';
+import { PlaybookExecutionHitlResumeService } from '../execution/runtime/playbook-execution-hitl-resume.service';
+import { PlaybookExecutionSingleStepPrepService } from '../execution/runtime/playbook-execution-single-step-prep.service';
 
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
 import { PlaybookFlowPublicReasoningParserService } from './observability/playbook-flow-public-reasoning-parser.service';
@@ -30,6 +32,7 @@ export function createExecutionServiceForTests(overrides?: {
   executionDispatcherService?: Record<string, any>;
   workspaceService?: Record<string, any>;
   hitlMemoryModel?: Record<string, any>;
+  accessService?: Record<string, any>;
 }) {
   const executionModel = {
     exists: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(null) })),
@@ -196,6 +199,23 @@ export function createExecutionServiceForTests(overrides?: {
     ...overrides?.workspaceService,
   };
 
+  const accessService = {
+    assertExecutionAccess: jest.fn().mockResolvedValue(undefined),
+    ...overrides?.accessService,
+  };
+
+  const hitlResumeService = new PlaybookExecutionHitlResumeService(
+    executionModel as any,
+    streamEvents as any,
+    overrides?.hitlMemoryModel as any,
+    accessService as any,
+  );
+
+  const singleStepPrepService = new PlaybookExecutionSingleStepPrepService(
+    executionModel as any,
+    taskResultModel as any,
+  );
+
   const service = new PlaybookFlowExecutionService(
     executionModel as any,
     taskResultModel as any,
@@ -232,6 +252,9 @@ export function createExecutionServiceForTests(overrides?: {
     undefined as any,
     workspaceService as any,
     overrides?.hitlMemoryModel as any,
+    accessService as any,
+    hitlResumeService,
+    singleStepPrepService,
   );
 
   return {
@@ -257,6 +280,7 @@ export function createExecutionServiceForTests(overrides?: {
     outputFormatService,
     executionLeaseService,
     runtimeClient,
+    hitlResumeService,
   };
 }
 

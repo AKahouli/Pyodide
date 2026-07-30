@@ -4,8 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
-import axios from 'axios';
-import { DEFAULT_CRAWL_USER_AGENT } from '../../config/indexing.config';
 import { IngestUrlDto } from './dto/ingest-url.dto';
 import {
   WorkspaceDoc,
@@ -14,7 +12,7 @@ import {
   DocumentType,
   IndexingStatus,
 } from './schemas/workspace-document.schema';
-import { escapeRegex, collapseCharSet, stripLeadingTrailingWhitespaceOrDot } from '../../common/utils';
+import { escapeRegex, collapseCharSet, stripLeadingTrailingWhitespaceOrDot, redactUrlForLog, redactUrlsInMessage } from '../../common/utils';
 import { IndexingService } from '../indexing/indexing.service';
 import {
   UploadSession,
@@ -53,8 +51,8 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 import { WorkspaceUploadSettingsService } from '../system/workspace-upload-settings.service';
 import { getUploadExtension } from '../system/constants/workspace-upload-settings.constants';
 import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
-import { assertUrlIsSafe as assertUrlSafe } from './services/url-safety';
 import { normalizeWorkspaceUrl } from './services/url-normalization';
+import { GuardedUrlDownloaderService } from './services/guarded-url-downloader.service';
 import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
 import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
 import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
@@ -67,7 +65,6 @@ export class WorkspaceDocumentService {
   private readonly smallFileThresholdMb: number;
   private readonly uploadSessionTtlMinutes: number;
   private readonly sasUrlExpiryMinutes: number;
-  private readonly crawlUserAgent: string;
 
   constructor(
     @InjectModel(WorkspaceDoc.name)
@@ -86,6 +83,7 @@ export class WorkspaceDocumentService {
     private readonly logger: LoggerService,
     private readonly workspaceArtifacts: WorkspaceArtifactCleanupService,
     private readonly websiteCrawler: WebsiteCrawlerService,
+    private readonly urlDownloader: GuardedUrlDownloaderService,
     @Optional() private readonly outbox?: IntegrationEventOutboxService,
   ) {
     this.logger.setContext('WorkspaceDocumentService');
@@ -95,7 +93,6 @@ export class WorkspaceDocumentService {
     this.smallFileThresholdMb = this.configService.get<number>('workspace.smallFileThresholdMb', 10);
     this.uploadSessionTtlMinutes = this.configService.get<number>('workspace.uploadSessionTtlMinutes', 60);
     this.sasUrlExpiryMinutes = this.configService.get<number>('workspace.sasUrlExpiryMinutes', 60);
-    this.crawlUserAgent = this.configService.get<string>('indexing.crawlUserAgent', DEFAULT_CRAWL_USER_AGENT);
   }
 
   /**
@@ -612,6 +609,14 @@ export class WorkspaceDocumentService {
    * Ingest a file from an external download URL into a workspace.
    * Downloads the file, then delegates to uploadSmallFile for storage.
    * Used by the brain/agent to save MCP-sourced files (e.g., SharePoint download URLs).
+   *
+   * SSRF: initial URL and every redirect hop are checked with assertUrlIsSafe;
+   * auto-redirects are disabled. Only Authorization may be forwarded, and it is
+   * stripped when a redirect changes origin (credential forwarding).
+   *
+   * Memory: response is streamed with a hard byte cap (small-file threshold),
+   * assembled once — no arraybuffer + Buffer.from double copy. An AbortSignal
+   * enforces an end-to-end deadline across redirect hops.
    */
   async ingestFromUrl(
     workspaceId: string,
@@ -628,20 +633,34 @@ export class WorkspaceDocumentService {
     let resolvedMimeType = dto.mimeType || 'application/octet-stream';
 
     try {
-      const response = await axios.get(dto.downloadUrl, {
-        responseType: 'arraybuffer',
-        timeout: 30_000,
-        maxContentLength: this.maxFileSizeMb * 1024 * 1024,
-        headers: dto.authHeaders || {},
+      // Fail closed before any network I/O so disallowed hosts never hit axios.
+      await this.urlDownloader.assertUrlIsSafe(dto.downloadUrl);
+
+      // Cap at small-file threshold: uploadSmallFile rejects larger bodies anyway,
+      // and buffering hundreds of MB here is an OOM risk (YS-08).
+      const maxBytes = this.smallFileThresholdMb * 1024 * 1024;
+      const response = await this.urlDownloader.download(dto.downloadUrl, {
+        maxBytes,
+        authHeaders: dto.authHeaders,
+        deadlineMs: 30_000,
       });
 
-      buffer = Buffer.from(response.data);
+      buffer = response.data;
 
       if (!dto.mimeType && response.headers['content-type']) {
         resolvedMimeType = response.headers['content-type'].split(';')[0].trim();
       }
     } catch (error) {
-      const err = error as any;
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      const err = error as { response?: { status?: number }; message?: string; name?: string; code?: string };
+      if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') {
+        throw new BadRequestException(
+          ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+          'Failed to download file: timed out',
+        );
+      }
       const status = err.response?.status;
       const message = status
         ? `Failed to download file: HTTP ${status}`
@@ -649,8 +668,8 @@ export class WorkspaceDocumentService {
 
       this.logger.error('File download failed during ingest', {
         workspaceId,
-        downloadUrl: dto.downloadUrl,
-        error: message,
+        ...redactUrlForLog(dto.downloadUrl),
+        error: redactUrlsInMessage(message),
       });
 
       throw new BadRequestException(ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED, message);
@@ -866,7 +885,7 @@ export class WorkspaceDocumentService {
     options?: { deepSearch?: boolean; autoIndex?: boolean },
   ): Promise<void> {
     try {
-      await this.assertUrlIsSafe(url);
+      await this.urlDownloader.assertUrlIsSafe(url);
 
       // The name only came from the URL (no clicked link text / provided title).
       // Try the real page <title> so the doc is named after the page, falling
@@ -989,103 +1008,7 @@ export class WorkspaceDocumentService {
   async checkUrlReachable(
     url: string,
   ): Promise<{ reachable: boolean; status?: number; error?: string }> {
-    // SSRF guard: intentionally called BEFORE the try/catch below so a
-    // disallowed URL surfaces as a thrown BadRequestException (400) to the
-    // client, rather than being swallowed into a generic {reachable:false}.
-    await this.assertUrlIsSafe(url);
-
-    try {
-      const head = await this.followGuardedRedirects('head', url);
-      if (head === null) {
-        // A redirect hop pointed at a disallowed (private/internal) host.
-        // Unlike the initial URL above, a mid-redirect block is reported,
-        // not thrown.
-        return { reachable: false, error: 'Redirect target is not allowed' };
-      }
-      if (head.status >= 200 && head.status < 400) {
-        return { reachable: true, status: head.status };
-      }
-
-      const get = await this.followGuardedRedirects('get', url);
-      if (get === null) {
-        return { reachable: false, error: 'Redirect target is not allowed' };
-      }
-      const ok = get.status >= 200 && get.status < 400;
-      // Consume/destroy the response stream — we only need the status code,
-      // and axios won't release the underlying socket until the stream is
-      // drained or destroyed.
-      (get.data as { destroy?: () => void } | undefined)?.destroy?.();
-      return { reachable: ok, status: get.status, error: ok ? undefined : `HTTP ${get.status}` };
-    } catch (error) {
-      const err = error as { message?: string };
-      return { reachable: false, error: err?.message ?? 'unreachable' };
-    }
-  }
-
-  /**
-   * Follows redirects for a HEAD/GET reachability probe manually (max 5
-   * hops), re-validating each hop with assertUrlIsSafe before requesting
-   * it. axios's built-in `maxRedirects` would follow a redirect chain
-   * WITHOUT re-checking the SSRF guard, letting an attacker-controlled URL
-   * 302/301 to an internal address (e.g. cloud metadata) and bypass the
-   * guard entirely — so auto-redirects are disabled here and each hop is
-   * resolved + guarded one at a time instead. Returns null (never throws)
-   * if a hop is blocked, so the caller can report `{ reachable: false }`
-   * instead of surfacing a 400 for what is a redirect target, not the
-   * user-supplied URL itself.
-   */
-  private async followGuardedRedirects(
-    method: 'head' | 'get',
-    url: string,
-  ): Promise<{ status: number; data?: unknown } | null> {
-    const MAX_HOPS = 5;
-    let currentUrl = url;
-    const opts = {
-      timeout: 5000,
-      maxRedirects: 0,
-      validateStatus: () => true,
-      headers: { 'User-Agent': this.crawlUserAgent },
-      ...(method === 'get' ? { responseType: 'stream' as const } : {}),
-    };
-
-    for (let hop = 0; hop <= MAX_HOPS; hop++) {
-      if (hop > 0) {
-        try {
-          await this.assertUrlIsSafe(currentUrl);
-        } catch {
-          return null;
-        }
-      }
-
-      const res =
-        method === 'head'
-          ? await axios.head(currentUrl, opts)
-          : await axios.get(currentUrl, opts);
-
-      if (res.status >= 300 && res.status < 400) {
-        const location = res.headers?.location as string | undefined;
-        (res.data as { destroy?: () => void } | undefined)?.destroy?.();
-        if (!location) return null;
-        currentUrl = new URL(location, currentUrl).toString();
-        continue;
-      }
-
-      return res;
-    }
-    return null;
-  }
-
-  /**
-   * SSRF guard for server-side fetches triggered by user-supplied URLs
-   * (link reachability checks and the URL-to-PDF conversion). Rejects
-   * anything that isn't a plain http(s) URL, and rejects any URL whose
-   * hostname resolves (via DNS) to a private, loopback, link-local,
-   * unspecified, or CGNAT address — this covers direct IP-literal SSRF
-   * attempts as well as DNS-rebinding to internal hosts/cloud metadata
-   * endpoints (e.g. 169.254.169.254).
-   */
-  private async assertUrlIsSafe(url: string): Promise<void> {
-    return assertUrlSafe(url);
+    return this.urlDownloader.checkUrlReachable(url);
   }
 
   /**
