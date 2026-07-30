@@ -1,4 +1,5 @@
 import { PlaybookFlowExecutionService } from './playbook-flow-execution.service';
+import { PlaybookExecutionSingleStepPrepService } from '../execution/runtime/playbook-execution-single-step-prep.service';
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
 import { PlaybookFlowPublicReasoningParserService } from './observability/playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow-trace-redaction.service';
@@ -105,6 +106,11 @@ describe('single-step execution allowed paths', () => {
       { createPreRunReport: jest.fn(), updateStructuralDrift: jest.fn() } as any,
       new PlaybookFlowOutputContractService() as any,
       { validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: null, inactive: false }) } as any,
+    );
+
+    (service as any).singleStepPrepService = new PlaybookExecutionSingleStepPrepService(
+      (service as any).executionModel,
+      (service as any).taskResultModel,
     );
 
     (service as any).executionModel.find = jest.fn().mockReturnValue({
@@ -216,6 +222,10 @@ describe('single-step execution allowed paths', () => {
       { createPreRunReport: jest.fn(), updateStructuralDrift: jest.fn() } as any,
       new PlaybookFlowOutputContractService() as any,
       { validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: null, inactive: false }) } as any,
+    );
+    (service as any).singleStepPrepService = new PlaybookExecutionSingleStepPrepService(
+      (service as any).executionModel,
+      (service as any).taskResultModel,
     );
     jest.spyOn(service as any, 'drainQueue').mockResolvedValue(undefined);
 
