@@ -142,6 +142,20 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     exception: unknown,
     baseResponse: { success: false; error: { timestamp: string; path: string; method: string; requestId: string } },
   ): ErrorResponse {
+    // Multer rejects oversized multipart bodies at parse time (before buffering
+    // completes). Map to 413 so clients get a clear size error instead of 500.
+    if (this.isMulterFileTooLarge(exception)) {
+      return {
+        ...baseResponse,
+        error: {
+          ...baseResponse.error,
+          code: ErrorCode.WORKSPACE_STORAGE_FILE_TOO_LARGE,
+          message: ErrorMessages[ErrorCode.WORKSPACE_STORAGE_FILE_TOO_LARGE],
+          statusCode: HttpStatus.PAYLOAD_TOO_LARGE,
+        },
+      };
+    }
+
     const message = this.isProduction
       ? ErrorMessages[ErrorCode.INTERNAL_ERROR]
       : this.getUnknownExceptionMessage(exception);
@@ -155,6 +169,15 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
       },
     };
+  }
+
+  private isMulterFileTooLarge(exception: unknown): boolean {
+    return (
+      typeof exception === 'object' &&
+      exception !== null &&
+      (exception as { name?: string }).name === 'MulterError' &&
+      (exception as { code?: string }).code === 'LIMIT_FILE_SIZE'
+    );
   }
 
   private extractMessage(responseObj: Record<string, unknown>): string {
