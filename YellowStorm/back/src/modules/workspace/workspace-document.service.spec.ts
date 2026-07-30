@@ -3,6 +3,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { lookup } from 'dns/promises';
 import axios from 'axios';
+import { Readable } from 'stream';
 import { Types } from 'mongoose';
 import { WorkspaceDocumentService } from './workspace-document.service';
 import { BadRequestException } from '../exceptions';
@@ -846,7 +847,7 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     mockedAxios.get.mockResolvedValueOnce({
       status: 302,
       headers: { location: 'https://internal.example.com/secret' },
-      data: Buffer.alloc(0),
+      data: Readable.from([]),
     } as any);
 
     await expect(
@@ -872,12 +873,12 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
       .mockResolvedValueOnce({
         status: 302,
         headers: { location: 'https://other.example.com/file' },
-        data: Buffer.alloc(0),
+        data: Readable.from([]),
       } as any)
       .mockResolvedValueOnce({
         status: 200,
         headers: { 'content-type': 'application/octet-stream' },
-        data: Buffer.from('payload'),
+        data: Readable.from([Buffer.from('payload')]),
       } as any);
 
     await service.ingestFromUrl(WS_ID, {
@@ -902,7 +903,7 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     mockedAxios.get.mockResolvedValue({
       status: 200,
       headers: { 'content-type': 'application/octet-stream' },
-      data: Buffer.from('payload'),
+      data: Readable.from([Buffer.from('payload')]),
     } as any);
 
     await service.ingestFromUrl(WS_ID, {
@@ -919,7 +920,13 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     const [, opts] = mockedAxios.get.mock.calls[0];
     const headers = (opts as { headers: Record<string, string> }).headers;
     expect(headers).toEqual({ Authorization: 'Bearer ok' });
-    expect(opts).toEqual(expect.objectContaining({ maxRedirects: 0 }));
+    expect(opts).toEqual(
+      expect.objectContaining({
+        maxRedirects: 0,
+        responseType: 'stream',
+        signal: expect.any(AbortSignal),
+      }),
+    );
   });
 
   it('does not log signed download URL query tokens on download failure', async () => {
@@ -928,7 +935,7 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     mockedAxios.get.mockResolvedValue({
       status: 403,
       headers: {},
-      data: Buffer.alloc(0),
+      data: Readable.from([]),
     } as any);
 
     const signedUrl =
@@ -957,6 +964,53 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     expect(meta).not.toHaveProperty('downloadUrl');
     expect(JSON.stringify(meta)).not.toContain('secret-sas');
     expect(JSON.stringify(meta)).not.toContain('sig=abc');
+  });
+
+  it('rejects oversized streamed bodies before upload (hard byte cap)', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.get.mockReset();
+    // Default smallFileThresholdMb is 10; emit more than that.
+    const oversized = Buffer.alloc(11 * 1024 * 1024, 1);
+    mockedAxios.get.mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'application/octet-stream' },
+      data: Readable.from([oversized]),
+    } as any);
+
+    await expect(
+      service.ingestFromUrl(WS_ID, {
+        downloadUrl: 'https://cdn.example.com/huge.bin',
+        filename: 'huge.bin',
+        userId: USER_ID,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(service.uploadSmallFile as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it('rejects when Content-Length exceeds the hard byte cap without reading the body', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.get.mockReset();
+    const destroy = jest.fn();
+    mockedAxios.get.mockResolvedValue({
+      status: 200,
+      headers: {
+        'content-type': 'application/octet-stream',
+        'content-length': String(50 * 1024 * 1024),
+      },
+      data: { destroy, [Symbol.asyncIterator]: async function* () { yield Buffer.from('x'); } },
+    } as any);
+
+    await expect(
+      service.ingestFromUrl(WS_ID, {
+        downloadUrl: 'https://cdn.example.com/huge.bin',
+        filename: 'huge.bin',
+        userId: USER_ID,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(destroy).toHaveBeenCalled();
+    expect(service.uploadSmallFile as jest.Mock).not.toHaveBeenCalled();
   });
 });
 

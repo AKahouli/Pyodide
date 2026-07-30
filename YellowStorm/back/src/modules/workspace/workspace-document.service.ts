@@ -5,6 +5,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import axios from 'axios';
+import { Readable } from 'stream';
 import { DEFAULT_CRAWL_USER_AGENT } from '../../config/indexing.config';
 import { IngestUrlDto } from './dto/ingest-url.dto';
 import {
@@ -616,6 +617,10 @@ export class WorkspaceDocumentService {
    * SSRF: initial URL and every redirect hop are checked with assertUrlIsSafe;
    * auto-redirects are disabled. Only Authorization may be forwarded, and it is
    * stripped when a redirect changes origin (credential forwarding).
+   *
+   * Memory: response is streamed with a hard byte cap (small-file threshold),
+   * assembled once — no arraybuffer + Buffer.from double copy. An AbortSignal
+   * enforces an end-to-end deadline across redirect hops.
    */
   async ingestFromUrl(
     workspaceId: string,
@@ -635,12 +640,16 @@ export class WorkspaceDocumentService {
       // Fail closed before any network I/O so disallowed hosts never hit axios.
       await this.assertUrlIsSafe(dto.downloadUrl);
 
+      // Cap at small-file threshold: uploadSmallFile rejects larger bodies anyway,
+      // and buffering hundreds of MB here is an OOM risk (YS-08).
+      const maxBytes = this.smallFileThresholdMb * 1024 * 1024;
       const response = await this.downloadUrlGuarded(dto.downloadUrl, {
-        maxBytes: this.maxFileSizeMb * 1024 * 1024,
+        maxBytes,
         authHeaders: this.pickIngestAuthHeaders(dto.authHeaders),
+        deadlineMs: 30_000,
       });
 
-      buffer = Buffer.from(response.data);
+      buffer = response.data;
 
       if (!dto.mimeType && response.headers['content-type']) {
         resolvedMimeType = response.headers['content-type'].split(';')[0].trim();
@@ -649,7 +658,13 @@ export class WorkspaceDocumentService {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      const err = error as { response?: { status?: number }; message?: string };
+      const err = error as { response?: { status?: number }; message?: string; name?: string; code?: string };
+      if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') {
+        throw new BadRequestException(
+          ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+          'Failed to download file: timed out',
+        );
+      }
       const status = err.response?.status;
       const message = status
         ? `Failed to download file: HTTP ${status}`
@@ -1034,69 +1049,143 @@ export class WorkspaceDocumentService {
    * Downloads a binary URL with redirects followed manually (max 5 hops).
    * Each hop must be HTTPS and is re-validated with assertUrlIsSafe.
    * Authorization is stripped when the redirect target origin differs.
+   * Body is streamed with a hard byte cap into a single Buffer (no arraybuffer
+   * double-copy). `signal` enforces one end-to-end deadline across hops.
    */
   private async downloadUrlGuarded(
     url: string,
     options: {
       maxBytes: number;
       authHeaders: Record<string, string>;
+      deadlineMs?: number;
     },
-  ): Promise<{ data: ArrayBuffer; headers: Record<string, string> }> {
+  ): Promise<{ data: Buffer; headers: Record<string, string> }> {
     const MAX_HOPS = 5;
+    const deadlineMs = options.deadlineMs ?? 30_000;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), deadlineMs);
     let currentUrl = url;
     const headers: Record<string, string> = { ...options.authHeaders };
 
-    for (let hop = 0; hop <= MAX_HOPS; hop++) {
-      this.assertIngestUrlIsHttps(currentUrl);
-      if (hop > 0) {
-        await this.assertUrlIsSafe(currentUrl);
-      }
-
-      const res = await axios.get(currentUrl, {
-        responseType: 'arraybuffer',
-        timeout: 30_000,
-        maxContentLength: options.maxBytes,
-        maxRedirects: 0,
-        validateStatus: () => true,
-        headers: { ...headers },
-      });
-
-      if (res.status >= 300 && res.status < 400) {
-        const location = res.headers?.location as string | undefined;
-        if (!location) {
+    try {
+      for (let hop = 0; hop <= MAX_HOPS; hop++) {
+        if (controller.signal.aborted) {
           throw new BadRequestException(
             ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
-            'Failed to download file: redirect without Location',
+            'Failed to download file: timed out',
           );
         }
-        const nextUrl = new URL(location, currentUrl).toString();
-        if (new URL(nextUrl).origin !== new URL(currentUrl).origin) {
-          for (const key of Object.keys(headers)) {
-            if (key.toLowerCase() === 'authorization') {
-              delete headers[key];
+
+        this.assertIngestUrlIsHttps(currentUrl);
+        if (hop > 0) {
+          await this.assertUrlIsSafe(currentUrl);
+        }
+
+        const res = await axios.get(currentUrl, {
+          responseType: 'stream',
+          timeout: deadlineMs,
+          signal: controller.signal,
+          maxRedirects: 0,
+          validateStatus: () => true,
+          headers: { ...headers },
+        });
+
+        const body = res.data as Readable;
+
+        if (res.status >= 300 && res.status < 400) {
+          body.destroy();
+          const location = res.headers?.location as string | undefined;
+          if (!location) {
+            throw new BadRequestException(
+              ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+              'Failed to download file: redirect without Location',
+            );
+          }
+          const nextUrl = new URL(location, currentUrl).toString();
+          if (new URL(nextUrl).origin !== new URL(currentUrl).origin) {
+            for (const key of Object.keys(headers)) {
+              if (key.toLowerCase() === 'authorization') {
+                delete headers[key];
+              }
             }
           }
+          currentUrl = nextUrl;
+          continue;
         }
-        currentUrl = nextUrl;
-        continue;
+
+        if (res.status < 200 || res.status >= 300) {
+          body.destroy();
+          throw Object.assign(new Error(`Request failed with status code ${res.status}`), {
+            response: { status: res.status },
+          });
+        }
+
+        const contentLengthHeader = res.headers?.['content-length'];
+        if (contentLengthHeader) {
+          const contentLength = Number.parseInt(String(contentLengthHeader), 10);
+          if (Number.isFinite(contentLength) && contentLength > options.maxBytes) {
+            body.destroy();
+            throw new BadRequestException(
+              ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+              `File size exceeds maximum ${Math.round(options.maxBytes / 1024 / 1024)}MB`,
+            );
+          }
+        }
+
+        const data = await this.readStreamWithByteCap(body, options.maxBytes, controller.signal);
+        return {
+          data,
+          headers: (res.headers ?? {}) as Record<string, string>,
+        };
       }
 
-      if (res.status < 200 || res.status >= 300) {
-        throw Object.assign(new Error(`Request failed with status code ${res.status}`), {
-          response: { status: res.status },
-        });
-      }
+      throw new BadRequestException(
+        ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+        'Failed to download file: too many redirects',
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
-      return {
-        data: res.data as ArrayBuffer,
-        headers: (res.headers ?? {}) as Record<string, string>,
-      };
+  /** Consume a response stream into one Buffer; abort and destroy if over maxBytes. */
+  private async readStreamWithByteCap(
+    stream: Readable,
+    maxBytes: number,
+    signal: AbortSignal,
+  ): Promise<Buffer> {
+    const chunks: Buffer[] = [];
+    let total = 0;
+
+    try {
+      for await (const chunk of stream) {
+        if (signal.aborted) {
+          stream.destroy();
+          throw new BadRequestException(
+            ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+            'Failed to download file: timed out',
+          );
+        }
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        total += buf.length;
+        if (total > maxBytes) {
+          stream.destroy();
+          throw new BadRequestException(
+            ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+            `File size exceeds maximum ${Math.round(maxBytes / 1024 / 1024)}MB`,
+          );
+        }
+        chunks.push(buf);
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      stream.destroy();
+      throw error;
     }
 
-    throw new BadRequestException(
-      ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
-      'Failed to download file: too many redirects',
-    );
+    return chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, total);
   }
 
   private assertIngestUrlIsHttps(url: string): void {
