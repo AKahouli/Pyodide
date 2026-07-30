@@ -87,6 +87,36 @@ def test_an_executor_never_sees_the_plan_wide_goal_or_another_steps_task():
         assert other.description not in agent.instruction
 
 
+def test_a_persona_step_never_gets_a_competing_execution_agent_identity():
+    """"You are an execution agent" right after "You are Rabeb." is two
+    contradicting self-descriptions in one prompt. A persona step must not
+    carry the generic identity line; a plain step still should."""
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[])
+
+    persona_step = Step(id="a", kind="execute", description="Should we invest?",
+                        assignee_name="Rabeb", assignee_role="Investment analyst.")
+    plain_step = Step(id="b", kind="execute", description="Search the web for Tesla news.")
+
+    assert "You are an execution agent" not in factory(persona_step, "a").instruction
+    assert "You are Rabeb." in factory(persona_step, "a").instruction
+    assert "You are an execution agent" in factory(plain_step, "b").instruction
+
+
+def test_a_persona_step_is_never_told_and_nothing_else():
+    """"Do exactly this and nothing else" contradicts a persona's own mandate
+    to consult others first. A persona step must be told consultation is
+    part of "doing this"; a plain step keeps the original, stricter wording."""
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[])
+
+    persona_step = Step(id="a", kind="execute", description="Should we invest?",
+                        assignee_name="Rabeb", assignee_role="Investment analyst.")
+    plain_step = Step(id="b", kind="execute", description="Search the web for Tesla news.")
+
+    assert "Do exactly this and nothing else:" not in factory(persona_step, "a").instruction
+    assert "using whatever consultation your role above requires" in factory(persona_step, "a").instruction
+    assert "Do exactly this and nothing else:" in factory(plain_step, "b").instruction
+
+
 def test_the_instruction_template_carries_no_goal_placeholder():
     """A returning {goal} placeholder would put the leak straight back."""
     assert "{goal}" not in nodes.EXECUTOR_INSTRUCTION

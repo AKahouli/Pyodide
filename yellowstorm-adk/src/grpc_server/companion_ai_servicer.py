@@ -24,6 +24,11 @@ from src.companion_ai.service import OrchestratorService
 
 logger = logging.getLogger(__name__)
 
+# Used only when the request carries no "executor" agent — e.g. a client that
+# hasn't been updated to send `agents` yet. Once every client sends one, this
+# becomes dead and can go.
+DEFAULT_MODEL = "gpt-5.4-mini"
+
 
 def _parse_mcp_config(raw: str) -> dict:
     """Parse the connector's mcp_server_config_json (JSON string) into a dict."""
@@ -37,12 +42,13 @@ def _parse_mcp_config(raw: str) -> dict:
 
 
 def _agent_by_type(agents, agent_type: str):
-    """The chatbot.Agent in `agents` with this agent_type.
+    """The chatbot.Agent in `agents` with this agent_type, or None if the
+    request carries no such agent (e.g. a client not yet updated to send
+    `agents` — falls back to DEFAULT_MODEL and the hardcoded prompts).
 
-    Every request carries exactly one "planner" and one "executor" agent;
-    any other agent_type is reserved for a future named persona a plan step
-    can be assigned to."""
-    return next(a for a in agents if a.agent_type == agent_type)
+    "planner"/"executor" select the built-in roles; any other agent_type is
+    reserved for a future named persona a plan step can be assigned to."""
+    return next((a for a in agents if a.agent_type == agent_type), None)
 
 
 def _describe_request(request) -> str:
@@ -129,7 +135,8 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         # STEP 3 — ack now, run the turn in the background. The client watches
         # progress arrive in the read model, not on this call. Last-answer-wins:
         # hand the in-flight turn (if any) to the new one so it supersedes it.
-        model = _agent_by_type(request.agents, "executor").chatbot.model
+        executor = _agent_by_type(request.agents, "executor")
+        model = (executor.chatbot.model if executor else "") or DEFAULT_MODEL
         prev = self._running.get(request.session_id)
         task = asyncio.create_task(self._run_turn(request, model, run_id, prev))
         self._bg.add(task)
@@ -184,7 +191,8 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                     else "continue — resume paused plan" if status == "paused"
                     else "new turn — planning")
             logger.info("[worky] 4. %s (session=%s)", mode, request.session_id)
-            executor_prompt = _agent_by_type(request.agents, "executor").prompt
+            executor = _agent_by_type(request.agents, "executor")
+            executor_prompt = executor.prompt if executor else None
             if interrupt_id:
                 await self._svc.resume_turn(
                     session_id=request.session_id, user_id=request.user_id,
@@ -199,7 +207,8 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 await self._svc.plan_turn(
                     session_id=request.session_id, user_id=request.user_id,
                     message=request.message, model=model, connectors=connectors,
-                    planner_model=planner.chatbot.model, planner_prompt=planner.prompt,
+                    planner_model=planner.chatbot.model if planner else None,
+                    planner_prompt=planner.prompt if planner else None,
                     executor_prompt=executor_prompt)
             logger.info("RunTask turn done (session=%s run=%s)", request.session_id, run_id)
         except asyncio.CancelledError:
@@ -310,7 +319,8 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
 
         # Ack immediately and resume in the background: the caller is answering a
         # Graph webhook on a clock, and the resumed plan can run for minutes.
-        model = _agent_by_type(request.agents, "executor").chatbot.model
+        executor = _agent_by_type(request.agents, "executor")
+        model = (executor.chatbot.model if executor else "") or DEFAULT_MODEL
         prev = self._running.get(session_id)
         task = asyncio.create_task(self._resume_with_reply(request, wait, model, prev))
         self._bg.add(task)
@@ -334,12 +344,13 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                     await prev
                 except BaseException:  # noqa: BLE001 — prev's cancellation is expected
                     pass
+            executor = _agent_by_type(request.agents, "executor")
             await self._svc.resume_turn(
                 session_id=session_id, user_id=wait["user_id"],
                 answer=request.reply_body, model=model,
                 connectors=_connectors_to_dicts(request.connectors),
                 interrupt_id=wait["interrupt_id"],
-                executor_prompt=_agent_by_type(request.agents, "executor").prompt)
+                executor_prompt=executor.prompt if executor else None)
             logger.info("[worky] DeliverMailReply turn done (session=%s step=%s)",
                         session_id, wait["step_id"])
         except asyncio.CancelledError:

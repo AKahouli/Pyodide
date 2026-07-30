@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.grpc_generated import chatbot_pb2 as chatbot_pb
 from src.grpc_generated import companion_ai_pb2 as pb
+from src.grpc_server import companion_ai_servicer
 from src.grpc_server.companion_ai_servicer import CompanionAiServicer
 
 
@@ -58,6 +59,21 @@ async def test_runtask_accepts_and_runs_plan():
     await _drain(s)
     service.plan_turn.assert_awaited_once()
     service.resume_turn.assert_not_awaited()
+
+
+async def test_runtask_falls_back_to_default_model_when_no_agents_sent():
+    """A client not yet updated to send `agents` still works — DEFAULT_MODEL
+    and the hardcoded planner/executor prompts (None override) kick in."""
+    rm = MagicMock(snapshot=AsyncMock(return_value={"session": {"status": "running", "interrupt_id": None}}))
+    service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+    await s.RunTask(pb.RunRequest(user_id="u", session_id="s1", message="hi"), _ctx())
+    await _drain(s)
+    kw = service.plan_turn.await_args.kwargs
+    assert kw["model"] == companion_ai_servicer.DEFAULT_MODEL
+    assert kw["planner_model"] is None
+    assert kw["planner_prompt"] is None
+    assert kw["executor_prompt"] is None
 
 
 async def test_runtask_forwards_planner_and_executor_overrides():

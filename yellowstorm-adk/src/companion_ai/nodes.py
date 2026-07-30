@@ -13,6 +13,7 @@ import logging
 from typing import Awaitable, Callable, List, Optional
 
 from google.adk.agents import LlmAgent
+from google.genai import types as genai_types
 
 from . import mail_token
 from .graph import NodeFactory
@@ -20,9 +21,50 @@ from .plan import Step
 
 logger = logging.getLogger(__name__)
 
-EXECUTOR_INSTRUCTION = """You are an execution agent working on ONE step of a larger plan.
+# ADK's own RunConfig.max_llm_calls is invocation-wide (shared across every
+# step in the plan) and hard-aborts the whole run on trip. This caps a
+# single step instead, and recovers gracefully.
+MAX_STEP_MODEL_CALLS = 15
 
-Do exactly this and nothing else:
+
+def _stop_after_n_calls(limit: int, model_name: str):
+    """Forces a real answer once a step exceeds `limit` model calls, instead
+    of looping forever or returning a non-answer a caller could mistake for
+    a genuine one.
+
+    Routes the forced answer through a separate with_tools=False client
+    rather than stripping tools from the current request: the tool-enabled
+    client has parallel_tool_calls=True baked in at construction time (see
+    llm_factory.py), and a tools-less request through it gets rejected by
+    Azure outright ("parallel_tool_calls is only allowed when tools are
+    specified") — litellm.drop_params doesn't catch this, it's a value-level
+    conflict, not an unsupported param.
+    """
+    state = {"n": 0, "forced": False}
+
+    async def _cb(callback_context, llm_request):
+        state["n"] += 1
+        if state["n"] > limit and not state["forced"]:
+            state["forced"] = True
+            logger.warning("[worky] step exceeded %d model calls — forcing a final answer", limit)
+            from google.adk.models.llm_request import LlmRequest
+            nudge = genai_types.Content(role="user", parts=[genai_types.Part(
+                text="Stop calling tools now. Give your best answer using only what you "
+                     "already know from this conversation so far — do not ask for more "
+                     "information and do not say you are unable to answer.")])
+            fallback_request = LlmRequest(model=model_name, contents=llm_request.contents + [nudge])
+            # contents alone drops the task/persona instruction — a separate field.
+            fallback_request.config.system_instruction = llm_request.config.system_instruction
+            fallback_llm = build_llm(model_name, with_tools=False)
+            async for resp in fallback_llm.generate_content_async(fallback_request, stream=False):
+                return resp
+        return None
+
+    return _cb
+
+EXECUTOR_INSTRUCTION = """{identity}
+
+{do_this_line}
 {description}
 
 You are not told the plan's wider goal or its other steps, on purpose — the
@@ -143,10 +185,38 @@ def make_llm_node_factory(
         if step.kind == "await_reply":
             return hitl.make_await_reply_node(
                 name, step.question or step.description or "Awaiting an email reply.")
-        base_instruction = EXECUTOR_INSTRUCTION.format(description=step.description)
-        instruction = (
-            f"{custom_instruction}\n\n{base_instruction}" if custom_instruction else base_instruction
-        )
+        # A persona step already has an identity ("You are Rabeb."); a second,
+        # contradicting "You are an execution agent" right after undermines it.
+        identity = ("You are working on ONE step of a larger plan." if step.assignee_name else
+                    "You are an execution agent working on ONE step of a larger plan.")
+        # "...and nothing else" contradicts a persona's mandate to consult
+        # others first — consulting per the role above IS "doing this".
+        do_this_line = (
+            "Do exactly this — using whatever consultation your role above requires — "
+            "and nothing else:" if step.assignee_name else
+            "Do exactly this and nothing else:")
+        base_instruction = EXECUTOR_INSTRUCTION.format(
+            identity=identity, do_this_line=do_this_line, description=step.description)
+        persona_preamble = (
+            f"You are {step.assignee_name}."
+            + (f" {step.assignee_role}" if step.assignee_role else "")
+            + "\n\n"
+            "If this task squarely matches your OWN role above, just answer it "
+            "yourself directly — do not search for or consult anyone else just "
+            "because the topic matches your job title; a compliance officer "
+            "asked a compliance question, for instance, does not need to go find "
+            "a compliance officer, that is you. There is no fixed roster — only "
+            "when this task genuinely needs a DIFFERENT role or authority you "
+            "don't have yourself, use find_human_agents to look them up, then "
+            "delegate_to_human_agent to actually get their answer, then give your "
+            "own final answer USING what they said. Never just tell the user to "
+            "go ask someone else yourself, and never end your turn on 'ask "
+            "so-and-so' without having asked them. Never delegate to yourself, and "
+            "never delegate just because a task feels hard or uncertain — if no "
+            "one else is actually needed, answer with your own best judgment."
+        ) if step.assignee_name else None
+        preambles = [p for p in (custom_instruction, persona_preamble) if p]
+        instruction = "\n\n".join(preambles + [base_instruction]) if preambles else base_instruction
         step_tools = tools_for_step(step, shared_tools) if tools_for_step else shared_tools
         tool_names = [getattr(getattr(t, "func", None), "__name__", "?") for t in step_tools]
         logger.info("[worky] 8. step=%s executor context:\n--- instruction ---\n%s\n"
@@ -157,6 +227,7 @@ def make_llm_node_factory(
             instruction=instruction,
             tools=step_tools,
             output_key=name,  # step result lands in session state under this key
+            before_model_callback=_stop_after_n_calls(MAX_STEP_MODEL_CALLS, model_name),
         )
 
     return factory

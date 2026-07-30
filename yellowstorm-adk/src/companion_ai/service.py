@@ -30,12 +30,49 @@ from typing import List, Optional, Tuple
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
 from google.genai import types
+from pydantic import BaseModel, Field
 
-from . import graph, hitl, mail_token, nodes, scheduler
+from . import graph, hitl, human_agents, mail_token, nodes, scheduler
 from .plan import Plan, Status, Step
 from .readmodel import ReadModel
 
 logger = logging.getLogger(__name__)
+
+# Hard cap on how large a plan may grow via delegate_to_human_agent (see
+# _delegate_tool_for) — without one, a step that keeps deciding it needs to
+# ask someone else could grow the plan without bound.
+MAX_PLAN_STEPS = 30
+
+# Client-facing label for a step with no human-agent assignee — an internal
+# graph node id is meaningless in the UI. Only used at the read-model
+# projection boundary (_step_row); never written to Step.assignee_name
+# itself, since nodes.py's persona preamble checks `if step.assignee_name`.
+DEFAULT_EXECUTOR_LABEL = "Executor"
+
+
+class _PlannerStepOut(BaseModel):
+    """Schema for one step in the planner's JSON contract — passed as
+    LlmAgent.output_schema (see _make_plan) so the field SHAPE is enforced by
+    the model provider itself, not just hoped for via prose instructions.
+
+    This guarantees every field exists with the right type; it does NOT
+    guarantee "assignee" is populated with the right name when it should
+    be — that's a semantic/reasoning question the schema can't force."""
+    id: str
+    kind: str = "execute"
+    title: str = ""
+    description: str = ""
+    question: Optional[str] = None
+    depends_on: List[str] = Field(default_factory=list)
+    assignee: Optional[str] = None
+
+
+class _PlannerOutput(BaseModel):
+    """Schema for the planner's whole JSON response — see _PlannerStepOut."""
+    title: str = ""
+    goal: str = ""
+    answer: str = ""
+    steps: List[_PlannerStepOut] = Field(default_factory=list)
 
 PLANNER_INSTRUCTION = """You are a planning agent for a multi-agent assistant.
 First decide whether the user's message needs a PLAN or just a DIRECT REPLY.
@@ -82,7 +119,8 @@ Rules:
     input you cannot get otherwise; give it a "question".
   - "await_reply": pause until SOMEONE ELSE replies to an email a previous step
     sent. See below.
-- Use "await_reply" whenever the task depends on a REPLY to a mail you send —
+- Use "await_reply" whenever the task depends on a REPLY to a mail you send to
+  a REAL external person (anyone find_human_agents does not find — see below) —
   "email X and then ...", "ask X by email and report back", "wait for their
   answer". Without it the plan would send the mail and carry on as if the answer
   had arrived, inventing one.
@@ -93,10 +131,80 @@ Rules:
   the await_reply step, not on the send step.
   Do NOT use it for mail you send that needs no answer (a notification, a
   report), and do NOT use it to wait for anything other than an email reply.
+  NEVER use it for a human agent found via find_human_agents — see below,
+  it is a completely different, single-step mechanism with no email involved.
 - ids are short unique strings. depends_on lists ids that MUST finish first;
   leave it [] for independent steps.
-- Prefer parallelism: only add a dependency when a step truly needs another's output.
+- PARALLELIZE BY DEFAULT — this is not a style preference, it is the default
+  you must actively override: two steps run sequentially (one depends_on the
+  other) ONLY when one genuinely needs the other's OUTPUT to do its work.
+  Never make a step depend on another just because the user mentioned them in
+  that order, out of habit, or "to be safe" — that costs the user real time
+  for no reason. Before adding any depends_on, ask yourself "does this step
+  actually need data the other one produced?" — if the honest answer is no,
+  leave depends_on: [] and let both run in the same wave. When a request
+  names several steps/people with no data flowing between them, assume they
+  are independent and run together unless something in the request says
+  otherwise.
 - No cycles.
+
+A NAME IN THE USER'S MESSAGE MEANS A HUMAN AGENT, NOT THE DEFAULT EXECUTOR:
+whenever the user mentions a person by name (or a role like "the approver"),
+and does NOT explicitly say to email them, they are NOT asking you to compose
+a message for the default executor to send — they are naming a human agent
+that already exists in this system, who does the step's work himself, in his
+own name and role, instead of the anonymous default executor. Your job is to
+find that person and assign the step to them, not to write a step about
+contacting them.
+
+MANDATORY FIRST CHECK — human agents, NO fixed roster: before you write ANY
+step whose job is to reach a named person, or a role (e.g. "the approver",
+"someone in support"), you MUST call find_human_agents(name=...) and/or
+find_human_agents(role=...) to check whether they are a human agent — never
+assume, and never skip this because the wording sounds like a message to
+send. If the message names no one and implies no role at all, skip this
+check entirely.
+
+The default is ALWAYS the human agent, never email: a human agent answers
+INSTANTLY inside this same plan run, no message is sent, nothing is waited
+on. Reach for email/a messaging connector (Teams, etc.) ONLY when the user
+explicitly says "email" / "send an email" / gives an actual email address —
+wording like "send it to X and ask her", "tell X", "ask X" is NOT an email
+instruction by itself; it means find_human_agents first, and if she's a
+match, delegate to her, full stop. Do not also try a connector's
+send_email/send_teams_message tool "just in case" — if find_human_agents
+found her, that IS the entire interaction, and if it found no one, then and
+only then does an ordinary step / connector send make sense.
+
+When find_human_agents finds a match, that's ONE "execute" step: set
+"assignee": "<their exact name>" and write "description" as the question/task
+addressed directly TO them (e.g. "Should we invest in Bitcoin today, given:
+<summary>?" — never "send/email/notify <name> and ask...", they are not
+emailed, they simply answer). "assignee" REPLACES the default executor for
+that step with that person, running with his own name and role as his
+instructions — you never also write instructions telling the default
+executor to go find or contact him. That step's description is all he
+sees — he doesn't see the rest of this plan.
+Do NOT add a separate mail-send step or an "await_reply" step for them — no
+message is sent and nothing is awaited by mail; the single assignee step IS
+the question and IS the answer, both in that one step.
+If find_human_agents finds no match, treat it as an ordinary step (or, if the
+user clearly means to email a real external person by address, use the
+normal execute + await_reply pattern above).
+
+Example — "search bitcoin news, then send it to Rabeb and ask if we should
+invest today" — find_human_agents(name="Rabeb") found her, so this is
+CORRECT (one assignee step, no email/Teams anywhere):
+{{"title": "Bitcoin investment check", "goal": "Get Rabeb's investment call on Bitcoin", "answer": "",
+  "steps": [
+    {{"id": "s1", "kind": "execute", "title": "Search Bitcoin news", "description": "Search for the latest Bitcoin price and news; summarize price, drivers, and risks.", "depends_on": []}},
+    {{"id": "s2", "kind": "execute", "title": "Ask Rabeb", "assignee": "Rabeb", "description": "Given the latest Bitcoin price/news research, should we invest in Bitcoin today? Give your recommendation and reasoning.", "depends_on": ["s1"]}}
+  ]}}
+WRONG for that same request (do NOT do this): a plain "execute" step titled
+something like "Send to Rabeb" with no "assignee", whose description tells
+the executor to email her or message her on Teams. The user never said
+"email" — that phrasing came only from misreading "send it to Rabeb" as a
+literal message to compose, instead of checking find_human_agents first.
 
 Example — "email x asking which company she works for, then report on it":
 {{"title": "Company report", "goal": "Report on the company x works for", "answer": "",
@@ -125,7 +233,9 @@ def _plan_from_snapshot(snap: dict) -> Plan:
             description=row.get("description") or "",
             kind=row.get("kind") or "execute", question=row.get("question"),
             depends_on=deps, status=Status(row["status"]),
-            wave=row.get("wave") or 0, result=row.get("result")))
+            wave=row.get("wave") or 0, result=row.get("result"),
+            assignee=row.get("assignee"), assignee_name=row.get("assignee_name"),
+            assignee_role=row.get("assignee_role")))
     return Plan(id=p.get("id") or "", title=p.get("title") or "",
                 goal=p.get("goal") or "", status=Status(p.get("status") or "running"),
                 steps=steps)
@@ -257,6 +367,164 @@ class OrchestratorService:
 
         return tools_for_step
 
+    def _delegate_tool_for(self, session_id: str, user_id: str, plan: Plan,
+                           factory_holder: list, name_to_step: dict, caller_step_id: str):
+        """Tool given to a persona-assigned step (see nodes.py/human_agents.py):
+        hand a question or task to ANOTHER human agent and get their answer back
+        before continuing — e.g. Rabeb decides investment approval is out of her
+        scope and asks Oussama.
+
+        Runs the delegate as a one-step nested Workflow via ADK's dynamic node
+        scheduling (`ctx.run_node`, confirmed on google.adk 2.3.0's `Context`):
+        the calling step's turn does not end until the delegate answers, and if
+        the delegate itself blocks (ask-the-user, await_reply) that interrupt
+        propagates out through this call exactly like an ordinary step's would —
+        no changes needed to _drive/_finalize for that.
+
+        `factory_holder` is a 1-item list filled with this turn's node factory
+        right after it is built (see _build_workflow) — the delegated step is
+        built with that SAME factory, so it gets the same model/tools/instruction
+        wiring, including this same tool, letting a delegate delegate again.
+
+        `caller_step_id` becomes the sub-step's `depends_on` — it isn't wired
+        into the outer graph's edges (this is a nested Workflow, not a graph
+        node), but the DAG/wave numbers projected to the read model would
+        otherwise show it as an independent wave-0 step with no relation to
+        the step that actually spawned it.
+        """
+        from google.adk.tools.tool_context import ToolContext
+        from src.smart_rag.tools.search.tools import SearchToolADK
+
+        async def delegate_to_human_agent(agent_name: str, task: str, *,
+                                          tool_context: ToolContext = None) -> str:
+            matches = await human_agents.search_human_agents(name=agent_name)
+            if not matches:
+                return (f"Unknown agent {agent_name!r} — no match via find_human_agents. "
+                        "Call find_human_agents first to discover who actually exists.")
+            agent = matches[0]
+            agent_display_name = agent.get("name") or agent_name
+            caller = plan.step(caller_step_id)
+            if caller is not None and caller.assignee_name and agent_display_name == caller.assignee_name:
+                # Backstop regardless of role wording — prompt guidance alone
+                # has misfired into self-delegation loops before.
+                return (f"You are {agent_display_name} — you cannot delegate to yourself. "
+                        "Answer with your own best judgment instead.")
+            if len(plan.steps) >= MAX_PLAN_STEPS:
+                return "Cannot delegate further — this plan has reached its step limit."
+
+            sub_step = Step(title=f"Ask {agent_display_name}", description=task, kind="execute",
+                            assignee=agent.get("id") or agent_display_name,
+                            assignee_name=agent_display_name, assignee_role=agent.get("role"),
+                            depends_on=[caller_step_id])
+            plan.steps.append(sub_step)
+            scheduler.validate(plan)
+            scheduler.assign_waves(plan)
+            name_to_step[graph.node_name(sub_step.id)] = sub_step.id
+            logger.info("[worky] delegate_to_human_agent session=%s → %s (step=%s)",
+                        session_id, agent_name, sub_step.id)
+            await self._project_step(session_id, plan, sub_step)
+
+            # The caller's node is still "running" in ADK, but the user sees it
+            # as blocked on the delegate — reflect that on the plan card.
+            blocked_reason = f"waiting on {agent_display_name}"
+            if caller is not None:
+                caller.status = Status.BLOCKED
+                caller.blocked_reason = blocked_reason
+            await self._project(self._rm and self._rm.set_step_status(
+                session_id, caller_step_id, "blocked", blocked_reason=blocked_reason))
+            try:
+                # depends_on=[caller_step_id] is for the OUTER plan's wave display
+                # only — the nested one-step Workflow below has no caller_step_id
+                # in it, so building it with that dependency would fail DAG
+                # validation ("depends on unknown step"). Give it a local,
+                # dependency-free copy instead.
+                sub_wf = graph.to_workflow(
+                    Plan(steps=[sub_step.model_copy(update={"depends_on": []})]),
+                    factory_holder[0], name=f"delegate_{sub_step.id}")
+                # use_sub_branch=True alone is NOT enough: the delegate's reply
+                # event carries a different `author`, and contents.py's
+                # _get_current_turn_contents scans backward for the latest
+                # foreign-author event to find the turn boundary — the
+                # delegate's reply qualifies, truncating away the calling
+                # step's own function_call event and blowing up the next LLM
+                # call ("No function call event found for function responses").
+                # override_isolation_scope=tool_context.function_call_id is
+                # ADK's own documented convention for a delegated sub-agent —
+                # it excludes the delegate's events from that scan entirely.
+                result = await tool_context.run_node(
+                    sub_wf, use_as_output=False, use_sub_branch=True,
+                    override_isolation_scope=tool_context.function_call_id)
+            except Exception as e:
+                logger.exception("[worky] delegate_to_human_agent failed session=%s step=%s",
+                                 session_id, sub_step.id)
+                return f"Error asking {agent_display_name}: {e}"
+            finally:
+                # Whether the delegate answered or errored, the caller is no
+                # longer blocked — it's back to running its own turn.
+                if caller is not None:
+                    caller.status = Status.RUNNING
+                    caller.blocked_reason = None
+                await self._project(self._rm and self._rm.set_step_status(
+                    session_id, caller_step_id, "running"))
+            return str(result) if result is not None else ""
+
+        # Built directly rather than via create_search_schema: that helper adds
+        # a "strict" key that OpenAI-style function schemas accept but ADK's
+        # own google.genai.types.FunctionDeclaration (what SearchToolADK feeds
+        # this into) has no field for and rejects outright.
+        schema = {
+            "function": {
+                "name": "delegate_to_human_agent",
+                "description": (
+                    "Hand a question or task to ANOTHER named human agent and get their "
+                    "answer back before you continue. Use this when the task needs "
+                    "someone else's role or authority — e.g. you are not authorized to "
+                    "decide something yourself and need to ask a colleague who is. "
+                    "Use find_human_agents first if you don't already know their exact name."),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "agent_name": {"type": "string",
+                                      "description": "exact name of the human agent to ask"},
+                        "task": {"type": "string",
+                                "description": "the question or task to hand them, in full"},
+                    },
+                    "required": ["agent_name", "task"],
+                    "additionalProperties": False,
+                },
+            }
+        }
+        return SearchToolADK(delegate_to_human_agent, schema)
+
+    def _build_workflow(self, session_id: str, user_id: str, plan: Plan, model: str,
+                        connectors: Optional[List[dict]], executor_prompt: Optional[str]):
+        """STEP 8, shared by plan_turn/resume_turn/continue_turn: connectors +
+        persona-delegation → executor tools, plan → ADK Workflow."""
+        name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
+        factory_holder: List = []
+        mail_tools_for_step = self._mail_stamping(session_id, plan)
+
+        def tools_for_step(step: Step, tools: List) -> List:
+            if mail_tools_for_step:
+                tools = mail_tools_for_step(step, tools)
+            if step.assignee:
+                tools = list(tools) + [
+                    human_agents.make_find_human_agents_tool(),
+                    self._delegate_tool_for(session_id, user_id, plan, factory_holder,
+                                            name_to_step, step.id)]
+            return tools
+
+        factory = nodes.make_llm_node_factory(
+            model_name=model,
+            tools=self._tools_for(connectors, session_id, user_id),
+            tools_for_step=tools_for_step,
+            custom_instruction=executor_prompt)
+        factory_holder.append(factory)
+
+        wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
+                               max_concurrency=self._max_concurrency)
+        return wf, name_to_step
+
     async def _project(self, coro):
         if self._rm is None:
             return
@@ -314,14 +582,7 @@ class OrchestratorService:
         await self._project_plan(session_id, plan, user_id)
 
         # STEP 8 — connectors → executor tools, plan → ADK Workflow.
-        factory = nodes.make_llm_node_factory(
-            model_name=model,
-            tools=self._tools_for(connectors, session_id, user_id),
-            tools_for_step=self._mail_stamping(session_id, plan),
-            custom_instruction=executor_prompt)
-        name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
-        wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
-                               max_concurrency=self._max_concurrency)
+        wf, name_to_step = self._build_workflow(session_id, user_id, plan, model, connectors, executor_prompt)
         logger.info("[worky] 8. to_workflow → ADK Workflow %r (max_concurrency=%d) session=%s",
                     wf.name, self._max_concurrency, session_id)
 
@@ -387,14 +648,7 @@ class OrchestratorService:
         # STEP 8 (resume) — same step ids + depends_on ⇒ same node names + edges,
         # which is what lets the interrupt id from the earlier run still match.
         plan = _plan_from_snapshot(snap)
-        factory = nodes.make_llm_node_factory(
-            model_name=model,
-            tools=self._tools_for(connectors, session_id, user_id),
-            tools_for_step=self._mail_stamping(session_id, plan),
-            custom_instruction=executor_prompt)
-        name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
-        wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
-                               max_concurrency=self._max_concurrency)
+        wf, name_to_step = self._build_workflow(session_id, user_id, plan, model, connectors, executor_prompt)
         runner = self._runner_factory(wf, f"orch_{session_id}")
         await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
         # Keep the pending interrupt set while resuming so a correction that
@@ -435,14 +689,7 @@ class OrchestratorService:
             await self._project(self._rm.set_session_status(session_id, plan.status.value))
             return plan
 
-        factory = nodes.make_llm_node_factory(
-            model_name=model,
-            tools=self._tools_for(connectors, session_id, user_id),
-            tools_for_step=self._mail_stamping(session_id, plan),
-            custom_instruction=executor_prompt)
-        name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
-        wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
-                               max_concurrency=self._max_concurrency)
+        wf, name_to_step = self._build_workflow(session_id, user_id, plan, model, connectors, executor_prompt)
         runner = self._runner_factory(wf, f"orch_{session_id}")
         await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
         await self._project(self._rm.set_session_status(session_id, "running"))  # paused -> running
@@ -562,6 +809,8 @@ class OrchestratorService:
             model=self._build_planner_model(planner_model),
             instruction=(f"{planner_prompt}\n\n{PLANNER_INSTRUCTION}"
                          if planner_prompt else PLANNER_INSTRUCTION),
+            tools=[human_agents.make_find_human_agents_tool()],
+            output_schema=_PlannerOutput,
         )
         runner = self._runner_factory(planner, f"planner_{session_id}")
         await _ensure_session(runner, f"planner_{session_id}", user_id, session_id + "_plan")
@@ -574,29 +823,55 @@ class OrchestratorService:
                     if getattr(p, "text", None):
                         text = p.text
         data = _extract_json(text)
-        steps = [Step(id=s["id"], title=s.get("title", ""),
-                      description=s.get("description", ""),
-                      kind=s.get("kind", "execute"), question=s.get("question"),
-                      depends_on=list(s.get("depends_on", [])))
-                 for s in data.get("steps", [])]
+        steps = []
+        for s in data.get("steps", []):
+            assignee_id = assignee_name = assignee_role = None
+            if s.get("assignee"):
+                # Trust the API's resolution, not whatever the planner echoed
+                # back — same reasoning as delegate_to_human_agent: an LLM
+                # relaying fields can drift, a fresh lookup can't.
+                matches = await human_agents.search_human_agents(name=s["assignee"])
+                if matches:
+                    assignee_name = matches[0].get("name") or s["assignee"]
+                    assignee_id = matches[0].get("id") or assignee_name
+                    assignee_role = matches[0].get("role")
+            steps.append(Step(id=s["id"], title=s.get("title", ""),
+                              description=s.get("description", ""),
+                              kind=s.get("kind", "execute"), question=s.get("question"),
+                              depends_on=list(s.get("depends_on", [])),
+                              assignee=assignee_id, assignee_name=assignee_name,
+                              assignee_role=assignee_role))
         return Plan(title=data.get("title", ""), goal=data.get("goal", ""),
                     answer=data.get("answer") or None, steps=steps)
 
     def _build_planner_model(self, model_name: Optional[str] = None):
-        # Planner has no tools → plain model (no tool_choice/parallel_tool_calls,
-        # which the API rejects when no tools are provided).
-        return nodes.build_llm(model_name or self._planner_model, with_tools=False, temperature=0.0)
+        # Always has the find_human_agents discovery tool now.
+        return nodes.build_llm(model_name or self._planner_model, with_tools=True, temperature=0.0)
+
+    @staticmethod
+    def _step_row(ordinal: int, s: Step) -> tuple:
+        # Show the persona's display name (e.g. "Rabeb") as soon as the step
+        # appears, even before it runs; DEFAULT_EXECUTOR_LABEL for a plain
+        # (non-persona) step — a blank/internal node id is meaningless in the UI.
+        return (s.id, ordinal, s.wave, s.status.value, s.kind, s.question or "",
+                s.title or s.description or s.question or "",   # card label, never blank
+                s.description or "",                            # full instruction / detail
+                ",".join(s.depends_on), s.assignee or "",
+                s.assignee_name or DEFAULT_EXECUTOR_LABEL, s.assignee_role or "")
 
     async def _project_plan(self, session_id: str, plan: Plan, user_id: str) -> None:
         await self._project(self._rm and self._rm.upsert_plan(
             session_id, plan.id, plan.title, plan.goal, "running"))
-        rows = [(s.id, i, s.wave, s.status.value, s.kind, s.question or "",
-                 s.title or s.description or s.question or "",   # card label, never blank
-                 s.description or "",                            # full instruction / detail
-                 ",".join(s.depends_on), s.agent or "")
-                for i, s in enumerate(plan.steps)]
+        rows = [self._step_row(i, s) for i, s in enumerate(plan.steps)]
         await self._project(self._rm and self._rm.upsert_steps(session_id, rows))
         await self._register_mail_waits(session_id, plan, user_id)
+
+    async def _project_step(self, session_id: str, plan: Plan, step: Step) -> None:
+        """Project ONE dynamically-added step (see _delegate_tool_for) so the
+        client sees it appear — the plan card grows instead of looking static."""
+        ordinal = plan.steps.index(step)
+        await self._project(self._rm and self._rm.upsert_steps(
+            session_id, [self._step_row(ordinal, step)]))
 
     async def _register_mail_waits(self, session_id: str, plan: Plan, user_id: str) -> None:
         """Mint a routing token for every step that will wait on a reply, before
@@ -659,7 +934,7 @@ class OrchestratorService:
             logger.info("[worky] 9. step running session=%s step=%s wave=%d",
                         session_id, step_id, step.wave)
             await self._project(self._rm and self._rm.set_step_status(
-                session_id, step_id, "running", agent=node))
+                session_id, step_id, "running"))
         if is_output:
             step.status = Status.COMPLETED
             text = ""
@@ -669,4 +944,4 @@ class OrchestratorService:
             logger.info("[worky] 9. step completed session=%s step=%s (%d chars)",
                         session_id, step_id, len(text))
             await self._project(self._rm and self._rm.set_step_status(
-                session_id, step_id, "completed", agent=node, result=text))
+                session_id, step_id, "completed", result=text))

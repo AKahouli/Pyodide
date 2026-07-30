@@ -36,10 +36,16 @@ class Step(BaseModel):
     # Assigned by the scheduler: 0-based parallel wave. Steps in the same wave
     # have no dependency between them and may run concurrently.
     wave: int = 0
-    agent: Optional[str] = None            # which executor sub-agent handled it
     result: Optional[str] = None
     error: Optional[str] = None
     blocked_reason: Optional[str] = None
+    # Human-agent persona (see human_agents.py) this step is delegated to, if
+    # any; None means the generic executor. assignee is the directory id
+    # (used for self-delegation checks); name/role are resolved and cached
+    # at creation time, since there's no static roster to re-look-up later.
+    assignee: Optional[str] = None
+    assignee_name: Optional[str] = None
+    assignee_role: Optional[str] = None
 
     def is_done(self) -> bool:
         return self.status.is_terminal()
