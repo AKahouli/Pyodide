@@ -22,6 +22,7 @@ import { LoggerService } from '../logger';
 import { WorkspaceUploadSettingsService } from '../system/workspace-upload-settings.service';
 import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
 import { WebsiteCrawlerService } from './services/website-crawler.service';
+import { GuardedUrlDownloaderService } from './services/guarded-url-downloader.service';
 import {
   DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS,
 } from '../system/constants/workspace-upload-settings.constants';
@@ -59,6 +60,7 @@ describe('WorkspaceDocumentService.createFromAiArtifact', () => {
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
         { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
+        GuardedUrlDownloaderService,
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -167,6 +169,7 @@ describe('WorkspaceDocumentService upload validation', () => {
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
         { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
+        GuardedUrlDownloaderService,
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -266,6 +269,7 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
         { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
+        GuardedUrlDownloaderService,
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -413,6 +417,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
           },
         },
         { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
+        GuardedUrlDownloaderService,
       ],
     }).compile();
 
@@ -601,6 +606,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
 
 describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachable)', () => {
   let service: WorkspaceDocumentService;
+  let urlDownloader: GuardedUrlDownloaderService;
   const mockLookup = lookup as jest.MockedFunction<typeof lookup>;
 
   beforeEach(async () => {
@@ -618,6 +624,7 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
         { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
+        GuardedUrlDownloaderService,
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -653,10 +660,11 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
     }).compile();
 
     service = mod.get(WorkspaceDocumentService);
+    urlDownloader = mod.get(GuardedUrlDownloaderService);
   });
 
   const assertUrlIsSafe = (url: string): Promise<void> =>
-    (service as any).assertUrlIsSafe(url);
+    urlDownloader.assertUrlIsSafe(url);
 
   it('rejects a localhost URL without consulting DNS', async () => {
     await expect(assertUrlIsSafe('http://localhost:8080/admin')).rejects.toBeInstanceOf(
@@ -783,6 +791,7 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
         { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn() } },
+        GuardedUrlDownloaderService,
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -1032,14 +1041,13 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
 
   beforeEach(async () => {
     // convertAndStore (called from the fire-and-forget loop) runs the real
-    // assertUrlIsSafe guard, which does a live DNS lookup. Test URLs like
-    // https://a.example won't resolve, so convert() would never be reached
-    // and the ordering assertion below would fail for the wrong reason.
-    // Stub the guard just for this describe block. TS compiles the named
-    // import in workspace-document.service.ts ("import { assertUrlIsSafe }
-    // from './services/url-safety'") to a property access on the required
+    // assertUrlIsSafe guard via GuardedUrlDownloaderService, which does a live
+    // DNS lookup. Test URLs like https://a.example won't resolve, so convert()
+    // would never be reached and the ordering assertion below would fail for
+    // the wrong reason. Stub the guard just for this describe block. TS compiles
+    // the named import in url-safety to a property access on the required
     // module object at each call site (commonjs target), so spying on the
-    // module's export here is visible to the service without a jest.mock()
+    // module's export here is visible to the downloader without a jest.mock()
     // that would affect the SSRF-guard describe block above, which needs
     // the real implementation.
     urlSafeSpy = jest.spyOn(urlSafetyModule, 'assertUrlIsSafe').mockResolvedValue(undefined);
@@ -1107,6 +1115,7 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
         { provide: UrlToPdfClientService, useValue: { convert } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
         { provide: WebsiteCrawlerService, useValue: crawler },
+        GuardedUrlDownloaderService,
         {
           provide: ConfigService,
           useValue: {
