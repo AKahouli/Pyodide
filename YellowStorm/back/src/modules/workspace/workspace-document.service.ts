@@ -612,6 +612,10 @@ export class WorkspaceDocumentService {
    * Ingest a file from an external download URL into a workspace.
    * Downloads the file, then delegates to uploadSmallFile for storage.
    * Used by the brain/agent to save MCP-sourced files (e.g., SharePoint download URLs).
+   *
+   * SSRF: initial URL and every redirect hop are checked with assertUrlIsSafe;
+   * auto-redirects are disabled. Only Authorization may be forwarded, and it is
+   * stripped when a redirect changes origin (credential forwarding).
    */
   async ingestFromUrl(
     workspaceId: string,
@@ -628,11 +632,12 @@ export class WorkspaceDocumentService {
     let resolvedMimeType = dto.mimeType || 'application/octet-stream';
 
     try {
-      const response = await axios.get(dto.downloadUrl, {
-        responseType: 'arraybuffer',
-        timeout: 30_000,
-        maxContentLength: this.maxFileSizeMb * 1024 * 1024,
-        headers: dto.authHeaders || {},
+      // Fail closed before any network I/O so disallowed hosts never hit axios.
+      await this.assertUrlIsSafe(dto.downloadUrl);
+
+      const response = await this.downloadUrlGuarded(dto.downloadUrl, {
+        maxBytes: this.maxFileSizeMb * 1024 * 1024,
+        authHeaders: this.pickIngestAuthHeaders(dto.authHeaders),
       });
 
       buffer = Buffer.from(response.data);
@@ -641,7 +646,10 @@ export class WorkspaceDocumentService {
         resolvedMimeType = response.headers['content-type'].split(';')[0].trim();
       }
     } catch (error) {
-      const err = error as any;
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      const err = error as { response?: { status?: number }; message?: string };
       const status = err.response?.status;
       const message = status
         ? `Failed to download file: HTTP ${status}`
@@ -1020,6 +1028,108 @@ export class WorkspaceDocumentService {
       const err = error as { message?: string };
       return { reachable: false, error: err?.message ?? 'unreachable' };
     }
+  }
+
+  /**
+   * Downloads a binary URL with redirects followed manually (max 5 hops).
+   * Each hop must be HTTPS and is re-validated with assertUrlIsSafe.
+   * Authorization is stripped when the redirect target origin differs.
+   */
+  private async downloadUrlGuarded(
+    url: string,
+    options: {
+      maxBytes: number;
+      authHeaders: Record<string, string>;
+    },
+  ): Promise<{ data: ArrayBuffer; headers: Record<string, string> }> {
+    const MAX_HOPS = 5;
+    let currentUrl = url;
+    const headers: Record<string, string> = { ...options.authHeaders };
+
+    for (let hop = 0; hop <= MAX_HOPS; hop++) {
+      this.assertIngestUrlIsHttps(currentUrl);
+      if (hop > 0) {
+        await this.assertUrlIsSafe(currentUrl);
+      }
+
+      const res = await axios.get(currentUrl, {
+        responseType: 'arraybuffer',
+        timeout: 30_000,
+        maxContentLength: options.maxBytes,
+        maxRedirects: 0,
+        validateStatus: () => true,
+        headers: { ...headers },
+      });
+
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers?.location as string | undefined;
+        if (!location) {
+          throw new BadRequestException(
+            ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+            'Failed to download file: redirect without Location',
+          );
+        }
+        const nextUrl = new URL(location, currentUrl).toString();
+        if (new URL(nextUrl).origin !== new URL(currentUrl).origin) {
+          for (const key of Object.keys(headers)) {
+            if (key.toLowerCase() === 'authorization') {
+              delete headers[key];
+            }
+          }
+        }
+        currentUrl = nextUrl;
+        continue;
+      }
+
+      if (res.status < 200 || res.status >= 300) {
+        throw Object.assign(new Error(`Request failed with status code ${res.status}`), {
+          response: { status: res.status },
+        });
+      }
+
+      return {
+        data: res.data as ArrayBuffer,
+        headers: (res.headers ?? {}) as Record<string, string>,
+      };
+    }
+
+    throw new BadRequestException(
+      ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+      'Failed to download file: too many redirects',
+    );
+  }
+
+  private assertIngestUrlIsHttps(url: string): void {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new BadRequestException(
+        ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+        'Only https URLs are allowed for ingest',
+      );
+    }
+    if (parsed.protocol !== 'https:') {
+      throw new BadRequestException(
+        ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED,
+        'Only https URLs are allowed for ingest',
+      );
+    }
+  }
+
+  /** Keep only Authorization from caller-supplied ingest headers (defense in depth). */
+  private pickIngestAuthHeaders(
+    authHeaders?: Record<string, string>,
+  ): Record<string, string> {
+    if (!authHeaders) return {};
+    const picked: Record<string, string> = {};
+    for (const [key, value] of Object.entries(authHeaders)) {
+      if (typeof value !== 'string') continue;
+      if (key.toLowerCase() === 'authorization') {
+        picked.Authorization = value;
+      }
+    }
+    return picked;
   }
 
   /**
