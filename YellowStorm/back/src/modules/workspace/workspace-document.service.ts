@@ -14,7 +14,7 @@ import {
   DocumentType,
   IndexingStatus,
 } from './schemas/workspace-document.schema';
-import { escapeRegex, collapseCharSet, stripLeadingTrailingWhitespaceOrDot } from '../../common/utils';
+import { escapeRegex, collapseCharSet, stripLeadingTrailingWhitespaceOrDot, redactUrlForLog, redactUrlsInMessage } from '../../common/utils';
 import { IndexingService } from '../indexing/indexing.service';
 import {
   UploadSession,
@@ -657,8 +657,8 @@ export class WorkspaceDocumentService {
 
       this.logger.error('File download failed during ingest', {
         workspaceId,
-        downloadUrl: dto.downloadUrl,
-        error: message,
+        ...redactUrlForLog(dto.downloadUrl),
+        error: redactUrlsInMessage(message),
       });
 
       throw new BadRequestException(ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED, message);

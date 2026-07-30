@@ -755,11 +755,20 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
 
 describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', () => {
   let service: WorkspaceDocumentService;
+  let logger: { error: jest.Mock; log: jest.Mock; warn: jest.Mock; debug: jest.Mock; setContext: jest.Mock };
   const mockLookup = lookup as jest.MockedFunction<typeof lookup>;
 
   beforeEach(async () => {
     mockLookup.mockReset();
     mockLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }] as any);
+
+    logger = {
+      setContext: jest.fn(),
+      log: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    };
 
     const mod = await Test.createTestingModule({
       providers: [
@@ -788,13 +797,7 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
         },
         {
           provide: LoggerService,
-          useValue: {
-            setContext: jest.fn(),
-            log: jest.fn(),
-            warn: jest.fn(),
-            error: jest.fn(),
-            debug: jest.fn(),
-          },
+          useValue: logger,
         },
         {
           provide: WorkspaceArtifactCleanupService,
@@ -917,6 +920,43 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     const headers = (opts as { headers: Record<string, string> }).headers;
     expect(headers).toEqual({ Authorization: 'Bearer ok' });
     expect(opts).toEqual(expect.objectContaining({ maxRedirects: 0 }));
+  });
+
+  it('does not log signed download URL query tokens on download failure', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.get.mockReset();
+    mockedAxios.get.mockResolvedValue({
+      status: 403,
+      headers: {},
+      data: Buffer.alloc(0),
+    } as any);
+
+    const signedUrl =
+      'https://contoso.sharepoint.com/sites/hr/_layouts/download.aspx?token=secret-sas&sig=abc';
+
+    await expect(
+      service.ingestFromUrl(WS_ID, {
+        downloadUrl: signedUrl,
+        filename: 'x.bin',
+        userId: USER_ID,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(logger.error).toHaveBeenCalled();
+    const [, meta] = logger.error.mock.calls.find(
+      (call) => call[0] === 'File download failed during ingest',
+    )!;
+    expect(meta).toEqual(
+      expect.objectContaining({
+        workspaceId: WS_ID,
+        scheme: 'https',
+        host: 'contoso.sharepoint.com',
+        pathHash: expect.any(String),
+      }),
+    );
+    expect(meta).not.toHaveProperty('downloadUrl');
+    expect(JSON.stringify(meta)).not.toContain('secret-sas');
+    expect(JSON.stringify(meta)).not.toContain('sig=abc');
   });
 });
 
