@@ -23,6 +23,7 @@ logger = get_logger(__name__)
 settings = get_settings()
 
 MAX_TOOL_ITERATIONS = 50
+MAX_IMAGES_PER_LLM_REQUEST = 50
 MCP_CONTENT_PARTS_KEY = "__mcp_content_parts"
 
 
@@ -81,12 +82,36 @@ def _image_url_from_mcp_part(part: dict[str, Any]) -> str:
     return f"data:{mime_type};base64,{image_data}"
 
 
-def _build_mcp_vision_message(tool_name: str, tool_content: str, parts: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _count_message_images(messages: list[dict[str, Any]]) -> int:
+    image_count = 0
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        image_count += sum(
+            1
+            for block in content
+            if isinstance(block, dict)
+            and block.get("type") in {"image_url", "input_image"}
+        )
+    return image_count
+
+
+def _build_mcp_vision_message(
+    tool_name: str,
+    tool_content: str,
+    parts: list[dict[str, Any]],
+    image_budget: int,
+) -> dict[str, Any] | None:
     blocks: list[dict[str, Any]] = [{"type": "text", "text": tool_content}]
     image_count = 0
+    total_image_count = 0
     image_log: list[dict[str, Any]] = []
     for part in parts:
         if part.get("type") != "image" or not part.get("data"):
+            continue
+        total_image_count += 1
+        if image_count >= max(image_budget, 0):
             continue
         image_count += 1
         blocks.append(
@@ -103,6 +128,15 @@ def _build_mcp_vision_message(tool_name: str, tool_content: str, parts: list[dic
             }
         )
 
+    dropped_count = total_image_count - image_count
+    if dropped_count:
+        logger.warning(
+            "MCP image bridge limited",
+            tool=tool_name,
+            forwarded_image_count=image_count,
+            dropped_image_count=dropped_count,
+            request_limit=MAX_IMAGES_PER_LLM_REQUEST,
+        )
     if image_count == 0:
         return None
 
@@ -368,10 +402,17 @@ async def run_step_with_tools(
                 "content": tool_content,
             })
             mcp_parts = _extract_mcp_content_parts(tool_result)
+            existing_image_count = _count_message_images(messages)
+            pending_image_count = _count_message_images(vision_messages)
             vision_message = _build_mcp_vision_message(
                 tool_name,
                 tool_content,
                 mcp_parts,
+                image_budget=(
+                    MAX_IMAGES_PER_LLM_REQUEST
+                    - existing_image_count
+                    - pending_image_count
+                ),
             )
             if vision_message is not None:
                 vision_messages.append(vision_message)

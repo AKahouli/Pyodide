@@ -746,14 +746,6 @@ def create_standard_agent_with_tools(
     runtime_context=agent_params,
     ))
 
-    # Platform tools (save_file_to_workspace)
-    agent_params = agent_config.get("agent_params") or {}
-    if agent_params.get("platform_api_url"):
-        try:
-            agent.tools.extend(create_platform_tools(agent_params))
-        except Exception as e:
-            logger.exception("Error adding platform tools to standard agent: %s", e)
-
     _attach_mcp_search_state(agent, config, agent_config)
     _attach_mcp_toolset(agent, config, agent_config)
 
