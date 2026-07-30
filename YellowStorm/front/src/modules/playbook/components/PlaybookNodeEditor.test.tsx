@@ -36,7 +36,7 @@ const storeState = {
 };
 
 vi.mock('@/modules/localization', () => ({
-  useModuleTranslation: () => ({ t: (key: string) => key }),
+  useModuleTranslation: () => ({ t: (key: string) => key, language: 'en' }),
 }));
 
 vi.mock('@/modules/agent/store', () => ({
@@ -107,6 +107,99 @@ vi.mock('@/components/ui/dialog', () => ({
   DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
+
+vi.mock('@/components/ui/scroll-area', () => ({
+  ScrollArea: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock('@/components/ui/collapsible', async () => {
+  const React = await import('react');
+  const CollapsibleContext = React.createContext<{
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+  } | null>(null);
+
+  return {
+    Collapsible: ({
+      children,
+      open = false,
+      onOpenChange,
+    }: {
+      children: ReactNode;
+      open?: boolean;
+      onOpenChange?: (open: boolean) => void;
+    }) => (
+      <CollapsibleContext.Provider value={{ open, onOpenChange: onOpenChange ?? (() => undefined) }}>
+        <div>{children}</div>
+      </CollapsibleContext.Provider>
+    ),
+    CollapsibleTrigger: ({
+      children,
+      ...props
+    }: React.ButtonHTMLAttributes<HTMLButtonElement>) => {
+      const context = React.useContext(CollapsibleContext);
+      return (
+        <button
+          type="button"
+          {...props}
+          onClick={(event) => {
+            props.onClick?.(event);
+            context?.onOpenChange(!context.open);
+          }}
+        >
+          {children}
+        </button>
+      );
+    },
+    CollapsibleContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  };
+});
+
+vi.mock('@/components/ui/tabs', async () => {
+  const React = await import('react');
+  const TabsContext = React.createContext<{ value: string; setValue: (value: string) => void } | null>(null);
+
+  return {
+    Tabs: ({
+      children,
+      value,
+      onValueChange,
+    }: {
+      children: ReactNode;
+      value: string;
+      onValueChange?: (value: string) => void;
+    }) => (
+      <TabsContext.Provider value={{ value, setValue: onValueChange ?? (() => undefined) }}>
+        <div>{children}</div>
+      </TabsContext.Provider>
+    ),
+    TabsList: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+    TabsTrigger: ({
+      children,
+      value,
+      ...props
+    }: React.ButtonHTMLAttributes<HTMLButtonElement> & { value: string }) => {
+      const context = React.useContext(TabsContext);
+      return (
+        <button
+          type="button"
+          {...props}
+          onClick={(event) => {
+            props.onClick?.(event);
+            context?.setValue(value);
+          }}
+        >
+          {children}
+        </button>
+      );
+    },
+    TabsContent: ({ children, value }: { children: ReactNode; value: string }) => {
+      const context = React.useContext(TabsContext);
+      if (context?.value !== value) return null;
+      return <div>{children}</div>;
+    },
+  };
+});
 
 vi.mock('@/components/ui/searchable-select', () => ({
   SearchableSelect: () => null,
@@ -371,7 +464,7 @@ describe('PlaybookNodeEditor', () => {
   });
 
   it('locks iterator output ports to the canonical results data port', async () => {
-    const { container } = render(
+    render(
       <PlaybookNodeEditor
         playbookId="playbook-1"
         task={iteratorTask}
@@ -382,11 +475,12 @@ describe('PlaybookNodeEditor', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue('Results')).toBeDisabled();
+      expect(screen.getByTestId('data-flow-output-port')).toHaveTextContent('Results');
     });
 
-    const disabledSelects = Array.from(container.querySelectorAll('select')).filter((select) => (select as HTMLSelectElement).disabled);
-    expect(disabledSelects.length).toBeGreaterThan(0);
+    expect(screen.getByTestId('data-flow-can-edit-output-names')).toHaveTextContent('false');
+    expect(screen.getByTestId('data-flow-can-edit-output-kinds')).toHaveTextContent('false');
+    expect(screen.getByTestId('data-flow-can-modify-outputs')).toHaveTextContent('false');
     expect(screen.queryByText('dataFlow.addOutput')).not.toBeInTheDocument();
   });
 
@@ -420,7 +514,7 @@ describe('PlaybookNodeEditor', () => {
       'task-1',
       expect.objectContaining({
         taskType: 'iterator',
-        inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false }],
+        inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false, role: 'collection' }],
         outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
       }),
     );
@@ -498,6 +592,8 @@ describe('PlaybookNodeEditor', () => {
         onOpenOutputFormatEditor={vi.fn()}
       />,
     );
+
+    fireEvent.click(screen.getByText('nodeEditor.sectionReplays'));
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'nodeEditor.replayEditFormatGuide' })).toBeInTheDocument();

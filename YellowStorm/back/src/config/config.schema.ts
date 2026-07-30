@@ -52,6 +52,8 @@ export const configValidationSchema = Joi.object({
   // Rate Limiting
   THROTTLE_TTL: Joi.number().default(60),
   THROTTLE_LIMIT: Joi.number().default(100),
+  // Express trust proxy: false|0|empty, hop count, true, or CIDR/name list
+  TRUST_PROXY: Joi.string().allow('').default(''),
 
   // MongoDB
   MONGODB_URI: Joi.string().default('mongodb://localhost:27017/yellostorm'),

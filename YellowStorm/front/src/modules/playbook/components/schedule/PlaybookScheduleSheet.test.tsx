@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { PlaybookScheduleSheet } from './PlaybookScheduleSheet';
@@ -168,6 +168,7 @@ describe('PlaybookScheduleSheet', () => {
   });
 
   it('saves mail trigger filters when mail is selected', async () => {
+    const user = userEvent.setup({ delay: null });
     render(
       <PlaybookScheduleSheet
         open
@@ -201,12 +202,14 @@ describe('PlaybookScheduleSheet', () => {
       />,
     );
 
-    await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.from' }), 'alerts@example.com');
-    await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.subjectContains' }), 'invoice');
-    await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.bodyContains' }), 'urgent');
-    await userEvent.type(screen.getByLabelText('triggers.mailConfig.autoRenewUntil'), '2026-05-01');
-    await userEvent.click(screen.getByRole('checkbox', { name: 'triggers.mailConfig.hasAttachments' }));
-    await userEvent.click(screen.getByRole('button', { name: 'schedule.save' }));
+    await user.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.from' }), 'alerts@example.com');
+    await user.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.subjectContains' }), 'invoice');
+    await user.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.bodyContains' }), 'urgent');
+    fireEvent.change(screen.getByLabelText('triggers.mailConfig.autoRenewUntil'), {
+      target: { value: '2026-05-01' },
+    });
+    await user.click(screen.getByRole('checkbox', { name: 'triggers.mailConfig.hasAttachments' }));
+    await user.click(screen.getByRole('button', { name: 'schedule.save' }));
 
     expect(storeMock.upsertPlaybookTriggerMail).toHaveBeenCalledWith('p1', {
       enabled: true,
@@ -275,6 +278,7 @@ describe('PlaybookScheduleSheet', () => {
   });
 
   it('syncs the Microsoft 365 subscription from the trigger panel', async () => {
+    const user = userEvent.setup({ delay: null });
     mailboxCapabilityMock.current = {
       connected: true,
       mailboxReady: true,
@@ -315,12 +319,14 @@ describe('PlaybookScheduleSheet', () => {
       />,
     );
 
-    await userEvent.type(
+    await user.type(
       screen.getByRole('textbox', { name: 'triggers.mailConfig.notificationUrl' }),
       'https://example.test/webhook',
     );
-    await userEvent.type(screen.getByLabelText('triggers.mailConfig.autoRenewUntil'), '2026-05-01');
-    await userEvent.click(screen.getByRole('button', { name: 'triggers.mailConfig.syncSubscription' }));
+    fireEvent.change(screen.getByLabelText('triggers.mailConfig.autoRenewUntil'), {
+      target: { value: '2026-05-01' },
+    });
+    await user.click(screen.getByRole('button', { name: 'triggers.mailConfig.syncSubscription' }));
 
     expect(storeMock.syncPlaybookTriggerMailSubscription).toHaveBeenCalledWith('p1', {
       notificationUrl: 'https://example.test/webhook',

@@ -11,8 +11,10 @@ describe('admin constants', () => {
     for (const item of ADMIN_MENU_ITEMS) {
       expect(item.path.startsWith('/admin')).toBe(true);
       expect(item.permissions.length).toBeGreaterThan(0);
-      expect(item.labelKey).toContain('menu.');
-      expect(item.descriptionKey).toContain('menu.');
+      expect(item.labelKey.length).toBeGreaterThan(0);
+      expect(item.descriptionKey.length).toBeGreaterThan(0);
+      expect(item.labelKey).toMatch(/^(menu\.|appearance\.)/);
+      expect(item.descriptionKey).toMatch(/^(menu\.|appearance\.)/);
     }
   });
 });

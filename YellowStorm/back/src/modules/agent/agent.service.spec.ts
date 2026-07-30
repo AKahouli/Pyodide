@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { AgentService } from './agent.service';
+import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
 import { IAgentForStream } from './interfaces/agent.interface';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
 
@@ -124,6 +125,13 @@ describe('AgentService connector skill inheritance', () => {
       teamService as any,
       agentShareService as any,
       guardrailsSettingsService as any,
+      new AgentConnectorRuntimeService(
+        logger as any,
+        skillService as any,
+        connectorService as any,
+        connectorAuthService as any,
+        configService as unknown as ConfigService,
+      ),
     );
 
     jest.spyOn(service as any, 'buildToolsWithTokens').mockResolvedValue([]);

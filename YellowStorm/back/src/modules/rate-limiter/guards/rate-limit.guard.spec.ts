@@ -39,7 +39,9 @@ describe('RateLimitGuard', () => {
     const request = {
       user: overrides.user,
       headers: overrides.headers ?? {},
-      ip: overrides.ip ?? '127.0.0.1',
+      ip: Object.prototype.hasOwnProperty.call(overrides, 'ip')
+        ? overrides.ip
+        : '127.0.0.1',
       socket: overrides.socket ?? { remoteAddress: '127.0.0.1' },
       method: overrides.method ?? 'GET',
     };
@@ -222,48 +224,56 @@ describe('RateLimitGuard', () => {
       );
     });
 
-    it('should extract IP from x-forwarded-for header', async () => {
-      await guard.canActivate(
-        createMockContext({ headers: { 'x-forwarded-for': '203.0.113.50, 70.41.3.18' } }),
-      );
-
-      expect(rateLimiterService.generateKey).toHaveBeenCalledWith(
-        undefined,
-        '203.0.113.50',
-        expect.any(String),
-      );
-    });
-
-    it('should extract IP from x-real-ip header', async () => {
-      await guard.canActivate(
-        createMockContext({ headers: { 'x-real-ip': '10.0.0.5' } }),
-      );
-
-      expect(rateLimiterService.generateKey).toHaveBeenCalledWith(
-        undefined,
-        '10.0.0.5',
-        expect.any(String),
-      );
-    });
-
-    it('should prefer x-forwarded-for over x-real-ip', async () => {
+    it('should ignore x-forwarded-for and use request.ip', async () => {
       await guard.canActivate(
         createMockContext({
-          headers: {
-            'x-forwarded-for': '1.2.3.4',
-            'x-real-ip': '5.6.7.8',
-          },
+          ip: '192.0.2.10',
+          headers: { 'x-forwarded-for': '203.0.113.50, 70.41.3.18' },
         }),
       );
 
       expect(rateLimiterService.generateKey).toHaveBeenCalledWith(
         undefined,
-        '1.2.3.4',
+        '192.0.2.10',
         expect.any(String),
       );
     });
 
-    it('should fallback to request.ip', async () => {
+    it('should ignore x-real-ip and use request.ip', async () => {
+      await guard.canActivate(
+        createMockContext({
+          ip: '192.0.2.20',
+          headers: { 'x-real-ip': '10.0.0.5' },
+        }),
+      );
+
+      expect(rateLimiterService.generateKey).toHaveBeenCalledWith(
+        undefined,
+        '192.0.2.20',
+        expect.any(String),
+      );
+    });
+
+    it('should ignore spoofed forwarding headers when only socket address is available', async () => {
+      await guard.canActivate(
+        createMockContext({
+          ip: undefined,
+          headers: {
+            'x-forwarded-for': '1.2.3.4',
+            'x-real-ip': '5.6.7.8',
+          },
+          socket: { remoteAddress: '192.0.2.55' },
+        }),
+      );
+
+      expect(rateLimiterService.generateKey).toHaveBeenCalledWith(
+        undefined,
+        '192.0.2.55',
+        expect.any(String),
+      );
+    });
+
+    it('should use request.ip when present', async () => {
       await guard.canActivate(createMockContext({ ip: '192.168.1.100' }));
 
       expect(rateLimiterService.generateKey).toHaveBeenCalledWith(
@@ -273,26 +283,18 @@ describe('RateLimitGuard', () => {
       );
     });
 
-    it('should handle array x-forwarded-for header', async () => {
+    it('should fall back to socket.remoteAddress when request.ip is missing', async () => {
       await guard.canActivate(
-        createMockContext({ headers: { 'x-forwarded-for': ['9.8.7.6, 1.1.1.1'] } }),
+        createMockContext({
+          ip: undefined,
+          headers: { 'x-forwarded-for': ['9.8.7.6, 1.1.1.1'] },
+          socket: { remoteAddress: '198.51.100.9' },
+        }),
       );
 
       expect(rateLimiterService.generateKey).toHaveBeenCalledWith(
         undefined,
-        '9.8.7.6',
-        expect.any(String),
-      );
-    });
-
-    it('should handle array x-real-ip header', async () => {
-      await guard.canActivate(
-        createMockContext({ headers: { 'x-real-ip': ['11.22.33.44'] } }),
-      );
-
-      expect(rateLimiterService.generateKey).toHaveBeenCalledWith(
-        undefined,
-        '11.22.33.44',
+        '198.51.100.9',
         expect.any(String),
       );
     });

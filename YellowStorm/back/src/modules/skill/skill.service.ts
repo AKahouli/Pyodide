@@ -7,7 +7,7 @@ import { LoggerService } from '../logger';
 import { Agent, AgentDocument } from '../agent/schemas/agent.schema';
 import { AgentType, AgentTypeDocument } from '../agent-type/schemas/agent-type.schema';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
-import { escapeRegex, stripTrailingChar } from '../../common/utils';
+import { escapeRegex, stripTrailingChar, MULTIPART_SKILL_IMPORT_MAX_BYTES } from '../../common/utils';
 import { BadRequestException, ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateSkillDto, QuerySkillDto, UpdateSkillDto } from './dto';
@@ -261,9 +261,17 @@ export class SkillService implements OnModuleInit {
     ]);
   }
 
-  async importPackage(createdBy: string, file: { originalname: string; buffer: Buffer }): Promise<ISkillResponse> {
+  async importPackage(createdBy: string, file: { originalname: string; buffer: Buffer; size?: number }): Promise<ISkillResponse> {
     if (!file || !file.buffer?.length) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'A skill package file is required.');
+    }
+
+    const size = file.size ?? file.buffer.length;
+    if (size > MULTIPART_SKILL_IMPORT_MAX_BYTES) {
+      throw new BadRequestException(
+        ErrorCode.BAD_REQUEST,
+        `Skill package exceeds maximum size (${Math.floor(MULTIPART_SKILL_IMPORT_MAX_BYTES / 1024 / 1024)}MB).`,
+      );
     }
 
     const lowerName = file.originalname.toLowerCase();

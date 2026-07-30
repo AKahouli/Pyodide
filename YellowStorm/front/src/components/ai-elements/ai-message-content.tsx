@@ -857,18 +857,6 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
   const { t: tCommon } = useModuleTranslation('common');
   const hasData = Array.isArray(data) && data.length > 0;
 
-  console.log('[ChartPartRenderer] Props:', {
-    title,
-    kind,
-    kindType: typeof kind,
-    hasData,
-    dataLength: data?.length,
-    xAxisKey,
-    yAxisKey,
-    config,
-    series,
-  });
-
   if (!hasData) {
     return <div className='my-4 rounded-xl border bg-card p-4 text-sm text-muted-foreground'>{tCommon('ai.chart.noData')}</div>;
   }

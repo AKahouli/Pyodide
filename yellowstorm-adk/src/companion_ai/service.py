@@ -282,14 +282,17 @@ class OrchestratorService:
         return "\n\n".join(parts)
 
     async def plan_turn(self, *, session_id: str, user_id: str, message: str,
-                        model: str, connectors: Optional[List[dict]] = None) -> Plan:
+                        model: str, connectors: Optional[List[dict]] = None,
+                        planner_model: Optional[str] = None, planner_prompt: Optional[str] = None,
+                        executor_prompt: Optional[str] = None) -> Plan:
         logger.info("[worky] 5. plan_turn ◄ session=%s model=%s connectors=%d",
                     session_id, model, len(connectors or []))
         await self._project(self._rm and self._rm.ensure_session(session_id, user_id, None, "running"))
 
         # STEP 5 — planner LLM → Plan. Zero steps means it chose a direct reply
         # (chit-chat): answer and finish the turn here, no graph is ever built.
-        plan = await self._make_plan(session_id, user_id, message)
+        plan = await self._make_plan(session_id, user_id, message,
+                                     planner_model=planner_model, planner_prompt=planner_prompt)
         logger.info("[worky] 5. planner LLM → Plan session=%s title=%r steps=%d",
                     session_id, plan.title, len(plan.steps))
         if not plan.steps:
@@ -314,7 +317,8 @@ class OrchestratorService:
         factory = nodes.make_llm_node_factory(
             model_name=model,
             tools=self._tools_for(connectors, session_id, user_id),
-            tools_for_step=self._mail_stamping(session_id, plan))
+            tools_for_step=self._mail_stamping(session_id, plan),
+            custom_instruction=executor_prompt)
         name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
                                max_concurrency=self._max_concurrency)
@@ -351,7 +355,8 @@ class OrchestratorService:
 
     async def resume_turn(self, *, session_id: str, user_id: str, answer: str,
                           model: str, connectors: Optional[List[dict]] = None,
-                          interrupt_id: Optional[str] = None) -> Plan:
+                          interrupt_id: Optional[str] = None,
+                          executor_prompt: Optional[str] = None) -> Plan:
         """Resume a turn blocked on ask-the-user with the user's `answer`.
 
         Reached from STEP 4 when the session is waiting; skips planning (STEP
@@ -385,7 +390,8 @@ class OrchestratorService:
         factory = nodes.make_llm_node_factory(
             model_name=model,
             tools=self._tools_for(connectors, session_id, user_id),
-            tools_for_step=self._mail_stamping(session_id, plan))
+            tools_for_step=self._mail_stamping(session_id, plan),
+            custom_instruction=executor_prompt)
         name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
                                max_concurrency=self._max_concurrency)
@@ -409,7 +415,8 @@ class OrchestratorService:
         return plan
 
     async def continue_turn(self, *, session_id: str, user_id: str,
-                            model: str, connectors: Optional[List[dict]] = None) -> Plan:
+                            model: str, connectors: Optional[List[dict]] = None,
+                            executor_prompt: Optional[str] = None) -> Plan:
         """Continue a PAUSED plan (PauseSession cancelled the in-flight turn).
 
         Rebuilds the same workflow from the stored plan and re-drives it. ADK
@@ -431,7 +438,8 @@ class OrchestratorService:
         factory = nodes.make_llm_node_factory(
             model_name=model,
             tools=self._tools_for(connectors, session_id, user_id),
-            tools_for_step=self._mail_stamping(session_id, plan))
+            tools_for_step=self._mail_stamping(session_id, plan),
+            custom_instruction=executor_prompt)
         name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
                                max_concurrency=self._max_concurrency)
@@ -546,11 +554,14 @@ class OrchestratorService:
         await self._project(self._rm and self._rm.set_session_status(
             session_id, "completed" if plan.status is Status.COMPLETED else plan.status.value))
 
-    async def _make_plan(self, session_id: str, user_id: str, message: str) -> Plan:
+    async def _make_plan(self, session_id: str, user_id: str, message: str, *,
+                         planner_model: Optional[str] = None,
+                         planner_prompt: Optional[str] = None) -> Plan:
         planner = LlmAgent(
             name="planner",
-            model=self._build_planner_model(),
-            instruction=PLANNER_INSTRUCTION,
+            model=self._build_planner_model(planner_model),
+            instruction=(f"{planner_prompt}\n\n{PLANNER_INSTRUCTION}"
+                         if planner_prompt else PLANNER_INSTRUCTION),
         )
         runner = self._runner_factory(planner, f"planner_{session_id}")
         await _ensure_session(runner, f"planner_{session_id}", user_id, session_id + "_plan")
@@ -571,10 +582,10 @@ class OrchestratorService:
         return Plan(title=data.get("title", ""), goal=data.get("goal", ""),
                     answer=data.get("answer") or None, steps=steps)
 
-    def _build_planner_model(self):
+    def _build_planner_model(self, model_name: Optional[str] = None):
         # Planner has no tools → plain model (no tool_choice/parallel_tool_calls,
         # which the API rejects when no tools are provided).
-        return nodes.build_llm(self._planner_model, with_tools=False, temperature=0.0)
+        return nodes.build_llm(model_name or self._planner_model, with_tools=False, temperature=0.0)
 
     async def _project_plan(self, session_id: str, plan: Plan, user_id: str) -> None:
         await self._project(self._rm and self._rm.upsert_plan(

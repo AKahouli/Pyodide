@@ -160,7 +160,10 @@ export class WorkyOrchestratorGrpcClientService
     sessionId: string,
     message: string,
     opts: {
-      model?: string;
+      plannerModel?: string;
+      executorModel?: string;
+      plannerPrompt?: string;
+      executorPrompt?: string;
       skills?: unknown[];
       connectors?: unknown[];
     },
@@ -170,7 +173,10 @@ export class WorkyOrchestratorGrpcClientService
       session_id: sessionId,
       message,
     };
-    if (opts.model) request.model = opts.model;
+    if (opts.plannerModel) request.planner_model = opts.plannerModel;
+    if (opts.executorModel) request.executor_model = opts.executorModel;
+    if (opts.plannerPrompt) request.planner_prompt = opts.plannerPrompt;
+    if (opts.executorPrompt) request.executor_prompt = opts.executorPrompt;
     if (opts.skills?.length) request.skills = opts.skills;
     if (opts.connectors?.length) request.connectors = opts.connectors;
     return new Promise((resolve, reject) => {
@@ -260,6 +266,7 @@ export class WorkyOrchestratorGrpcClientService
     replyBody: string;
     replyFrom?: string;
     model?: string;
+    executorPrompt?: string;
     connectors?: unknown[];
   }): Promise<{ delivered: boolean; sessionId: string; stepId: string }> {
     return new Promise((resolve, reject) => {
@@ -269,6 +276,7 @@ export class WorkyOrchestratorGrpcClientService
           reply_body: input.replyBody,
           reply_from: input.replyFrom ?? '',
           model: input.model ?? '',
+          executor_prompt: input.executorPrompt ?? '',
           connectors: input.connectors ?? [],
         },
         createGrpcMetadata(this.config, WORKY_ORCHESTRATOR_GRPC_SECURITY_NS),

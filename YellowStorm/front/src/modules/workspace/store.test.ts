@@ -8,6 +8,8 @@ const workspaceApiMock = vi.hoisted(() => ({
   getWorkspaces: vi.fn(),
   getWorkspace: vi.fn(),
   getDocuments: vi.fn(),
+  getPersonalWorkspace: vi.fn().mockResolvedValue(null),
+  getAllFolders: vi.fn().mockResolvedValue([]),
   addLinks: vi.fn(),
 }));
 
@@ -57,18 +59,13 @@ describe('workspace store', () => {
     useWorkspaceStore.setState(useWorkspaceStore.getInitialState(), true);
   });
 
-  it('fetches workspaces and auto-selects first workspace when modal is open', async () => {
+  it('fetches workspaces into cache without auto-selecting', async () => {
     const ws1 = makeWorkspace('ws-1', 'Workspace One');
     const ws2 = makeWorkspace('ws-2', 'Workspace Two');
 
     workspaceApiMock.getWorkspaces.mockResolvedValue({
       workspaces: [ws1, ws2],
       pagination: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 2, totalPages: 1 },
-    });
-    workspaceApiMock.getWorkspace.mockResolvedValue(ws1);
-    workspaceApiMock.getDocuments.mockResolvedValue({
-      documents: [],
-      pagination: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
     });
 
     useWorkspaceStore.setState({ isModalOpen: true, selectedWorkspaceId: null });
@@ -85,8 +82,9 @@ describe('workspace store', () => {
 
     await waitFor(() => {
       const state = useWorkspaceStore.getState();
-      expect(state.selectedWorkspaceId).toBe('ws-1');
-      expect(state.selectedWorkspace?.id).toBe('ws-1');
+      expect(state.workspaces.get(1)?.map((w) => w.id)).toEqual(['ws-1', 'ws-2']);
+      expect(state.selectedWorkspaceId).toBeNull();
+      expect(state.isLoadingWorkspaces).toBe(false);
     });
   });
 
@@ -143,7 +141,9 @@ describe('workspace store', () => {
       page: 1,
       limit: DEFAULT_PAGE_LIMIT,
       search: undefined,
+      parentId: null,
     });
+    expect(workspaceApiMock.getAllFolders).toHaveBeenCalledWith('ws-2');
   });
 
   it('does not refetch when selecting the same workspace', async () => {

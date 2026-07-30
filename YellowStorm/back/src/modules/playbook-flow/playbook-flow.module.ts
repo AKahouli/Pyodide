@@ -140,6 +140,8 @@ import { PlaybookExecutionEventHandlerService } from './execution/runtime/playbo
 import { PlaybookExecutionNodeEventHandlerService } from './execution/runtime/playbook-execution-node-event-handler.service';
 import { PlaybookExecutionReplayRuntimeService } from './execution/runtime/playbook-execution-replay-runtime.service';
 import { PlaybookExecutionStreamFinalizerService } from './execution/runtime/playbook-execution-stream-finalizer.service';
+import { PlaybookExecutionHitlResumeService } from './execution/runtime/playbook-execution-hitl-resume.service';
+import { PlaybookExecutionSingleStepPrepService } from './execution/runtime/playbook-execution-single-step-prep.service';
 import { PlaybookDesignRequestBuilderService } from './design/playbook-design-request-builder.service';
 import { PlaybookDesignResultApplierService } from './design/playbook-design-result-applier.service';
 import { PlaybookDesignSummaryService } from './design/playbook-design-summary.service';
@@ -219,6 +221,8 @@ import { PlaybookAssistantOperationService } from './assistant/playbook-assistan
     PlaybookExecutionNodeEventHandlerService,
     PlaybookExecutionReplayRuntimeService,
     PlaybookExecutionStreamFinalizerService,
+    PlaybookExecutionHitlResumeService,
+    PlaybookExecutionSingleStepPrepService,
     PlaybookDesignRequestBuilderService,
     PlaybookDesignResultApplierService,
     PlaybookDesignSummaryService,

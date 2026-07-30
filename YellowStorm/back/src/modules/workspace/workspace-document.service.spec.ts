@@ -3,6 +3,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { lookup } from 'dns/promises';
 import axios from 'axios';
+import { Readable } from 'stream';
 import { Types } from 'mongoose';
 import { WorkspaceDocumentService } from './workspace-document.service';
 import { BadRequestException } from '../exceptions';
@@ -21,6 +22,7 @@ import { LoggerService } from '../logger';
 import { WorkspaceUploadSettingsService } from '../system/workspace-upload-settings.service';
 import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
 import { WebsiteCrawlerService } from './services/website-crawler.service';
+import { GuardedUrlDownloaderService } from './services/guarded-url-downloader.service';
 import {
   DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS,
 } from '../system/constants/workspace-upload-settings.constants';
@@ -58,6 +60,7 @@ describe('WorkspaceDocumentService.createFromAiArtifact', () => {
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
         { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
+        GuardedUrlDownloaderService,
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -166,6 +169,7 @@ describe('WorkspaceDocumentService upload validation', () => {
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
         { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
+        GuardedUrlDownloaderService,
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -265,6 +269,7 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
         { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
+        GuardedUrlDownloaderService,
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -412,6 +417,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
           },
         },
         { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
+        GuardedUrlDownloaderService,
       ],
     }).compile();
 
@@ -600,6 +606,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
 
 describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachable)', () => {
   let service: WorkspaceDocumentService;
+  let urlDownloader: GuardedUrlDownloaderService;
   const mockLookup = lookup as jest.MockedFunction<typeof lookup>;
 
   beforeEach(async () => {
@@ -617,6 +624,7 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
         { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
         { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn().mockResolvedValue(undefined) } },
+        GuardedUrlDownloaderService,
         {
           provide: ConfigService,
           useValue: { get: (_: string, dflt?: unknown) => dflt },
@@ -652,10 +660,11 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
     }).compile();
 
     service = mod.get(WorkspaceDocumentService);
+    urlDownloader = mod.get(GuardedUrlDownloaderService);
   });
 
   const assertUrlIsSafe = (url: string): Promise<void> =>
-    (service as any).assertUrlIsSafe(url);
+    urlDownloader.assertUrlIsSafe(url);
 
   it('rejects a localhost URL without consulting DNS', async () => {
     await expect(assertUrlIsSafe('http://localhost:8080/admin')).rejects.toBeInstanceOf(
@@ -753,6 +762,267 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
   });
 });
 
+describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', () => {
+  let service: WorkspaceDocumentService;
+  let logger: { error: jest.Mock; log: jest.Mock; warn: jest.Mock; debug: jest.Mock; setContext: jest.Mock };
+  const mockLookup = lookup as jest.MockedFunction<typeof lookup>;
+
+  beforeEach(async () => {
+    mockLookup.mockReset();
+    mockLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }] as any);
+
+    logger = {
+      setContext: jest.fn(),
+      log: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    };
+
+    const mod = await Test.createTestingModule({
+      providers: [
+        WorkspaceDocumentService,
+        { provide: getModelToken(WorkspaceDoc.name), useValue: {} },
+        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: WorkspaceService, useValue: {} },
+        { provide: DocumentService, useValue: {} },
+        { provide: NotificationsService, useValue: {} },
+        { provide: IndexingService, useValue: {} },
+        { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
+        { provide: WorkspaceArtifactCleanupService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn() } },
+        GuardedUrlDownloaderService,
+        {
+          provide: ConfigService,
+          useValue: { get: (_: string, dflt?: unknown) => dflt },
+        },
+        {
+          provide: WorkspaceUploadSettingsService,
+          useValue: {
+            getAllowedExtensions: jest.fn().mockResolvedValue([...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS]),
+            getAllowedMimeTypesForExtension: jest.fn(() => []),
+            ensureDefaultSettings: jest.fn().mockResolvedValue(undefined),
+            getSettings: jest.fn().mockResolvedValue({ allowedExtensions: [...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS] }),
+          },
+        },
+        {
+          provide: LoggerService,
+          useValue: logger,
+        },
+        {
+          provide: WorkspaceArtifactCleanupService,
+          useValue: {
+            countBySource: jest.fn().mockResolvedValue(0),
+            deleteBySource: jest.fn().mockResolvedValue(undefined),
+            deleteAllByWorkspace: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+      ],
+    }).compile();
+
+    service = mod.get(WorkspaceDocumentService);
+    jest.spyOn(service, 'uploadSmallFile' as any).mockResolvedValue({
+      id: 'doc1',
+      originalName: 'file.bin',
+    });
+  });
+
+  it('rejects a private/loopback download URL before calling axios', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.get.mockReset();
+
+    await expect(
+      service.ingestFromUrl(WS_ID, {
+        downloadUrl: 'https://localhost/secret',
+        filename: 'x.bin',
+        userId: USER_ID,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(mockedAxios.get).not.toHaveBeenCalled();
+  });
+
+  it('does not follow a redirect to a private host', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.get.mockReset();
+
+    mockLookup.mockImplementation((hostname: unknown) => {
+      if (hostname === 'internal.example.com') {
+        return Promise.resolve([{ address: '10.0.0.5', family: 4 }] as any);
+      }
+      return Promise.resolve([{ address: '93.184.216.34', family: 4 }] as any);
+    });
+
+    mockedAxios.get.mockResolvedValueOnce({
+      status: 302,
+      headers: { location: 'https://internal.example.com/secret' },
+      data: Readable.from([]),
+    } as any);
+
+    await expect(
+      service.ingestFromUrl(WS_ID, {
+        downloadUrl: 'https://cdn.example.com/file',
+        filename: 'x.bin',
+        userId: USER_ID,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(mockedAxios.get).toHaveBeenCalledTimes(1);
+    expect(mockedAxios.get).not.toHaveBeenCalledWith(
+      'https://internal.example.com/secret',
+      expect.anything(),
+    );
+  });
+
+  it('strips Authorization when a redirect changes origin', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.get.mockReset();
+
+    mockedAxios.get
+      .mockResolvedValueOnce({
+        status: 302,
+        headers: { location: 'https://other.example.com/file' },
+        data: Readable.from([]),
+      } as any)
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/octet-stream' },
+        data: Readable.from([Buffer.from('payload')]),
+      } as any);
+
+    await service.ingestFromUrl(WS_ID, {
+      downloadUrl: 'https://cdn.example.com/file',
+      filename: 'x.bin',
+      userId: USER_ID,
+      authHeaders: { Authorization: 'Bearer secret-token' },
+    });
+
+    expect(mockedAxios.get).toHaveBeenCalledTimes(2);
+    const [, firstOpts] = mockedAxios.get.mock.calls[0];
+    expect((firstOpts as { headers: Record<string, string> }).headers.Authorization).toBe(
+      'Bearer secret-token',
+    );
+    const [, secondOpts] = mockedAxios.get.mock.calls[1];
+    expect((secondOpts as { headers: Record<string, string> }).headers.Authorization).toBeUndefined();
+  });
+
+  it('forwards only Authorization and drops other supplied header names', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.get.mockReset();
+    mockedAxios.get.mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'application/octet-stream' },
+      data: Readable.from([Buffer.from('payload')]),
+    } as any);
+
+    await service.ingestFromUrl(WS_ID, {
+      downloadUrl: 'https://cdn.example.com/file',
+      filename: 'x.bin',
+      userId: USER_ID,
+      authHeaders: {
+        Authorization: 'Bearer ok',
+        Cookie: 'session=evil',
+        'X-Api-Key': 'leak',
+      } as Record<string, string>,
+    });
+
+    const [, opts] = mockedAxios.get.mock.calls[0];
+    const headers = (opts as { headers: Record<string, string> }).headers;
+    expect(headers).toEqual({ Authorization: 'Bearer ok' });
+    expect(opts).toEqual(
+      expect.objectContaining({
+        maxRedirects: 0,
+        responseType: 'stream',
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it('does not log signed download URL query tokens on download failure', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.get.mockReset();
+    mockedAxios.get.mockResolvedValue({
+      status: 403,
+      headers: {},
+      data: Readable.from([]),
+    } as any);
+
+    const signedUrl =
+      'https://contoso.sharepoint.com/sites/hr/_layouts/download.aspx?token=secret-sas&sig=abc';
+
+    await expect(
+      service.ingestFromUrl(WS_ID, {
+        downloadUrl: signedUrl,
+        filename: 'x.bin',
+        userId: USER_ID,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(logger.error).toHaveBeenCalled();
+    const [, meta] = logger.error.mock.calls.find(
+      (call) => call[0] === 'File download failed during ingest',
+    )!;
+    expect(meta).toEqual(
+      expect.objectContaining({
+        workspaceId: WS_ID,
+        scheme: 'https',
+        host: 'contoso.sharepoint.com',
+        pathHash: expect.any(String),
+      }),
+    );
+    expect(meta).not.toHaveProperty('downloadUrl');
+    expect(JSON.stringify(meta)).not.toContain('secret-sas');
+    expect(JSON.stringify(meta)).not.toContain('sig=abc');
+  });
+
+  it('rejects oversized streamed bodies before upload (hard byte cap)', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.get.mockReset();
+    // Default smallFileThresholdMb is 10; emit more than that.
+    const oversized = Buffer.alloc(11 * 1024 * 1024, 1);
+    mockedAxios.get.mockResolvedValue({
+      status: 200,
+      headers: { 'content-type': 'application/octet-stream' },
+      data: Readable.from([oversized]),
+    } as any);
+
+    await expect(
+      service.ingestFromUrl(WS_ID, {
+        downloadUrl: 'https://cdn.example.com/huge.bin',
+        filename: 'huge.bin',
+        userId: USER_ID,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(service.uploadSmallFile as jest.Mock).not.toHaveBeenCalled();
+  });
+
+  it('rejects when Content-Length exceeds the hard byte cap without reading the body', async () => {
+    const mockedAxios = axios as jest.Mocked<typeof axios>;
+    mockedAxios.get.mockReset();
+    const destroy = jest.fn();
+    mockedAxios.get.mockResolvedValue({
+      status: 200,
+      headers: {
+        'content-type': 'application/octet-stream',
+        'content-length': String(50 * 1024 * 1024),
+      },
+      data: { destroy, [Symbol.asyncIterator]: async function* () { yield Buffer.from('x'); } },
+    } as any);
+
+    await expect(
+      service.ingestFromUrl(WS_ID, {
+        downloadUrl: 'https://cdn.example.com/huge.bin',
+        filename: 'huge.bin',
+        userId: USER_ID,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(destroy).toHaveBeenCalled();
+    expect(service.uploadSmallFile as jest.Mock).not.toHaveBeenCalled();
+  });
+});
+
 describe('WorkspaceDocumentService.addLinks sequencing', () => {
   let service: WorkspaceDocumentService;
   let documentModel: { create: jest.Mock; findByIdAndUpdate: jest.Mock };
@@ -771,14 +1041,13 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
 
   beforeEach(async () => {
     // convertAndStore (called from the fire-and-forget loop) runs the real
-    // assertUrlIsSafe guard, which does a live DNS lookup. Test URLs like
-    // https://a.example won't resolve, so convert() would never be reached
-    // and the ordering assertion below would fail for the wrong reason.
-    // Stub the guard just for this describe block. TS compiles the named
-    // import in workspace-document.service.ts ("import { assertUrlIsSafe }
-    // from './services/url-safety'") to a property access on the required
+    // assertUrlIsSafe guard via GuardedUrlDownloaderService, which does a live
+    // DNS lookup. Test URLs like https://a.example won't resolve, so convert()
+    // would never be reached and the ordering assertion below would fail for
+    // the wrong reason. Stub the guard just for this describe block. TS compiles
+    // the named import in url-safety to a property access on the required
     // module object at each call site (commonjs target), so spying on the
-    // module's export here is visible to the service without a jest.mock()
+    // module's export here is visible to the downloader without a jest.mock()
     // that would affect the SSRF-guard describe block above, which needs
     // the real implementation.
     urlSafeSpy = jest.spyOn(urlSafetyModule, 'assertUrlIsSafe').mockResolvedValue(undefined);
@@ -846,6 +1115,7 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
         { provide: UrlToPdfClientService, useValue: { convert } },
         { provide: WorkspaceArtifactCleanupService, useValue: {} },
         { provide: WebsiteCrawlerService, useValue: crawler },
+        GuardedUrlDownloaderService,
         {
           provide: ConfigService,
           useValue: {

@@ -145,6 +145,7 @@ interface Props {
   scopeId: string | null;
   overview?: GovernanceScopeOverview;
   memberships: GovernanceMembership[];
+  membershipsLoading: boolean;
   metrics: GovernanceMetric[];
   activeTab: TabKey;
   onTabChange: (tab: TabKey) => void;

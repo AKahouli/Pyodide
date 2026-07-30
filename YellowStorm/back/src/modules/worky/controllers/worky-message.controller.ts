@@ -48,28 +48,32 @@ export class WorkyMessageController {
     @Body() dto: CreateWorkyMessageDto,
   ): Promise<{ id: string; content: string; createdAt: string; turnStarted: true }> {
     const saved = await this.planning.appendOwnerMessage(user._id.toString(), streamId, dto);
-    const { aiSessionId, managerModelId } = await this.streamService.ensureKickoffContext(
-      streamId,
-      user._id.toString(),
-    );
-    // Manager model + per-user connectors (shared with the resume path).
-    const model = await this.turnContext.resolveManagerModel(
-      dto.managerModelId?.trim() || managerModelId || null,
-    );
-    const connectors = await this.turnContext.resolveConnectors(user._id.toString());
+    const ctx = await this.streamService.ensureKickoffContext(streamId, user._id.toString());
+    // Persisted per-stream config is the single source of truth. Both models
+    // resolve through the same chain (stream field → admin default); prompts
+    // pass through raw (empty = server default). Shared with the resume path.
+    const [plannerModel, executorModel, connectors] = await Promise.all([
+      this.turnContext.resolveManagerModel(ctx.plannerModelId),
+      this.turnContext.resolveManagerModel(ctx.executorModelId),
+      this.turnContext.resolveConnectors(user._id.toString()),
+    ]);
     // Fire-and-forget kickoff. The manager writes task/message rows into
     // its Postgres; the Electric consumer mirrors them into Mongo and
     // re-emits over the SSE channel `/worky/streams/{id}/events`.
     this.logger.log('[worky-orchestrator] RunTask kickoff', {
       streamId,
-      aiSid: aiSessionId,
-      model,
+      aiSid: ctx.aiSessionId,
+      plannerModel,
+      executorModel,
       contentLength: dto.content?.length,
       connectorCount: connectors.length,
     });
     void this.orchestrator
-      .runTask(user._id.toString(), aiSessionId, dto.content, {
-        model,
+      .runTask(user._id.toString(), ctx.aiSessionId, dto.content, {
+        plannerModel,
+        executorModel,
+        plannerPrompt: ctx.plannerPrompt ?? undefined,
+        executorPrompt: ctx.executorPrompt ?? undefined,
         connectors,
       })
       .catch((err) =>
@@ -155,11 +159,17 @@ export class WorkyMessageController {
     const aiSessionId = stream?.aiSessionId;
     if (!aiSessionId) return { resumed: false }; // nothing to resume
 
-    const model = await this.turnContext.resolveManagerModel(stream.managerModelId ?? null);
-    const connectors = await this.turnContext.resolveConnectors(user._id.toString());
+    const [plannerModel, executorModel, connectors] = await Promise.all([
+      this.turnContext.resolveManagerModel(stream.plannerModelId ?? null),
+      this.turnContext.resolveManagerModel(stream.executorModelId ?? null),
+      this.turnContext.resolveConnectors(user._id.toString()),
+    ]);
     void this.orchestrator
       .runTask(user._id.toString(), aiSessionId, '', {
-        model,
+        plannerModel,
+        executorModel,
+        plannerPrompt: stream.plannerPrompt ?? undefined,
+        executorPrompt: stream.executorPrompt ?? undefined,
         connectors,
       })
       .catch((err) =>

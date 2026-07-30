@@ -26,6 +26,7 @@ import { CurrentUser } from './decorators/current-user.decorator';
 import { UserDocument } from '../user/schemas/user.schema';
 import { BadRequestException, UnauthorizedException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
+import { getClientIp } from '@common/utils';
 import { RateLimit } from '../rate-limiter';
 
 @ApiTags('Authentication')
@@ -67,7 +68,7 @@ export class AuthController {
   @ApiResponse({ status: 403, description: 'Email not verified or account suspended' })
   @ApiResponse({ status: 429, description: 'Too many login attempts' })
   async login(@Body() dto: LoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    const ipAddress = this.getClientIp(req);
+    const ipAddress = getClientIp(req);
     const userAgent = req.headers['user-agent'] || 'unknown';
 
     const { loginResponse, refreshToken } = await this.authService.login(
@@ -110,7 +111,7 @@ export class AuthController {
       throw new UnauthorizedException(ErrorCode.AUTH_REFRESH_TOKEN_INVALID, 'Refresh token not provided');
     }
 
-    const ipAddress = this.getClientIp(req);
+    const ipAddress = getClientIp(req);
     const userAgent = req.headers['user-agent'] || 'unknown';
 
     const tokens = await this.authService.refreshTokens(refreshToken, ipAddress, userAgent);
@@ -250,15 +251,4 @@ export class AuthController {
     });
   }
 
-  /**
-   * Extract client IP address from request
-   */
-  private getClientIp(req: Request): string {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (forwarded) {
-      const ips = Array.isArray(forwarded) ? forwarded[0] : forwarded.split(',')[0];
-      return ips.trim();
-    }
-    return req.ip || req.socket.remoteAddress || 'unknown';
-  }
 }

@@ -13,6 +13,7 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
+import { getClientIp } from '@common/utils';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { RateLimit } from '@modules/rate-limiter';
 import { BadRequestException } from '@modules/exceptions';
@@ -105,7 +106,7 @@ export class OAuthController {
     }
 
     try {
-      const ipAddress = this.getClientIp(req);
+      const ipAddress = getClientIp(req);
       const userAgent = req.headers['user-agent'] || 'unknown';
 
       const result = await this.oauthFlowService.handleCallback(
@@ -154,7 +155,7 @@ export class OAuthController {
       throw new BadRequestException(ErrorCode.AUTH_OAUTH_LINK_TOKEN_INVALID, 'Token is required');
     }
 
-    const ipAddress = this.getClientIp(req);
+    const ipAddress = getClientIp(req);
     const userAgent = req.headers['user-agent'] || 'unknown';
 
     const result = await this.oauthFlowService.exchangeTempToken(token, ipAddress, userAgent);
@@ -201,12 +202,4 @@ export class OAuthController {
     }
   }
 
-  private getClientIp(req: Request): string {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (forwarded) {
-      const ips = Array.isArray(forwarded) ? forwarded[0] : forwarded.split(',')[0];
-      return ips.trim();
-    }
-    return req.ip || req.socket.remoteAddress || 'unknown';
-  }
 }

@@ -4,9 +4,9 @@ import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { WorkspaceButton } from './WorkspaceButton';
 
-const openModalMock = vi.fn();
 const openCreateModalMock = vi.fn();
 const openCreateTemplateModalMock = vi.fn();
+const navigateMock = vi.fn();
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
@@ -20,10 +20,13 @@ vi.mock('../hooks/useWorkspaceStoreTranslator', () => ({
   useWorkspaceStoreTranslator: vi.fn(),
 }));
 
+vi.mock('react-router-dom', () => ({
+  useNavigate: () => navigateMock,
+}));
+
 vi.mock('../store', () => ({
-  useWorkspaceStore: (selector: (state: { openModal: () => void; openCreateModal: () => void; openCreateTemplateModal: () => void }) => unknown) =>
+  useWorkspaceStore: (selector: (state: { openCreateModal: () => void; openCreateTemplateModal: () => void }) => unknown) =>
     selector({
-      openModal: openModalMock,
       openCreateModal: openCreateModalMock,
       openCreateTemplateModal: openCreateTemplateModalMock,
     }),
@@ -51,14 +54,14 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 }));
 
 describe('WorkspaceButton', () => {
-  it('calls workspace actions from button and menu items', async () => {
+  it('navigates to workspace and calls create actions from menu items', async () => {
     render(<WorkspaceButton />);
 
     await userEvent.click(screen.getByRole('button', { name: 'button.label' }));
     await userEvent.click(screen.getByRole('button', { name: 'button.menu.createWorkspace' }));
     await userEvent.click(screen.getByRole('button', { name: 'button.menu.createTemplate' }));
 
-    expect(openModalMock).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith('/workspace');
     expect(openCreateModalMock).toHaveBeenCalledTimes(1);
     expect(openCreateTemplateModalMock).toHaveBeenCalledTimes(1);
   });

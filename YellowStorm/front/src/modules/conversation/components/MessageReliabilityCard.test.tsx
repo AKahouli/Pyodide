@@ -8,6 +8,7 @@ vi.mock('../api', () => ({ rerunReliabilityEvaluation: rerunReliabilityEvaluatio
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
+    language: 'en',
     t: (key: string, options?: Record<string, string | number>) => {
       const values: Record<string, string> = {
         'reliability.pendingTitle': 'Checking sources',
@@ -238,8 +239,12 @@ describe('MessageReliabilityCard', () => {
     expect(screen.getByText('1.')).toBeInTheDocument();
     expect(screen.getByText('2.')).toBeInTheDocument();
     const attemptViewButton = screen.getByRole('button', { name: 'View answer for Correction attempt 1' });
+    const expectedAttemptTimestamp = new Intl.DateTimeFormat('en', {
+      dateStyle: 'medium',
+      timeStyle: 'medium',
+    }).format(new Date('2026-07-26T10:01:00.000Z'));
     expect(attemptViewButton.parentElement).toHaveClass('flex', 'items-center');
-    expect(attemptViewButton.parentElement).toHaveTextContent('Jul 26, 2026, 12:01:00 PM');
+    expect(attemptViewButton.parentElement).toHaveTextContent(expectedAttemptTimestamp);
     expect(attemptViewButton.parentElement).toContainElement(screen.getAllByRole('meter', { name: 'Reliability score: 52 out of 100' })[1]);
     expect(attemptViewButton.parentElement).toContainElement(attemptDetails);
     fireEvent.click(originalDetails);
