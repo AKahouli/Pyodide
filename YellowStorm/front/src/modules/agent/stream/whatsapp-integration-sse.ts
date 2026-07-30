@@ -107,11 +107,6 @@ export function subscribeToWhatsAppIntegrationEvents(
                 const envelope = JSON.parse(data) as WhatsAppIntegrationSseEnvelope;
                 if (envelope.type === 'status' && envelope.agentId === agentId) {
                   const integration = envelope.data as AgentWhatsAppIntegration;
-                  console.log('[WhatsApp integration SSE] status', {
-                    agentId,
-                    status: integration.status,
-                    integration,
-                  });
                   onStatus(integration);
                 }
               } catch {

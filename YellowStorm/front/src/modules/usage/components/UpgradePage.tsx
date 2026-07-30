@@ -21,10 +21,8 @@ export function UpgradePage() {
   // Show skeleton while we have no plans (handles both initial load and context loading)
   const isLoading = plans.length === 0;
 
-  const handleSelectPlan = (plan: Plan) => {
+  const handleSelectPlan = (_plan: Plan) => {
     // TODO: Implement plan selection/upgrade flow
-    console.log('Selected plan:', plan);
-    // This would typically redirect to a payment page or call an API
   };
 
   const sortedPlans = React.useMemo(() => {

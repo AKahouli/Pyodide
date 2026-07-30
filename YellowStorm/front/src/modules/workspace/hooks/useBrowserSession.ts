@@ -78,8 +78,10 @@ export function useBrowserSession() {
     // never reaches the backend — surface that instead of spinning forever. Logging
     // the exact target URL is the fastest way to diagnose a bad deploy.
     const target = `${getSocketBaseUrl()}/browser-session`;
-    // eslint-disable-next-line no-console
-    console.info('[browser-session] connecting to', target);
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line no-console
+      console.info('[browser-session] connecting to', target);
+    }
 
     const socket = io(target, {
       auth: { token },

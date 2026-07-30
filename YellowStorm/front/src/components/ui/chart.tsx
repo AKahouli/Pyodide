@@ -53,15 +53,9 @@ function ChartContainer({
 }
 
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
-  console.log('[ChartStyle] Received id:', id, 'full config:', JSON.stringify(config));
-  console.log('[ChartStyle] Config entries:', Object.entries(config));
-
   const colorConfig = Object.entries(config).filter(([, config]) => config.theme || config.color);
 
-  console.log('[ChartStyle] Generating CSS for chart:', id, 'colorConfig:', colorConfig);
-
   if (!colorConfig.length) {
-    console.warn('[ChartStyle] No color config found for chart:', id);
     return null;
   }
 
@@ -79,8 +73,6 @@ ${colorConfig
 `,
           )
           .join('\n');
-
-  console.log('[ChartStyle] Generated CSS:', cssContent);
 
   return (
     <style
