@@ -18,24 +18,6 @@ export class CreateGovernanceRevisionDto {
   @IsMongoId({ each: true })
   workspaceIds?: string[];
 
-  @ApiPropertyOptional({ type: [String] })
-  @IsOptional()
-  @IsArray()
-  @IsMongoId({ each: true })
-  sourceIds?: string[];
-
-  @ApiPropertyOptional({ type: [String] })
-  @IsOptional()
-  @IsArray()
-  @IsMongoId({ each: true })
-  includedSourceIds?: string[];
-
-  @ApiPropertyOptional({ type: [String] })
-  @IsOptional()
-  @IsArray()
-  @IsMongoId({ each: true })
-  excludedSourceIds?: string[];
-
   @ApiPropertyOptional({ type: Object })
   @IsOptional()
   @IsObject()

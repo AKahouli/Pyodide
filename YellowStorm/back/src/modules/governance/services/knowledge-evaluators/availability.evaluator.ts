@@ -6,11 +6,9 @@ import { dimension } from './knowledge-evaluator.utils';
 export class AvailabilityEvaluator implements KnowledgeEvaluator {
   readonly key = 'availability' as const;
   async evaluate(context: KnowledgeAssessmentContext) {
-    const unavailable = context.version.extractedMetadata.artifactAvailable === false;
-    if (unavailable) return dimension(0, [{ code: 'availability.artifact_unavailable', contribution: 0, message: 'The source artifact is unavailable.' }]);
-    const status = context.version.technicalStatus;
-    const scores: Record<string, number> = { ready: 100, processing: 60, pending: 45, failed: 0 };
+    const status = context.document.indexingStatus;
+    const scores: Record<string, number> = { ready: 100, processing: 60, pending: 45, none: 35, failed: 0 };
     const score = scores[status] ?? 0;
-    return dimension(score, [{ code: `availability.${status}`, contribution: score, message: `Technical status is ${status}.`, evidenceRefs: [`source-version:${context.version.id}:technicalStatus`] }]);
+    return dimension(score, [{ code: `availability.${status}`, contribution: score, message: `Indexing status is ${status}.`, evidenceRefs: [`document:${context.document.id}:indexingStatus`] }]);
   }
 }

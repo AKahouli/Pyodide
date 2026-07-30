@@ -6,8 +6,8 @@ import type { MetadataCandidateInput } from '@modules/knowledge-intelligence/ser
 @Injectable()
 export class MetadataCandidateEngineService {
   build(programId: string, context: KnowledgeAssessmentContext): MetadataCandidateInput[] {
-    const sourceMetadata = context.source.metadata;
-    const extracted = context.version.extractedMetadata;
+    const governanceMetadata = context.governance.metadata;
+    const extracted = context.document.metadata;
     const candidates: MetadataCandidateInput[] = [];
     const observed: Array<{ key: string; value: unknown; confidence: number }> = [
       { key: 'title', value: extracted.title, confidence: 0.9 },
@@ -17,10 +17,10 @@ export class MetadataCandidateEngineService {
       { key: 'version', value: extracted.version, confidence: 0.75 },
     ];
     for (const item of observed) {
-      if (typeof item.value !== 'string' || !item.value.trim() || sourceMetadata[item.key] === item.value.trim()) continue;
+      if (typeof item.value !== 'string' || !item.value.trim() || governanceMetadata[item.key] === item.value.trim()) continue;
       const proposedValue = item.value.trim().slice(0, 1000);
-      const candidateKey = createHash('sha256').update(`${context.version.id}:${item.key}:${proposedValue}`).digest('hex');
-      candidates.push({ programId, scopeIds: context.source.scopeIds, sourceId: context.source.id, sourceVersionId: context.version.id, key: item.key, proposedValue, candidateType: 'document', confidence: item.confidence, riskLevel: item.key === 'title' ? 'medium' : 'low', evidenceRefs: [`source-version:${context.version.id}:extractedMetadata.${item.key}`], candidateKey });
+      const candidateKey = createHash('sha256').update(`${context.document.id}:${item.key}:${proposedValue}`).digest('hex');
+      candidates.push({ programId, scopeIds: context.binding.scopeIds, documentId: context.document.id, key: item.key, proposedValue, candidateType: 'document', confidence: item.confidence, riskLevel: item.key === 'title' ? 'medium' : 'low', evidenceRefs: [`document:${context.document.id}:metadata.${item.key}`], candidateKey });
     }
     return candidates;
   }

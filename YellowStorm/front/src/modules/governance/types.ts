@@ -73,53 +73,36 @@ export interface GovernanceScopeMetadata {
   [key: string]: unknown;
 }
 
-export interface GovernanceSource {
+export type GovernanceDocumentLifecycleStatus = 'captured' | 'to_review' | 'approved' | 'published' | 'rejected' | 'archived';
+export type ValidityEvidenceOrigin = 'manual' | 'technical_metadata' | 'http_header' | 'html_metadata' | 'structured_data' | 'document_metadata' | 'logical_search' | 'llm_extraction' | 'policy';
+export interface ValidityEvidence { id: string; field: 'effectiveFrom' | 'effectiveUntil' | 'publishedAt' | 'modifiedAt' | 'validityMode'; value?: unknown; origin: ValidityEvidenceOrigin; confidence: number; documentId: string; page?: number; sectionId?: string; blockId?: string; excerpt?: string; validatedBy?: string; validatedAt?: string; extractionMethod?: string; capturedAt?: string; isCritical?: boolean; supersedesEvidenceId?: string; }
+export interface DocumentValidity { mode: 'fixed_date' | 'relative_duration' | 'until_replaced' | 'until_funds_exhausted' | 'open_ended' | 'unknown'; businessStatus: 'unknown' | 'scheduled' | 'valid' | 'needs_review' | 'expired' | 'conflicting' | 'suspended'; confidence: number; effectiveFrom?: string | null; effectiveUntil?: string | null; inclusiveEnd?: boolean; lastReviewedAt?: string | null; nextReviewAt?: string | null; reviewFrequencyDays?: number | null; evidence?: ValidityEvidence[]; manuallyOverridden?: boolean; }
+export interface GovernanceDocument {
   id: string;
   programId: string;
-  scopeIds?: string[];
-  visibility: 'program_shared' | 'scope_specific' | 'multi_scope';
-  title: string;
-  sourceType: 'pdf' | 'web_page' | 'api' | 'manual_record' | 'spreadsheet';
-  url?: string;
-  workspaceId?: string;
-  documentId?: string;
-  status: 'draft' | 'to_review' | 'validated' | 'published' | 'expired' | 'rejected';
-  tags: string[];
-  metadata?: Record<string, unknown>;
-  lastReviewedAt?: string;
-  nextReviewAt?: string;
-  reviewFrequencyDays?: number;
-  isArchived: boolean;
-  archivedAt?: string;
-  archiveReason?: string;
-  createdAt: string;
-  updatedAt: string;
+  documentId: string;
+  workspaceId: string;
+  document: { originalName: string; mimeType: string; type: 'doc' | 'url'; sourceUrl?: string; contentHash?: string; status: string; indexingStatus: string; updatedAt: string };
+  governance: { status: GovernanceDocumentLifecycleStatus; validity: DocumentValidity; tags: string[]; metadata: Record<string, unknown>; ownerUserId?: string; ownerScopeId?: string; archivedAt?: string; archiveReason?: string; createdAt: string; updatedAt: string };
 }
-
-export type GovernanceSourceVersionLifecycleStatus = 'captured' | 'to_review' | 'approved' | 'published' | 'rejected' | 'superseded';
-export type GovernanceSourceVersionTechnicalStatus = 'pending' | 'processing' | 'ready' | 'failed';
-export type GovernanceSourceValidityEvidenceOrigin = 'manual' | 'technical_metadata' | 'http_header' | 'html_metadata' | 'structured_data' | 'document_metadata' | 'logical_search' | 'llm_extraction' | 'policy';
-export interface GovernanceSourceValidityEvidence { id: string; field: 'effectiveFrom' | 'effectiveUntil' | 'publishedAt' | 'modifiedAt' | 'validityMode'; value?: unknown; origin: GovernanceSourceValidityEvidenceOrigin; confidence: number; documentId?: string; page?: number; sectionId?: string; blockId?: string; excerpt?: string; validatedBy?: string; validatedAt?: string; extractionMethod?: string; sourceVersionId?: string; sourceUrl?: string; capturedAt?: string; isCritical?: boolean; supersedesEvidenceId?: string; }
-export interface GovernanceSourceValidity { mode: 'fixed_date' | 'relative_duration' | 'until_replaced' | 'until_funds_exhausted' | 'open_ended' | 'unknown'; businessStatus: 'unknown' | 'scheduled' | 'valid' | 'needs_review' | 'expired' | 'conflicting' | 'suspended'; confidence: number; effectiveFrom?: string | null; effectiveUntil?: string | null; inclusiveEnd?: boolean; lastReviewedAt?: string | null; nextReviewAt?: string | null; reviewFrequencyDays?: number | null; evidence?: GovernanceSourceValidityEvidence[]; manuallyOverridden?: boolean; }
-export interface GovernanceSourceVersion { id: string; sourceId: string; programId: string; versionNumber: number; lifecycleStatus: GovernanceSourceVersionLifecycleStatus; technicalStatus: GovernanceSourceVersionTechnicalStatus; validity: GovernanceSourceValidity; capturedAt: string; canonicalUrl?: string; contentHash?: string; reviewComment?: string; submittedForReviewAt?: string; reviewedAt?: string; approvedAt?: string; publishedAt?: string; indexingAttemptId?: string; }
-export interface GovernanceTemporalCandidate { candidateId: string; field: 'effectiveFrom' | 'effectiveUntil' | 'publishedAt' | 'modifiedAt' | 'validityMode'; value?: string; mode?: GovernanceSourceValidity['mode']; interpretation: string; confidence: number; evidenceRefs: string[]; reasoningSummary: string; criticality: 'low' | 'medium' | 'high'; }
-export interface GovernanceTemporalCandidateRecord { id: string; candidate: GovernanceTemporalCandidate; validation: { status: 'accepted_candidate' | 'ambiguous' | 'conflicting' | 'rejected'; issues: Array<{ code: string; severity: 'warning' | 'blocking'; message: string }> }; evidence: GovernanceSourceValidityEvidence[]; decisionStatus: 'pending' | 'processing' | 'confirmed' | 'corrected' | 'rejected'; decidedAt?: string; decisionComment?: string; }
-export interface GovernanceSourceEvent { id: string; sourceId: string; versionId?: string; eventType: string; occurredAt: string; reason?: string; }
+export interface GovernanceTemporalCandidate { candidateId: string; field: 'effectiveFrom' | 'effectiveUntil' | 'publishedAt' | 'modifiedAt' | 'validityMode'; value?: string; mode?: DocumentValidity['mode']; interpretation: string; confidence: number; evidenceRefs: string[]; reasoningSummary: string; criticality: 'low' | 'medium' | 'high'; }
+export interface GovernanceTemporalCandidateRecord { id: string; candidate: GovernanceTemporalCandidate; validation: { status: 'accepted_candidate' | 'ambiguous' | 'conflicting' | 'rejected'; issues: Array<{ code: string; severity: 'warning' | 'blocking'; message: string }> }; evidence: ValidityEvidence[]; decisionStatus: 'pending' | 'processing' | 'confirmed' | 'corrected' | 'rejected'; decidedAt?: string; decisionComment?: string; }
+export interface GovernanceDocumentEvent { id: string; governanceDocumentId: string; documentId: string; eventType: string; occurredAt: string; reason?: string; }
 export interface CreateGovernanceWorkspaceBindingPayload { workspaceId: string; visibility: 'program_shared' | 'scope_specific' | 'multi_scope'; scopeIds?: string[]; ingestionMode?: 'manual' | 'assisted' | 'automatic'; defaults?: Record<string, unknown>; }
 export interface GovernanceWorkspaceBinding extends CreateGovernanceWorkspaceBindingPayload { id: string; programId: string; enabled: boolean; createdAt: string; updatedAt: string; }
-export interface GovernanceWorkspaceReconciliationResult { bindingId: string; scannedDocuments: number; missingSources: number; missingVersions: number; repairedStatuses: number; missingArtifacts: number; emittedEvents: number; errors: Array<{ documentId?: string; sourceId?: string; message: string }>; }
+export interface GovernanceWorkspaceReconciliationResult { bindingId: string; scannedDocuments: number; missingGovernanceDocuments: number; createdGovernanceDocuments: number; staleGovernanceDocuments: number; archivedMissingArtifacts: number; emittedEvents: number; errors: Array<{ documentId?: string; message: string }>; }
 export interface GovernanceReconciliationRun { id: string; bindingId: string; status: 'pending' | 'running' | 'completed' | 'failed'; dryRun: boolean; cursor?: string; stats: Partial<Omit<GovernanceWorkspaceReconciliationResult, 'bindingId' | 'errors'>>; errors: GovernanceWorkspaceReconciliationResult['errors']; startedAt?: string; completedAt?: string; createdAt: string; updatedAt: string; }
 
 export type KnowledgeHealthStatus = 'healthy' | 'warning' | 'critical';
 export type KnowledgePriority = 'critical' | 'high' | 'medium' | 'low';
 export interface KnowledgeAssessmentFactor { code: string; contribution: number; message: string; evidenceRefs?: string[]; }
 export interface KnowledgeAssessmentDimension { score: number; status: 'pass' | 'warning' | 'fail' | 'unknown'; factors: KnowledgeAssessmentFactor[]; }
-export interface KnowledgeAssessment { id: string; programId: string; scopeIds: string[]; sourceId: string; sourceVersionId: string; assessedAt: string; assessmentVersion: string; overallHealthScore: number; status: KnowledgeHealthStatus; summary: string; dimensions: Record<'businessValidity' | 'freshness' | 'availability' | 'integrity' | 'searchQuality' | 'governanceQuality', KnowledgeAssessmentDimension>; }
-export interface KnowledgeHealthSummary { totalSources: number; averageHealthScore: number; byStatus: Record<KnowledgeHealthStatus, number>; assessments: KnowledgeAssessment[]; }
-export interface KnowledgeAlert { id: string; programId: string; scopeIds: string[]; sourceId?: string; sourceVersionId?: string; category: 'validity' | 'freshness' | 'availability' | 'integrity' | 'governance' | 'search_quality' | 'impact'; severity: KnowledgePriority; status: 'open' | 'acknowledged' | 'resolved' | 'ignored'; title: string; description: string; evidenceRefs: string[]; openedAt: string; }
+export interface KnowledgeAssessment { id: string; programId: string; scopeIds: string[]; documentId: string; assessedAt: string; assessmentVersion: string; overallHealthScore: number; status: KnowledgeHealthStatus; summary: string; dimensions: Record<'businessValidity' | 'freshness' | 'availability' | 'integrity' | 'searchQuality' | 'governanceQuality', KnowledgeAssessmentDimension>; }
+export interface KnowledgeHealthSummary { totalDocuments: number; averageHealthScore: number; byStatus: Record<KnowledgeHealthStatus, number>; assessments: KnowledgeAssessment[]; }
+export interface KnowledgeAlert { id: string; programId: string; scopeIds: string[]; documentId?: string; category: 'validity' | 'freshness' | 'availability' | 'integrity' | 'governance' | 'search_quality' | 'impact'; severity: KnowledgePriority; status: 'open' | 'acknowledged' | 'resolved' | 'ignored'; title: string; description: string; evidenceRefs: string[]; openedAt: string; }
 export type KnowledgeRecommendationType = 'assign_owner' | 'schedule_review' | 'confirm_validity' | 'resolve_conflict' | 'enrich_metadata' | 'add_synonyms' | 'merge_duplicate' | 'reindex' | 'change_scope' | 'exclude_from_runtime';
-export interface KnowledgeRecommendation { id: string; programId: string; scopeIds: string[]; sourceId?: string; sourceVersionId?: string; type: KnowledgeRecommendationType; priority: KnowledgePriority; reason: string; impactSummary: string; proposedAction?: Record<string, unknown>; status: 'proposed' | 'accepted' | 'rejected' | 'applied' | 'superseded'; }
-export interface GovernanceMetadataCandidate { id: string; programId: string; scopeIds: string[]; sourceId: string; sourceVersionId: string; key: string; proposedValue: unknown; candidateType: 'document' | 'business' | 'search'; confidence: number; riskLevel: 'low' | 'medium' | 'high'; evidenceRefs: string[]; status: 'proposed' | 'accepted' | 'rejected' | 'superseded'; acceptedValue?: unknown; }
+export interface KnowledgeRecommendation { id: string; programId: string; scopeIds: string[]; documentId?: string; type: KnowledgeRecommendationType; priority: KnowledgePriority; reason: string; impactSummary: string; proposedAction?: Record<string, unknown>; status: 'proposed' | 'accepted' | 'rejected' | 'applied' | 'superseded'; }
+export interface GovernanceMetadataCandidate { id: string; programId: string; scopeIds: string[]; documentId: string; key: string; proposedValue: unknown; candidateType: 'document' | 'business' | 'search'; confidence: number; riskLevel: 'low' | 'medium' | 'high'; evidenceRefs: string[]; status: 'proposed' | 'accepted' | 'rejected' | 'superseded'; acceptedValue?: unknown; }
 export interface KnowledgeListFilter { scopeId?: string; status?: string; category?: string; severity?: KnowledgePriority; priority?: KnowledgePriority; }
 
 export interface CreateGovernanceProgramPayload {
@@ -143,20 +126,7 @@ export type UpdateGovernanceScopePayload = Partial<CreateGovernanceScopePayload>
   metadata?: GovernanceScopeMetadata;
 };
 
-export interface CreateGovernanceSourcePayload {
-  title: string;
-  visibility: GovernanceSource['visibility'];
-  sourceType: GovernanceSource['sourceType'];
-  scopeIds?: string[];
-  url?: string;
-  workspaceId?: string;
-  documentId?: string;
-  tags?: string[];
-}
-
-export type UpdateGovernanceSourcePayload = Partial<CreateGovernanceSourcePayload> & {
-  status?: GovernanceSource['status'];
-};
+export interface UpdateGovernanceDocumentPayload { tags?: string[]; metadata?: Record<string, unknown>; ownerUserId?: string; ownerScopeId?: string; }
 
 export interface GovernanceReadinessCheck {
   key: string;
@@ -164,7 +134,7 @@ export interface GovernanceReadinessCheck {
   status: 'passed' | 'warning' | 'failed';
   severity: 'info' | 'warning' | 'blocking';
   message?: string;
-  targetType?: 'source' | 'channel' | 'dry_run' | 'agent' | 'workspace' | 'rule';
+  targetType?: 'document' | 'channel' | 'dry_run' | 'agent' | 'workspace' | 'rule';
   targetId?: string;
 }
 
@@ -252,10 +222,6 @@ export interface GovernanceDeploymentRevision {
   agentId: string;
   allowedAgentIds: string[];
   workspaceIds: string[];
-  sourceIds: string[];
-  includedSourceIds: string[];
-  excludedSourceIds: string[];
-  sourceSnapshot: Record<string, { title?: string; sourceType?: string; workspaceId?: string }>;
   workspaceBindingSnapshot: Record<string, { workspaceId?: string; visibility?: string; ingestionMode?: string; defaults?: Record<string, unknown> }>;
   configurationFingerprint?: string;
   scopeSnapshot: Record<string, unknown>;
@@ -274,7 +240,6 @@ export interface CreateGovernanceRevisionPayload {
   agentId: string;
   allowedAgentIds?: string[];
   workspaceIds?: string[];
-  sourceIds?: string[];
 }
 
 export interface GovernanceDryRun {
@@ -322,9 +287,9 @@ export interface GovernanceScopeOverview {
   authorization: { canApprove: boolean };
   readiness: Omit<GovernanceReadiness, 'deploymentId'>;
   knowledge: {
-    sharedSources: GovernanceSource[];
-    localSources: GovernanceSource[];
-    workspaceMappings: GovernanceSource[];
+    sharedWorkspaces: GovernanceWorkspaceBinding[];
+    localWorkspaces: GovernanceWorkspaceBinding[];
+    documents: GovernanceDocument[];
     reviewBlockers: GovernanceReadinessCheck[];
   };
   agents: {

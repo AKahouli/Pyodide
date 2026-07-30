@@ -20,7 +20,8 @@ describe('GovernanceScopeService delete authorization', () => {
       deleteOne: jest.fn().mockResolvedValue({}),
       find: jest.fn().mockReturnValue(queryResult(options.children ?? [])),
     };
-    const sourceModel = { countDocuments: jest.fn().mockResolvedValue(0), deleteMany: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({}) };
+    const documentModel = { updateMany: jest.fn().mockResolvedValue({}) };
+    const bindingModel = { deleteMany: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({}) };
     const membershipModel = {
       find: jest.fn().mockReturnValue(queryResult((options.accessibleScopeIds ?? [scopeId]).map((id) => ({ scopeId: { toString: () => id } })))),
       findOne: jest.fn().mockReturnValue(queryResult(options.deleteMembership ?? null)),
@@ -40,8 +41,8 @@ describe('GovernanceScopeService delete authorization', () => {
     const userGroupService = { findGroupIdsForMember: jest.fn().mockResolvedValue(options.groupIds ?? []) };
     const auditLogService = { logSuccess: jest.fn() };
     const draftPreparation = { prepare: jest.fn().mockResolvedValue(undefined) };
-    const service = new GovernanceScopeService(scopeModel as never, sourceModel as never, membershipModel as never, deploymentModel as never, revisionModel as never, dryRunModel as never, metricModel as never, publicationAttemptModel as never, programService as never, userGroupService as never, auditLogService as never, draftPreparation as never);
-    return { service, scope, scopeModel, sourceModel, membershipModel, deploymentModel, revisionModel, dryRunModel, metricModel, publicationAttemptModel, userGroupService, auditLogService, draftPreparation };
+    const service = new GovernanceScopeService(scopeModel as never, documentModel as never, bindingModel as never, membershipModel as never, deploymentModel as never, revisionModel as never, dryRunModel as never, metricModel as never, publicationAttemptModel as never, programService as never, userGroupService as never, auditLogService as never, draftPreparation as never);
+    return { service, scope, scopeModel, documentModel, bindingModel, membershipModel, deploymentModel, revisionModel, dryRunModel, metricModel, publicationAttemptModel, userGroupService, auditLogService, draftPreparation };
   }
 
   it('allows the program owner to delete a scope', async () => {
@@ -77,12 +78,13 @@ describe('GovernanceScopeService delete authorization', () => {
 
   it('removes scope-owned governance records when deleting a scope', async () => {
     const deploymentId = { toString: () => '507f1f77bcf86cd799439099' };
-    const { service, sourceModel, membershipModel, deploymentModel, revisionModel, dryRunModel, metricModel, publicationAttemptModel } = buildService({ isOwner: true, deployments: [{ _id: deploymentId }] });
+    const { service, documentModel, bindingModel, membershipModel, deploymentModel, revisionModel, dryRunModel, metricModel, publicationAttemptModel } = buildService({ isOwner: true, deployments: [{ _id: deploymentId }] });
 
     await service.delete(actorId, programId, scopeId);
 
-    expect(sourceModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ visibility: 'scope_specific' }));
-    expect(sourceModel.updateMany).toHaveBeenCalledWith(expect.objectContaining({ visibility: 'multi_scope' }), expect.objectContaining({ $pull: expect.any(Object) }));
+    expect(bindingModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({ visibility: 'scope_specific' }));
+    expect(bindingModel.updateMany).toHaveBeenCalledWith(expect.objectContaining({ visibility: 'multi_scope' }), expect.any(Array));
+    expect(documentModel.updateMany).toHaveBeenCalledWith(expect.objectContaining({ ownerScopeId: expect.any(Object) }), expect.objectContaining({ $unset: expect.any(Object) }));
     expect(membershipModel.deleteMany).toHaveBeenCalled();
     expect(metricModel.deleteMany).toHaveBeenCalled();
     expect(dryRunModel.deleteMany).toHaveBeenCalled();

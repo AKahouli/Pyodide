@@ -44,7 +44,7 @@ const actionHelpKeys: Partial<Record<string, string>> = {
 };
 
 function tabForAttentionItem(targetType?: string, key?: string): TabKey {
-  if (targetType === 'source' || targetType === 'workspace' || key === 'knowledge_mapped') return 'knowledge';
+  if (targetType === 'document' || targetType === 'workspace' || key === 'knowledge_mapped') return 'knowledge';
   if (targetType === 'agent' || key === 'agents_mapped') return 'agents';
   if (targetType === 'channel' || key?.startsWith('channel_')) return 'agents';
   if (key === 'ownership_assigned') return 'ownership';

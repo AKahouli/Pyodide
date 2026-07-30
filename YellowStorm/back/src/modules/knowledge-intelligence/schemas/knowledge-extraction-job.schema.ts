@@ -8,8 +8,7 @@ export type KnowledgeExtractionJobStatus = 'pending' | 'running' | 'completed' |
 @Schema({ timestamps: true, collection: 'knowledge_extraction_jobs' })
 export class KnowledgeExtractionJob {
   @Prop({ type: Types.ObjectId, ref: 'GovernanceProgram', required: true, index: true }) programId!: Types.ObjectId;
-  @Prop({ type: Types.ObjectId, ref: 'GovernanceSource', required: true, index: true }) sourceId!: Types.ObjectId;
-  @Prop({ type: Types.ObjectId, ref: 'GovernanceSourceVersion', required: true, index: true }) sourceVersionId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'WorkspaceDoc', required: true, index: true }) documentId!: Types.ObjectId;
   @Prop({ type: Types.ObjectId, ref: 'Connector', required: true, index: true }) connectorId!: Types.ObjectId;
   @Prop({ type: Types.ObjectId, ref: 'User', index: true }) requestedByUserId?: Types.ObjectId;
   @Prop({ required: true, enum: ['technical_metadata', 'temporal_extraction', 'metadata_enrichment'], index: true }) jobType!: KnowledgeExtractionJobType;
@@ -34,6 +33,6 @@ KnowledgeExtractionJobSchema.set('toJSON', {
     delete returned.__v;
   },
 });
-KnowledgeExtractionJobSchema.index({ sourceVersionId: 1, jobType: 1, inputHash: 1, engineVersion: 1 }, { unique: true });
+KnowledgeExtractionJobSchema.index({ programId: 1, documentId: 1, jobType: 1, inputHash: 1, engineVersion: 1 }, { unique: true });
 KnowledgeExtractionJobSchema.index({ status: 1, createdAt: 1 });
 KnowledgeExtractionJobSchema.index({ status: 1, leaseExpiresAt: 1, createdAt: 1 });

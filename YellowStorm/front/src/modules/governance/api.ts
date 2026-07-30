@@ -8,7 +8,6 @@ import type {
   CreateGovernanceProgramPayload,
   CreateGovernanceRevisionPayload,
   CreateGovernanceScopePayload,
-  CreateGovernanceSourcePayload,
   GovernanceDeployment,
   GovernanceDeploymentRevision,
   GovernanceDryRun,
@@ -16,13 +15,13 @@ import type {
   GovernanceMetric,
   GovernanceScope,
   GovernanceScopeOverview,
-  GovernanceSource,
+  GovernanceDocument,
   GovernanceUserSearchResult,
   UpdateGovernanceDeploymentPayload,
   UpdateGovernanceMembershipPayload,
   UpdateGovernanceProgramPayload,
   UpdateGovernanceScopePayload,
-  UpdateGovernanceSourcePayload,
+  UpdateGovernanceDocumentPayload,
   GovernanceScopeAudienceConfiguration,
   AvailableGovernedScope,
 } from './types';
@@ -69,31 +68,31 @@ export const governanceApi = {
 
   async getScopeOverview(programId: string, scopeId: string): Promise<GovernanceScopeOverview> {
     const res = await apiClient.get(API_ENDPOINTS.governance.scopeOverview(programId, scopeId));
-    return res.data.data;
+    const overview = res.data.data as GovernanceScopeOverview;
+    return { ...overview, knowledge: { ...overview.knowledge, sharedWorkspaces: overview.knowledge?.sharedWorkspaces ?? [], localWorkspaces: overview.knowledge?.localWorkspaces ?? [], documents: overview.knowledge?.documents ?? [], reviewBlockers: overview.knowledge?.reviewBlockers ?? [] } };
   },
 
   async deleteScope(programId: string, scopeId: string): Promise<void> {
     await apiClient.delete(API_ENDPOINTS.governance.scope(programId, scopeId));
   },
 
-  async listSources(programId: string): Promise<GovernanceSource[]> {
-    const res = await apiClient.get(API_ENDPOINTS.governance.sources(programId));
+  async listDocuments(programId: string): Promise<GovernanceDocument[]> {
+    const res = await apiClient.get(API_ENDPOINTS.governance.documents(programId));
     return res.data.data;
   },
 
-  async createSource(programId: string, payload: CreateGovernanceSourcePayload): Promise<GovernanceSource> {
-    const res = await apiClient.post(API_ENDPOINTS.governance.sources(programId), payload);
+  async createDocumentGovernance(programId: string, documentId: string): Promise<GovernanceDocument> {
+    const res = await apiClient.post(API_ENDPOINTS.governance.document(programId, documentId), {});
     return res.data.data;
   },
 
-  async updateSource(programId: string, sourceId: string, payload: UpdateGovernanceSourcePayload): Promise<GovernanceSource> {
-    const res = await apiClient.patch(API_ENDPOINTS.governance.source(programId, sourceId), payload);
+  async updateDocument(programId: string, documentId: string, payload: UpdateGovernanceDocumentPayload): Promise<GovernanceDocument> {
+    const res = await apiClient.patch(API_ENDPOINTS.governance.document(programId, documentId), payload);
     return res.data.data;
   },
 
-  async deleteSource(programId: string, sourceId: string): Promise<void> {
-    await apiClient.delete(API_ENDPOINTS.governance.source(programId, sourceId));
-  },
+  async archiveDocument(programId: string, documentId: string, reason?: string): Promise<GovernanceDocument> { const res = await apiClient.post(API_ENDPOINTS.governance.documentAction(programId, documentId, 'archive'), { reason }); return res.data.data; },
+  async restoreDocument(programId: string, documentId: string): Promise<GovernanceDocument> { const res = await apiClient.post(API_ENDPOINTS.governance.documentAction(programId, documentId, 'restore'), {}); return res.data.data; },
 
   async getScopeAudience(programId: string, scopeId: string): Promise<GovernanceScopeAudienceConfiguration> {
     const res = await apiClient.get(API_ENDPOINTS.governance.scopeAudience(programId, scopeId));
@@ -142,26 +141,22 @@ export const governanceApi = {
     return res.data.data;
   },
 
-  async listSourceVersions(programId: string, sourceId: string): Promise<import('./types').GovernanceSourceVersion[]> {
-    const res = await apiClient.get(API_ENDPOINTS.governance.sourceVersions(programId, sourceId));
+  async listDocumentEvents(programId: string, documentId: string): Promise<import('./types').GovernanceDocumentEvent[]> {
+    const res = await apiClient.get(API_ENDPOINTS.governance.documentEvents(programId, documentId));
     return res.data.data;
   },
-  async listSourceEvents(programId: string, sourceId: string): Promise<import('./types').GovernanceSourceEvent[]> {
-    const res = await apiClient.get(API_ENDPOINTS.governance.sourceEvents(programId, sourceId));
+  async transitionDocument(programId: string, documentId: string, action: 'submit-review' | 'return-to-editing' | 'approve' | 'reject' | 'publish', comment?: string): Promise<GovernanceDocument> {
+    const res = await apiClient.post(API_ENDPOINTS.governance.documentAction(programId, documentId, action), { commandId: crypto.randomUUID(), comment });
     return res.data.data;
   },
-  async transitionSourceVersion(programId: string, sourceId: string, versionId: string, action: 'submit-review' | 'return-to-editing' | 'approve' | 'reject' | 'publish', comment?: string): Promise<import('./types').GovernanceSourceVersion> {
-    const res = await apiClient.post(`${API_ENDPOINTS.governance.sourceVersion(programId, sourceId, versionId)}/${action}`, { commandId: crypto.randomUUID(), comment });
+  async updateDocumentValidity(programId: string, documentId: string, payload: Partial<import('./types').DocumentValidity>): Promise<GovernanceDocument> {
+    const res = await apiClient.patch(API_ENDPOINTS.governance.documentValidity(programId, documentId), payload);
     return res.data.data;
   },
-  async updateSourceValidity(programId: string, sourceId: string, versionId: string, payload: Partial<import('./types').GovernanceSourceValidity>): Promise<import('./types').GovernanceSourceVersion> {
-    const res = await apiClient.patch(`${API_ENDPOINTS.governance.sourceVersion(programId, sourceId, versionId)}/validity`, payload);
-    return res.data.data;
-  },
-  async listTemporalCandidates(programId: string, sourceId: string, versionId: string): Promise<import('./types').GovernanceTemporalCandidateRecord[]> { const res = await apiClient.get(API_ENDPOINTS.governance.temporalCandidates(programId, sourceId, versionId)); return res.data.data; },
-  async runTemporalAnalysis(programId: string, sourceId: string, versionId: string): Promise<{ id: string; status: string }> { const res = await apiClient.post(API_ENDPOINTS.governance.temporalAnalysis(programId, sourceId, versionId), {}); return res.data.data; },
-  async getTemporalAnalysisStatus(programId: string, sourceId: string, versionId: string): Promise<{ id: string; jobType: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; attempts: number; error?: string } | null> { const res = await apiClient.get(API_ENDPOINTS.governance.temporalAnalysis(programId, sourceId, versionId)); return res.data.data; },
-  async decideTemporalCandidate(programId: string, sourceId: string, versionId: string, candidateId: string, payload: { action: 'confirm' | 'correct' | 'reject'; correctedValue?: string; comment?: string }): Promise<import('./types').GovernanceTemporalCandidateRecord> { const res = await apiClient.post(API_ENDPOINTS.governance.temporalCandidateDecision(programId, sourceId, versionId, candidateId), payload); return res.data.data; },
+  async listTemporalCandidates(programId: string, documentId: string): Promise<import('./types').GovernanceTemporalCandidateRecord[]> { const res = await apiClient.get(API_ENDPOINTS.governance.temporalCandidates(programId, documentId)); return res.data.data; },
+  async runTemporalAnalysis(programId: string, documentId: string): Promise<{ id: string; status: string }> { const res = await apiClient.post(API_ENDPOINTS.governance.temporalAnalysis(programId, documentId), {}); return res.data.data; },
+  async getTemporalAnalysisStatus(programId: string, documentId: string): Promise<{ id: string; jobType: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; attempts: number; error?: string } | null> { const res = await apiClient.get(API_ENDPOINTS.governance.temporalAnalysis(programId, documentId)); return res.data.data; },
+  async decideTemporalCandidate(programId: string, documentId: string, candidateId: string, payload: { action: 'confirm' | 'correct' | 'reject'; correctedValue?: string; comment?: string }): Promise<import('./types').GovernanceTemporalCandidateRecord> { const res = await apiClient.post(API_ENDPOINTS.governance.temporalCandidateDecision(programId, documentId, candidateId), payload); return res.data.data; },
   async refreshKnowledge(programId: string, scopeId?: string): Promise<{ assessed: number }> { const res = await apiClient.post(API_ENDPOINTS.governance.knowledgeRefresh(programId), {}, { params: scopeId ? { scopeId } : undefined }); return res.data.data; },
   async getKnowledgeHealth(programId: string, scopeId?: string): Promise<import('./types').KnowledgeHealthSummary> { const res = await apiClient.get(API_ENDPOINTS.governance.knowledgeHealth(programId), { params: scopeId ? { scopeId } : undefined }); return res.data.data; },
   async listKnowledgeAlerts(programId: string, filter: import('./types').KnowledgeListFilter = {}): Promise<import('./types').KnowledgeAlert[]> { const res = await apiClient.get(API_ENDPOINTS.governance.knowledgeAlerts(programId), { params: filter }); return res.data.data; },

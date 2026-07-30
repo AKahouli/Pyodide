@@ -33,11 +33,11 @@ const actionHelpKeys: Partial<Record<string, string>> = {
 };
 
 function isUserVisibleCheck(key: string): boolean {
-  return !key.startsWith('source_') && !key.startsWith('deployment_') && key !== 'draft_revision_publishable' && (governedConversationFeatures.conversationsEnabled || key !== 'audience_configured');
+  return !key.startsWith('document_') && !key.startsWith('deployment_') && key !== 'draft_revision_publishable' && (governedConversationFeatures.conversationsEnabled || key !== 'audience_configured');
 }
 
 function tabForCheck(key: string): TabKey {
-  return tabForReadinessCheck({ key, targetType: key.startsWith('source_') ? 'source' : key.startsWith('channel_') || /^[^:]+:[^:]+_ready$/.test(key) ? 'channel' : undefined });
+  return tabForReadinessCheck({ key, targetType: key.startsWith('document_') ? 'document' : key.startsWith('channel_') || /^[^:]+:[^:]+_ready$/.test(key) ? 'channel' : undefined });
 }
 
 interface Props {

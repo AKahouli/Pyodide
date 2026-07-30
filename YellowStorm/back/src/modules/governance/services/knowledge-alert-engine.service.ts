@@ -19,7 +19,7 @@ export class KnowledgeAlertEngineService {
       if (result.status === 'pass' || result.status === 'unknown') return [];
       const blockingFactor = result.factors.find((factor) => factor.contribution === 0 && !factor.code.endsWith('_unknown')) ?? result.factors[0];
       const severity: KnowledgePriority = result.status === 'fail' ? (result.score === 0 ? 'critical' : 'high') : 'medium';
-      return [{ programId: '', scopeIds: context.source.scopeIds, sourceId: context.source.id, sourceVersionId: context.version.id, category, severity, title: `${key} requires attention`, description: blockingFactor?.message ?? `${key} health is below policy.`, deduplicationKey: `${context.version.id}:assessment-v1:${key}`, evidenceRefs: blockingFactor?.evidenceRefs ?? [] }];
+      return [{ programId: '', scopeIds: context.binding.scopeIds, documentId: context.document.id, category, severity, title: `${key} requires attention`, description: blockingFactor?.message ?? `${key} health is below policy.`, deduplicationKey: `${context.document.id}:assessment-v1:${key}`, evidenceRefs: blockingFactor?.evidenceRefs ?? [] }];
     });
   }
 }

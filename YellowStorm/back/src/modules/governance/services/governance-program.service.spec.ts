@@ -14,9 +14,10 @@ describe('GovernanceProgramService delete authorization', () => {
     const program = { _id: { toString: () => programId }, ownerUserId: { toString: () => ownerUserId } };
     const programModel = { findById: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(program) }), deleteOne: jest.fn().mockResolvedValue({}) };
     const scopeModel = { countDocuments: jest.fn().mockResolvedValue(0) };
-    const sourceModel = { countDocuments: jest.fn().mockResolvedValue(0) };
+    const documentModel = { countDocuments: jest.fn().mockResolvedValue(0) };
+    const bindingModel = { countDocuments: jest.fn().mockResolvedValue(0) };
     const membershipModel = { findOne: jest.fn().mockReturnValue(queryResult(membership)) };
-    const service = new GovernanceProgramService(programModel as never, scopeModel as never, sourceModel as never, membershipModel as never);
+    const service = new GovernanceProgramService(programModel as never, scopeModel as never, documentModel as never, bindingModel as never, membershipModel as never);
     return { service, programModel };
   }
 

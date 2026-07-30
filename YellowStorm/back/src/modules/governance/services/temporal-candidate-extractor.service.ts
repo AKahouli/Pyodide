@@ -1,14 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'crypto';
-import type { SourceValidityEvidence } from '../domain/source-validity';
+import type { ValidityEvidence } from '../domain/document-validity';
 import type { TemporalCandidate, TemporalCandidateField, TemporalInterpretation } from '../domain/temporal-candidate';
 
 const DATE_PATTERN = /\b(20\d{2})[-/.](0?[1-9]|1[0-2])[-/.](0?[1-9]|[12]\d|3[01])\b|\b(0?[1-9]|[12]\d|3[01])[-/.](0?[1-9]|1[0-2])[-/.](20\d{2})\b/g;
 
 @Injectable()
 export class TemporalCandidateExtractorService {
-  extract(evidence: SourceValidityEvidence[]): Array<{ candidate: TemporalCandidate; evidence: SourceValidityEvidence }> {
-    const candidates: Array<{ candidate: TemporalCandidate; evidence: SourceValidityEvidence }> = [];
+  extract(evidence: ValidityEvidence[]): Array<{ candidate: TemporalCandidate; evidence: ValidityEvidence }> {
+    const candidates: Array<{ candidate: TemporalCandidate; evidence: ValidityEvidence }> = [];
     for (const item of evidence) {
       const excerpt = item.excerpt ?? '';
       for (const match of excerpt.matchAll(DATE_PATTERN)) {

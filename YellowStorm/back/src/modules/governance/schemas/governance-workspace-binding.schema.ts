@@ -1,20 +1,20 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
-import type { GovernanceSourceVisibility } from './governance-source.schema';
-import type { SourceValidityMode } from '../domain/source-validity';
+import type { DocumentValidityMode } from '../domain/document-validity';
 
 export type GovernanceWorkspaceBindingDocument = HydratedDocument<GovernanceWorkspaceBinding>;
 export type GovernanceWorkspaceIngestionMode = 'manual' | 'assisted' | 'automatic';
+export type GovernanceWorkspaceVisibility = 'program_shared' | 'scope_specific' | 'multi_scope';
 
 @Schema({ timestamps: true, collection: 'governance_workspace_bindings' })
 export class GovernanceWorkspaceBinding {
   @Prop({ type: Types.ObjectId, ref: 'GovernanceProgram', required: true, index: true }) programId!: Types.ObjectId;
   @Prop({ type: Types.ObjectId, ref: 'Workspace', required: true, index: true }) workspaceId!: Types.ObjectId;
-  @Prop({ type: String, enum: ['program_shared', 'scope_specific', 'multi_scope'], required: true, index: true }) visibility!: GovernanceSourceVisibility;
+  @Prop({ type: String, enum: ['program_shared', 'scope_specific', 'multi_scope'], required: true, index: true }) visibility!: GovernanceWorkspaceVisibility;
   @Prop({ type: [Types.ObjectId], ref: 'GovernanceScope', default: [], index: true }) scopeIds!: Types.ObjectId[];
   @Prop({ default: true, index: true }) enabled!: boolean;
   @Prop({ type: String, enum: ['manual', 'assisted', 'automatic'], default: 'assisted' }) ingestionMode!: GovernanceWorkspaceIngestionMode;
-  @Prop({ type: Object, default: {} }) defaults!: { sourceType?: string; ownerUserId?: string; ownerScopeId?: string; reviewFrequencyDays?: number; validityMode?: SourceValidityMode };
+  @Prop({ type: Object, default: {} }) defaults!: { ownerUserId?: string; ownerScopeId?: string; reviewFrequencyDays?: number; validityMode?: DocumentValidityMode };
   @Prop({ type: Types.ObjectId, ref: 'User', required: true }) createdBy!: Types.ObjectId;
 }
 export const GovernanceWorkspaceBindingSchema = SchemaFactory.createForClass(GovernanceWorkspaceBinding);

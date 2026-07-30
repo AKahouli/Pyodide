@@ -8,8 +8,7 @@ export type MetadataCandidateStatus = 'proposed' | 'accepted' | 'rejected' | 'su
 export class MetadataCandidate {
   @Prop({ type: Types.ObjectId, ref: 'GovernanceProgram', required: true, index: true }) programId!: Types.ObjectId;
   @Prop({ type: [Types.ObjectId], ref: 'GovernanceScope', default: [], index: true }) scopeIds!: Types.ObjectId[];
-  @Prop({ type: Types.ObjectId, ref: 'GovernanceSource', required: true, index: true }) sourceId!: Types.ObjectId;
-  @Prop({ type: Types.ObjectId, ref: 'GovernanceSourceVersion', required: true, index: true }) sourceVersionId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'WorkspaceDoc', required: true, index: true }) documentId!: Types.ObjectId;
   @Prop({ required: true, maxlength: 120 }) key!: string;
   @Prop({ type: Object, required: true }) proposedValue!: unknown;
   @Prop({ required: true, enum: ['document', 'business', 'search'], index: true }) candidateType!: 'document' | 'business' | 'search';
@@ -25,6 +24,6 @@ export class MetadataCandidate {
 }
 
 export const MetadataCandidateSchema = SchemaFactory.createForClass(MetadataCandidate);
-MetadataCandidateSchema.index({ sourceVersionId: 1, candidateKey: 1 }, { unique: true });
+MetadataCandidateSchema.index({ programId: 1, documentId: 1, candidateKey: 1 }, { unique: true });
 MetadataCandidateSchema.index({ programId: 1, scopeIds: 1, status: 1, createdAt: -1 });
 MetadataCandidateSchema.set('toJSON', { virtuals: true, transform: (_doc, value: MetadataCandidate & { _id?: Types.ObjectId; __v?: number; id?: string }) => { value.id = String(value._id); delete value._id; delete value.__v; } });

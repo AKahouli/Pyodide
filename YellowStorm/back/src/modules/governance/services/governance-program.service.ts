@@ -5,7 +5,8 @@ import { ConflictException, ForbiddenException, NotFoundException } from '@modul
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { GovernanceProgram, GovernanceProgramDocument } from '../schemas/governance-program.schema';
 import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
-import { GovernanceSource, GovernanceSourceDocument } from '../schemas/governance-source.schema';
+import { GovernanceDocument, GovernanceDocumentDocument } from '../schemas/governance-document.schema';
+import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
 import { GovernanceMembership, GovernanceMembershipDocument } from '../schemas/governance-membership.schema';
 import { CreateGovernanceProgramDto, UpdateGovernanceProgramDto } from '../dto';
 
@@ -28,8 +29,10 @@ export class GovernanceProgramService {
     private readonly programModel: Model<GovernanceProgramDocument>,
     @InjectModel(GovernanceScope.name)
     private readonly scopeModel: Model<GovernanceScopeDocument>,
-    @InjectModel(GovernanceSource.name)
-    private readonly sourceModel: Model<GovernanceSourceDocument>,
+    @InjectModel(GovernanceDocument.name)
+    private readonly documentModel: Model<GovernanceDocumentDocument>,
+    @InjectModel(GovernanceWorkspaceBinding.name)
+    private readonly bindingModel: Model<GovernanceWorkspaceBindingDocument>,
     @InjectModel(GovernanceMembership.name)
     private readonly membershipModel: Model<GovernanceMembershipDocument>,
   ) {}
@@ -95,11 +98,12 @@ export class GovernanceProgramService {
     const isProgramAdmin = await this.hasActiveProgramRole(ownerId, programObjectId, 'program_admin');
     if (!isOwner && !isProgramAdmin) throw new ForbiddenException(ErrorCode.GOVERNANCE_ACCESS_DENIED);
 
-    const [scopeCount, sourceCount] = await Promise.all([
+    const [scopeCount, documentCount, bindingCount] = await Promise.all([
       this.scopeModel.countDocuments({ programId: programObjectId }),
-      this.sourceModel.countDocuments({ programId: programObjectId }),
+      this.documentModel.countDocuments({ programId: programObjectId }),
+      this.bindingModel.countDocuments({ programId: programObjectId }),
     ]);
-    if (scopeCount > 0 || sourceCount > 0) {
+    if (scopeCount > 0 || documentCount > 0 || bindingCount > 0) {
       throw new ConflictException(ErrorCode.GOVERNANCE_PROGRAM_DELETE_BLOCKED);
     }
     await this.programModel.deleteOne({ _id: program._id });

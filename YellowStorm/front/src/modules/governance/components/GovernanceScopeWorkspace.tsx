@@ -22,11 +22,9 @@ import {
   useCreateGovernanceDryRun,
   useCreateGovernanceMembership,
   useCreateGovernanceRevision,
-  useCreateGovernanceSource,
   useCreateGovernanceWorkspaceBinding,
   useDeleteGovernanceMembership,
   useDeleteGovernanceScope,
-  useDeleteGovernanceSource,
   useGovernanceDryRuns,
   useGovernanceWorkspaceBindings,
   useGovernanceUiStore,
@@ -41,14 +39,14 @@ import {
   type GovernanceMembershipRole,
   type GovernanceMetric,
   type GovernanceScope,
-  type GovernanceSource,
+  type GovernanceDocument,
   type GovernanceScopeMetadata,
   type GovernanceScopeOverview,
   type GovernanceUserSearchResult,
 } from '@/modules/governance';
 import { GovernanceAgentName } from './GovernanceAgentSelector';
 import { GovernanceDryRunConversationModal } from './GovernanceDryRunConversationModal';
-import { SourcePassportDrawer } from './source/SourcePassportDrawer';
+import { DocumentPassportDrawer } from './document/DocumentPassportDrawer';
 import { WorkspaceBindingList as WorkspaceBindingListPanel } from './bindings/WorkspaceBindingList';
 import { KnowledgeActionCenter } from './intelligence/KnowledgeActionCenter';
 import { dataRoomFeatures } from '@/config/dataRoomFeatures';
@@ -249,9 +247,9 @@ function OverviewTab({ programId, overview, settingsDraft, onSettingsDraftChange
       {showSettings && <ScopeSettingsCard programId={programId} overview={overview} draft={settingsDraft} onDraftChange={onSettingsDraftChange} />}
       <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
       <OverviewCard title={t('scopeShell.overview.knowledgeCard')} onClick={() => onNavigate('knowledge')}>
-        <OverviewRow label={t('scopeShell.knowledge.shared')} value={String(overview.knowledge.sharedSources.length)} />
-        <OverviewRow label={t('scopeShell.knowledge.local')} value={String(overview.knowledge.localSources.length)} />
-        <OverviewRow label={t('scopeShell.knowledge.workspaces')} value={String(overview.knowledge.workspaceMappings.length)} />
+        <OverviewRow label={t('scopeShell.knowledge.shared')} value={String(overview.knowledge.sharedWorkspaces.length)} />
+        <OverviewRow label={t('scopeShell.knowledge.local')} value={String(overview.knowledge.localWorkspaces.length)} />
+        <OverviewRow label={t('scopeShell.knowledge.workspaces')} value={String(overview.knowledge.sharedWorkspaces.length + overview.knowledge.localWorkspaces.length)} />
       </OverviewCard>
       <OverviewCard title={t('scopeShell.overview.agentsCard')} onClick={() => onNavigate('agents')}>
         <OverviewRow label={t('scopeShell.overview.agents')} value={String(overview.agents.mappedAgents.length)} />
@@ -433,24 +431,22 @@ function ChannelStatusPill({ value }: Readonly<{ value: unknown }>): JSX.Element
 
 function KnowledgeTab({ programId, scopeId, overview }: Readonly<{ programId: string | null; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
-  const deleteSource = useDeleteGovernanceSource(programId);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [passportSource, setPassportSource] = useState<GovernanceSource | null>(null);
+  const [passportDocument, setPassportDocument] = useState<GovernanceDocument | null>(null);
   const workspaces = useWorkspaces();
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const { data: bindings = [] } = useGovernanceWorkspaceBindings(dataRoomFeatures.workspaceBindingEnabled ? programId : null);
-  const allSources = [...overview.knowledge.sharedSources, ...overview.knowledge.localSources];
+  const documents = overview.knowledge.documents;
   const workspaceNames = Object.fromEntries(workspaces.map((workspace) => [workspace.id, workspace.name]));
   const scopeBindings = bindings.filter((binding) => binding.visibility === 'program_shared' || binding.scopeIds?.includes(scopeId));
-  const mappedWorkspaceIds = [...allSources.map((source) => source.workspaceId), ...scopeBindings.map((binding) => binding.workspaceId)].filter((id): id is string => Boolean(id));
-  const removingId = deleteSource.isPending ? deleteSource.variables ?? null : null;
+  const mappedWorkspaceIds = [...documents.map((document) => document.workspaceId), ...scopeBindings.map((binding) => binding.workspaceId)].filter((id): id is string => Boolean(id));
 
   useEffect(() => { void fetchWorkspaces(1); }, [fetchWorkspaces]);
 
   return (
     <div className='grid gap-4'>
-      {dataRoomFeatures.knowledgeAssessmentEnabled && allSources.length > 0 && <KnowledgeActionCenter programId={programId} scopeId={scopeId} sources={allSources} workspaceNames={workspaceNames} onOpenSource={(sourceId) => { const source = allSources.find((item) => item.id === sourceId); if (source) setPassportSource(source); }} />}
-      {allSources.length === 0 && scopeBindings.length > 0 && <div className='rounded-xl border border-primary/30 bg-primary/5 p-4'><p className='text-sm font-medium'>{t('scopeShell.knowledge.connectedTitle')}</p><p className='mt-1 text-xs text-muted-foreground'>{t('scopeShell.knowledge.connectedDescription')}</p></div>}
+      {dataRoomFeatures.knowledgeAssessmentEnabled && documents.length > 0 && <KnowledgeActionCenter programId={programId} scopeId={scopeId} documents={documents} workspaceNames={workspaceNames} onOpenDocument={(documentId) => { const document = documents.find((item) => item.documentId === documentId); if (document) setPassportDocument(document); }} />}
+      {documents.length === 0 && scopeBindings.length > 0 && <div className='rounded-xl border border-primary/30 bg-primary/5 p-4'><p className='text-sm font-medium'>{t('scopeShell.knowledge.connectedTitle')}</p><p className='mt-1 text-xs text-muted-foreground'>{t('scopeShell.knowledge.connectedDescription')}</p></div>}
       <div className='flex items-center justify-between gap-3'>
         <div>
           <h3 className='text-sm font-semibold'>{t('scopeShell.knowledge.mapTitle')}</h3>
@@ -460,33 +456,17 @@ function KnowledgeTab({ programId, scopeId, overview }: Readonly<{ programId: st
       </div>
       <div className='grid gap-2'>
         {dataRoomFeatures.workspaceBindingEnabled && <WorkspaceBindingListPanel programId={programId} bindings={scopeBindings} />}
-        {allSources.map((source) => {
-          const isShared = source.visibility === 'program_shared';
-          return (
-            <div key={source.id} onClick={() => dataRoomFeatures.sourceVersionsEnabled && setPassportSource(source)} className='flex items-center justify-between gap-3 rounded-xl border p-3'>
-              <div className='min-w-0'>
-                <div className='truncate font-medium'>{source.title}</div>
-                <p className='text-xs text-muted-foreground'>{isShared ? t('scopeShell.knowledge.sharedBadge') : t('scopeShell.knowledge.scopeBadge')} · {t(`scopeShell.knowledge.status.${source.status}`)}</p>
-              </div>
-              {!isShared && (
-                <Button type='button' variant='ghost' size='icon' className='h-8 w-8 flex-none text-muted-foreground hover:text-destructive' aria-label={t('scopeShell.knowledge.remove')} disabled={removingId === source.id} onClick={() => deleteSource.mutate(source.id)}>
-                  <Trash2 className='h-4 w-4' />
-                </Button>
-              )}
-            </div>
-          );
-        })}
-        {allSources.length === 0 && scopeBindings.length === 0 && <GuidedEmptyState title={t('scopeShell.knowledge.emptyTitle')} description={t('scopeShell.knowledge.empty')} actionLabel={t('scopeShell.knowledge.addWorkspace')} onAction={() => setDialogOpen(true)} />}
+        {documents.map((document) => <button type='button' key={document.id} onClick={() => setPassportDocument(document)} className='flex items-center justify-between gap-3 rounded-xl border p-3 text-left hover:bg-muted/20'><span className='min-w-0'><span className='block truncate font-medium'>{document.document.originalName}</span><span className='text-xs text-muted-foreground'>{t(`documentPassport.status.${document.governance.status}` as never)}</span></span></button>)}
+        {documents.length === 0 && scopeBindings.length === 0 && <GuidedEmptyState title={t('scopeShell.knowledge.emptyTitle')} description={t('scopeShell.knowledge.empty')} actionLabel={t('scopeShell.knowledge.addWorkspace')} onAction={() => setDialogOpen(true)} />}
       </div>
       <WorkspaceMapDialog open={dialogOpen} onOpenChange={setDialogOpen} programId={programId} scopeId={scopeId} mappedWorkspaceIds={mappedWorkspaceIds} />
-      {dataRoomFeatures.sourceVersionsEnabled && <SourcePassportDrawer open={Boolean(passportSource)} onOpenChange={(open) => !open && setPassportSource(null)} programId={programId} source={passportSource} />}
+      <DocumentPassportDrawer open={Boolean(passportDocument)} onOpenChange={(open) => !open && setPassportDocument(null)} programId={programId} document={passportDocument} />
     </div>
   );
 }
 
 function WorkspaceMapDialog({ open, onOpenChange, programId, scopeId, mappedWorkspaceIds }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; programId: string | null; scopeId: string; mappedWorkspaceIds: string[] }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
-  const createSource = useCreateGovernanceSource(programId);
   const createBinding = useCreateGovernanceWorkspaceBinding(programId, scopeId);
   const workspaces = useWorkspaces();
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
@@ -514,15 +494,8 @@ function WorkspaceMapDialog({ open, onOpenChange, programId, scopeId, mappedWork
   }, [open]);
 
   const handleAdd = (workspace: Workspace) => {
-    if (dataRoomFeatures.workspaceBindingEnabled) {
-      createBinding.mutate(
-        { workspaceId: workspace.id, visibility, scopeIds: visibility === 'scope_specific' ? [scopeId] : [], ingestionMode, defaults: { validityMode: 'unknown', ...(reviewFrequencyDays ? { reviewFrequencyDays: Number(reviewFrequencyDays) } : {}) } },
-        { onSuccess: () => setAddedIds((prev) => [...prev, workspace.id]) },
-      );
-      return;
-    }
-    createSource.mutate(
-      { title: workspace.name, visibility: 'scope_specific', sourceType: 'manual_record', scopeIds: [scopeId], workspaceId: workspace.id },
+    createBinding.mutate(
+      { workspaceId: workspace.id, visibility, scopeIds: visibility === 'scope_specific' ? [scopeId] : [], ingestionMode, defaults: { validityMode: 'unknown', ...(reviewFrequencyDays ? { reviewFrequencyDays: Number(reviewFrequencyDays) } : {}) } },
       { onSuccess: () => setAddedIds((prev) => [...prev, workspace.id]) },
     );
   };
@@ -547,7 +520,7 @@ function WorkspaceMapDialog({ open, onOpenChange, programId, scopeId, mappedWork
                 <p className='truncate text-sm font-medium'>{workspace.name}</p>
                 <p className='text-xs text-muted-foreground'>{t('scopeShell.knowledge.workspaceDetails', { count: workspace.documentCount })}</p>
               </div>
-              <Button type='button' size='sm' disabled={createSource.isPending || createBinding.isPending} onClick={() => handleAdd(workspace)}>{t('scopeShell.knowledge.add')}</Button>
+              <Button type='button' size='sm' disabled={createBinding.isPending} onClick={() => handleAdd(workspace)}>{t('scopeShell.knowledge.add')}</Button>
             </div>
           ))}
           {!isLoading && availableWorkspaces.length === 0 && <p className='p-2 text-sm text-muted-foreground'>{t('scopeShell.knowledge.noWorkspaces')}</p>}
@@ -1078,7 +1051,7 @@ function reviewChanges(overview: GovernanceScopeOverview, agents: Agent[], works
   if (!draft || draft.id === published?.id) return [];
   const changes: ReviewChange[] = [];
   const agentName = (id: string) => agents.find((agent) => agent.id === id)?.name ?? t('scopeShell.review.unknownAgent');
-  const workspaceName = (id: string) => workspaces.find((workspace) => workspace.id === id)?.name ?? overview.knowledge.workspaceMappings.find((source) => source.workspaceId === id)?.title ?? t('scopeShell.review.unknownWorkspace');
+  const workspaceName = (id: string) => workspaces.find((workspace) => workspace.id === id)?.name ?? t('scopeShell.review.unknownWorkspace');
   const publishedAgents = new Set(published?.allowedAgentIds ?? []);
   const draftAgents = new Set(draft.allowedAgentIds);
   draft.allowedAgentIds.filter((id) => !publishedAgents.has(id)).forEach((id) => changes.push({ category: 'agents', kind: 'added', label: agentName(id) }));
@@ -1087,11 +1060,6 @@ function reviewChanges(overview: GovernanceScopeOverview, agents: Agent[], works
   const draftWorkspaces = new Set(draft.workspaceIds);
   draft.workspaceIds.filter((id) => !publishedWorkspaces.has(id)).forEach((id) => changes.push({ category: 'knowledge', kind: 'added', label: workspaceName(id) }));
   (published?.workspaceIds ?? []).filter((id) => !draftWorkspaces.has(id)).forEach((id) => changes.push({ category: 'knowledge', kind: 'removed', label: workspaceName(id) }));
-  const publishedSources = published?.sourceSnapshot ?? {};
-  const draftSources = draft.sourceSnapshot ?? {};
-  Object.keys(draftSources).filter((id) => !publishedSources[id]).forEach((id) => changes.push({ category: 'knowledge', kind: 'added', label: draftSources[id]?.title ?? t('scopeShell.review.unknownSource') }));
-  Object.keys(publishedSources).filter((id) => !draftSources[id]).forEach((id) => changes.push({ category: 'knowledge', kind: 'removed', label: publishedSources[id]?.title ?? t('scopeShell.review.unknownSource') }));
-  Object.keys(draftSources).filter((id) => publishedSources[id] && JSON.stringify(publishedSources[id]) !== JSON.stringify(draftSources[id])).forEach((id) => changes.push({ category: 'knowledge', kind: 'changed', label: draftSources[id]?.title ?? publishedSources[id]?.title ?? t('scopeShell.review.unknownSource'), detail: t('scopeShell.review.sourceSettingsChanged') }));
   const publishedBindings = published?.workspaceBindingSnapshot ?? {};
   const draftBindings = draft.workspaceBindingSnapshot ?? {};
   Object.keys(draftBindings).filter((id) => !publishedBindings[id]).forEach((id) => changes.push({ category: 'knowledge', kind: 'added', label: workspaceName(draftBindings[id]?.workspaceId ?? '') }));
@@ -1208,6 +1176,7 @@ function ReviewTab({ programId, memberships, scopeId, overview, onNavigateTab }:
 
 function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: string | null; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
+  const workspaces = useWorkspaces();
   const deploymentId = overview.deployment?.id ?? null;
   const createDeployment = useCreateGovernanceDeployment(programId);
   const createRevision = useCreateGovernanceRevision(deploymentId);
@@ -1234,12 +1203,12 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
       if (revisionProvisionDeploymentRef.current === overview.deployment.id) return;
       const agentId = overview.agents.primaryAgentId;
       if (!agentId) return;
-      const workspaceIds = overview.knowledge.workspaceMappings.map((source) => source.workspaceId).filter((id): id is string => Boolean(id));
+      const workspaceIds = [...overview.knowledge.sharedWorkspaces, ...overview.knowledge.localWorkspaces].map((binding) => binding.workspaceId);
       revisionProvisionDeploymentRef.current = overview.deployment.id;
       const allowedAgentIds = Array.from(new Set([agentId, ...overview.scope.agentIds]));
       createRevision.mutate({ agentId, allowedAgentIds, workspaceIds }, { onError: (error) => { revisionProvisionDeploymentRef.current = null; showError(t('scopeShell.testPublish.revisionError'), { description: parseApiError(error).message }); } });
     }
-  }, [createDeployment, createRevision, overview.agents.primaryAgentId, overview.deployment, overview.draftRevision, overview.knowledge.workspaceMappings, overview.scope.name, programId, scopeId, t]);
+  }, [createDeployment, createRevision, overview.agents.primaryAgentId, overview.deployment, overview.draftRevision, overview.knowledge.localWorkspaces, overview.knowledge.sharedWorkspaces, overview.scope.agentIds, overview.scope.name, programId, scopeId, t]);
 
   const handleSuspend = () => suspendDeployment.mutate(undefined, { onError: (error) => showError(t('scopeShell.testPublish.suspendError'), { description: parseApiError(error).message }) });
 
@@ -1267,7 +1236,7 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
       )}
 
       {overview.draftRevision && deploymentId && (
-        <DryRunConversationPanel programId={programId} scopeId={scopeId} deploymentId={deploymentId} draftRevisionId={overview.draftRevision.id} latestDryRun={overview.latestDryRun} mappedAgentIds={overview.draftRevision.allowedAgentIds} primaryAgentId={overview.draftRevision.agentId} mappedWorkspaces={overview.draftRevision.workspaceIds.map((workspaceId) => ({ id: workspaceId, name: overview.knowledge.workspaceMappings.find((source) => source.workspaceId === workspaceId)?.title ?? workspaceId, documentCount: 0 }))} />
+        <DryRunConversationPanel programId={programId} scopeId={scopeId} deploymentId={deploymentId} draftRevisionId={overview.draftRevision.id} latestDryRun={overview.latestDryRun} mappedAgentIds={overview.draftRevision.allowedAgentIds} primaryAgentId={overview.draftRevision.agentId} mappedWorkspaces={overview.draftRevision.workspaceIds.map((workspaceId) => ({ id: workspaceId, name: workspaces.find((workspace) => workspace.id === workspaceId)?.name ?? workspaceId, documentCount: overview.knowledge.documents.filter((document) => document.workspaceId === workspaceId).length }))} />
       )}
 
       {overview.draftRevision && (

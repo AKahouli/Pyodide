@@ -36,26 +36,21 @@ export interface KnowledgeAssessmentDimensions {
 }
 
 export interface KnowledgeAssessmentContext {
-  source: {
+  document: {
     id: string;
-    title: string;
-    sourceType: string;
+    workspaceId: string;
+    originalName: string;
+    mimeType: string;
+    type: string;
+    sourceUrl?: string;
+    contentHash?: string;
     status: string;
-    visibility: string;
-    scopeIds: string[];
-    ownerUserId?: string;
-    reviewFrequencyDays?: number;
+    indexingStatus: string;
+    updatedAt: Date;
     metadata: Record<string, unknown>;
   };
-  version: {
-    id: string;
-    lifecycleStatus: string;
-    technicalStatus: string;
-    contentHash?: string;
-    documentId?: string;
-    canonicalUrl?: string;
-    capturedAt: Date;
-    extractedMetadata: Record<string, unknown>;
+  governance: {
+    status: string;
     validity: {
       mode: string;
       businessStatus: string;
@@ -65,6 +60,15 @@ export interface KnowledgeAssessmentContext {
       reviewFrequencyDays?: number;
       evidence?: unknown[];
     };
+    tags: string[];
+    metadata: Record<string, unknown>;
+    ownerUserId?: string;
+    ownerScopeId?: string;
+  };
+  binding: {
+    visibility: string;
+    scopeIds: string[];
+    ingestionMode: string;
   };
   now: Date;
 }

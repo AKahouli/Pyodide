@@ -13,7 +13,7 @@ import { GovernanceScopeController } from './controllers/governance-scope.contro
 import { GovernanceScopeAudienceController } from './controllers/governance-scope-audience.controller';
 import { GovernanceConsumerController } from './controllers/governance-consumer.controller';
 import { GovernedConversationController } from './controllers/governed-conversation.controller';
-import { GovernanceSourceController } from './controllers/governance-source.controller';
+import { GovernanceDocumentController } from './controllers/governance-document.controller';
 import { GovernanceMembershipController } from './controllers/governance-membership.controller';
 import { GovernanceDeploymentController } from './controllers/governance-deployment.controller';
 import { GovernanceDryRunController } from './controllers/governance-dry-run.controller';
@@ -24,7 +24,7 @@ import { GovernanceScopeAudienceService } from './services/governance-scope-audi
 import { GovernanceConsumerScopeService } from './services/governance-consumer-scope.service';
 import { GovernedConversationService } from './services/governed-conversation.service';
 import { GovernedConversationRuntimeService } from './services/governed-conversation-runtime.service';
-import { GovernanceSourceService } from './services/governance-source.service';
+import { GovernanceDocumentService } from './services/governance-document.service';
 import { GovernanceMembershipService } from './services/governance-membership.service';
 import { GovernanceAccessService } from './services/governance-access.service';
 import { GovernanceDeploymentService } from './services/governance-deployment.service';
@@ -35,21 +35,19 @@ import { GovernanceDraftPreparationService } from './services/governance-draft-p
 import { GovernanceScopeOverviewService } from './services/governance-scope-overview.service';
 import { GovernanceProgram, GovernanceProgramSchema } from './schemas/governance-program.schema';
 import { GovernanceScope, GovernanceScopeSchema } from './schemas/governance-scope.schema';
-import { GovernanceSource, GovernanceSourceSchema } from './schemas/governance-source.schema';
+import { GovernanceDocument, GovernanceDocumentSchema } from './schemas/governance-document.schema';
+import { GovernanceDocumentEvent, GovernanceDocumentEventSchema } from './schemas/governance-document-event.schema';
 import { GovernanceMembership, GovernanceMembershipSchema } from './schemas/governance-membership.schema';
 import { GovernanceDeployment, GovernanceDeploymentSchema } from './schemas/governance-deployment.schema';
 import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionSchema } from './schemas/governance-deployment-revision.schema';
 import { GovernanceDryRun, GovernanceDryRunSchema } from './schemas/governance-dry-run.schema';
 import { GovernanceMetric, GovernanceMetricSchema } from './schemas/governance-metric.schema';
-import { GovernanceSourceVersion, GovernanceSourceVersionSchema } from './schemas/governance-source-version.schema';
-import { GovernanceSourceEvent, GovernanceSourceEventSchema } from './schemas/governance-source-event.schema';
 import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingSchema } from './schemas/governance-workspace-binding.schema';
 import { GovernanceWorkspaceBindingController } from './controllers/governance-workspace-binding.controller';
 import { GovernanceWorkspaceBindingService } from './services/governance-workspace-binding.service';
 import { WorkspaceGovernanceEventHandler } from './integration/workspace-governance-event.handler';
-import { GovernanceSourceVersionService } from './services/governance-source-version.service';
-import { GovernanceSourceTransitionService } from './services/governance-source-transition.service';
-import { GovernanceSourceEventService } from './services/governance-source-event.service';
+import { GovernanceDocumentTransitionService } from './services/governance-document-transition.service';
+import { GovernanceDocumentEventService } from './services/governance-document-event.service';
 import { GovernancePublicationAttempt, GovernancePublicationAttemptSchema } from './schemas/governance-publication-attempt.schema';
 import { Agent, AgentSchema } from '@modules/agent/schemas/agent.schema';
 import { User, UserSchema } from '@modules/user/schemas/user.schema';
@@ -60,11 +58,10 @@ import { WorkspaceDoc, WorkspaceDocumentSchema } from '@modules/workspace/schema
 import { Workspace, WorkspaceSchema } from '@modules/workspace/schemas/workspace.schema';
 import { WorkspaceShare, WorkspaceShareSchema } from '@modules/workspace/schemas/workspace-share.schema';
 import { GovernanceWorkspaceReconciliationService } from './services/governance-workspace-reconciliation.service';
-import { SourceValidityCalculatorService } from './services/source-validity-calculator.service';
-import { GovernanceSourceFromWorkspaceFactory } from './factories/governance-source-from-workspace.factory';
+import { DocumentValidityCalculatorService } from './services/document-validity-calculator.service';
 import { GovernanceReconciliationRun, GovernanceReconciliationRunSchema } from './schemas/governance-reconciliation-run.schema';
 import { TemporalCandidateValidatorService } from './services/temporal-candidate-validator.service';
-import { GovernanceSourceReviewSchedulerService } from './services/governance-source-review-scheduler.service';
+import { GovernanceDocumentReviewSchedulerService } from './services/governance-document-review-scheduler.service';
 import { KnowledgeIntelligenceModule } from '@modules/knowledge-intelligence/knowledge-intelligence.module';
 import { ConnectorModule } from '@modules/connector/connector.module';
 import { SystemModule } from '@modules/system/system.module';
@@ -92,9 +89,8 @@ import { GovernanceQualityEvaluator } from './services/knowledge-evaluators/gove
     MongooseModule.forFeature([
       { name: GovernanceProgram.name, schema: GovernanceProgramSchema },
       { name: GovernanceScope.name, schema: GovernanceScopeSchema },
-      { name: GovernanceSource.name, schema: GovernanceSourceSchema },
-      { name: GovernanceSourceVersion.name, schema: GovernanceSourceVersionSchema },
-      { name: GovernanceSourceEvent.name, schema: GovernanceSourceEventSchema },
+      { name: GovernanceDocument.name, schema: GovernanceDocumentSchema },
+      { name: GovernanceDocumentEvent.name, schema: GovernanceDocumentEventSchema },
       { name: GovernanceWorkspaceBinding.name, schema: GovernanceWorkspaceBindingSchema },
       { name: GovernanceReconciliationRun.name, schema: GovernanceReconciliationRunSchema },
       { name: GovernanceMembership.name, schema: GovernanceMembershipSchema },
@@ -122,8 +118,8 @@ import { GovernanceQualityEvaluator } from './services/knowledge-evaluators/gove
     SystemModule,
     IndexingModule,
   ],
-  controllers: [GovernanceProgramController, GovernanceScopeController, GovernanceScopeAudienceController, GovernanceConsumerController, GovernedConversationController, GovernanceSourceController, GovernanceWorkspaceBindingController, GovernanceMembershipController, GovernanceDeploymentController, GovernanceDryRunController, GovernanceMetricController, GovernanceKnowledgeController],
-  providers: [GovernanceProgramService, GovernanceScopeService, GovernanceScopeAudienceService, GovernanceConsumerScopeService, GovernedConversationService, GovernedConversationRuntimeService, GovernanceScopeOverviewService, GovernanceSourceService, GovernanceSourceVersionService, GovernanceSourceTransitionService, GovernanceSourceEventService, SourceValidityCalculatorService, TemporalCandidateValidatorService, TemporalCandidateExtractorService, LogicalSearchEvidenceService, GovernanceTemporalIntelligenceWorkerService, GovernanceTemporalCandidateService, GovernanceSourceReviewSchedulerService, GovernanceSourceFromWorkspaceFactory, GovernanceWorkspaceBindingService, GovernanceWorkspaceReconciliationService, WorkspaceGovernanceEventHandler, GovernanceMembershipService, GovernanceAccessService, GovernanceDeploymentService, GovernanceDraftPreparationService, GovernanceDryRunService, GovernanceMetricService, GovernanceChannelReadinessService, GovernanceKnowledgeAssessmentService, KnowledgeAlertEngineService, KnowledgeRecommendationEngineService, MetadataCandidateEngineService, BusinessValidityEvaluator, FreshnessEvaluator, AvailabilityEvaluator, IntegrityEvaluator, SearchQualityEvaluator, GovernanceQualityEvaluator],
-  exports: [GovernanceProgramService, GovernanceScopeService, GovernanceScopeAudienceService, GovernedConversationRuntimeService, GovernanceSourceService, GovernanceAccessService, GovernanceMetricService],
+  controllers: [GovernanceProgramController, GovernanceScopeController, GovernanceScopeAudienceController, GovernanceConsumerController, GovernedConversationController, GovernanceDocumentController, GovernanceWorkspaceBindingController, GovernanceMembershipController, GovernanceDeploymentController, GovernanceDryRunController, GovernanceMetricController, GovernanceKnowledgeController],
+  providers: [GovernanceProgramService, GovernanceScopeService, GovernanceScopeAudienceService, GovernanceConsumerScopeService, GovernedConversationService, GovernedConversationRuntimeService, GovernanceScopeOverviewService, GovernanceDocumentService, GovernanceDocumentTransitionService, GovernanceDocumentEventService, DocumentValidityCalculatorService, TemporalCandidateValidatorService, TemporalCandidateExtractorService, LogicalSearchEvidenceService, GovernanceTemporalIntelligenceWorkerService, GovernanceTemporalCandidateService, GovernanceDocumentReviewSchedulerService, GovernanceWorkspaceBindingService, GovernanceWorkspaceReconciliationService, WorkspaceGovernanceEventHandler, GovernanceMembershipService, GovernanceAccessService, GovernanceDeploymentService, GovernanceDraftPreparationService, GovernanceDryRunService, GovernanceMetricService, GovernanceChannelReadinessService, GovernanceKnowledgeAssessmentService, KnowledgeAlertEngineService, KnowledgeRecommendationEngineService, MetadataCandidateEngineService, BusinessValidityEvaluator, FreshnessEvaluator, AvailabilityEvaluator, IntegrityEvaluator, SearchQualityEvaluator, GovernanceQualityEvaluator],
+  exports: [GovernanceProgramService, GovernanceScopeService, GovernanceScopeAudienceService, GovernedConversationRuntimeService, GovernanceDocumentService, GovernanceAccessService, GovernanceMetricService],
 })
 export class GovernanceModule {}

@@ -6,7 +6,6 @@ import { AuditLogService } from '@modules/authorization/services/audit-log.servi
 import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
 import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
 import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
-import { GovernanceSource, GovernanceSourceDocument } from '../schemas/governance-source.schema';
 import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
 
 type AudienceSnapshot = { mode: 'all_authenticated' | 'restricted'; userIds: string[]; groupIds: string[] };
@@ -19,7 +18,6 @@ export interface PrepareGovernanceDraftOptions {
 export class GovernanceDraftPreparationService {
   constructor(
     @InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>,
-    @InjectModel(GovernanceSource.name) private readonly sourceModel: Model<GovernanceSourceDocument>,
     @InjectModel(GovernanceWorkspaceBinding.name) private readonly bindingModel: Model<GovernanceWorkspaceBindingDocument>,
     @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
     @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
@@ -27,18 +25,15 @@ export class GovernanceDraftPreparationService {
   ) {}
 
   async prepare(actorId: string, actorEmail: string, programId: string, scopeId: string, options: PrepareGovernanceDraftOptions = {}): Promise<void> {
-    const [scope, deployment, sources, bindings] = await Promise.all([
+    const [scope, deployment, bindings] = await Promise.all([
       this.scopeModel.findOne({ _id: new Types.ObjectId(scopeId), programId: new Types.ObjectId(programId) }).lean().exec(),
       this.deploymentModel.findOne({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(scopeId) }).exec(),
-      this.sourceModel.find({ programId: new Types.ObjectId(programId), isArchived: { $ne: true }, $or: [{ visibility: 'program_shared' }, { scopeIds: new Types.ObjectId(scopeId) }] }).select('_id workspaceId title sourceType').lean().exec(),
       this.bindingModel.find({ programId: new Types.ObjectId(programId), enabled: true, $or: [{ visibility: 'program_shared' }, { scopeIds: new Types.ObjectId(scopeId) }] }).select('_id workspaceId visibility ingestionMode defaults').lean().exec(),
     ]);
     if (!scope || !deployment || deployment.status === 'archived') return;
 
     const allowedAgentIds = (scope.agentIds ?? []).map(String);
-    const workspaceIds = [...new Set([...sources.map((source) => source.workspaceId?.toString()), ...bindings.map((binding) => binding.workspaceId?.toString())].filter((id): id is string => Boolean(id)))].sort();
-    const sourceIds = sources.map((source) => source._id.toString()).sort();
-    const sourceSnapshot = Object.fromEntries(sources.map((source) => [source._id.toString(), { title: source.title, sourceType: source.sourceType, workspaceId: source.workspaceId?.toString() }] as const).sort(([a], [b]) => a.localeCompare(b)));
+    const workspaceIds = [...new Set(bindings.map((binding) => binding.workspaceId.toString()))].sort();
     const workspaceBindingSnapshot = Object.fromEntries(bindings.map((binding) => [binding._id.toString(), { workspaceId: binding.workspaceId.toString(), visibility: binding.visibility, ingestionMode: binding.ingestionMode, defaults: binding.defaults ?? {} }] as const).sort(([a], [b]) => a.localeCompare(b)));
     const scopeSnapshot = {
       name: scope.name,
@@ -47,7 +42,7 @@ export class GovernanceDraftPreparationService {
       classification: (scope.metadata as { classification?: Record<string, unknown> } | undefined)?.classification ?? {},
     };
     const audienceSnapshot = this.toAudienceSnapshot(scope.audience);
-    const configuration = { allowedAgentIds: [...allowedAgentIds].sort(), workspaceIds, sourceIds, sourceSnapshot, workspaceBindingSnapshot, scopeSnapshot, audienceSnapshot };
+    const configuration = { allowedAgentIds: [...allowedAgentIds].sort(), workspaceIds, workspaceBindingSnapshot, scopeSnapshot, audienceSnapshot };
     const configurationFingerprint = createHash('sha256').update(JSON.stringify(configuration)).digest('hex');
     const currentDraft = deployment.currentDraftRevisionId ? await this.revisionModel.findById(deployment.currentDraftRevisionId).lean().exec() : null;
     if (currentDraft?.configurationFingerprint === configurationFingerprint) return;
@@ -68,11 +63,7 @@ export class GovernanceDraftPreparationService {
       agentId: allowedAgentIds[0] ? new Types.ObjectId(allowedAgentIds[0]) : undefined,
       allowedAgentIds: allowedAgentIds.map((id) => new Types.ObjectId(id)),
       workspaceIds: workspaceIds.map((id) => new Types.ObjectId(id)),
-      sourceIds: sourceIds.map((id) => new Types.ObjectId(id)),
-      includedSourceIds: [],
-      excludedSourceIds: [],
       agentSnapshot: {},
-      sourceSnapshot,
       workspaceBindingSnapshot,
       channelSnapshot: deployment.channels ?? {},
       configurationFingerprint,

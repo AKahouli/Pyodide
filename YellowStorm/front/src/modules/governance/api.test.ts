@@ -69,14 +69,14 @@ describe('governanceApi', () => {
 
   it('runs and decides evidence-backed temporal candidates', async () => {
     mocks.get.mockResolvedValue({ data: { data: [] } }); mocks.post.mockResolvedValue({ data: { data: {} } });
-    await governanceApi.listTemporalCandidates('program-1', 'source-1', 'version-1');
-    await governanceApi.runTemporalAnalysis('program-1', 'source-1', 'version-1');
-    await governanceApi.getTemporalAnalysisStatus('program-1', 'source-1', 'version-1');
-    await governanceApi.decideTemporalCandidate('program-1', 'source-1', 'version-1', 'candidate-1', { action: 'confirm' });
-    expect(mocks.get).toHaveBeenCalledWith('/governance/programs/program-1/sources/source-1/versions/version-1/temporal-candidates');
-    expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/sources/source-1/versions/version-1/temporal-analysis', {});
-    expect(mocks.get).toHaveBeenCalledWith('/governance/programs/program-1/sources/source-1/versions/version-1/temporal-analysis');
-    expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/sources/source-1/versions/version-1/temporal-candidates/candidate-1/decision', { action: 'confirm' });
+    await governanceApi.listTemporalCandidates('program-1', 'document-1');
+    await governanceApi.runTemporalAnalysis('program-1', 'document-1');
+    await governanceApi.getTemporalAnalysisStatus('program-1', 'document-1');
+    await governanceApi.decideTemporalCandidate('program-1', 'document-1', 'candidate-1', { action: 'confirm' });
+    expect(mocks.get).toHaveBeenCalledWith('/governance/programs/program-1/documents/document-1/temporal-candidates');
+    expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/documents/document-1/temporal-analysis', {});
+    expect(mocks.get).toHaveBeenCalledWith('/governance/programs/program-1/documents/document-1/temporal-analysis');
+    expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/documents/document-1/temporal-candidates/candidate-1/decision', { action: 'confirm' });
   });
 
   it('uses the knowledge intelligence endpoints for health and governed decisions', async () => {

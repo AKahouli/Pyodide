@@ -9,8 +9,7 @@ export type KnowledgeRecommendationStatus = 'proposed' | 'accepted' | 'rejected'
 export class KnowledgeRecommendation {
   @Prop({ type: Types.ObjectId, ref: 'GovernanceProgram', required: true, index: true }) programId!: Types.ObjectId;
   @Prop({ type: [Types.ObjectId], ref: 'GovernanceScope', default: [], index: true }) scopeIds!: Types.ObjectId[];
-  @Prop({ type: Types.ObjectId, ref: 'GovernanceSource', index: true }) sourceId?: Types.ObjectId;
-  @Prop({ type: Types.ObjectId, ref: 'GovernanceSourceVersion', index: true }) sourceVersionId?: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'WorkspaceDoc', index: true }) documentId?: Types.ObjectId;
   @Prop({ type: [Types.ObjectId], ref: 'KnowledgeAlert', default: [] }) alertIds!: Types.ObjectId[];
   @Prop({ required: true, enum: ['assign_owner', 'schedule_review', 'confirm_validity', 'resolve_conflict', 'enrich_metadata', 'add_synonyms', 'merge_duplicate', 'reindex', 'change_scope', 'exclude_from_runtime'], index: true }) type!: KnowledgeRecommendationType;
   @Prop({ required: true, enum: ['critical', 'high', 'medium', 'low'], index: true }) priority!: KnowledgePriority;

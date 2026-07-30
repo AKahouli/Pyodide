@@ -73,8 +73,7 @@ describe('KnowledgeRecommendationRepositoryService', () => {
     await service.synchronize('64b000000000000000000006', [{
       programId,
       scopeIds: [scopeId],
-      sourceId: '64b000000000000000000007',
-      sourceVersionId: '64b000000000000000000006',
+      documentId: '64b000000000000000000006',
       alertIds: [],
       type: 'schedule_review',
       priority: 'medium',

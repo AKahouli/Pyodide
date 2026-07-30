@@ -16,7 +16,7 @@ const tabCheckKeys: Partial<Record<TabKey, string[]>> = {
 };
 
 export function tabForReadinessCheck(check: Pick<GovernanceReadinessCheck, 'key' | 'targetType'>): TabKey {
-  if (check.targetType === 'source' || check.targetType === 'workspace' || check.key.startsWith('source_') || check.key === 'knowledge_mapped') return 'knowledge';
+  if (check.targetType === 'document' || check.targetType === 'workspace' || check.key.startsWith('document_') || check.key === 'knowledge_mapped') return 'knowledge';
   if (check.key === 'guardrails_reviewed') return 'guardrails';
   if (check.targetType === 'agent' || check.targetType === 'channel' || check.key === 'agents_mapped' || check.key.startsWith('channel_')) return 'agents';
   if (check.key === 'audience_configured') return 'audience';
@@ -41,9 +41,9 @@ export function getTabReadinessState(tab: TabKey, overview: GovernanceScopeOverv
   if (tab === 'monitor') return overview.publishedRevision ? 'ready' : 'attention';
 
   const checks = tab === 'review'
-    ? overview.readiness.checks.filter((check) => !check.key.startsWith('source_'))
+    ? overview.readiness.checks.filter((check) => !check.key.startsWith('document_'))
     : overview.readiness.checks.filter((check) => {
-      if (tab === 'knowledge' && (check.targetType === 'source' || check.key.startsWith('source_'))) return true;
+      if (tab === 'knowledge' && (check.targetType === 'document' || check.key.startsWith('document_'))) return true;
       return tabCheckKeys[tab]?.includes(check.key) ?? false;
     });
 
