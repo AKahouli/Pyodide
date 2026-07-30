@@ -396,11 +396,18 @@ class SingleAgentService:
                 tools.append(activate_skill_tool)
 
             if deep_search:
+                deep_search_workspaces = ", ".join(
+                    str(workspace_id)
+                    for workspace_id in (agent_config.brain_ids or [])
+                    if workspace_id
+                )
                 agent_prompt += (
                     "\n\n<deep_search_mode>\n"
                     "You are in DEEP SEARCH mode. You MUST follow this two-phase search strategy:\n\n"
                     "Phase 1 — Find relevant documents:\n"
-                    "- Call search_relevant_documents(query=\"your search query\", workspace_name=\"...\") FIRST\n"
+                    "- Call search_relevant_documents FIRST.\n"
+                    "- Pass the latest user message verbatim as the query argument; do not summarize or rewrite it.\n"
+                    f"- Set workspace_name to the active workspace identifier: {deep_search_workspaces}\n"
                     "- This returns top candidate documents with: document_id, file_name, hybrid_score, matched concepts\n"
                     "- Use the results to identify the most relevant documents for the user's question\n\n"
                     "Phase 2 — Extract detailed information:\n"
