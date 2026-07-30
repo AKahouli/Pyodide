@@ -34,6 +34,18 @@ import { CryptoService } from '@common/services/crypto.service';
 import { ConnectorAdminAuthService } from './services/connector-admin-auth.service';
 import { ConnectorPlaybookBindingSyncService } from './services/connector-playbook-binding-sync.service';
 import { ConnectorMcpRuntimeService } from './services/connector-mcp-runtime.service';
+import { CatalogTransferService } from './services/catalog-transfer.service';
+import { AdminCatalogTransferController } from './admin-catalog-transfer.controller';
+import { Skill, SkillSchema } from '../skill/schemas/skill.schema';
+import { SkillCategory, SkillCategorySchema } from '../skill/schemas/skill-category.schema';
+import {
+  ConnectedAppDefinition,
+  ConnectedAppDefinitionSchema,
+} from '../connected-app/schemas/connected-app-definition.schema';
+import {
+  UserAppConnection,
+  UserAppConnectionSchema,
+} from '../connected-app/schemas/user-app-connection.schema';
 
 @Module({
   imports: [
@@ -45,6 +57,10 @@ import { ConnectorMcpRuntimeService } from './services/connector-mcp-runtime.ser
       { name: AdminConnectorAuth.name, schema: AdminConnectorAuthSchema },
       { name: AdminConnectorOAuthState.name, schema: AdminConnectorOAuthStateSchema },
       { name: ConnectedAppOAuthState.name, schema: ConnectedAppOAuthStateSchema },
+      { name: ConnectedAppDefinition.name, schema: ConnectedAppDefinitionSchema },
+      { name: UserAppConnection.name, schema: UserAppConnectionSchema },
+      { name: Skill.name, schema: SkillSchema },
+      { name: SkillCategory.name, schema: SkillCategorySchema },
     ]),
     AuthorizationModule,
     ConnectedAppModule,
@@ -58,6 +74,7 @@ import { ConnectorMcpRuntimeService } from './services/connector-mcp-runtime.ser
     AdminConnectorAuthCallbackController,
     UnifiedOAuthCallbackController,
     ConnectorController,
+    AdminCatalogTransferController,
   ],
   providers: [
     CryptoService,
@@ -69,6 +86,7 @@ import { ConnectorMcpRuntimeService } from './services/connector-mcp-runtime.ser
     ConnectorTransferService,
     ConnectorPlaybookBindingSyncService,
     ConnectorMcpRuntimeService,
+    CatalogTransferService,
     M365TransferAdapter,
     ConnectorUserService,
     {

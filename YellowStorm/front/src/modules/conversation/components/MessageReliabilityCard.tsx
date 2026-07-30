@@ -77,49 +77,42 @@ export function MessageReliabilityCard({ conversationId, messageId, evaluation, 
   const history = <EvaluationHistory workflow={correctionWorkflow} originalEvaluation={originalEvaluation} fallbackEvaluation={evaluation} displayedVersion={displayedVersion} onVersionChange={onVersionChange} language={language} />;
   if (!evaluation) {
     if (!correctionWorkflow && !rerunAction) return null;
-    return <ReliabilityPanelHeader action={rerunAction} icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.notRecorded')}>{history}</ReliabilityPanelHeader>;
+    return <ReliabilityPanel action={rerunAction} icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.notRecorded')}>{history}</ReliabilityPanel>;
   }
 
   if (evaluation.status === 'pending') {
     return (
-      <ReliabilityPanelHeader
+      <ReliabilityPanel
         icon={<Loader2 className='size-5 animate-spin text-primary [animation-duration:1.1s]' />}
         title={t('reliability.pendingTitle')}
         description={t('reliability.pendingDescription')}
         action={rerunAction}
       >
         {history}
-      </ReliabilityPanelHeader>
+      </ReliabilityPanel>
     );
   }
   if (evaluation.status === 'insufficient_evidence') {
-    return <ReliabilityPanelHeader action={rerunAction} title={t('reliability.notScored')} description={t('reliability.insufficientEvidence')}>{history}</ReliabilityPanelHeader>;
+    return <ReliabilityPanel action={rerunAction} title={t('reliability.notScored')} description={t('reliability.insufficientEvidence')}>{history}</ReliabilityPanel>;
   }
   if (evaluation.status === 'not_applicable') {
-    return <ReliabilityPanelHeader action={rerunAction} title={t('reliability.notApplicable')} description={t('reliability.noClaims')}>{history}</ReliabilityPanelHeader>;
+    return <ReliabilityPanel action={rerunAction} title={t('reliability.notApplicable')} description={t('reliability.noClaims')}>{history}</ReliabilityPanel>;
   }
   if (evaluation.status === 'failed') {
-    return <ReliabilityPanelHeader action={rerunAction} icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.unavailableDescription')}>{history}</ReliabilityPanelHeader>;
+    return <ReliabilityPanel action={rerunAction} icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.unavailableDescription')}>{history}</ReliabilityPanel>;
   }
   if (evaluation.score === undefined || !evaluation.label || !evaluation.claimCounts) return null;
 
   const counts = evaluation.claimCounts;
   return (
-    <div className={conversationPanelClassName}>
-      <div className='flex min-w-0 items-center gap-3 px-1'>
-        <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
-          <span className='absolute inset-1 rounded-full bg-primary/20 ring-1 ring-primary/40' />
-          <ShieldCheck className='size-4 text-primary' />
-        </span>
-        <div className='min-w-0 flex-1'>
-          <p className='truncate text-sm font-medium text-foreground'>{t('reliability.title')}</p>
-          <p className='text-xs text-muted-foreground'>{t('reliability.supportedCount', { supported: counts.supported, total: counts.total })}</p>
-        </div>
-        {rerunAction}
-        <ScoreIndicator score={evaluation.score} size='large' />
-      </div>
+    <ReliabilityPanel
+      action={rerunAction}
+      title={t('reliability.title')}
+      description={t('reliability.supportedCount', { supported: counts.supported, total: counts.total })}
+      score={<ScoreIndicator score={evaluation.score} size='large' />}
+    >
       {history}
-    </div>
+    </ReliabilityPanel>
   );
 }
 
@@ -405,9 +398,11 @@ function EvaluationOccurrence({ label, sequence, evaluation, fallbackStatus, sel
   </Collapsible>;
 }
 
-function ReliabilityPanelHeader({ action, icon, title, description, children }: Readonly<{ action?: React.ReactNode; icon?: React.ReactNode; title: string; description?: string; children?: React.ReactNode }>) {
+function ReliabilityPanel({ action, icon, title, description, score, children }: Readonly<{ action?: React.ReactNode; icon?: React.ReactNode; title: string; description?: string; score?: React.ReactNode; children?: React.ReactNode }>) {
+  const { t } = useModuleTranslation('conversation');
+  const [open, setOpen] = useState(false);
   return (
-    <div className={conversationPanelClassName}>
+    <Collapsible open={open} onOpenChange={setOpen} className={conversationPanelClassName}>
       <div className='flex min-w-0 items-center gap-3 px-1'>
         <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
           <span className='absolute inset-1 rounded-full bg-primary/20 ring-1 ring-primary/40' />
@@ -418,8 +413,12 @@ function ReliabilityPanelHeader({ action, icon, title, description, children }: 
           {description && <p className='text-xs leading-relaxed text-muted-foreground'>{description}</p>}
         </div>
         {action}
+        {score}
+        {children ? <CollapsibleTrigger className='inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&[data-state=open]>svg]:rotate-180' aria-label={open ? t('reliability.collapseAria') : t('reliability.expandAria')}>
+          <ChevronDown className='size-4 transition-transform' aria-hidden='true' />
+        </CollapsibleTrigger> : null}
       </div>
-      {children}
-    </div>
+      {children ? <CollapsibleContent>{children}</CollapsibleContent> : null}
+    </Collapsible>
   );
 }

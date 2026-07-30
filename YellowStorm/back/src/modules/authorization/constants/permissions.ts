@@ -101,6 +101,7 @@ export const Permissions = {
   CONNECTORS_CREATE: 'connectors.create',
   CONNECTORS_UPDATE: 'connectors.update',
   CONNECTORS_DELETE: 'connectors.delete',
+  CONNECTORS_TRANSFER_SECURITY: 'connectors.transfer_security',
   CONNECTORS_ALL: 'connectors.*',
 
   // Connected App Management

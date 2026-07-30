@@ -1429,6 +1429,7 @@ export interface SkillFileResponse {
 
 export interface SkillResponse {
   id: string;
+  slug: string;
   name: string;
   description: string;
   icon: string;
@@ -1484,6 +1485,7 @@ export interface UpdateSkillCategoryRequest {
 }
 
 export interface CreateSkillRequest {
+  slug?: string;
   name: string;
   description: string;
   icon?: string;
@@ -1665,6 +1667,22 @@ export interface ConnectorOAuthStatusResponse {
   connectedAt?: string;
   disconnectedAt?: string;
   providerEmail?: string;
+}
+
+export type CatalogConflictPolicy = 'skip' | 'overwrite';
+
+export interface CatalogExportRequest {
+  selection: 'all' | 'selected';
+  ids?: string[];
+  includeSecurity?: boolean;
+  passphrase?: string;
+}
+
+export interface CatalogImportResult {
+  skills: { created: number; updated: number; skipped: number };
+  connectors: { created: number; updated: number; skipped: number };
+  categories: { created: number; reused: number };
+  security: { credentials: number; connectedApps: number; tokens: number };
 }
 
 // Workspace Upload Settings Types

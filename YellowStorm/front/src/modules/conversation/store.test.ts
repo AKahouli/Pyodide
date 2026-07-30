@@ -38,6 +38,7 @@ beforeEach(() => {
     currentConversation: null,
     currentConversationId: null,
     conversationLoading: false,
+    selectedModelId: null,
     selectedWorkspaceIds: [],
     messages: [],
     optimisticMessages: [],
@@ -200,6 +201,98 @@ describe('conversation workspace selection', () => {
 
     expect(useConversationStore.getState().currentConversation).toBeNull();
     expect(useConversationStore.getState().selectedWorkspaceIds).toEqual([]);
+  });
+});
+
+describe('new conversation selections', () => {
+  it('claims the submitted model and workspaces before route hydration', () => {
+    const conversation = { id: 'conv-1', title: 'New Conversation' } as never;
+
+    useConversationStore.getState().claimCurrentConversation('conv-1', conversation, {
+      modelId: 'model-1',
+      workspaceIds: ['ws-1'],
+    });
+
+    expect(useConversationStore.getState()).toMatchObject({
+      currentConversationId: 'conv-1',
+      selectedModelId: 'model-1',
+      selectedWorkspaceIds: ['ws-1'],
+    });
+  });
+
+  it('preserves a claimed model when the initial message history is empty', async () => {
+    fetchMessagesMock.mockResolvedValue({ items: [], total: 0, totalPages: 0 });
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      selectedModelId: 'model-1',
+    });
+
+    await useConversationStore.getState().fetchMessages('conv-1');
+
+    expect(useConversationStore.getState().selectedModelId).toBe('model-1');
+  });
+
+  it('ignores message hydration from the previously active conversation', async () => {
+    let resolvePreviousFetch: (value: {
+      items: Array<{ id: string; conversationType: string; modelId: string }>;
+      total: number;
+      totalPages: number;
+    }) => void = () => undefined;
+    fetchMessagesMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolvePreviousFetch = resolve; }),
+    );
+    useConversationStore.setState({ currentConversationId: 'conv-previous' });
+
+    const previousFetch = useConversationStore.getState().fetchMessages('conv-previous');
+    useConversationStore.getState().claimCurrentConversation(
+      'conv-new',
+      { id: 'conv-new', title: 'New Conversation' } as never,
+      { modelId: 'model-new', workspaceIds: ['ws-new'] },
+    );
+    resolvePreviousFetch({
+      items: [{ id: 'message-previous', conversationType: 'user', modelId: 'model-previous' }],
+      total: 1,
+      totalPages: 1,
+    });
+    await previousFetch;
+
+    expect(useConversationStore.getState()).toMatchObject({
+      currentConversationId: 'conv-new',
+      selectedModelId: 'model-new',
+      selectedWorkspaceIds: ['ws-new'],
+      messages: [],
+    });
+  });
+
+  it('hydrates the last persisted user model from message history', async () => {
+    fetchMessagesMock.mockResolvedValue({
+      items: [
+        { id: 'message-1', conversationType: 'user', modelId: 'model-2' },
+        { id: 'message-2', conversationType: 'ai' },
+      ],
+      total: 2,
+      totalPages: 1,
+    });
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      selectedModelId: 'model-1',
+    });
+
+    await useConversationStore.getState().fetchMessages('conv-1');
+
+    expect(useConversationStore.getState().selectedModelId).toBe('model-2');
+  });
+
+  it('clears the previous model when switching conversations', async () => {
+    fetchConversationMock.mockResolvedValue({ id: 'conv-2', workspaces: [] });
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      selectedModelId: 'model-1',
+    });
+
+    await useConversationStore.getState().setCurrentConversation('conv-2');
+
+    expect(useConversationStore.getState().selectedModelId).toBeNull();
   });
 });
 

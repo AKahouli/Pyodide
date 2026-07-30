@@ -13,6 +13,7 @@ import { TimingIndicator } from './TimingIndicator';
 import { useNavigate } from 'react-router-dom';
 import { useApiAction } from '@/lib/use-api-action';
 import { branchConversation } from '../api';
+import { useModelById } from '@/modules/models';
 
 import { cn } from '@/lib/utils';
 
@@ -33,7 +34,10 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const fetchConversations = useConversationStore((s) => s.fetchConversations);
   const isGroup = !!currentConversation?.groupMeta?.isGroup;
   const [reportOpen, setReportOpen] = useState(false);
-  const { t } = useModuleTranslation('conversation');
+  const { t, language } = useModuleTranslation('conversation');
+  const generationModelId = message.modelId
+    || (message.questionMessageId ? messages.find((candidate) => candidate.id === message.questionMessageId)?.modelId : undefined);
+  const model = useModelById(generationModelId || '');
   const navigate = useNavigate();
   const canBranch = !!currentConversation
     && message.isComplete
@@ -48,6 +52,11 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       navigate(`/conversation/${conversation.id}`);
     },
   });
+  const createdAt = new Date(message.createdAt);
+  const formattedCreatedAt = Number.isNaN(createdAt.getTime())
+    ? t('messageActions.dateUnavailable')
+    : new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'medium' }).format(createdAt);
+  const modelName = model?.name || generationModelId || t('messageActions.modelUnavailable');
 
   const handleLike = () => {
     // Don't allow removing feedback (clicking same button twice)
@@ -97,7 +106,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
 
   return (
     <>
-      <div className={cn('flex items-center gap-0.5 mt-1 opacity-0 group-hover/msg:opacity-100 transition-opacity', className)}>
+      <div className={cn('mt-1 flex flex-wrap items-center gap-0.5', className)}>
         <TooltipProvider delayDuration={300}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -164,6 +173,11 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
           </DropdownMenuContent>
         </DropdownMenu>
         {message.isComplete && !message.isStreaming && <TimingIndicator timeToFirstChunk={message.timeToFirstChunk} timeToFirstToken={message.timeToFirstToken} durationMs={message.durationMs} inputTokens={message.inputTokens} outputTokens={message.outputTokens} />}
+        <div className='ml-auto flex min-w-0 items-center gap-1.5 px-1 text-[11px] text-muted-foreground' aria-label={t('messageActions.generationMetadata', { date: formattedCreatedAt, model: modelName })}>
+          <time dateTime={Number.isNaN(createdAt.getTime()) ? undefined : message.createdAt} className='whitespace-nowrap'>{formattedCreatedAt}</time>
+          <span aria-hidden='true'>·</span>
+          <span className='max-w-48 truncate' title={modelName}>{modelName}</span>
+        </div>
       </div>
 
       <ReportDialog open={reportOpen} onOpenChange={setReportOpen} conversationId={conversationId} messageId={message.id} />

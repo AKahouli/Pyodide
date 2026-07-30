@@ -107,6 +107,9 @@ import type {
   ConversationSettingsResponse,
   UpdateConversationSettingsRequest,
   ConversationSettingsAgentOption,
+  CatalogExportRequest,
+  CatalogConflictPolicy,
+  CatalogImportResult,
 } from './types';
 import type {
   WorkyWhatsAppConnectResponse,
@@ -925,6 +928,37 @@ export async function updateConnector(id: string, data: UpdateConnectorRequest):
 
 export async function deleteConnector(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminConnectors.byId(id));
+}
+
+export async function exportConnectorCatalog(data: CatalogExportRequest): Promise<Blob> {
+  const response = await apiClient.post<Blob>(API_ENDPOINTS.adminCatalogTransfer.exportConnectors, data, {
+    responseType: 'blob',
+  });
+  return response.data;
+}
+
+export async function exportSkillCatalog(data: CatalogExportRequest): Promise<Blob> {
+  const response = await apiClient.post<Blob>(API_ENDPOINTS.adminCatalogTransfer.exportSkills, data, {
+    responseType: 'blob',
+  });
+  return response.data;
+}
+
+export async function importCatalog(
+  file: File,
+  conflictPolicy: CatalogConflictPolicy,
+  passphrase?: string,
+): Promise<CatalogImportResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('conflictPolicy', conflictPolicy);
+  if (passphrase) formData.append('passphrase', passphrase);
+  const response = await apiClient.post<ApiResponse<CatalogImportResult>>(
+    API_ENDPOINTS.adminCatalogTransfer.import,
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
+  return response.data.data;
 }
 
 // Connector Categories API

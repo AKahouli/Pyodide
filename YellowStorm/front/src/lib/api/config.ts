@@ -327,6 +327,11 @@ export const API_ENDPOINTS = {
     oauthStatus: (appKey: string) => `/admin/connectors/oauth/${appKey}/status`,
     oauthDisconnect: (appKey: string) => `/admin/connectors/oauth/${appKey}/connection`,
   },
+  adminCatalogTransfer: {
+    exportConnectors: '/admin/catalog-transfer/connectors/export',
+    exportSkills: '/admin/catalog-transfer/skills/export',
+    import: '/admin/catalog-transfer/import',
+  },
   adminConnectorCategories: {
     list: '/admin/connector-categories',
     byId: (id: string) => `/admin/connector-categories/${id}`,

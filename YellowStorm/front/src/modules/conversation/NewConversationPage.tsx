@@ -223,7 +223,10 @@ export function NewConversationPage() {
         conversation = useConversationStore.getState().conversations.find((candidate) => candidate.id === convId);
       }
 
-      claimCurrentConversation(convId, conversation);
+      claimCurrentConversation(convId, conversation, {
+        modelId: modelId || undefined,
+        workspaceIds: workspaceIds ?? [],
+      });
       navigate(`/conversation/${convId}`);
 
       // Build optimistic attachedFiles

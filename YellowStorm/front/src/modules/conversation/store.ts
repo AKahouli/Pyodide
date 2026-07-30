@@ -14,6 +14,7 @@ import type { Conversation, Message, StreamingComponent, SendMessagePayload, Cre
 export const DEFAULT_CONVERSATIONS_LIMIT = 12;
 const DEFAULT_MESSAGES_LIMIT = 5;
 let currentConversationRequestSequence = 0;
+let currentMessagesRequestSequence = 0;
 
 // ===== Streaming Helper Functions =====
 
@@ -445,7 +446,11 @@ interface ConversationState {
   moveConversationToProject: (id: string, projectId: string | null) => Promise<void>;
   detachConversationsFromProject: (projectId: string) => void;
   deleteConversation: (id: string) => Promise<void>;
-  claimCurrentConversation: (id: string, conversation?: Conversation) => void;
+  claimCurrentConversation: (
+    id: string,
+    conversation?: Conversation,
+    selections?: { modelId?: string; workspaceIds?: string[] },
+  ) => void;
   setCurrentConversation: (id: string) => Promise<void>;
 
   // Actions - History Panel
@@ -794,20 +799,26 @@ export const useConversationStore = create<ConversationState>()(
         }
       },
 
-      claimCurrentConversation: (id, conversation) => {
+      claimCurrentConversation: (id, conversation, selections) => {
         const cached = conversation ?? get().conversations.find((candidate) => candidate.id === id) ?? null;
         set({
           currentConversationId: id,
           currentConversation: cached,
           conversationLoading: false,
           selectedSkillIds: cached?.selectedSkills ?? [],
-          selectedWorkspaceIds: cached?.workspaces ?? [],
+          selectedModelId: selections?.modelId ?? null,
+          selectedWorkspaceIds: selections?.workspaceIds ?? cached?.workspaces ?? [],
         });
       },
 
       setCurrentConversation: async (id) => {
         const requestSequence = ++currentConversationRequestSequence;
-        set({ conversationLoading: true, currentConversationId: id });
+        const isSwitchingConversation = get().currentConversationId !== id;
+        set({
+          conversationLoading: true,
+          currentConversationId: id,
+          ...(isSwitchingConversation ? { selectedModelId: null } : {}),
+        });
         try {
           const conversation = await api.fetchConversation(id);
           if (requestSequence !== currentConversationRequestSequence || get().currentConversationId !== id) return;
@@ -829,6 +840,7 @@ export const useConversationStore = create<ConversationState>()(
       // ===== Message Actions =====
 
       fetchMessages: async (conversationId) => {
+        const requestSequence = ++currentMessagesRequestSequence;
         set({ messagesLoading: true, messages: [] });
 
         try {
@@ -836,6 +848,7 @@ export const useConversationStore = create<ConversationState>()(
             page: 1,
             limit: DEFAULT_MESSAGES_LIMIT,
           });
+          if (requestSequence !== currentMessagesRequestSequence || get().currentConversationId !== conversationId) return;
 
           const messages = result.items || [];
 
@@ -860,6 +873,7 @@ export const useConversationStore = create<ConversationState>()(
               })),
             ),
           );
+          if (requestSequence !== currentMessagesRequestSequence || get().currentConversationId !== conversationId) return;
 
           const newBranchCache = new Map(get().branchCache);
           const newActiveBranches = new Map(get().activeBranches);
@@ -878,7 +892,7 @@ export const useConversationStore = create<ConversationState>()(
             messagesTotal: result.total || 0,
             messagesHasMore: (result.totalPages || 1) > 1,
             messagesLoading: false,
-            selectedModelId: lastUserModelId,
+            ...(lastUserModelId ? { selectedModelId: lastUserModelId } : {}),
             branchCache: newBranchCache,
             activeBranches: newActiveBranches,
           });
@@ -936,6 +950,7 @@ export const useConversationStore = create<ConversationState>()(
             });
           }
         } catch (err) {
+          if (requestSequence !== currentMessagesRequestSequence || get().currentConversationId !== conversationId) return;
           set({ messagesLoading: false });
           toast.error(translateConversation('toasts.messages.loadError'));
           console.error('[ConversationStore] fetchMessages error:', err);

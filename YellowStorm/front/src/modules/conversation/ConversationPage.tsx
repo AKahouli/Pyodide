@@ -49,7 +49,10 @@ export function ConversationPage() {
 
   useEffect(() => {
     if (id) {
-      setCurrentConversation(id);
+      const state = useConversationStore.getState();
+      if (state.currentConversationId !== id || state.currentConversation?.id !== id) {
+        setCurrentConversation(id);
+      }
     }
   }, [id, setCurrentConversation]);
 

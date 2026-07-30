@@ -7,20 +7,29 @@ const closeViewerMock = vi.hoisted(() => vi.fn());
 const fetchMessagesMock = vi.hoisted(() => vi.fn());
 const clearMessagesMock = vi.hoisted(() => vi.fn());
 const setCurrentConversationMock = vi.hoisted(() => vi.fn());
+const conversationStateMock = vi.hoisted(() => ({
+  value: {
+    currentConversationId: 'conversation-1' as string | null,
+    currentConversation: { id: 'conversation-1' } as { id: string } | null,
+  },
+}));
 
 vi.mock('react-router-dom', () => ({
   useParams: () => ({ id: 'conversation-1' }),
 }));
 
 vi.mock('./store', () => ({
-  useConversationStore: (selector: (state: Record<string, unknown>) => unknown) =>
-    selector({
-      setCurrentConversation: setCurrentConversationMock,
-      fetchMessages: fetchMessagesMock,
-      clearMessages: clearMessagesMock,
-      currentConversationId: 'conversation-1',
-    }),
-  useCurrentConversation: () => ({ id: 'conversation-1' }),
+  useConversationStore: Object.assign(
+    (selector: (state: Record<string, unknown>) => unknown) =>
+      selector({
+        setCurrentConversation: setCurrentConversationMock,
+        fetchMessages: fetchMessagesMock,
+        clearMessages: clearMessagesMock,
+        currentConversationId: conversationStateMock.value.currentConversationId,
+      }),
+    { getState: () => conversationStateMock.value },
+  ),
+  useCurrentConversation: () => conversationStateMock.value.currentConversation,
   useConversationLoading: () => false,
 }));
 
@@ -46,6 +55,28 @@ describe('ConversationPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    conversationStateMock.value = {
+      currentConversationId: 'conversation-1',
+      currentConversation: { id: 'conversation-1' },
+    };
+  });
+
+  it('does not rehydrate a newly claimed conversation', () => {
+    render(<ConversationPage />);
+
+    expect(setCurrentConversationMock).not.toHaveBeenCalled();
+    expect(fetchMessagesMock).toHaveBeenCalledWith('conversation-1');
+  });
+
+  it('hydrates a conversation that has not been claimed', () => {
+    conversationStateMock.value = {
+      currentConversationId: null,
+      currentConversation: null,
+    };
+
+    render(<ConversationPage />);
+
+    expect(setCurrentConversationMock).toHaveBeenCalledWith('conversation-1');
   });
 
   afterEach(() => {

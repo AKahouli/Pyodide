@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageActions } from './MessageActions';
 
 const updateFeedbackMock = vi.hoisted(() => vi.fn());
@@ -10,6 +10,7 @@ const toastSuccessMock = vi.hoisted(() => vi.fn());
 const branchConversationMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
 const fetchConversationsMock = vi.hoisted(() => vi.fn());
+const modelMock = vi.hoisted(() => ({ value: { id: 'model-1', name: 'Model One' } as { id: string; name: string } | undefined }));
 
 vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -27,6 +28,9 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => navigateMock }));
 vi.mock('../api', () => ({ branchConversation: branchConversationMock }));
+vi.mock('@/modules/models', () => ({
+  useModelById: (id: string) => id === 'model-1' ? modelMock.value : undefined,
+}));
 
 vi.mock('../store', () => ({
   useConversationStore: (selector: (state: Record<string, unknown>) => unknown) =>
@@ -36,7 +40,7 @@ vi.mock('../store', () => ({
       setReplyingToMessage: vi.fn(),
       currentConversation: { runtimeMode: 'standard' },
       messages: [
-        { id: 'user-1', conversationType: 'user' },
+        { id: 'user-1', conversationType: 'user', modelId: 'model-1' },
         { id: 'ai-1', conversationType: 'ai', questionMessageId: 'user-1' },
       ],
       activeBranches: new Map([['user-1', 'ai-1']]),
@@ -63,6 +67,10 @@ vi.mock('sonner', () => ({
 }));
 
 describe('MessageActions', () => {
+  beforeEach(() => {
+    modelMock.value = { id: 'model-1', name: 'Model One' };
+  });
+
   it('handles like, copy, and regenerate actions', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {
@@ -72,11 +80,16 @@ describe('MessageActions', () => {
 
     render(
       <MessageActions
-        message={{ id: 'ai-1', feedback: null, components: [], isComplete: false, isStreaming: false } as never}
+        message={{ id: 'ai-1', feedback: null, components: [], isComplete: false, isStreaming: false, modelId: 'model-1', createdAt: '2026-07-29T13:00:00.000Z' } as never}
         isLastAiMessage
         conversationId='conv-1'
       />,
     );
+
+    const actions = screen.getByRole('button', { name: 'messageActions.likeAria' }).parentElement;
+    expect(actions).not.toHaveClass('opacity-0', 'group-hover/msg:opacity-100');
+    expect(screen.getByText('Model One')).toBeInTheDocument();
+    expect(screen.getByText(new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date('2026-07-29T13:00:00.000Z')))).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'messageActions.likeAria' }));
     expect(updateFeedbackMock).toHaveBeenCalledWith('conv-1', 'ai-1', 'like');
@@ -101,6 +114,8 @@ describe('MessageActions', () => {
       />,
     );
 
+    expect(screen.getByText('Model One')).toBeInTheDocument();
+
     await userEvent.click(screen.getByRole('button', { name: 'messageActions.branch' }));
 
     await waitFor(() => expect(branchConversationMock).toHaveBeenCalledWith(
@@ -111,5 +126,28 @@ describe('MessageActions', () => {
       }),
     ));
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/conversation/branch-1'));
+  });
+
+  it('falls back safely when generation metadata cannot be resolved', () => {
+    modelMock.value = undefined;
+    const { rerender } = render(
+      <MessageActions
+        message={{ id: 'ai-1', conversationType: 'ai', components: [], modelId: 'retired-model', createdAt: 'invalid' } as never}
+        isLastAiMessage={false}
+        conversationId='conv-1'
+      />,
+    );
+
+    expect(screen.getByText('retired-model')).toBeInTheDocument();
+    expect(screen.getByText('messageActions.dateUnavailable')).toBeInTheDocument();
+
+    rerender(
+      <MessageActions
+        message={{ id: 'ai-1', conversationType: 'ai', components: [], createdAt: 'invalid' } as never}
+        isLastAiMessage={false}
+        conversationId='conv-1'
+      />,
+    );
+    expect(screen.getByText('messageActions.modelUnavailable')).toBeInTheDocument();
   });
 });

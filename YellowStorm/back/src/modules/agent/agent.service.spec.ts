@@ -9,6 +9,7 @@ describe('AgentService connector skill inheritance', () => {
 
   const createSkill = (id: string): ISkillResponse => ({
     id,
+    slug: id,
     name: id,
     description: `${id} description`,
     icon: '',
