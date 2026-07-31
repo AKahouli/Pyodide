@@ -14,6 +14,11 @@ vi.mock('@/modules/localization', () => ({
         'agents.card.standingBy': 'Standing by',
         'agents.status.idle': 'Idle',
         'agents.status.working': 'Working',
+        'agents.sort.label': 'Sort agents',
+        'agents.sort.status': 'Status',
+        'agents.sort.name': 'Name',
+        'agents.sort.progress': 'Least progress',
+        'agents.sort.tasks': 'Most tasks',
       }) as Record<string, string>)[k] ?? k;
     },
     language: 'en',
@@ -101,6 +106,58 @@ describe('AgentTeamView', () => {
     await userEvent.click(screen.getByTestId('agent-card-toggle-a'));
     expect(screen.queryByText('Task one')).toBeNull();
     expect(screen.getByText('Task two')).toBeTruthy();
+  });
+
+  it('orders by status (most attention first) by default', () => {
+    asMock(useStreamAgents).mockReturnValue({
+      agents: [
+        mkAgent({ key: 'a', name: 'Atlas', status: 'done' }),
+        mkAgent({ key: 'b', name: 'Iris', status: 'blocked' }),
+        mkAgent({ key: 'c', name: 'Nova', status: 'working' }),
+      ],
+      ungrouped: [],
+    });
+    render(<AgentTeamView onOpenTask={() => {}} />);
+
+    const names = screen.getAllByTestId(/^agent-card-toggle-/).map((el) => el.textContent);
+    expect(names[0]).toContain('Iris'); // blocked
+    expect(names[1]).toContain('Nova'); // working
+    expect(names[2]).toContain('Atlas'); // done
+  });
+
+  it('re-orders the cards when a different sort is picked', async () => {
+    asMock(useStreamAgents).mockReturnValue({
+      agents: [
+        mkAgent({ key: 'a', name: 'Zeta', status: 'blocked' }),
+        mkAgent({ key: 'b', name: 'Alpha', status: 'done' }),
+      ],
+      ungrouped: [],
+    });
+    render(<AgentTeamView onOpenTask={() => {}} />);
+
+    // Status order puts the blocked agent first.
+    expect(screen.getAllByTestId(/^agent-card-toggle-/)[0].textContent).toContain('Zeta');
+
+    await userEvent.click(screen.getByTestId('agent-sort-trigger'));
+    await userEvent.click(await screen.findByTestId('agent-sort-name'));
+
+    expect(screen.getAllByTestId(/^agent-card-toggle-/)[0].textContent).toContain('Alpha');
+  });
+
+  it('sorts by least progress when asked', async () => {
+    asMock(useStreamAgents).mockReturnValue({
+      agents: [
+        mkAgent({ key: 'a', name: 'Atlas', doneCount: 4, totalCount: 4 }),
+        mkAgent({ key: 'b', name: 'Iris', doneCount: 1, totalCount: 4 }),
+      ],
+      ungrouped: [],
+    });
+    render(<AgentTeamView onOpenTask={() => {}} />);
+
+    await userEvent.click(screen.getByTestId('agent-sort-trigger'));
+    await userEvent.click(await screen.findByTestId('agent-sort-progress'));
+
+    expect(screen.getAllByTestId(/^agent-card-toggle-/)[0].textContent).toContain('Iris');
   });
 
   it('hands a selected task up to the caller', async () => {
