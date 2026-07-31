@@ -7,7 +7,6 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 import { WorkyMobileNav } from './WorkyMobileNav';
-import { ManagerVoiceBanner } from './ManagerVoiceBanner';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -27,14 +26,9 @@ describe('WorkyMobileNav', () => {
     await userEvent.click(screen.getByText('nav.home'));
     expect(onHome).toHaveBeenCalled();
   });
-});
 
-describe('ManagerVoiceBanner', () => {
-  it('renders the manager and calls onTalk from the mic', async () => {
-    const onTalk = vi.fn();
-    render(<ManagerVoiceBanner onTalk={onTalk} />);
-    expect(screen.getByText('voice.manager')).toBeTruthy();
-    await userEvent.click(screen.getByLabelText('voice.talk'));
-    expect(onTalk).toHaveBeenCalled();
+  it('no longer renders a "More" tab', () => {
+    render(<WorkyMobileNav active="agents" onChange={() => {}} onVoice={() => {}} onHome={() => {}} />);
+    expect(screen.queryByText('nav.more')).toBeNull();
   });
 });

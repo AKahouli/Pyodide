@@ -22,7 +22,7 @@ The Worky module is the **Chief of Staff** UI: stream list, chat with the Manage
 | Stream workspace | `WorkyStreamPage` | REST + SSE (`/worky/streams/:id/events`) |
 | Chat & prompt | `ChatMessageThread`, `PromptBar` | SSE + REST messages |
 | Kanban | `KanbanBoard`, `TaskDetailDrawer` | REST board/tasks |
-| Clarifications | `ChatClarificationCard`, `InteractionPanel` | SSE `interaction.requested` |
+| Clarifications | `ChatClarificationCard`, `ApprovalModal` / `mobile/ApprovalSheet` | SSE `interaction.requested` |
 | WhatsApp (per stream) | `WorkyWhatsAppConnectModal` | REST + Socket.IO pairing |
 | Governance admin | `admin/WorkyGovernancePage` | REST (admin module) |
 
@@ -63,7 +63,6 @@ worky/
 │   ├── WorkyWhatsAppConnectModal.tsx
 │   ├── ChatMessageThread.tsx
 │   ├── PromptBar.tsx
-│   ├── OrchestratorPanel.tsx
 │   └── admin/WorkyGovernancePage.tsx
 ├── hooks/
 │   └── useWorkyWhatsAppPairingSocket.ts
@@ -117,7 +116,7 @@ Users **cannot** connect a stream until the system bot is online. The modal show
 
 ### User flow (stream)
 
-1. Open stream → WhatsApp button in `PromptBar` / `OrchestratorPanel`.
+1. Open stream → WhatsApp button in `PromptBar` (rail chat composer or `ManagerChatSheet`).
 2. `WorkyWhatsAppConnectModal` loads integration via `getWorkyWhatsAppIntegration(streamId)`.
 3. **Connect** → `connectWorkyWhatsApp` → QR / pairing code.
 4. `useWorkyWhatsAppPairingSocket` joins Socket.IO room `user:{userId}:worky:{streamId}`; HTTP poll fallback every 2.5s.

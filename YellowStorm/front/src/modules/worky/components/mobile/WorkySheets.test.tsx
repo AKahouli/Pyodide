@@ -7,7 +7,6 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 // Replace the heavy child content components with stubs — we test the sheet wrappers.
-vi.mock('../BudgetControl', () => ({ BudgetControl: () => <div>budget-control-body</div> }));
 vi.mock('../TaskDetailDrawer', () => ({
   TaskDetailDrawer: ({ task }: { task: { title: string } | null }) => <div>drawer:{task?.title}</div>,
 }));
@@ -15,7 +14,6 @@ vi.mock('../TaskDetailDrawer', () => ({
 const mutateAsync = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../query/hooks', () => ({ useRespondInteraction: () => ({ mutateAsync }) }));
 
-import { BudgetSheet } from './BudgetSheet';
 import { TaskDetailSheet } from './TaskDetailSheet';
 import { ApprovalSheet } from './ApprovalSheet';
 import type { WorkyPendingClarification } from '../../types';
@@ -31,13 +29,6 @@ const interaction = {
 } as unknown as WorkyPendingClarification;
 
 beforeEach(() => vi.clearAllMocks());
-
-describe('BudgetSheet', () => {
-  it('renders the budget control body when open', () => {
-    render(<BudgetSheet streamId="s1" open onOpenChange={() => {}} />);
-    expect(screen.getByText('budget-control-body')).toBeTruthy();
-  });
-});
 
 describe('TaskDetailSheet', () => {
   it('renders the task drawer with the task when open', () => {

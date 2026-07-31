@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import { Home, LayoutGrid, MessageCircle, Menu, Mic } from 'lucide-react';
+import { Home, LayoutGrid, MessageCircle, Mic } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { WorkyMobileTab } from '../../uiStore';
@@ -7,7 +7,6 @@ import type { WorkyMobileTab } from '../../uiStore';
 const TABS = [
   { tab: 'agents', icon: LayoutGrid, labelKey: 'nav.agents' },
   { tab: 'chat', icon: MessageCircle, labelKey: 'nav.chat' },
-  { tab: 'more', icon: Menu, labelKey: 'nav.more' },
 ] as const satisfies ReadonlyArray<{ tab: WorkyMobileTab; icon: typeof Home; labelKey: string }>;
 
 function TabButton({
@@ -53,7 +52,7 @@ export function WorkyMobileNav({
   onHome: () => void;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
-  const [agents, chat, more] = TABS;
+  const [agents, chat] = TABS;
 
   return (
     <nav className="pointer-events-none relative flex justify-center px-4 pb-3">
@@ -76,12 +75,6 @@ export function WorkyMobileNav({
             label={t(chat.labelKey)}
             active={active === chat.tab}
             onClick={() => onChange(chat.tab)}
-          />
-          <TabButton
-            icon={more.icon}
-            label={t(more.labelKey)}
-            active={active === more.tab}
-            onClick={() => onChange(more.tab)}
           />
         </div>
 
