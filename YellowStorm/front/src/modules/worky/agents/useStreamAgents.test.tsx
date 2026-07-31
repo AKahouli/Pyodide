@@ -18,8 +18,8 @@ describe('useStreamAgents', () => {
   it('groups the current board tasks by agent and resolves identity', () => {
     asMock(useWorkyBoard).mockReturnValue({
       ...emptyLanes,
-      running: [{ id: '1', title: 'A', lane: 'running', agentKey: 'researcher' }],
-      done: [{ id: '2', title: 'B', lane: 'done', agentKey: 'researcher' }],
+      running: [{ id: '1', title: 'A', lane: 'running', assigneeKey: 'researcher' }],
+      done: [{ id: '2', title: 'B', lane: 'done', assigneeKey: 'researcher' }],
     });
     asMock(useAgentStore).mockImplementation((sel: (s: unknown) => unknown) =>
       sel({ agents: [{ id: '1', name: 'Atlas', slug: 'researcher', role: 'Research' }] }),
@@ -39,10 +39,10 @@ describe('useStreamAgents', () => {
     expect(result.current.ungrouped).toEqual([]);
   });
 
-  it('surfaces tasks without an agentKey as ungrouped', () => {
+  it('surfaces tasks without an assigneeKey as ungrouped', () => {
     asMock(useWorkyBoard).mockReturnValue({
       ...emptyLanes,
-      backlog: [{ id: '3', title: 'C', lane: 'backlog', agentKey: null }],
+      backlog: [{ id: '3', title: 'C', lane: 'backlog', assigneeKey: null }],
     });
     asMock(useAgentStore).mockImplementation((sel: (s: unknown) => unknown) => sel({ agents: [] }));
     const { result } = renderHook(() => useStreamAgents());

@@ -4,7 +4,7 @@ import type { WorkyTask } from '../types';
 import type { Agent } from '../../agent/types';
 
 const task = (o: Partial<WorkyTask>): WorkyTask =>
-  ({ id: Math.random().toString(), title: 't', lane: 'backlog', agentKey: 'a', ...o } as WorkyTask);
+  ({ id: Math.random().toString(), title: 't', lane: 'backlog', assigneeKey: 'a', ...o } as WorkyTask);
 
 describe('deriveAgentStatus', () => {
   it('is working when any task is running', () => {
@@ -36,9 +36,9 @@ describe('groupTasksByAgent', () => {
   const resolve = (k: string): Agent | undefined =>
     k === 'researcher' ? ({ id: '1', name: 'Atlas', role: 'Research' } as Agent) : undefined;
 
-  it('groups by agentKey and resolves identity + derived status/progress', () => {
+  it('groups by assigneeKey and resolves identity + derived status/progress', () => {
     const groups = groupTasksByAgent(
-      [task({ agentKey: 'researcher', lane: 'running' }), task({ agentKey: 'researcher', lane: 'done' })],
+      [task({ assigneeKey: 'researcher', lane: 'running' }), task({ assigneeKey: 'researcher', lane: 'done' })],
       resolve,
     );
     expect(groups).toHaveLength(1);
@@ -54,7 +54,7 @@ describe('groupTasksByAgent', () => {
   });
 
   it('falls back to the raw key as name when unresolved, and skips null keys', () => {
-    const groups = groupTasksByAgent([task({ agentKey: null }), task({ agentKey: 'x' })], () => undefined);
+    const groups = groupTasksByAgent([task({ assigneeKey: null }), task({ assigneeKey: 'x' })], () => undefined);
     expect(groups.map((g) => g.key)).toEqual(['x']);
     expect(groups[0].name).toBe('x');
   });

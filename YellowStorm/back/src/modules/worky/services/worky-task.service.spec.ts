@@ -23,19 +23,19 @@ const makeService = (tasks: unknown[]) => {
 describe('WorkyTaskService.projectForBoard', () => {
   const streamId = new Types.ObjectId().toString();
 
-  it('projects agentKey onto the board task view', async () => {
+  it('projects assigneeKey onto the board task view', async () => {
     const service = makeService([
-      { _id: new Types.ObjectId(), streamId, title: 'T', lane: 'running', agentKey: 'Researcher' },
+      { _id: new Types.ObjectId(), streamId, title: 'T', lane: 'running', assigneeKey: 'Researcher' },
     ]);
     const lanes = await service.projectForBoard(streamId, new Map());
-    expect((lanes.running[0] as { agentKey?: string | null }).agentKey).toBe('Researcher');
+    expect((lanes.running[0] as { assigneeKey?: string | null }).assigneeKey).toBe('Researcher');
   });
 
-  it('defaults agentKey to null when absent', async () => {
+  it('defaults assigneeKey to null when absent', async () => {
     const service = makeService([
       { _id: new Types.ObjectId(), streamId, title: 'T', lane: 'ready' },
     ]);
     const lanes = await service.projectForBoard(streamId, new Map());
-    expect((lanes.ready[0] as { agentKey?: string | null }).agentKey).toBeNull();
+    expect((lanes.ready[0] as { assigneeKey?: string | null }).assigneeKey).toBeNull();
   });
 });

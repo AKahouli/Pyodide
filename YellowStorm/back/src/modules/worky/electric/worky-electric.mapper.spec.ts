@@ -184,25 +184,25 @@ describe('worky-electric.mapper', () => {
       expect(set).toMatchObject({ lane: 'backlog', executionState: 'not_started' });
     });
 
-    it('maps a non-empty agent to a trimmed agentKey', () => {
+    it('maps a non-empty assignee to a trimmed assigneeKey', () => {
       const { set } = mapPlanStep(
-        { session_id: 's', step_id: 'step-1', ordinal: 1, status: 'running', description: 'd', agent: '  Researcher ' },
+        { session_id: 's', step_id: 'step-1', ordinal: 1, status: 'running', description: 'd', assignee: '  Researcher ' },
         'stream-1',
       );
-      expect(set).toMatchObject({ agentKey: 'Researcher' });
+      expect(set).toMatchObject({ assigneeKey: 'Researcher' });
     });
 
-    it('maps a missing or blank agent to null', () => {
+    it('maps a missing or blank assignee to null', () => {
       const missing = mapPlanStep(
         { session_id: 's', step_id: 'step-1', ordinal: 1, status: 'running', description: 'd' },
         'stream-1',
       ).set;
       const blank = mapPlanStep(
-        { session_id: 's', step_id: 'step-1', ordinal: 1, status: 'running', description: 'd', agent: '   ' },
+        { session_id: 's', step_id: 'step-1', ordinal: 1, status: 'running', description: 'd', assignee: '   ' },
         'stream-1',
       ).set;
-      expect(missing.agentKey).toBeNull();
-      expect(blank.agentKey).toBeNull();
+      expect(missing.assigneeKey).toBeNull();
+      expect(blank.assigneeKey).toBeNull();
     });
   });
 

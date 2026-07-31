@@ -36,8 +36,8 @@ export function agentInitials(name: string): string {
 }
 
 /**
- * Group tasks by their `agentKey`, resolving each key to a real Agent for
- * display. Tasks with no `agentKey` are skipped (the caller surfaces them
+ * Group tasks by their `assigneeKey`, resolving each key to a real Agent for
+ * display. Tasks with no `assigneeKey` are skipped (the caller surfaces them
  * separately). Never fabricates an agent: unresolved keys use the raw key as
  * the display name.
  */
@@ -47,10 +47,10 @@ export function groupTasksByAgent(
 ): WorkyAgent[] {
   const byKey = new Map<string, WorkyTask[]>();
   for (const t of tasks) {
-    if (!t.agentKey) continue;
-    const list = byKey.get(t.agentKey);
+    if (!t.assigneeKey) continue;
+    const list = byKey.get(t.assigneeKey);
     if (list) list.push(t);
-    else byKey.set(t.agentKey, [t]);
+    else byKey.set(t.assigneeKey, [t]);
   }
   return [...byKey.entries()].map(([key, list]) => {
     const agent = resolve(key);
