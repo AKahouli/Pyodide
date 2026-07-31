@@ -1,5 +1,5 @@
 import { useState, type JSX, type ComponentType } from 'react';
-import { Sparkles, Check, Play, ShieldAlert, GitBranch, UserRound, CircleDot } from 'lucide-react';
+import { Sparkles, Check, Play, ShieldAlert, GitBranch, User, CircleDot } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { useStreamBudget } from '../../query/hooks';
@@ -10,7 +10,7 @@ const ICONS: Record<string, ComponentType<{ className?: string }>> = {
   play: Play,
   'shield-alert': ShieldAlert,
   'git-branch': GitBranch,
-  'user-round': UserRound,
+  'user-round': User,
 };
 const TONE: Record<string, string> = {
   working: 'text-worky-working',
