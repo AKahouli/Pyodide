@@ -107,7 +107,17 @@ export const useWorkyStore = create<WorkyState>()(
       setBoardLoading: (boardLoading) => set({ boardLoading }),
       setBoardError: (boardError) => set({ boardError }),
       setMessages: (messages) => set({ messages }),
-      appendMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
+      // Idempotent by id: the backend both returns the saved owner message
+      // (which `useSendMessage` writes into the React Query cache, and the
+      // messages effect mirrors into this store) and emits the same message
+      // over SSE, so it would otherwise be appended twice until the next
+      // refetch collapsed it. Also covers SSE replays after a reconnect.
+      appendMessage: (message) =>
+        set((state) =>
+          state.messages.some((m) => m.id === message.id)
+            ? {}
+            : { messages: [...state.messages, message] },
+        ),
       setPendingClarifications: (pendingClarifications) => set({ pendingClarifications }),
       appendAssistantToken: (text) =>
         set((state) => ({ assistantText: state.assistantText + text })),
