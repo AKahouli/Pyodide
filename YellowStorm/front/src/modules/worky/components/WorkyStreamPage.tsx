@@ -27,14 +27,12 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
 import { WorkyMobileStream } from './mobile/WorkyMobileStream';
 import { AgentTeamView } from './mobile/AgentTeamView';
-import { AgentTasksSheet } from './mobile/AgentTasksSheet';
 import { useStreamAgents } from '../agents/useStreamAgents';
 import { WorkyVoiceDock } from './desktop/WorkyVoiceDock';
 import { WorkyTopBar } from './desktop/WorkyTopBar';
 import { WorkyActivityRail } from './desktop/WorkyActivityRail';
 import { ManagerChatSheet } from './mobile/ManagerChatSheet';
 import { VoiceSession } from './voice/VoiceSession';
-import type { WorkyAgent } from '../agents/agentModel';
 import type { WorkyEvent, WorkyMessage, WorkyPendingClarification, WorkyTask } from '../types';
 
 function summarizeDelta(event: WorkyEvent, fallback: string): string {
@@ -68,7 +66,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const streamQuery = useStream(streamId);
   const updateStream = useUpdateStream();
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
-  const [selectedAgent, setSelectedAgent] = useState<WorkyAgent | null>(null);
   const [boardView, setBoardView] = useState<'agents' | 'status' | 'graph'>('agents');
   const [approvalFor, setApprovalFor] = useState<WorkyPendingClarification | null>(null);
   const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
@@ -357,18 +354,18 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
                 </h2>
                 <span className='text-xs text-muted-foreground'>{tWorky('agents.team.groupedBy')}</span>
               </div>
-              <AgentTeamView
-                onOpenAgent={(agent) => setSelectedAgent(agent)}
-                showHeader={false}
-                columns={2}
-              />
+              <AgentTeamView onOpenTask={setSelectedTask} showHeader={false} columns={2} />
             </div>
           </div>
         ) : (
           <KanbanBoard streamId={streamId} onTaskClick={setSelectedTask} />
         )}
       </main>
-      <WorkyActivityRail streamId={streamId} />
+      <WorkyActivityRail
+        streamId={streamId}
+        onWhatsAppClick={() => setWhatsappModalOpen(true)}
+        whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
+      />
       </div>
       <ManagerChatSheet
         streamId={streamId}
@@ -386,17 +383,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           onClose={() => setApprovalFor(null)}
         />
       ) : null}
-      <AgentTasksSheet
-        agent={selectedAgent}
-        open={selectedAgent !== null}
-        onOpenChange={(o) => {
-          if (!o) setSelectedAgent(null);
-        }}
-        onOpenTask={(task) => {
-          setSelectedAgent(null);
-          setSelectedTask(task);
-        }}
-      />
       <TaskDetailDrawer
         task={selectedTask}
         onClose={() => setSelectedTask(null)}
