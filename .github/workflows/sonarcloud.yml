@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
@@ -27,6 +29,7 @@ jobs:
 
       # --------------------------
       # SonarQube scan (self-hosted — no LOC limit)
+      # with PR analysis enabled via Community Branch Plugin
       # --------------------------
       - name: Install sonar-scanner
         run: |
@@ -39,6 +42,18 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          sonar-scanner \
-            -Dsonar.token="${SONAR_TOKEN}" \
-            -Dsonar.scm.revision="${{ github.sha }}"
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "Running SonarQube scan for Pull Request #${{ github.event.pull_request.number }}"
+            sonar-scanner \
+              -Dsonar.token="${SONAR_TOKEN}" \
+              -Dsonar.scm.revision="${{ github.sha }}" \
+              -Dsonar.pullrequest.key="${{ github.event.pull_request.number }}" \
+              -Dsonar.pullrequest.branch="${{ github.event.pull_request.head.ref }}" \
+              -Dsonar.pullrequest.base="${{ github.event.pull_request.base.ref }}"
+          else
+            echo "Running SonarQube scan for branch main"
+            sonar-scanner \
+              -Dsonar.token="${SONAR_TOKEN}" \
+              -Dsonar.scm.revision="${{ github.sha }}" \
+              -Dsonar.branch.name="main"
+          fi
