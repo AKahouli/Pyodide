@@ -56,28 +56,6 @@ export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps): JSX.
           </TabsList>
           <TabsContent value='details' className='space-y-4'>
             <p className='whitespace-pre-wrap text-muted-foreground'>{task.description}</p>
-            <dl className='grid grid-cols-2 gap-2 text-xs'>
-              <dt className='font-medium'>{tWorky('taskDetail.lane')}</dt>
-              <dd>{task.lane}</dd>
-              <dt className='font-medium'>{tWorky('taskDetail.executionState')}</dt>
-              <dd>{task.executionState}</dd>
-              <dt className='font-medium'>{tWorky('taskDetail.priority')}</dt>
-              <dd>{tWorky(`kanban.priorities.${task.priority}`)}</dd>
-              <dt className='font-medium'>{tWorky('taskDetail.assignee')}</dt>
-              <dd>
-                {ROLE_LABEL_KEYS[task.assigneeType]
-                  ? tWorky(ROLE_LABEL_KEYS[task.assigneeType] as 'kanban.assignees.ephemeral_ai_agent' | 'kanban.assignees.human_agent' | 'kanban.assignees.unassigned')
-                  : task.assigneeType}
-              </dd>
-              <dt className='font-medium'>{tWorky('taskDetail.actionCategory')}</dt>
-              <dd>{task.actionCategory}</dd>
-              <dt className='font-medium'>{tWorky('taskDetail.startedAt')}</dt>
-              <dd>{formatDateTime(task.startedAt, tWorky('taskDetail.notAvailable'))}</dd>
-              <dt className='font-medium'>{tWorky('taskDetail.completedAt')}</dt>
-              <dd>{formatDateTime(task.completedAt, tWorky('taskDetail.notAvailable'))}</dd>
-              <dt className='font-medium'>{tWorky('taskDetail.duration')}</dt>
-              <dd>{formatDuration(task.durationMs, tWorky('taskDetail.notAvailable'))}</dd>
-            </dl>
             {task.dependsOn.length > 0 ? (
               <div>
                 <h3 className='text-xs font-semibold'>{tWorky('taskDetail.dependsOn')}</h3>

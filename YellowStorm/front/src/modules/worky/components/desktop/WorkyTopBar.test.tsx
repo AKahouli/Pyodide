@@ -13,6 +13,7 @@ vi.mock('react-router-dom', async () => ({
   useNavigate: () => navigate,
 }));
 
+vi.mock('@/lib/notifications', () => ({ showError: vi.fn() }));
 vi.mock('../../query/hooks', () => ({
   useStream: () => ({ data: { title: 'Q3 Market Expansion', status: 'active' } }),
   useStreams: () => ({
@@ -21,6 +22,7 @@ vi.mock('../../query/hooks', () => ({
       { id: 's2', title: 'Hiring' },
     ],
   }),
+  useCreateStream: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 import { WorkyTopBar } from './WorkyTopBar';

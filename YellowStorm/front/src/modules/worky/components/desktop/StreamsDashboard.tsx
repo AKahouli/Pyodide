@@ -4,18 +4,10 @@ import { Loader2, Plus, Search, Trash2 } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { showError } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
-import { useCreateStream, useDeleteStream, useStreams } from '../../query/hooks';
-import { WORKY_STREAM_TITLE_MAX, WORKY_STREAM_TITLE_MIN } from '../../constants';
+import { useDeleteStream, useStreams } from '../../query/hooks';
+import { NewStreamDialog } from '../NewStreamDialog';
 
 // Client-derivable groupings (no aggregate endpoint exists).
 const ACTIVE = new Set(['active', 'planning', 'partially_blocked', 'start_requested']);
@@ -32,10 +24,8 @@ export function StreamsDashboard(): JSX.Element {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
-  const [draftTitle, setDraftTitle] = useState('');
 
   const { data: streams = [], isLoading } = useStreams({ search: search || undefined });
-  const createStream = useCreateStream();
   const deleteStream = useDeleteStream();
 
   const active = streams.filter((s) => ACTIVE.has(s.status)).length;
@@ -45,28 +35,6 @@ export function StreamsDashboard(): JSX.Element {
     { key: 'total', label: t('dashboard.kpi.total'), value: streams.length },
     { key: 'attention', label: t('dashboard.kpi.attention'), value: attention },
   ];
-
-  const titleLength = draftTitle.trim().length;
-  const canCreate =
-    !createStream.isPending &&
-    titleLength >= WORKY_STREAM_TITLE_MIN &&
-    titleLength <= WORKY_STREAM_TITLE_MAX;
-
-  const closeCreate = (): void => {
-    setCreateOpen(false);
-    setDraftTitle('');
-  };
-
-  const onCreate = async (): Promise<void> => {
-    if (!canCreate) return;
-    try {
-      const stream = await createStream.mutateAsync({ title: draftTitle.trim() });
-      closeCreate();
-      navigate(`/worky/${stream.id}`);
-    } catch (error) {
-      showError(error instanceof Error ? error.message : t('dashboard.createFailed'));
-    }
-  };
 
   const onDelete = async (stream: { id: string; title: string }): Promise<void> => {
     const confirmed = window.confirm(t('dashboard.deleteConfirm', { title: stream.title }));
@@ -162,38 +130,7 @@ export function StreamsDashboard(): JSX.Element {
         </div>
       )}
 
-      <Dialog open={createOpen} onOpenChange={(open) => (open ? setCreateOpen(true) : closeCreate())}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('dashboard.newStream')}</DialogTitle>
-            <DialogDescription>{t('dashboard.newStreamDescription')}</DialogDescription>
-          </DialogHeader>
-          <Input
-            id="worky-new-stream-title"
-            name="streamTitle"
-            value={draftTitle}
-            onChange={(event) => setDraftTitle(event.target.value)}
-            placeholder={t('dashboard.newStreamPlaceholder')}
-            maxLength={WORKY_STREAM_TITLE_MAX}
-            disabled={createStream.isPending}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                void onCreate();
-              }
-            }}
-            autoFocus
-          />
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={closeCreate} disabled={createStream.isPending}>
-              {t('actions.cancel')}
-            </Button>
-            <Button type="button" onClick={() => void onCreate()} disabled={!canCreate}>
-              {createStream.isPending ? <Loader2 className="size-4 animate-spin" /> : t('actions.create')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <NewStreamDialog open={createOpen} onOpenChange={setCreateOpen} />
     </div>
   );
 }
