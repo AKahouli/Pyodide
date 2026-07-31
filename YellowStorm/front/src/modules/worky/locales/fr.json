@@ -56,7 +56,6 @@
   "header.loading": "Chargement du flux…",
   "header.error": "Impossible de charger ce flux.",
   "header.planVersion": "Plan v{{version}}",
-  "header.budget": "Budget : {{spent}}$ / {{limit}}$",
   "badges.status.created": "Créé",
   "badges.status.planning": "Planification",
   "badges.status.not_started": "Non démarré",

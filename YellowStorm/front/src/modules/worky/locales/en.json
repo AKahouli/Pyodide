@@ -56,7 +56,6 @@
   "header.loading": "Loading stream…",
   "header.error": "Could not load this stream.",
   "header.planVersion": "Plan v{{version}}",
-  "header.budget": "Budget: ${{spent}} / ${{limit}}",
   "badges.status.created": "Created",
   "badges.status.planning": "Planning",
   "badges.status.not_started": "Not started",

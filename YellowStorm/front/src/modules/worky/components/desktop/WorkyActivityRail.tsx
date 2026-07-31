@@ -65,8 +65,13 @@ export function WorkyActivityRail({
       </div>
 
       {tab === 'chat' ? (
-        <div className="flex min-h-0 flex-1 flex-col gap-2" data-testid="worky-rail-chat">
-          <ChatMessageThread streamId={streamId} />
+        // Edge-to-edge: no side padding and no thread border, so the narrow rail
+        // spends its width on message text rather than chrome.
+        <div className="flex min-h-0 flex-1 flex-col" data-testid="worky-rail-chat">
+          <ChatMessageThread
+            streamId={streamId}
+            className="rounded-none border-x-0 border-b-0 border-t border-border/60 bg-transparent"
+          />
           <PromptBar
             streamId={streamId}
             onWhatsAppClick={onWhatsAppClick}
@@ -74,7 +79,7 @@ export function WorkyActivityRail({
           />
         </div>
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto" data-testid="worky-rail-activity">
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3" data-testid="worky-rail-activity">
           {activity.length === 0 ? (
             <p className="py-6 text-center text-xs text-muted-foreground">{t('activity.empty')}</p>
           ) : (
