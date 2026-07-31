@@ -88,7 +88,6 @@ export function WorkyMobileStream({
         onOpenTask={openTask}
       />
       <TaskDetailSheet
-        streamId={streamId}
         task={selectedTask}
         open={activeSheet === 'task'}
         onOpenChange={(o) => setActiveSheet(o ? 'task' : null)}

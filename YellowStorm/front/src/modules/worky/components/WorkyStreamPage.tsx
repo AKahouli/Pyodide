@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Bot, PanelLeftOpen, PanelLeftClose } from 'lucide-react';
+import { Bot } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import { Button } from '@/components/ui/button';
-import { StreamSidebar } from './StreamSidebar';
 import { StreamHeader } from './StreamHeader';
 import { KanbanBoard } from './KanbanBoard';
 import { WorkyGraphBoard } from './WorkyGraphBoard';
 import { PlanDeltaToast } from './PlanDeltaToast';
-import { StreamControls } from './StreamControls';
 import { ApprovalModal } from './ApprovalModal';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { WorkyWhatsAppConnectModal } from './WorkyWhatsAppConnectModal';
@@ -282,8 +280,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const setOrchestratorOpen = useWorkyUiStore((s) => s.setOrchestratorOpen);
   const voiceOpen = useWorkyUiStore((s) => s.voiceOpen);
   const setVoiceOpen = useWorkyUiStore((s) => s.setVoiceOpen);
-  const sidebarCollapsed = useWorkyUiStore((s) => s.sidebarCollapsed);
-  const setSidebarCollapsed = useWorkyUiStore((s) => s.setSidebarCollapsed);
   // Close the slide-over automatically on stream switch so the next
   // stream doesn't inherit the open state of the previous one.
   useEffect(() => {
@@ -304,31 +300,13 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
     <div className='flex h-full w-full flex-col overflow-hidden'>
       <WorkyTopBar streamId={streamId} />
       <div className='flex min-h-0 flex-1 overflow-hidden'>
-      {sidebarCollapsed ? null : <StreamSidebar />}
       <main
         data-testid='worky-stream-main'
         className='flex min-w-0 flex-1 flex-col overflow-hidden'
       >
         <StreamHeader streamId={streamId} onRename={onRename} />
         {streamQuery.data ? (
-          <div className='flex items-center gap-2 border-b border-border/60 bg-background/20 px-6 py-2'>
-            <Button
-              type='button'
-              size='icon'
-              variant='ghost'
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              aria-label={tWorky(sidebarCollapsed ? 'sidebar.expand' : 'sidebar.collapse')}
-              className='size-7 shrink-0'
-            >
-              {sidebarCollapsed ? <PanelLeftOpen className='h-4 w-4' /> : <PanelLeftClose className='h-4 w-4' />}
-            </Button>
-            <div className='flex-1'>
-              <StreamControls
-                streamId={streamId}
-                status={streamQuery.data.status}
-                controlState={streamQuery.data.controlState}
-              />
-            </div>
+          <div className='flex items-center justify-end gap-2 border-b border-border/60 bg-background/20 px-6 py-2'>
             <div
               role='tablist'
               aria-label={tWorky('kanban.view.status')}
@@ -420,7 +398,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         }}
       />
       <TaskDetailDrawer
-        streamId={streamId}
         task={selectedTask}
         onClose={() => setSelectedTask(null)}
       />

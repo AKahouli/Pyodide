@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useStream } from '../query/hooks';
 import { useModuleTranslation } from '@/modules/localization';
-import { StatusBadge } from './StatusBadge';
 
 interface StreamHeaderProps {
   streamId: string;
@@ -31,8 +30,8 @@ export function StreamHeader({ streamId, onRename }: StreamHeaderProps): JSX.Ele
   };
 
   return (
-    <header className='flex items-center justify-between gap-4 border-b border-border/60 bg-background/40 px-6 py-4'>
-      <div className='flex flex-col gap-1'>
+    <header className='flex items-center gap-4 border-b border-border/60 bg-background/40 px-6 py-4'>
+      <div className='flex min-w-0 flex-col gap-1'>
         {editing ? (
           <input
             autoFocus
@@ -66,10 +65,6 @@ export function StreamHeader({ streamId, onRename }: StreamHeaderProps): JSX.Ele
             })}
           </span>
         </div>
-      </div>
-      <div className='flex items-center gap-2'>
-        <StatusBadge status={stream.status} />
-        <StatusBadge status={stream.controlState} tone='control' />
       </div>
     </header>
   );

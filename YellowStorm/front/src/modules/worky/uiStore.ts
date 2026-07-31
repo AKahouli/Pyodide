@@ -21,7 +21,6 @@ export interface WorkyActivityItem {
 interface WorkyUiState {
   isTaskDrawerOpen: boolean;
   selectedTaskId: string | null;
-  sidebarCollapsed: boolean;
   orchestratorOpen: boolean;
   sendError: string | null;
   /** Active bottom tab in the mobile layout. */
@@ -34,7 +33,6 @@ interface WorkyUiState {
   recentActivity: WorkyActivityItem[];
   setTaskDrawerOpen: (open: boolean) => void;
   setSelectedTaskId: (id: string | null) => void;
-  setSidebarCollapsed: (collapsed: boolean) => void;
   setOrchestratorOpen: (open: boolean) => void;
   setMobileTab: (tab: WorkyMobileTab) => void;
   setActiveSheet: (sheet: WorkyMobileSheet | null) => void;
@@ -49,7 +47,6 @@ interface WorkyUiState {
 const initialState = {
   isTaskDrawerOpen: false,
   selectedTaskId: null as string | null,
-  sidebarCollapsed: false,
   orchestratorOpen: false,
   sendError: null as string | null,
   mobileTab: 'agents' as WorkyMobileTab,
@@ -65,7 +62,6 @@ export const useWorkyUiStore = create<WorkyUiState>()(
       setTaskDrawerOpen: (isTaskDrawerOpen) => set({ isTaskDrawerOpen }),
       setSelectedTaskId: (selectedTaskId) =>
         set({ selectedTaskId, isTaskDrawerOpen: selectedTaskId != null }),
-      setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
       setOrchestratorOpen: (orchestratorOpen) => set({ orchestratorOpen }),
       setMobileTab: (mobileTab) => set({ mobileTab }),
       setActiveSheet: (activeSheet) => set({ activeSheet }),
