@@ -3,7 +3,6 @@ export { WorkyStreamPage } from './components/WorkyStreamPage';
 export { ApprovalModal } from './components/ApprovalModal';
 export { TaskDetailDrawer } from './components/TaskDetailDrawer';
 export { WorkyGovernancePage } from './components/admin/WorkyGovernancePage';
-export { BudgetControl } from './components/BudgetControl';
 export { StreamReportPage } from './components/StreamReportPage';
 export { HumanTaskPanel } from './components/HumanTaskPanel';
 export { MemoryProposalCard } from './components/MemoryProposalCard';

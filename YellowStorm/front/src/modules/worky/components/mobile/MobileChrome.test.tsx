@@ -7,34 +7,32 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 import { WorkyMobileNav } from './WorkyMobileNav';
-import { ManagerVoiceBanner } from './ManagerVoiceBanner';
 
 beforeEach(() => vi.clearAllMocks());
 
 describe('WorkyMobileNav', () => {
-  it('changes tab, opens voice and goes home', async () => {
-    const onChange = vi.fn();
-    const onVoice = vi.fn();
+  it('fires home, voice and chat', async () => {
     const onHome = vi.fn();
-    render(<WorkyMobileNav active="agents" onChange={onChange} onVoice={onVoice} onHome={onHome} />);
+    const onVoice = vi.fn();
+    const onChat = vi.fn();
+    render(<WorkyMobileNav onHome={onHome} onVoice={onVoice} onChat={onChat} />);
 
-    await userEvent.click(screen.getByText('nav.chat'));
-    expect(onChange).toHaveBeenCalledWith('chat');
+    await userEvent.click(screen.getByText('nav.home'));
+    expect(onHome).toHaveBeenCalled();
 
     await userEvent.click(screen.getByLabelText('nav.voice'));
     expect(onVoice).toHaveBeenCalled();
 
-    await userEvent.click(screen.getByText('nav.home'));
-    expect(onHome).toHaveBeenCalled();
+    await userEvent.click(screen.getByText('nav.chat'));
+    expect(onChat).toHaveBeenCalled();
   });
-});
 
-describe('ManagerVoiceBanner', () => {
-  it('renders the manager and calls onTalk from the mic', async () => {
-    const onTalk = vi.fn();
-    render(<ManagerVoiceBanner onTalk={onTalk} />);
-    expect(screen.getByText('voice.manager')).toBeTruthy();
-    await userEvent.click(screen.getByLabelText('voice.talk'));
-    expect(onTalk).toHaveBeenCalled();
+  it('renders only home, chat and the mic', () => {
+    render(<WorkyMobileNav onHome={() => {}} onVoice={() => {}} onChat={() => {}} />);
+    expect(screen.queryByText('nav.agents')).toBeNull();
+    expect(screen.queryByText('nav.more')).toBeNull();
+    expect(screen.getByText('nav.home')).toBeTruthy();
+    expect(screen.getByText('nav.chat')).toBeTruthy();
+    expect(screen.getByLabelText('nav.voice')).toBeTruthy();
   });
 });

@@ -346,14 +346,13 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         {boardView === 'graph' ? (
           <WorkyGraphBoard onTaskClick={setSelectedTask} />
         ) : boardView === 'agents' ? (
-          <div className='min-h-0 flex-1 overflow-y-auto p-6'>
+          // pb clears the fixed WorkyVoiceDock, which would otherwise cover the
+          // last row of agent cards at the bottom of the scroll.
+          <div className='min-h-0 flex-1 overflow-y-auto p-6 pb-28' data-testid='worky-agents-scroll'>
             <div className='mx-auto flex max-w-5xl flex-col gap-4'>
-              <div className='flex items-center justify-between'>
-                <h2 className='text-lg font-bold text-foreground'>
-                  {tWorky('agents.team.title')} · {tWorky('agents.team.count', { count: streamAgents.length })}
-                </h2>
-                <span className='text-xs text-muted-foreground'>{tWorky('agents.team.groupedBy')}</span>
-              </div>
+              <h2 className='text-lg font-bold text-foreground'>
+                {tWorky('agents.team.title')} · {tWorky('agents.team.count', { count: streamAgents.length })}
+              </h2>
               <AgentTeamView onOpenTask={setSelectedTask} showHeader={false} columns={2} />
             </div>
           </div>

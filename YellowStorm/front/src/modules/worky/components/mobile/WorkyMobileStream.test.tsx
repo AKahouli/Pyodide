@@ -19,7 +19,6 @@ vi.mock('../../agents/useStreamAgents', () => ({ useStreamAgents: vi.fn() }));
 // Sheets are covered by their own specs; stub them here to keep this wiring
 // test light (their real import chains pull in ai-elements + audio recorder).
 vi.mock('./TaskDetailSheet', () => ({ TaskDetailSheet: () => null }));
-vi.mock('./BudgetSheet', () => ({ BudgetSheet: () => null }));
 vi.mock('./ApprovalSheet', () => ({ ApprovalSheet: () => null }));
 vi.mock('./ManagerChatSheet', () => ({ ManagerChatSheet: () => null }));
 vi.mock('../PlanDeltaToast', () => ({ PlanDeltaToast: () => null }));
@@ -64,7 +63,7 @@ describe('WorkyMobileStream', () => {
       </MemoryRouter>,
     );
     expect(screen.getByText('Atlas')).toBeTruthy();
-    expect(screen.getByText('nav.agents')).toBeTruthy();
+    expect(screen.getByText('nav.chat')).toBeTruthy();
     expect(screen.getByLabelText('nav.voice')).toBeTruthy();
   });
 
