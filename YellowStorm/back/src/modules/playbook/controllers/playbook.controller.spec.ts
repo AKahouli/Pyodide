@@ -277,7 +277,8 @@ describe('PlaybookController', () => {
         playbookId,
         dto,
         'test@example.com',
-        { executionTrigger: 'manual' },
+        // The controller resolves the user's appearance language, defaulting to 'en'.
+        { executionTrigger: 'manual', userLanguage: 'en' },
       );
     });
   });
@@ -305,9 +306,13 @@ describe('PlaybookController', () => {
 
   describe('syncMailSubscription', () => {
     it('should create a Graph inbox subscription using the playbook mail trigger config', async () => {
+      // Relative to now: the controller rejects a cutoff in the past, so a
+      // hard-coded date silently expires and breaks this test later.
+      const autoRenewUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
       await controller.syncMailSubscription(user, playbookId, {
         notificationUrl: 'https://example.test/webhook',
-        autoRenewUntil: '2026-05-01T23:59:59.999Z',
+        autoRenewUntil,
       } as any);
 
       expect(mailGraphClientService.createInboxSubscription).toHaveBeenCalledWith(
@@ -315,7 +320,7 @@ describe('PlaybookController', () => {
         'microsoft',
         'https://example.test/webhook',
         `ys_${playbookId}`,
-        '2026-05-01T23:59:59.999Z',
+        autoRenewUntil,
       );
     });
   });

@@ -8,6 +8,7 @@ import { PlaybookExecutionGraphService } from './playbook-execution-graph.servic
 import { PlaybookExecutionNotificationService } from './playbook-execution-notification.service';
 import { PlaybookExecutionBufferService } from './playbook-execution-buffer.service';
 import { PlaybookExecutionAdvisorService } from './playbook-execution-advisor.service';
+import { PlaybookEvaluationService } from './playbook-evaluation.service';
 import { PlaybookService } from './playbook.service';
 import { PlaybookGrpcService } from './playbook-grpc.service';
 import { PlaybookContextService } from './playbook-context.service';
@@ -351,9 +352,12 @@ describe('PlaybookExecutionService', () => {
           }
         }
       }),
-      flushBufferedTaskResult: jest.fn(),
-      recordBufferedTaskUsage: jest.fn(),
-      recordStreamUsage: jest.fn(),
+      // These are async on the real service and the execution path chains
+      // `.then()` off flushBufferedTaskResult, so a bare jest.fn() (undefined)
+      // throws instead of resolving.
+      flushBufferedTaskResult: jest.fn().mockResolvedValue(undefined),
+      recordBufferedTaskUsage: jest.fn().mockResolvedValue(undefined),
+      recordStreamUsage: jest.fn().mockResolvedValue(undefined),
       mergeTaskResultWithBuffer: jest.fn((dbTr: any, buffered: any) => {
         const STATUS_WEIGHT: Record<string, number> = {
           [StepStatus.PENDING]: 0,
@@ -420,6 +424,11 @@ describe('PlaybookExecutionService', () => {
         { provide: PlaybookExecutionNotificationService, useValue: mockNotificationService },
         { provide: PlaybookExecutionBufferService, useValue: mockBufferService },
         PlaybookExecutionAdvisorService,
+        // Fire-and-forget from the execution path; the spec only needs it to resolve.
+        {
+          provide: PlaybookEvaluationService,
+          useValue: { persistEvaluationExecution: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
 
@@ -503,7 +512,8 @@ describe('PlaybookExecutionService', () => {
         objectId('pb1').toString(),
         {},
         'owner@example.com',
-        { executionTrigger: 'manual' },
+        // The owner's appearance language is resolved and forwarded, default 'en'.
+        { executionTrigger: 'manual', userLanguage: 'en' },
       );
       expect(result).toEqual({ executionId: 'exec-public-1' });
     });

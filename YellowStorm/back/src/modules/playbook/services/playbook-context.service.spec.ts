@@ -39,7 +39,7 @@ describe('PlaybookContextService', () => {
     save_memory: false,
     tools: [],
     brain_context: [],
-    chatbot: { model: 'gpt-4' },
+    chatbot: { model: 'gpt-4', input_modalities: ['text'] },
     ...overrides,
   });
 
