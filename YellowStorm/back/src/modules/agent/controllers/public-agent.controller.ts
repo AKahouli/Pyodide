@@ -14,7 +14,6 @@ import { ApiKeyGuard } from '../../auth/guards/api-key.guard';
  * global JWT auth.
  */
 @ApiTags('Public Agents')
-@ApiSecurity('api-key')
 @Public()
 @UseGuards(ApiKeyGuard)
 @Controller('public/agents')
