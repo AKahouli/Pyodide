@@ -1,27 +1,33 @@
-import type { JSX } from 'react';
+import { useState, type JSX } from 'react';
 import { Users, SlidersHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { AgentCard } from '../agents/AgentCard';
 import { useStreamAgents } from '../../agents/useStreamAgents';
 import type { WorkyAgent } from '../../agents/agentModel';
+import type { WorkyTask } from '../../types';
 
 /**
- * Agent-team body: the stream's tasks grouped by agent. `showHeader` renders the
- * "Team" + filter row (mobile); desktop supplies its own header and passes
- * `columns={2}` for the grid.
+ * Agent-team body: the stream's tasks grouped by agent. Cards expand in place
+ * to reveal their tasks; one at a time, so the list stays scannable.
+ * `showHeader` renders the "Team" + filter row (mobile); desktop supplies its
+ * own header and passes `columns={2}` for the grid.
  */
 export function AgentTeamView({
-  onOpenAgent,
+  onOpenTask,
   showHeader = true,
   columns = 1,
 }: {
-  onOpenAgent: (agent: WorkyAgent) => void;
+  onOpenTask: (task: WorkyTask) => void;
   showHeader?: boolean;
   columns?: 1 | 2;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const { agents, ungrouped } = useStreamAgents();
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
+  const toggle = (agent: WorkyAgent): void =>
+    setExpandedKey((current) => (current === agent.key ? null : agent.key));
 
   if (agents.length === 0 && ungrouped.length === 0) {
     return (
@@ -44,9 +50,15 @@ export function AgentTeamView({
         </div>
       ) : null}
 
-      <div className={cn('grid gap-3', columns === 2 ? 'grid-cols-2' : 'grid-cols-1')}>
+      <div className={cn('grid items-start gap-3', columns === 2 ? 'grid-cols-2' : 'grid-cols-1')}>
         {agents.map((agent) => (
-          <AgentCard key={agent.key} agent={agent} onOpen={onOpenAgent} />
+          <AgentCard
+            key={agent.key}
+            agent={agent}
+            expanded={expandedKey === agent.key}
+            onToggle={toggle}
+            onOpenTask={onOpenTask}
+          />
         ))}
       </div>
 

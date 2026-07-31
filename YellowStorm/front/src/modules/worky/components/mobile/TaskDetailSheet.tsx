@@ -5,12 +5,10 @@ import type { WorkyTask } from '../../types';
 
 /** Bottom-sheet wrapper around the existing TaskDetailDrawer for the mobile layout. */
 export function TaskDetailSheet({
-  streamId,
   task,
   open,
   onOpenChange,
 }: {
-  streamId: string;
   task: WorkyTask | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -21,7 +19,7 @@ export function TaskDetailSheet({
         <SheetHeader className="sr-only">
           <SheetTitle>{task?.title ?? ''}</SheetTitle>
         </SheetHeader>
-        <TaskDetailDrawer streamId={streamId} task={task} onClose={() => onOpenChange(false)} />
+        <TaskDetailDrawer task={task} onClose={() => onOpenChange(false)} />
       </SheetContent>
     </Sheet>
   );

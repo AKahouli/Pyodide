@@ -42,7 +42,7 @@ describe('BudgetSheet', () => {
 describe('TaskDetailSheet', () => {
   it('renders the task drawer with the task when open', () => {
     render(
-      <TaskDetailSheet streamId="s1" task={{ title: 'Do the thing' } as never} open onOpenChange={() => {}} />,
+      <TaskDetailSheet task={{ title: 'Do the thing' } as never} open onOpenChange={() => {}} />,
     );
     expect(screen.getByText('drawer:Do the thing')).toBeTruthy();
   });

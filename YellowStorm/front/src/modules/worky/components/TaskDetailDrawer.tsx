@@ -2,11 +2,10 @@ import { useModuleTranslation } from '@/modules/localization';
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useTaskOps, useTaskResults } from '../query/hooks';
+import { useTaskResults } from '../query/hooks';
 import type { WorkyTask, WorkyTaskResult } from '../types';
 
 interface TaskDetailDrawerProps {
-  streamId: string;
   task: WorkyTask | null;
   onClose: () => void;
 }
@@ -18,19 +17,14 @@ const ROLE_LABEL_KEYS: Record<string, string> = {
 };
 
 /**
- * Task detail drawer. Part 3 surfaces per-task controls (move,
- * pause, resume, cancel, review) and shows trace/cost placeholders
- * (Part 4 wires the real trace/cost surfaces). Raw payloads are
- * admin-only per canonical §9 — for Part 3 the drawer is the
- * owner view; the admin view is a future hardening step.
+ * Read-only task detail drawer: description, metadata and the step's result.
+ * The per-task lane controls (move / pause / resume / review / cancel) were
+ * removed — they wrote Mongo lanes that the next Electric `plan_steps` update
+ * overwrote, so they had no lasting effect. Raw payloads are admin-only per
+ * canonical §9; this is the owner view.
  */
-export function TaskDetailDrawer({
-  streamId,
-  task,
-  onClose,
-}: TaskDetailDrawerProps): JSX.Element | null {
+export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps): JSX.Element | null {
   const { t: tWorky } = useModuleTranslation('worky');
-  const ops = useTaskOps(streamId);
   const results = useTaskResults(task?.id);
 
   if (!task) return null;
@@ -116,48 +110,6 @@ export function TaskDetailDrawer({
             )}
           </TabsContent>
         </Tabs>
-      </div>
-      <div className='flex flex-wrap gap-2 border-t border-border px-4 py-3'>
-        <button
-          type='button'
-          className='rounded-md border border-border bg-background px-2 py-1 text-xs'
-          onClick={() => ops.move.mutate({ taskId: task.id, lane: 'ready' })}
-          disabled={ops.move.isPending}
-        >
-          {tWorky('taskDetail.moveReady')}
-        </button>
-        <button
-          type='button'
-          className='rounded-md border border-border bg-background px-2 py-1 text-xs'
-          onClick={() => ops.pause.mutate({ taskId: task.id })}
-          disabled={ops.pause.isPending}
-        >
-          {tWorky('taskDetail.pause')}
-        </button>
-        <button
-          type='button'
-          className='rounded-md border border-border bg-background px-2 py-1 text-xs'
-          onClick={() => ops.resume.mutate({ taskId: task.id })}
-          disabled={ops.resume.isPending}
-        >
-          {tWorky('taskDetail.resume')}
-        </button>
-        <button
-          type='button'
-          className='rounded-md border border-border bg-background px-2 py-1 text-xs'
-          onClick={() => ops.review.mutate({ taskId: task.id })}
-          disabled={ops.review.isPending}
-        >
-          {tWorky('taskDetail.review')}
-        </button>
-        <button
-          type='button'
-          className='ml-auto rounded-md border border-destructive/40 bg-background px-2 py-1 text-xs text-destructive'
-          onClick={() => ops.cancel.mutate({ taskId: task.id })}
-          disabled={ops.cancel.isPending}
-        >
-          {tWorky('taskDetail.cancel')}
-        </button>
       </div>
     </div>
   );

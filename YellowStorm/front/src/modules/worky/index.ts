@@ -1,6 +1,5 @@
 export { WorkyPage } from './components/WorkyPage';
 export { WorkyStreamPage } from './components/WorkyStreamPage';
-export { StreamControls } from './components/StreamControls';
 export { ApprovalModal } from './components/ApprovalModal';
 export { TaskDetailDrawer } from './components/TaskDetailDrawer';
 export { WorkyGovernancePage } from './components/admin/WorkyGovernancePage';

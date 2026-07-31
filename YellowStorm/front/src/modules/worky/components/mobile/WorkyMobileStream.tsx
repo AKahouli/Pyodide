@@ -2,7 +2,6 @@ import { useState, type JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWorkyUiStore } from '../../uiStore';
 import type { WorkyPendingClarification, WorkyTask } from '../../types';
-import type { WorkyAgent } from '../../agents/agentModel';
 import { AgentTeamView } from './AgentTeamView';
 import { MobileStreamHeader } from './MobileStreamHeader';
 import { ManagerVoiceBanner } from './ManagerVoiceBanner';
@@ -10,7 +9,6 @@ import { WorkyMobileNav } from './WorkyMobileNav';
 import { TaskDetailSheet } from './TaskDetailSheet';
 import { BudgetSheet } from './BudgetSheet';
 import { ApprovalSheet } from './ApprovalSheet';
-import { AgentTasksSheet } from './AgentTasksSheet';
 import { ManagerChatSheet } from './ManagerChatSheet';
 import { VoiceSession } from '../voice/VoiceSession';
 import { PlanDeltaToast } from '../PlanDeltaToast';
@@ -42,12 +40,6 @@ export function WorkyMobileStream({
   const voiceOpen = useWorkyUiStore((s) => s.voiceOpen);
   const setVoiceOpen = useWorkyUiStore((s) => s.setVoiceOpen);
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
-  const [selectedAgent, setSelectedAgent] = useState<WorkyAgent | null>(null);
-
-  const openAgent = (agent: WorkyAgent): void => {
-    setSelectedAgent(agent);
-    setActiveSheet('agent');
-  };
 
   const openTask = (task: WorkyTask): void => {
     setSelectedTask(task);
@@ -65,7 +57,7 @@ export function WorkyMobileStream({
         <div className="mb-4">
           <ManagerVoiceBanner onTalk={() => setVoiceOpen(true)} />
         </div>
-        <AgentTeamView onOpenAgent={openAgent} />
+        <AgentTeamView onOpenTask={openTask} />
       </div>
 
       <div className="shrink-0">
@@ -81,14 +73,7 @@ export function WorkyMobileStream({
         />
       </div>
 
-      <AgentTasksSheet
-        agent={selectedAgent}
-        open={activeSheet === 'agent'}
-        onOpenChange={(o) => setActiveSheet(o ? 'agent' : null)}
-        onOpenTask={openTask}
-      />
       <TaskDetailSheet
-        streamId={streamId}
         task={selectedTask}
         open={activeSheet === 'task'}
         onOpenChange={(o) => setActiveSheet(o ? 'task' : null)}

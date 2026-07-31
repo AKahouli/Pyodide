@@ -51,7 +51,7 @@ describe('AgentTeamView', () => {
       agents: [mkAgent({ key: 'a', name: 'Atlas' }), mkAgent({ key: 'b', name: 'Iris' })],
       ungrouped: [],
     });
-    render(<AgentTeamView onOpenAgent={() => {}} />);
+    render(<AgentTeamView onOpenTask={() => {}} />);
     expect(screen.getByText('Atlas')).toBeTruthy();
     expect(screen.getByText('Iris')).toBeTruthy();
     expect(screen.getByText('Team')).toBeTruthy();
@@ -59,7 +59,7 @@ describe('AgentTeamView', () => {
 
   it('renders an empty state when there are no agents', () => {
     asMock(useStreamAgents).mockReturnValue({ agents: [], ungrouped: [] });
-    render(<AgentTeamView onOpenAgent={() => {}} />);
+    render(<AgentTeamView onOpenTask={() => {}} />);
     expect(screen.getByText('No agents yet')).toBeTruthy();
   });
 
@@ -68,7 +68,7 @@ describe('AgentTeamView', () => {
       agents: [mkAgent({ key: 'a', name: 'Atlas' })],
       ungrouped: [{ id: '1' }, { id: '2' }],
     });
-    render(<AgentTeamView onOpenAgent={() => {}} />);
+    render(<AgentTeamView onOpenTask={() => {}} />);
     expect(screen.getByText('Unassigned work')).toBeTruthy();
     expect(screen.getByText('2 unassigned tasks')).toBeTruthy();
   });
