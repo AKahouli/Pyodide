@@ -32,6 +32,7 @@ import { WorkyMobileStream } from './mobile/WorkyMobileStream';
 import { AgentTeamView } from './mobile/AgentTeamView';
 import { AgentTasksSheet } from './mobile/AgentTasksSheet';
 import { WorkyVoiceDock } from './desktop/WorkyVoiceDock';
+import { WorkyTopBar } from './desktop/WorkyTopBar';
 import { VoiceSession } from './voice/VoiceSession';
 import type { WorkyAgent } from '../agents/agentModel';
 import type { WorkyEvent, WorkyMessage, WorkyPendingClarification, WorkyTask } from '../types';
@@ -278,7 +279,9 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   }
 
   return (
-    <div className='flex h-full w-full overflow-hidden'>
+    <div className='flex h-full w-full flex-col overflow-hidden'>
+      <WorkyTopBar streamId={streamId} />
+      <div className='flex min-h-0 flex-1 overflow-hidden'>
       {sidebarCollapsed ? null : <StreamSidebar />}
       <main
         data-testid='worky-stream-main'
@@ -360,6 +363,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         onWhatsAppClick={() => setWhatsappModalOpen(true)}
         whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
       />
+      </div>
       {orchestratorOpen ? (
         <button
           type='button'
