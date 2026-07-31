@@ -4,6 +4,7 @@ import { useWorkyUiStore } from '../../uiStore';
 import type { WorkyPendingClarification, WorkyTask } from '../../types';
 import type { WorkyAgent } from '../../agents/agentModel';
 import { AgentTeamView } from './AgentTeamView';
+import { MobileStreamHeader } from './MobileStreamHeader';
 import { ManagerVoiceBanner } from './ManagerVoiceBanner';
 import { WorkyMobileNav } from './WorkyMobileNav';
 import { TaskDetailSheet } from './TaskDetailSheet';
@@ -55,7 +56,12 @@ export function WorkyMobileStream({
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-3 pb-4">
+      <MobileStreamHeader
+        streamId={streamId}
+        onBack={() => navigate('/worky')}
+        onOpenChat={() => setActiveSheet('chat')}
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-1 pb-4">
         <div className="mb-4">
           <ManagerVoiceBanner onTalk={() => setVoiceOpen(true)} />
         </div>

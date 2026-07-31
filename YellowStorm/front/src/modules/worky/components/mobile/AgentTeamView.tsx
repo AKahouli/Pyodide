@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import { Users } from 'lucide-react';
+import { Users, SlidersHorizontal } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import { AgentCard } from '../agents/AgentCard';
 import { useStreamAgents } from '../../agents/useStreamAgents';
@@ -26,7 +26,10 @@ export function AgentTeamView({ onOpenAgent }: { onOpenAgent: (agent: WorkyAgent
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-bold text-foreground">{t('agents.team.title')}</h2>
-        <span className="text-xs text-muted-foreground">{t('agents.team.count', { count: agents.length })}</span>
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <SlidersHorizontal className="size-3.5" />
+          {t('agents.team.sort')}
+        </span>
       </div>
 
       {agents.map((agent) => (

@@ -26,6 +26,7 @@ vi.mock('../PlanDeltaToast', () => ({ PlanDeltaToast: () => null }));
 vi.mock('../voice/VoiceSession', () => ({
   VoiceSession: ({ open }: { open: boolean }) => (open ? <div>voice-session-open</div> : null),
 }));
+vi.mock('./MobileStreamHeader', () => ({ MobileStreamHeader: () => <div>stream-header</div> }));
 
 import { useStreamAgents } from '../../agents/useStreamAgents';
 import { WorkyMobileStream } from './WorkyMobileStream';
