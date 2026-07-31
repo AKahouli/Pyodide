@@ -97,10 +97,10 @@ async def test_readmodel_roundtrip(pool):
     sid = "sess1"
     await rm.ensure_session(sid, "u1", "My task", "running")
     await rm.upsert_plan(sid, "p1", "Report", "Build a report", "running")
-    # (step_id, ordinal, wave, status, kind, question, title, description, depends_on, assignee, assignee_name, assignee_role)
+    # (step_id, ordinal, wave, status, kind, question, title, description, depends_on, assignee, assignee_name, assignee_role, is_persona)
     await rm.upsert_steps(sid, [
-        ("a", 0, 0, "pending", "execute", "", "Gather", "gather the data", "", "", "", ""),
-        ("b", 1, 1, "pending", "execute", "", "Write", "write it up", "a", "", "", ""),
+        ("a", 0, 0, "pending", "execute", "", "Gather", "gather the data", "", "", "", "", False),
+        ("b", 1, 1, "pending", "execute", "", "Write", "write it up", "a", "", "", "", False),
     ])
     await rm.set_step_status(sid, "a", "completed", result="got data")
     await rm.set_step_status(sid, "b", "blocked", blocked_reason="need input")
@@ -126,8 +126,8 @@ async def test_outstanding_interrupts_are_tracked_per_step(pool):
     sid = "sess_interrupts"
     await rm.ensure_session(sid, "u1", "Two questions", "running")
     await rm.upsert_steps(sid, [
-        ("a", 0, 0, "pending", "ask", "A?", "Ask A", "", "", "", "", ""),
-        ("b", 1, 0, "pending", "ask", "B?", "Ask B", "", "", "", "", ""),
+        ("a", 0, 0, "pending", "ask", "A?", "Ask A", "", "", "", "", "", False),
+        ("b", 1, 0, "pending", "ask", "B?", "Ask B", "", "", "", "", "", False),
     ])
 
     await rm.set_step_status(sid, "a", "blocked", blocked_reason="awaiting user input",

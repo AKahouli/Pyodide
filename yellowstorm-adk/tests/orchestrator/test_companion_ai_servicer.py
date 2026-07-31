@@ -32,8 +32,8 @@ def _servicer(rm=None, service=None):
 # Every request carries exactly one planner + one executor agent; tests that
 # don't care about specific overrides reuse this pair to satisfy that.
 _AGENTS = [
-    chatbot_pb.Agent(agent_type="planner", chatbot=chatbot_pb.Chatbot(model="m")),
-    chatbot_pb.Agent(agent_type="executor", chatbot=chatbot_pb.Chatbot(model="m")),
+    chatbot_pb.Agent(agent_type=companion_ai_servicer.PLANNER_AGENT_TYPE, chatbot=chatbot_pb.Chatbot(model="m")),
+    chatbot_pb.Agent(agent_type=companion_ai_servicer.EXECUTOR_AGENT_TYPE, chatbot=chatbot_pb.Chatbot(model="m")),
 ]
 
 
@@ -83,15 +83,18 @@ async def test_runtask_forwards_planner_and_executor_overrides():
     await s._run_turn(pb.RunRequest(
         user_id="u", session_id="s1", message="hi",
         agents=[
-            chatbot_pb.Agent(agent_type="planner", prompt="custom planner",
+            chatbot_pb.Agent(agent_type=companion_ai_servicer.PLANNER_AGENT_TYPE, prompt="custom planner",
                              chatbot=chatbot_pb.Chatbot(model="plan-model")),
-            chatbot_pb.Agent(agent_type="executor", prompt="custom executor {description}",
+            chatbot_pb.Agent(agent_type=companion_ai_servicer.EXECUTOR_AGENT_TYPE, id="exec-42",
+                             name="Worky executor", prompt="custom executor {description}",
                              chatbot=chatbot_pb.Chatbot(model="exec-model")),
         ]), "exec-model", "run1")
     kw = service.plan_turn.await_args.kwargs
     assert kw["planner_model"] == "plan-model"
     assert kw["planner_prompt"] == "custom planner"
     assert kw["executor_prompt"] == "custom executor {description}"
+    assert kw["executor_name"] == "Worky executor"
+    assert kw["executor_id"] == "exec-42"
 
 
 async def test_run_turn_routes_to_resume_when_waiting():
@@ -163,7 +166,7 @@ async def test_mail_reply_resumes_the_step_that_was_waiting():
     resp = await s.DeliverMailReply(pb.DeliverMailReplyRequest(
         token="YW-tok", reply_body="I work at Yellow Systems.",
         reply_from="x@example.com",
-        agents=[chatbot_pb.Agent(agent_type="executor", chatbot=chatbot_pb.Chatbot(model="gpt"))]), _ctx())
+        agents=[chatbot_pb.Agent(agent_type=companion_ai_servicer.EXECUTOR_AGENT_TYPE, chatbot=chatbot_pb.Chatbot(model="gpt"))]), _ctx())
     await _drain(s)
 
     assert (resp.delivered, resp.session_id, resp.step_id) == (True, "s1", "m")
@@ -183,7 +186,7 @@ async def test_mail_reply_forwards_executor_prompt_override():
 
     await s.DeliverMailReply(pb.DeliverMailReplyRequest(
         token="YW-tok", reply_body="reply",
-        agents=[chatbot_pb.Agent(agent_type="executor", prompt="custom {description}")]), _ctx())
+        agents=[chatbot_pb.Agent(agent_type=companion_ai_servicer.EXECUTOR_AGENT_TYPE, prompt="custom {description}")]), _ctx())
     await _drain(s)
 
     kw = service.resume_turn.await_args.kwargs

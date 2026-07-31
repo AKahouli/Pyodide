@@ -187,13 +187,13 @@ def make_llm_node_factory(
                 name, step.question or step.description or "Awaiting an email reply.")
         # A persona step already has an identity ("You are Rabeb."); a second,
         # contradicting "You are an execution agent" right after undermines it.
-        identity = ("You are working on ONE step of a larger plan." if step.assignee_name else
+        identity = ("You are working on ONE step of a larger plan." if step.is_persona else
                     "You are an execution agent working on ONE step of a larger plan.")
         # "...and nothing else" contradicts a persona's mandate to consult
         # others first — consulting per the role above IS "doing this".
         do_this_line = (
             "Do exactly this — using whatever consultation your role above requires — "
-            "and nothing else:" if step.assignee_name else
+            "and nothing else:" if step.is_persona else
             "Do exactly this and nothing else:")
         base_instruction = EXECUTOR_INSTRUCTION.format(
             identity=identity, do_this_line=do_this_line, description=step.description)
@@ -216,8 +216,16 @@ def make_llm_node_factory(
             "so-and-so' without having actually checked. You can't ask "
             "yourself, and you don't reach out just because a question is "
             "hard — only when the authority or expertise genuinely isn't yours."
-        ) if step.assignee_name else None
-        preambles = [p for p in (custom_instruction, persona_preamble) if p]
+        ) if step.is_persona else None
+        # A client prompt may carry a literal "{description}" token (see
+        # PROMPTS.txt); ADK's instruction templating treats any unresolved
+        # "{...}" as a session-variable lookup and raises KeyError, so this
+        # must be substituted here too. .replace(), not .format(): the
+        # client's text may contain other, incidental braces.
+        custom_instruction_resolved = (
+            custom_instruction.replace("{description}", step.description)
+            if custom_instruction else None)
+        preambles = [p for p in (custom_instruction_resolved, persona_preamble) if p]
         instruction = "\n\n".join(preambles + [base_instruction]) if preambles else base_instruction
         step_tools = tools_for_step(step, shared_tools) if tools_for_step else shared_tools
         tool_names = [getattr(getattr(t, "func", None), "__name__", "?") for t in step_tools]

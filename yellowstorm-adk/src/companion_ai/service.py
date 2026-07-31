@@ -43,10 +43,9 @@ logger = logging.getLogger(__name__)
 # ask someone else could grow the plan without bound.
 MAX_PLAN_STEPS = 30
 
-# Client-facing label for a step with no human-agent assignee — an internal
-# graph node id is meaningless in the UI. Only used at the read-model
-# projection boundary (_step_row); never written to Step.assignee_name
-# itself, since nodes.py's persona preamble checks `if step.assignee_name`.
+# Fallback label for a plain step when the client sent no executor agent at
+# all (so plan_turn had no name to stamp) — an internal graph node id is
+# meaningless in the UI.
 DEFAULT_EXECUTOR_LABEL = "Executor"
 
 
@@ -235,7 +234,7 @@ def _plan_from_snapshot(snap: dict) -> Plan:
             depends_on=deps, status=Status(row["status"]),
             wave=row.get("wave") or 0, result=row.get("result"),
             assignee=row.get("assignee"), assignee_name=row.get("assignee_name"),
-            assignee_role=row.get("assignee_role")))
+            assignee_role=row.get("assignee_role"), is_persona=bool(row.get("is_persona"))))
     return Plan(id=p.get("id") or "", title=p.get("title") or "",
                 goal=p.get("goal") or "", status=Status(p.get("status") or "running"),
                 steps=steps)
@@ -409,7 +408,7 @@ class OrchestratorService:
             agent = matches[0]
             agent_display_name = agent.get("name") or agent_name
             caller = plan.step(caller_step_id)
-            if caller is not None and caller.assignee_name and agent_display_name == caller.assignee_name:
+            if caller is not None and caller.is_persona and agent_display_name == caller.assignee_name:
                 # Backstop regardless of role wording — prompt guidance alone
                 # has misfired into self-delegation loops before.
                 return (f"You are {agent_display_name} — you cannot delegate to yourself. "
@@ -418,7 +417,7 @@ class OrchestratorService:
                 return "Cannot delegate further — this plan has reached its step limit."
 
             sub_step = Step(title=f"Ask {agent_display_name}", description=task, kind="execute",
-                            assignee=agent.get("id") or agent_display_name,
+                            is_persona=True, assignee=agent.get("id") or agent_display_name,
                             assignee_name=agent_display_name, assignee_role=agent.get("role"),
                             depends_on=[caller_step_id])
             plan.steps.append(sub_step)
@@ -505,7 +504,12 @@ class OrchestratorService:
                         "agent_name": {"type": "string",
                                       "description": "exact name of the human agent to ask"},
                         "task": {"type": "string",
-                                "description": "the question or task to hand them, in full"},
+                                "description": (
+                                    "the question or task to hand them, in full — they see "
+                                    "ONLY this text, nothing else from your own conversation. "
+                                    "Include every fact/figure they'd need inline (e.g. the "
+                                    "actual price, not 'the latest snapshot'); a reference to "
+                                    "data they can't see leaves them unable to answer.")},
                     },
                     "required": ["agent_name", "task"],
                     "additionalProperties": False,
@@ -525,7 +529,7 @@ class OrchestratorService:
         def tools_for_step(step: Step, tools: List) -> List:
             if mail_tools_for_step:
                 tools = mail_tools_for_step(step, tools)
-            if step.assignee:
+            if step.is_persona:
                 tools = list(tools) + [
                     human_agents.make_find_human_agents_tool(),
                     self._delegate_tool_for(session_id, user_id, plan, factory_holder,
@@ -570,7 +574,9 @@ class OrchestratorService:
     async def plan_turn(self, *, session_id: str, user_id: str, message: str,
                         model: str, connectors: Optional[List[dict]] = None,
                         planner_model: Optional[str] = None, planner_prompt: Optional[str] = None,
-                        executor_prompt: Optional[str] = None) -> Plan:
+                        executor_prompt: Optional[str] = None,
+                        executor_name: Optional[str] = None,
+                        executor_id: Optional[str] = None) -> Plan:
         logger.info("[worky] 5. plan_turn ◄ session=%s model=%s connectors=%d",
                     session_id, model, len(connectors or []))
         await self._project(self._rm and self._rm.ensure_session(session_id, user_id, None, "running"))
@@ -586,6 +592,15 @@ class OrchestratorService:
             await self._add_message(session_id, "assistant", plan.answer or "")
             await self._project(self._rm and self._rm.set_session_status(session_id, "completed"))
             return plan
+
+        # Stamp the client's executor onto every non-persona step once, here —
+        # every later read (projection, re-projection, the delegate-tool gate)
+        # then just uses assignee/assignee_name like it already does for a
+        # persona, no separate fallback plumbing needed downstream.
+        for s in plan.steps:
+            if not s.is_persona:
+                s.assignee = executor_id
+                s.assignee_name = executor_name or DEFAULT_EXECUTOR_LABEL
 
         # STEP 6 — validate the DAG (a cyclic/dangling plan can never complete)
         # and assign waves: steps sharing a wave are independent and run together.
@@ -857,6 +872,7 @@ class OrchestratorService:
                               description=s.get("description", ""),
                               kind=s.get("kind", "execute"), question=s.get("question"),
                               depends_on=list(s.get("depends_on", [])),
+                              is_persona=bool(assignee_name),
                               assignee=assignee_id, assignee_name=assignee_name,
                               assignee_role=assignee_role))
         return Plan(title=data.get("title", ""), goal=data.get("goal", ""),
@@ -868,14 +884,16 @@ class OrchestratorService:
 
     @staticmethod
     def _step_row(ordinal: int, s: Step) -> tuple:
-        # Show the persona's display name (e.g. "Rabeb") as soon as the step
-        # appears, even before it runs; DEFAULT_EXECUTOR_LABEL for a plain
-        # (non-persona) step — a blank/internal node id is meaningless in the UI.
+        # assignee/assignee_name are always populated by plan_turn (the
+        # client's executor for a plain step, a persona's own id/name
+        # otherwise) — DEFAULT_EXECUTOR_LABEL only guards a snapshot from
+        # before that stamping existed.
         return (s.id, ordinal, s.wave, s.status.value, s.kind, s.question or "",
                 s.title or s.description or s.question or "",   # card label, never blank
                 s.description or "",                            # full instruction / detail
                 ",".join(s.depends_on), s.assignee or "",
-                s.assignee_name or DEFAULT_EXECUTOR_LABEL, s.assignee_role or "")
+                s.assignee_name or DEFAULT_EXECUTOR_LABEL, s.assignee_role or "",
+                s.is_persona)
 
     async def _project_plan(self, session_id: str, plan: Plan, user_id: str) -> None:
         await self._project(self._rm and self._rm.upsert_plan(
@@ -885,8 +903,9 @@ class OrchestratorService:
         await self._register_mail_waits(session_id, plan, user_id)
 
     async def _project_step(self, session_id: str, plan: Plan, step: Step) -> None:
-        """Project ONE dynamically-added step (see _delegate_tool_for) so the
-        client sees it appear — the plan card grows instead of looking static."""
+        """Project ONE dynamically-added or dependency-updated step (see
+        _delegate_tool_for) so the client sees it — the plan card grows
+        instead of looking static."""
         ordinal = plan.steps.index(step)
         await self._project(self._rm and self._rm.upsert_steps(
             session_id, [self._step_row(ordinal, step)]))

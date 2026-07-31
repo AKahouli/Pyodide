@@ -94,7 +94,7 @@ async def _run_rabeb_delegates_to_oussama(monkeypatch) -> str:
     service = OrchestratorService(runner_factory, None, planner_model="fake")
     plan = Plan(id="p1", steps=[
         Step(id="s2", kind="execute", description="Should we invest today?",
-             assignee="rabeb", assignee_name="Rabeb"),
+             is_persona=True, assignee="rabeb", assignee_name="Rabeb"),
     ])
     wf, _ = service._build_workflow("sess1", "u1", plan, "fake", None, None)
 

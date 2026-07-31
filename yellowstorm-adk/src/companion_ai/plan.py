@@ -39,10 +39,11 @@ class Step(BaseModel):
     result: Optional[str] = None
     error: Optional[str] = None
     blocked_reason: Optional[str] = None
-    # Human-agent persona (see human_agents.py) this step is delegated to, if
-    # any; None means the generic executor. assignee is the directory id
-    # (used for self-delegation checks); name/role are resolved and cached
-    # at creation time, since there's no static roster to re-look-up later.
+    # True only for a human-agent persona (human_agents.py); a plain step's
+    # assignee/assignee_name are also populated (with the executor's own
+    # id/name — see plan_turn), so this is the actual gate for persona
+    # behavior, not assignee.
+    is_persona: bool = False
     assignee: Optional[str] = None
     assignee_name: Optional[str] = None
     assignee_role: Optional[str] = None

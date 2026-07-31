@@ -24,10 +24,18 @@ from src.companion_ai.service import OrchestratorService
 
 logger = logging.getLogger(__name__)
 
-# Used only when the request carries no "executor" agent — e.g. a client that
+# Used only when the request carries no executor agent — e.g. a client that
 # hasn't been updated to send `agents` yet. Once every client sends one, this
 # becomes dead and can go.
 DEFAULT_MODEL = "gpt-5.4-mini"
+
+# The real, permanent slugs the client sends (YellowStorm/back:
+# worky.constants.ts — WORKY_PLANNER_AGENT_TYPE_SLUG / WORKY_EXECUTOR_AGENT_TYPE_SLUG).
+# Not "planner"/"executor" — those never matched any real request, so the
+# client's own model/prompt silently never applied; every turn ran on
+# DEFAULT_MODEL and the hardcoded PLANNER_INSTRUCTION/EXECUTOR_INSTRUCTION.
+PLANNER_AGENT_TYPE = "worky-planner"
+EXECUTOR_AGENT_TYPE = "worky-executer"
 
 
 def _parse_mcp_config(raw: str) -> dict:
@@ -46,8 +54,9 @@ def _agent_by_type(agents, agent_type: str):
     request carries no such agent (e.g. a client not yet updated to send
     `agents` — falls back to DEFAULT_MODEL and the hardcoded prompts).
 
-    "planner"/"executor" select the built-in roles; any other agent_type is
-    reserved for a future named persona a plan step can be assigned to."""
+    Pass PLANNER_AGENT_TYPE/EXECUTOR_AGENT_TYPE to select the built-in roles;
+    any other agent_type is reserved for a future named persona a plan step
+    can be assigned to."""
     return next((a for a in agents if a.agent_type == agent_type), None)
 
 
@@ -135,7 +144,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         # STEP 3 — ack now, run the turn in the background. The client watches
         # progress arrive in the read model, not on this call. Last-answer-wins:
         # hand the in-flight turn (if any) to the new one so it supersedes it.
-        executor = _agent_by_type(request.agents, "executor")
+        executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
         model = (executor.chatbot.model if executor else "") or DEFAULT_MODEL
         prev = self._running.get(request.session_id)
         task = asyncio.create_task(self._run_turn(request, model, run_id, prev))
@@ -191,7 +200,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                     else "continue — resume paused plan" if status == "paused"
                     else "new turn — planning")
             logger.info("[worky] 4. %s (session=%s)", mode, request.session_id)
-            executor = _agent_by_type(request.agents, "executor")
+            executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
             executor_prompt = executor.prompt if executor else None
             if interrupt_id:
                 await self._svc.resume_turn(
@@ -203,13 +212,15 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                     session_id=request.session_id, user_id=request.user_id,
                     model=model, connectors=connectors, executor_prompt=executor_prompt)
             else:
-                planner = _agent_by_type(request.agents, "planner")
+                planner = _agent_by_type(request.agents, PLANNER_AGENT_TYPE)
                 await self._svc.plan_turn(
                     session_id=request.session_id, user_id=request.user_id,
                     message=request.message, model=model, connectors=connectors,
                     planner_model=planner.chatbot.model if planner else None,
                     planner_prompt=planner.prompt if planner else None,
-                    executor_prompt=executor_prompt)
+                    executor_prompt=executor_prompt,
+                    executor_name=executor.name if executor else None,
+                    executor_id=executor.id if executor else None)
             logger.info("RunTask turn done (session=%s run=%s)", request.session_id, run_id)
         except asyncio.CancelledError:
             logger.info("RunTask turn superseded/cancelled (session=%s)", request.session_id)
@@ -319,7 +330,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
 
         # Ack immediately and resume in the background: the caller is answering a
         # Graph webhook on a clock, and the resumed plan can run for minutes.
-        executor = _agent_by_type(request.agents, "executor")
+        executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
         model = (executor.chatbot.model if executor else "") or DEFAULT_MODEL
         prev = self._running.get(session_id)
         task = asyncio.create_task(self._resume_with_reply(request, wait, model, prev))
@@ -344,7 +355,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                     await prev
                 except BaseException:  # noqa: BLE001 — prev's cancellation is expected
                     pass
-            executor = _agent_by_type(request.agents, "executor")
+            executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
             await self._svc.resume_turn(
                 session_id=session_id, user_id=wait["user_id"],
                 answer=request.reply_body, model=model,

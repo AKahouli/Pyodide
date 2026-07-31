@@ -85,6 +85,34 @@ def test_step_row_shows_the_personas_display_name_before_it_runs():
     assert svc.OrchestratorService._step_row(0, plain_step)[10] == svc.DEFAULT_EXECUTOR_LABEL
 
 
+def test_plan_turn_stamps_the_clients_executor_onto_every_plain_step():
+    """Every step is executed by someone: a human-agent persona, or — for
+    the rest — the client's own configured executor agent. plan_turn stamps
+    that identity onto plan.assignee/assignee_name once, right after the
+    plan is built, so every later read (initial projection, re-projection
+    on delegation, the delegate-tool gate) is just `step.assignee_name`,
+    with no separate executor_name/executor_id fallback needed anywhere."""
+    session = MagicMock()
+    session.session_service.get_session = AsyncMock(return_value=object())
+    service = svc.OrchestratorService(lambda node, app_name: session, None, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="s1", kind="execute", description="search"),
+        Step(id="s2", kind="execute", description="ask Rabeb",
+             is_persona=True, assignee="rabeb", assignee_name="Rabeb"),
+    ])
+    service._make_plan = AsyncMock(return_value=plan)
+    service._drive = AsyncMock(return_value=[])
+
+    asyncio.run(service.plan_turn(
+        session_id="s1", user_id="u1", message="go", model="m",
+        executor_name="Worky executor", executor_id="exec-42"))
+
+    assert (plan.step("s1").assignee, plan.step("s1").assignee_name) == ("exec-42", "Worky executor")
+    assert plan.step("s1").is_persona is False
+    # A persona step keeps its own identity untouched.
+    assert (plan.step("s2").assignee, plan.step("s2").assignee_name) == ("rabeb", "Rabeb")
+
+
 def test_extract_json_plain():
     assert svc._extract_json('{"title": "t", "steps": []}') == {"title": "t", "steps": []}
 
@@ -183,7 +211,7 @@ def test_delegate_tool_appends_a_step_assigned_to_the_target_and_calls_run_node(
     plan = Plan(id="p", title="t", goal="g", steps=[
         Step(id="s1", kind="execute", description="search bitcoin price"),
         Step(id="s2", kind="execute", description="ask if we should invest",
-             assignee="rabeb", assignee_name="Rabeb", depends_on=["s1"]),
+             is_persona=True, assignee="rabeb", assignee_name="Rabeb", depends_on=["s1"]),
     ])
     name_to_step = {"s1": "s1", "s2": "s2"}
     tool = service._delegate_tool_for("sess1", "u1", plan, _fn_factory_holder(), name_to_step, "s2")
@@ -231,7 +259,7 @@ def test_delegate_tool_propagates_dependency_to_siblings_for_an_accurate_wave(mo
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     plan = Plan(id="p", title="t", goal="g", steps=[
         Step(id="s1", kind="execute", description="ask James",
-             assignee="james", assignee_name="James"),
+             is_persona=True, assignee="james", assignee_name="James"),
         Step(id="s3", kind="execute", description="formal sign-off", depends_on=["s1"]),
     ])
     scheduler.assign_waves(plan)
@@ -250,6 +278,40 @@ def test_delegate_tool_propagates_dependency_to_siblings_for_an_accurate_wave(mo
     assert plan.step("s3").wave == 2  # correctly later than David's wave (1), not equal to it
 
 
+def test_delegate_tool_reprojects_a_plain_sibling_without_losing_its_executor_id(monkeypatch):
+    """s3 is a plain (non-persona) step, already stamped with the client's
+    executor id/name by plan_turn before the workflow ever runs (see
+    test_plan_turn_stamps_the_clients_executor_onto_every_plain_step). It
+    gets re-projected here by the dependency-propagation above, once s1
+    dynamically spawns a delegate — that re-projection must not lose the
+    stamped id/name, since _step_row has no fallback of its own to fall
+    back on."""
+    monkeypatch.setattr(svc.human_agents, "search_human_agents", AsyncMock(
+        return_value=[{"id": "david", "name": "David", "role": "Risk manager"}]))
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="s1", kind="execute", description="ask James",
+             is_persona=True, assignee="james", assignee_name="James"),
+        Step(id="s3", kind="execute", description="formal sign-off", depends_on=["s1"],
+             assignee="exec-42", assignee_name="Worky executor"),
+    ])
+    scheduler.assign_waves(plan)
+
+    name_to_step = {"s1": "s1", "s3": "s3"}
+    tool = service._delegate_tool_for("sess1", "u1", plan, _fn_factory_holder(), name_to_step, "s1")
+    tool_context = MagicMock()
+    tool_context.run_node = AsyncMock(return_value="modest sizing")
+
+    asyncio.run(tool.func("David", "risk read?", tool_context=tool_context))
+
+    s3_rows = [row for c in rm.upsert_steps.call_args_list
+               for row in c.args[1] if row[0] == "s3"]
+    assert s3_rows, "s3 should have been re-projected after its depends_on changed"
+    assert s3_rows[-1][9] == "exec-42"
+    assert s3_rows[-1][10] == "Worky executor"
+
+
 def test_delegate_tool_keeps_two_consultations_from_the_same_caller_parallel(monkeypatch):
     """James asks both David and Oussama. They're independent branches of
     the same caller, not a chain, and must stay siblings at the same wave —
@@ -262,7 +324,7 @@ def test_delegate_tool_keeps_two_consultations_from_the_same_caller_parallel(mon
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     plan = Plan(id="p", title="t", goal="g", steps=[
         Step(id="s1", kind="execute", description="ask James",
-             assignee="james", assignee_name="James"),
+             is_persona=True, assignee="james", assignee_name="James"),
         Step(id="s3", kind="execute", description="formal sign-off", depends_on=["s1"]),
     ])
     scheduler.assign_waves(plan)
@@ -294,7 +356,8 @@ def test_delegate_tool_unblocks_the_caller_even_when_the_delegate_errors(monkeyp
     rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     plan = Plan(id="p", steps=[
-        Step(id="s2", kind="execute", description="ask", assignee="rabeb", assignee_name="Rabeb"),
+        Step(id="s2", kind="execute", description="ask", is_persona=True,
+             assignee="rabeb", assignee_name="Rabeb"),
     ])
     tool = service._delegate_tool_for("sess1", "u1", plan, _fn_factory_holder(), {}, "s2")
 
@@ -329,7 +392,7 @@ def test_delegate_tool_refuses_to_delegate_to_itself(monkeypatch):
     service = svc.OrchestratorService(MagicMock(), None, planner_model="m")
     plan = Plan(id="p", steps=[
         Step(id="s2", kind="execute", description="give a decision",
-             assignee="sami", assignee_name="Sami"),
+             is_persona=True, assignee="sami", assignee_name="Sami"),
     ])
     tool = service._delegate_tool_for("sess1", "u1", plan, _fn_factory_holder(), {}, "s2")
 
