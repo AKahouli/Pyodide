@@ -9,9 +9,9 @@ import type { WorkyTask } from '../../types';
 
 /**
  * Agent-team body: the stream's tasks grouped by agent. Cards expand in place
- * to reveal their tasks; one at a time, so the list stays scannable.
- * `showHeader` renders the "Team" + filter row (mobile); desktop supplies its
- * own header and passes `columns={2}` for the grid.
+ * to reveal their tasks, and any number can be open at once so several agents
+ * can be compared side by side. `showHeader` renders the "Team" + filter row
+ * (mobile); desktop supplies its own header and passes `columns={2}`.
  */
 export function AgentTeamView({
   onOpenTask,
@@ -24,10 +24,15 @@ export function AgentTeamView({
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const { agents, ungrouped } = useStreamAgents();
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(() => new Set());
 
   const toggle = (agent: WorkyAgent): void =>
-    setExpandedKey((current) => (current === agent.key ? null : agent.key));
+    setExpandedKeys((current) => {
+      const next = new Set(current);
+      // `delete` reports whether the key was there, so this is toggle-in-place.
+      if (!next.delete(agent.key)) next.add(agent.key);
+      return next;
+    });
 
   if (agents.length === 0 && ungrouped.length === 0) {
     return (
@@ -55,7 +60,7 @@ export function AgentTeamView({
           <AgentCard
             key={agent.key}
             agent={agent}
-            expanded={expandedKey === agent.key}
+            expanded={expandedKeys.has(agent.key)}
             onToggle={toggle}
             onOpenTask={onOpenTask}
           />

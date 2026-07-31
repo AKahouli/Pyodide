@@ -53,7 +53,8 @@ export function WorkyMobileStream({
         onBack={() => navigate('/worky')}
         onOpenChat={() => setActiveSheet('chat')}
       />
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-1 pb-4">
+      {/* pb keeps the last agent card clear of the nav's raised voice button. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-1 pb-8">
         <div className="mb-4">
           <ManagerVoiceBanner onTalk={() => setVoiceOpen(true)} />
         </div>

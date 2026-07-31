@@ -75,7 +75,7 @@ describe('AgentTeamView', () => {
     expect(screen.getByText('2 unassigned tasks')).toBeTruthy();
   });
 
-  it('expands a card in place to reveal its tasks, one card at a time', async () => {
+  it('expands cards in place and keeps several open at once', async () => {
     const task = { id: 't1', title: 'Task one', lane: 'running' } as WorkyTask;
     const other = { id: 't2', title: 'Task two', lane: 'done' } as WorkyTask;
     asMock(useStreamAgents).mockReturnValue({
@@ -92,14 +92,15 @@ describe('AgentTeamView', () => {
     await userEvent.click(screen.getByTestId('agent-card-toggle-a'));
     expect(screen.getByText('Task one')).toBeTruthy();
 
-    // Expanding another agent collapses the first.
+    // Expanding a second agent leaves the first one open.
     await userEvent.click(screen.getByTestId('agent-card-toggle-b'));
+    expect(screen.getByText('Task one')).toBeTruthy();
     expect(screen.getByText('Task two')).toBeTruthy();
-    expect(screen.queryByText('Task one')).toBeNull();
 
-    // Clicking the open card again collapses it.
-    await userEvent.click(screen.getByTestId('agent-card-toggle-b'));
-    expect(screen.queryByText('Task two')).toBeNull();
+    // Collapsing one leaves the other untouched.
+    await userEvent.click(screen.getByTestId('agent-card-toggle-a'));
+    expect(screen.queryByText('Task one')).toBeNull();
+    expect(screen.getByText('Task two')).toBeTruthy();
   });
 
   it('hands a selected task up to the caller', async () => {
