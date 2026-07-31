@@ -11,24 +11,28 @@ import { WorkyMobileNav } from './WorkyMobileNav';
 beforeEach(() => vi.clearAllMocks());
 
 describe('WorkyMobileNav', () => {
-  it('changes tab, opens voice and goes home', async () => {
-    const onChange = vi.fn();
-    const onVoice = vi.fn();
+  it('fires home, voice and chat', async () => {
     const onHome = vi.fn();
-    render(<WorkyMobileNav active="agents" onChange={onChange} onVoice={onVoice} onHome={onHome} />);
+    const onVoice = vi.fn();
+    const onChat = vi.fn();
+    render(<WorkyMobileNav onHome={onHome} onVoice={onVoice} onChat={onChat} />);
 
-    await userEvent.click(screen.getByText('nav.chat'));
-    expect(onChange).toHaveBeenCalledWith('chat');
+    await userEvent.click(screen.getByText('nav.home'));
+    expect(onHome).toHaveBeenCalled();
 
     await userEvent.click(screen.getByLabelText('nav.voice'));
     expect(onVoice).toHaveBeenCalled();
 
-    await userEvent.click(screen.getByText('nav.home'));
-    expect(onHome).toHaveBeenCalled();
+    await userEvent.click(screen.getByText('nav.chat'));
+    expect(onChat).toHaveBeenCalled();
   });
 
-  it('no longer renders a "More" tab', () => {
-    render(<WorkyMobileNav active="agents" onChange={() => {}} onVoice={() => {}} onHome={() => {}} />);
+  it('renders only home, chat and the mic', () => {
+    render(<WorkyMobileNav onHome={() => {}} onVoice={() => {}} onChat={() => {}} />);
+    expect(screen.queryByText('nav.agents')).toBeNull();
     expect(screen.queryByText('nav.more')).toBeNull();
+    expect(screen.getByText('nav.home')).toBeTruthy();
+    expect(screen.getByText('nav.chat')).toBeTruthy();
+    expect(screen.getByLabelText('nav.voice')).toBeTruthy();
   });
 });

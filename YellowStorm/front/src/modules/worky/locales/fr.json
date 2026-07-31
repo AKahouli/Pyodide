@@ -18,7 +18,6 @@
   "agents.team.unassignedTitle": "Travail non attribué",
   "agents.team.unassignedCount": "{{count}} tâches pas encore attribuées à un agent",
   "nav.home": "Accueil",
-  "nav.agents": "Agents",
   "nav.chat": "Chat",
   "nav.voice": "Parler au Chief of Staff",
   "voice.manager": "Chief of Staff",

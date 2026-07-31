@@ -63,7 +63,7 @@ describe('WorkyMobileStream', () => {
       </MemoryRouter>,
     );
     expect(screen.getByText('Atlas')).toBeTruthy();
-    expect(screen.getByText('nav.agents')).toBeTruthy();
+    expect(screen.getByText('nav.chat')).toBeTruthy();
     expect(screen.getByLabelText('nav.voice')).toBeTruthy();
   });
 

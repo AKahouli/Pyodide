@@ -29,8 +29,6 @@ export function WorkyMobileStream({
   onApprovalClose: () => void;
 }): JSX.Element {
   const navigate = useNavigate();
-  const mobileTab = useWorkyUiStore((s) => s.mobileTab);
-  const setMobileTab = useWorkyUiStore((s) => s.setMobileTab);
   const activeSheet = useWorkyUiStore((s) => s.activeSheet);
   const setActiveSheet = useWorkyUiStore((s) => s.setActiveSheet);
   const voiceOpen = useWorkyUiStore((s) => s.voiceOpen);
@@ -56,13 +54,9 @@ export function WorkyMobileStream({
 
       <div className="shrink-0">
         <WorkyMobileNav
-          active={mobileTab}
-          onChange={(tab) => {
-            setMobileTab(tab);
-            if (tab === 'chat') setActiveSheet('chat');
-          }}
-          onVoice={() => setVoiceOpen(true)}
           onHome={() => navigate('/worky')}
+          onVoice={() => setVoiceOpen(true)}
+          onChat={() => setActiveSheet('chat')}
         />
       </div>
 
