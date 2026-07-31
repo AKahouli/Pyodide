@@ -53,7 +53,7 @@ import { PlaybookAssistantConnectorReconcilerService } from './services/playbook
     forwardRef(() => ConversationModule),
     forwardRef(() => UsageModule),
   ],
-  controllers: [AgentController, AdminAgentController, AgentA2AController, AgentShareController],
+  controllers: [AgentController, PublicAgentController, AdminAgentController, AgentA2AController, AgentShareController],
   providers: [AgentService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, PlaybookAssistantConnectorReconcilerService,AgentConnectorRuntimeService],
   exports: [
     AgentService,
