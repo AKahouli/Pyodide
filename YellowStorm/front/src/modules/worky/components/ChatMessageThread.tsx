@@ -111,7 +111,10 @@ function MessageBubble({ message }: { message: WorkyMessage }): JSX.Element {
 // ponytail: Gemini TTS voice names; update if WORKY_TTS_MODEL changes provider.
 const TTS_VOICES = ['Kore', 'Puck', 'Zephyr', 'Charon', 'Fenrir', 'Aoede', 'Leda', 'Orus'];
 
-export function ChatMessageThread({ streamId }: { streamId?: string } = {}): JSX.Element {
+export function ChatMessageThread({
+  streamId,
+  className,
+}: { streamId?: string; className?: string } = {}): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const messages = useWorkyMessages();
   const streaming = useWorkyStore((s) => s.streaming);
