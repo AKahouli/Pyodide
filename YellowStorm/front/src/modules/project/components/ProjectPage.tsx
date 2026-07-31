@@ -246,7 +246,6 @@ export function ProjectPage() {
               accept={accept}
               maxFiles={5}
               showWorkspaceSelect={true}
-              showModelSelector
             />
           </div>
 

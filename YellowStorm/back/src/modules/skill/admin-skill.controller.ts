@@ -27,7 +27,11 @@ import {
 import { Request, Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
-import { decodeMultipartFilename } from '../../common/utils';
+import {
+  decodeMultipartFilename,
+  MULTIPART_SKILL_IMPORT_MAX_BYTES,
+  multipartFileInterceptorOptions,
+} from '../../common/utils';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserDocument } from '../user/schemas/user.schema';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
@@ -96,7 +100,9 @@ export class AdminSkillController {
   @Post('import')
   @HttpCode(HttpStatus.CREATED)
   @RequirePermissions(Permissions.SKILLS_CREATE)
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', multipartFileInterceptorOptions(MULTIPART_SKILL_IMPORT_MAX_BYTES)),
+  )
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {

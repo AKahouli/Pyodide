@@ -37,6 +37,10 @@ vi.mock('../query/hooks', () => ({
     },
     isPending: false,
   }),
+  useTranscribeAudio: () => ({
+    mutateAsync: async () => ({ text: '' }),
+    isPending: false,
+  }),
 }));
 
 vi.mock('../store', () => ({

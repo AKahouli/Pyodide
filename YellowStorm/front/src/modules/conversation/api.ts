@@ -1,5 +1,5 @@
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { Conversation, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse } from './types';
+import type { Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload } from './types';
 
 // ===== Conversation APIs =====
 
@@ -83,8 +83,13 @@ export async function fetchMessages(conversationId: string, params?: MessageList
   };
 }
 
-export async function sendMessage(conversationId: string, payload: SendMessagePayload): Promise<{ userMessage: Message }> {
-  const response = await apiClient.post<ApiResponse<{ userMessage: Message }>>(API_ENDPOINTS.conversations.messages(conversationId), payload);
+export async function sendMessage(conversationId: string, payload: SendMessagePayload): Promise<{ userMessage: Message; aiMessageId?: string }> {
+  const response = await apiClient.post<ApiResponse<{ userMessage: Message; aiMessageId?: string }>>(API_ENDPOINTS.conversations.messages(conversationId), payload);
+  return response.data.data;
+}
+
+export async function branchConversation(id: string, payload: BranchConversationPayload): Promise<Conversation> {
+  const response = await apiClient.post<ApiResponse<Conversation>>(API_ENDPOINTS.conversations.branch(id), payload);
   return response.data.data;
 }
 
@@ -133,13 +138,17 @@ export async function getArtifactDownloadUrl(filePath: string, filename?: string
 export async function fetchComposerSuggestions(
   partialText: string,
   signal?: AbortSignal,
-  agentId?: string,
 ): Promise<{ content: string }> {
   const response = await apiClient.post<ApiResponse<{ content: string }>>(
     API_ENDPOINTS.conversations.composerSuggestions,
-    { partialText, agentId },
+    { partialText },
     { signal },
   );
+  return response.data.data;
+}
+
+export async function fetchConversationSettings(): Promise<ConversationSettings> {
+  const response = await apiClient.get<ApiResponse<ConversationSettings>>(API_ENDPOINTS.conversations.settings);
   return response.data.data;
 }
 

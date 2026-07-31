@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExecutionStepDetail } from './ExecutionStepDetail';
 import type { PlaybookExecution, TaskResult } from '../types';
 
@@ -87,12 +87,27 @@ vi.mock('@/modules/conversation/utils', () => ({
 
 vi.mock('@/components/ui/tabs', () => {
   const React = require('react') as typeof import('react');
-  const TabsContext = React.createContext<{ activeValue: string; setActiveValue: (value: string) => void } | null>(null);
+  const TabsContext = React.createContext<{
+    activeValue: string;
+    setActiveValue: (value: string) => void;
+  } | null>(null);
 
   return {
-    Tabs: ({ children, defaultValue }: any) => {
-      const [activeValue, setActiveValue] = React.useState(defaultValue || '');
-      return <TabsContext.Provider value={{ activeValue, setActiveValue }}><div>{children}</div></TabsContext.Provider>;
+    Tabs: ({ children, defaultValue, value, onValueChange }: any) => {
+      const [uncontrolledValue, setUncontrolledValue] = React.useState(defaultValue || '');
+      const isControlled = value !== undefined;
+      const activeValue = isControlled ? value : uncontrolledValue;
+      const setActiveValue = (next: string) => {
+        onValueChange?.(next);
+        if (!isControlled) {
+          setUncontrolledValue(next);
+        }
+      };
+      return (
+        <TabsContext.Provider value={{ activeValue, setActiveValue }}>
+          <div>{children}</div>
+        </TabsContext.Provider>
+      );
     },
     TabsList: ({ children }: any) => <div>{children}</div>,
     TabsTrigger: ({ children, value }: any) => {
@@ -135,6 +150,21 @@ const baseStep: TaskResult = {
 };
 
 describe('ExecutionStepDetail', () => {
+  beforeEach(() => {
+    storeState.currentPlaybook = null;
+    storeState.deleteExecution.mockReset();
+    storeState.deleteStepExecution.mockReset();
+    storeState.fetchAdvisorRemediations.mockReset().mockResolvedValue([]);
+    storeState.executePlaybook.mockReset().mockResolvedValue({ executionId: 'exec-new' });
+    storeState.validateTaskReplay.mockReset();
+    storeState.fetchTaskReplays.mockReset().mockResolvedValue([]);
+    storeState.traceReplayExecution.mockReset().mockResolvedValue([]);
+    storeState.reExecuteExecution.mockReset().mockResolvedValue({ executionId: 'exec-new' });
+    navigateMock.mockReset();
+    replayReportsApi.getReplayReports.mockReset().mockResolvedValue([]);
+    mapComponentsToContentPartsMock.mockClear();
+  });
+
   it('shows generated artifact view and download actions in the result card', () => {
     storeState.currentPlaybook = {
       id: 'p1',
@@ -663,6 +693,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
+    await userEvent.click(screen.getByText('detail.tabs.judge'));
     await userEvent.click(screen.getByRole('button', { name: 'detail.judge.generateOptimizedPlaybook' }));
 
     expect(storeState.fetchAdvisorRemediations).toHaveBeenCalledWith('p1', 'exec-1', undefined);
@@ -720,6 +751,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
+    await userEvent.click(screen.getByText('detail.tabs.judge'));
     await userEvent.click(screen.getByRole('button', { name: 'detail.judge.previewChanges' }));
     await screen.findByText('detail.remediation.optimizeStepTitle');
     await userEvent.click(screen.getByRole('button', { name: 'detail.remediation.applySelected' }));
@@ -786,6 +818,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
+    await userEvent.click(screen.getByText('detail.tabs.judge'));
     expect(screen.getByRole('button', { name: 'detail.judge.previewChanges' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'detail.judge.applyToCurrentPlaybook' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'detail.judge.generateOptimizedPlaybook' })).toBeEnabled();
@@ -829,6 +862,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
+    await userEvent.click(screen.getByText('detail.tabs.judge'));
     await userEvent.click(screen.getByRole('button', { name: 'detail.judge.previewChanges' }));
     await screen.findByText('detail.remediation.optimizeStepTitle');
     await userEvent.click(screen.getByRole('button', { name: 'detail.remediation.applySelected' }));
@@ -843,7 +877,7 @@ describe('ExecutionStepDetail', () => {
     storeState.currentPlaybook = null;
   });
 
-  it('disables remediation apply actions when the canvas handler is unavailable', () => {
+  it('disables remediation apply actions when the canvas handler is unavailable', async () => {
     storeState.currentPlaybook = {
       id: 'p1',
       tasks: [{ id: 't1', title: 'Analyze Data' }],
@@ -876,6 +910,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
+    await userEvent.click(screen.getByText('detail.tabs.judge'));
     expect(screen.getByRole('button', { name: 'detail.judge.generateOptimizedPlaybook' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'detail.judge.previewChanges' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'detail.judge.applyToCurrentPlaybook' })).toBeDisabled();
@@ -958,6 +993,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
+    await userEvent.click(screen.getByText('detail.tabs.judge'));
     await userEvent.click(screen.getByRole('button', { name: 'detail.judge.generateOptimizedPlaybook' }));
 
     expect(storeState.fetchAdvisorRemediations).not.toHaveBeenCalled();
@@ -1046,6 +1082,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
+    await userEvent.click(screen.getByText('detail.tabs.judge'));
     await userEvent.click(screen.getByRole('button', { name: 'detail.judge.generateOptimizedPlaybook' }));
 
     expect(storeState.fetchAdvisorRemediations).not.toHaveBeenCalled();
@@ -1149,6 +1186,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
+    await userEvent.click(screen.getByText('detail.tabs.judge'));
     expect(screen.getByText('detail.autopilot.appliedOptimizations')).toBeInTheDocument();
     await userEvent.click(screen.getByText('detail.autopilot.appliedOptimizations'));
     expect(screen.getByText('detail.autopilot.field.description')).toBeInTheDocument();
@@ -1521,6 +1559,7 @@ describe('ExecutionStepDetail', () => {
       ],
     };
     render(<ExecutionStepDetail step={withReasoning} />);
+    await userEvent.click(screen.getByText('detail.tabs.traces'));
     await userEvent.click(screen.getByText('detail.reasoning.title'));
     expect(screen.getByText('Risk Assessment')).toBeInTheDocument();
     expect(screen.getByText('Evaluated operational risk factors based on document search results.')).toBeInTheDocument();
@@ -1531,11 +1570,12 @@ describe('ExecutionStepDetail', () => {
 
   it('shows reasoning empty state when chain is absent', async () => {
     render(<ExecutionStepDetail step={baseStep} />);
+    await userEvent.click(screen.getByText('detail.tabs.traces'));
     await userEvent.click(screen.getByText('detail.reasoning.title'));
     expect(screen.getByText('detail.reasoning.empty')).toBeInTheDocument();
   });
 
-  it('renders semantic match including evidence consistency in evaluation tab', () => {
+  it('renders semantic match including evidence consistency in evaluation tab', async () => {
     const withSemanticMatch: TaskResult = {
       ...baseStep,
       semanticMatch: {
@@ -1552,6 +1592,7 @@ describe('ExecutionStepDetail', () => {
     };
 
     render(<ExecutionStepDetail step={withSemanticMatch} />);
+    await userEvent.click(screen.getByText('Reference Check'));
     expect(screen.queryByText('detail.evaluation.description')).not.toBeInTheDocument();
     expect(screen.getByText('detail.evaluation.semanticMatch')).toBeInTheDocument();
     expect(screen.getByText('detail.evaluation.evidenceConsistency')).toBeInTheDocument();
@@ -1612,7 +1653,7 @@ describe('ExecutionStepDetail', () => {
     };
 
     render(<ExecutionStepDetail step={baseStep} execution={execution} />);
-    await userEvent.click(screen.getByText('Reference Check'));
+    await userEvent.click(screen.getByRole('button', { name: 'Reference Check' }));
     expect(screen.getByText('detail.actions.saveEvaluationBaseline')).toBeInTheDocument();
   });
 
@@ -1756,7 +1797,8 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('Semantic match')).toBeInTheDocument();
     expect(screen.getByText('Structural & tooling')).toBeInTheDocument();
     expect(screen.getByText(/replayReport.verdict: replayReport.verdictValue.warning/)).toBeInTheDocument();
-    expect(screen.getByText(/replayReport.overallScore: 76%/)).toBeInTheDocument();
+    expect(screen.getByText('replayReport.overallScore')).toBeInTheDocument();
+    expect(screen.getAllByText('76%').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Structural drift was detected./).length).toBeGreaterThan(0);
     expect(screen.getByText(/Replay output matches the captured intent/)).toBeInTheDocument();
     expect(screen.getAllByText(/minor citation detail/).length).toBeGreaterThan(0);

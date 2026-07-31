@@ -11,6 +11,7 @@ from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
 from src.smart_rag.infrastructure.processing.sandbox_callbacks import (
     create_sandbox_callbacks,
 )
+from src.smart_rag.infrastructure.model_parameters import resolve_model_config
 from src.logger.logging import get_logger
 import json
 
@@ -35,6 +36,21 @@ def _is_tool_enabled(tools_config: List[Any], tool_name: str) -> bool:
         elif tool.get("name") == tool_name and tool.get("enabled", True):
             return True
     return False
+
+
+def _get_enabled_tool_config(
+    tools_config: List[Any], tool_name: str
+) -> Dict[str, Any] | None:
+    for tool in tools_config:
+        if isinstance(tool, str) and tool == tool_name:
+            return {"name": tool_name}
+        if (
+            isinstance(tool, dict)
+            and tool.get("name") == tool_name
+            and tool.get("enabled", True)
+        ):
+            return tool
+    return None
 
 
 def _build_connector_repo_fixed_params(
@@ -367,8 +383,7 @@ def prepare_agent_data(
     final_workspace_names = agent_config.get("brain_ids") or config.brain_ids
     vectorstore_name = agent_config.get("vectorstore_name", config.vectorstore_name)
     chatbot_name = agent_config.get("chatbot_name", chatbot_name)
-    if isinstance(chatbot_name, dict):
-        chatbot_name = str(chatbot_name.get("provider"))
+    chatbot_name = resolve_model_config(chatbot_name)
 
     return (
         doc_tree,
@@ -467,6 +482,11 @@ def create_search_agent_with_tools(
         )
     top_k = 1
     tools_config = agent_config.get("tools", [])
+    preview_tool_config = _get_enabled_tool_config(
+        tools_config, "generate_web_preview"
+    )
+    if preview_tool_config:
+        agent_factory.set_web_preview_tool_config(preview_tool_config)
     connector_bindings = []
     _agent_params_search = agent_config.get("agent_params") or {}
     raw_connector_bindings = _agent_params_search.get("connector_bindings_json")
@@ -504,6 +524,7 @@ def create_search_agent_with_tools(
         logical_search_only=logical_search_only,
         deep_search=deep_search,
         render_chart_tool=_is_tool_enabled(tools_config, "render_chart"),
+        generate_web_preview=preview_tool_config is not None,
         skills=merge_skills(agent_config.get("skills", []), _get_team_skills(config)),
     )
 
@@ -511,10 +532,14 @@ def create_search_agent_with_tools(
     agent._toolkit = toolkit
 
     from src.smart_rag.tools.native_tool_registry import FACTORY_MANAGED_NATIVE_TOOLS, resolve_native_tools
-    agent.tools.extend(resolve_native_tools([
-        tool for tool in tools_config
-        if (tool if isinstance(tool, str) else tool.get("name")) not in FACTORY_MANAGED_NATIVE_TOOLS
-    ]))
+    agent_params = agent_config.get("agent_params") or {}
+    agent.tools.extend(resolve_native_tools(
+        [
+            tool for tool in tools_config
+            if (tool if isinstance(tool, str) else tool.get("name")) not in FACTORY_MANAGED_NATIVE_TOOLS
+        ],
+        runtime_context=agent_params,
+    ))
 
     if connector_bindings:
         try:
@@ -641,6 +666,12 @@ def create_standard_agent_with_tools(
             html_tool_config.update(tool.get("config", {}))
             agent_factory.set_diagram_tool_config(html_tool_config)
 
+    preview_tool_config = _get_enabled_tool_config(
+        agent_config.get("tools", []), "generate_web_preview"
+    )
+    if preview_tool_config:
+        agent_factory.set_web_preview_tool_config(preview_tool_config)
+
     (
         doc_tree,
         brain_tree,
@@ -680,6 +711,7 @@ def create_standard_agent_with_tools(
         in_memory_tool=True if "in_memory" in tools else False,
         in_memory_tool_description=in_memory_tool_description,
         html_design=True if "html_design" in tools else False,
+        generate_web_preview=preview_tool_config is not None,
         search_tool=True if "search" in tools else False,
         code_interpreter_tool=True if "code interpreter" in tools else False,
         snowflake_tool=True if "snowflake connector" in tools else False,
@@ -710,7 +742,9 @@ def create_standard_agent_with_tools(
     agent.tools.extend(resolve_native_tools([
         tool for tool in agent_config.get("tools", [])
         if (tool if isinstance(tool, str) else tool.get("name")) not in FACTORY_MANAGED_NATIVE_TOOLS
-    ]))
+    ],
+    runtime_context=agent_params,
+    ))
 
     _attach_mcp_search_state(agent, config, agent_config)
     _attach_mcp_toolset(agent, config, agent_config)

@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ArrowLeft, Library, MoreHorizontal, Pencil, Share, ShieldCheck, Trash2, Users } from 'lucide-react';
+import { ArrowLeft, Library, Pencil, Share, ShieldCheck, Trash2, Users } from 'lucide-react';
 import { useConversationStore, useCurrentConversation } from '../store';
 import { useTypewriter } from '../hooks/useTypewriter';
 import { RenameDialog } from './RenameDialog';
@@ -52,18 +51,33 @@ export function ConversationHeader() {
 
   return (
     <>
-      <div className='sticky top-0 z-10 flex items-center gap-3 p-4 border-b border-border/50 bg-background/80 backdrop-blur-sm'>
-        <Button variant='ghost' size='icon' onClick={() => navigate('/')} className='shrink-0'>
+      <div className='sticky top-0 z-10 flex items-center gap-2 border-b border-border/50 bg-background/85 px-3 py-3 backdrop-blur-sm md:px-4'>
+        <Button variant='ghost' size='icon' onClick={() => navigate('/')} className='size-9 shrink-0' aria-label={t('header.actions.back')}>
           <ArrowLeft className='h-4 w-4' />
         </Button>
-        <h1 className='flex flex-1 items-center gap-2 font-medium text-lg truncate'>{isGoverned && <ShieldCheck className='size-4 shrink-0 text-primary' aria-label={t('governedConversation.title')} />}{displayTitle}</h1>
+        <div className='flex min-w-0 flex-1 items-center gap-1'>
+          <h1 className='flex min-w-0 items-center gap-2 font-medium text-lg'>
+            {isGoverned && <ShieldCheck className='size-4 shrink-0 text-primary' aria-label={t('governedConversation.title')} />}
+            <span className='truncate'>{displayTitle}</span>
+          </h1>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant='ghost' size='icon' onClick={() => setRenameOpen(true)} className='size-8 shrink-0 text-muted-foreground hover:text-foreground' aria-label={t('header.actions.rename')}>
+                  <Pencil className='size-3.5' />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent><p>{t('header.actions.rename')}</p></TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
 
         <div className='flex items-center gap-1'>
           {conversation.groupMeta?.isGroup && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant='ghost' size='icon' onClick={() => setGroupDialogOpen(true)} className='shrink-0 text-primary'>
+                  <Button variant='ghost' size='icon' onClick={() => setGroupDialogOpen(true)} className='size-9 shrink-0 text-primary' aria-label={t('newConversation.groupDialog.manageTitle')}>
                     <Users className='h-4 w-4' />
                   </Button>
                 </TooltipTrigger>
@@ -76,7 +90,7 @@ export function ConversationHeader() {
           {!isGoverned && <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant='ghost' size='icon' onClick={() => setWorkspaceSheetOpen(true)} className='shrink-0'>
+                <Button variant='ghost' size='icon' onClick={() => setWorkspaceSheetOpen(true)} className='size-9 shrink-0' aria-label={t('header.tooltips.workspaces')}>
                   <Library className='h-4 w-4' />
                 </Button>
               </TooltipTrigger>
@@ -88,7 +102,7 @@ export function ConversationHeader() {
           {!isGoverned && <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant='ghost' size='icon' onClick={handleShare} className='shrink-0'>
+                <Button variant='ghost' size='icon' onClick={handleShare} className='size-9 shrink-0' aria-label={t('header.tooltips.share')}>
                   <Share className='h-4 w-4' />
                 </Button>
               </TooltipTrigger>
@@ -97,23 +111,16 @@ export function ConversationHeader() {
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant='ghost' size='icon' className='shrink-0'>
-                <MoreHorizontal className='h-4 w-4' />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align='end'>
-              <DropdownMenuItem onClick={() => setRenameOpen(true)} className='cursor-pointer'>
-                <Pencil className='mr-2 h-4 w-4' />
-                {t('header.actions.rename')}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setDeleteOpen(true)} className='cursor-pointer text-destructive focus:text-destructive'>
-                <Trash2 className='mr-2 h-4 w-4' />
-                {t('header.actions.delete')}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant='ghost' size='icon' onClick={() => setDeleteOpen(true)} className='size-9 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive' aria-label={t('header.actions.delete')}>
+                  <Trash2 className='size-4' />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent><p>{t('header.actions.delete')}</p></TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       </div>
 

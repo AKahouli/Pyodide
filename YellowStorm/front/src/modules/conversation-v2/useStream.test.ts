@@ -8,10 +8,11 @@ vi.mock('@/modules/auth', () => ({ useAuth: () => ({ isAuthenticated: true }) })
 // assert the call without hitting the network. The store also imports this
 // module, so the same mock backs `store.sendMessage`.
 const sendMessageMock = vi.fn().mockResolvedValue(undefined);
+const listEventsMock = vi.fn().mockResolvedValue({ items: [], nextSince: 0 });
 vi.mock('./api', () => ({
   conversationV2Api: {
     sendMessage: (...args: unknown[]) => sendMessageMock(...args),
-    listEvents: vi.fn().mockResolvedValue({ items: [], nextSince: 0 }),
+    listEvents: (...args: unknown[]) => listEventsMock(...args),
   },
 }));
 
@@ -58,6 +59,8 @@ describe('conversation-v2 per-user stream pipe', () => {
     localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'test-token');
     useConversationV2Store.getState().reset();
     sendMessageMock.mockClear();
+    listEventsMock.mockReset();
+    listEventsMock.mockResolvedValue({ items: [], nextSince: 0 });
   });
   afterEach(() => {
     conversationV2StreamService.disconnect();
@@ -72,6 +75,32 @@ describe('conversation-v2 per-user stream pipe', () => {
     expect(es.url).toContain('token=test-token');
     // No conversation id in the URL — the pipe carries all conversations.
     expect(es.url).not.toMatch(/sessions\//);
+  });
+
+  it('replaces the per-user pipe when the token changes', () => {
+    mountConnection();
+    const original = MockEventSource.instances.at(-1)!;
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'refreshed-token');
+
+    conversationV2StreamService.reconnectWithNewToken();
+
+    expect(original.closed).toBe(true);
+    expect(MockEventSource.instances.at(-1)?.url).toContain('token=refreshed-token');
+  });
+
+  it('reconciles a missed final event when the pipe reconnects', async () => {
+    mountConnection();
+    useConversationV2Store.getState().setSessionId('s1');
+    useConversationV2Store.getState().setStreaming(true);
+    listEventsMock.mockResolvedValue({
+      items: [{ type: 'done', event_id: 'done-1', timestamp: 1, sequence: 1 }],
+      nextSince: 1,
+    });
+
+    act(() => MockEventSource.instances.at(-1)!.emit('connected', {}));
+    await vi.waitFor(() => expect(useConversationV2Store.getState().streaming).toBe(false));
+
+    expect(listEventsMock).toHaveBeenCalledWith('s1', 0, 200);
   });
 
   it('sendMessage optimistically echoes the user message and POSTs it', async () => {

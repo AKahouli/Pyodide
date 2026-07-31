@@ -13,6 +13,11 @@ export default registerAs('app', () => ({
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
   throttleTtl: Number.parseInt(process.env.THROTTLE_TTL || '60', 10),
   throttleLimit: Number.parseInt(process.env.THROTTLE_LIMIT || '100', 10),
+  /**
+   * Express `trust proxy` (TRUST_PROXY). Empty/false = ignore X-Forwarded-*.
+   * Production behind an ingress should set hop count (e.g. `1`) or proxy CIDRs.
+   */
+  trustProxy: process.env.TRUST_PROXY || '',
   logLevel: process.env.LOG_LEVEL || 'info',
   memoryLimitMb: Number.parseInt(process.env.MEMORY_LIMIT_MB || '512', 10),
   encryptionKey: process.env.ENCRYPTION_KEY || '',

@@ -11,6 +11,7 @@ import { URL } from 'node:url';
 import { AppModule } from './app.module';
 import { LoggerService } from './modules/logger';
 import { SystemService } from './modules/system/system.service';
+import { parseTrustProxySetting } from './common/utils/client-ip';
 
 function serializeUnhandledReason(reason: unknown) {
   if (reason instanceof Error) {
@@ -45,6 +46,18 @@ async function bootstrap() {
   const logger = await app.resolve(LoggerService);
   logger.setContext('Bootstrap');
   app.useLogger(logger);
+
+  // Trust only configured proxy hops/CIDRs so req.ip is not attacker-controlled
+  // via X-Forwarded-For / X-Real-IP (YS-03). Default TRUST_PROXY empty → false.
+  const trustProxy = parseTrustProxySetting(
+    configService.get<string>('app.trustProxy') ?? configService.get<string>('TRUST_PROXY'),
+  );
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.set('trust proxy', trustProxy);
+  logger.log('Express trust proxy configured', {
+    trustProxy: trustProxy === false ? 'false' : trustProxy,
+  });
+
   const mongoUri = configService.get<string>('MONGODB_URI', 'mongodb://localhost:27017/yellostorm');
   try {
     const parsedMongoUri = new URL(mongoUri);

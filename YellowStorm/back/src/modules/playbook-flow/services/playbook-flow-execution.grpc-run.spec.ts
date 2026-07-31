@@ -186,7 +186,7 @@ describe('callGrpcRun router config serialization', () => {
         actions: [{ action_key: 'issues', description: 'List GitHub issues' }],
         fixed_params: { repo: 'yellowstorm' },
       }],
-      tools: [{ name: 'connector_conn-2_issues', description: 'GitHub connector action issues' }],
+      tools: [{ name: 'github_issues', description: 'GitHub connector action issues' }],
       skills: [{ id: 'skill-2', name: 'Connector skill', description: 'Added via connector' }],
     });
     agentService.buildGrpcSkillsForPlaybook.mockResolvedValue([]);
@@ -243,7 +243,7 @@ describe('callGrpcRun router config serialization', () => {
       agent_tools: structFields({
         agent_tools: [
           { name: 'calculator', description: 'Math helper' },
-          { name: 'connector_conn-2_issues', description: 'GitHub connector action issues' },
+          { name: 'github_issues', description: 'GitHub connector action issues' },
         ],
       }).agent_tools,
       agent_params: structFields({

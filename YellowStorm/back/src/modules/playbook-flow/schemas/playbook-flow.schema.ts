@@ -194,7 +194,7 @@ export class Flow {
   @Prop({ required: true, type: String, minlength: 2, maxlength: 100 })
   name!: string;
 
-  @Prop({ required: false, type: String, maxlength: 40000 })
+  @Prop({ required: false, type: String, maxlength: 80000 })
   description?: string;
 
   @Prop({ required: false, type: FlowTriggerConfig })

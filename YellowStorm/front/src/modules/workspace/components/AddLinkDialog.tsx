@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Loader2, RotateCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -52,11 +52,17 @@ export function AddLinkDialog({
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [exploring, setExploring] = useState<Set<string>>(new Set());
+  // URLs already auto-selected once. A page is auto-checked only the first time
+  // it's collected; afterwards the user's manual check/uncheck is authoritative,
+  // so later actions (manual add, rename, explore) never re-check a page the
+  // user unchecked.
+  const autoSelectedRef = useRef<Set<string>>(new Set());
 
   const indexedUrls = useMemo(() => new Set(seed.map((s) => normalizeUrl(s.url))), [seed]);
 
   useEffect(() => {
     if (open) {
+      autoSelectedRef.current = new Set(); // fresh session → nothing auto-selected yet
       if (autoStart && isValidUrl(initialUrl)) {
         // Opened from an existing group: skip the input step and browse the
         // root URL directly so the user can index more pages immediately.
@@ -84,11 +90,18 @@ export function AddLinkDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialUrl]);
 
-  // Auto-select each newly collected page (never the already-indexed seed).
+  // Auto-select each page the FIRST time it's collected (never the already-indexed
+  // seed). Pages seen before are skipped, so a user's uncheck survives any later
+  // action (manual add, rename, explore) that re-renders the page list.
   useEffect(() => {
+    const newlySeen = session.pages.map((p) => p.url).filter((u) => !autoSelectedRef.current.has(u));
+    if (newlySeen.length === 0) return;
+    newlySeen.forEach((u) => autoSelectedRef.current.add(u));
+    const toSelect = newlySeen.filter((u) => !indexedUrls.has(normalizeUrl(u)));
+    if (toSelect.length === 0) return;
     setSelected((prev) => {
       const next = new Set(prev);
-      session.pages.forEach((p) => { if (!indexedUrls.has(normalizeUrl(p.url))) next.add(p.url); });
+      toSelect.forEach((u) => next.add(u));
       return next;
     });
   }, [session.pages, indexedUrls]);
@@ -207,6 +220,11 @@ export function AddLinkDialog({
               <div className='relative min-h-0 flex-1 overflow-hidden bg-muted/10'>
                 {session.status === 'busy' ? (
                   <div className='flex h-full items-center justify-center text-sm text-muted-foreground'>Navigateur occupé. Réessayez dans un instant.</div>
+                ) : session.status === 'error' ? (
+                  <div className='flex h-full flex-col items-center justify-center gap-3 p-6 text-center'>
+                    <p className='max-w-md text-sm text-destructive'>{session.errorReason ?? 'Connexion au navigateur impossible.'}</p>
+                    <Button size='sm' variant='outline' onClick={() => session.start(session.rootUrl ?? url)}>Réessayer</Button>
+                  </div>
                 ) : session.status === 'connecting' ? (
                   <div className='flex h-full items-center justify-center'><Loader2 className='h-6 w-6 animate-spin' /></div>
                 ) : (
@@ -236,6 +254,7 @@ export function AddLinkDialog({
                 return ok;
               }}
               onExplore={handleExplore}
+              onNavigate={(u) => session.navigate({ kind: 'goto', url: u })}
               exploring={exploring}
             />
           </div>

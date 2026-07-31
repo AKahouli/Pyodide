@@ -147,7 +147,10 @@ export class ConversationService {
 
   async findById(conversationId: string): Promise<ConversationResponse> {
     const conversation = await this.conversationModel
-      .findById(conversationId)
+      .findOne({
+        _id: conversationId,
+        initializationStatus: { $nin: ['pending', 'seeding', 'cleanup_pending'] },
+      })
       .lean()
       .exec();
 
@@ -186,6 +189,7 @@ export class ConversationService {
     const skip = (page - 1) * limit;
 
     const query: Record<string, unknown> = {
+      initializationStatus: { $nin: ['pending', 'seeding', 'cleanup_pending'] },
       $or: [
         { createdBy: new Types.ObjectId(userId) },
         { 'groupMeta.members.userId': new Types.ObjectId(userId) },
@@ -994,6 +998,11 @@ export class ConversationService {
         revisionNumber: conversation.governanceContext.revisionNumber,
         pinnedAt: toISO(conversation.governanceContext.pinnedAt),
         runtimeDefinition: conversation.governanceContext.runtimeDefinition,
+      } : undefined,
+      branchProvenance: conversation.branchProvenance ? {
+        sourceConversationId: toStr(conversation.branchProvenance.sourceConversationId),
+        sourceTargetMessageId: toStr(conversation.branchProvenance.sourceTargetMessageId),
+        branchedAt: toISO(conversation.branchProvenance.branchedAt),
       } : undefined,
     };
   }

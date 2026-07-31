@@ -36,6 +36,9 @@ export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, on
     ? `${API_CONFIG.baseURL}${API_ENDPOINTS.playbooks.publicExecute(playbook.integrationToken)}`
     : '';
   const hasExecutionStatus = Boolean(playbook.executionStatus);
+  const openPlaybook = (search = '') => {
+    navigate(`/playbooks/${playbook.id}${search}`, { state: { autoLayoutOnOpen: true } });
+  };
 
   const handleCopyIntegrationLink = async (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -68,7 +71,7 @@ export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, on
         if (selectable && onSelect) {
           onSelect(playbook.id, !selected);
         } else {
-          navigate(`/playbooks/${playbook.id}`);
+          openPlaybook();
         }
       }}>
       <CardHeader className='pb-2'>
@@ -102,7 +105,7 @@ export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, on
               className='h-7 w-7'
               onClick={(e) => {
                 e.stopPropagation();
-                navigate(`/playbooks/${playbook.id}?triggers=1`);
+                openPlaybook('?triggers=1');
               }}
               title={t('card.openTriggers')}
               aria-label={t('card.openTriggers')}>
@@ -196,7 +199,7 @@ export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, on
           className='h-7 w-7'
           onClick={(e) => {
             e.stopPropagation();
-            navigate(`/playbooks/${playbook.id}`);
+            openPlaybook();
           }}
           title={t('card.view')}>
           <Eye className='h-3.5 w-3.5' />

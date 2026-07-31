@@ -55,6 +55,7 @@ export function useBrowserSession() {
   const [pages, setPages] = useState<CollectedPage[]>([]);
   const [loading, setLoading] = useState(false);
   const [blockedNotice, setBlockedNotice] = useState<string | null>(null);
+  const [errorReason, setErrorReason] = useState<string | null>(null);
 
   const setLoadingSafe = useCallback((next: boolean) => {
     if (loadingTimerRef.current) { clearTimeout(loadingTimerRef.current); loadingTimerRef.current = null; }
@@ -66,15 +67,38 @@ export function useBrowserSession() {
 
   const start = useCallback((url: string, seed: CollectedPage[] = []) => {
     const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
-    if (!token) { setStatus('error'); return; }
+    if (!token) { setStatus('error'); setErrorReason("Vous n'êtes pas authentifié."); return; }
     setStatus('connecting');
+    setErrorReason(null);
     seenRef.current = new Set(seed.map((p) => normalizeUrl(p.url)));
     setPages(seed); setFrame(null); setBlockedNotice(null); setCurrentUrl(url); setRootUrl(url); setLoadingSafe(false);
 
-    const socket = io(`${getSocketBaseUrl()}/browser-session`, {
-      auth: { token }, transports: ['websocket', 'polling'],
+    // The socket connects to the API origin (getSocketBaseUrl strips /api/v1). If a
+    // reverse proxy doesn't forward /socket.io/ with WebSocket upgrade, the handshake
+    // never reaches the backend — surface that instead of spinning forever. Logging
+    // the exact target URL is the fastest way to diagnose a bad deploy.
+    const target = `${getSocketBaseUrl()}/browser-session`;
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line no-console
+      console.info('[browser-session] connecting to', target);
+    }
+
+    const socket = io(target, {
+      auth: { token },
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 3,
+      timeout: 10_000,
     });
     socketRef.current = socket;
+
+    socket.on('connect_error', (err: Error) => {
+      // eslint-disable-next-line no-console
+      console.error('[browser-session] connect_error →', target, err?.message);
+      setStatus('error');
+      setErrorReason(
+        `Connexion au navigateur impossible (${target}). Vérifiez que le proxy transmet /socket.io/ avec la mise à niveau WebSocket. Détail : ${err?.message ?? 'inconnu'}`,
+      );
+    });
 
     socket.on('frame', (p: { data: string }) => setFrame(`data:image/jpeg;base64,${p.data}`));
     socket.on('navigated', (p: CollectedPage) => {
@@ -91,8 +115,11 @@ export function useBrowserSession() {
     socket.on('disconnect', () => setStatus('idle'));
 
     socket.emit('start', { url }, (res: { ok: boolean; sessionId?: string; error?: string }) => {
-      if (res.ok) setStatus('live');
-      else setStatus(res.error === 'BUSY' ? 'busy' : 'error');
+      if (res.ok) { setStatus('live'); setErrorReason(null); }
+      else {
+        setStatus(res.error === 'BUSY' ? 'busy' : 'error');
+        if (res.error !== 'BUSY') setErrorReason(`Le navigateur n'a pas pu démarrer : ${res.error ?? 'erreur inconnue'}`);
+      }
     });
   }, [setLoadingSafe]);
 
@@ -165,5 +192,5 @@ export function useBrowserSession() {
     return fresh.length;
   }, []);
 
-  return { status, frame, currentUrl, rootUrl, pages, loading, blockedNotice, start, sendInput, navigate, stop, addManualPage, updatePage, addPages, removePage };
+  return { status, frame, currentUrl, rootUrl, pages, loading, blockedNotice, errorReason, start, sendInput, navigate, stop, addManualPage, updatePage, addPages, removePage };
 }

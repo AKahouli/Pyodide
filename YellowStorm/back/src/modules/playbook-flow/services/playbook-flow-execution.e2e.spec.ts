@@ -1,4 +1,6 @@
 import { PlaybookFlowExecutionService } from './playbook-flow-execution.service';
+import { PlaybookExecutionHitlResumeService } from '../execution/runtime/playbook-execution-hitl-resume.service';
+import { PlaybookExecutionSingleStepPrepService } from '../execution/runtime/playbook-execution-single-step-prep.service';
 import { ForbiddenException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
@@ -205,6 +207,18 @@ async function createE2EService(
     ...overrides?.accessService,
   };
 
+  const hitlResumeService = new PlaybookExecutionHitlResumeService(
+    ExecutionModel as any,
+    streamEvents as any,
+    undefined,
+    accessService as any,
+  );
+
+  const singleStepPrepService = new PlaybookExecutionSingleStepPrepService(
+    ExecutionModel as any,
+    taskResultModel as any,
+  );
+
   const service = new PlaybookFlowExecutionService(
     ExecutionModel,
     taskResultModel as any,
@@ -233,9 +247,21 @@ async function createE2EService(
       undefined as any,
       new PlaybookFlowReplayPlanService() as any,
       replayDriftService as any,
+      undefined as any,
+      undefined as any,
+      undefined as any,
+      undefined as any,
+      undefined as any,
+      undefined as any,
+      undefined as any,
+      undefined as any,
+      undefined as any,
+      undefined as any,
+      undefined as any,
+      accessService as any,
+      hitlResumeService,
+      singleStepPrepService,
     );
-
-  (service as any).accessService = accessService;
 
   (service as any).isGrpcAvailable = true;
   (service as any).playbookFlowClient = { Run: mockRun };

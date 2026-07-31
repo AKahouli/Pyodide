@@ -32,6 +32,20 @@ class Skill(BaseModel):
     files: Optional[List[SkillFile]] = None
 
 
+class CorrectionReplayFinding(BaseModel):
+    claim: str
+    status: str
+    importance: str
+    explanation: str
+
+
+class CorrectionReplayContext(BaseModel):
+    original_answer: str
+    findings: List[CorrectionReplayFinding]
+    attempt_number: int
+    instructions: str
+
+
 class ChatWithADKRequest(BaseModel):
     """Schema for chat requests sent to the ADK."""
     user_id: str
@@ -91,6 +105,7 @@ class RunAgentTeamRequest(BaseModel):
     user_id: str
     session_id: str
     message: str
+    task_summary: Optional[str] = None
     image_input: Optional[List[Dict]] = None
     attached_files: Optional[List[Dict]] = None
     attached_images: Optional[List[Dict]] = None
@@ -110,6 +125,7 @@ class RunAgentTeamRequest(BaseModel):
     connector_repo: Optional[Dict[str, str]] = None
     skills: Optional[List[Skill]] = None  # Conversation-level skills selected by the user
     deep_search_enabled: bool = False
+    correction_replay_context: Optional[CorrectionReplayContext] = None
 
     def __init__(self, **data: Any) -> None:
         super().__init__(**_sync_workspace_aliases(data))

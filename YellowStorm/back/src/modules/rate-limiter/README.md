@@ -157,7 +157,7 @@ When rate limit is exceeded:
 
 ## Security Considerations
 
-- **IP Extraction**: Properly handles `X-Forwarded-For` and `X-Real-IP` headers for proxied requests
+- **IP Extraction**: Uses Express `req.ip` (and socket fallback). Application code must not read `X-Forwarded-For` / `X-Real-IP` directly. Configure `TRUST_PROXY` to the ingress hop count or proxy CIDRs so Express derives `req.ip` safely; leave empty/`false` when there is no trusted proxy.
 - **User Priority**: Authenticated users are identified by user ID, preventing IP-based bypass
 - **Automatic Cleanup**: Expired records are automatically cleaned up every 60 seconds
 - **Memory Efficient**: Uses sliding window counters, not request logs

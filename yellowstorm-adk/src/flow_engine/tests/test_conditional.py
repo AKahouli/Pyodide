@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 
 import pytest
+from langgraph.graph import END
 
 from src.flow_engine.builder import compose
+from src.flow_engine.builder.conditional import add_conditional_edges
 
 
 def load_fixture(name: str) -> dict:
@@ -14,8 +16,43 @@ def load_fixture(name: str) -> dict:
 
 
 class TestConditional:
+    def test_unlinked_declared_router_label_terminates_branch(self):
+        calls = []
+
+        class Graph:
+            def add_conditional_edges(self, source, path, label_map):
+                calls.append((source, path, label_map))
+
+        add_conditional_edges(Graph(), [{
+            "id": "edge-1",
+            "kind": "conditional",
+            "source": "router-1",
+            "target": "target-1",
+            "router_label": "linked",
+        }], [{
+            "id": "router-1",
+            "kind": "router",
+            "router_config": {"output_labels": ["linked", "unlinked", "__error__"]},
+        }, {
+            "id": "target-1",
+            "kind": "step",
+        }])
+
+        source, path, label_map = calls[0]
+        assert source == "router-1"
+        assert path({"router_decisions": {"router-1": "unlinked"}}) == "unlinked"
+        assert label_map == {"linked": "target-1", "unlinked": END, "__error__": END}
+
     def test_compose_retry_loop(self):
         snapshot = load_fixture("retry_loop.json")
+        graph = compose(snapshot)
+        assert graph is not None
+
+    def test_compose_router_with_unlinked_terminal_label(self):
+        snapshot = load_fixture("retry_loop.json")
+        snapshot["control_edges"] = [
+            edge for edge in snapshot["control_edges"] if edge["id"] != "e4"
+        ]
         graph = compose(snapshot)
         assert graph is not None
 

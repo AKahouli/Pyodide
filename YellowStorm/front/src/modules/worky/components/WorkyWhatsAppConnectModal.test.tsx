@@ -38,7 +38,7 @@ describe('WorkyWhatsAppConnectModal', () => {
     renderModal(<WorkyWhatsAppConnectModal open streamId='stream-1' onClose={vi.fn()} />);
 
     expect(await screen.findByTestId('worky-whatsapp-modal')).toBeInTheDocument();
-    expect(screen.getByText('WhatsApp integration')).toBeInTheDocument();
+    expect(screen.getByText('whatsapp.modalTitle')).toBeInTheDocument();
   });
 
   it('calls onClose when backdrop is clicked', async () => {
@@ -75,7 +75,7 @@ describe('WorkyWhatsAppConnectModal', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('worky-whatsapp-connect-error')).toHaveTextContent(
-        'Cannot reach WhatsApp servers',
+        'whatsapp.networkUnreachable',
       );
     });
   });

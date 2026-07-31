@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { ChevronRight, FolderInput, Globe, Trash2 } from 'lucide-react';
+import { ChevronRight, ExternalLink, FolderInput, Globe, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { IndexingStatus } from '../types';
 import { IndexingStatusDot } from './IndexingStatusDot';
@@ -28,7 +28,6 @@ export function SourceGroupRow({
           aria-label={label}
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
-          onDoubleClick={() => onOpenInNavigator?.(rootUrl)}
           className='flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm'
         >
           <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
@@ -37,6 +36,17 @@ export function SourceGroupRow({
           <span className='min-w-0 flex-1 truncate font-medium' title={rootUrl}>{label}</span>
           <span className='shrink-0 rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground'>{count}</span>
         </button>
+        {onOpenInNavigator && (
+          <button
+            type='button'
+            aria-label={`open ${label} in navigator`}
+            title='Ouvrir dans le navigateur'
+            onClick={() => onOpenInNavigator(rootUrl)}
+            className='shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground'
+          >
+            <ExternalLink className='h-4 w-4' />
+          </button>
+        )}
         {onMove && (
           <button
             type='button'

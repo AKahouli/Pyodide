@@ -106,6 +106,30 @@ it('indexes a manual different-domain link under the session root (no self-rooti
   expect(opts.roots).toBeUndefined(); // manual links no longer self-root into their own group
 });
 
+it('keeps a page unchecked after a later action adds a new page (no re-check)', () => {
+  session.status = 'live';
+  session.pages = [
+    { url: 'https://ok.example/a', title: 'A' },
+    { url: 'https://ok.example/b', title: 'B' },
+  ];
+  const { rerender } = render(<AddLinkDialog open onOpenChange={vi.fn()} workspaceId='w1' />);
+  // Both auto-selected on first collection (checkbox aria-label = page title).
+  expect(screen.getByLabelText('A')).toHaveAttribute('aria-checked', 'true');
+  // User unchecks 'A'.
+  fireEvent.click(screen.getByLabelText('A'));
+  expect(screen.getByLabelText('A')).toHaveAttribute('aria-checked', 'false');
+  // A later action (e.g. manual add / rename) mutates the page list.
+  session.pages = [
+    { url: 'https://ok.example/a', title: 'A' },
+    { url: 'https://ok.example/b', title: 'B' },
+    { url: 'https://ok.example/c', title: 'C', manual: true },
+  ];
+  rerender(<AddLinkDialog open onOpenChange={vi.fn()} workspaceId='w1' />);
+  // 'A' stays unchecked; only the newly added 'C' is auto-selected.
+  expect(screen.getByLabelText('A')).toHaveAttribute('aria-checked', 'false');
+  expect(screen.getByLabelText('C')).toHaveAttribute('aria-checked', 'true');
+});
+
 it('auto-starts browsing when opened with autoStart and a valid url', () => {
   session.status = 'idle';
   render(<AddLinkDialog open autoStart initialUrl='https://ok.example/services' onOpenChange={vi.fn()} workspaceId='w1' />);

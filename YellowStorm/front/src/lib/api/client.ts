@@ -10,6 +10,9 @@ import axios, {
 } from 'axios';
 import { API_CONFIG, AUTH_STORAGE_KEYS, API_ENDPOINTS } from './config';
 import { notificationsService } from '@/modules/notifications';
+import { conversationStreamService } from '@/modules/conversation/stream';
+import { translateConversation } from '@/modules/conversation/translation';
+import { conversationV2StreamService } from '@/modules/conversation-v2/conversationV2Stream';
 
 // Types
 export interface ApiError {
@@ -42,6 +45,26 @@ type RefreshSubscriber = {
   onError: (error: unknown) => void;
 };
 let refreshSubscribers: RefreshSubscriber[] = [];
+
+function isConversationMessageRequest(request: InternalAxiosRequestConfig): boolean {
+  return request.method?.toLowerCase() === 'post'
+    && /^\/conversations\/[^/]+\/messages$/.test(request.url ?? '');
+}
+
+async function retryRequestAfterRefresh(request: InternalAxiosRequestConfig): Promise<unknown> {
+  if (isConversationMessageRequest(request)) {
+    const streamReady = await conversationStreamService.waitForConnection();
+    if (!streamReady) {
+      return Promise.reject({
+        code: 'ERR_NETWORK',
+        message: translateConversation('sse.connectionErrors.rejected'),
+        statusCode: 503,
+      } satisfies ApiError);
+    }
+  }
+
+  return apiClient(request);
+}
 
 function onRefreshed(token: string) {
   refreshSubscribers.forEach(({ onToken }) => onToken(token));
@@ -129,7 +152,7 @@ apiClient.interceptors.response.use(
               if (originalRequest.headers) {
                 originalRequest.headers.Authorization = `Bearer ${token}`;
               }
-              resolve(apiClient(originalRequest));
+              resolve(retryRequestAfterRefresh(originalRequest));
             },
             onError: (err: unknown) => {
               // If refresh fails, clear auth and redirect
@@ -153,6 +176,8 @@ apiClient.interceptors.response.use(
 
         // Reconnect SSE with new token
         notificationsService.reconnectWithNewToken();
+        conversationStreamService.reconnectWithNewToken();
+        conversationV2StreamService.reconnectWithNewToken();
 
         if (originalRequest.headers) {
           originalRequest.headers.Authorization = `Bearer ${accessToken}`;
@@ -161,7 +186,7 @@ apiClient.interceptors.response.use(
         onRefreshed(accessToken);
         isRefreshing = false;
 
-        return apiClient(originalRequest);
+        return retryRequestAfterRefresh(originalRequest);
       } catch (refreshError) {
         isRefreshing = false;
         onRefreshFailed(refreshError);

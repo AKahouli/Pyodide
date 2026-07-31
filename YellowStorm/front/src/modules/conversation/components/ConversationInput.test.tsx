@@ -1,15 +1,21 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConversationInput } from './ConversationInput';
 
 const sendMessageMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const updateConversationMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const stopStreamMock = vi.hoisted(() => vi.fn());
 const clearAllMock = vi.hoisted(() => vi.fn());
+const currentConversationMock = vi.hoisted(() => ({
+  value: { id: 'conv-1', workspaces: ['ws-1'] } as { id: string; workspaces: string[]; runtimeMode?: 'standard' | 'governed' },
+}));
 
 vi.mock('@/components/ai-elements/input', () => ({
   default: ({
     onSubmit,
+    showWorkspaceSelect,
+    preserveWorkspaceSelectionOnSubmit,
   }: {
     onSubmit: (
       message: { text: string },
@@ -25,27 +31,33 @@ vi.mock('@/components/ai-elements/input', () => ({
         repoUrl?: string;
       },
     ) => Promise<void>;
+    showWorkspaceSelect?: boolean;
+    preserveWorkspaceSelectionOnSubmit?: boolean;
   }) => (
-    <button
-      type='button'
-      onClick={() => {
-        void onSubmit(
-          { text: 'hello' },
-          'model-1',
-          ['agent-1'],
-          undefined,
-          undefined,
-          {
-            connectorId: 'connector-1',
-            connectorName: 'GitHub',
-            repoId: 'repo-1',
-            repoName: 'org-name/repo-name',
-            repoUrl: 'https://github.com/org-name/repo-name',
-          },
-        );
-      }}>
-      submit-message
-    </button>
+    <>
+      <span>{showWorkspaceSelect ? 'workspace-selector-visible' : 'workspace-selector-hidden'}</span>
+      <span>{preserveWorkspaceSelectionOnSubmit ? 'workspace-selection-preserved' : 'workspace-selection-reset'}</span>
+      <button
+        type='button'
+        onClick={() => {
+          void onSubmit(
+            { text: 'hello' },
+            'model-1',
+            ['agent-1'],
+            undefined,
+            ['ws-2'],
+            {
+              connectorId: 'connector-1',
+              connectorName: 'GitHub',
+              repoId: 'repo-1',
+              repoName: 'org-name/repo-name',
+              repoUrl: 'https://github.com/org-name/repo-name',
+            },
+          );
+        }}>
+        submit-message
+      </button>
+    </>
   ),
 }));
 
@@ -95,6 +107,7 @@ vi.mock('../store', () => ({
     (selector: (state: Record<string, unknown>) => unknown) =>
       selector({
         sendMessage: sendMessageMock,
+        updateConversation: updateConversationMock,
         stopStream: stopStreamMock,
         clearReplyingTo: vi.fn(),
         isStreaming: false,
@@ -106,7 +119,7 @@ vi.mock('../store', () => ({
           repoName: 'org-name/repo-name',
           repoUrl: 'https://github.com/org-name/repo-name',
         },
-        currentConversation: null,
+        currentConversation: currentConversationMock.value,
       }),
     {
       getState: () => ({
@@ -124,7 +137,7 @@ vi.mock('../store', () => ({
   useIsAwaitingFirstChunk: () => false,
   useInputDisabled: () => false,
   useReplyingToMessage: () => null,
-  useSelectedWorkspaceIds: () => [],
+  useSelectedWorkspaceIds: () => ['ws-2'],
   useDeepSearchEnabled: () => false,
   useSetDeepSearchEnabled: () => vi.fn(),
   useSelectedConnectorRepo: () => ({
@@ -138,12 +151,21 @@ vi.mock('../store', () => ({
 }));
 
 describe('ConversationInput', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    currentConversationMock.value = { id: 'conv-1', workspaces: ['ws-1'] };
+  });
+
   it('submits message with uploaded files and clears upload state', async () => {
     render(<ConversationInput conversationId='conv-1' />);
+
+    expect(screen.getByText('workspace-selector-visible')).toBeInTheDocument();
+    expect(screen.getByText('workspace-selection-preserved')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'submit-message' }));
 
     await waitFor(() => {
+      expect(updateConversationMock).toHaveBeenCalledWith('conv-1', { workspaces: ['ws-2'] });
       expect(sendMessageMock).toHaveBeenCalledWith('conv-1', {
         content: 'hello',
         attachedFileIds: ['doc-1'],
@@ -167,6 +189,15 @@ describe('ConversationInput', () => {
         },
       });
       expect(clearAllMock).toHaveBeenCalled();
+      expect(updateConversationMock.mock.invocationCallOrder[0]).toBeLessThan(sendMessageMock.mock.invocationCallOrder[0]);
     });
+  });
+
+  it('hides the workspace selector for governed conversations', () => {
+    currentConversationMock.value = { id: 'conv-1', workspaces: ['ws-1'], runtimeMode: 'governed' };
+
+    render(<ConversationInput conversationId='conv-1' />);
+
+    expect(screen.getByText('workspace-selector-hidden')).toBeInTheDocument();
   });
 });

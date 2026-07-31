@@ -860,10 +860,24 @@ async def _execute_step(
     if deep_search:
         from src.flow_engine.deep_search import (
             merge_file_names,
+            routed_file_items,
             search_relevant_documents,
         )
 
-        deep_search_query = str(node_description or "").strip()
+        state_inputs = state.get("inputs", {})
+        deep_search_query = ""
+        for source in (state_inputs, input_context):
+            if not isinstance(source, dict):
+                continue
+            for key in ("query", "user_query", "message", "prompt"):
+                candidate = source.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    deep_search_query = candidate.strip()
+                    break
+            if deep_search_query:
+                break
+        if not deep_search_query:
+            deep_search_query = str(node_description or "").strip()
         if not deep_search_query:
             deep_search_query = user_msg
 
@@ -873,13 +887,9 @@ async def _execute_step(
                 deep_search_query,
                 deep_search_workspace_id,
             )
-            routed_files = deep_search_result.get("files")
-            if not isinstance(routed_files, list):
-                routed_files = deep_search_result.get("results", [])
             deep_search_file_names = [
                 str(item.get("file_name") or "")
-                for item in routed_files
-                if isinstance(item, dict)
+                for item in routed_file_items(deep_search_result)
             ]
             effective_file_names = merge_file_names(
                 tool_scope.file_names,
@@ -922,7 +932,9 @@ async def _execute_step(
             "The community-graph routing step is complete. Review each returned "
             "file's routing_decision, reason, and search_for guidance. Decide which "
             "exact file_name or file_names are needed for each next MCP call; do not "
-            "assume every candidate must be used. Pass selected filenames only when "
+            "assume every candidate must be used. Treat required files as the strongest "
+            "candidates and optional files as additional choices that may help answer "
+            "the request. Pass selected filenames only when "
             "the MCP tool schema supports file_name or file_names. If the status is "
             "NO_RELEVANT_FILES, do not invent filenames; use only user-provided files "
             "or explain that no relevant indexed file was found.\n"

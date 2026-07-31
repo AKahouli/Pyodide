@@ -382,6 +382,25 @@ class TestResolveItemsFromBindings:
         items = _resolve_items_from_bindings("iter", bindings, state, 0, raw_edges=raw_edges)
         assert items == [1, 2]
 
+    def test_does_not_synthesize_data_binding_from_router_control_edge(self):
+        state = _make_state(task_outputs={
+            ("router", 0): {
+                "outputs": [
+                    {"output_port_id": "approved", "artifact_kind": "data", "content": "[1,2]"},
+                ],
+            },
+        })
+        raw_edges = [{
+            "kind": "conditional",
+            "source": "router",
+            "target": "iter",
+            "source_output_port_id": "approved",
+            "target_input_port_id": "items",
+            "router_label": "approved",
+        }]
+
+        assert _resolve_items_from_bindings("iter", [], state, 0, raw_edges=raw_edges) == []
+
 
 class TestComposeWithIterator:
     def test_compose_iterator_graph(self):
@@ -435,6 +454,33 @@ class TestBuildBodySubgraph:
         assert subgraph is not None
         assert "child-a" in subgraph.nodes
         assert "child-b" in subgraph.nodes
+
+    def test_subgraph_compiles_router_with_unlinked_terminal_label(self):
+        children = ["router", "linked-child"]
+        raw_nodes = [{
+            "id": "router",
+            "kind": "router",
+            "label": "Route",
+            "router_config": {"output_labels": ["linked", "unlinked"]},
+        }, {
+            "id": "linked-child",
+            "kind": "step",
+            "label": "Linked",
+        }]
+        raw_edges = [{
+            "kind": "conditional",
+            "source": "router",
+            "target": "linked-child",
+            "router_label": "linked",
+        }]
+
+        subgraph = _build_body_subgraph(
+            children, raw_nodes, raw_edges, [],
+            {}, set(), {"router": raw_nodes[0]},
+        )
+
+        assert subgraph is not None
+        assert "router" in subgraph.nodes
 
     def test_multi_child_body_nodes_not_in_main_graph(self):
         snapshot = load_fixture("iterator_multi_child.json")

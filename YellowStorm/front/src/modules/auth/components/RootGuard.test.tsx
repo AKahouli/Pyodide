@@ -69,4 +69,20 @@ describe('RootGuard', () => {
     expect(screen.getByText('new conversation page')).toBeInTheDocument();
     await waitFor(() => expect(fetchModelsMock).toHaveBeenCalledTimes(1));
   });
+
+  it('renders authenticated child routes without replacing the new conversation homepage', () => {
+    useAuthMock.mockReturnValue(makeAuthState({ isAuthenticated: true }));
+
+    renderWithRouter(
+      <Routes>
+        <Route path='/' element={<RootGuard />}>
+          <Route path='platform' element={<div>platform overview page</div>} />
+        </Route>
+      </Routes>,
+      ['/platform'],
+    );
+
+    expect(screen.getByText('platform overview page')).toBeInTheDocument();
+    expect(screen.queryByText('new conversation page')).not.toBeInTheDocument();
+  });
 });

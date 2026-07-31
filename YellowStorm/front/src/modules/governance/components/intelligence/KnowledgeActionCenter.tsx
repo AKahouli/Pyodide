@@ -34,7 +34,7 @@ function buildWorkspaceSections(sources: GovernanceSource[], assessments: Knowle
   for (const sourceId of sourceIds) {
     const source = sourceById.get(sourceId);
     const workspaceId = sourceId === 'scope' ? 'scope' : source?.workspaceId ?? 'other';
-    const workspaceLabel = workspaceId === 'scope' ? labels.scope : workspaceId === 'other' ? labels.other : workspaceNames[workspaceId] ?? `${labels.other} · ${workspaceId.slice(-6)}`;
+    const workspaceLabel = workspaceId === 'scope' ? labels.scope : workspaceId === 'other' ? labels.other : workspaceNames[workspaceId] ?? labels.other;
     const sourceActions = actionBySource.get(sourceId) ?? [];
     const tags = [...new Set(sourceActions.map((action) => action.kind === 'alert' ? alertTag[action.alert.category] : recommendationTag[action.recommendation.type]))];
     const section = workspaceMap.get(workspaceId) ?? { workspaceId, label: workspaceLabel, sources: [], findings: 0, tags: [] };

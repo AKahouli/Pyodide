@@ -73,7 +73,7 @@ export function FileTransformationTools({ tab }: Readonly<{ tab: FileTab }>) {
     void getWorkspaceArtifactConfiguration(tab.workspaceId).then((value) => setConfigured(value.configured)).catch(() => setConfigured(false));
   }, [tab.workspaceId]);
 
-  if (!dataRoomFeatures.decisionFlowArtifactsEnabled || tab.mimeType !== 'application/pdf' || !tab.workspaceId || !tab.documentId || !tab.path || !tab.canWriteWorkspace) return null;
+  if (tab.mimeType !== 'application/pdf' || !tab.workspaceId || !tab.documentId || !tab.path || !tab.canWriteWorkspace) return null;
 
   const selectAudience = (audience: DecisionFlowTargetAudience, checked: boolean) => {
     setOptions((current) => {

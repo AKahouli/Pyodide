@@ -14,7 +14,11 @@ import {
   UploadedFile,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { decodeMultipartFilename } from '@common/utils';
+import {
+  decodeMultipartFilename,
+  MULTIPART_SMALL_FILE_MAX_BYTES,
+  multipartFileInterceptorOptions,
+} from '@common/utils';
 import {
   ApiTags,
   ApiOperation,
@@ -63,7 +67,9 @@ export class WorkspaceDocumentController {
    */
   @Post()
   @UseGuards(WritePermissionGuard)
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', multipartFileInterceptorOptions(MULTIPART_SMALL_FILE_MAX_BYTES)),
+  )
   @ApiOperation({ summary: 'Upload a small file directly (< 10MB recommended)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -442,6 +448,22 @@ export class WorkspaceDocumentController {
       body.name,
       body.parentId,
     );
+  }
+
+  /**
+   * Rename a document (its display name)
+   */
+  @Patch(':docId/rename')
+  @UseGuards(WritePermissionGuard)
+  @ApiOperation({ summary: 'Rename a document' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  @ApiParam({ name: 'docId', description: 'Document ID' })
+  async renameDocument(
+    @Param('workspaceId') workspaceId: string,
+    @Param('docId') docId: string,
+    @Body() body: { name: string },
+  ) {
+    return this.workspaceDocumentService.renameDocument(workspaceId, docId, body.name);
   }
 
   /**

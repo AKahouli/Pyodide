@@ -15,7 +15,7 @@ import * as path from 'node:path';
 import { StreamGatewayService } from './stream-gateway.service';
 import { MessageService } from './message.service';
 import { ConversationService } from './conversation.service';
-import { MessageComponent, ComponentType } from '../interfaces/message.interface';
+import { MessageComponent, ComponentType, type CorrectionReplayContext, type MessageReplayContext } from '../interfaces/message.interface';
 import {
   getComponentType as sharedGetComponentType,
   extractComponentData as sharedExtractComponentData,
@@ -39,9 +39,12 @@ import {
   createGrpcMetadata,
 } from '../../../common/grpc/grpc-security.util';
 import { randomUUID } from 'node:crypto';
+import { ResponseReliabilityService } from './response-reliability.service';
+import { ConversationAgentRequestBuilder, type BuiltAgentExecutionRequest } from './conversation-agent-request.builder';
 
-interface StreamRequest {
+export interface StreamRequest {
   content: string;
+  taskSummary?: string;
   attachedFileIds?: string[];
   webSearchEnabled?: boolean;
   deepSearchEnabled?: boolean;
@@ -64,6 +67,11 @@ export interface StreamGovernanceOverride {
   workspaceIds: string[];
   revisionId: string;
   scopeId: string;
+}
+
+export interface ConversationHistoryEntry {
+  role: 'CONVERSATION_HISTORY_ROLE_USER' | 'CONVERSATION_HISTORY_ROLE_ASSISTANT';
+  text: string;
 }
 
 // Log every Nth chunk to avoid overwhelming logs
@@ -96,8 +104,50 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly agentService: AgentService,
     private readonly modelsService: ModelsService,
     private readonly skillService: SkillService,
+    private readonly responseReliabilityService: ResponseReliabilityService,
+    private readonly agentRequestBuilder: ConversationAgentRequestBuilder,
   ) {
     this.logger.setContext('StreamService');
+  }
+
+  async seedConversationSession(
+    userId: string,
+    sessionId: string,
+    idempotencyKey: string,
+    history: ConversationHistoryEntry[],
+  ): Promise<void> {
+    await this.callConversationSessionRpc('SeedConversationSession', {
+      user_id: userId,
+      session_id: sessionId,
+      idempotency_key: idempotencyKey,
+      history,
+    });
+  }
+
+  async deleteConversationSession(userId: string, sessionId: string, idempotencyKey: string): Promise<void> {
+    await this.callConversationSessionRpc('DeleteConversationSession', {
+      user_id: userId,
+      session_id: sessionId,
+      idempotency_key: idempotencyKey,
+    });
+  }
+
+  private async callConversationSessionRpc(method: string, request: Record<string, unknown>): Promise<void> {
+    if (!this.isGrpcAvailable || !this.chatbotClient) {
+      throw new ServiceUnavailableException(
+        ErrorCode.CHAT_GRPC_UNAVAILABLE,
+        'AI service is currently unavailable',
+      );
+    }
+
+    const metadata = createGrpcMetadata(this.configService);
+    const deadline = new Date(Date.now() + this.configService.get<number>('conversation.grpcTimeoutMs', 120000));
+    await new Promise<void>((resolve, reject) => {
+      this.chatbotClient[method](request, metadata, { deadline }, (error: grpc.ServiceError | null) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
   }
 
   onModuleInit() {
@@ -638,85 +688,27 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       data: { conversationId, messageId },
     });
 
-    // Fetch conversation document once for workspace contexts and system workspace
-    const conversation = await this.conversationService.getConversationDocument(conversationId);
-    const systemWorkspaceId = conversation.systemWorkspaceId?.toString();
-
-    // Fetch group members if it's a group conversation
-    const groupMembers = conversation.groupMeta?.isGroup
-      ? await this.conversationService.getGroupMembers(conversationId)
-      : [];
-
-    // Build workspace contexts, agents, and attached files in parallel where possible
-    const sharedAgentIds = conversation.groupMeta?.isGroup
-      ? conversation.groupMeta.taggedAgents?.map((id) => id.toString()) || []
-      : [];
-
-    const requestedGovernedAgentIds = governanceOverride
-      ? (request.agentIds?.length ? request.agentIds : [governanceOverride.primaryAgentId])
-      : undefined;
-    const [workspaceContexts, agents] = await Promise.all([
-      this.buildWorkspaceContexts(conversationId, logOpts, conversation),
-      governanceOverride
-        ? this.agentService.buildGovernedAgentsForStream(userId, requestedGovernedAgentIds ?? [], governanceOverride.workspaceIds)
-        : this.agentService.buildAgentsForStream(
-        userId,
-        request.modelId,
-        request.agentIds,
-        sharedAgentIds,
-        groupMembers,
-        request.connectorRepo?.connectorId,
-      ),
-    ]);
-
-    // Resolve agent brain contexts, current-turn attached files, and previous files in parallel
-    const currentFileIds = request.attachedFileIds || [];
-    const [, attachedFiles, previousAttachedFiles, grpcSkills] = await Promise.all([
-      this.resolveAgentBrainContexts(agents),
-      this.buildAttachedFiles(currentFileIds),
-      this.buildPreviousAttachedFiles(systemWorkspaceId, currentFileIds),
-      request.skillIds?.length
-        ? this.skillService.findByIdsForGrpc(request.skillIds)
-        : Promise.resolve([]),
-    ]);
-
-    // Decide which RPC to use based on the resolved roster (see
-    // AgentService.buildAgentsForStream): the roster contains exactly one agent
-    // when the user tagged no agent (the default mono-agent) or tagged a single
-    // agent of any type — both run through RunSingleAgent. When the user tagged
-    // multiple agents the roster carries those agents plus the manager and runs
-    // through RunAgentTeam.
-    const useSingleAgent = agents.length === 1;
-
-    const baseRequest = {
-      user_context: { user_id: userId, username: username || '' },
-      conversation_id: conversationId,
-      query: request.content,
-      workspace_context: workspaceContexts?.length
-        ? workspaceContexts
-        : [{ workspace_id: conversationId, workspace_name: conversationId, workspace_documents: [] }],
-      attached_files: attachedFiles,
-      previous_attached_files: previousAttachedFiles,
-      deep_search_enabled: request.deepSearchEnabled ?? false,
-      ...(request.connectorRepo
-        ? {
-            connector_repo: {
-              connector_id: request.connectorRepo.connectorId,
-              connector_name: request.connectorRepo.connectorName,
-              repo_id: request.connectorRepo.repoId,
-              repo_name: request.connectorRepo.repoName,
-              repo_url: request.connectorRepo.repoUrl ?? '',
-            },
-          }
-        : {}),
-      ...(grpcSkills.length ? { skills: grpcSkills } : {}),
-    };
-
-    // RunSingleAgentRequest carries a single `agent` and no `agent_mode`;
-    // RunAgentTeamRequest carries the `agents` roster and an `agent_mode`.
-    const grpcRequest = useSingleAgent
-      ? { ...baseRequest, agent: agents[0] }
-      : { ...baseRequest, agents, agent_mode: 'manual' };
+    const builtRequest = await this.buildAgentExecutionRequest(
+      userId,
+      conversationId,
+      {
+        content: request.content,
+        taskSummary: request.taskSummary,
+        attachedFileIds: request.attachedFileIds ?? [],
+        webSearchEnabled: request.webSearchEnabled ?? false,
+        deepSearchEnabled: request.deepSearchEnabled ?? false,
+        modelId: request.modelId,
+        agentIds: request.agentIds ?? [],
+        skillIds: request.skillIds ?? [],
+        connectorRepo: request.connectorRepo,
+        governanceOverride,
+      },
+      username,
+      undefined,
+      logOpts,
+    );
+    const useSingleAgent = builtRequest.rpc === 'RunSingleAgent';
+    const grpcRequest = builtRequest.payload;
 
     const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);
     this.logger.debug(
@@ -751,6 +743,141 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       this.cleanupStream(userId, conversationId, streamKey);
       throw error;
     }
+  }
+
+  async buildAgentExecutionRequest(
+    userId: string,
+    conversationId: string,
+    request: MessageReplayContext,
+    username?: string,
+    correctionReplayContext?: CorrectionReplayContext,
+    logOpts: LogOptions = {},
+    sessionId = conversationId,
+  ): Promise<BuiltAgentExecutionRequest> {
+    const conversation = await this.conversationService.getConversationDocument(conversationId);
+    const systemWorkspaceId = conversation.systemWorkspaceId?.toString();
+    const groupMembers = conversation.groupMeta?.isGroup
+      ? await this.conversationService.getGroupMembers(conversationId)
+      : [];
+    const sharedAgentIds = conversation.groupMeta?.isGroup
+      ? conversation.groupMeta.taggedAgents?.map((id) => id.toString()) || []
+      : [];
+    const governanceOverride = request.governanceOverride;
+    const requestedGovernedAgentIds = governanceOverride
+      ? (request.agentIds.length ? request.agentIds : [governanceOverride.primaryAgentId])
+      : undefined;
+    const [workspaceContexts, agents] = await Promise.all([
+      this.buildWorkspaceContexts(conversationId, logOpts, conversation),
+      governanceOverride
+        ? this.agentService.buildGovernedAgentsForStream(userId, requestedGovernedAgentIds ?? [], governanceOverride.workspaceIds)
+        : this.agentService.buildAgentsForStream(
+          userId,
+          request.modelId,
+          request.agentIds,
+          sharedAgentIds,
+          groupMembers,
+          request.connectorRepo?.connectorId,
+        ),
+    ]);
+    const [, attachedFiles, previousAttachedFiles, skills] = await Promise.all([
+      this.resolveAgentBrainContexts(agents),
+      this.buildAttachedFiles(request.attachedFileIds),
+      this.buildPreviousAttachedFiles(systemWorkspaceId, request.attachedFileIds),
+      request.skillIds.length ? this.skillService.findByIdsForGrpc(request.skillIds) : Promise.resolve([]),
+    ]);
+    return this.agentRequestBuilder.build({
+      userId,
+      username,
+      conversationId: sessionId,
+      request,
+      workspaceContexts,
+      agents,
+      attachedFiles,
+      previousAttachedFiles,
+      skills,
+      correctionReplayContext,
+    });
+  }
+
+  executePrivateAgentRequest(
+    builtRequest: BuiltAgentExecutionRequest,
+    timeoutMs: number,
+    username?: string,
+  ): {
+    started: Promise<void>;
+    result: Promise<{ components: MessageComponent[]; usage: { inputTokens: number; outputTokens: number; model?: string; durationMs: number } }>;
+  } {
+    if (!this.isGrpcAvailable || !this.chatbotClient) {
+      throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'AI service is currently unavailable');
+    }
+    let resolveStarted!: () => void;
+    let rejectStarted!: (error: Error) => void;
+    const started = new Promise<void>((resolve, reject) => {
+      resolveStarted = resolve;
+      rejectStarted = reject;
+    });
+    let acknowledged = false;
+    const metadata = createGrpcMetadata(this.configService);
+    metadata.set('user', username || 'SYSTEM');
+    let call: grpc.ClientReadableStream<any>;
+    try {
+      call = this.chatbotClient[builtRequest.rpc](builtRequest.payload, metadata);
+    } catch (error) {
+      const transportError = error instanceof Error ? error : new Error(String(error));
+      rejectStarted(transportError);
+      return { started, result: Promise.reject(transportError) };
+    }
+    const result = new Promise<{ components: MessageComponent[]; usage: { inputTokens: number; outputTokens: number; model?: string; durationMs: number } }>((resolve, reject) => {
+      const buffer = new Map<string, MessageComponent>();
+      const started = Date.now();
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let model: string | undefined;
+      let settled = false;
+      let timeoutHandle: NodeJS.Timeout;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutHandle);
+        if (error) {
+          if (!acknowledged) rejectStarted(error);
+          reject(error);
+        }
+        else resolve({
+          components: Array.from(buffer.values()),
+          usage: { inputTokens, outputTokens, model, durationMs: Date.now() - started },
+        });
+      };
+      const resetTimeout = () => {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = setTimeout(() => {
+          call.cancel();
+          finish(new Error('corrective_replay_timeout'));
+        }, timeoutMs);
+      };
+      resetTimeout();
+      call.on('data', (chunk: any) => {
+        resetTimeout();
+        if (chunk.action === 'replay_started' && !acknowledged) {
+          acknowledged = true;
+          resolveStarted();
+          return;
+        }
+        const component = chunk.component;
+        if (component?.id && ['add', 'update', 'delete'].includes(chunk.action)) {
+          if (chunk.action === 'delete') buffer.delete(component.id);
+          else this.applyChunkToBuffer(buffer, chunk.action, component, undefined, true);
+        }
+        if (chunk.usage) {
+          inputTokens += chunk.usage.input_tokens || 0;
+          outputTokens += chunk.usage.output_tokens || 0;
+          model = chunk.usage.model || model;
+        }
+      });
+      call.on('error', (error: Error) => finish(error));
+      call.on('end', () => finish(acknowledged ? undefined : new Error('corrective_replay_not_started')));
+    });
+    return { started, result };
   }
 
   async stopStream(userId: string, conversationId: string, messageId: string): Promise<void> {
@@ -938,7 +1065,6 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         // Reset idle timeout on each chunk received
         resetIdleTimeout();
         chunkCount++;
-        console.log(chunk);
         // Capture time to first chunk
 
         // Capture time to first
@@ -991,6 +1117,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
               // Extract component type and data from oneof structure
               const { type, data } = this.extractComponentData(comp);
+              if (type === 'toolInfo') {
+                delete data.resultJson;
+                delete data.result_json;
+              }
               if (guardrailDecision) {
                 data.guardrailDecision = guardrailDecision;
               }
@@ -1162,6 +1292,19 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
                 durationMs,
               },
             },
+          });
+
+          // Informative evaluation starts only after users receive stream_complete.
+          void this.responseReliabilityService.schedule({
+            messageId,
+            conversationId,
+            userId,
+            requestId,
+          }).catch((error) => {
+            this.logger.warn('Unable to schedule response reliability evaluation', {
+              messageId,
+              error: error instanceof Error ? error.message : String(error),
+            }, logOpts);
           });
 
           this.cleanupStream(userId, conversationId, streamKey);
@@ -1406,14 +1549,28 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     action: string,
     comp: any,
     guardrailDecision?: Record<string, unknown>,
+    includePrivateToolResult = false,
   ): void {
     const componentId = comp.id;
     const { type, data } = this.extractComponentData(comp);
     if (guardrailDecision) {
       data.guardrailDecision = guardrailDecision;
     }
+    if (type === 'toolInfo' && !includePrivateToolResult) {
+      delete data.resultJson;
+      delete data.result_json;
+    }
 
     if (action === 'add') {
+      const existing = buffer.get(componentId);
+      if (existing && type === 'toolInfo') {
+        existing.data = this.mergeComponentData(type, existing.data, data);
+        if (!includePrivateToolResult) {
+          delete existing.data.resultJson;
+          delete existing.data.result_json;
+        }
+        return;
+      }
       buffer.set(componentId, {
         id: componentId,
         type,
@@ -1423,9 +1580,20 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const existing = buffer.get(componentId);
       if (existing) {
         existing.data = this.mergeComponentData(type, existing.data, data);
+        if (type === 'toolInfo' && !includePrivateToolResult) {
+          delete existing.data.resultJson;
+          delete existing.data.result_json;
+        }
         if (guardrailDecision) {
           existing.data.guardrailDecision = guardrailDecision;
         }
+      } else if (type === 'toolInfo') {
+        const merged = this.mergeComponentData(type, {}, data);
+        if (!includePrivateToolResult) {
+          delete merged.resultJson;
+          delete merged.result_json;
+        }
+        buffer.set(componentId, { id: componentId, type, data: merged });
       }
     }
   }
@@ -1481,10 +1649,15 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         // The 'update' chunk carries the final status (completed/failed) that
         // supersedes the initial 'running', but params (the tool-call args) are
         // only sent on the initial 'add' — preserve them when the update omits them.
+        const existingStatus = (existing.status as string) || 'running';
+        const incomingStatus = (incoming.status as string) || existingStatus;
+        const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'failed';
         return {
           title: (incoming.title as string) || (existing.title as string) || '',
-          status: (incoming.status as string) || (existing.status as string) || 'running',
+          status: existingIsTerminal ? existingStatus : incomingStatus,
           params: (incoming.params as string) || (existing.params as string) || '',
+          startedAt: (incoming.startedAt as string) || (existing.startedAt as string) || '',
+          resultJson: (incoming.resultJson as string) || (existing.resultJson as string) || '',
         };
       case 'sandbox':
         // Sandbox: merge code from first chunk with output/error from update

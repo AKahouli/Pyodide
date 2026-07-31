@@ -161,3 +161,51 @@ class TestStreamingEventProcessor:
       )
 
     assert closed is True
+
+  @pytest.mark.asyncio
+  async def test_manager_emits_each_repeated_tool_occurrence(self, processor):
+    queue = AsyncMock()
+    queue.include_private_tool_results = False
+
+    def event_for(part):
+      return SimpleNamespace(
+        content=SimpleNamespace(parts=[part]),
+        usage_metadata=None,
+        is_final_response=MagicMock(return_value=False),
+      )
+
+    events = [
+      event_for(SimpleNamespace(text=None, function_call=SimpleNamespace(id="call-1", name="search", args={"q": "one"}), function_response=None)),
+      event_for(SimpleNamespace(text=None, function_call=SimpleNamespace(id="call-2", name="search", args={"q": "two"}), function_response=None)),
+      event_for(SimpleNamespace(text=None, function_call=None, function_response=SimpleNamespace(id="call-1", name="search", response={"matches": 1}, is_error=False))),
+      event_for(SimpleNamespace(text=None, function_call=None, function_response=SimpleNamespace(id="call-2", name="search", response={"matches": 2}, is_error=False))),
+    ]
+
+    async def fake_stream():
+      for event in events:
+        yield event
+
+    agent_runner = MagicMock()
+    agent_runner.run_async.return_value = fake_stream()
+    with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
+    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client", MagicMock()
+    ):
+      await processor.process_streaming_events(
+        session_id="sess-tools",
+        user_prompt="search twice",
+        manager_agent=SimpleNamespace(id="mgr-1", name="Team Manager"),
+        agent_runner=agent_runner,
+        q=queue,
+      )
+
+    tool_events = [
+      call.args[0] for call in queue.put.await_args_list
+      if isinstance(call.args[0], dict) and call.args[0].get("component", {}).get("type") == "tool_info"
+    ]
+    assert [event["component"]["id"] for event in tool_events] == [
+      "tool-mgr-1-call-1", "tool-mgr-1-call-2", "tool-mgr-1-call-1", "tool-mgr-1-call-2",
+    ]
+    assert [event["action"] for event in tool_events] == ["add", "add", "update", "update"]
+    assert all("result_json" not in event["component"]["data"] for event in tool_events)

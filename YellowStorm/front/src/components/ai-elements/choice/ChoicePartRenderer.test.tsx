@@ -1,0 +1,168 @@
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { expect, it, vi } from 'vitest';
+
+import { ChoicePartRenderer } from './ChoicePartRenderer';
+
+vi.mock('@/modules/localization', () => ({
+  useModuleTranslation: () => ({ t: (key: string) => key }),
+}));
+
+it('visibly selects a list option and enables explicit submission', async () => {
+  const user = userEvent.setup();
+
+  render(
+    <ChoicePartRenderer
+      componentId='choice-1'
+      schemaVersion={1}
+      questionId='financial_analysis_type'
+      prompt='Choose an analysis'
+      presentation='list'
+      selectionMode='single'
+      submitBehavior='explicit'
+      status='ready'
+      dismissible={false}
+      options={[
+        { id: 'profitability', label: 'Profitability', submitText: 'Profitability', description: 'Review margins and return.' },
+        { id: 'liquidity', label: 'Liquidity', submitText: 'Liquidity', description: 'Review short-term obligations.' },
+      ]}
+      onAction={vi.fn()}
+    />,
+  );
+
+  const option = screen.getByRole('radio', { name: /Profitability/ });
+  const submit = screen.getByRole('button', { name: 'choice.submit' });
+  expect(submit).toBeDisabled();
+
+  await user.click(option);
+
+  expect(option).toHaveAttribute('aria-checked', 'true');
+  expect(option).toHaveAttribute('data-selected', 'true');
+  expect(option).toHaveClass('border-primary', 'bg-primary/10');
+  expect(submit).toBeEnabled();
+});
+
+it('renders Other as the final single-select card and submits its free text', async () => {
+  const user = userEvent.setup();
+  const onAction = vi.fn().mockResolvedValue(undefined);
+
+  render(
+    <ChoicePartRenderer
+      componentId='choice-1'
+      schemaVersion={1}
+      questionId='financial_analysis_type'
+      prompt='Choose an analysis'
+      presentation='list'
+      selectionMode='single'
+      submitBehavior='explicit'
+      status='ready'
+      dismissible={false}
+      options={[
+        { id: 'profitability', label: 'Profitability', submitText: 'Analyze profitability' },
+        { id: 'liquidity', label: 'Liquidity', submitText: 'Analyze liquidity' },
+      ]}
+      otherOption={{ enabled: true, label: 'Other analysis', placeholder: 'Describe your need', maxLength: 500 }}
+      onAction={onAction}
+    />,
+  );
+
+  const options = screen.getAllByRole('radio');
+  const normalOption = screen.getByRole('radio', { name: 'Profitability' });
+  const otherOption = screen.getByRole('radio', { name: 'Other analysis' });
+  const submit = screen.getByRole('button', { name: 'choice.submit' });
+  expect(options.at(-1)).toBe(otherOption);
+  expect(screen.queryByRole('textbox', { name: 'Other analysis' })).not.toBeInTheDocument();
+
+  await user.click(otherOption);
+  expect(otherOption).toHaveAttribute('aria-checked', 'true');
+  expect(screen.getByRole('textbox', { name: 'Other analysis' })).toBeInTheDocument();
+  expect(submit).toBeDisabled();
+
+  await user.type(screen.getByRole('textbox', { name: 'Other analysis' }), 'Focus on cash conversion');
+  await user.click(normalOption);
+  expect(otherOption).toHaveAttribute('aria-checked', 'false');
+  expect(screen.queryByRole('textbox', { name: 'Other analysis' })).not.toBeInTheDocument();
+  expect(normalOption).toHaveAttribute('aria-checked', 'true');
+
+  await user.click(otherOption);
+  expect(normalOption).toHaveAttribute('aria-checked', 'false');
+  expect(screen.getByRole('textbox', { name: 'Other analysis' })).toHaveValue('');
+  await user.type(screen.getByRole('textbox', { name: 'Other analysis' }), 'Compare operating cash flow');
+  await user.click(submit);
+
+  expect(onAction).toHaveBeenCalledWith(expect.objectContaining({
+    submitText: 'Compare operating cash flow',
+    interaction: expect.objectContaining({
+      selectedOptions: [],
+      customAnswer: 'Compare operating cash flow',
+    }),
+  }));
+});
+
+it('allows multiple selections to coexist with a completed Other response', async () => {
+  const user = userEvent.setup();
+  const onAction = vi.fn().mockResolvedValue(undefined);
+
+  render(
+    <ChoicePartRenderer
+      componentId='choice-1'
+      schemaVersion={1}
+      questionId='financial_analysis_type'
+      prompt='Choose analyses'
+      presentation='list'
+      selectionMode='multiple'
+      submitBehavior='explicit'
+      status='ready'
+      dismissible={false}
+      options={[
+        { id: 'profitability', label: 'Profitability', submitText: 'Analyze profitability' },
+        { id: 'liquidity', label: 'Liquidity', submitText: 'Analyze liquidity' },
+      ]}
+      otherOption={{ enabled: true, label: 'Other analysis', maxLength: 500 }}
+      onAction={onAction}
+    />,
+  );
+
+  await user.click(screen.getByRole('checkbox', { name: 'Profitability' }));
+  await user.click(screen.getByRole('checkbox', { name: 'Other analysis' }));
+  const submit = screen.getByRole('button', { name: 'choice.submit' });
+  expect(submit).toBeDisabled();
+  await user.type(screen.getByRole('textbox', { name: 'Other analysis' }), 'Include working capital');
+  expect(submit).toBeEnabled();
+  await user.click(submit);
+
+  expect(onAction).toHaveBeenCalledWith(expect.objectContaining({
+    interaction: expect.objectContaining({
+      selectedOptions: [{ optionId: 'profitability', label: 'Profitability' }],
+      customAnswer: 'Include working capital',
+    }),
+  }));
+});
+
+it('does not repeat selected values after the user response is displayed', async () => {
+  render(
+    <ChoicePartRenderer
+      componentId='choice-1'
+      schemaVersion={1}
+      questionId='financial_analysis_type'
+      prompt='Choose an analysis'
+      presentation='list'
+      selectionMode='single'
+      submitBehavior='explicit'
+      status='ready'
+      dismissible={false}
+      options={[
+        { id: 'profitability', label: 'Profitability', submitText: 'Analyze profitability' },
+        { id: 'liquidity', label: 'Liquidity', submitText: 'Analyze liquidity' },
+      ]}
+      submittedInteraction={{
+        type: 'choice', componentId: 'choice-1', questionId: 'financial_analysis_type',
+        selectionMode: 'single', selectedOptions: [{ optionId: 'profitability', label: 'Profitability' }],
+        displayText: 'Profitability',
+      }}
+    />,
+  );
+
+  await waitFor(() => expect(screen.getByText('choice.submitted')).toBeInTheDocument());
+  expect(screen.queryByText('Profitability')).not.toBeInTheDocument();
+});

@@ -219,6 +219,43 @@ class TestRunnerResponseHandlers:
         queue.put.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_handle_ui_tool_response_emits_web_preview(self):
+        runner = _runner()
+        function_response = MagicMock()
+        function_response.id = "preview-1"
+        function_response.response = {
+            "schemaVersion": 1,
+            "status": "ready",
+            "content": "<html><body>Preview</body></html>",
+        }
+        queue = AsyncMock()
+        runner.streaming_formatter.format_component_event.return_value = {"type": "web_preview"}
+
+        handled = await runner._handle_ui_tool_response(
+            "generate_web_preview", function_response, "agent-1", "sess-1", queue
+        )
+
+        assert handled is True
+        queue.put.assert_awaited_once()
+        assert runner.streaming_formatter.format_component_event.call_args.kwargs["component_data"] == {
+            "content": "<html><body>Preview</body></html>"
+        }
+
+    @pytest.mark.asyncio
+    async def test_handle_ui_tool_response_rejects_unstructured_web_preview(self):
+        runner = _runner()
+        function_response = MagicMock()
+        function_response.response = {"content": "<html></html>"}
+        queue = AsyncMock()
+
+        handled = await runner._handle_ui_tool_response(
+            "generate_web_preview", function_response, "agent-1", "sess-1", queue
+        )
+
+        assert handled is True
+        queue.put.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_send_citation_component_text(self):
         runner = _runner()
         queue = AsyncMock()

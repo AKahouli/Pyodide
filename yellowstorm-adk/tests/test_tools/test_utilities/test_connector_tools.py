@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.connector_tool_name import build_connector_tool_name
 from src.smart_rag.tools.utilities.connector_tools import (
     ConnectorToolContext,
     create_connector_tools,
@@ -97,8 +98,47 @@ def test_connector_tool_injects_bound_workspace_name(monkeypatch: pytest.MonkeyP
 def test_connector_tool_name_matches_nest_runtime_contract() -> None:
     tool = _first_connector_tool({"type": "object", "properties": {}})
 
-    assert tool.name == "connector_connector-1_search"
-    assert tool.custom_schema["name"] == "connector_connector-1_search"
+    assert tool.name == "workspace_search"
+    assert tool.custom_schema["name"] == "workspace_search"
+
+
+def test_connector_tool_name_is_openai_safe_and_matches_nest_contract() -> None:
+    assert build_connector_tool_name(
+        "sales@force", "search/files:v2"
+    ) == "sales_force_search_files_v2_76fa7386062c04a3"
+    long_name = build_connector_tool_name(
+        "enterprise-knowledge-connector-with-a-very-long-stable-slug",
+        "search_documents_with_extended_metadata_and_permissions",
+    )
+
+    assert long_name == (
+        "enterprise-knowledge-connector-with-a-very-long_0bb708607e97c779"
+    )
+    assert len(long_name) == 64
+    assert build_connector_tool_name(
+        "workspace", "search/files"
+    ) != build_connector_tool_name("workspace", "search:files")
+    assert build_connector_tool_name(
+        "workspace", "search\u001c"
+    ) == "workspace_search__9e54e0e3d98b6a49"
+
+
+def test_connector_tool_name_sanitization_does_not_change_mcp_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["action_key"] = args[3]
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    tool = _first_connector_tool({}, action_key="search\u001c")
+
+    asyncio.run(tool.func(query="revenue"))
+
+    assert tool.name == "workspace_search__9e54e0e3d98b6a49"
+    assert captured["action_key"] == "search\u001c"
 
 
 def test_connector_tool_binds_generic_params_as_workspace_id(

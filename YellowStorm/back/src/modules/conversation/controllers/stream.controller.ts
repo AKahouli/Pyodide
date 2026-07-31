@@ -1,6 +1,6 @@
-import { Controller, Sse, Req, MessageEvent } from '@nestjs/common';
+import { Controller, Sse, Req, Header, MessageEvent } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { Observable, of } from 'rxjs';
+import { concat, Observable, of } from 'rxjs';
 import { Request } from 'express';
 import { Subject } from 'rxjs';
 import { Public } from '../../auth/decorators/public.decorator';
@@ -18,6 +18,7 @@ export class StreamController {
   constructor(private readonly streamGateway: StreamGatewayService) {}
 
   @Sse()
+  @Header('X-Accel-Buffering', 'no')
   @Public()
   @StreamAuth()
   stream(@Req() req: RequestWithSseUser): Observable<MessageEvent> {
@@ -25,6 +26,9 @@ export class StreamController {
     const userId = user.sub;
     const sessionId = user.sessionId || 'unknown';
     const connectionId = `${userId}:${sessionId}:${Date.now()}`;
+
+    // Nest owns @Sse response headers; mutating them here is already too late.
+    req.socket?.setNoDelay(true);
 
     const disconnect$ = new Subject<void>();
 
@@ -52,12 +56,12 @@ export class StreamController {
       } as MessageEvent);
     }
 
-    // Send initial connected event
-    this.streamGateway.sendToUser(userId, {
+    // Emit after Nest subscribes so the initial connection frame cannot be lost.
+    const connected$ = of({
       type: 'connected',
       data: { connectionId },
-    });
+    } as MessageEvent);
 
-    return stream$;
+    return concat(connected$, stream$);
   }
 }

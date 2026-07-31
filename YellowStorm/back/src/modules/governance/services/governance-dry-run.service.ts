@@ -64,6 +64,7 @@ export class GovernanceDryRunService {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Dry-run agents must belong to the draft revision.');
     }
     if (dto.executionMode === 'manual') {
+      await this.accessService.assertScopeRole(actorId, deployment.programId.toString(), deployment.scopeId.toString(), ['scope_admin', 'scope_editor', 'scope_reviewer']);
       if (dto.conversationId || input) {
         throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'A manual dry-run cannot include a conversation or test input.');
       }

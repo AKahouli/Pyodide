@@ -41,6 +41,9 @@ export class AiModel extends Document {
   @Prop({ default: false })
   omitTemperature!: boolean; // Do not forward temperature for providers that reject it
 
+  @Prop({ type: [String], enum: ['text', 'image'], default: ['text'] })
+  inputModalities!: string[];
+
   createdAt!: Date;
   updatedAt!: Date;
 }

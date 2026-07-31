@@ -254,7 +254,9 @@ class ToolFactory:
         for tool_type, configs in grouped_configs.items():
             if tool_type not in ['search', 'web_search', 'calculator']:
                 for config in configs:
-                    native_tools = resolve_native_tools([config])
+                    native_tools = resolve_native_tools(
+                        [config], runtime_context=default_agent_params
+                    )
                     if native_tools:
                         tools.extend(native_tools)
                     elif config.enabled:

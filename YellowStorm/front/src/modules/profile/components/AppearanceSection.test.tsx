@@ -46,6 +46,17 @@ vi.mock('@/lib/utils', () => ({
   cn: (...args: string[]) => args.filter(Boolean).join(' '),
 }));
 
+vi.mock('@/modules/auth', () => ({
+  useAuth: () => ({
+    user: { appearance: { colorTheme: 'default' } },
+  }),
+}));
+
+vi.mock('../api', () => ({
+  updateAppearance: vi.fn().mockResolvedValue({ appearance: { colorTheme: 'default' } }),
+  updateLanguage: vi.fn().mockResolvedValue({}),
+}));
+
 describe('AppearanceSection', () => {
   it('changes theme and color theme on click', () => {
     render(<AppearanceSection />);

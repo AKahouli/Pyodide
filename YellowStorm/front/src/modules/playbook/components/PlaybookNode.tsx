@@ -23,14 +23,12 @@ import { InputFilesPopover } from './InputFilesPopover';
 import { PortLabel } from './PortLabel';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAgentStore } from '@/modules/agent/store';
-import { updateAdminAgent } from '@/modules/admin/api';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSchema';
-import type { Agent } from '@/modules/agent/types';
 import type { SkillDropPayload } from './SkillSidebar';
 import { usePlaybookStore } from '../store';
 import { cn } from '@/lib/utils';
-import { isDataBindingResolved } from '../utils/required-port-validation';
+import { getUnboundRequiredPorts } from '../utils/required-port-validation';
 import { PORT_COLORS } from '../utils/port-colors';
 import { migrateTask } from '../hooks/helpers/node-serializer';
 import { getEffectiveNodeType } from '../utils/node-type';
@@ -401,7 +399,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const [agentDialogOpen, setAgentDialogOpen] = useState(false);
   const [agentDialogSaving, setAgentDialogSaving] = useState(false);
   const updateAgent = useAgentStore((s) => s.updateAgent);
-  const createAgent = useAgentStore((s) => s.createAgent);
   const updateNodeInternals = useUpdateNodeInternals();
 
   const migratedTask = useMemo(() => migrateTask(data), [data]);
@@ -409,17 +406,16 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const outputPorts = migratedTask.outputPorts ?? [];
   const hasMultiplePorts = inputPorts.length > 1 || outputPorts.length > 1;
 
-  const dataBindings = usePlaybookStore((s) => s.currentPlaybook?.dataBindings ?? []);
+  const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
+  const dataBindings = currentPlaybook?.dataBindings ?? [];
   const unboundRequiredPortIds = useMemo(() => {
-    const portIds = new Set<string>();
-    for (const port of inputPorts) {
-      if (!port.required) continue;
-      if (!dataBindings.some((b) => b.targetNode === id && b.targetPort === port.id && isDataBindingResolved(b))) {
-        portIds.add(port.id);
-      }
-    }
-    return portIds;
-  }, [inputPorts, dataBindings, id]);
+    const tasks = currentPlaybook?.tasks?.length ? currentPlaybook.tasks : [migratedTask];
+    return new Set(getUnboundRequiredPorts(
+      tasks,
+      dataBindings,
+      currentPlaybook?.controlEdges ?? [],
+    ).filter((port) => port.taskId === id).map((port) => port.portId));
+  }, [currentPlaybook, dataBindings, id, migratedTask]);
 
   useEffect(() => {
     updateNodeInternals(id);
@@ -536,19 +532,15 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         skills: data.skills,
         disabledSkills: data.disabledSkills,
         connectors: data.connectors,
+        connectorActionSelections: data.connectorActionSelections,
         isActive: data.isActive,
         enable_temporary_child_agents: data.enable_temporary_child_agents,
         max_temporary_child_agents: data.max_temporary_child_agents,
+        deploymentSettings: data.deploymentSettings,
+        guardrails: data.guardrails,
       };
 
-      if (agent.isDefault) {
-        const updated = await updateAdminAgent(agent.id, payload);
-        useAgentStore.setState((state) => ({
-          agents: state.agents.map((item) => (item.id === updated.id ? updated : item)),
-        }));
-      } else {
-        await updateAgent(agent.id, payload);
-      }
+      await updateAgent(agent.id, payload);
       setAgentDialogOpen(false);
     } catch (error) {
       if (agent.isDefault) {
@@ -649,7 +641,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     const resourceArtifactKind = getResourceArtifactKind(payload);
     let portId = resolveHitPortId();
 
-    if (resourceKind === 'document' && nodeDataActions?.updateNodeData) {
+    if ((resourceKind === 'document' || resourceKind === 'workspace') && nodeDataActions?.updateNodeData) {
       const newPort = createCompatibleInputPort(payload.name || payload.id, resourceArtifactKind);
       nodeDataActions.updateNodeData(id, { inputPorts: [...inputPorts, newPort] });
       portId = newPort.id;

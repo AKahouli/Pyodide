@@ -11,6 +11,10 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  MULTIPART_STT_MAX_BYTES,
+  multipartFileInterceptorOptions,
+} from '@common/utils';
 import { WorkySttService } from '../services/worky-stt.service';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../../authorization/constants/permissions';
@@ -43,7 +47,9 @@ export class WorkySttController {
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Transcribe a recorded audio clip (EN/FR) to text' })
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', multipartFileInterceptorOptions(MULTIPART_STT_MAX_BYTES)),
+  )
   async transcribe(
     @UploadedFile() file: MulterFile,
   ): Promise<{ text: string; language?: string }> {

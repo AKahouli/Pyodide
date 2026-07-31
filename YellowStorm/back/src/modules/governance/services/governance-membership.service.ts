@@ -10,8 +10,6 @@ import { CreateGovernanceMembershipDto, UpdateGovernanceMembershipDto } from '..
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceScopeService } from './governance-scope.service';
 import { GovernanceMembership, GovernanceMembershipDocument, GovernanceMembershipRole } from '../schemas/governance-membership.schema';
-import { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
-import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
 
 export interface GovernanceMembershipResponse {
   id: string;
@@ -49,13 +47,10 @@ export class GovernanceMembershipService {
   constructor(
     @InjectModel(GovernanceMembership.name)
     private readonly membershipModel: Model<GovernanceMembershipDocument>,
-    @InjectModel(GovernanceScope.name)
-    private readonly scopeModel: Model<GovernanceScopeDocument>,
     private readonly programService: GovernanceProgramService,
     private readonly scopeService: GovernanceScopeService,
     private readonly userGroupService: UserGroupService,
     private readonly auditLogService: AuditLogService,
-    private readonly draftPreparationService: GovernanceDraftPreparationService,
   ) {}
 
   async create(actorId: string, actorEmail: string, programId: string, dto: CreateGovernanceMembershipDto): Promise<GovernanceMembershipResponse> {
@@ -68,7 +63,6 @@ export class GovernanceMembershipService {
     const { membership, reusedExisting } = await this.createMembershipOrReuseDuplicate(actorId, actorEmail, programId, dto);
     if (!reusedExisting) this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.membership.invited', targetType: 'governance_membership', targetId: membership._id.toString(), metadata: { programId, scopeId: dto.scopeId, role: dto.role } });
     const populated = await this.membershipModel.findById(membership._id).populate(MEMBERSHIP_POPULATE).lean().exec();
-    await this.prepareScopeDraft(actorId, actorEmail, programId, dto.scopeId);
     return this.toResponse(populated ?? membership);
   }
 
@@ -119,7 +113,6 @@ export class GovernanceMembershipService {
     const membership = await this.membershipModel.findOne({ _id: new Types.ObjectId(membershipId), programId: new Types.ObjectId(programId) }).exec();
     if (!membership) throw new NotFoundException(ErrorCode.GOVERNANCE_MEMBERSHIP_NOT_FOUND);
     await this.assertCanManageMembership(actorId, programId, membership.scopeId?.toString());
-    const previousScopeId = membership.scopeId?.toString();
     if (dto.scopeId !== undefined) membership.scopeId = dto.scopeId ? new Types.ObjectId(dto.scopeId) : undefined;
     if (dto.role !== undefined) {
       membership.role = dto.role as GovernanceMembershipRole;
@@ -129,15 +122,12 @@ export class GovernanceMembershipService {
     await membership.save();
     this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.membership.updated', targetType: 'governance_membership', targetId: membershipId, metadata: { programId, status: membership.status, role: membership.role } });
     const populated = await this.membershipModel.findById(membership._id).populate(MEMBERSHIP_POPULATE).lean().exec();
-    await this.prepareScopeDraft(actorId, actorEmail, programId, previousScopeId);
-    if (membership.scopeId?.toString() !== previousScopeId) await this.prepareScopeDraft(actorId, actorEmail, programId, membership.scopeId?.toString());
     return this.toResponse(populated ?? membership);
   }
 
   private async reactivateMembership(actorId: string, actorEmail: string, programId: string, membership: GovernanceMembershipDocument, dto: CreateGovernanceMembershipDto): Promise<GovernanceMembershipResponse> {
     const reactivated = await this.reactivateMembershipDocument(actorId, actorEmail, programId, membership, dto);
     const populated = await this.membershipModel.findById(reactivated._id).populate(MEMBERSHIP_POPULATE).lean().exec();
-    await this.prepareScopeDraft(actorId, actorEmail, programId, dto.scopeId);
     return this.toResponse(populated ?? reactivated);
   }
 
@@ -160,23 +150,12 @@ export class GovernanceMembershipService {
     if (await this.isProgramOwner(actorId, programId)) {
       await this.membershipModel.deleteOne({ _id: membership._id }).exec();
       this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.membership.deleted', targetType: 'governance_membership', targetId: membershipId, metadata: { programId } });
-      await this.prepareScopeDraft(actorId, actorEmail, programId, membership.scopeId?.toString());
       return;
     }
 
     membership.status = 'disabled';
     await membership.save();
     this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.membership.disabled', targetType: 'governance_membership', targetId: membershipId, metadata: { programId, status: 'disabled' } });
-    await this.prepareScopeDraft(actorId, actorEmail, programId, membership.scopeId?.toString());
-  }
-
-  private async prepareScopeDraft(actorId: string, actorEmail: string, programId: string, scopeId?: string): Promise<void> {
-    if (scopeId) {
-      await this.draftPreparationService.prepare(actorId, actorEmail, programId, scopeId);
-      return;
-    }
-    const scopes = await this.scopeModel.find({ programId: new Types.ObjectId(programId), status: 'active' }).select('_id').lean().exec();
-    await Promise.all(scopes.map((scope) => this.draftPreparationService.prepare(actorId, actorEmail, programId, scope._id.toString())));
   }
 
   async getAccessibleScopeIds(userId: string, programId: string): Promise<string[]> {

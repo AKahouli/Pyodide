@@ -52,6 +52,7 @@ export class ReportService {
       reason: data.reason,
       description: data.description,
       status: 'pending',
+      source: 'user',
     });
 
     this.logger.log('Report created', {
@@ -62,6 +63,28 @@ export class ReportService {
     });
 
     return this.mapToResponse(report);
+  }
+
+  async createSystemCorrectionReport(data: Pick<CreateReportData, 'conversationId' | 'messageId' | 'userId'>): Promise<ReportResponse> {
+    const existing = await this.reportModel.findOne({ messageId: new Types.ObjectId(data.messageId), source: 'system_correction' });
+    if (existing) return this.mapToResponse(existing);
+    try {
+      const report = await this.reportModel.create({
+        conversationId: new Types.ObjectId(data.conversationId),
+        messageId: new Types.ObjectId(data.messageId),
+        userId: new Types.ObjectId(data.userId),
+        reason: 'hallucination',
+        description: 'Automatic reliability correction requires human review.',
+        status: 'pending',
+        source: 'system_correction',
+      });
+      return this.mapToResponse(report);
+    } catch (error) {
+      // The legacy user/message unique index may already own the row; reuse it rather than duplicate review work.
+      const duplicate = await this.reportModel.findOne({ userId: new Types.ObjectId(data.userId), messageId: new Types.ObjectId(data.messageId) });
+      if (duplicate) return this.mapToResponse(duplicate);
+      throw error;
+    }
   }
 
   async findAll(params: ReportQueryParams): Promise<PaginatedReports> {
@@ -219,6 +242,8 @@ export class ReportService {
         durationMs: aiMessage.durationMs,
         isComplete: aiMessage.isComplete,
         createdAt: aiMessage.createdAt.toISOString(),
+        reliabilityEvaluation: aiMessage.reliabilityEvaluation,
+        correctionWorkflow: aiMessage.correctionWorkflow,
       },
       reporter: {
         id: reporter._id.toString(),
@@ -237,6 +262,7 @@ export class ReportService {
       description: report.description,
       status: report.status as ReportStatus,
       adminNotes: report.adminNotes,
+      source: report.source,
       createdAt: report.createdAt.toISOString(),
       updatedAt: report.updatedAt.toISOString(),
     };

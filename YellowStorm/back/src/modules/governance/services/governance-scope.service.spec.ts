@@ -1,4 +1,4 @@
-import { ForbiddenException, NotFoundException } from '@modules/exceptions';
+import { ForbiddenException, NotFoundException, ValidationException } from '@modules/exceptions';
 import { GovernanceScopeService } from './governance-scope.service';
 
 const actorId = '507f1f77bcf86cd799439011';
@@ -14,6 +14,7 @@ describe('GovernanceScopeService delete authorization', () => {
   function buildService(options: { isOwner?: boolean; accessibleScopeIds?: string[]; deleteMembership?: unknown; groupIds?: string[]; children?: unknown[]; deployments?: unknown[] } = {}) {
     const scope = { _id: { toString: () => scopeId }, programId: { toString: () => programId }, name: 'Scope', metadata: { classification: { stage: 'pilot' } }, save: jest.fn().mockResolvedValue(undefined) };
     const scopeModel = {
+      create: jest.fn().mockResolvedValue(scope),
       findOne: jest.fn().mockReturnValue(queryResult(scope)),
       countDocuments: jest.fn().mockResolvedValue(0),
       deleteOne: jest.fn().mockResolvedValue({}),
@@ -115,9 +116,25 @@ describe('GovernanceScopeService delete authorization', () => {
   it('deep-merges metadata updates without removing sibling metadata', async () => {
     const { service, scope } = buildService({ isOwner: true });
 
-    await service.update(actorId, actorEmail, programId, scopeId, { metadata: { review: { status: 'in_review' } } });
+    await service.update(actorId, actorEmail, programId, scopeId, { metadata: { description: 'Credit risk guidance', review: { status: 'in_review' } } });
 
-    expect(scope.metadata).toEqual({ classification: { stage: 'pilot' }, review: { status: 'in_review' } });
+    expect(scope.metadata).toEqual({ description: 'Credit risk guidance', classification: { stage: 'pilot' }, review: { status: 'in_review' } });
+  });
+
+  it('rejects invalid scope descriptions', async () => {
+    const { service } = buildService({ isOwner: true });
+
+    await expect(service.update(actorId, actorEmail, programId, scopeId, { metadata: { description: 'x'.repeat(2001) } })).rejects.toBeInstanceOf(ValidationException);
+  });
+
+  it('validates and normalizes scope descriptions on creation', async () => {
+    const { service, scopeModel } = buildService({ isOwner: true });
+    scopeModel.findOne.mockReturnValueOnce(queryResult(null)).mockReturnValueOnce(queryResult(null));
+
+    await service.create(actorId, programId, { name: 'Scope', metadata: { description: '  Credit risk guidance  ' } });
+    expect(scopeModel.create).toHaveBeenCalledWith(expect.objectContaining({ metadata: { description: 'Credit risk guidance' } }));
+
+    await expect(service.create(actorId, programId, { name: 'Other scope', metadata: { description: 42 } })).rejects.toBeInstanceOf(ValidationException);
   });
 
   it('does not prepare a draft when only the guardrail review timestamp changes', async () => {

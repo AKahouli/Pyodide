@@ -5,6 +5,13 @@ import { AdminDashboard } from './AdminDashboard';
 
 const menuItems = vi.hoisted(() => [
   {
+    id: 'appearance',
+    path: '/admin/appearance',
+    labelKey: 'appearance.title',
+    descriptionKey: 'appearance.description',
+    icon: () => <span>appearance-icon</span>,
+  },
+  {
     id: 'users',
     path: '/admin/users',
     labelKey: 'menu.users.label',
@@ -29,6 +36,7 @@ describe('AdminDashboard', () => {
     expect(screen.getByText('dashboard.description')).toBeInTheDocument();
     expect(screen.getByText('appearance.title')).toBeInTheDocument();
     expect(screen.getByText('appearance.description')).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /appearance\.title/i })).toHaveLength(1);
     expect(screen.getByText('menu.users.label')).toBeInTheDocument();
     expect(screen.getByText('menu.users.description')).toBeInTheDocument();
   });
