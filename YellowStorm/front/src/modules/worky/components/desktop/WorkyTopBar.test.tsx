@@ -48,6 +48,15 @@ describe('WorkyTopBar', () => {
     expect(screen.queryByLabelText('nav.worky')).toBeNull();
   });
 
+  it('opens the create dialog from the plus button', async () => {
+    const user = userEvent.setup();
+    renderTopBar();
+
+    await user.click(screen.getByTestId('worky-topbar-new-stream'));
+
+    expect(await screen.findByPlaceholderText('dashboard.newStreamPlaceholder')).toBeTruthy();
+  });
+
   it('navigates to another stream from the switcher', async () => {
     // Radix opens the menu on pointerdown, which fireEvent.click does not emit.
     const user = userEvent.setup();
