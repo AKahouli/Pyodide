@@ -68,7 +68,7 @@ export function useDocumentActions(document: WorkspaceDocument) {
 
   const handleViewFile = () => {
     if (!selectedWorkspace || !isViewable) return;
-    openFileViewer(selectedWorkspace.id, document.id, document.originalName, document.mimeType);
+    openFileViewer(selectedWorkspace.id, document.id, document.path, document.originalName, document.mimeType);
   };
 
   return {

@@ -20,8 +20,11 @@ vi.mock('../store', () => ({
 }));
 
 vi.mock('../utils', () => ({
-  ACCEPT_EXTENSIONS: '.pdf',
   validateFiles: (files: File[]) => validateFilesMock(files),
+}));
+
+vi.mock('../hooks/useAllowedUploadExtensions', () => ({
+  useAllowedUploadExtensions: () => ({ accept: '.pdf' }),
 }));
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }));

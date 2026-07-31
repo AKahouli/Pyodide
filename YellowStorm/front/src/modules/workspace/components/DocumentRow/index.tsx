@@ -236,8 +236,7 @@ export const DocumentRow = memo(function DocumentRow({
         <CreateFolderDialog
           open={isSubFolderDialogOpen}
           onOpenChange={setIsSubFolderDialogOpen}
-          workspaceId={selectedWorkspace?.id || ''}
-          parentFolderId={document.id}
+          parentId={document.id}
         />
       )}
     </>

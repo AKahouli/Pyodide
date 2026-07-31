@@ -173,8 +173,7 @@ export const DocumentCard = memo(function DocumentCard({
         <CreateFolderDialog
           open={isSubFolderDialogOpen}
           onOpenChange={setIsSubFolderDialogOpen}
-          workspaceId={selectedWorkspace?.id || ''}
-          parentFolderId={document.id}
+          parentId={document.id}
         />
       )}
     </>

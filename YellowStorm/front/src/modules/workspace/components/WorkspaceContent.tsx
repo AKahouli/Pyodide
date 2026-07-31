@@ -224,8 +224,7 @@ export function WorkspaceContent() {
             <CreateFolderDialog
               open={isCreateFolderOpen}
               onOpenChange={setIsCreateFolderOpen}
-              workspaceId={selectedWorkspaceId ?? undefined}
-              parentFolderId={createFolderParentId}
+              parentId={createFolderParentId ?? null}
             />
           )}
 

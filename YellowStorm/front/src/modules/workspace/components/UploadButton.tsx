@@ -9,7 +9,8 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useModuleTranslation } from '@/modules/localization';
 import { useWorkspaceStore, useSelectedWorkspace } from '../store';
-import { validateFiles, ACCEPT_EXTENSIONS } from '../utils';
+import { validateFiles } from '../utils';
+import { useAllowedUploadExtensions } from '../hooks/useAllowedUploadExtensions';
 
 interface UploadButtonProps {
   folderId?: string;
@@ -18,6 +19,7 @@ interface UploadButtonProps {
 export function UploadButton({ folderId }: UploadButtonProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { t } = useModuleTranslation('workspace');
+  const { accept } = useAllowedUploadExtensions();
 
   const selectedWorkspace = useSelectedWorkspace();
   const addFilesToQueue = useWorkspaceStore((state) => state.addFilesToQueue);
@@ -54,7 +56,7 @@ export function UploadButton({ folderId }: UploadButtonProps) {
 
   return (
     <>
-      <input ref={fileInputRef} type='file' accept={ACCEPT_EXTENSIONS} multiple className='hidden' onChange={handleFileChange} />
+      <input ref={fileInputRef} type='file' accept={accept} multiple className='hidden' onChange={handleFileChange} />
       {/* Mobile: icon-only button */}
       <Button variant='outline' size='icon' className='h-8 w-8 md:hidden' onClick={handleClick} disabled={!selectedWorkspace || isUploading} title={t('upload.button.add')}>
         <Plus className='h-4 w-4' />

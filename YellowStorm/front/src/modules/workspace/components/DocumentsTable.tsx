@@ -12,8 +12,9 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useModuleTranslation } from '@/modules/localization';
 import { useWorkspaceStore, useDocuments, useDocumentPagination, useWorkspaceLoading, useSelectedWorkspace } from '../store';
-import { DEFAULT_PAGE_LIMIT, ACCEPT_EXTENSIONS, validateFiles } from '../utils';
+import { DEFAULT_PAGE_LIMIT, validateFiles } from '../utils';
 import { useDocumentSelection } from '../hooks';
+import { useAllowedUploadExtensions } from '../hooks/useAllowedUploadExtensions';
 import { useDocumentDragDrop } from '../hooks/useDocumentDragDrop';
 import { FloatingActionBar } from './FloatingActionBar';
 import DocumentRow from './DocumentRow';
@@ -25,6 +26,7 @@ interface DocumentsTableProps {
 
 export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
   const { t } = useModuleTranslation('workspace');
+  const { accept } = useAllowedUploadExtensions();
   const { documents } = useDocuments();
   const selectedWorkspace = useSelectedWorkspace();
   const { currentPage, totalPages, totalDocuments } = useDocumentPagination();
@@ -137,7 +139,7 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
       <input
         ref={folderFileInputRef}
         type='file'
-        accept={ACCEPT_EXTENSIONS}
+        accept={accept}
         multiple
         style={{ position: 'absolute', left: -9999, visibility: 'hidden' }}
         onChange={handleFileInputChange}

@@ -7,10 +7,19 @@ import { useMemo } from 'react';
 import { File, Folder, FolderOpen, ChevronRight, FileText, Download, MoreHorizontal, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import type { WorkspaceDocument, WorkspaceFolder } from '../types';
+import type { WorkspaceDocument } from '../types';
+
+/**
+ * Tree-shaped folder consumed by this component: a folder document
+ * (`isFolder: true`) enriched with its expansion state and resolved children.
+ */
+type FolderTreeNode = WorkspaceDocument & {
+  isExpanded?: boolean;
+  children: (WorkspaceDocument | FolderTreeNode)[];
+};
 
 interface FolderTreeProps {
-  items: (WorkspaceDocument | WorkspaceFolder)[];
+  items: (WorkspaceDocument | FolderTreeNode)[];
   workspaceId: string;
   selectedIds: string[];
   onToggleExpand?: (folderId: string) => void;
@@ -44,7 +53,7 @@ export function FolderTree({
 
   // Separate folders and documents
   const { folders, documents } = useMemo(() => {
-    const folderItems = items.filter((item) => item.isFolder) as WorkspaceFolder[];
+    const folderItems = items.filter((item) => item.isFolder) as FolderTreeNode[];
     const documentItems = items.filter((item) => !item.isFolder) as WorkspaceDocument[];
     return { folders: folderItems, documents: documentItems };
   }, [items]);
@@ -75,7 +84,7 @@ export function FolderTree({
     }
   };
 
-  const renderFolder = (folder: WorkspaceFolder, level = 0) => {
+  const renderFolder = (folder: FolderTreeNode, level = 0) => {
     return (
       <div className="ml-4">
         <div
@@ -146,7 +155,7 @@ export function FolderTree({
                 return (
                   <FolderTreeItem
                     key={item.id}
-                    item={item as WorkspaceFolder}
+                    item={item as FolderTreeNode}
                     level={level + 1}
                     workspaceId={workspaceId}
                     selectedIds={selectedIds}
@@ -309,7 +318,7 @@ export function FolderTree({
 
 // Sub-components for recursive rendering
 interface FolderTreeItemProps {
-  item: WorkspaceFolder;
+  item: FolderTreeNode;
   level: number;
   workspaceId: string;
   selectedIds: string[];
@@ -415,7 +424,7 @@ function FolderTreeItem({
               return (
                 <FolderTreeItem
                   key={child.id}
-                  item={child as WorkspaceFolder}
+                  item={child as FolderTreeNode}
                   level={level + 1}
                   workspaceId={workspaceId}
                   selectedIds={selectedIds}

@@ -444,6 +444,7 @@
   "intentBar.actions.suggest": "Suggest",
   "intentBar.actions.stop": "Stop",
   "intentBar.actions.apply": "Apply",
+  "intentBar.actions.autoApply": "Auto-apply",
   "intentBar.actions.collapse": "Collapse intent bar",
   "intentBar.actions.expand": "Expand intent bar",
   "intentBar.construction.starting": "Starting realtime construction...",

@@ -49,6 +49,10 @@ vi.mock('../hooks', () => ({
   }),
 }));
 
+vi.mock('../hooks/useAllowedUploadExtensions', () => ({
+  useAllowedUploadExtensions: () => ({ accept: '.pdf' }),
+}));
+
 vi.mock('./DocumentRow', () => ({
   default: ({ document }: { document: { id: string } }) => <tr><td>row-{document.id}</td></tr>,
 }));
