@@ -1,16 +1,10 @@
-name: SonarCloud Analysis
+name: SonarQube Analysis
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      branch:
-        description: "Branch to scan"
-        required: false
-        default: "main"
-        type: string
 
 permissions:
   contents: read
@@ -22,10 +16,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch || github.ref_name }}
           fetch-depth: 0
 
-      - name: Cache SonarCloud packages
+      - name: Cache SonarQube packages
         uses: actions/cache@v4
         with:
           path: ~/.sonar/cache
@@ -33,8 +26,7 @@ jobs:
           restore-keys: ${{ runner.os }}-sonar
 
       # --------------------------
-      # SonarCloud scan (direct CLI — no PR auto-detection)
-      # Note: tests skipped intentionally — re-enable once failing specs are fixed
+      # SonarQube scan (self-hosted — no LOC limit)
       # --------------------------
       - name: Install sonar-scanner
         run: |
@@ -43,12 +35,10 @@ jobs:
           unzip -q /tmp/sonar-scanner.zip -d /opt/
           echo "/opt/sonar-scanner-6.2.1.4610-linux-x64/bin" >> $GITHUB_PATH
 
-      - name: Run SonarCloud scan
+      - name: Run SonarQube scan
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           sonar-scanner \
-            -Dsonar.host.url=https://sonarcloud.io \
             -Dsonar.token="${SONAR_TOKEN}" \
-            -Dsonar.branch.name=${{ inputs.branch || github.ref_name }} \
             -Dsonar.scm.revision="${{ github.sha }}"
