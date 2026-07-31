@@ -10,14 +10,8 @@ interface TaskDetailDrawerProps {
   onClose: () => void;
 }
 
-const ROLE_LABEL_KEYS: Record<string, string> = {
-  ephemeral_ai_agent: 'kanban.assignees.ephemeral_ai_agent',
-  human_agent: 'kanban.assignees.human_agent',
-  unassigned: 'kanban.assignees.unassigned',
-};
-
 /**
- * Read-only task detail drawer: description, metadata and the step's result.
+ * Read-only task detail drawer: description, dependencies and the step's result.
  * The per-task lane controls (move / pause / resume / review / cancel) were
  * removed — they wrote Mongo lanes that the next Electric `plan_steps` update
  * overwrote, so they had no lasting effect. Raw payloads are admin-only per
@@ -126,15 +120,3 @@ function extractPayloadText(payload: Record<string, unknown> | null): string {
   return typeof value === 'string' ? value : '';
 }
 
-function formatDateTime(value: string | null, fallback: string): string {
-  if (!value) return fallback;
-  return new Date(value).toLocaleString();
-}
-
-function formatDuration(value: number | null, fallback: string): string {
-  if (typeof value !== 'number') return fallback;
-  const seconds = Math.max(0, Math.round(value / 1000));
-  const minutes = Math.floor(seconds / 60);
-  const remaining = seconds % 60;
-  return minutes > 0 ? `${minutes}m ${remaining}s` : `${remaining}s`;
-}
