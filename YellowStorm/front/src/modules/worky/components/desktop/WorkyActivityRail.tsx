@@ -45,8 +45,8 @@ export function WorkyActivityRail({
   const activity = useWorkyUiStore((s) => s.recentActivity);
 
   return (
-    <aside className="hidden w-[344px] shrink-0 flex-col gap-4 border-l border-border bg-card p-4 lg:flex">
-      <div className="flex gap-1 rounded-lg border border-border bg-muted p-0.5">
+    <aside className="hidden w-[344px] shrink-0 flex-col border-l border-border bg-card lg:flex">
+      <div className="flex shrink-0 gap-1 rounded-lg border border-border bg-muted p-0.5 m-3 mb-2">
         {(['chat', 'activity'] as const).map((v) => (
           <button
             key={v}
