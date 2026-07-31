@@ -395,6 +395,11 @@ class OrchestratorService:
         from google.adk.tools.tool_context import ToolContext
         from src.smart_rag.tools.search.tools import SearchToolADK
 
+        # Every delegate spawned by THIS caller this turn — siblings, not a
+        # chain. Excluded below so a second consultation doesn't get wired
+        # as depending on the first.
+        siblings: set = set()
+
         async def delegate_to_human_agent(agent_name: str, task: str, *,
                                           tool_context: ToolContext = None) -> str:
             matches = await human_agents.search_human_agents(name=agent_name)
@@ -417,12 +422,25 @@ class OrchestratorService:
                             assignee_name=agent_display_name, assignee_role=agent.get("role"),
                             depends_on=[caller_step_id])
             plan.steps.append(sub_step)
+            # Anything already waiting on the caller can't really start until
+            # this new child finishes either — the caller's node doesn't
+            # complete until its delegate calls do. Excludes the caller's
+            # own other delegates, which are parallel to this one, not before it.
+            affected = [o for o in plan.steps
+                       if o.id != sub_step.id and o.id not in siblings
+                       and caller_step_id in o.depends_on
+                       and sub_step.id not in o.depends_on]
+            for other in affected:
+                other.depends_on.append(sub_step.id)
+            siblings.add(sub_step.id)
             scheduler.validate(plan)
             scheduler.assign_waves(plan)
             name_to_step[graph.node_name(sub_step.id)] = sub_step.id
             logger.info("[worky] delegate_to_human_agent session=%s → %s (step=%s)",
                         session_id, agent_name, sub_step.id)
             await self._project_step(session_id, plan, sub_step)
+            for other in affected:
+                await self._project_step(session_id, plan, other)
 
             # The caller's node is still "running" in ADK, but the user sees it
             # as blocked on the delegate — reflect that on the plan card.

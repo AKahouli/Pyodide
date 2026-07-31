@@ -98,7 +98,7 @@ def test_a_persona_step_never_gets_a_competing_execution_agent_identity():
     plain_step = Step(id="b", kind="execute", description="Search the web for Tesla news.")
 
     assert "You are an execution agent" not in factory(persona_step, "a").instruction
-    assert "You are Rabeb." in factory(persona_step, "a").instruction
+    assert "You are Rabeb" in factory(persona_step, "a").instruction
     assert "You are an execution agent" in factory(plain_step, "b").instruction
 
 

@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import pytest
 
-from src.companion_ai import service as svc
+from src.companion_ai import scheduler, service as svc
 from src.companion_ai.plan import Plan, Status, Step
 
 
@@ -218,6 +218,72 @@ def test_delegate_tool_appends_a_step_assigned_to_the_target_and_calls_run_node(
     assert caller_calls[0].kwargs["blocked_reason"] == "waiting on Oussama"
     assert plan.step("s2").status is Status.RUNNING
     assert plan.step("s2").blocked_reason is None
+
+
+def test_delegate_tool_propagates_dependency_to_siblings_for_an_accurate_wave(monkeypatch):
+    """s3 already depends on the caller (s1). Once s1 dynamically spawns a
+    delegate, s3 can't really start until that finishes either — s1's own
+    node doesn't complete until its delegate call does, so s3 must land in
+    a later wave than the delegate, not the same one."""
+    monkeypatch.setattr(svc.human_agents, "search_human_agents", AsyncMock(
+        return_value=[{"id": "david", "name": "David", "role": "Risk manager"}]))
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="s1", kind="execute", description="ask James",
+             assignee="james", assignee_name="James"),
+        Step(id="s3", kind="execute", description="formal sign-off", depends_on=["s1"]),
+    ])
+    scheduler.assign_waves(plan)
+    assert plan.step("s3").wave == 1  # before delegation
+
+    name_to_step = {"s1": "s1", "s3": "s3"}
+    tool = service._delegate_tool_for("sess1", "u1", plan, _fn_factory_holder(), name_to_step, "s1")
+    tool_context = MagicMock()
+    tool_context.run_node = AsyncMock(return_value="modest sizing")
+
+    asyncio.run(tool.func("David", "risk read?", tool_context=tool_context))
+
+    new_step = plan.steps[-1]
+    assert new_step.assignee_name == "David"
+    assert plan.step("s3").depends_on == ["s1", new_step.id]
+    assert plan.step("s3").wave == 2  # correctly later than David's wave (1), not equal to it
+
+
+def test_delegate_tool_keeps_two_consultations_from_the_same_caller_parallel(monkeypatch):
+    """James asks both David and Oussama. They're independent branches of
+    the same caller, not a chain, and must stay siblings at the same wave —
+    not get sequentialized into one wave after the other."""
+    monkeypatch.setattr(svc.human_agents, "search_human_agents", AsyncMock(side_effect=[
+        [{"id": "david", "name": "David", "role": "Risk manager"}],
+        [{"id": "oussama", "name": "Oussama", "role": "Investment approver"}],
+    ]))
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="s1", kind="execute", description="ask James",
+             assignee="james", assignee_name="James"),
+        Step(id="s3", kind="execute", description="formal sign-off", depends_on=["s1"]),
+    ])
+    scheduler.assign_waves(plan)
+
+    name_to_step = {"s1": "s1", "s3": "s3"}
+    tool = service._delegate_tool_for("sess1", "u1", plan, _fn_factory_holder(), name_to_step, "s1")
+    tool_context = MagicMock()
+    tool_context.run_node = AsyncMock(return_value="ok")
+
+    asyncio.run(tool.func("David", "risk read?", tool_context=tool_context))
+    asyncio.run(tool.func("Oussama", "approve?", tool_context=tool_context))
+
+    david, oussama = plan.steps[2], plan.steps[3]
+    assert david.assignee_name == "David" and oussama.assignee_name == "Oussama"
+    # Neither delegate depends on the other — they're parallel siblings.
+    assert david.depends_on == ["s1"]
+    assert oussama.depends_on == ["s1"]
+    assert david.wave == oussama.wave == 1
+    # The genuinely later step picks up BOTH, and lands one wave after them.
+    assert plan.step("s3").depends_on == ["s1", david.id, oussama.id]
+    assert plan.step("s3").wave == 2
 
 
 def test_delegate_tool_unblocks_the_caller_even_when_the_delegate_errors(monkeypatch):
