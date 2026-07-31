@@ -1,4 +1,5 @@
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class SpeakWorkyTtsDto {
   @IsString()
@@ -11,4 +12,12 @@ export class SpeakWorkyTtsDto {
   @IsString()
   @MaxLength(100)
   voice?: string;
+
+  /** Playback rate for synthesis, 0.5–2. Omitted = the provider's default. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.5)
+  @Max(2)
+  speed?: number;
 }

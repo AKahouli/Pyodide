@@ -387,10 +387,14 @@ export async function transcribeAudio(
  * Synthesize spoken audio for an agent answer via OpenRouter TTS (proxied by
  * the backend). Returns the audio as a Blob for playback.
  */
-export async function synthesizeSpeech(text: string, voice?: string): Promise<Blob> {
+export async function synthesizeSpeech(
+  text: string,
+  voice?: string,
+  speed?: number,
+): Promise<Blob> {
   const response = await apiClient.post(
     API_ENDPOINTS.worky.ttsSpeak,
-    { text, voice },
+    { text, voice, speed },
     { responseType: 'blob' },
   );
   return response.data as Blob;
