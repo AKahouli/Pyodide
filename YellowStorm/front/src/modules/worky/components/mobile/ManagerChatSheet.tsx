@@ -13,10 +13,14 @@ export function ManagerChatSheet({
   streamId,
   open,
   onOpenChange,
+  onWhatsAppClick,
+  whatsappConnected,
 }: {
   streamId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onWhatsAppClick?: () => void;
+  whatsappConnected?: boolean;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   return (
@@ -29,7 +33,7 @@ export function ManagerChatSheet({
           <ChatMessageThread streamId={streamId} />
         </div>
         <div className="border-t border-border">
-          <PromptBar streamId={streamId} />
+          <PromptBar streamId={streamId} onWhatsAppClick={onWhatsAppClick} whatsappConnected={whatsappConnected} />
         </div>
       </SheetContent>
     </Sheet>

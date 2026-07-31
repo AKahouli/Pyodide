@@ -10,6 +10,14 @@ import { devtools } from 'zustand/middleware';
 export type WorkyMobileTab = 'agents' | 'chat' | 'more';
 export type WorkyMobileSheet = 'agent' | 'task' | 'budget' | 'approval' | 'chat';
 
+/** A single live activity-feed entry (accumulated in-session from SSE events). */
+export interface WorkyActivityItem {
+  key: string;
+  icon: string;
+  tone: 'working' | 'blocked' | 'done' | 'primary' | 'muted';
+  text: string;
+}
+
 interface WorkyUiState {
   isTaskDrawerOpen: boolean;
   selectedTaskId: string | null;
@@ -22,6 +30,8 @@ interface WorkyUiState {
   activeSheet: WorkyMobileSheet | null;
   /** Whether the live voice session overlay is open. */
   voiceOpen: boolean;
+  /** Live activity feed, newest first, bounded to the last 20 events. */
+  recentActivity: WorkyActivityItem[];
   setTaskDrawerOpen: (open: boolean) => void;
   setSelectedTaskId: (id: string | null) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
@@ -29,6 +39,8 @@ interface WorkyUiState {
   setMobileTab: (tab: WorkyMobileTab) => void;
   setActiveSheet: (sheet: WorkyMobileSheet | null) => void;
   setVoiceOpen: (open: boolean) => void;
+  pushActivity: (item: WorkyActivityItem) => void;
+  clearActivity: () => void;
   notifySendError: (message: string) => void;
   clearSendError: () => void;
   reset: () => void;
@@ -43,6 +55,7 @@ const initialState = {
   mobileTab: 'agents' as WorkyMobileTab,
   activeSheet: null as WorkyMobileSheet | null,
   voiceOpen: false,
+  recentActivity: [] as WorkyActivityItem[],
 };
 
 export const useWorkyUiStore = create<WorkyUiState>()(
@@ -57,6 +70,9 @@ export const useWorkyUiStore = create<WorkyUiState>()(
       setMobileTab: (mobileTab) => set({ mobileTab }),
       setActiveSheet: (activeSheet) => set({ activeSheet }),
       setVoiceOpen: (voiceOpen) => set({ voiceOpen }),
+      pushActivity: (item) =>
+        set((s) => ({ recentActivity: [item, ...s.recentActivity].slice(0, 20) })),
+      clearActivity: () => set({ recentActivity: [] }),
       notifySendError: (sendError) => set({ sendError }),
       clearSendError: () => set({ sendError: null }),
       reset: () => set(initialState),
