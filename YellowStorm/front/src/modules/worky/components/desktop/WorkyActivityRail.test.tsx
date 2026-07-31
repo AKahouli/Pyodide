@@ -4,9 +4,6 @@ import { render, screen, fireEvent } from '@testing-library/react';
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (k: string) => k, language: 'en', ready: true }),
 }));
-vi.mock('../../query/hooks', () => ({
-  useStreamBudget: () => ({ data: { spendUsd: 42.8, limitUsd: 100 } }),
-}));
 // The rail only needs to mount these; their own suites cover their behaviour.
 vi.mock('../ChatMessageThread', () => ({
   ChatMessageThread: () => <div data-testid="thread" />,
@@ -29,9 +26,10 @@ describe('WorkyActivityRail', () => {
     expect(screen.queryByText('voice.tapToTalk')).toBeNull();
   });
 
-  it('renders the budget mini regardless of the active tab', () => {
+  it('does not render a budget card', () => {
     render(<WorkyActivityRail streamId="s1" />);
-    expect(screen.getByText('$42.80 / $100')).toBeTruthy();
+    expect(screen.queryByText('budget.title')).toBeNull();
+    expect(screen.queryByText(/\$/)).toBeNull();
   });
 
   it('switches to the activity tab and shows live activity items', () => {
