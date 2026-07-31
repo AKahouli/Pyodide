@@ -209,6 +209,18 @@ export async function reindexDocument(
   return response.data.data;
 }
 
+export async function renameDocument(
+  workspaceId: string,
+  documentId: string,
+  name: string,
+): Promise<WorkspaceDocument> {
+  const response = await apiClient.patch<ApiResponse<WorkspaceDocument>>(
+    API_ENDPOINTS.workspaceDocuments.rename(workspaceId, documentId),
+    { name },
+  );
+  return response.data.data;
+}
+
 // ===== Folder APIs =====
 
 export interface CommunityGraphData {

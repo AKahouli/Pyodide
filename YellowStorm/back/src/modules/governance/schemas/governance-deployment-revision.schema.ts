@@ -57,12 +57,6 @@ export class GovernanceDeploymentRevision extends Document {
   @Prop({ type: Object, default: {} })
   previousAudienceSnapshot!: Record<string, unknown>;
 
-  @Prop({ type: Object, default: {} })
-  ownershipSnapshot!: Record<string, unknown>;
-
-  @Prop({ type: Object, default: {} })
-  guardrailSnapshot!: Record<string, unknown>;
-
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy!: Types.ObjectId;
 

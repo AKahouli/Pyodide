@@ -1,0 +1,1 @@
+export const conversationPanelClassName = 'mx-2 mb-2 w-auto shrink-0 rounded-xl border border-border/80 bg-background/95 p-2 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80 md:mx-4';

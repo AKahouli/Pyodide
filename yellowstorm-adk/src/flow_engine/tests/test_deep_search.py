@@ -5,6 +5,7 @@ import pytest
 from src.flow_engine.deep_search import (
     merge_file_names,
     normalize_response,
+    routed_file_items,
     search_relevant_documents,
 )
 
@@ -61,6 +62,57 @@ def test_normalize_response_accepts_no_relevant_files():
     assert result["status"] == "NO_RELEVANT_FILES"
     assert result["files"] == []
     assert result["total_files"] == 0
+
+
+def test_normalize_response_accepts_wrapped_results():
+    result = normalize_response(
+        {
+            "success": True,
+            "data": {
+                "workspace_id": "workspace-1",
+                "results": [
+                    {"file_name": "Contract.pdf", "hybrid_score": 0.91},
+                ],
+            },
+        },
+    )
+
+    assert result["workspace_id"] == "workspace-1"
+    assert result["files"] == [
+        {"file_name": "Contract.pdf", "hybrid_score": 0.91},
+    ]
+    assert result["total_files"] == 1
+
+
+def test_normalize_response_preserves_required_and_optional_files():
+    result = normalize_response(
+        {
+            "workspace_id": "workspace-1",
+            "status": "ROUTED",
+            "files": {
+                "required": [
+                    {"file_name": "Required.pdf", "reason": "Exact period match"},
+                ],
+                "optional": [
+                    {"file_name": "Optional.pdf", "reason": "Related content"},
+                ],
+            },
+        },
+    )
+
+    assert result["files"] == {
+        "required": [
+            {"file_name": "Required.pdf", "reason": "Exact period match"},
+        ],
+        "optional": [
+            {"file_name": "Optional.pdf", "reason": "Related content"},
+        ],
+    }
+    assert result["total_files"] == 2
+    assert [item["file_name"] for item in routed_file_items(result)] == [
+        "Required.pdf",
+        "Optional.pdf",
+    ]
 
 
 @pytest.mark.anyio

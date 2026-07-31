@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { AgentService } from './agent.service';
+import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
 import { IAgentForStream } from './interfaces/agent.interface';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
 
@@ -123,6 +124,13 @@ describe('AgentService connector skill inheritance', () => {
       teamService as any,
       agentShareService as any,
       guardrailsSettingsService as any,
+      new AgentConnectorRuntimeService(
+        logger as any,
+        skillService as any,
+        connectorService as any,
+        connectorAuthService as any,
+        configService as unknown as ConfigService,
+      ),
     );
 
     jest.spyOn(service as any, 'buildToolsWithTokens').mockResolvedValue([]);
@@ -198,6 +206,7 @@ describe('AgentService connector skill inheritance', () => {
       {
         id: 'connector-1',
         name: 'Connector 1',
+        slug: 'workspace',
         actions: [
           { key: 'run_code', label: 'Run code', description: '', isEnabled: true },
           { key: 'upload_file', label: 'Upload file', description: '', isEnabled: true },
@@ -219,7 +228,9 @@ describe('AgentService connector skill inheritance', () => {
       'disabled-skill',
     ]);
     expect(result).toHaveLength(1);
-    expect(result[0].tools.map((tool) => tool.name)).toEqual(['connector_connector-1_run_code']);
+    expect(result[0].tools.map((tool) => tool.name)).toEqual(['workspace_run_code']);
+    expect(JSON.parse(result[0].agent_params?.params.connector_bindings_json as string)[0])
+      .toEqual(expect.objectContaining({ connector_slug: 'workspace' }));
     expect(result[0].skills?.map((skill) => skill.id as string)).toEqual([
       'type-skill',
       'agent-skill',
@@ -474,6 +485,7 @@ describe('AgentService connector skill inheritance', () => {
       {
         id: '222222222222222222222222',
         name: 'Connector 1',
+        slug: 'workspace',
         actions: [
           { key: 'run_code', label: 'Run code', description: '', isEnabled: true },
           { key: 'upload_file', label: 'Upload file', description: '', isEnabled: true },
@@ -494,8 +506,8 @@ describe('AgentService connector skill inheritance', () => {
     ]);
     expect(result).toHaveLength(1);
     expect(result[0].tools.map((tool) => tool.name)).toEqual([
-      'connector_222222222222222222222222_run_code',
-      'connector_222222222222222222222222_upload_file',
+      'workspace_run_code',
+      'workspace_upload_file',
     ]);
     expect(result[0].skills?.map((skill) => skill.id as string)).toEqual([
       '444444444444444444444444',
@@ -703,6 +715,7 @@ describe('AgentService connector skill inheritance', () => {
 
     expect(result.connector_bindings).toEqual([
       expect.objectContaining({
+        connector_slug: 'search',
         fixed_params: { limit: 10 },
         actions: [expect.objectContaining({
           action_key: 'search',
@@ -714,5 +727,43 @@ describe('AgentService connector skill inheritance', () => {
         })],
       }),
     ]);
+  });
+
+  it('builds OpenAI-safe connector tool names from slugs', () => {
+    const { service } = createService();
+    const buildDefs = (service as any).buildConnectorToolDefs.bind(service);
+
+    const invalidCharacterName = buildDefs([{
+      connector_id: 'connector-1',
+      connector_name: 'Salesforce',
+      connector_slug: 'sales@force',
+      actions: [{ action_key: 'search/files:v2' }],
+    }])[0].name;
+    const longName = buildDefs([{
+      connector_id: 'connector-2',
+      connector_name: 'Enterprise Knowledge',
+      connector_slug: 'enterprise-knowledge-connector-with-a-very-long-stable-slug',
+      actions: [{ action_key: 'search_documents_with_extended_metadata_and_permissions' }],
+    }])[0].name;
+
+    expect(invalidCharacterName).toBe('sales_force_search_files_v2_76fa7386062c04a3');
+    expect(longName).toBe('enterprise-knowledge-connector-with-a-very-long_0bb708607e97c779');
+    expect(longName).toHaveLength(64);
+
+    const collidingNames = buildDefs([{
+      connector_id: 'connector-3',
+      connector_name: 'Workspace',
+      connector_slug: 'workspace',
+      actions: [{ action_key: 'search/files' }, { action_key: 'search:files' }],
+    }]).map((tool: { name: string }) => tool.name);
+    const controlWhitespaceName = buildDefs([{
+      connector_id: 'connector-4',
+      connector_name: 'Workspace',
+      connector_slug: 'workspace',
+      actions: [{ action_key: 'search\u001c' }],
+    }])[0].name;
+
+    expect(new Set(collidingNames).size).toBe(2);
+    expect(controlWhitespaceName).toBe('workspace_search__9e54e0e3d98b6a49');
   });
 });

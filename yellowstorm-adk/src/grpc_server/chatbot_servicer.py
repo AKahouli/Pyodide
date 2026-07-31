@@ -39,6 +39,10 @@ from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
 from src.temporary_child_summary import pop_temporary_child_summary
 from src.flow_engine.advisor.playbook_node_advisor import advise_playbook_node
 from src.flow_engine.advisor.execution_advisor_service import evaluate_task_execution
+from src.grpc_server.conversation_session_seed import (
+    ConversationSessionSeedService,
+    SessionSeedConflictError,
+)
 
 logger = get_logger(__name__)
 app_settings = get_settings()
@@ -69,6 +73,28 @@ def _grpc_skill_summaries(skills: Any) -> List[Dict[str, Any]]:
     return summaries
 
 
+def _convert_file_chunk_to_artifact(chunk_dict: Dict[str, Any]) -> Dict[str, Any]:
+    file_data = json.loads(chunk_dict.get("chunk", "{}"))
+    return {
+        "action": "add",
+        "component": {
+            "id": str(uuid.uuid4()),
+            "type": "artifact",
+            "data": {
+                "filename": file_data.get("filename", ""),
+                "file_path": file_data.get("object_key")
+                or file_data.get("azure_path")
+                or file_data.get("file_path")
+                or "",
+            },
+        },
+        "metadata": {
+            "message_id": chunk_dict.get("message_id", ""),
+            "agent_id": chunk_dict.get("agent_id", ""),
+        },
+    }
+
+
 class ChatbotServicer(
     chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grpc else object
 ):
@@ -85,8 +111,69 @@ class ChatbotServicer(
             agent_team_service: Service for multi-agent team orchestration
         """
         self.agent_team_service = agent_team_service
+        self.conversation_session_seed = ConversationSessionSeedService()
         self._background_tasks: set[asyncio.Task] = set()
         logger.info("[gRPC] ChatbotServicer initialized (V2 only)")
+
+    async def SeedConversationSession(self, request, context):
+        role_names = {
+            chatbot_pb2.CONVERSATION_HISTORY_ROLE_USER: "user",
+            chatbot_pb2.CONVERSATION_HISTORY_ROLE_ASSISTANT: "assistant",
+        }
+        try:
+            history = []
+            for entry in request.history:
+                role = role_names.get(entry.role)
+                if not role:
+                    await context.abort(
+                        grpc.StatusCode.INVALID_ARGUMENT,
+                        "Conversation history contains an invalid role",
+                    )
+                history.append((role, entry.text))
+
+            created = await self.conversation_session_seed.seed(
+                user_id=request.user_id,
+                session_id=request.session_id,
+                idempotency_key=request.idempotency_key,
+                history=history,
+            )
+            return chatbot_pb2.SeedConversationSessionResponse(
+                session_id=request.session_id,
+                created=created,
+            )
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        except SessionSeedConflictError as exc:
+            await context.abort(grpc.StatusCode.ALREADY_EXISTS, str(exc))
+        except Exception:
+            logger.exception(
+                "[gRPC] Failed to seed conversation session",
+                session_id=request.session_id,
+            )
+            await context.abort(
+                grpc.StatusCode.INTERNAL,
+                "Failed to seed conversation session",
+            )
+
+    async def DeleteConversationSession(self, request, context):
+        try:
+            deleted = await self.conversation_session_seed.delete(
+                user_id=request.user_id,
+                session_id=request.session_id,
+                idempotency_key=request.idempotency_key,
+            )
+            return chatbot_pb2.DeleteConversationSessionResponse(deleted=deleted)
+        except SessionSeedConflictError as exc:
+            await context.abort(grpc.StatusCode.ALREADY_EXISTS, str(exc))
+        except Exception:
+            logger.exception(
+                "[gRPC] Failed to delete conversation session",
+                session_id=request.session_id,
+            )
+            await context.abort(
+                grpc.StatusCode.INTERNAL,
+                "Failed to delete conversation session",
+            )
 
     async def AdvisePlaybookNode(
         self,
@@ -230,7 +317,15 @@ class ChatbotServicer(
         request: "chatbot_pb2.RunAgentTeamRequest",
     ) -> Dict[str, Any]:
         """Convert RunAgentTeam protobuf request to a JSON-safe dict for logging."""
-        return _message_to_dict(request)
+        payload = _message_to_dict(request)
+        replay_context = payload.get("correction_replay_context")
+        if isinstance(replay_context, dict):
+            payload["correction_replay_context"] = {
+                "present": True,
+                "attempt_number": replay_context.get("attempt_number", 0),
+                "finding_count": len(replay_context.get("findings", [])),
+            }
+        return payload
 
     @staticmethod
     def _log_temporary_child_summary(session_id: str, label: str) -> None:
@@ -294,6 +389,12 @@ class ChatbotServicer(
         try:
             # Convert protobuf request to internal V1 Pydantic model (for backward compatibility)
             internal_request = await self._convert_agent_team_request_v2(request)
+
+            if internal_request.correction_replay_context:
+                yield chatbot_pb2.StreamChunk(
+                    action="replay_started",
+                    metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
+                )
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -375,30 +476,9 @@ class ChatbotServicer(
                 # Convert old File chunks to artifact components
                 if chunk_dict.get("content_type") == "File":
                     try:
-                        file_json = chunk_dict.get("chunk", "{}")
-                        file_data = json.loads(file_json)
-
-                        # Convert to artifact component format
-                        chunk_dict = {
-                            "action": "add",
-                            "component": {
-                                "id": str(uuid.uuid4()),
-                                "type": "artifact",
-                                "data": {
-                                    "filename": file_data.get("filename", ""),
-                                    "file_path": file_data.get("azure_path")
-                                    or file_data.get("file_path")
-                                    or file_data.get("object_key")
-                                    or "",
-                                },
-                            },
-                            "metadata": {
-                                "message_id": chunk_dict.get("message_id", ""),
-                                "agent_id": chunk_dict.get("agent_id", ""),
-                            },
-                        }
+                        chunk_dict = _convert_file_chunk_to_artifact(chunk_dict)
                         logger.info(
-                            f"[gRPC] Converted old File chunk to artifact component - filename: {file_data.get('filename', 'unknown')}"
+                            "[gRPC] Converted old File chunk to artifact component"
                         )
                     except Exception as e:
                         logger.error(
@@ -552,6 +632,12 @@ class ChatbotServicer(
         try:
             internal_request = await self._convert_single_agent_request(request)
 
+            if internal_request.correction_replay_context:
+                yield chatbot_pb2.StreamChunk(
+                    action="replay_started",
+                    metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
+                )
+
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
                     self._index_attached_documents(
@@ -607,25 +693,7 @@ class ChatbotServicer(
 
                 if chunk_dict.get("content_type") == "File":
                     try:
-                        file_data = json.loads(chunk_dict.get("chunk", "{}"))
-                        chunk_dict = {
-                            "action": "add",
-                            "component": {
-                                "id": str(uuid.uuid4()),
-                                "type": "artifact",
-                                "data": {
-                                    "filename": file_data.get("filename", ""),
-                                    "file_path": file_data.get("azure_path")
-                                    or file_data.get("file_path")
-                                    or file_data.get("object_key")
-                                    or "",
-                                },
-                            },
-                            "metadata": {
-                                "message_id": chunk_dict.get("message_id", ""),
-                                "agent_id": chunk_dict.get("agent_id", ""),
-                            },
-                        }
+                        chunk_dict = _convert_file_chunk_to_artifact(chunk_dict)
                     except Exception as e:
                         logger.error(
                             f"[gRPC] Failed to convert File chunk to artifact: {e}"
@@ -838,7 +906,8 @@ class ChatbotServicer(
             brain_documents=brain_documents,
             brain_relations={"nodes": [], "relationships": []},
             chatbot_name={
-                "provider": pb_agent.chatbot.model
+                "provider": pb_agent.chatbot.model,
+                "input_modalities": list(pb_agent.chatbot.input_modalities) or ["text"],
             }
             if pb_agent.HasField("chatbot")
             else None,
@@ -1098,7 +1167,10 @@ class ChatbotServicer(
         # Chatbot config + base prompt come from the single agent (no manager).
         agent_chatbot_name = None
         if pb_request.agent.HasField("chatbot"):
-            agent_chatbot_name = {"provider": pb_request.agent.chatbot.model}
+            agent_chatbot_name = {
+                "provider": pb_request.agent.chatbot.model,
+                "input_modalities": list(pb_request.agent.chatbot.input_modalities) or ["text"],
+            }
         if not agent_chatbot_name:
             logger.error(
                 f"No chatbot model provided for single agent in conversation {pb_request.conversation_id}"
@@ -1109,6 +1181,7 @@ class ChatbotServicer(
             user_id=pb_request.user_context.user_id,
             session_id=pb_request.conversation_id,
             message=pb_request.query,
+            task_summary=getattr(pb_request, "task_summary", "") or None,
             image_input=ctx["image_input"] or None,
             attached_files=ctx["attached_documents"] or None,
             attached_images=ctx["attached_images_metadata"] or None,
@@ -1123,11 +1196,12 @@ class ChatbotServicer(
             brain_ids=ctx["workspace_ids"],
             brain_documents=ctx["brain_documents"],
             brain_relations=None,
-            search_web=False,
+            search_web=getattr(pb_request, "web_search_enabled", False),
             agent_mode="mono",
             connector_repo=self._build_connector_repo(pb_request),
             skills=self._build_skills(pb_request),
             deep_search_enabled=getattr(pb_request, "deep_search_enabled", False),
+            correction_replay_context=self._build_correction_replay_context(pb_request),
         )
 
     async def _convert_agent_team_request_v2(
@@ -1335,7 +1409,8 @@ class ChatbotServicer(
                 # Found the manager agent - use its chatbot configuration and prompt
                 if agent.HasField("chatbot"):
                     manager_chatbot_name = {
-                        "provider": agent.chatbot.model  # Full model identifier
+                        "provider": agent.chatbot.model,
+                        "input_modalities": list(agent.chatbot.input_modalities) or ["text"],
                     }
                 if agent.prompt:
                     manager_prompt = agent.prompt
@@ -1394,6 +1469,7 @@ class ChatbotServicer(
             user_id=pb_request.user_context.user_id,  # V2: user_context.user_id → V1: user_id
             session_id=pb_request.conversation_id,  # V2: conversation_id → V1: session_id
             message=pb_request.query,  # V2: query → V1: message
+            task_summary=getattr(pb_request, "task_summary", "") or None,
             image_input=image_input if image_input else None,
             attached_files=attached_documents if attached_documents else None,
             attached_images=attached_images_metadata
@@ -1415,11 +1491,32 @@ class ChatbotServicer(
             brain_ids=workspace_ids,
             brain_documents=brain_documents,
             brain_relations=None,  # V2 removed this field
-            search_web=False,  # V2 removed this field, default to False
+            search_web=getattr(pb_request, "web_search_enabled", False),
             agent_mode=pb_request.agent_mode,
             connector_repo=connector_repo,
+            skills=skills,
             deep_search_enabled=getattr(pb_request, 'deep_search_enabled', False),
+            correction_replay_context=self._build_correction_replay_context(pb_request),
         )
+
+    def _build_correction_replay_context(self, pb_request):
+        if not pb_request.HasField("correction_replay_context"):
+            return None
+        context = pb_request.correction_replay_context
+        return {
+            "original_answer": context.original_answer,
+            "findings": [
+                {
+                    "claim": finding.claim,
+                    "status": finding.status,
+                    "importance": finding.importance,
+                    "explanation": finding.explanation,
+                }
+                for finding in context.findings
+            ],
+            "attempt_number": context.attempt_number,
+            "instructions": context.instructions,
+        }
 
     async def _download_and_encode_images(
         self, filepaths: List[str]
@@ -1916,6 +2013,9 @@ class ChatbotServicer(
             result_json = component_data.get("result_json")
             if result_json:
                 tool_info.result_json = result_json
+            started_at = component_data.get("started_at")
+            if started_at:
+                tool_info.started_at = started_at
             component_kwargs["tool_info"] = tool_info
         elif component_type == "web_preview":
             component_kwargs["web_preview"] = chatbot_pb2.WebPreviewComponent(
@@ -1923,9 +2023,9 @@ class ChatbotServicer(
             )
         elif component_type == "artifact":
             component_kwargs["artifact"] = chatbot_pb2.ArtifactComponent(
-                file_path=component_data.get("file_path")
+                file_path=component_data.get("object_key")
+                or component_data.get("file_path")
                 or component_data.get("azure_path")
-                or component_data.get("object_key")
                 or "",
                 filename=component_data.get("filename", ""),
                 output_port_id=component_data.get("output_port_id")

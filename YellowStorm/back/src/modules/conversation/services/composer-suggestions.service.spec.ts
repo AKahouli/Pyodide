@@ -17,6 +17,7 @@ describe('ComposerSuggestionsService temperature forwarding', () => {
     { setContext: jest.fn(), debug: jest.fn(), warn: jest.fn(), error: jest.fn() } as any,
     {} as any,
     {} as any,
+    { getSettings: jest.fn().mockResolvedValue({ composerSuggestions: { enabled: true, agentId: null, minimumDraftLength: 3, maxOutputTokens: 256 } }) } as any,
   );
 
   afterEach(() => jest.restoreAllMocks());
@@ -71,6 +72,30 @@ describe('ComposerSuggestionsService temperature forwarding', () => {
     expect(post).toHaveBeenCalledWith(
       'http://adk/chatbots/chat_completion',
       expect.objectContaining({ model: 'azure/gpt-5.4-mini', temperature: null }),
+      expect.any(Object),
+    );
+  });
+
+  it('rejects requests when suggestions are disabled', async () => {
+    const service = createService();
+    (service as any).conversationSettings.getSettings.mockResolvedValue({ composerSuggestions: { enabled: false } });
+
+    await expect(service.fetchSuggestions('Continue')).rejects.toThrow('Composer suggestions are disabled');
+  });
+
+  it('uses the configured output token limit', async () => {
+    const service = createService();
+    (service as any).conversationSettings.getSettings.mockResolvedValue({ composerSuggestions: { enabled: true, agentId: null, minimumDraftLength: 3, maxOutputTokens: 128 } });
+    jest.spyOn(service as any, 'getAgentForComposer').mockResolvedValue(agent);
+    jest.spyOn(service as any, 'buildAgentPrompt').mockResolvedValue('Prompt');
+    jest.spyOn((service as any).modelsService, 'findById').mockResolvedValue({ id: 'model-1', omitTemperature: false });
+    const post = jest.spyOn(axios, 'post').mockResolvedValue({ data: { content: 'Suggestion' } });
+
+    await service.fetchSuggestions('Continue');
+
+    expect(post).toHaveBeenCalledWith(
+      'http://adk/chatbots/chat_completion',
+      expect.objectContaining({ max_tokens: 128 }),
       expect.any(Object),
     );
   });

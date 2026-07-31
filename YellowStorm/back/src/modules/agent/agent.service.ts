@@ -1,4 +1,4 @@
-import { Inject, Injectable, forwardRef } from '@nestjs/common';
+import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Model, FilterQuery, Types } from 'mongoose';
@@ -6,6 +6,7 @@ import { LoggerService } from '../logger';
 import { Agent, AgentDocument } from './schemas/agent.schema';
 import { IAgentResponse, IAgentForStream, IGrpcAgent, ISharedAgentInfo } from './interfaces/agent.interface';
 import { AgentShareService } from './services/agent-share.service';
+import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { QueryAgentDto } from './dto/query-agent.dto';
@@ -23,7 +24,6 @@ import { ISkillResponse } from '../skill/interfaces/skill.interface';
 import { ConnectorService } from '../connector/connector.service';
 import { IConnectorResponse } from '../connector/interfaces/connector.interface';
 import { ConnectorAuthService } from '../connector/interfaces/connector-auth.interface';
-import { filterConnectorFixedParams } from '../connector/utils/connector-fixed-params.util';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 import { TeamService } from '../team/team.service';
 import {
@@ -42,6 +42,8 @@ const HUMAIN_AGENT_TYPE_SLUG = 'humain';
 
 @Injectable()
 export class AgentService {
+  private fallbackConnectorRuntimeService?: AgentConnectorRuntimeService;
+
   constructor(
     @InjectModel(Agent.name)
     private readonly agentModel: Model<AgentDocument>,
@@ -59,6 +61,7 @@ export class AgentService {
     private readonly teamService: TeamService,
     private readonly agentShareService: AgentShareService,
     private readonly guardrailsSettingsService: GuardrailsSettingsService,
+    @Optional() private readonly connectorRuntimeService?: AgentConnectorRuntimeService,
   ) {
     this.logger.setContext(AgentService.name);
   }
@@ -867,14 +870,14 @@ export class AgentService {
         .map(effectiveModelIdForAgent)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[] }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
         if (m) {
-          modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature });
+          modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature, inputModalities: m.inputModalities });
         }
       }
     }
@@ -980,6 +983,7 @@ export class AgentService {
         })),
         chatbot: {
           model: proxyModel,
+          input_modalities: resolvedModel?.inputModalities || ['text'],
         },
         agent_params: {
           params: {
@@ -1088,13 +1092,13 @@ export class AgentService {
         .map((a) => a.model || inheritedDefaultModelId)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[] }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
-        if (m) modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature });
+        if (m) modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature, inputModalities: m.inputModalities });
       }
     }
 
@@ -1170,6 +1174,7 @@ export class AgentService {
           })),
           chatbot: {
             model: proxyModel,
+            input_modalities: resolvedModel?.inputModalities || ['text'],
           },
           agent_params: {
             params: {
@@ -1235,103 +1240,11 @@ export class AgentService {
     tools: Record<string, unknown>[];
     skills: Record<string, unknown>[];
   }> {
-    const normalizedBindings = toolBindings
-      .filter((binding) => binding && typeof binding === 'object')
-      .map((binding) => binding as Record<string, unknown>);
-
-    if (normalizedBindings.length === 0) {
-      return { connectorIds: [], connector_bindings: [], tools: [], skills: [] };
-    }
-
-    const connectorIds: string[] = [];
-    const actionKeysByConnectorId = new Map<string, Set<string>>();
-    const fixedParamsByConnectorId = new Map<string, Record<string, unknown>>();
-
-    for (const binding of normalizedBindings) {
-      if (binding.isEnabled === false) {
-        continue;
-      }
-
-      const connectorId = String(binding.connectorId || '').trim();
-      if (!connectorId) {
-        this.logger.warn('Skipping playbook connector binding without connector id', { userId });
-        continue;
-      }
-
-      const enabledActionKeys = new Set(
-        (Array.isArray(binding.actions) ? binding.actions : [])
-          .filter((action) => action && typeof action === 'object' && (action as Record<string, unknown>).isEnabled !== false)
-          .map((action) => String((action as Record<string, unknown>).actionKey || '').trim())
-          .filter(Boolean),
-      );
-
-      if (enabledActionKeys.size === 0) {
-        this.logger.warn('Skipping playbook connector binding without enabled actions', { userId, connectorId });
-        continue;
-      }
-
-      connectorIds.push(connectorId);
-      actionKeysByConnectorId.set(connectorId, enabledActionKeys);
-
-      if (binding.fixedParams && typeof binding.fixedParams === 'object' && !Array.isArray(binding.fixedParams)) {
-        fixedParamsByConnectorId.set(connectorId, binding.fixedParams as Record<string, unknown>);
-      }
-    }
-
-    const uniqueConnectorIds = [...new Set(connectorIds)];
-    if (uniqueConnectorIds.length === 0) {
-      return { connectorIds: [], connector_bindings: [], tools: [], skills: [] };
-    }
-
-    const connectorsMap = await this.buildConnectorsMap(uniqueConnectorIds);
-    for (const [connectorId, fixedParams] of fixedParamsByConnectorId) {
-      const connector = connectorsMap.get(connectorId);
-      if (!connector) continue;
-
-      const allowedActionKeys = actionKeysByConnectorId.get(connectorId);
-      const selectedActions = (connector.actions || [])
-        .filter((action) => action.isEnabled !== false)
-        .filter((action) => !allowedActionKeys || allowedActionKeys.has(action.key))
-        .map((action) => ({
-          key: action.key,
-          parameterSchema: action.parameterSchema || {},
-        }));
-      fixedParamsByConnectorId.set(
-        connectorId,
-        filterConnectorFixedParams(fixedParams, selectedActions),
-      );
-    }
-    const connectorBindings = await this.buildConnectorBindings(
-      connectorsMap,
-      uniqueConnectorIds,
-      userId,
-      actionKeysByConnectorId,
-      fixedParamsByConnectorId,
-    );
-    const connectorSkillIds = this.getConnectorSkillIds(connectorsMap, uniqueConnectorIds);
-    const skills = await this.buildGrpcSkillsForPlaybook(connectorSkillIds);
-
-    return {
-      connectorIds: uniqueConnectorIds,
-      connector_bindings: connectorBindings,
-      tools: this.buildConnectorToolDefs(connectorBindings),
-      skills,
-    };
+    return this.getConnectorRuntime().buildGrpcConnectorRuntimeForPlaybook(userId, toolBindings);
   }
 
   async buildGrpcSkillsForPlaybook(skillIds: string[]): Promise<Record<string, unknown>[]> {
-    const uniqueSkillIds = [...new Set(skillIds.map((skillId) => skillId.trim()).filter(Boolean))];
-    if (uniqueSkillIds.length === 0) {
-      return [];
-    }
-
-    const skills = await this.skillService.findByIds(uniqueSkillIds);
-    const resolvedSkillIds = new Set(skills.map((skill) => skill.id));
-    const missingSkillIds = uniqueSkillIds.filter((skillId) => !resolvedSkillIds.has(skillId));
-    if (missingSkillIds.length > 0) {
-      this.logger.warn('Missing playbook runtime skills', { skillIds: missingSkillIds });
-    }
-    return skills.map((skill) => this.toGrpcSkill(skill));
+    return this.getConnectorRuntime().buildGrpcSkillsForPlaybook(skillIds);
   }
 
   async getAllForUserResponse(userId: string): Promise<IAgentResponse[]> {
@@ -1846,12 +1759,7 @@ export class AgentService {
     connectorsMap: Map<string, IConnectorResponse>,
     connectorIds: string[],
   ): string[] {
-    return [...new Set(
-      connectorIds
-        .map((connectorId) => connectorsMap.get(connectorId)?.referencedSkillIds || [])
-        .flat()
-        .filter(Boolean) as string[],
-    )];
+    return this.getConnectorRuntime().getConnectorSkillIds(connectorsMap, connectorIds);
   }
 
   private toConnectorActionSelectionResponses(
@@ -1939,22 +1847,7 @@ export class AgentService {
   }
 
   private toGrpcSkill(skill: ISkillResponse): Record<string, unknown> {
-    return {
-      id: skill.id,
-      name: skill.name,
-      description: skill.description,
-      instructions: skill.instructions,
-      license: skill.license,
-      compatibility: skill.compatibility,
-      metadata: skill.metadata,
-      allowed_tools: skill.allowedTools,
-      files: skill.files.map((file) => ({
-        path: file.path,
-        kind: file.kind,
-        mime_type: file.mimeType,
-        content: file.content,
-      })),
-    };
+    return this.getConnectorRuntime().toGrpcSkill(skill);
   }
 
   /**
@@ -1993,22 +1886,7 @@ export class AgentService {
   }
 
   private async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, IConnectorResponse>> {
-    const connectorsMap = new Map<string, IConnectorResponse>();
-    if (connectorIds.length === 0) {
-      return connectorsMap;
-    }
-
-    const fetchedConnectors = await this.connectorService.findByIds(connectorIds);
-    for (const connector of fetchedConnectors) {
-      connectorsMap.set(connector.id, connector);
-    }
-
-    const missingConnectorIds = connectorIds.filter((connectorId) => !connectorsMap.has(connectorId));
-    if (missingConnectorIds.length > 0) {
-      this.logger.warn('Missing playbook runtime connectors', { connectorIds: missingConnectorIds });
-    }
-
-    return connectorsMap;
+    return this.getConnectorRuntime().buildConnectorsMap(connectorIds);
   }
 
   private async buildConnectorBindings(
@@ -2018,111 +1896,30 @@ export class AgentService {
     actionKeysByConnectorId?: Map<string, Set<string>>,
     fixedParamsByConnectorId?: Map<string, Record<string, unknown>>,
   ): Promise<Record<string, unknown>[]> {
-    const bindings = connectorIds
-      .map((connectorId) => connectorsMap.get(connectorId))
-      .filter(Boolean)
-      .map((connector: any) => ({
-        connector_id: connector.id,
-        connector_name: connector.name,
-        actions: (connector.actions || [])
-          .filter((action: any) => action.isEnabled !== false)
-          .filter((action: any) => {
-            const allowedActionKeys = actionKeysByConnectorId?.get(connector.id);
-            return !allowedActionKeys || allowedActionKeys.has(action.key);
-          })
-          .map((action: any) => ({
-            action_key: action.key,
-            label: action.label || action.key,
-            description: action.description || '',
-            parameter_schema: action.parameterSchema || {},
-          })),
-        fixed_params: fixedParamsByConnectorId?.get(connector.id) || {},
-        mcp_transport_type: connector.mcpTransportType || '',
-        mcp_server_url: connector.mcpServerUrl || '',
-        mcp_server_config: connector.mcpServerConfig || {},
-        auth_headers: {} as Record<string, string>,
-        auth_env: {} as Record<string, string>,
-      }))
-      .filter((binding: any) => binding.actions.length > 0);
-
-    if (userId) {
-      for (const binding of bindings) {
-        const connector = connectorsMap.get(binding.connector_id);
-        if (connector?.authSourceType && connector.authSourceType !== 'none') {
-          try {
-            const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
-              authSourceType: connector.authSourceType,
-              connectedAppKey: connector.connectedAppKey,
-              runtimeAuthConfig: connector.runtimeAuthConfig || {},
-              connectorId: connector.id,
-            });
-            binding.auth_headers = auth.headers;
-            binding.auth_env = auth.env;
-          } catch (err) {
-            this.logger.warn('Failed to resolve connector auth for agent runtime', {
-              connector_id: binding.connector_id,
-              error: (err as Error).message,
-            });
-          }
-        }
-        try {
-          const dynamicHeaders = await this.connectorAuthService.resolveDynamicHeaders(
-            userId,
-            connector?.dynamicHeaders || [],
-          );
-          binding.auth_headers = {
-            ...binding.auth_headers,
-            ...dynamicHeaders,
-          };
-          this.logger.debug('Connector runtime auth headers resolved', {
-            connector_id: binding.connector_id,
-            authHeaderNames: Object.keys(binding.auth_headers),
-          });
-        } catch (err) {
-          this.logger.warn('Failed to resolve connector dynamic headers for agent runtime', {
-            connector_id: binding.connector_id,
-            error: (err as Error).message,
-          });
-        }
-      }
-    }
-
-    const mcpLogicalSearchKey = this.configService.get<string>('MCP_LOGICAL_SEARCH_API_KEY', '');
-    if (mcpLogicalSearchKey) {
-      for (const binding of bindings) {
-        const transport = String(binding.mcp_transport_type || '');
-        const hasAuth = Boolean((binding.auth_headers as Record<string, string>)?.Authorization);
-        if (transport === 'streamable_http' && !hasAuth) {
-          binding.auth_headers = {
-            ...(binding.auth_headers as Record<string, string>),
-            Authorization: `Bearer ${mcpLogicalSearchKey}`,
-          };
-        }
-      }
-    }
-
-    return bindings;
+    return this.getConnectorRuntime().buildConnectorBindings(
+      connectorsMap,
+      connectorIds,
+      userId,
+      actionKeysByConnectorId,
+      fixedParamsByConnectorId,
+    );
   }
 
   private buildConnectorToolDefs(bindings: Record<string, unknown>[]): Record<string, unknown>[] {
-    return bindings.flatMap((binding) => {
-      const connectorId = String(binding.connector_id || '');
-      const connectorName = String(binding.connector_name || 'connector');
-      const actions = Array.isArray(binding.actions) ? binding.actions : [];
+    return this.getConnectorRuntime().buildConnectorToolDefs(bindings);
+  }
 
-      return actions.map((action) => {
-        const normalizedAction = action as Record<string, unknown>;
-        const actionKey = String(normalizedAction.action_key || '');
-        const label = String(normalizedAction.label || actionKey);
-        const description = String(normalizedAction.description || '');
-
-        return {
-          name: `connector_${connectorId}_${actionKey}`,
-          description: description || `${connectorName} connector action ${label}`,
-          prompt: '',
-          top_k: 0,
-        };
-      });
-    });
+  private getConnectorRuntime(): AgentConnectorRuntimeService {
+    if (this.connectorRuntimeService) {
+      return this.connectorRuntimeService;
+    }
+    this.fallbackConnectorRuntimeService ??= new AgentConnectorRuntimeService(
+      this.logger,
+      this.skillService,
+      this.connectorService,
+      this.connectorAuthService,
+      this.configService,
+    );
+    return this.fallbackConnectorRuntimeService;
   }
 }

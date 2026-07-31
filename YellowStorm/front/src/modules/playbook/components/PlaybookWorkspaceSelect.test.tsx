@@ -11,6 +11,7 @@ const getSharedWorkspacesMock = vi.hoisted(() => vi.fn());
 vi.mock('@/modules/workspace', () => ({
   getWorkspaces: getWorkspacesMock,
   getSharedWorkspaces: getSharedWorkspacesMock,
+  isSharedWorkspace: (item: { shareId?: string }) => Boolean(item && 'shareId' in item),
 }));
 
 vi.mock('@/components/ui/popover', () => {

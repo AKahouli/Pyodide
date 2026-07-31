@@ -13,6 +13,8 @@ import {
   FeedbackType,
   AttachedFileResponse,
   MessageComponent,
+  ReliabilityEvaluation,
+  ResponseCorrectionAttempt,
 } from '../interfaces/message.interface';
 import { ConversationService } from './conversation.service';
 import { StreamGatewayService } from './stream-gateway.service';
@@ -103,6 +105,7 @@ export class MessageService {
       isComplete: true,
       requestId: data.requestId,
       interaction: data.interaction,
+      replayContext: data.replayContext,
     });
 
     // Update conversation
@@ -485,6 +488,176 @@ export class MessageService {
     return response;
   }
 
+  async updateReliabilityEvaluation(
+    messageId: string,
+    evaluation: ReliabilityEvaluation,
+  ): Promise<MessageResponse> {
+    const message = await this.messageModel.findById(messageId);
+    if (!message) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    }
+    if (message.conversationType !== 'ai') {
+      throw new AppException({
+        code: ErrorCode.BAD_REQUEST,
+        message: 'Reliability evaluation applies only to AI messages',
+        statusCode: HttpStatus.BAD_REQUEST,
+      });
+    }
+
+    message.reliabilityEvaluation = evaluation;
+    message.reliabilityEvaluationHeartbeatAt = evaluation.status === 'pending' ? new Date() : undefined;
+    await message.save();
+    const response = this.mapToResponse(message);
+    await this.broadcastMessage(message.conversationId.toString(), {
+      type: 'message_updated',
+      data: {
+        conversationId: message.conversationId.toString(),
+        messageId,
+        message: { reliabilityEvaluation: response.reliabilityEvaluation } as Partial<MessageResponse>,
+      },
+    });
+    return response;
+  }
+
+  async updateCorrectionWorkflow(messageId: string, workflow: NonNullable<MessageResponse['correctionWorkflow']>, correctionRunId?: string): Promise<MessageResponse> {
+    let message = await this.messageModel.findById(messageId);
+    if (!message || message.conversationType !== 'ai') throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'AI message not found');
+    if (correctionRunId && message.correctionWorkflow?.correctionRunId !== correctionRunId) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction run ownership lost');
+    const nextWorkflow = { ...(message.correctionWorkflow || {}), ...workflow, attempts: workflow.attempts ?? message.correctionWorkflow?.attempts } as typeof workflow;
+    if (correctionRunId) {
+      message = await this.messageModel.findOneAndUpdate({ _id: messageId, 'correctionWorkflow.correctionRunId': correctionRunId }, { $set: { correctionWorkflow: nextWorkflow } }, { new: true });
+      if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction run ownership lost');
+    } else {
+      message.correctionWorkflow = nextWorkflow;
+      await message.save();
+    }
+    const response = this.mapToResponse(message);
+    await this.broadcastMessage(message.conversationId.toString(), {
+      type: 'message_updated',
+      data: {
+        conversationId: message.conversationId.toString(),
+        messageId,
+        message: { correctionWorkflow: response.correctionWorkflow } as Partial<MessageResponse>,
+      },
+    });
+    return response;
+  }
+
+  async claimCorrectionRun(messageId: string, runId: string, leaseExpiresAt: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    const message = await this.messageModel.findOneAndUpdate({
+      _id: messageId,
+      conversationType: 'ai',
+      $or: [
+        { 'correctionWorkflow.correctionRunId': { $exists: false } },
+        { 'correctionWorkflow.status': { $in: ['corrected', 'failed', 'abstained', 'human_review_required'] } },
+        { 'correctionWorkflow.leaseExpiresAt': { $lt: now } },
+      ],
+    }, {
+      $set: {
+        'correctionWorkflow.correctionRunId': runId,
+        'correctionWorkflow.leaseExpiresAt': leaseExpiresAt,
+        'correctionWorkflow.status': 'queued',
+        'correctionWorkflow.activeVersion': 'original',
+      },
+    }, { new: true });
+    return Boolean(message);
+  }
+
+  async upsertCorrectionAttempt(messageId: string, attempt: ResponseCorrectionAttempt, correctionRunId?: string): Promise<MessageResponse> {
+    let message = await this.messageModel.findById(messageId);
+    if (!message || message.conversationType !== 'ai') {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'AI message not found');
+    }
+    const workflow = message.correctionWorkflow;
+    if (!workflow) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction workflow not found');
+    if (correctionRunId && workflow.correctionRunId !== correctionRunId) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction run ownership lost');
+    }
+    const attempts = [...(workflow.attempts || [])];
+    const index = attempts.findIndex((item) => item.attemptId === attempt.attemptId);
+    const sanitizedAttempt = { ...attempt, components: this.publicComponents(attempt.components) };
+    if (index >= 0) {
+      const existing = attempts[index];
+      attempts[index] = ['accepted', 'rejected', 'failed'].includes(existing.status)
+        ? existing
+        : { ...existing, ...sanitizedAttempt };
+    } else {
+      attempts.push(sanitizedAttempt);
+    }
+    const nextWorkflow = { ...workflow, attempts };
+    if (correctionRunId) {
+      message = await this.messageModel.findOneAndUpdate({ _id: messageId, 'correctionWorkflow.correctionRunId': correctionRunId }, { $set: { correctionWorkflow: nextWorkflow } }, { new: true });
+      if (!message) throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Correction run ownership lost');
+    } else {
+      message.correctionWorkflow = nextWorkflow;
+      await message.save();
+    }
+    const response = this.mapToResponse(message);
+    await this.broadcastMessage(message.conversationId.toString(), {
+      type: 'message_updated',
+      data: {
+        conversationId: message.conversationId.toString(),
+        messageId,
+        message: { correctionWorkflow: response.correctionWorkflow } as Partial<MessageResponse>,
+      },
+    });
+    return response;
+  }
+
+  async markStaleReliabilityEvaluationsFailed(cutoff: Date): Promise<number> {
+    const staleQuery = {
+      'reliabilityEvaluation.status': 'pending',
+      $or: [
+        { reliabilityEvaluationHeartbeatAt: { $lt: cutoff } },
+        {
+          reliabilityEvaluationHeartbeatAt: { $exists: false },
+          'reliabilityEvaluation.requestedAt': { $lt: cutoff.toISOString() },
+        },
+      ],
+    };
+    const candidates = await this.messageModel.find(staleQuery).select('_id').lean().exec();
+    let updatedCount = 0;
+    for (const candidate of candidates) {
+      // Reapply the stale predicate atomically so a fresh heartbeat or completed job wins the race.
+      const message = await this.messageModel.findOneAndUpdate(
+        { _id: candidate._id, ...staleQuery },
+        {
+          $set: {
+            'reliabilityEvaluation.status': 'failed',
+            'reliabilityEvaluation.failureCode': 'stale_pending_after_restart',
+            'reliabilityEvaluation.evaluatedAt': new Date().toISOString(),
+          },
+          $unset: { reliabilityEvaluationHeartbeatAt: 1 },
+        },
+        { new: true },
+      );
+      if (!message) continue;
+      const response = this.mapToResponse(message);
+      await this.broadcastMessage(message.conversationId.toString(), {
+        type: 'message_updated',
+        data: {
+          conversationId: message.conversationId.toString(),
+          messageId: message._id.toString(),
+          message: { reliabilityEvaluation: response.reliabilityEvaluation } as Partial<MessageResponse>,
+        },
+      });
+      updatedCount += 1;
+    }
+    return updatedCount;
+  }
+
+  async touchPendingReliabilityEvaluations(messageIds: string[]): Promise<void> {
+    if (!messageIds.length) return;
+    await this.messageModel.updateMany(
+      {
+        _id: { $in: messageIds },
+        'reliabilityEvaluation.status': 'pending',
+      },
+      { $set: { reliabilityEvaluationHeartbeatAt: new Date() } },
+    );
+  }
+
   async getMessageDocument(messageId: string): Promise<MessageDocument> {
     const message = await this.messageModel.findById(messageId);
 
@@ -645,7 +818,7 @@ export class MessageService {
       conversationId: toStr(message.conversationId),
       conversationType: message.conversationType as 'user' | 'ai',
       content: message.content,
-      components: message.components as any,
+      components: this.publicComponents(message.components) as any,
       attachedFileIds: message.attachedFileIds?.map((id: any) => toStr(id)),
       modelId: message.modelId,
       webSearchEnabled: message.webSearchEnabled,
@@ -665,6 +838,19 @@ export class MessageService {
       requestId: message.requestId,
       guardrailDecision: message.guardrailDecision as any,
       interaction: message.interaction as Record<string, unknown> | undefined,
+      reliabilityEvaluation: message.reliabilityEvaluation as ReliabilityEvaluation | undefined,
+      correctionWorkflow: message.correctionWorkflow ? {
+        ...message.correctionWorkflow,
+        ...(message.correctionWorkflow.correctedComponents ? {
+          correctedComponents: this.publicComponents(message.correctionWorkflow.correctedComponents),
+        } : {}),
+        ...(message.correctionWorkflow.attempts ? {
+          attempts: message.correctionWorkflow.attempts.map((attempt: ResponseCorrectionAttempt) => ({
+            ...attempt,
+            components: this.publicComponents(attempt.components),
+          })),
+        } : {}),
+      } as MessageResponse['correctionWorkflow'] : undefined,
       agentIds: message.agentIds?.map((id: any) => toStr(id)),
       memberIds: message.memberIds?.map((id: any) => toStr(id)),
       senderId: toStr(message.senderId),
@@ -672,6 +858,15 @@ export class MessageService {
       createdAt: toISO(message.createdAt),
       updatedAt: toISO(message.updatedAt),
     };
+  }
+
+  private publicComponents(components: unknown): MessageComponent[] | undefined {
+    if (!Array.isArray(components)) return undefined;
+    return components.map((component) => {
+      if (component?.type !== 'toolInfo' || !component.data) return component;
+      const { resultJson: _resultJson, result_json: _resultJsonSnake, ...publicData } = component.data;
+      return { ...component, data: publicData };
+    });
   }
 
   private findGuardrailDecision(components: MessageComponent[]): CompleteAIMessageData['guardrailDecision'] {

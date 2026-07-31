@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Put, Body, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { Request } from 'express';
 import { SystemService } from './system.service';
@@ -12,6 +12,9 @@ import { CorsSettingsValue } from './schemas/system-setting.schema';
 import { RequirePermissions, PermissionsGuard, Permissions, AuditLogService } from '../authorization';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserDocument } from '../user/schemas/user.schema';
+import { FeatureVisibilityService } from './feature-visibility.service';
+import type { FeatureVisibility } from './interfaces/feature-visibility.interface';
+import { UpdateFeatureVisibilityDto } from './dto/update-feature-visibility.dto';
 
 @ApiTags('System (Experimental)')
 @Controller('experimental/system')
@@ -19,7 +22,39 @@ export class SystemController {
   constructor(
     private readonly systemService: SystemService,
     private readonly auditLogService: AuditLogService,
+    private readonly featureVisibilityService: FeatureVisibilityService,
   ) {}
+
+  @Get('features')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get main sidebar feature visibility' })
+  getFeatureVisibility(): Promise<FeatureVisibility> {
+    return this.featureVisibilityService.getVisibility();
+  }
+
+  @Put('features')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.SYSTEM_MAINTENANCE)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update main sidebar feature visibility' })
+  async updateFeatureVisibility(
+    @Body() body: UpdateFeatureVisibilityDto,
+    @CurrentUser() user: UserDocument,
+    @Req() req: Request,
+  ): Promise<FeatureVisibility> {
+    const result = await this.featureVisibilityService.updateVisibility(body);
+
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'system.features',
+      metadata: { ...body },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return result;
+  }
 
   @Get('maintenance')
   @Public()

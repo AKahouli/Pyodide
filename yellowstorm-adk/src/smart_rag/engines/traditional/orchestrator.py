@@ -18,6 +18,7 @@ from google.genai import types
 
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
+from src.smart_rag.infrastructure.model_parameters import resolve_model_config
 from src.smart_rag.engines.helpers import build_content_with_images
 # Import remaining dependencies
 from src.schema.chatbot_schema import ChatWithADKRequest
@@ -91,8 +92,7 @@ class SmartRAGOrchestrator:
             instructions = user_request.instructions
             chatbot_name = user_request.chatbot_name
 
-            if isinstance(user_request.chatbot_name, dict):
-                chatbot_name = str(user_request.chatbot_name.get('provider'))
+            chatbot_name = resolve_model_config(chatbot_name)
 
         except Exception as e:
             logger.error(f"Failed to extract request parameters: {str(e)}")

@@ -97,6 +97,19 @@ class TestToolFactory:
     assert tools == []
     assert config_dict == {}
 
+  def test_create_tools_from_config_binds_assigned_workspace_file_tool(self, tool_factory):
+    tools, _ = tool_factory.create_tools_from_config(
+      [{"name": "save_file_to_workspace", "tool_type": "native"}],
+      default_agent_params={
+        "platform_api_url": "https://platform.example.com",
+        "platform_api_token": "internal-secret",
+        "user_id": "user-1",
+      },
+    )
+
+    assert len(tools) == 1
+    assert tools[0].__name__ == "save_file_to_workspace"
+
   @patch("src.smart_rag.agents.factories.tool_factory.SearchToolkit")
   @patch("src.smart_rag.agents.factories.tool_factory.in_memory_construct_json")
   def test_create_in_memory_tools_success(

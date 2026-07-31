@@ -12,7 +12,6 @@ export {
   SSEConnection,
   SSEConnectionStats,
 } from './interfaces/notification.interface';
-export * from './dto/create-notification.dto';
 export * from './dto/notification-query.dto';
 export * from './dto/mark-read.dto';
 export * from './guards/sse-auth.guard';

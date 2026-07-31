@@ -7,6 +7,9 @@ import { MessageActions } from './MessageActions';
 const updateFeedbackMock = vi.hoisted(() => vi.fn());
 const regenerateMessageMock = vi.hoisted(() => vi.fn());
 const toastSuccessMock = vi.hoisted(() => vi.fn());
+const branchConversationMock = vi.hoisted(() => vi.fn());
+const navigateMock = vi.hoisted(() => vi.fn());
+const fetchConversationsMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -19,14 +22,25 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuContent: ({ children }: { children: ReactNode }) => <>{children}</>,
-  DropdownMenuItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuItem: ({ children, onClick, disabled }: { children: ReactNode; onClick?: () => void; disabled?: boolean }) => <button onClick={onClick} disabled={disabled}>{children}</button>,
 }));
+
+vi.mock('react-router-dom', () => ({ useNavigate: () => navigateMock }));
+vi.mock('../api', () => ({ branchConversation: branchConversationMock }));
 
 vi.mock('../store', () => ({
   useConversationStore: (selector: (state: Record<string, unknown>) => unknown) =>
     selector({
       updateFeedback: updateFeedbackMock,
       regenerateMessage: regenerateMessageMock,
+      setReplyingToMessage: vi.fn(),
+      currentConversation: { runtimeMode: 'standard' },
+      messages: [
+        { id: 'user-1', conversationType: 'user' },
+        { id: 'ai-1', conversationType: 'ai', questionMessageId: 'user-1' },
+      ],
+      activeBranches: new Map([['user-1', 'ai-1']]),
+      fetchConversations: fetchConversationsMock,
     }),
 }));
 
@@ -75,5 +89,27 @@ describe('MessageActions', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'messageActions.regenerateAria' }));
     expect(regenerateMessageMock).toHaveBeenCalledWith('conv-1', 'ai-1');
+  });
+
+  it('branches from a completed response using the selected path', async () => {
+    branchConversationMock.mockResolvedValueOnce({ id: 'branch-1' });
+    render(
+      <MessageActions
+        message={{ id: 'ai-1', conversationType: 'ai', questionMessageId: 'user-1', components: [], isComplete: true, isStreaming: false } as never}
+        isLastAiMessage={false}
+        conversationId='conv-1'
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'messageActions.branch' }));
+
+    await waitFor(() => expect(branchConversationMock).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        targetMessageId: 'ai-1',
+        activeBranches: { 'user-1': 'ai-1' },
+      }),
+    ));
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/conversation/branch-1'));
   });
 });

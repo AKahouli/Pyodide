@@ -93,13 +93,13 @@ describe('PlaybookCard', () => {
   it('opens the triggers panel from the shortcut icon', async () => {
     render(<PlaybookCard playbook={playbook} onDelete={vi.fn()} onClone={vi.fn()} onToggleFavorite={vi.fn()} />);
     await userEvent.click(screen.getByLabelText('card.openTriggers'));
-    expect(navigateMock).toHaveBeenCalledWith('/playbooks/p1?triggers=1');
+    expect(navigateMock).toHaveBeenCalledWith('/playbooks/p1?triggers=1', { state: { autoLayoutOnOpen: true } });
   });
 
   it('navigates to playbook on card click', async () => {
     render(<PlaybookCard playbook={playbook} onDelete={vi.fn()} onClone={vi.fn()} onToggleFavorite={vi.fn()} />);
     await userEvent.click(screen.getByText('Deploy Pipeline'));
-    expect(navigateMock).toHaveBeenCalledWith('/playbooks/p1');
+    expect(navigateMock).toHaveBeenCalledWith('/playbooks/p1', { state: { autoLayoutOnOpen: true } });
   });
 
   it('calls onDelete when delete button is clicked', async () => {

@@ -1,4 +1,4 @@
-import { AUTH_STORAGE_KEYS, API_CONFIG } from '@/lib/api';
+import { AUTH_STORAGE_KEYS, API_CONFIG } from '@/lib/api/config';
 import type { StreamSSEEvent } from './types';
 import { translateConversation } from './translation';
 
@@ -38,6 +38,7 @@ class ConversationStreamService {
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private isConnected = false;
   private connectionId: string | null = null;
+  private connectionToken: string | null = null;
   private isEvicted = false;
 
   private readonly maxReconnectAttempts = 10;
@@ -45,23 +46,36 @@ class ConversationStreamService {
   private readonly maxReconnectDelay = 60000;
   private readonly heartbeatTimeout = 30000;
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectionWaiters = new Set<(connected: boolean) => void>();
 
   connect(): void {
     if (this.isEvicted) return;
-    if (this.eventSource) return; // Already connected or connecting
 
     const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
     if (!token) {
+      this.resolveConnectionWaiters(false);
       this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.noToken') } });
       return;
+    }
+
+    if (this.eventSource && this.connectionToken === token) return;
+    if (this.eventSource) {
+      // Another singleton may have refreshed the shared token. Never let the
+      // browser keep retrying an EventSource URL carrying the revoked token.
+      this.eventSource.close();
+      this.eventSource = null;
+      this.isConnected = false;
+      this.connectionId = null;
     }
 
     const url = `${API_CONFIG.baseURL}/conversations/stream?token=${encodeURIComponent(token)}`;
     try {
       this.eventSource = new EventSource(url);
+      this.connectionToken = token;
       this.setupEventHandlers();
     } catch (error) {
       console.error('[ConversationStream] Failed to create EventSource:', error);
+      this.resolveConnectionWaiters(false);
       this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.creationFailed') } });
     }
   }
@@ -76,7 +90,9 @@ class ConversationStreamService {
 
     this.isConnected = false;
     this.connectionId = null;
+    this.connectionToken = null;
     this.reconnectAttempts = 0;
+    this.resolveConnectionWaiters(false);
   }
 
   subscribe(listener: StreamListener): () => void {
@@ -90,7 +106,32 @@ class ConversationStreamService {
     return this.isConnected;
   }
 
+  /** Wait briefly for the shared pipe before starting a new stream-producing request. */
+  waitForConnection(timeoutMs = 2000): Promise<boolean> {
+    const currentToken = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    if (this.isConnected && this.connectionToken === currentToken) return Promise.resolve(true);
+
+    return new Promise((resolve) => {
+      let timeout: ReturnType<typeof setTimeout>;
+      const settle = (connected: boolean) => {
+        clearTimeout(timeout);
+        this.connectionWaiters.delete(settle);
+        resolve(connected);
+      };
+
+      this.connectionWaiters.add(settle);
+      timeout = setTimeout(() => settle(false), timeoutMs);
+      this.connect();
+    });
+  }
+
   reconnectWithNewToken(): void {
+    this.clearTimers();
+    this.eventSource?.close();
+    this.eventSource = null;
+    this.isConnected = false;
+    this.connectionId = null;
+    this.connectionToken = null;
     this.reconnectAttempts = 0;
     this.isEvicted = false;
     this.connect();
@@ -108,80 +149,49 @@ class ConversationStreamService {
     this.eventSource.onerror = () => {
       const wasConnected = this.isConnected;
       this.isConnected = false;
-      if (this.eventSource?.readyState === EventSource.CLOSED) {
+      if (!this.eventSource) return;
+
+      if (this.eventSource.readyState === EventSource.CONNECTING) {
+        // Disable native retry because it reuses the original tokenized URL.
+        this.eventSource.close();
+      }
+      if (this.eventSource.readyState === EventSource.CLOSED) {
         this.eventSource = null;
-        if (wasConnected) {
+        this.connectionToken = null;
+        if (wasConnected) this.scheduleReconnect();
+        else {
+          this.resolveConnectionWaiters(false);
           this.scheduleReconnect();
-        } else {
           this.emit({ type: 'connection_failed', data: { reason: translateConversation('sse.connectionErrors.rejected') } });
         }
       }
     };
 
-    // NestJS SSE sends all events as generic messages with {type, data} payload
+    const namedEventTypes: StreamSSEEvent['type'][] = [
+      'connected',
+      'heartbeat',
+      'stream_start',
+      'stream_chunk',
+      'stream_complete',
+      'stream_error',
+      'conversation_name_generated',
+      'message_created',
+      'message_updated',
+      'mention_created',
+      'error',
+    ];
+    for (const type of namedEventTypes) {
+      this.eventSource.addEventListener(type, (rawEvent) => {
+        const data = safeJsonParse((rawEvent as MessageEvent<string>).data);
+        this.handleEvent(type, data);
+      });
+    }
+
+    // Retain compatibility with deployments that wrap the type in a default event.
     this.eventSource.onmessage = (event) => {
       try {
         const parsed = JSON.parse(event.data);
-        const { type, data } = parsed;
-
-        switch (type) {
-          case 'connected':
-            this.connectionId = data.connectionId;
-            this.isConnected = true;
-            this.resetHeartbeatTimer();
-            this.emit({ type: 'connected', data });
-            break;
-          case 'heartbeat':
-            this.resetHeartbeatTimer();
-            break;
-          case 'stream_start':
-            this.emit({ type: 'stream_start', data });
-            break;
-          case 'stream_chunk':
-            if (data?.component?.type === 'chart') {
-              data.component = {
-                ...data.component,
-                data: normalizeChartPayload(data.component.data),
-              };
-            }
-            if (data?.component?.type === 'chart') {
-              console.debug('[ConversationStreamService][stream_chunk][chart]', {
-                action: data.action,
-                id: data.component?.id,
-                keys: Object.keys(data.component || {}),
-                dataKeys: data.component?.data ? Object.keys(data.component.data) : [],
-                chartDataLength: Array.isArray(data.component?.data?.data) ? data.component.data.data.length : undefined,
-                chartDataAltLength: Array.isArray(data.component?.data?.chartData) ? data.component.data.chartData.length : undefined,
-              });
-            }
-            this.emit({ type: 'stream_chunk', data });
-            break;
-          case 'stream_complete':
-            this.emit({ type: 'stream_complete', data });
-            break;
-          case 'stream_error':
-            this.emit({ type: 'stream_error', data });
-            break;
-          case 'conversation_name_generated':
-            this.emit({ type: 'conversation_name_generated', data });
-            break;
-          case 'message_created':
-            this.emit({ type: 'message_created', data });
-            break;
-          case 'message_updated':
-            this.emit({ type: 'message_updated', data });
-            break;
-          case 'mention_created':
-            this.emit({ type: 'mention_created', data });
-            break;
-          case 'error':
-            if (data?.code === 'TOO_MANY_TABS') {
-              this.isEvicted = true;
-              this.isConnected = false;
-              this.emit({ type: 'error', data });
-            }
-            break;
-        }
+        this.handleEvent(parsed.type, parsed.data);
       } catch (error) {
         console.error('[ConversationStream] Failed to parse SSE event:', error);
       }
@@ -196,8 +206,62 @@ class ConversationStreamService {
     this.heartbeatTimer = setTimeout(() => {
       console.warn('[ConversationStream] Heartbeat timeout, reconnecting...');
       this.disconnect();
+      if (typeof document !== 'undefined' && document.hidden) return;
       this.scheduleReconnect();
     }, this.heartbeatTimeout);
+  }
+
+  private handleEvent(type: StreamSSEEvent['type'], rawData: unknown): void {
+    const data = (rawData && typeof rawData === 'object' ? rawData : {}) as Record<string, unknown>;
+    switch (type) {
+      case 'connected':
+        this.connectionId = typeof data.connectionId === 'string' ? data.connectionId : null;
+        this.isConnected = true;
+        this.resolveConnectionWaiters(true);
+        this.resetHeartbeatTimer();
+        this.emit({ type, data: { connectionId: this.connectionId ?? '' } });
+        break;
+      case 'heartbeat':
+        this.resetHeartbeatTimer();
+        break;
+      case 'stream_chunk':
+        if (
+          data.component &&
+          typeof data.component === 'object' &&
+          (data.component as { type?: string }).type === 'chart'
+        ) {
+          const component = data.component as { type: string; data?: unknown };
+          data.component = {
+            ...component,
+            data: normalizeChartPayload(component.data),
+          };
+        }
+        this.emit({ type, data } as unknown as StreamSSEEvent);
+        break;
+      case 'stream_start':
+      case 'stream_complete':
+      case 'stream_error':
+      case 'conversation_name_generated':
+      case 'message_created':
+      case 'message_updated':
+      case 'mention_created':
+        this.resetHeartbeatTimer();
+        this.emit({ type, data } as StreamSSEEvent);
+        break;
+      case 'error':
+        if (data.code === 'TOO_MANY_TABS' || data.code === 'ERR_1405') {
+          this.isEvicted = true;
+          this.isConnected = false;
+          this.eventSource?.close();
+          this.eventSource = null;
+          this.connectionToken = null;
+          this.resolveConnectionWaiters(false);
+          this.emit({ type, data: { code: String(data.code), message: typeof data.message === 'string' ? data.message : undefined } });
+        }
+        break;
+      default:
+        break;
+    }
   }
 
   private scheduleReconnect(): void {
@@ -227,6 +291,13 @@ class ConversationStreamService {
       clearTimeout(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+  }
+
+  private resolveConnectionWaiters(connected: boolean): void {
+    for (const resolve of this.connectionWaiters) {
+      resolve(connected);
+    }
+    this.connectionWaiters.clear();
   }
 
   private emit(event: StreamSSEEvent): void {

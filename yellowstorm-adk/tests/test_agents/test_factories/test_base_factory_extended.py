@@ -9,6 +9,7 @@ from google.adk.tools.agent_tool import AgentTool
 from src.smart_rag.agents.factories.base_factory import AgentFactory
 from src.smart_rag.infrastructure.factories import LLMFactory
 from src.smart_rag.infrastructure.processing import PromptProcessor
+from src.smart_rag.infrastructure.processing import prepare_web_preview_after_tool
 
 
 @pytest.fixture
@@ -129,3 +130,21 @@ class TestBaseFactoryExtended:
             )
         assert isinstance(agent, Agent)
         assert len(agent.tools) == 1
+
+    def test_create_standard_agent_with_web_preview_tool(self, agent_factory):
+        agent_factory.set_web_preview_tool_config({
+            "prompt": "\nUse the preview tool when useful.",
+            "instructions": "Return complete HTML.",
+        })
+
+        agent = agent_factory.create_agent(
+            name="Worker",
+            prompt="Help the user",
+            chatbot_name="gpt-4o",
+            generate_web_preview=True,
+        )
+
+        assert agent.name == "Worker"
+        assert [tool.name for tool in agent.tools] == ["generate_web_preview"]
+        assert "Use the preview tool" in agent.instruction
+        assert prepare_web_preview_after_tool in agent.after_tool_callback

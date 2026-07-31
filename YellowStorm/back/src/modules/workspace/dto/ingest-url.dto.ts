@@ -5,14 +5,36 @@ import {
   IsOptional,
   MaxLength,
   IsObject,
+  Validate,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+  ValidationArguments,
 } from 'class-validator';
+
+/** Only Authorization may be forwarded to the download URL (credential exfil / SSRF). */
+export const INGEST_ALLOWED_AUTH_HEADER_NAMES = new Set(['authorization']);
+
+@ValidatorConstraint({ name: 'ingestAuthHeaders', async: false })
+export class IngestAuthHeadersConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    if (value === undefined || value === null) return true;
+    if (typeof value !== 'object' || Array.isArray(value)) return false;
+    return Object.keys(value as Record<string, unknown>).every((key) =>
+      INGEST_ALLOWED_AUTH_HEADER_NAMES.has(key.toLowerCase()),
+    );
+  }
+
+  defaultMessage(_args: ValidationArguments): string {
+    return 'authHeaders may only include Authorization';
+  }
+}
 
 export class IngestUrlDto {
   @ApiProperty({
-    description: 'URL to download the file from',
+    description: 'HTTPS URL to download the file from (SSRF-checked before fetch)',
     example: 'https://example.sharepoint.com/download?token=abc',
   })
-  @IsUrl({ require_tld: false })
+  @IsUrl({ protocols: ['https'], require_protocol: true, require_tld: true })
   downloadUrl!: string;
 
   @ApiProperty({
@@ -40,11 +62,14 @@ export class IngestUrlDto {
   mimeType?: string;
 
   @ApiPropertyOptional({
-    description: 'Authorization headers to include when downloading the file (e.g., Bearer token)',
+    description:
+      'Authorization header only (e.g. Bearer token). Other header names are rejected. ' +
+      'Stripped automatically if a redirect changes origin.',
     example: { Authorization: 'Bearer eyJ...' },
   })
   @IsOptional()
   @IsObject()
+  @Validate(IngestAuthHeadersConstraint)
   authHeaders?: Record<string, string>;
 
   @ApiPropertyOptional({

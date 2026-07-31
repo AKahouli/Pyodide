@@ -1,6 +1,6 @@
-import { ArrayUnique, IsString, IsBoolean, IsArray, IsOptional, IsIn } from 'class-validator';
+import { ArrayContains, ArrayNotEmpty, ArrayUnique, IsString, IsBoolean, IsArray, IsOptional, IsIn } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { MODEL_TYPES } from '../interfaces/model.interface';
+import { MODEL_INPUT_MODALITIES, MODEL_TYPES, ModelInputModality } from '../interfaces/model.interface';
 
 export class UpdateModelDto {
   @ApiPropertyOptional({ description: 'Model display name' })
@@ -52,4 +52,18 @@ export class UpdateModelDto {
   @IsBoolean()
   @IsOptional()
   omitTemperature?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Input modalities supported by this model. Text is required.',
+    enum: MODEL_INPUT_MODALITIES,
+    isArray: true,
+    default: ['text'],
+  })
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayUnique()
+  @ArrayContains(['text'])
+  @IsIn(MODEL_INPUT_MODALITIES, { each: true })
+  @IsOptional()
+  inputModalities?: ModelInputModality[];
 }

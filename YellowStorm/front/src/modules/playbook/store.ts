@@ -666,7 +666,9 @@ function logPlaybookPerfMetric(
   metric: string,
   fields: Record<string, string | number | boolean | null | undefined>,
 ): void {
-  console.info(`[playbook_perf] ${metric}`, fields);
+  if (import.meta.env.DEV) {
+    console.info(`[playbook_perf] ${metric}`, fields);
+  }
 }
 
 function getAutosaveRetryDelayMs(backoffUntil: number | null): number {

@@ -87,7 +87,7 @@ export function WorkspacePage() {
   const folders = useWorkspaceStore((s) => s.pageFolders);
   const files = useWorkspaceStore((s) => s.pageFiles);
   const storedArtifacts = useWorkspaceStore((s) => s.pageArtifacts);
-  const artifacts = dataRoomFeatures.decisionFlowArtifactsEnabled ? storedArtifacts : [];
+  const artifacts =storedArtifacts ;
   const currentFolderId = useWorkspaceStore((s) => s.pageCurrentFolderId);
   const navigateToFolder = useWorkspaceStore((s) => s.navigateToPageFolder);
   const search = useWorkspaceStore((s) => s.pageSearch);
@@ -109,21 +109,6 @@ export function WorkspacePage() {
       void selectPageWorkspace(null);
     }
   }, [routeWorkspaceId, selectedWorkspaceId, selectPageWorkspace]);
-
-  // TEMP diagnostic: log the indexing statuses the workspace page receives.
-  useEffect(() => {
-    if (!files.length) return;
-    const counts = files.reduce<Record<string, number>>((acc, f) => {
-      const s = f.indexingStatus ?? 'undefined';
-      acc[s] = (acc[s] ?? 0) + 1;
-      return acc;
-    }, {});
-    console.log('[indexing-status] received files', {
-      total: files.length,
-      counts,
-      sample: files.slice(0, 5).map((f) => ({ name: f.name, indexingStatus: f.indexingStatus })),
-    });
-  }, [files]);
 
   // While any file is still indexing, poll so its status dot updates to
   // green/red on its own without a manual refresh. Stops once all settle.
@@ -465,7 +450,7 @@ export function WorkspacePage() {
                     return (
                       <div className='space-y-1'>
                         {groups.map((group) => (
-                          <SourceGroupRow key={group.key} label={group.label} rootUrl={group.rootUrl} count={group.files.length} status={group.status} onOpenInNavigator={(url) => openAddLink({ url, autoStart: true, sourceGroupId: group.sourceGroupId, seed: group.files.filter((f) => f.sourceUrl).map((f) => ({ url: f.sourceUrl as string, name: f.name, indexingStatus: f.indexingStatus })) })} onMove={() => setMoveTarget({ files: group.files, title: group.label })} onDelete={canWrite ? () => setDeleteGroupTarget({ files: group.files, label: group.label }) : undefined}>
+                          <SourceGroupRow key={group.key} label={group.label} rootUrl={group.rootUrl} count={group.files.length} status={group.status} onOpenInNavigator={(url) => openAddLink({ url, autoStart: true, sourceGroupId: group.key, seed: group.files.filter((f) => f.sourceUrl).map((f) => ({ url: f.sourceUrl as string, name: f.name, indexingStatus: f.indexingStatus })) })} onMove={() => setMoveTarget({ files: group.files, title: group.label })} onDelete={canWrite ? () => setDeleteGroupTarget({ files: group.files, label: group.label }) : undefined}>
                             {group.files.map(renderFileRow)}
                           </SourceGroupRow>
                         ))}
@@ -882,6 +867,7 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
   const [isReindexing, setIsReindexing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [expanded, setExpanded] = useState(forceExpanded);
 
   useEffect(() => {
@@ -895,6 +881,7 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
   const deleteDocument = useWorkspaceStore((s) => s.deleteDocument);
   const getDownloadUrl = useWorkspaceStore((s) => s.getDownloadUrl);
   const reindexDocument = useWorkspaceStore((s) => s.reindexDocument);
+  const renameDocument = useWorkspaceStore((s) => s.renameDocument);
   const refreshPageData = useWorkspaceStore((s) => s.refreshPageData);
   const { enabled: deepSearch } = useDeepSearchIndexation();
 
@@ -1011,6 +998,9 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
                   {isReindexing ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <RefreshCw className='mr-2 h-4 w-4' />}
                   Indexer / Réindexer
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setRenameOpen(true)}>
+                  <Pencil className='mr-2 h-4 w-4' /> Renommer
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={onMove}>
                   <ArrowRight className='mr-2 h-4 w-4' /> Déplacer dans…
                 </DropdownMenuItem>
@@ -1027,7 +1017,56 @@ function FileRow({ file, artifacts, totalArtifactCount, forceExpanded, onMove }:
       {expanded && artifacts.map((artifact) => <WorkspaceArtifactRow key={artifact.id} artifact={artifact} canWrite={canWrite} onChanged={refreshPageData} />)}
 
       <ConfirmDeleteFileDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen} fileName={file.name} linkedArtifactCount={totalArtifactCount} isDeleting={isDeleting} onConfirm={handleDelete} />
+
+      <RenameFileDialog open={renameOpen} onOpenChange={setRenameOpen} currentName={file.name} onRename={(name) => renameDocument(file.workspaceId, file.id, name)} />
     </>
+  );
+}
+
+function RenameFileDialog({ open, onOpenChange, currentName, onRename }: { open: boolean; onOpenChange: (open: boolean) => void; currentName: string; onRename: (name: string) => Promise<void> }) {
+  const [name, setName] = useState(currentName);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => { if (open) setName(currentName); }, [open, currentName]);
+
+  const save = useCallback(async () => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === currentName || isSaving) return;
+    setIsSaving(true);
+    try {
+      await onRename(trimmed);
+      toast.success('Fichier renommé');
+      onOpenChange(false);
+    } catch {
+      toast.error('Le renommage a échoué.');
+    } finally {
+      setIsSaving(false);
+    }
+  }, [name, currentName, isSaving, onRename, onOpenChange]);
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !isSaving && onOpenChange(o)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Renommer le fichier</DialogTitle>
+          <DialogDescription>Modifiez le nom d'affichage de ce fichier. L'extension est conservée.</DialogDescription>
+        </DialogHeader>
+        <Input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void save(); } }}
+          aria-label='Nouveau nom du fichier'
+        />
+        <DialogFooter>
+          <Button variant='outline' onClick={() => onOpenChange(false)} disabled={isSaving}>Annuler</Button>
+          <Button onClick={save} disabled={isSaving || !name.trim() || name.trim() === currentName} className='gap-1.5'>
+            {isSaving ? <Loader2 className='h-4 w-4 animate-spin' /> : <Pencil className='h-4 w-4' />}
+            Renommer
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

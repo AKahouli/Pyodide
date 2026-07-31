@@ -1,6 +1,8 @@
 {
   "actions.newChat.label": "New Chat",
   "actions.newChat.tooltip": "Start a new conversation",
+  "actions.platformOverview.label": "Platform overview",
+  "actions.platformOverview.tooltip": "Explore platform capabilities",
   "actions.projects.label": "Projects",
   "actions.projects.tooltip": "Your projects",
   "history.label": "History",

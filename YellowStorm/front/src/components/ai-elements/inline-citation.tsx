@@ -19,7 +19,7 @@ export type InlineCitationCardProps = ComponentProps<typeof HoverCard>;
 
 export const InlineCitationCard = (props: InlineCitationCardProps) => <HoverCard closeDelay={0} openDelay={0} {...props} />;
 
-export type InlineCitationCardTriggerProps = ComponentProps<'span'> & {
+export type InlineCitationCardTriggerProps = ComponentProps<'button'> & {
   sources: string[];
 };
 
@@ -31,19 +31,30 @@ function getSourceLabel(source: string): string {
   }
 }
 
-export const InlineCitationCardTrigger = ({ sources, className, ...props }: InlineCitationCardTriggerProps) => (
-  <HoverCardTrigger asChild>
-    <span className={cn(badgeVariants({ variant: 'secondary' }), 'ml-1 rounded-full', className)} {...props}>
-      {sources[0] ? (
-        <>
-          {getSourceLabel(sources[0])} {sources.length > 1 && `+${sources.length - 1}`}
-        </>
-      ) : (
-        'unknown'
-      )}
-    </span>
-  </HoverCardTrigger>
-);
+export const InlineCitationCardTrigger = ({ sources, className, 'aria-label': ariaLabel, ...props }: InlineCitationCardTriggerProps) => {
+  const source = sources[0];
+  const visibleLabel = source ? getSourceLabel(source) : '?';
+  const fullLabel = sources.filter(Boolean).join(', ') || visibleLabel;
+
+  return (
+    <HoverCardTrigger asChild>
+      <button
+        type='button'
+        aria-label={ariaLabel ?? fullLabel}
+        title={fullLabel}
+        className={cn(
+          badgeVariants({ variant: 'outline' }),
+          'mx-0.5 h-5 min-w-5 max-w-32 rounded-full border-primary/25 bg-primary/8 px-1.5 py-0 align-super text-[11px] font-semibold leading-none text-primary shadow-none hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
+          className,
+        )}
+        {...props}
+      >
+        <span className='truncate'>{visibleLabel}</span>
+        {sources.length > 1 && <span className='ml-0.5 shrink-0'>+{sources.length - 1}</span>}
+      </button>
+    </HoverCardTrigger>
+  );
+};
 
 export type InlineCitationCardBodyProps = Omit<ComponentProps<'div'>, 'ref'>;
 

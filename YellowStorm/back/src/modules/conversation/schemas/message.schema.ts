@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types, Schema as MongooseSchema } from 'mongoose';
+import type { MessageReplayContext, ReliabilityEvaluation, ResponseCorrectionWorkflow } from '../interfaces/message.interface';
 
 export type MessageDocument = HydratedDocument<Message>;
 
@@ -119,6 +120,20 @@ export class Message extends Document {
   @Prop({ type: Object, default: undefined })
   interaction?: Record<string, unknown>;
 
+  // Internal reproducible execution inputs. Never included in MessageResponse.
+  @Prop({ type: Object, default: undefined })
+  replayContext?: MessageReplayContext;
+
+  @Prop({ type: Object, default: undefined })
+  reliabilityEvaluation?: ReliabilityEvaluation;
+
+  @Prop({ type: Object, default: undefined })
+  correctionWorkflow?: ResponseCorrectionWorkflow;
+
+  // Internal heartbeat prevents live in-memory jobs from being mistaken for restart leftovers.
+  @Prop({ type: Date, default: undefined })
+  reliabilityEvaluationHeartbeatAt?: Date;
+
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -132,6 +147,7 @@ MessageSchema.index({ conversationId: 1, conversationType: 1 });
 MessageSchema.index({ questionMessageId: 1, conversationType: 1, createdAt: 1 }); // Branch queries
 MessageSchema.index({ isStreaming: 1, updatedAt: 1 });
 MessageSchema.index({ requestId: 1 });
+MessageSchema.index({ 'reliabilityEvaluation.status': 1, reliabilityEvaluationHeartbeatAt: 1 });
 
 // JSON transform
 MessageSchema.set('toJSON', {

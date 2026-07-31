@@ -2,7 +2,7 @@ import { Types } from 'mongoose';
 import { MessageService } from './message.service';
 
 describe('MessageService createUserMessage agent tagging', () => {
-  let messageModel: { create: jest.Mock };
+  let messageModel: { create: jest.Mock; findById?: jest.Mock };
   let conversationService: {
     addMessageRef: jest.Mock;
     updateLastMessageAt: jest.Mock;
@@ -115,5 +115,46 @@ describe('MessageService createUserMessage agent tagging', () => {
     });
 
     expect(conversationService.updateTaggedAgents).not.toHaveBeenCalled();
+  });
+
+  it('removes raw tool results from public message responses', () => {
+    const response = (service as any).mapToResponse({
+      _id: new Types.ObjectId(),
+      conversationId: new Types.ObjectId(conversationId),
+      conversationType: 'ai',
+      components: [{
+        id: 'tool-1', type: 'toolInfo',
+        data: { title: 'connector', status: 'completed', resultJson: '{"secret":"value"}', params: '{"query":"safe"}' },
+      }],
+    });
+
+    expect(response.components[0].data).toEqual({ title: 'connector', status: 'completed', params: '{"query":"safe"}' });
+  });
+
+  it('upserts one sanitized correction attempt and protects its terminal decision', async () => {
+    const document: any = {
+      _id: new Types.ObjectId(),
+      conversationId: new Types.ObjectId(conversationId),
+      conversationType: 'ai',
+      correctionWorkflow: {
+        mode: 'corrective_transparent', status: 'correcting', activeVersion: 'original', threshold: 70,
+        attemptCount: 1, maxAttempts: 1, failureBehavior: 'publish_with_warning', showOriginalAnswer: true,
+        queuedAt: '2026-07-26T00:00:00.000Z', attempts: [],
+      },
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    messageModel.findById = jest.fn().mockResolvedValue(document);
+    const base = { attemptId: 'attempt-1', attemptNumber: 1, policyReasons: [], createdAt: '2026-07-26T00:00:01.000Z' };
+
+    await service.upsertCorrectionAttempt('message-1', { ...base, status: 'generating' });
+    await service.upsertCorrectionAttempt('message-1', {
+      ...base, status: 'rejected', decision: 'rejected', policyReasons: ['score_below_threshold'],
+      components: [{ id: 'tool', type: 'toolInfo', data: { title: 'search', resultJson: '{"secret":"value"}' } }],
+    });
+    await service.upsertCorrectionAttempt('message-1', { ...base, status: 'generating' });
+
+    expect(document.correctionWorkflow.attempts).toHaveLength(1);
+    expect(document.correctionWorkflow.attempts[0]).toMatchObject({ status: 'rejected', policyReasons: ['score_below_threshold'] });
+    expect(document.correctionWorkflow.attempts[0].components[0].data).toEqual({ title: 'search' });
   });
 });

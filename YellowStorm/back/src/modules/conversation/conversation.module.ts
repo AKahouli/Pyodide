@@ -28,10 +28,12 @@ import { ShareService } from './services/share.service';
 import { ReportService } from './services/report.service';
 import { ComposerSuggestionsService } from './services/composer-suggestions.service';
 import { ChoiceInteractionService } from './services/choice-interaction.service';
+import { ConversationBranchService } from './services/conversation-branch.service';
 
 // Guards
 import { ConversationOwnerGuard } from './guards/conversation-owner.guard';
 import { SseAuthGuard } from './guards/stream-auth.guard';
+import { ComposerSuggestionsRateLimitGuard } from './guards/composer-suggestions-rate-limit.guard';
 
 // External modules
 import { AuthModule } from '../auth/auth.module';
@@ -47,6 +49,18 @@ import { SkillModule } from '../skill/skill.module';
 import { EmailModule } from '../email/email.module';
 import conversationConfig from '../../config/conversation.config';
 import { GovernanceRuntimeModule } from '../governance/governance-runtime.module';
+import { EvaluationModule } from '../evaluation/evaluation.module';
+import { ResponseReliabilityService } from './services/response-reliability.service';
+import { ResponseReliabilityEvidenceBuilder } from './services/response-reliability-evidence.builder';
+import { ResponseReliabilityScoringService } from './services/response-reliability-scoring.service';
+import { ResponseCorrectionPolicyService } from './services/response-correction-policy.service';
+import { ResponseCorrectionPlannerService } from './services/response-correction-planner.service';
+import { CorrectedResponseComponentBuilder } from './services/corrected-response-component.builder';
+import { ResponseCorrectionService } from './services/response-correction.service';
+import { ConversationAgentRequestBuilder } from './services/conversation-agent-request.builder';
+import { CorrectiveReplayContextService } from './services/corrective-replay-context.service';
+import { CorrectiveReplayPromptBuilder } from './services/corrective-replay-prompt.builder';
+import { CorrectiveReplayRunnerService } from './services/corrective-replay-runner.service';
 
 @Module({
   imports: [
@@ -71,6 +85,7 @@ import { GovernanceRuntimeModule } from '../governance/governance-runtime.module
     SkillModule,
     EmailModule,
     GovernanceRuntimeModule,
+    forwardRef(() => EvaluationModule),
   ],
   controllers: [
     StreamController,  // Must be before ConversationController to avoid route conflict with :id param
@@ -90,8 +105,21 @@ import { GovernanceRuntimeModule } from '../governance/governance-runtime.module
     ReportService,
     ComposerSuggestionsService,
     ChoiceInteractionService,
+    ConversationBranchService,
+    ResponseReliabilityService,
+    ResponseReliabilityEvidenceBuilder,
+    ResponseReliabilityScoringService,
+    ResponseCorrectionPolicyService,
+    ResponseCorrectionPlannerService,
+    CorrectedResponseComponentBuilder,
+    ResponseCorrectionService,
+    ConversationAgentRequestBuilder,
+    CorrectiveReplayContextService,
+    CorrectiveReplayPromptBuilder,
+    CorrectiveReplayRunnerService,
     ConversationOwnerGuard,
     SseAuthGuard,
+    ComposerSuggestionsRateLimitGuard,
   ],
   exports: [
     ConversationService,

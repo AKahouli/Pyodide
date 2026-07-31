@@ -205,6 +205,25 @@ export class MessageController {
       requestId,
       parentMessageId: dto.parentMessageId,
       interaction: canonicalChoice?.interaction,
+      replayContext: {
+        content: canonicalChoice?.content ?? dto.content,
+        taskSummary: canonicalChoice?.taskSummary,
+        attachedFileIds: dto.attachedFileIds ?? [],
+        webSearchEnabled: dto.webSearchEnabled ?? false,
+        deepSearchEnabled: dto.deepSearchEnabled ?? false,
+        modelId: dto.modelId,
+        agentIds: effectiveAgentIds ?? [],
+        skillIds: dto.skillIds ?? [],
+        connectorRepo: dto.connectorRepo,
+        governanceOverride: governedRuntime ? {
+          runtimeMode: 'governed',
+          primaryAgentId: governedRuntime.primaryAgentId,
+          allowedAgentIds: governedRuntime.allowedAgentIds,
+          workspaceIds: governedRuntime.workspaceIds,
+          revisionId: governedRuntime.revisionId,
+          scopeId: governedRuntime.scopeId,
+        } : undefined,
+      },
     });
 
     // Fire and forget - generate conversation name asynchronously on first message
@@ -217,6 +236,8 @@ export class MessageController {
         user.email,
       );
     }
+
+    let aiMessageId: string | undefined;
 
     // Create AI placeholder and start stream
     if (!dto.memberIds?.length) {
@@ -234,6 +255,7 @@ export class MessageController {
         questionMessageId: userMessage.id,
         requestId,
       });
+      aiMessageId = aiMessage.id;
 
       this.logger.log('Starting stream', {
         conversationId,
@@ -247,6 +269,7 @@ export class MessageController {
       this.streamService
         .startStream(user._id.toString(), conversationId, aiMessage.id, {
           content: canonicalChoice?.content ?? dto.content,
+          taskSummary: canonicalChoice?.taskSummary,
           attachedFileIds: dto.attachedFileIds,
           webSearchEnabled: dto.webSearchEnabled,
           deepSearchEnabled: dto.deepSearchEnabled,
@@ -277,7 +300,7 @@ export class MessageController {
       });
     }
 
-    return { userMessage };
+    return { userMessage, aiMessageId };
   }
 
   @Get()
@@ -385,13 +408,24 @@ export class MessageController {
 
     // Start streaming (non-blocking)
     this.streamService
-      .startStream(user._id.toString(), conversationId, newAiMessage.id, {
-        content: userMessage.content || '',
-        attachedFileIds: userMessage.attachedFileIds?.map((id) => id.toString()),
-        webSearchEnabled: userMessage.webSearchEnabled,
-        deepSearchEnabled: (userMessage as any).deepSearchEnabled,
-        agentIds: userMessage.agentIds?.map((id) => id.toString()),
-      }, requestId, undefined, this.resolveDisplayName(user))
+      .startStream(
+        user._id.toString(),
+        conversationId,
+        newAiMessage.id,
+        userMessage.replayContext ?? {
+          content: userMessage.content || '',
+          attachedFileIds: userMessage.attachedFileIds?.map((id) => id.toString()) ?? [],
+          webSearchEnabled: userMessage.webSearchEnabled,
+          deepSearchEnabled: false,
+          modelId: userMessage.modelId,
+          agentIds: userMessage.agentIds?.map((id) => id.toString()) ?? [],
+          skillIds: [],
+        },
+        requestId,
+        undefined,
+        this.resolveDisplayName(user),
+        userMessage.replayContext?.governanceOverride,
+      )
       .catch((err) => {
         this.logger.error('Regenerate stream failed', {
           conversationId,

@@ -3,9 +3,11 @@ import {
   deletePlan,
   getAllPlans,
   getMaintenanceStatus,
+  getFeatureVisibility,
   getUserAnalytics,
   setMaintenanceMode,
   updatePlan,
+  updateFeatureVisibility,
 } from './api';
 
 const getMock = vi.hoisted(() => vi.fn());
@@ -29,6 +31,7 @@ vi.mock('@/lib/api/config', () => ({
     },
     system: {
       maintenance: '/system/maintenance',
+      features: '/system/features',
     },
     usage: {
       plansAll: '/usage/plans/all',
@@ -61,6 +64,25 @@ describe('admin api', () => {
     expect(postMock).toHaveBeenCalledWith('/system/maintenance', { enabled: true, message: 'maint' });
     expect(status.enabled).toBe(false);
     expect(updated.enabled).toBe(true);
+  });
+
+  it('gets and updates feature visibility', async () => {
+    const visibility = {
+      conversation: true,
+      workspace: true,
+      playbook: false,
+      governance: true,
+      appMarketplace: true,
+      worky: false,
+      agents: true,
+    };
+    getMock.mockResolvedValue({ data: { data: visibility } });
+    putMock.mockResolvedValue({ data: { data: visibility } });
+
+    await expect(getFeatureVisibility()).resolves.toEqual(visibility);
+    await expect(updateFeatureVisibility(visibility)).resolves.toEqual(visibility);
+    expect(getMock).toHaveBeenCalledWith('/system/features');
+    expect(putMock).toHaveBeenCalledWith('/system/features', visibility);
   });
 
   it('handles plans CRUD endpoints', async () => {

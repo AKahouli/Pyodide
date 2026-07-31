@@ -442,7 +442,7 @@ describe('PlaybookFlowValidatorService', () => {
     }).not.toThrow();
   });
 
-  it('still rejects runnable routers when a non-reserved label has no outgoing edge', () => {
+  it('accepts runnable routers when at least one non-reserved label has an outgoing edge', () => {
     expect(() => {
       service.validate([
         ...buildNodes(),
@@ -459,7 +459,38 @@ describe('PlaybookFlowValidatorService', () => {
         sourcePort: 'summary',
         iteration: 'current',
       }] as any);
-    }).toThrow('Router router-1 label "retry" has no outgoing edge');
+    }).not.toThrow();
+  });
+
+  it('rejects runnable routers when no declared output label has an outgoing edge', () => {
+    expect(() => {
+      service.validate([
+        ...buildNodes(),
+        buildRouterNode(),
+      ] as any, [
+        { id: 'edge-1', kind: 'sequential', source: 'source-node', target: 'router-1' },
+      ] as any, [] as any, { allowUnboundRequiredPorts: true });
+    }).toThrow('Router router-1 has no linked output label');
+  });
+
+  it('accepts a router control edge as coverage for the exact required target port', () => {
+    expect(() => {
+      service.validate([
+        ...buildNodes(),
+        buildRouterNode(),
+      ] as any, [
+        { id: 'edge-1', kind: 'sequential', source: 'source-node', target: 'router-1' },
+        { id: 'edge-2', kind: 'conditional', source: 'router-1', target: 'target-node', routerLabel: 'done', targetInputPortId: 'prompt' },
+      ] as any, [] as any);
+    }).not.toThrow();
+  });
+
+  it('does not accept a non-router edge as coverage for a required target port', () => {
+    expect(() => {
+      service.validate(buildNodes() as any, [
+        { id: 'edge-1', kind: 'sequential', source: 'source-node', target: 'target-node', targetInputPortId: 'prompt' },
+      ] as any, [] as any);
+    }).toThrow('Required port target-node.prompt has no data binding');
   });
 
   it('rejects router cycles whose router is unbounded', () => {
@@ -480,6 +511,18 @@ describe('PlaybookFlowValidatorService', () => {
         { id: 'edge-3', kind: 'conditional', source: 'router-1', target: 'target-node', routerLabel: 'done' },
       ] as any, [] as any);
     }).toThrow('Cycle router-1 -> source-node must include a router with maxIterations > 0');
+  });
+
+  it('treats an unlinked router output as a terminal exit from a bounded cycle', () => {
+    expect(() => {
+      service.validate([
+        ...buildNodes(),
+        buildRouterNode(),
+      ] as any, [
+        { id: 'edge-1', kind: 'sequential', source: 'source-node', target: 'router-1' },
+        { id: 'edge-2', kind: 'conditional', source: 'router-1', target: 'source-node', routerLabel: 'retry' },
+      ] as any, [] as any, { allowUnboundRequiredPorts: true });
+    }).not.toThrow();
   });
 
   it('accepts router cycles that include a bounded router and a terminal exit route', () => {

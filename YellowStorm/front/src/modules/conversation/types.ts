@@ -47,6 +47,27 @@ export interface Conversation {
   projectId?: string | null;
   runtimeMode?: 'standard' | 'governed';
   governanceContext?: { programId: string; scopeId: string; deploymentId: string; revisionId: string; revisionNumber: number; pinnedAt: string; runtimeDefinition: { primaryAgentId: string; allowedAgentIds: string[]; workspaceIds: string[] } };
+  branchProvenance?: { sourceConversationId: string; sourceTargetMessageId: string; branchedAt: string };
+}
+
+export interface BranchConversationPayload {
+  requestId: string;
+  targetMessageId: string;
+  activeBranches: Record<string, string>;
+}
+
+export interface ComposerSuggestionSettings {
+  enabled: boolean;
+  agentId: string | null;
+  debounceMs: number;
+  minimumDraftLength: number;
+  requestsPerMinute: number;
+  maxOutputTokens: number;
+}
+
+export interface ConversationSettings {
+  composerSuggestions: ComposerSuggestionSettings;
+  updatedAt?: string;
 }
 
 export interface AttachedFile {
@@ -55,6 +76,92 @@ export interface AttachedFile {
   mimeType: string;
   size: number;
   downloadUrl: string;
+}
+
+export type ReliabilityEvaluationStatus = 'pending' | 'completed' | 'insufficient_evidence' | 'not_applicable' | 'failed';
+export type ReliabilityClaimStatus = 'supported' | 'partially_supported' | 'unsupported' | 'contradicted';
+export type ReliabilityClaimImportance = 'critical' | 'major' | 'minor';
+export type ReliabilityLabel = 'strongly_supported' | 'mostly_supported' | 'needs_verification' | 'high_hallucination_risk';
+
+export interface ReliabilityFinding {
+  claim: string;
+  status: ReliabilityClaimStatus;
+  importance: ReliabilityClaimImportance;
+  explanation: string;
+  evidenceIds?: string[];
+}
+
+export interface ReliabilityEvaluation {
+  status: ReliabilityEvaluationStatus;
+  score?: number;
+  label?: ReliabilityLabel;
+  summary?: string;
+  claimCounts?: { total: number; supported: number; partiallySupported: number; unsupported: number; contradicted: number };
+  claims?: ReliabilityFinding[];
+  findings?: ReliabilityFinding[];
+  evaluator?: { modelId: string; modelName: string; evaluatorVersion: string; promptVersion: string };
+  requestedAt?: string;
+  evaluatedAt?: string;
+  durationMs?: number;
+  failureCode?: string;
+}
+
+export type ResponseCorrectionStatus = 'queued' | 'correcting' | 're_evaluating' | 'corrected' | 'failed' | 'abstained' | 'human_review_required';
+export type ActiveAnswerVersion = 'original' | 'corrected' | 'abstention';
+export type DisplayedAnswerVersion = ActiveAnswerVersion | `attempt:${string}`;
+
+export interface AppliedCorrection {
+  claim: string;
+  action: 'removed' | 'qualified' | 'replaced' | 'citation_repaired';
+  explanation: string;
+  evidenceIds?: string[];
+}
+
+export type CorrectionPolicyReason = 'policy_requirements_met' | 'answer_empty' | 'evaluation_not_applicable' | 'evaluation_not_completed' | 'score_below_threshold' | 'score_below_original' | 'critical_claim_unresolved' | 'candidate_generation_failed' | 'candidate_evaluation_failed';
+export interface ResponseCorrectionAttempt {
+  attemptId: string;
+  attemptNumber: number;
+  strategy?: 'existing_evidence' | 'corrective_replay';
+  status: 'generating' | 'generated' | 'evaluating' | 'accepted' | 'rejected' | 'failed';
+  decision?: 'accepted' | 'rejected' | 'failed';
+  policyReasons: CorrectionPolicyReason[];
+  components?: MessageComponent[];
+  evaluation?: ReliabilityEvaluation;
+  appliedCorrections?: AppliedCorrection[];
+  remainingUncertainties?: string[];
+  failureCode?: string;
+  createdAt: string;
+  generatedAt?: string;
+  completedAt?: string;
+  correctionModel?: { modelId: string; modelName: string; correctorVersion: string; promptVersion: string };
+}
+
+export interface ResponseCorrectionWorkflow {
+  mode: 'corrective_transparent';
+  status: ResponseCorrectionStatus;
+  activeVersion: ActiveAnswerVersion;
+  originalScore?: number;
+  threshold: number;
+  attemptCount: number;
+  maxAttempts: number;
+  correctedComponents?: MessageComponent[];
+  finalReliabilityEvaluation?: ReliabilityEvaluation;
+  appliedCorrections?: AppliedCorrection[];
+  remainingUncertainties?: string[];
+  failureBehavior: 'publish_with_warning' | 'abstain' | 'require_human_review';
+  failureCode?: string;
+  showOriginalAnswer: boolean;
+  reviewReportId?: string;
+  queuedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  correctionModel?: { modelId: string; modelName: string; correctorVersion: string; promptVersion: string };
+  strategy?: 'existing_evidence' | 'corrective_replay';
+  attempts?: ResponseCorrectionAttempt[];
+  publishedAttemptId?: string;
+  correctionRunId?: string;
+  leaseExpiresAt?: string;
 }
 
 export interface Message {
@@ -85,6 +192,8 @@ export interface Message {
   timeToFirstChunk?: number;
   timeToFirstToken?: number;
   parentMessageId?: string; // Reference to the message being replied to
+  reliabilityEvaluation?: ReliabilityEvaluation;
+  correctionWorkflow?: ResponseCorrectionWorkflow;
   createdAt: string;
 }
 

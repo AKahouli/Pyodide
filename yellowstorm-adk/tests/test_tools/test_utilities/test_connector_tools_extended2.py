@@ -1,7 +1,7 @@
 """Extended connector_tools coverage for schema, workspace binding, and import."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -22,6 +22,7 @@ from src.smart_rag.tools.utilities.connector_tools import (
     _unique_strings,
     _with_default_workspace_params,
     _with_tool_context_signature,
+    create_save_file_to_workspace,
     import_connector_items_to_workspace_request,
 )
 
@@ -203,3 +204,100 @@ class TestConnectorMcpAndImport:
         )
         assert "Imported connector items" in result
         assert "doc.pdf" in result
+
+
+class TestSaveFileToWorkspace:
+    @pytest.mark.asyncio
+    async def test_posts_ingest_request_and_propagates_brain_doc(self):
+        response = MagicMock(status_code=200)
+        response.json.return_value = {
+            "document": {
+                "id": "doc-1",
+                "originalName": "report.xlsx",
+                "size": 123,
+                "filePath": "workspace/report.xlsx",
+            }
+        }
+        client = AsyncMock()
+        client.post.return_value = response
+        client_context = MagicMock()
+        client_context.__aenter__ = AsyncMock(return_value=client)
+        client_context.__aexit__ = AsyncMock(return_value=None)
+        tool_context = SimpleNamespace(state={})
+        tool = create_save_file_to_workspace(
+            {
+                "platform_api_url": "https://platform.example.com/api/v1",
+                "platform_api_token": "internal-secret",
+                "user_id": "user-1",
+            }
+        )
+
+        with patch("httpx.AsyncClient", return_value=client_context):
+            result = await tool(
+                download_url="https://files.example.com/report.xlsx",
+                workspace_id="workspace-1",
+                filename="report.xlsx",
+                mime_type="application/vnd.ms-excel",
+                auth_headers={"Authorization": "Bearer source-token"},
+                source_meta={"connector": "SharePoint"},
+                tool_context=tool_context,
+            )
+
+        assert "File saved to workspace successfully" in result
+        client.post.assert_awaited_once_with(
+            "https://platform.example.com/api/v1/workspaces/workspace-1/documents/ingest-url",
+            json={
+                "downloadUrl": "https://files.example.com/report.xlsx",
+                "filename": "report.xlsx",
+                "userId": "user-1",
+                "mimeType": "application/vnd.ms-excel",
+                "authHeaders": {"Authorization": "Bearer source-token"},
+                "sourceMeta": {"connector": "SharePoint"},
+            },
+            headers={
+                "X-Internal-Token": "internal-secret",
+                "Content-Type": "application/json",
+            },
+        )
+        assert tool_context.state["_code_interpreter_brain_docs"] == [
+            {
+                "filename": "report.xlsx",
+                "filepath": "workspace/report.xlsx",
+                "workspace_id": "workspace-1",
+            }
+        ]
+
+    def test_requires_platform_credentials(self):
+        assert create_save_file_to_workspace({}) is None
+        assert create_save_file_to_workspace({"platform_api_url": "https://example.com"}) is None
+
+    @pytest.mark.asyncio
+    async def test_redacts_runtime_context_from_failures(self):
+        tool = create_save_file_to_workspace(
+            {
+                "platform_api_url": "https://platform.example.com",
+                "platform_api_token": "internal-secret",
+                "user_id": "user-1",
+            }
+        )
+        client_context = MagicMock()
+        client_context.__aenter__ = AsyncMock(
+            side_effect=RuntimeError(
+                "internal-secret https://platform.example.com user-1"
+            )
+        )
+        client_context.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("httpx.AsyncClient", return_value=client_context), patch(
+            "src.smart_rag.tools.utilities.connector_tools.logger.error"
+        ) as log_error:
+            result = await tool(
+                download_url="https://files.example.com/report.xlsx",
+                workspace_id="workspace-1",
+                filename="report.xlsx",
+            )
+
+        assert "internal-secret" not in result
+        assert "https://platform.example.com" not in result
+        assert "user-1" not in result
+        assert log_error.call_args.args[1] == "[REDACTED] [REDACTED] [REDACTED]"

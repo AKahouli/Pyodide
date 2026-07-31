@@ -9,6 +9,7 @@ import type { ChoiceInteractionDto } from '../dto/send-message.dto';
 
 export interface CanonicalChoiceSubmission {
   content: string;
+  taskSummary: string;
   interaction: Record<string, unknown>;
 }
 
@@ -29,17 +30,27 @@ export class ChoiceInteractionService {
     }
 
     const selectedIds = interaction.selectedOptions.map((item) => item.optionId);
-    const selected = selectedIds.map((id) => choice.options.find((option) => option.id === id));
-    if (selected.some((option) => !option || option.disabled)) throw this.invalid();
+    const selected = choice.options.filter((option) => selectedIds.includes(option.id));
+    if (selected.length !== selectedIds.length || selected.some((option) => option.disabled)) throw this.invalid();
     const customAnswer = interaction.customAnswer?.trim();
     if (interaction.dismissed) {
       if (!choice.dismissible || selected.length || customAnswer) throw this.invalid();
+      const displayText = choice.labels?.dismiss ?? 'Dismissed';
       return {
-        content: 'I prefer not to answer this question.',
+        content: JSON.stringify({
+          question: {
+            prompt: choice.prompt,
+            description: choice.description ?? null,
+          },
+          selectedChoices: [],
+          alternativeResponse: null,
+          dismissed: true,
+        }, null, 2),
+        taskSummary: this.summarize([displayText]),
         interaction: {
           type: 'choice', componentId: interaction.componentId, questionId: choice.questionId,
           sourceMessageId: interaction.sourceMessageId, selectionMode: choice.selectionMode,
-          selectedOptions: [], dismissed: true, displayText: 'Dismissed',
+          selectedOptions: [], dismissed: true, displayText,
         },
       };
     }
@@ -48,12 +59,25 @@ export class ChoiceInteractionService {
     if (choice.selectionMode === 'single' && customAnswer && selected.length) throw this.invalid();
     if (!selected.length && !customAnswer) throw this.invalid();
 
-    const canonicalSelected = selected as NonNullable<(typeof selected)[number]>[];
-    const submitParts = canonicalSelected.map((option) => option.submitText);
+    const canonicalSelected = selected;
     const displayParts = canonicalSelected.map((option) => option.label);
-    if (customAnswer) { submitParts.push(customAnswer); displayParts.push(customAnswer); }
+    if (customAnswer) displayParts.push(customAnswer);
+    const content = JSON.stringify({
+      question: {
+        prompt: choice.prompt,
+        description: choice.description ?? null,
+      },
+      selectedChoices: canonicalSelected.map((option) => ({
+        optionId: option.id,
+        submitText: option.submitText,
+        description: option.description ?? null,
+      })),
+      alternativeResponse: customAnswer ?? null,
+      dismissed: false,
+    }, null, 2);
     return {
-      content: submitParts.join(' '),
+      content,
+      taskSummary: this.summarize(displayParts),
       interaction: {
         type: 'choice', componentId: interaction.componentId, questionId: choice.questionId,
         sourceMessageId: interaction.sourceMessageId, selectionMode: choice.selectionMode,
@@ -61,6 +85,11 @@ export class ChoiceInteractionService {
         ...(customAnswer ? { customAnswer } : {}), displayText: displayParts.join(', '),
       },
     };
+  }
+
+  private summarize(parts: string[]): string {
+    const summary = parts.join(', ').replace(/\s+/g, ' ').trim();
+    return summary.length <= 120 ? summary : `${summary.slice(0, 117).trimEnd()}...`;
   }
 
   private invalid(): BadRequestException {

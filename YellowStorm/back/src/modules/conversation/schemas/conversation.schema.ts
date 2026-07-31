@@ -3,6 +3,7 @@ import { Document, HydratedDocument, Types } from 'mongoose';
 
 export type ConversationDocument = HydratedDocument<Conversation>;
 export type ConversationRuntimeMode = 'standard' | 'governed';
+export type ConversationInitializationStatus = 'ready' | 'pending' | 'seeding' | 'cleanup_pending';
 
 @Schema({ _id: false })
 export class ConversationGovernanceContext {
@@ -72,6 +73,34 @@ export class Conversation extends Document {
   @Prop({ type: Types.ObjectId, ref: 'User' })
   sharedFrom?: Types.ObjectId;
 
+  @Prop({ type: String, enum: ['ready', 'pending', 'seeding', 'cleanup_pending'], default: 'ready', index: true })
+  initializationStatus!: ConversationInitializationStatus;
+
+  @Prop({ type: String })
+  branchSeedAttemptId?: string;
+
+  @Prop({
+    type: {
+      sourceConversationId: { type: Types.ObjectId, ref: 'Conversation', required: true },
+      sourceTargetMessageId: { type: Types.ObjectId, ref: 'Message', required: true },
+      requestId: { type: String, required: true },
+      requestFingerprint: { type: String, required: true },
+      branchedBy: { type: Types.ObjectId, ref: 'User', required: true },
+      branchedAt: { type: Date, required: true },
+      selectedAnswerIds: [{ type: Types.ObjectId, ref: 'Message' }],
+    },
+    required: false,
+  })
+  branchProvenance?: {
+    sourceConversationId: Types.ObjectId;
+    sourceTargetMessageId: Types.ObjectId;
+    requestId: string;
+    requestFingerprint: string;
+    branchedBy: Types.ObjectId;
+    branchedAt: Date;
+    selectedAnswerIds: Types.ObjectId[];
+  };
+
   @Prop({
     type: {
       isGroup: { type: Boolean, default: false },
@@ -133,6 +162,10 @@ ConversationSchema.index({ createdBy: 1, isArchived: 1, lastMessageAt: -1 });
 ConversationSchema.index({ createdBy: 1, createdAt: -1 });
 ConversationSchema.index({ createdBy: 1, projectId: 1, lastMessageAt: -1 });
 ConversationSchema.index({ createdBy: 1, governedCreationRequestId: 1 }, { unique: true, partialFilterExpression: { governedCreationRequestId: { $exists: true, $type: 'string' } } });
+ConversationSchema.index(
+  { createdBy: 1, 'branchProvenance.requestId': 1 },
+  { unique: true, partialFilterExpression: { 'branchProvenance.requestId': { $exists: true, $type: 'string' } } },
+);
 
 // JSON transform
 ConversationSchema.set('toJSON', {

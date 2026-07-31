@@ -67,6 +67,23 @@ describe('groupBySourceRoot', () => {
     expect(groups[0].sourceGroupId).toBe('g1');
   });
 
+  it('unifies a new doc with a legacy group when stamped with the group key as sourceGroupId', () => {
+    // Continue-mode re-navigation passes the group's KEY as sourceGroupId. For a
+    // legacy group (key = normalizedSourceRootUrl), a newly indexed link — e.g. a
+    // cross-domain manual link — stamped with that key must join the same group,
+    // not split off into its own (which would drop it from the re-navigation seed).
+    const ROOT = 'https://ex.com';
+    const files = [
+      urlFile('legacy1', { sourceGroupId: undefined, sourceRootUrl: ROOT, normalizedSourceRootUrl: ROOT }),
+      urlFile('legacy2', { sourceGroupId: undefined, sourceRootUrl: ROOT, normalizedSourceRootUrl: ROOT }),
+      urlFile('ext', { sourceGroupId: ROOT, sourceRootUrl: ROOT, normalizedSourceRootUrl: ROOT }),
+    ];
+    const { groups, loose } = groupBySourceRoot(files);
+    expect(loose).toHaveLength(0);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].files.map((f) => f.id)).toEqual(['legacy1', 'legacy2', 'ext']);
+  });
+
   it('falls back to root-URL grouping for legacy docs without a sourceGroupId', () => {
     const files = [
       urlFile('a', { sourceRootUrl: 'https://ex.com', normalizedSourceRootUrl: 'https://ex.com' }),

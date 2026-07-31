@@ -15,6 +15,21 @@ import { ErrorCode, ErrorMessages } from '../constants/error-codes';
 import { ErrorResponse, ErrorDetail } from '../interfaces/error-response.interface';
 import { MaintenanceException } from '../../system/exceptions/maintenance.exception';
 
+const SENSITIVE_QUERY_PARAM = /token|secret|password|code|key/i;
+
+function sanitizeRequestUrl(requestUrl: string): string {
+  const queryIndex = requestUrl.indexOf('?');
+  if (queryIndex < 0) return requestUrl;
+
+  const path = requestUrl.slice(0, queryIndex);
+  const params = new URLSearchParams(requestUrl.slice(queryIndex + 1));
+  for (const key of params.keys()) {
+    if (SENSITIVE_QUERY_PARAM.test(key)) params.set(key, '[REDACTED]');
+  }
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly isProduction: boolean;
@@ -49,7 +64,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       success: false as const,
       error: {
         timestamp: new Date().toISOString(),
-        path: request.url,
+        path: sanitizeRequestUrl(request.url),
         method: request.method,
         requestId,
       },
@@ -127,6 +142,20 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     exception: unknown,
     baseResponse: { success: false; error: { timestamp: string; path: string; method: string; requestId: string } },
   ): ErrorResponse {
+    // Multer rejects oversized multipart bodies at parse time (before buffering
+    // completes). Map to 413 so clients get a clear size error instead of 500.
+    if (this.isMulterFileTooLarge(exception)) {
+      return {
+        ...baseResponse,
+        error: {
+          ...baseResponse.error,
+          code: ErrorCode.WORKSPACE_STORAGE_FILE_TOO_LARGE,
+          message: ErrorMessages[ErrorCode.WORKSPACE_STORAGE_FILE_TOO_LARGE],
+          statusCode: HttpStatus.PAYLOAD_TOO_LARGE,
+        },
+      };
+    }
+
     const message = this.isProduction
       ? ErrorMessages[ErrorCode.INTERNAL_ERROR]
       : this.getUnknownExceptionMessage(exception);
@@ -140,6 +169,15 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
       },
     };
+  }
+
+  private isMulterFileTooLarge(exception: unknown): boolean {
+    return (
+      typeof exception === 'object' &&
+      exception !== null &&
+      (exception as { name?: string }).name === 'MulterError' &&
+      (exception as { code?: string }).code === 'LIMIT_FILE_SIZE'
+    );
   }
 
   private extractMessage(responseObj: Record<string, unknown>): string {

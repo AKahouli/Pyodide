@@ -36,6 +36,7 @@ export interface ReportResponse {
   description: string;
   status: ReportStatus;
   adminNotes?: string;
+  source?: 'user' | 'system_correction';
   createdAt: string;
   updatedAt: string;
 }
@@ -66,6 +67,8 @@ export interface ReportDetailResponse extends ReportResponse {
     durationMs?: number;
     isComplete: boolean;
     createdAt: string;
+    reliabilityEvaluation?: import('./message.interface').ReliabilityEvaluation;
+    correctionWorkflow?: import('./message.interface').ResponseCorrectionWorkflow;
   };
   reporter: {
     id: string;

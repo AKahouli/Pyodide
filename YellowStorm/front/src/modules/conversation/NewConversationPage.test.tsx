@@ -1,18 +1,22 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NewConversationPage } from './NewConversationPage';
 
 const createConversationMock = vi.hoisted(() => vi.fn().mockResolvedValue({ id: 'conv-1' }));
 const updateConversationMock = vi.hoisted(() => vi.fn());
+const claimCurrentConversationMock = vi.hoisted(() => vi.fn());
 const sendMessageMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-const resetSelectedWorkspaceIdsMock = vi.hoisted(() => vi.fn());
+const setConversationStateMock = vi.hoisted(() => vi.fn());
 const clearAllMock = vi.hoisted(() => vi.fn());
 const mockNavigate = vi.hoisted(() => vi.fn());
+const selectedWorkspaceIdsMock = vi.hoisted(() => ({ value: ['ws-1'] as string[] }));
+const uploadConversationIdMock = vi.hoisted(() => ({ value: null as string | null }));
 
 vi.mock('@/components/ai-elements/input', () => ({
   default: ({
     onSubmit,
+    preserveWorkspaceSelectionOnSubmit,
   }: {
     onSubmit: (
       message: { text: string },
@@ -28,28 +32,32 @@ vi.mock('@/components/ai-elements/input', () => ({
         repoUrl?: string;
       },
     ) => Promise<void>;
+    preserveWorkspaceSelectionOnSubmit?: boolean;
   }) => (
-    <button
-      type='button'
-      onClick={() => {
-        void onSubmit(
-          { text: 'hello' },
-          'model-1',
-          ['agent-1'],
-          undefined,
-          ['ws-1'],
-          {
-            connectorId: 'connector-1',
-            connectorName: 'GitHub',
-            repoId: 'repo-1',
-            repoName: 'org-name/repo-name',
-            repoUrl: 'https://github.com/org-name/repo-name',
-          },
-        );
-      }}
-    >
-      submit-new-conversation
-    </button>
+    <>
+      <span>{preserveWorkspaceSelectionOnSubmit ? 'workspace-selection-preserved' : 'workspace-selection-reset'}</span>
+      <button
+        type='button'
+        onClick={() => {
+          void onSubmit(
+            { text: 'hello' },
+            'model-1',
+            ['agent-1'],
+            undefined,
+            selectedWorkspaceIdsMock.value,
+            {
+              connectorId: 'connector-1',
+              connectorName: 'GitHub',
+              repoId: 'repo-1',
+              repoName: 'org-name/repo-name',
+              repoUrl: 'https://github.com/org-name/repo-name',
+            },
+          );
+        }}
+      >
+        submit-new-conversation
+      </button>
+    </>
   ),
 }));
 
@@ -62,15 +70,21 @@ vi.mock('react-router-dom', async () => {
 });
 
 vi.mock('./store', () => ({
-  useConversationStore: (selector: (state: Record<string, unknown>) => unknown) =>
-    selector({
-      createConversation: createConversationMock,
-      updateConversation: updateConversationMock,
-      sendMessage: sendMessageMock,
-    }),
+  useConversationStore: Object.assign(
+    (selector: (state: Record<string, unknown>) => unknown) =>
+      selector({
+        createConversation: createConversationMock,
+        updateConversation: updateConversationMock,
+        claimCurrentConversation: claimCurrentConversationMock,
+        sendMessage: sendMessageMock,
+      }),
+    {
+      setState: setConversationStateMock,
+      getState: () => ({ conversations: [], selectedSkillIds: [], selectedConnectorRepo: null }),
+    },
+  ),
   useInputDisabled: () => false,
-  useSelectedWorkspaceIds: () => [],
-  useResetSelectedWorkspaceIds: () => resetSelectedWorkspaceIdsMock,
+  useSelectedWorkspaceIds: () => selectedWorkspaceIdsMock.value,
 }));
 
 vi.mock('./hooks/useConversationFileUpload', () => ({
@@ -80,7 +94,7 @@ vi.mock('./hooks/useConversationFileUpload', () => ({
     removeFile: vi.fn(),
     completedFileIds: [],
     isUploading: false,
-    conversationId: null,
+    conversationId: uploadConversationIdMock.value,
     clearAll: clearAllMock,
   }),
 }));
@@ -91,7 +105,7 @@ vi.mock('@/modules/localization', () => ({
   }),
 }));
 
-vi.mock('@/modules/usage', () => ({
+vi.mock('@/modules/usage/UsageContext', () => ({
   useUsage: () => ({ status: { isLimitExceeded: false } }),
 }));
 
@@ -109,6 +123,10 @@ vi.mock('./components/ComposerSuggestionChips', () => ({
 
 vi.mock('@/modules/playbook/components/playbook-swiper', () => ({
   PlaybooksCarousel: () => <div>playbooks</div>,
+}));
+
+vi.mock('@/modules/governance/components/consumer/GovernedScopesCarousel', () => ({
+  GovernedScopesCarousel: () => <div>governed-scopes</div>,
 }));
 
 vi.mock('@/modules/models', () => ({
@@ -138,8 +156,23 @@ vi.mock('@/modules/conversation/effects/stars-background', () => ({
 }));
 
 describe('NewConversationPage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createConversationMock.mockResolvedValue({ id: 'conv-1' });
+    sendMessageMock.mockResolvedValue(undefined);
+    selectedWorkspaceIdsMock.value = ['ws-1'];
+    uploadConversationIdMock.value = null;
+  });
+
   it('forwards selected connector repo on first legacy message', async () => {
     render(<NewConversationPage />);
+
+    expect(screen.getByText('workspace-selection-preserved')).toBeInTheDocument();
+    expect(setConversationStateMock).toHaveBeenCalledWith({
+      currentConversationId: null,
+      selectedSkillIds: [],
+      selectedWorkspaceIds: [],
+    });
 
     await userEvent.click(screen.getByRole('button', { name: 'submit-new-conversation' }));
 
@@ -158,8 +191,25 @@ describe('NewConversationPage', () => {
         },
       });
       expect(clearAllMock).toHaveBeenCalled();
-      expect(resetSelectedWorkspaceIdsMock).toHaveBeenCalled();
       expect(mockNavigate).toHaveBeenCalledWith('/conversation/conv-1');
+      expect(claimCurrentConversationMock).toHaveBeenCalledWith('conv-1', { id: 'conv-1' });
+      expect(claimCurrentConversationMock.mock.invocationCallOrder[0]).toBeLessThan(mockNavigate.mock.invocationCallOrder[0]);
+      expect(mockNavigate.mock.invocationCallOrder[0]).toBeLessThan(sendMessageMock.mock.invocationCallOrder[0]);
+    });
+  });
+
+  it('clears workspaces on a conversation created before file upload completes', async () => {
+    uploadConversationIdMock.value = 'conv-upload';
+    selectedWorkspaceIdsMock.value = [];
+    render(<NewConversationPage />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'submit-new-conversation' }));
+
+    await waitFor(() => {
+      expect(createConversationMock).not.toHaveBeenCalled();
+      expect(updateConversationMock).toHaveBeenCalledWith('conv-upload', { workspaces: [] });
+      expect(claimCurrentConversationMock).toHaveBeenCalledWith('conv-upload', undefined);
+      expect(sendMessageMock).toHaveBeenCalledWith('conv-upload', expect.objectContaining({ content: 'hello' }));
     });
   });
 });

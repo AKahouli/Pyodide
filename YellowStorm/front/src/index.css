@@ -48,6 +48,7 @@
   --animate-accordion-up: accordion-up 0.2s ease-out;
   --animate-conv-v2-bounce: conv-v2-bounce 1.5s infinite ease-in-out;
   --animate-running-node-glow: running-node-glow 2s ease-in-out infinite;
+  --animate-agent-scan: agent-scan 2.4s ease-in-out infinite;
 
   @keyframes conv-v2-bounce {
     0%,
@@ -57,6 +58,20 @@
     }
     20% {
       transform: translateY(-3px);
+    }
+  }
+
+  @keyframes agent-scan {
+    0% {
+      transform: translateX(-110%);
+      opacity: 0;
+    }
+    20%, 80% {
+      opacity: 0.8;
+    }
+    100% {
+      transform: translateX(310%);
+      opacity: 0;
     }
   }
 

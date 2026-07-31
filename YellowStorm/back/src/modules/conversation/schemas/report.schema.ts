@@ -27,6 +27,9 @@ export class Report extends Document {
   @Prop({ type: String, required: true, maxlength: 2000 })
   description!: string;
 
+  @Prop({ type: String, enum: ['user', 'system_correction'], default: 'user', index: true })
+  source!: 'user' | 'system_correction';
+
   @Prop({ type: String, enum: ['pending', 'reviewed', 'resolved'], default: 'pending' })
   status!: string;
 
@@ -41,6 +44,7 @@ export const ReportSchema = SchemaFactory.createForClass(Report);
 
 // Unique constraint: one report per user per message
 ReportSchema.index({ userId: 1, messageId: 1 }, { unique: true });
+ReportSchema.index({ messageId: 1, source: 1 }, { unique: true, partialFilterExpression: { source: 'system_correction' } });
 ReportSchema.index({ status: 1, createdAt: -1 });
 
 // JSON transform

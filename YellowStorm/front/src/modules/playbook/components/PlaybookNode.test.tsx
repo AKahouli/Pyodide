@@ -32,7 +32,6 @@ const storeState = vi.hoisted(() => ({
 
 const createAgentMock = vi.hoisted(() => vi.fn());
 const updateAgentMock = vi.hoisted(() => vi.fn());
-const updateAdminAgentMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
@@ -66,10 +65,6 @@ vi.mock('@/modules/agent/store', () => ({
   useModels: () => [],
 }));
 
-vi.mock('@/modules/admin/api', () => ({
-  updateAdminAgent: updateAdminAgentMock,
-}));
-
 vi.mock('@/modules/agent/components/CreateEditAgentDialog', () => ({
   CreateEditAgentDialog: ({ open, onSave }: { open: boolean; onSave: (data: any) => void }) => open ? (
     <button
@@ -88,9 +83,9 @@ vi.mock('@/modules/agent/components/CreateEditAgentDialog', () => ({
         tools: [],
         skills: [],
         disabledSkills: [],
-        connectors: [],
+        connectors: ['connector-1'],
+        connectorActionSelections: [{ connectorId: 'connector-1', actionKeys: ['search'] }],
         isActive: true,
-        isDefaultForType: true,
       })}
     >
       save-agent-dialog
@@ -222,7 +217,8 @@ describe('PlaybookNode', () => {
     expect(screen.getByText('Prompt')).toHaveAttribute('data-warning', 'true');
   });
 
-  it('binds a dropped workspace to the only compatible text input', () => {
+  it('creates a dedicated input port for every dropped workspace', () => {
+    const updateNodeData = vi.fn();
     const payload = {
       type: 'workspace',
       kind: 'workspace',
@@ -233,38 +229,40 @@ describe('PlaybookNode', () => {
     };
 
     const { container } = render(
-      <PlaybookNode
-        {...({
-          id: 'node-1',
-          selected: false,
-          data: {
+      <NodeDataActionsContext.Provider value={{ updateNodeData }}>
+        <PlaybookNode
+          {...({
             id: 'node-1',
-            title: 'Save result',
-            description: 'Save to workspace',
-            assignedAgentId: 'agent-1',
-            executionOrder: 0,
-            positionX: 0,
-            positionY: 0,
-            interruptBefore: false,
-            interruptAfter: false,
-            allowClarification: false,
-            clarificationPrompt: '',
-            maxClarifications: 0,
-            inputKeys: [],
-            outputKey: '',
-            enabled: true,
-            notifyOnComplete: false,
-            notifyEmails: [],
-            inputFiles: [],
-            taskType: 'generic',
-            inputPorts: [
-              { id: 'input-context', name: 'Context', artifactKind: 'text', required: false },
-              { id: 'input-template', name: 'Template', artifactKind: 'document', required: true },
-            ],
-            outputPorts: [],
-          },
-        } as any)}
-      />,
+            selected: false,
+            data: {
+              id: 'node-1',
+              title: 'Save result',
+              description: 'Save to workspace',
+              assignedAgentId: 'agent-1',
+              executionOrder: 0,
+              positionX: 0,
+              positionY: 0,
+              interruptBefore: false,
+              interruptAfter: false,
+              allowClarification: false,
+              clarificationPrompt: '',
+              maxClarifications: 0,
+              inputKeys: [],
+              outputKey: '',
+              enabled: true,
+              notifyOnComplete: false,
+              notifyEmails: [],
+              inputFiles: [],
+              taskType: 'generic',
+              inputPorts: [
+                { id: 'input-context', name: 'Context', artifactKind: 'text', required: false },
+                { id: 'input-template', name: 'Template', artifactKind: 'document', required: true },
+              ],
+              outputPorts: [],
+            },
+          } as any)}
+        />
+      </NodeDataActionsContext.Provider>,
     );
 
     fireEvent.drop(container.firstChild as Element, {
@@ -274,7 +272,12 @@ describe('PlaybookNode', () => {
       },
     });
 
-    expect(storeState.bindResourceToInputPort).toHaveBeenCalledWith('node-1', 'input-context', expect.objectContaining({
+    const createdPort = updateNodeData.mock.calls[0][1].inputPorts[2];
+    expect(createdPort).toEqual(expect.objectContaining({
+      name: 'Workspace',
+      artifactKind: 'text',
+    }));
+    expect(storeState.bindResourceToInputPort).toHaveBeenCalledWith('node-1', createdPort.id, expect.objectContaining({
       kind: 'workspace',
       id: 'ws-1',
       workspaceId: 'ws-1',
@@ -682,15 +685,15 @@ describe('PlaybookNode', () => {
     fireEvent.click(screen.getByText('save-agent-dialog'));
 
     await waitFor(() => {
-      expect(updateAdminAgentMock).toHaveBeenCalledTimes(1);
+      expect(updateAgentMock).toHaveBeenCalledTimes(1);
     });
 
     expect(createAgentMock).not.toHaveBeenCalled();
-    expect(updateAgentMock).not.toHaveBeenCalled();
-    expect(updateAdminAgentMock).toHaveBeenCalledWith('agent-1', expect.objectContaining({
+    expect(updateAgentMock).toHaveBeenCalledWith('agent-1', expect.objectContaining({
       name: 'Agent',
       slug: 'agent',
-      isDefaultForType: true,
+      connectors: ['connector-1'],
+      connectorActionSelections: [{ connectorId: 'connector-1', actionKeys: ['search'] }],
     }));
   });
 });

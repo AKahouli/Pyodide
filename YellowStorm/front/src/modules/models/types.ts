@@ -17,6 +17,7 @@ export interface Model {
   isActive: boolean;
   isDefault: boolean;
   omitTemperature: boolean;
+  inputModalities: Array<'text' | 'image'>;
 }
 
 export interface ModelsListResponse {

@@ -1,0 +1,135 @@
+import { Types } from 'mongoose';
+import { ChoiceInteractionService } from './choice-interaction.service';
+
+describe('ChoiceInteractionService', () => {
+  const conversationId = new Types.ObjectId().toString();
+  const sourceMessageId = new Types.ObjectId().toString();
+  const componentId = 'choice-1';
+  let source: Record<string, unknown>;
+  let service: ChoiceInteractionService;
+
+  beforeEach(() => {
+    source = {
+      components: [{
+        id: componentId,
+        type: 'choice',
+        data: {
+          schemaVersion: 1,
+          questionId: 'financial-analysis',
+          prompt: 'Choose an analysis',
+          description: 'Select every relevant analysis.',
+          presentation: 'list',
+          selectionMode: 'multiple',
+          submitBehavior: 'explicit',
+          status: 'ready',
+          otherOption: { enabled: true, label: 'Other', maxLength: 500 },
+          options: [
+            { id: 'profitability', label: 'Profitability', submitText: 'Analyze profitability', description: 'Review margins and return.', value: 'profit' },
+            { id: 'liquidity', label: 'Liquidity', submitText: 'Analyze liquidity', description: 'Review short-term obligations.', value: 'liquid' },
+          ],
+        },
+      }],
+    };
+    const exec = jest.fn(async () => source);
+    const lean = jest.fn(() => ({ exec }));
+    const select = jest.fn(() => ({ lean }));
+    const messageModel = { findOne: jest.fn(() => ({ select })) };
+    service = new ChoiceInteractionService(messageModel as any);
+  });
+
+  it('builds server-authoritative content with every selected description in source order', async () => {
+    const result = await service.canonicalize(conversationId, {
+      type: 'choice',
+      componentId,
+      questionId: 'financial-analysis',
+      sourceMessageId,
+      selectionMode: 'multiple',
+      selectedOptions: [
+        { optionId: 'liquidity', label: 'Spoofed liquidity', value: 'spoofed' },
+        { optionId: 'profitability', label: 'Spoofed profitability' },
+      ],
+      customAnswer: 'Focus on Q4',
+      displayText: 'Spoofed display text',
+    });
+
+    expect(JSON.parse(result.content)).toEqual({
+      question: {
+        prompt: 'Choose an analysis',
+        description: 'Select every relevant analysis.',
+      },
+      selectedChoices: [
+        { optionId: 'profitability', submitText: 'Analyze profitability', description: 'Review margins and return.' },
+        { optionId: 'liquidity', submitText: 'Analyze liquidity', description: 'Review short-term obligations.' },
+      ],
+      alternativeResponse: 'Focus on Q4',
+      dismissed: false,
+    });
+    expect(result.taskSummary).toBe('Profitability, Liquidity, Focus on Q4');
+    expect(result.interaction).toMatchObject({
+      selectedOptions: [
+        { optionId: 'profitability', label: 'Profitability', value: 'profit' },
+        { optionId: 'liquidity', label: 'Liquidity', value: 'liquid' },
+      ],
+      customAnswer: 'Focus on Q4',
+      displayText: 'Profitability, Liquidity, Focus on Q4',
+    });
+  });
+
+  it('uses explicit nulls for absent descriptions and alternative text', async () => {
+    const data = (source.components as Array<{ data: Record<string, unknown> }>)[0].data;
+    data.description = undefined;
+    data.options = [
+      { id: 'profitability', label: 'Profitability', submitText: 'Analyze profitability' },
+      { id: 'liquidity', label: 'Liquidity', submitText: 'Analyze liquidity' },
+    ];
+
+    const result = await service.canonicalize(conversationId, {
+      type: 'choice', componentId, questionId: 'financial-analysis', sourceMessageId,
+      selectionMode: 'multiple', selectedOptions: [{ optionId: 'profitability', label: 'Ignored' }],
+    });
+
+    expect(JSON.parse(result.content)).toEqual({
+      question: { prompt: 'Choose an analysis', description: null },
+      selectedChoices: [{ optionId: 'profitability', submitText: 'Analyze profitability', description: null }],
+      alternativeResponse: null,
+      dismissed: false,
+    });
+  });
+
+  it('preserves question context when the interaction is dismissed', async () => {
+    const data = (source.components as Array<{ data: Record<string, unknown> }>)[0].data;
+    data.dismissible = true;
+    data.labels = { dismiss: 'Passer cette question' };
+
+    const result = await service.canonicalize(conversationId, {
+      type: 'choice', componentId, questionId: 'financial-analysis', sourceMessageId,
+      selectionMode: 'multiple', selectedOptions: [], dismissed: true,
+    });
+
+    expect(JSON.parse(result.content)).toEqual({
+      question: {
+        prompt: 'Choose an analysis',
+        description: 'Select every relevant analysis.',
+      },
+      selectedChoices: [],
+      alternativeResponse: null,
+      dismissed: true,
+    });
+    expect(result.taskSummary).toBe('Passer cette question');
+    expect(result.interaction).toMatchObject({ dismissed: true, displayText: 'Passer cette question' });
+  });
+
+  it('normalizes and bounds long task summaries without changing canonical content', async () => {
+    const customAnswer = `A custom response with\n extra spacing ${'x'.repeat(150)}`;
+
+    const result = await service.canonicalize(conversationId, {
+      type: 'choice', componentId, questionId: 'financial-analysis', sourceMessageId,
+      selectionMode: 'multiple', selectedOptions: [], customAnswer,
+    });
+
+    expect(result.taskSummary).toHaveLength(120);
+    expect(result.taskSummary).toMatch(/^A custom response with extra spacing/);
+    expect(result.taskSummary).toMatch(/\.\.\.$/);
+    expect(JSON.parse(result.content).alternativeResponse).toBe(customAnswer.trim());
+  });
+});

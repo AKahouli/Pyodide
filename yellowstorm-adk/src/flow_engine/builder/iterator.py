@@ -21,6 +21,7 @@ from langgraph.graph import END, START, StateGraph
 from structlog import get_logger
 
 from src.flow_engine.bindings.resolver import resolve_node_inputs
+from src.flow_engine.builder.conditional import add_conditional_edges
 from src.flow_engine.builder.guards import wrap_node_for_error_routing, wrap_node_for_iteration
 from src.flow_engine.nodes.step import run_step
 from src.flow_engine.nodes.router import run_router
@@ -187,7 +188,13 @@ def _build_body_subgraph(
     exit_ids = [c for c in children if c not in {e["source"] for e in child_edges}]
 
     for edge in child_edges:
-        subgraph.add_edge(edge["source"], edge["target"])
+        if edge.get("kind") != "conditional":
+            subgraph.add_edge(edge["source"], edge["target"])
+    add_conditional_edges(
+        subgraph,
+        child_edges,
+        [node_lookup[child_id] for child_id in children],
+    )
 
     if len(entry_ids) == 1:
         subgraph.add_edge(START, entry_ids[0])
@@ -272,6 +279,8 @@ def _resolve_items_from_bindings(
             if b.get("source_kind") == "node-output"
         }
         for edge in raw_edges:
+            if edge.get("kind") == "conditional":
+                continue
             src = edge.get("source", "")
             tgt = edge.get("target", "")
             src_port = edge.get("source_output_port_id") or edge.get("sourceOutputPortId") or ""

@@ -25,7 +25,7 @@ export class FlowDesignMessage {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy!: Types.ObjectId;
 
-  @Prop({ type: String, maxlength: 40000, default: '' })
+  @Prop({ type: String, maxlength: 80000, default: '' })
   userQuery!: string;
 
   @Prop({ type: String, default: '' })

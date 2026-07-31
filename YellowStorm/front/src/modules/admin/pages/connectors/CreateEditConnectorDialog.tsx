@@ -184,7 +184,14 @@ function normalizeMcpActionDescription(description: string) {
     .replaceAll('workspace name', 'workspace ID');
 }
 
-function mapInspectToolsToActions(tools: McpToolDefinition[]): ConnectorActionResponse[] {
+function mapInspectToolsToActions(
+  tools: McpToolDefinition[],
+  existingActions: ConnectorActionResponse[] = [],
+): ConnectorActionResponse[] {
+  const enabledByKey = new Map(
+    existingActions.map((action) => [action.key, action.isEnabled !== false]),
+  );
+
   return tools.map((tool) => ({
     key: truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH),
     label: truncateValue(humanizeToolName(tool.name), CONNECTOR_ACTION_LABEL_MAX_LENGTH),
@@ -197,7 +204,7 @@ function mapInspectToolsToActions(tools: McpToolDefinition[]): ConnectorActionRe
     safety: 'read',
     supportsBatch: false,
     supportsIteration: false,
-    isEnabled: true,
+    isEnabled: enabledByKey.get(truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH)) ?? true,
   }));
 }
 
@@ -404,15 +411,21 @@ export function CreateEditConnectorDialog({
         toast.error(t('connectors.form.inspect.title'), { description: result.error });
         return;
       }
-      const actions = mapInspectToolsToActions(result.tools ?? []);
-      setForm((current) => ({
-        ...current,
-        actions,
-        actionsJson: JSON.stringify(actions, null, 2),
-      }));
-      setSelectedActionKey(actions[0]?.key ?? null);
+      setForm((current) => {
+        const actions = mapInspectToolsToActions(result.tools ?? [], current.actions);
+        return {
+          ...current,
+          actions,
+          actionsJson: JSON.stringify(actions, null, 2),
+        };
+      });
+      setSelectedActionKey(
+        result.tools?.[0]?.name
+          ? truncateValue(result.tools[0].name, CONNECTOR_ACTION_KEY_MAX_LENGTH)
+          : null,
+      );
       toast.success(t('connectors.form.inspect.loadedTitle'), {
-        description: t('connectors.form.inspect.loadedDescription', { count: actions.length }),
+        description: t('connectors.form.inspect.loadedDescription', { count: result.tools?.length ?? 0 }),
       });
     } catch (err) {
       toast.error(t('connectors.form.inspect.title'), {
@@ -568,6 +581,19 @@ export function CreateEditConnectorDialog({
       ...current,
       dynamicHeaders: current.dynamicHeaders.filter((row) => row.id !== rowId),
     }));
+  };
+
+  const updateActionEnabled = (actionKey: string, isEnabled: boolean) => {
+    setForm((current) => {
+      const actions = (current.actions ?? []).map((action) =>
+        action.key === actionKey ? { ...action, isEnabled } : action,
+      );
+      return {
+        ...current,
+        actions,
+        actionsJson: JSON.stringify(actions, null, 2),
+      };
+    });
   };
 
   const connectorActions = form.actions ?? [];
@@ -949,6 +975,7 @@ export function CreateEditConnectorDialog({
                         <TableHead className='w-1/3'>{t('connectors.form.actions.columns.tool')}</TableHead>
                         <TableHead>{t('connectors.form.actions.columns.description')}</TableHead>
                         <TableHead className='w-20'>{t('connectors.form.actions.columns.safety')}</TableHead>
+                        <TableHead className='w-20 text-center'>{t('connectors.form.actions.columns.enabled')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -962,6 +989,15 @@ export function CreateEditConnectorDialog({
                           </TableCell>
                           <TableCell className='max-w-0 truncate text-muted-foreground'>{action.description || t('connectors.form.actions.noDescription')}</TableCell>
                           <TableCell>{safetyLabel(action.safety)}</TableCell>
+                          <TableCell className='text-center'>
+                            <Switch
+                              checked={action.isEnabled !== false}
+                              onCheckedChange={(checked) => updateActionEnabled(action.key, checked)}
+                              aria-label={t('connectors.form.actions.toggleLabel', {
+                                tool: action.label || action.key,
+                              })}
+                            />
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

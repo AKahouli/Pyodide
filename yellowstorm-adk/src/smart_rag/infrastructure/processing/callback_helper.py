@@ -21,6 +21,10 @@ from src.logger.logging import get_logger
 
 logger = get_logger("api.smart_rag.infrastructure.processing.callback_helper")
 
+WEB_PREVIEW_TOOL_NAME = "generate_web_preview"
+MAX_WEB_PREVIEW_BYTES = 1_000_000
+MAX_IMAGES_PER_LLM_REQUEST = 50
+
 try:
     from google.genai import types
 except Exception:  # pragma: no cover - optional dependency
@@ -388,6 +392,42 @@ def inject_images_before_model(
     IMAGE_KEY_PREFIX = "_pending_tool_images_"
     FILENAME_KEY_PREFIX = "_list_of_filenames_"
 
+    def is_image_part(part: Any) -> bool:
+        if isinstance(part, dict):
+            if part.get("type") in {"image_url", "input_image"}:
+                return True
+            inline_data = part.get("inline_data") or part.get("inlineData")
+            file_data = part.get("file_data") or part.get("fileData")
+        else:
+            inline_data = getattr(part, "inline_data", None)
+            file_data = getattr(part, "file_data", None)
+            direct_mime = str(getattr(part, "mime_type", "") or "")
+            if direct_mime.startswith("image/") and getattr(part, "data", None):
+                return True
+
+        for image_data in (inline_data, file_data):
+            if isinstance(image_data, dict):
+                mime_type = image_data.get("mime_type") or image_data.get("mimeType")
+            else:
+                mime_type = getattr(image_data, "mime_type", None)
+            if str(mime_type or "").startswith("image/"):
+                return True
+        return False
+
+    def count_request_images() -> int:
+        image_count = 0
+        for content in getattr(llm_request, "contents", []) or []:
+            if isinstance(content, dict):
+                parts = content.get("parts")
+                if parts is None and isinstance(content.get("content"), list):
+                    parts = content["content"]
+            else:
+                parts = getattr(content, "parts", None)
+            if not isinstance(parts, list):
+                continue
+            image_count += sum(1 for part in parts if is_image_part(part))
+        return image_count
+
     def detect_mime_type(image_bytes, provided_mime=None):
         """Detect MIME type from image bytes data."""
         try:
@@ -428,6 +468,7 @@ def inject_images_before_model(
 
     # Find all keys that start with the prefixes
     image_keys = [key for key in state_dict.keys() if key.startswith(IMAGE_KEY_PREFIX)]
+    existing_image_count = count_request_images()
     injected_count = 0
 
     # Process each set of images with their corresponding filenames
@@ -445,8 +486,15 @@ def inject_images_before_model(
             file_names = []
 
         if images:
+            remaining_capacity = (
+                MAX_IMAGES_PER_LLM_REQUEST
+                - existing_image_count
+                - injected_count
+            )
+            images_to_forward = images[:max(remaining_capacity, 0)]
+
             # Unwrap the images
-            unwrapped_images = unwrap_images(images)
+            unwrapped_images = unwrap_images(images_to_forward)
             forwarded_images = []
 
             # Inject each image with its filename
@@ -465,7 +513,12 @@ def inject_images_before_model(
                     )
                 )
                 injected_count += 1
-                source_image = images[i] if i < len(images) and isinstance(images[i], dict) else {}
+                source_image = (
+                    images_to_forward[i]
+                    if i < len(images_to_forward)
+                    and isinstance(images_to_forward[i], dict)
+                    else {}
+                )
                 raw_data = source_image.get("data", "")
                 try:
                     decoded_size = len(base64.b64decode(raw_data))
@@ -484,9 +537,19 @@ def inject_images_before_model(
                 response_id,
                 len(images),
                 0,
-                len(images),
+                len(images_to_forward),
                 forwarded_images,
             )
+            dropped_count = len(images) - len(images_to_forward)
+            if dropped_count:
+                logger.warning(
+                    "CONVERSATION_MCP_IMAGE_BRIDGE_LIMITED response_id=%s "
+                    "forwarded_image_count=%s dropped_image_count=%s request_limit=%s",
+                    response_id,
+                    len(images_to_forward),
+                    dropped_count,
+                    MAX_IMAGES_PER_LLM_REQUEST,
+                )
 
             # Clear the buffer for this response_id
             callback_context.state[image_key] = []
@@ -495,8 +558,11 @@ def inject_images_before_model(
 
     if injected_count:
         logger.info(
-            "CONVERSATION_MCP_IMAGES_INJECTED image_count=%s request_content_count=%s",
+            "CONVERSATION_MCP_IMAGES_INJECTED existing_image_count=%s "
+            "injected_image_count=%s total_image_count=%s request_content_count=%s",
+            existing_image_count,
             injected_count,
+            existing_image_count + injected_count,
             len(getattr(llm_request, "contents", []) or []),
         )
 
@@ -584,8 +650,11 @@ async def add_diagram_context_before_tool(
     Returns:
         Optional[Dict]: None to proceed with execution.
     """
-    # Only apply to diagram agent calls (HtmlAgent delegation tools)
-    if not (tool.name and "HtmlAgent" in tool.name):
+    # Both HTML child tools need the parent conversation as generation context.
+    if not (
+        tool.name
+        and ("HtmlAgent" in tool.name or tool.name == WEB_PREVIEW_TOOL_NAME)
+    ):
         return None
 
     # Get session events for context
@@ -610,6 +679,32 @@ Here is the relevant context from the conversation that may help you create a be
 </context_from_calling_agent>
 """
     return None
+
+
+async def prepare_web_preview_after_tool(
+    tool: BaseTool,
+    args: dict,
+    tool_context: ToolContext,
+    tool_response: dict,
+) -> Optional[dict]:
+    """Convert output from the trusted HTML child tool into a UI component result."""
+    if getattr(tool, "name", None) != WEB_PREVIEW_TOOL_NAME:
+        return None
+
+    content = extract_html(tool_response)
+    if not content:
+        return {
+            "schemaVersion": 1,
+            "status": "error",
+            "error": "The HTML generator did not return renderable HTML.",
+        }
+    if len(content.encode("utf-8")) > MAX_WEB_PREVIEW_BYTES:
+        return {
+            "schemaVersion": 1,
+            "status": "error",
+            "error": "The generated HTML exceeds the preview size limit.",
+        }
+    return {"schemaVersion": 1, "status": "ready", "content": content}
 
 
 async def catch_diagram_after_tool(

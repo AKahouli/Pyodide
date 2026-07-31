@@ -27,6 +27,7 @@ import type {
   SetMaintenanceRequest,
   RegistrationStatus,
   SetRegistrationRequest,
+  FeatureVisibility,
   CorsSettings,
   SetCorsSettingsRequest,
   AppearanceSettings,
@@ -102,6 +103,10 @@ import type {
   TeamAutoBuilderConfigResponse,
   UpsertTeamAutoBuilderConfigRequest,
   AdminGuardrailsSettings,
+  AdminEvaluationSettings,
+  ConversationSettingsResponse,
+  UpdateConversationSettingsRequest,
+  ConversationSettingsAgentOption,
 } from './types';
 import type {
   WorkyWhatsAppConnectResponse,
@@ -128,6 +133,16 @@ export async function getAdminGuardrailsSettings(): Promise<AdminGuardrailsSetti
 
 export async function updateAdminGuardrailsSettings(input: AdminGuardrailsSettings): Promise<AdminGuardrailsSettings> {
   const response = await apiClient.put<ApiResponse<AdminGuardrailsSettings>>(API_ENDPOINTS.adminGuardrails.base, input);
+  return response.data.data;
+}
+
+export async function getAdminEvaluationSettings(): Promise<AdminEvaluationSettings> {
+  const response = await apiClient.get<ApiResponse<AdminEvaluationSettings>>(API_ENDPOINTS.adminEvaluationSettings.base);
+  return response.data.data;
+}
+
+export async function updateAdminEvaluationSettings(input: AdminEvaluationSettings): Promise<AdminEvaluationSettings> {
+  const response = await apiClient.put<ApiResponse<AdminEvaluationSettings>>(API_ENDPOINTS.adminEvaluationSettings.base, input);
   return response.data.data;
 }
 
@@ -208,6 +223,19 @@ export async function setRegistrationStatus(
   const response = await apiClient.post<ApiResponse<RegistrationStatus>>(
     API_ENDPOINTS.system.registration,
     data
+  );
+  return response.data.data;
+}
+
+export async function getFeatureVisibility(): Promise<FeatureVisibility> {
+  const response = await apiClient.get<ApiResponse<FeatureVisibility>>(API_ENDPOINTS.system.features);
+  return response.data.data;
+}
+
+export async function updateFeatureVisibility(data: FeatureVisibility): Promise<FeatureVisibility> {
+  const response = await apiClient.put<ApiResponse<FeatureVisibility>>(
+    API_ENDPOINTS.system.features,
+    data,
   );
   return response.data.data;
 }
@@ -1184,6 +1212,21 @@ export async function getAdminWorkspaceTransformationAgents(): Promise<Workspace
 
 export async function updateAdminWorkspaceTransformationSettings(data: UpdateWorkspaceTransformationSettingsRequest): Promise<WorkspaceTransformationSettingsResponse> {
   const response = await apiClient.put<ApiResponse<WorkspaceTransformationSettingsResponse>>(API_ENDPOINTS.adminWorkspaceTransformationSettings.base, data);
+  return response.data.data;
+}
+
+export async function getAdminConversationSettings(): Promise<ConversationSettingsResponse> {
+  const response = await apiClient.get<ApiResponse<ConversationSettingsResponse>>(API_ENDPOINTS.adminConversationSettings.base);
+  return response.data.data;
+}
+
+export async function getAdminConversationSettingsAgents(): Promise<ConversationSettingsAgentOption[]> {
+  const response = await apiClient.get<ApiResponse<ConversationSettingsAgentOption[]>>(API_ENDPOINTS.adminConversationSettings.agents);
+  return response.data.data;
+}
+
+export async function updateAdminConversationSettings(data: UpdateConversationSettingsRequest): Promise<ConversationSettingsResponse> {
+  const response = await apiClient.put<ApiResponse<ConversationSettingsResponse>>(API_ENDPOINTS.adminConversationSettings.base, data);
   return response.data.data;
 }
 

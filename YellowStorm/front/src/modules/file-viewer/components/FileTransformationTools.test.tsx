@@ -17,7 +17,6 @@ vi.mock('@/modules/workspace/store', () => ({
   useWorkspaceStore: (selector: (state: { refreshWorkspaceArtifacts: typeof mocks.refreshArtifacts }) => unknown) => selector({ refreshWorkspaceArtifacts: mocks.refreshArtifacts }),
 }));
 vi.mock('../store', () => ({ useFileViewerStore: (selector: (state: { closeViewer: typeof mocks.closeViewer }) => unknown) => selector({ closeViewer: mocks.closeViewer }) }));
-vi.mock('@/config/dataRoomFeatures', () => ({ dataRoomFeatures: { decisionFlowArtifactsEnabled: true } }));
 vi.mock('@/lib/notifications', () => ({ showError: vi.fn(), showSuccess: vi.fn() }));
 vi.mock('@/modules/localization', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/modules/localization')>();
