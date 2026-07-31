@@ -28,14 +28,19 @@ const agent: WorkyAgent = {
   colorSeed: 'x',
   status: 'working',
   currentTask: { title: 'Drafting the competitor analysis' } as WorkyTask,
-  tasks: [],
+  tasks: [
+    { id: 't1', title: 'Task one', lane: 'running' } as WorkyTask,
+    { id: 't2', title: 'Task two', lane: 'done' } as WorkyTask,
+  ],
   doneCount: 3,
   totalCount: 5,
 };
 
+const noop = () => {};
+
 describe('AgentCard', () => {
   it('renders identity, current task and progress', () => {
-    render(<AgentCard agent={agent} onOpen={() => {}} />);
+    render(<AgentCard agent={agent} expanded={false} onToggle={noop} onOpenTask={noop} />);
     expect(screen.getByText('Atlas')).toBeTruthy();
     expect(screen.getByText('Research')).toBeTruthy();
     expect(screen.getByText('Drafting the competitor analysis')).toBeTruthy();
@@ -43,14 +48,39 @@ describe('AgentCard', () => {
   });
 
   it('falls back to "Standing by" when there is no current task', () => {
-    render(<AgentCard agent={{ ...agent, currentTask: null, status: 'idle' }} onOpen={() => {}} />);
+    render(
+      <AgentCard
+        agent={{ ...agent, currentTask: null, status: 'idle' }}
+        expanded={false}
+        onToggle={noop}
+        onOpenTask={noop}
+      />,
+    );
     expect(screen.getByText('Standing by')).toBeTruthy();
   });
 
-  it('calls onOpen when clicked', async () => {
-    const onOpen = vi.fn();
-    render(<AgentCard agent={agent} onOpen={onOpen} />);
+  it('hides the task list until expanded', () => {
+    render(<AgentCard agent={agent} expanded={false} onToggle={noop} onOpenTask={noop} />);
+    expect(screen.queryByText('Task one')).toBeNull();
+  });
+
+  it('reveals the task list inline when expanded', () => {
+    render(<AgentCard agent={agent} expanded onToggle={noop} onOpenTask={noop} />);
+    expect(screen.getByText('Task one')).toBeTruthy();
+    expect(screen.getByText('Task two')).toBeTruthy();
+  });
+
+  it('calls onToggle when the header is clicked', async () => {
+    const onToggle = vi.fn();
+    render(<AgentCard agent={agent} expanded={false} onToggle={onToggle} onOpenTask={noop} />);
     await userEvent.click(screen.getByText('Atlas'));
-    expect(onOpen).toHaveBeenCalledWith(agent);
+    expect(onToggle).toHaveBeenCalledWith(agent);
+  });
+
+  it('opens a task from the expanded list', async () => {
+    const onOpenTask = vi.fn();
+    render(<AgentCard agent={agent} expanded onToggle={noop} onOpenTask={onOpenTask} />);
+    await userEvent.click(screen.getByText('Task one'));
+    expect(onOpenTask).toHaveBeenCalledWith(agent.tasks[0]);
   });
 });
