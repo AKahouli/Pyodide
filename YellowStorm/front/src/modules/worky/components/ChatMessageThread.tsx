@@ -188,7 +188,10 @@ export function ChatMessageThread({
     <section
       data-testid='worky-message-thread'
       aria-label={t('messages.title')}
-      className='flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border/60 bg-background/30'
+      className={cn(
+        'flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border/60 bg-background/30',
+        className,
+      )}
     >
       <header className='flex items-center justify-between border-b border-border/60 px-3 py-1.5'>
         <h3 className='text-[10px] font-semibold uppercase tracking-wide text-muted-foreground'>
@@ -232,7 +235,7 @@ export function ChatMessageThread({
       {hasContent ? (
         <ul
           ref={containerRef}
-          className='flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-2 text-xs'
+          className='flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 py-2 text-xs'
           data-testid='worky-message-list'
         >
           {threadItems.map((item) =>
