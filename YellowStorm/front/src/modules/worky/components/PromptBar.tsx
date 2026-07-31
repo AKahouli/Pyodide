@@ -16,11 +16,10 @@ interface PromptBarProps {
 }
 
 /**
- * Composer-only prompt input. Per-turn model selection is intentionally
- * not exposed here — owners configure Manager/Worker models through
- * the persistent `StreamModelsControl` in the orchestrator sidebar.
- * Keeping a single source of truth avoids two model-selection UIs
- * drifting out of sync and removes the per-turn override payload.
+ * Composer-only prompt input. Model/prompt selection is intentionally not
+ * exposed here: the planner and executor are admin-created default agents
+ * (resolved server-side by agent type), so there is no per-stream or per-turn
+ * model override to configure.
  */
 export function PromptBar({
   streamId,

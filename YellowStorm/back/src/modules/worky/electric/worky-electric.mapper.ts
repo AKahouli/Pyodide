@@ -108,6 +108,7 @@ export function mapPlanStep(row: PgPlanStepRow, streamId: string): { set: Record
         .split(',')
         .map((id) => id.trim())
         .filter(Boolean),
+      assigneeKey: (row.assignee ?? '').trim() || null,
     },
     event: {
       type: terminal ? 'task.completed' : 'task.updated',

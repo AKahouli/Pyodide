@@ -70,6 +70,7 @@ export class WorkyTaskService {
         priority: task.priority ?? 'medium',
         assigneeType: task.assigneeType ?? 'unassigned',
         assigneeId: task.assigneeId ? (task.assigneeId as Types.ObjectId).toString() : null,
+        assigneeKey: (task.assigneeKey as string | null | undefined) ?? null,
         actionCategory: task.actionCategory ?? 'internal_analysis',
         dependsOn: (task.dependsOn ?? []).map((d) => (d as Types.ObjectId).toString()),
         wave: typeof task.wave === 'number' ? task.wave : null,
@@ -146,6 +147,8 @@ export interface IBoardTaskView {
   priority: string;
   assigneeType: string;
   assigneeId: string | null;
+  /** plan_steps.assignee (Electric source) — executor sub-agent that handled this task; null when unattributed. */
+  assigneeKey: string | null;
   actionCategory: string;
   dependsOn: string[];
   /** Parallel wave index (plan_steps.wave via Electric); null outside a plan. */

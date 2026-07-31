@@ -18,11 +18,11 @@ The Worky module is the **Chief of Staff** UI: stream list, chat with the Manage
 
 | Feature | Entry component | Transport |
 |---------|-----------------|-----------|
-| Stream list | `WorkyPage` | REST |
+| Stream list, search, create, delete | `WorkyPage` → `desktop/StreamsDashboard` | REST |
 | Stream workspace | `WorkyStreamPage` | REST + SSE (`/worky/streams/:id/events`) |
 | Chat & prompt | `ChatMessageThread`, `PromptBar` | SSE + REST messages |
 | Kanban | `KanbanBoard`, `TaskDetailDrawer` | REST board/tasks |
-| Clarifications | `ChatClarificationCard`, `InteractionPanel` | SSE `interaction.requested` |
+| Clarifications | `ChatClarificationCard`, `ApprovalModal` / `mobile/ApprovalSheet` | SSE `interaction.requested` |
 | WhatsApp (per stream) | `WorkyWhatsAppConnectModal` | REST + Socket.IO pairing |
 | Governance admin | `admin/WorkyGovernancePage` | REST (admin module) |
 
@@ -36,7 +36,7 @@ The Worky module is the **Chief of Staff** UI: stream list, chat with the Manage
 ├─────────────────────────────────────────────────────────────────┤
 │  WorkyPage / WorkyStreamPage                                     │
 │    ├── ChatMessageThread + PromptBar (owner input, STT mic)      │
-│    ├── OrchestratorPanel / StreamSidebar                         │
+│    ├── StreamsDashboard (landing) / WorkyTopBar (stream switch)  │
 │    └── WorkyWhatsAppConnectModal (optional)                      │
 ├─────────────────────────────────────────────────────────────────┤
 │  api.ts · query/hooks.ts · store.ts · stream/sse.ts              │
@@ -56,12 +56,13 @@ The Worky module is the **Chief of Staff** UI: stream list, chat with the Manage
 ```
 worky/
 ├── components/
-│   ├── WorkyPage.tsx              # Stream list
+│   ├── WorkyPage.tsx              # Landing shell
+│   ├── desktop/StreamsDashboard.tsx  # KPIs + stream search / create / delete
+│   ├── desktop/WorkyTopBar.tsx    # Stream switcher (replaces the old sidebar)
 │   ├── WorkyStreamPage.tsx        # Main stream UI (+ WhatsApp modal trigger)
 │   ├── WorkyWhatsAppConnectModal.tsx
 │   ├── ChatMessageThread.tsx
 │   ├── PromptBar.tsx
-│   ├── OrchestratorPanel.tsx
 │   └── admin/WorkyGovernancePage.tsx
 ├── hooks/
 │   └── useWorkyWhatsAppPairingSocket.ts
@@ -81,9 +82,9 @@ worky/
 
 | Route | Component |
 |-------|-----------|
-| `#/worky` | `WorkyPage` |
-| `#/worky/streams/:id` | `WorkyStreamPage` |
-| `#/worky/streams/:id/report` | `StreamReportPage` |
+| `/worky` | `WorkyPage` |
+| `/worky/:streamId` | `WorkyStreamPage` |
+| `/worky/:streamId/report` | `StreamReportPage` |
 | `#/admin/worky-governance` | `WorkyGovernancePage` (admin) |
 | `#/admin/worky-whatsapp-system` | `WorkyWhatsAppSystemBotPage` (admin — **system bot prerequisite**) |
 
@@ -95,7 +96,7 @@ Lazy routes are wrapped in `<Suspense>` in `src/Router.tsx`.
 
 | Concern | Mechanism |
 |---------|-----------|
-| Stream list / selection | Zustand `store.ts` + React Query |
+| Stream list / selection | React Query (`useStreams`); the landing dashboard owns search, create and delete, and `WorkyTopBar` owns stream-to-stream switching |
 | Live events | `stream/sse.ts` → updates store / query cache |
 | WhatsApp status | `useWorkyWhatsAppIntegration(streamId)` + modal local state during pairing |
 | i18n | Namespace `worky` — keys under `whatsapp.*` |
@@ -115,7 +116,7 @@ Users **cannot** connect a stream until the system bot is online. The modal show
 
 ### User flow (stream)
 
-1. Open stream → WhatsApp button in `PromptBar` / `OrchestratorPanel`.
+1. Open stream → WhatsApp button in `PromptBar` (rail chat composer or `ManagerChatSheet`).
 2. `WorkyWhatsAppConnectModal` loads integration via `getWorkyWhatsAppIntegration(streamId)`.
 3. **Connect** → `connectWorkyWhatsApp` → QR / pairing code.
 4. `useWorkyWhatsAppPairingSocket` joins Socket.IO room `user:{userId}:worky:{streamId}`; HTTP poll fallback every 2.5s.

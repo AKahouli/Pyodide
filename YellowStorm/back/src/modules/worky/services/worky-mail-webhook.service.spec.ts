@@ -45,7 +45,7 @@ function build(overrides: {
     }),
   };
   const turnContext = {
-    resolveManagerModel: jest.fn().mockResolvedValue('openai/gpt-4o-mini'),
+    resolveWorkyAgents: jest.fn().mockResolvedValue([{ id: 'planner-1' }, { id: 'executor-1' }]),
     resolveConnectors: jest.fn().mockResolvedValue([{ connector_id: 'c1' }]),
   };
   const logger = {
@@ -83,7 +83,7 @@ describe('WorkyMailWebhookService', () => {
     );
   });
 
-  it('resolves real connectors and a model for the subscription owner, not none', async () => {
+  it('resolves real connectors and agents for the subscription owner, not none', async () => {
     // The bug this pins: DeliverMailReply was called with no connectors at
     // all, so resume_turn rebuilt every not-yet-run step with ZERO tools. A
     // step needing none (writing a report) looked fine; a step that needed
@@ -92,10 +92,11 @@ describe('WorkyMailWebhookService', () => {
     const { service, turnContext, orchestrator } = build({});
     await service.handleNotifications(notification());
 
+    expect(turnContext.resolveWorkyAgents).toHaveBeenCalledWith(SUBSCRIPTION.userId);
     expect(turnContext.resolveConnectors).toHaveBeenCalledWith(SUBSCRIPTION.userId);
     expect(orchestrator.deliverMailReply).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'openai/gpt-4o-mini',
+        agents: [{ id: 'planner-1' }, { id: 'executor-1' }],
         connectors: [{ connector_id: 'c1' }],
       }),
     );

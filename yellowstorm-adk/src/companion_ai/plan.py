@@ -36,10 +36,17 @@ class Step(BaseModel):
     # Assigned by the scheduler: 0-based parallel wave. Steps in the same wave
     # have no dependency between them and may run concurrently.
     wave: int = 0
-    agent: Optional[str] = None            # which executor sub-agent handled it
     result: Optional[str] = None
     error: Optional[str] = None
     blocked_reason: Optional[str] = None
+    # True only for a human-agent persona (human_agents.py); a plain step's
+    # assignee/assignee_name are also populated (with the executor's own
+    # id/name — see plan_turn), so this is the actual gate for persona
+    # behavior, not assignee.
+    is_persona: bool = False
+    assignee: Optional[str] = None
+    assignee_name: Optional[str] = None
+    assignee_role: Optional[str] = None
 
     def is_done(self) -> bool:
         return self.status.is_terminal()

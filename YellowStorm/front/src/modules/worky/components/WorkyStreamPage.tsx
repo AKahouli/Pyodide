@@ -1,16 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Bot } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import { Button } from '@/components/ui/button';
-import { StreamSidebar } from './StreamSidebar';
 import { StreamHeader } from './StreamHeader';
 import { KanbanBoard } from './KanbanBoard';
 import { WorkyGraphBoard } from './WorkyGraphBoard';
-import { OrchestratorPanel } from './OrchestratorPanel';
 import { PlanDeltaToast } from './PlanDeltaToast';
-import { StreamControls } from './StreamControls';
 import { ApprovalModal } from './ApprovalModal';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { WorkyWhatsAppConnectModal } from './WorkyWhatsAppConnectModal';
@@ -26,7 +23,16 @@ import {
   useWorkyWhatsAppIntegration,
 } from '../query/hooks';
 import { isWhatsAppConnected } from '@/lib/whatsapp-integration-utils';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
+import { WorkyMobileStream } from './mobile/WorkyMobileStream';
+import { AgentTeamView } from './mobile/AgentTeamView';
+import { useStreamAgents } from '../agents/useStreamAgents';
+import { WorkyVoiceDock } from './desktop/WorkyVoiceDock';
+import { WorkyTopBar } from './desktop/WorkyTopBar';
+import { WorkyActivityRail } from './desktop/WorkyActivityRail';
+import { ManagerChatSheet } from './mobile/ManagerChatSheet';
+import { VoiceSession } from './voice/VoiceSession';
 import type { WorkyEvent, WorkyMessage, WorkyPendingClarification, WorkyTask } from '../types';
 
 function summarizeDelta(event: WorkyEvent, fallback: string): string {
@@ -60,10 +66,15 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const streamQuery = useStream(streamId);
   const updateStream = useUpdateStream();
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
-  const [boardView, setBoardView] = useState<'status' | 'graph'>('status');
+  const [boardView, setBoardView] = useState<'agents' | 'status' | 'graph'>('agents');
   const [approvalFor, setApprovalFor] = useState<WorkyPendingClarification | null>(null);
   const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
   const whatsappQuery = useWorkyWhatsAppIntegration(streamId);
+  const isMobile = useIsMobile();
+  const { agents: streamAgents } = useStreamAgents();
+  const pushActivity = useWorkyUiStore((s) => s.pushActivity);
+  const clearActivity = useWorkyUiStore((s) => s.clearActivity);
+  const activitySeq = useRef(0);
 
   useEffect(() => {
     setWhatsappModalOpen(false);
@@ -111,6 +122,8 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           );
           void qc.invalidateQueries({ queryKey: workyKeys.board(streamId) });
           void qc.invalidateQueries({ queryKey: workyKeys.messages(streamId) });
+          activitySeq.current += 1;
+          pushActivity({ key: `a-${activitySeq.current}`, icon: 'git-branch', tone: 'primary', text: tWorky('activity.item.planUpdated') });
           break;
         }
         case 'plan.version.created': {
@@ -128,6 +141,8 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         case 'task.completed': {
           void qc.invalidateQueries({ queryKey: workyKeys.board(streamId) });
           void qc.invalidateQueries({ queryKey: workyKeys.detail(streamId) });
+          activitySeq.current += 1;
+          pushActivity({ key: `a-${activitySeq.current}`, icon: 'check', tone: 'working', text: tWorky('activity.item.taskCompleted') });
           break;
         }
         case 'interaction.requested': {
@@ -150,6 +165,8 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
             });
           }
           void qc.invalidateQueries({ queryKey: workyKeys.board(streamId) });
+          activitySeq.current += 1;
+          pushActivity({ key: `a-${activitySeq.current}`, icon: 'shield-alert', tone: 'blocked', text: tWorky('activity.item.approvalRequested') });
           break;
         }
         case 'interaction.responded': {
@@ -169,6 +186,10 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         case 'cost.recorded': {
           void qc.invalidateQueries({ queryKey: workyKeys.board(streamId) });
           void qc.invalidateQueries({ queryKey: workyKeys.budget(streamId) });
+          if (event.type === 'worker.spawned') {
+            activitySeq.current += 1;
+            pushActivity({ key: `a-${activitySeq.current}`, icon: 'user-round', tone: 'done', text: tWorky('activity.item.agentSpawned') });
+          }
           break;
         }
         case 'budget.updated':
@@ -232,7 +253,13 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
     setStreaming,
     setStreamError,
     tWorky,
+    pushActivity,
   ]);
+
+  // Reset the in-session activity feed when switching streams.
+  useEffect(() => {
+    clearActivity();
+  }, [streamId, clearActivity]);
 
   useEffect(() => {
     return () => {
@@ -248,36 +275,42 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
 
   const orchestratorOpen = useWorkyUiStore((s) => s.orchestratorOpen);
   const setOrchestratorOpen = useWorkyUiStore((s) => s.setOrchestratorOpen);
+  const voiceOpen = useWorkyUiStore((s) => s.voiceOpen);
+  const setVoiceOpen = useWorkyUiStore((s) => s.setVoiceOpen);
   // Close the slide-over automatically on stream switch so the next
   // stream doesn't inherit the open state of the previous one.
   useEffect(() => {
     setOrchestratorOpen(false);
   }, [streamId, setOrchestratorOpen]);
 
+  if (isMobile) {
+    return (
+      <WorkyMobileStream
+        streamId={streamId}
+        approvalFor={approvalFor}
+        onApprovalClose={() => setApprovalFor(null)}
+      />
+    );
+  }
+
   return (
-    <div className='flex h-full w-full overflow-hidden'>
-      <StreamSidebar />
+    <div className='flex h-full w-full flex-col overflow-hidden'>
+      <WorkyTopBar streamId={streamId} />
+      <div className='flex min-h-0 flex-1 overflow-hidden'>
       <main
         data-testid='worky-stream-main'
         className='flex min-w-0 flex-1 flex-col overflow-hidden'
       >
         <StreamHeader streamId={streamId} onRename={onRename} />
         {streamQuery.data ? (
-          <div className='flex items-center gap-2 border-b border-border/60 bg-background/20 px-6 py-2'>
-            <div className='flex-1'>
-              <StreamControls
-                streamId={streamId}
-                status={streamQuery.data.status}
-                controlState={streamQuery.data.controlState}
-              />
-            </div>
+          <div className='flex items-center justify-end gap-2 border-b border-border/60 bg-background/20 px-6 py-2'>
             <div
               role='tablist'
               aria-label={tWorky('kanban.view.status')}
-              className='grid shrink-0 grid-cols-2 rounded-md border border-border/60 bg-muted/20 p-0.5 text-xs'
+              className='grid shrink-0 grid-cols-3 rounded-md border border-border/60 bg-muted/20 p-0.5 text-xs'
               data-testid='worky-board-view-toggle'
             >
-              {(['status', 'graph'] as const).map((view) => (
+              {(['agents', 'status', 'graph'] as const).map((view) => (
                 <button
                   key={view}
                   type='button'
@@ -312,24 +345,34 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         ) : null}
         {boardView === 'graph' ? (
           <WorkyGraphBoard onTaskClick={setSelectedTask} />
+        ) : boardView === 'agents' ? (
+          // pb clears the fixed WorkyVoiceDock, which would otherwise cover the
+          // last row of agent cards at the bottom of the scroll.
+          <div className='min-h-0 flex-1 overflow-y-auto p-6 pb-28' data-testid='worky-agents-scroll'>
+            <div className='mx-auto flex max-w-5xl flex-col gap-4'>
+              <h2 className='text-lg font-bold text-foreground'>
+                {tWorky('agents.team.title')} · {tWorky('agents.team.count', { count: streamAgents.length })}
+              </h2>
+              <AgentTeamView onOpenTask={setSelectedTask} showHeader={false} columns={2} />
+            </div>
+          </div>
         ) : (
           <KanbanBoard streamId={streamId} onTaskClick={setSelectedTask} />
         )}
       </main>
-      <OrchestratorPanel
+      <WorkyActivityRail
         streamId={streamId}
         onWhatsAppClick={() => setWhatsappModalOpen(true)}
         whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
       />
-      {orchestratorOpen ? (
-        <button
-          type='button'
-          aria-label={tWorky('orchestrator.close')}
-          onClick={() => setOrchestratorOpen(false)}
-          className='fixed inset-0 z-20 bg-black/40 backdrop-blur-sm lg:hidden'
-          data-testid='worky-orchestrator-backdrop'
-        />
-      ) : null}
+      </div>
+      <ManagerChatSheet
+        streamId={streamId}
+        open={orchestratorOpen}
+        onOpenChange={setOrchestratorOpen}
+        onWhatsAppClick={() => setWhatsappModalOpen(true)}
+        whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
+      />
       <PlanDeltaToast />
       {approvalFor ? (
         <ApprovalModal
@@ -340,7 +383,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         />
       ) : null}
       <TaskDetailDrawer
-        streamId={streamId}
         task={selectedTask}
         onClose={() => setSelectedTask(null)}
       />
@@ -351,6 +393,13 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           onClose={() => setWhatsappModalOpen(false)}
         />
       ) : null}
+      <WorkyVoiceDock onOpen={() => setVoiceOpen(true)} />
+      <VoiceSession
+        streamId={streamId}
+        open={voiceOpen}
+        onOpenChange={setVoiceOpen}
+        onKeyboard={() => setOrchestratorOpen(true)}
+      />
     </div>
   );
 }

@@ -2,7 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { LoggerService } from '@modules/logger';
 import { ModelsService } from '@modules/models/models.service';
 import { ConnectorService } from '@modules/connector/connector.service';
+import { AgentService } from '@modules/agent/agent.service';
+import { AgentTypeService } from '@modules/agent-type/agent-type.service';
 import { WorkyMailSubscriptionService } from './worky-mail-subscription.service';
+import {
+  WORKY_PLANNER_AGENT_TYPE_SLUG,
+  WORKY_EXECUTOR_AGENT_TYPE_SLUG,
+} from '../constants/worky.constants';
 
 const WORKY_CONNECTOR_SLUGS = ['code-interpreter', 'linkup', 'microsoft365'];
 
@@ -24,6 +30,8 @@ export class WorkyTurnContextService {
   constructor(
     private readonly models: ModelsService,
     private readonly connectorService: ConnectorService,
+    private readonly agentService: AgentService,
+    private readonly agentTypeService: AgentTypeService,
     private readonly mailSubscriptions: WorkyMailSubscriptionService,
     private readonly logger: LoggerService,
   ) {
@@ -38,6 +46,60 @@ export class WorkyTurnContextService {
       model = this.models.getModelIdentifier(await this.models.getDefaultModel()) || null;
     }
     return model ?? undefined;
+  }
+
+  /**
+   * The two agents every orchestrator turn forwards: the admin's default agent
+   * of type `worky-planner` and of type `worky-executer`, built into the full
+   * gRPC `chatbot.Agent` shape (tools / prompt / model / connectors resolved by
+   * AgentService). Replaces the old per-stream planner/executor model + prompt
+   * overrides — the agents now carry that config.
+   *
+   * Non-fatal by design (mirrors `resolveConnectors`): a misconfigured or
+   * missing default agent must not fail the turn. We log and send whatever
+   * resolves; the orchestrator falls back to its own defaults for the rest.
+   */
+  async resolveWorkyAgents(userId: string): Promise<unknown[]> {
+    try {
+      const [plannerType, executorType] = await Promise.all([
+        this.agentTypeService.findBySlug(WORKY_PLANNER_AGENT_TYPE_SLUG),
+        this.agentTypeService.findBySlug(WORKY_EXECUTOR_AGENT_TYPE_SLUG),
+      ]);
+      if (!plannerType || !executorType) {
+        this.logger.warn('[worky-orchestrator] planner/executor agent type missing; sending none', {
+          plannerType: plannerType?.id ?? null,
+          executorType: executorType?.id ?? null,
+        });
+      }
+
+      const [plannerAgent, executorAgent] = await Promise.all([
+        plannerType ? this.agentService.findDefaultByAgentType(plannerType.id) : null,
+        executorType ? this.agentService.findDefaultByAgentType(executorType.id) : null,
+      ]);
+
+      const agentIds = [plannerAgent?.id, executorAgent?.id].filter(Boolean) as string[];
+      if (agentIds.length === 0) {
+        this.logger.warn('[worky-orchestrator] no default planner/executor agents resolved; sending none', {
+          userId,
+        });
+        return [];
+      }
+      if (agentIds.length < 2) {
+        this.logger.warn('[worky-orchestrator] only one default worky agent resolved', {
+          userId,
+          plannerAgent: plannerAgent?.id ?? null,
+          executorAgent: executorAgent?.id ?? null,
+        });
+      }
+
+      return await this.agentService.buildGrpcAgentsForPlaybook(userId, agentIds);
+    } catch (err) {
+      this.logger.warn('[worky-orchestrator] worky agent resolution failed; sending none', {
+        userId,
+        error: (err as Error).message,
+      });
+      return [];
+    }
   }
 
   /** Per-user connectors worky needs (code-interpreter, linkup, microsoft365).

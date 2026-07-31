@@ -97,12 +97,12 @@ async def test_readmodel_roundtrip(pool):
     sid = "sess1"
     await rm.ensure_session(sid, "u1", "My task", "running")
     await rm.upsert_plan(sid, "p1", "Report", "Build a report", "running")
-    # (step_id, ordinal, wave, status, kind, question, title, description, depends_on, agent)
+    # (step_id, ordinal, wave, status, kind, question, title, description, depends_on, assignee, assignee_name, assignee_role, is_persona)
     await rm.upsert_steps(sid, [
-        ("a", 0, 0, "pending", "execute", "", "Gather", "gather the data", "", ""),
-        ("b", 1, 1, "pending", "execute", "", "Write", "write it up", "a", ""),
+        ("a", 0, 0, "pending", "execute", "", "Gather", "gather the data", "", "", "", "", False),
+        ("b", 1, 1, "pending", "execute", "", "Write", "write it up", "a", "", "", "", False),
     ])
-    await rm.set_step_status(sid, "a", "completed", agent="w_a", result="got data")
+    await rm.set_step_status(sid, "a", "completed", result="got data")
     await rm.set_step_status(sid, "b", "blocked", blocked_reason="need input")
     await rm.add_message("m1", sid, "user", "do it")
 
@@ -110,7 +110,7 @@ async def test_readmodel_roundtrip(pool):
         a = await con.fetchrow(f'SELECT * FROM "{SCHEMA}".plan_steps WHERE session_id=$1 AND step_id=$2', sid, "a")
         b = await con.fetchrow(f'SELECT * FROM "{SCHEMA}".plan_steps WHERE session_id=$1 AND step_id=$2', sid, "b")
         msg = await con.fetchval(f'SELECT content FROM "{SCHEMA}".messages WHERE id=$1', "m1")
-    assert a["status"] == "completed" and a["result"] == "got data" and a["agent"] == "w_a"
+    assert a["status"] == "completed" and a["result"] == "got data"
     assert b["status"] == "blocked" and b["blocked_reason"] == "need input"
     assert msg == "do it"
     print("ok  read-model: session/plan/steps/messages project + read back")
@@ -126,8 +126,8 @@ async def test_outstanding_interrupts_are_tracked_per_step(pool):
     sid = "sess_interrupts"
     await rm.ensure_session(sid, "u1", "Two questions", "running")
     await rm.upsert_steps(sid, [
-        ("a", 0, 0, "pending", "ask", "A?", "Ask A", "", "", ""),
-        ("b", 1, 0, "pending", "ask", "B?", "Ask B", "", "", ""),
+        ("a", 0, 0, "pending", "ask", "A?", "Ask A", "", "", "", "", "", False),
+        ("b", 1, 0, "pending", "ask", "B?", "Ask B", "", "", "", "", "", False),
     ])
 
     await rm.set_step_status(sid, "a", "blocked", blocked_reason="awaiting user input",

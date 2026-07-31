@@ -78,14 +78,6 @@ export interface WorkyStream {
   managerModelId?: string | null;
   /** Per-stream worker model. Same semantics as `managerModelId`. */
   workerModelId?: string | null;
-  /** Per-stream Planner model (LiteLLM id). `null` = admin default. Sent as `planner_model` over gRPC. */
-  plannerModelId?: string | null;
-  /** Per-stream Executor model (LiteLLM id). `null` = admin default. Sent as `executor_model`. */
-  executorModelId?: string | null;
-  /** Planner system-prompt override. `null`/empty = server default. */
-  plannerPrompt?: string | null;
-  /** Executor system-prompt override. `null`/empty = server default. */
-  executorPrompt?: string | null;
   governancePolicyRef?: string | null;
   title: string;
   status: WorkyStreamStatus;
@@ -121,14 +113,6 @@ export interface UpdateWorkyStreamData {
   managerModelId?: string | null;
   /** Same semantics as `managerModelId`, for ephemeral workers. */
   workerModelId?: string | null;
-  /** LiteLLM id for the Planner. `null` clears; omit = unchanged. */
-  plannerModelId?: string | null;
-  /** LiteLLM id for the Executor. `null` clears; omit = unchanged. */
-  executorModelId?: string | null;
-  /** Planner prompt override. `null`/empty clears; omit = unchanged. */
-  plannerPrompt?: string | null;
-  /** Executor prompt override. `null`/empty clears; omit = unchanged. */
-  executorPrompt?: string | null;
 }
 
 /**
@@ -168,6 +152,8 @@ export interface WorkyTask {
   priority: WorkyPriority;
   assigneeType: WorkyAssigneeType;
   assigneeId: string | null;
+  /** Executor sub-agent that handled this task (Electric plan_steps.assignee). Null when unattributed. */
+  assigneeKey?: string | null;
   actionCategory: WorkyActionCategory;
   dependsOn: string[];
   /** Parallel wave index (plan_steps.wave via Electric); null outside a plan. */

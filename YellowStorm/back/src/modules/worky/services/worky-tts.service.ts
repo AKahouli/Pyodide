@@ -60,7 +60,11 @@ export class WorkyTtsService implements OnModuleInit {
   }
 
   /** Synthesize speech for `text`. Throws on transport/HTTP errors. */
-  async speak(text: string, voiceOverride?: string): Promise<WorkySpeechResult> {
+  async speak(
+    text: string,
+    voiceOverride?: string,
+    speed?: number,
+  ): Promise<WorkySpeechResult> {
     const input = text.trim().slice(0, this.maxChars);
     if (!input) throw new Error('Empty text');
 
@@ -70,6 +74,10 @@ export class WorkyTtsService implements OnModuleInit {
       voice: voiceOverride || this.voice,
       response_format: this.format,
     };
+    // Omit entirely at 1x so providers that reject the field still work.
+    if (typeof speed === 'number' && Number.isFinite(speed) && speed !== 1) {
+      payload.speed = Math.min(2, Math.max(0.5, speed));
+    }
     if (this.providerOrder.length) {
       payload.provider = { only: this.providerOrder, allow_fallbacks: false };
     }
