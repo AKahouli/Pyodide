@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Bot } from 'lucide-react';
+import { Bot, PanelLeftOpen, PanelLeftClose } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import { Button } from '@/components/ui/button';
 import { StreamSidebar } from './StreamSidebar';
@@ -26,7 +26,12 @@ import {
   useWorkyWhatsAppIntegration,
 } from '../query/hooks';
 import { isWhatsAppConnected } from '@/lib/whatsapp-integration-utils';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
+import { WorkyMobileStream } from './mobile/WorkyMobileStream';
+import { AgentTeamView } from './mobile/AgentTeamView';
+import { WorkyVoiceDock } from './desktop/WorkyVoiceDock';
+import { VoiceSession } from './voice/VoiceSession';
 import type { WorkyEvent, WorkyMessage, WorkyPendingClarification, WorkyTask } from '../types';
 
 function summarizeDelta(event: WorkyEvent, fallback: string): string {
@@ -60,10 +65,11 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const streamQuery = useStream(streamId);
   const updateStream = useUpdateStream();
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
-  const [boardView, setBoardView] = useState<'status' | 'graph'>('status');
+  const [boardView, setBoardView] = useState<'agents' | 'status' | 'graph'>('agents');
   const [approvalFor, setApprovalFor] = useState<WorkyPendingClarification | null>(null);
   const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
   const whatsappQuery = useWorkyWhatsAppIntegration(streamId);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     setWhatsappModalOpen(false);
@@ -248,15 +254,29 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
 
   const orchestratorOpen = useWorkyUiStore((s) => s.orchestratorOpen);
   const setOrchestratorOpen = useWorkyUiStore((s) => s.setOrchestratorOpen);
+  const voiceOpen = useWorkyUiStore((s) => s.voiceOpen);
+  const setVoiceOpen = useWorkyUiStore((s) => s.setVoiceOpen);
+  const sidebarCollapsed = useWorkyUiStore((s) => s.sidebarCollapsed);
+  const setSidebarCollapsed = useWorkyUiStore((s) => s.setSidebarCollapsed);
   // Close the slide-over automatically on stream switch so the next
   // stream doesn't inherit the open state of the previous one.
   useEffect(() => {
     setOrchestratorOpen(false);
   }, [streamId, setOrchestratorOpen]);
 
+  if (isMobile) {
+    return (
+      <WorkyMobileStream
+        streamId={streamId}
+        approvalFor={approvalFor}
+        onApprovalClose={() => setApprovalFor(null)}
+      />
+    );
+  }
+
   return (
     <div className='flex h-full w-full overflow-hidden'>
-      <StreamSidebar />
+      {sidebarCollapsed ? null : <StreamSidebar />}
       <main
         data-testid='worky-stream-main'
         className='flex min-w-0 flex-1 flex-col overflow-hidden'
@@ -264,6 +284,16 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         <StreamHeader streamId={streamId} onRename={onRename} />
         {streamQuery.data ? (
           <div className='flex items-center gap-2 border-b border-border/60 bg-background/20 px-6 py-2'>
+            <Button
+              type='button'
+              size='icon'
+              variant='ghost'
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              aria-label={tWorky(sidebarCollapsed ? 'sidebar.expand' : 'sidebar.collapse')}
+              className='size-7 shrink-0'
+            >
+              {sidebarCollapsed ? <PanelLeftOpen className='h-4 w-4' /> : <PanelLeftClose className='h-4 w-4' />}
+            </Button>
             <div className='flex-1'>
               <StreamControls
                 streamId={streamId}
@@ -274,10 +304,10 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
             <div
               role='tablist'
               aria-label={tWorky('kanban.view.status')}
-              className='grid shrink-0 grid-cols-2 rounded-md border border-border/60 bg-muted/20 p-0.5 text-xs'
+              className='grid shrink-0 grid-cols-3 rounded-md border border-border/60 bg-muted/20 p-0.5 text-xs'
               data-testid='worky-board-view-toggle'
             >
-              {(['status', 'graph'] as const).map((view) => (
+              {(['agents', 'status', 'graph'] as const).map((view) => (
                 <button
                   key={view}
                   type='button'
@@ -312,6 +342,12 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         ) : null}
         {boardView === 'graph' ? (
           <WorkyGraphBoard onTaskClick={setSelectedTask} />
+        ) : boardView === 'agents' ? (
+          <div className='min-h-0 flex-1 overflow-y-auto p-6'>
+            <div className='mx-auto max-w-3xl'>
+              <AgentTeamView onOpenAgent={(agent) => setSelectedTask(agent.currentTask)} />
+            </div>
+          </div>
         ) : (
           <KanbanBoard streamId={streamId} onTaskClick={setSelectedTask} />
         )}
@@ -351,6 +387,13 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           onClose={() => setWhatsappModalOpen(false)}
         />
       ) : null}
+      <WorkyVoiceDock onOpen={() => setVoiceOpen(true)} />
+      <VoiceSession
+        streamId={streamId}
+        open={voiceOpen}
+        onOpenChange={setVoiceOpen}
+        onKeyboard={() => setOrchestratorOpen(true)}
+      />
     </div>
   );
 }

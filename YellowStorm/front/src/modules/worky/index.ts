@@ -9,6 +9,12 @@ export { StreamReportPage } from './components/StreamReportPage';
 export { HumanTaskPanel } from './components/HumanTaskPanel';
 export { MemoryProposalCard } from './components/MemoryProposalCard';
 export { MemoryTimeline } from './components/MemoryTimeline';
+export { AgentCard } from './components/agents/AgentCard';
+export { AgentAvatar } from './components/agents/AgentAvatar';
+export { AgentStatusPill } from './components/agents/AgentStatusPill';
+export { useStreamAgents } from './agents/useStreamAgents';
+export { groupTasksByAgent, deriveAgentStatus, agentInitials } from './agents/agentModel';
+export type { WorkyAgent, WorkyAgentStatus } from './agents/agentModel';
 export {
   useWorkyStore,
   useWorkyStreams,

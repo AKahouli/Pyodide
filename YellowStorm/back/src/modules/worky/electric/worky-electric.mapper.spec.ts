@@ -183,6 +183,27 @@ describe('worky-electric.mapper', () => {
       );
       expect(set).toMatchObject({ lane: 'backlog', executionState: 'not_started' });
     });
+
+    it('maps a non-empty agent to a trimmed agentKey', () => {
+      const { set } = mapPlanStep(
+        { session_id: 's', step_id: 'step-1', ordinal: 1, status: 'running', description: 'd', agent: '  Researcher ' },
+        'stream-1',
+      );
+      expect(set).toMatchObject({ agentKey: 'Researcher' });
+    });
+
+    it('maps a missing or blank agent to null', () => {
+      const missing = mapPlanStep(
+        { session_id: 's', step_id: 'step-1', ordinal: 1, status: 'running', description: 'd' },
+        'stream-1',
+      ).set;
+      const blank = mapPlanStep(
+        { session_id: 's', step_id: 'step-1', ordinal: 1, status: 'running', description: 'd', agent: '   ' },
+        'stream-1',
+      ).set;
+      expect(missing.agentKey).toBeNull();
+      expect(blank.agentKey).toBeNull();
+    });
   });
 
   describe('mapPlan', () => {

@@ -7,16 +7,28 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 
+export type WorkyMobileTab = 'agents' | 'chat' | 'more';
+export type WorkyMobileSheet = 'task' | 'budget' | 'approval' | 'chat';
+
 interface WorkyUiState {
   isTaskDrawerOpen: boolean;
   selectedTaskId: string | null;
   sidebarCollapsed: boolean;
   orchestratorOpen: boolean;
   sendError: string | null;
+  /** Active bottom tab in the mobile layout. */
+  mobileTab: WorkyMobileTab;
+  /** Which bottom sheet is open in the mobile layout (null = none). */
+  activeSheet: WorkyMobileSheet | null;
+  /** Whether the live voice session overlay is open. */
+  voiceOpen: boolean;
   setTaskDrawerOpen: (open: boolean) => void;
   setSelectedTaskId: (id: string | null) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setOrchestratorOpen: (open: boolean) => void;
+  setMobileTab: (tab: WorkyMobileTab) => void;
+  setActiveSheet: (sheet: WorkyMobileSheet | null) => void;
+  setVoiceOpen: (open: boolean) => void;
   notifySendError: (message: string) => void;
   clearSendError: () => void;
   reset: () => void;
@@ -28,6 +40,9 @@ const initialState = {
   sidebarCollapsed: false,
   orchestratorOpen: false,
   sendError: null as string | null,
+  mobileTab: 'agents' as WorkyMobileTab,
+  activeSheet: null as WorkyMobileSheet | null,
+  voiceOpen: false,
 };
 
 export const useWorkyUiStore = create<WorkyUiState>()(
@@ -39,6 +54,9 @@ export const useWorkyUiStore = create<WorkyUiState>()(
         set({ selectedTaskId, isTaskDrawerOpen: selectedTaskId != null }),
       setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
       setOrchestratorOpen: (orchestratorOpen) => set({ orchestratorOpen }),
+      setMobileTab: (mobileTab) => set({ mobileTab }),
+      setActiveSheet: (activeSheet) => set({ activeSheet }),
+      setVoiceOpen: (voiceOpen) => set({ voiceOpen }),
       notifySendError: (sendError) => set({ sendError }),
       clearSendError: () => set({ sendError: null }),
       reset: () => set(initialState),

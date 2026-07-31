@@ -130,6 +130,14 @@ export class WorkyTask extends Document {
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   assigneeId?: Types.ObjectId | null;
 
+  /**
+   * plan_steps.agent (Electric source) — which executor sub-agent handled this
+   * step, for display/grouping. Free-form string keyed to a chatbot Agent's
+   * name/slug. Null for tasks not attributed to an agent.
+   */
+  @Prop({ type: String, default: null, index: true })
+  agentKey?: string | null;
+
   @Prop({ type: [Types.ObjectId], ref: 'WorkyTask', default: [] })
   dependsOn!: Types.ObjectId[];
 
