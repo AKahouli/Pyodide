@@ -12,18 +12,20 @@ import { useStreamAgents } from './useStreamAgents';
 const asMock = (fn: unknown) => fn as any;
 const emptyLanes = { backlog: [], ready: [], running: [], review: [], blocked: [], done: [] };
 
+const agentState = (agents: unknown[]) => ({ agents, fetchAgents: vi.fn(), isInitialized: true });
+const mockAgents = (agents: unknown[]) =>
+  asMock(useAgentStore).mockImplementation((sel: (s: unknown) => unknown) => sel(agentState(agents)));
+
 beforeEach(() => vi.clearAllMocks());
 
 describe('useStreamAgents', () => {
-  it('groups the current board tasks by agent and resolves identity', () => {
+  it('resolves the agent name by its Mongo id (assigneeKey)', () => {
     asMock(useWorkyBoard).mockReturnValue({
       ...emptyLanes,
-      running: [{ id: '1', title: 'A', lane: 'running', assigneeKey: 'researcher' }],
-      done: [{ id: '2', title: 'B', lane: 'done', assigneeKey: 'researcher' }],
+      running: [{ id: '1', title: 'A', lane: 'running', assigneeKey: '64f0agent01' }],
+      done: [{ id: '2', title: 'B', lane: 'done', assigneeKey: '64f0agent01' }],
     });
-    asMock(useAgentStore).mockImplementation((sel: (s: unknown) => unknown) =>
-      sel({ agents: [{ id: '1', name: 'Atlas', slug: 'researcher', role: 'Research' }] }),
-    );
+    mockAgents([{ id: '64f0agent01', name: 'Atlas', slug: 'researcher', role: 'Research' }]);
 
     const { result } = renderHook(() => useStreamAgents());
     expect(result.current.agents).toHaveLength(1);
@@ -31,9 +33,19 @@ describe('useStreamAgents', () => {
     expect(result.current.ungrouped).toHaveLength(0);
   });
 
+  it('falls back to slug/name resolution when the key is not an id', () => {
+    asMock(useWorkyBoard).mockReturnValue({
+      ...emptyLanes,
+      running: [{ id: '1', title: 'A', lane: 'running', assigneeKey: 'researcher' }],
+    });
+    mockAgents([{ id: '64f0agent01', name: 'Atlas', slug: 'researcher', role: 'Research' }]);
+    const { result } = renderHook(() => useStreamAgents());
+    expect(result.current.agents[0]).toMatchObject({ name: 'Atlas' });
+  });
+
   it('returns empty when the board is null', () => {
     asMock(useWorkyBoard).mockReturnValue(null);
-    asMock(useAgentStore).mockImplementation((sel: (s: unknown) => unknown) => sel({ agents: [] }));
+    mockAgents([]);
     const { result } = renderHook(() => useStreamAgents());
     expect(result.current.agents).toEqual([]);
     expect(result.current.ungrouped).toEqual([]);
@@ -44,7 +56,7 @@ describe('useStreamAgents', () => {
       ...emptyLanes,
       backlog: [{ id: '3', title: 'C', lane: 'backlog', assigneeKey: null }],
     });
-    asMock(useAgentStore).mockImplementation((sel: (s: unknown) => unknown) => sel({ agents: [] }));
+    mockAgents([]);
     const { result } = renderHook(() => useStreamAgents());
     expect(result.current.agents).toEqual([]);
     expect(result.current.ungrouped).toHaveLength(1);

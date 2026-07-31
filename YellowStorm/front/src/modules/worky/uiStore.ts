@@ -8,7 +8,7 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 
 export type WorkyMobileTab = 'agents' | 'chat' | 'more';
-export type WorkyMobileSheet = 'task' | 'budget' | 'approval' | 'chat';
+export type WorkyMobileSheet = 'agent' | 'task' | 'budget' | 'approval' | 'chat';
 
 interface WorkyUiState {
   isTaskDrawerOpen: boolean;

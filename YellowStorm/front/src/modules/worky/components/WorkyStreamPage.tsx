@@ -30,8 +30,10 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
 import { WorkyMobileStream } from './mobile/WorkyMobileStream';
 import { AgentTeamView } from './mobile/AgentTeamView';
+import { AgentTasksSheet } from './mobile/AgentTasksSheet';
 import { WorkyVoiceDock } from './desktop/WorkyVoiceDock';
 import { VoiceSession } from './voice/VoiceSession';
+import type { WorkyAgent } from '../agents/agentModel';
 import type { WorkyEvent, WorkyMessage, WorkyPendingClarification, WorkyTask } from '../types';
 
 function summarizeDelta(event: WorkyEvent, fallback: string): string {
@@ -65,6 +67,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const streamQuery = useStream(streamId);
   const updateStream = useUpdateStream();
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<WorkyAgent | null>(null);
   const [boardView, setBoardView] = useState<'agents' | 'status' | 'graph'>('agents');
   const [approvalFor, setApprovalFor] = useState<WorkyPendingClarification | null>(null);
   const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
@@ -345,7 +348,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         ) : boardView === 'agents' ? (
           <div className='min-h-0 flex-1 overflow-y-auto p-6'>
             <div className='mx-auto max-w-3xl'>
-              <AgentTeamView onOpenAgent={(agent) => setSelectedTask(agent.currentTask)} />
+              <AgentTeamView onOpenAgent={(agent) => setSelectedAgent(agent)} />
             </div>
           </div>
         ) : (
@@ -375,6 +378,17 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           onClose={() => setApprovalFor(null)}
         />
       ) : null}
+      <AgentTasksSheet
+        agent={selectedAgent}
+        open={selectedAgent !== null}
+        onOpenChange={(o) => {
+          if (!o) setSelectedAgent(null);
+        }}
+        onOpenTask={(task) => {
+          setSelectedAgent(null);
+          setSelectedTask(task);
+        }}
+      />
       <TaskDetailDrawer
         streamId={streamId}
         task={selectedTask}

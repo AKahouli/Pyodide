@@ -5,6 +5,7 @@
   "agents.status.done": "Terminé",
   "agents.card.standingBy": "En veille",
   "agents.card.tasksProgress": "{{done}} sur {{total}} tâches",
+  "agents.tasks.heading": "{{count}} tâches",
   "agents.team.title": "Équipe",
   "agents.team.count": "{{count}} agents",
   "agents.team.empty": "Aucun agent sur ce flux pour l'instant",

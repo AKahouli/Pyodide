@@ -5,6 +5,7 @@
   "agents.status.done": "Done",
   "agents.card.standingBy": "Standing by",
   "agents.card.tasksProgress": "{{done}} of {{total}} tasks",
+  "agents.tasks.heading": "{{count}} tasks",
   "agents.team.title": "Team",
   "agents.team.count": "{{count}} agents",
   "agents.team.empty": "No agents on this stream yet",
