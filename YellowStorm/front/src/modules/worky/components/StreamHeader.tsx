@@ -55,15 +55,8 @@ export function StreamHeader({ streamId, onRename }: StreamHeaderProps): JSX.Ele
             {stream.title}
           </button>
         )}
-        <div className='flex items-center gap-2 text-xs text-muted-foreground'>
-          <span>{t('header.planVersion', { version: stream.currentPlanVersion })}</span>
-          <span aria-hidden>·</span>
-          <span>
-            {t('header.budget', {
-              limit: stream.budget.limitUsd,
-              spent: stream.budget.spendUsd,
-            })}
-          </span>
+        <div className='text-xs text-muted-foreground'>
+          {t('header.planVersion', { version: stream.currentPlanVersion })}
         </div>
       </div>
     </header>

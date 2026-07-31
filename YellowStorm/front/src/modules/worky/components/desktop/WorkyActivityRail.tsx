@@ -2,7 +2,6 @@ import { useState, type JSX, type ComponentType } from 'react';
 import { Check, Play, ShieldAlert, GitBranch, User, CircleDot } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { useStreamBudget } from '../../query/hooks';
 import { useWorkyUiStore } from '../../uiStore';
 import { ChatMessageThread } from '../ChatMessageThread';
 import { PromptBar } from '../PromptBar';
@@ -23,7 +22,7 @@ const TONE: Record<string, string> = {
 };
 
 /**
- * Desktop right rail: Chat / Activity tabs over a budget mini.
+ * Desktop right rail: Chat / Activity tabs.
  *
  * Chat is the default tab and holds the manager thread + composer, so the
  * Chief-of-Staff conversation is reachable without opening a sheet. Voice stays
@@ -44,8 +43,6 @@ export function WorkyActivityRail({
   const { t } = useModuleTranslation('worky');
   const [tab, setTab] = useState<'chat' | 'activity'>('chat');
   const activity = useWorkyUiStore((s) => s.recentActivity);
-  const { data: budget } = useStreamBudget(streamId);
-  const pct = budget && budget.limitUsd > 0 ? Math.min(100, (budget.spendUsd / budget.limitUsd) * 100) : 0;
 
   return (
     <aside className="hidden w-[344px] shrink-0 flex-col gap-4 border-l border-border bg-card p-4 lg:flex">
@@ -97,20 +94,6 @@ export function WorkyActivityRail({
           )}
         </div>
       )}
-
-      {budget ? (
-        <div className="flex flex-col gap-2 rounded-2xl border border-border bg-muted/40 p-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold text-foreground">{t('budget.title')}</span>
-            <span className="text-xs text-muted-foreground">
-              ${(budget.spendUsd ?? 0).toFixed(2)} / ${budget.limitUsd ?? 0}
-            </span>
-          </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-            <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
-          </div>
-        </div>
-      ) : null}
     </aside>
   );
 }
