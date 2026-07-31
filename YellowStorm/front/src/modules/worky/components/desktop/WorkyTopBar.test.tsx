@@ -13,6 +13,7 @@ vi.mock('react-router-dom', async () => ({
   useNavigate: () => navigate,
 }));
 
+vi.mock('@/lib/notifications', () => ({ showError: vi.fn() }));
 vi.mock('../../query/hooks', () => ({
   useStream: () => ({ data: { title: 'Q3 Market Expansion', status: 'active' } }),
   useStreams: () => ({
@@ -21,6 +22,7 @@ vi.mock('../../query/hooks', () => ({
       { id: 's2', title: 'Hiring' },
     ],
   }),
+  useCreateStream: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 import { WorkyTopBar } from './WorkyTopBar';
@@ -44,6 +46,15 @@ describe('WorkyTopBar', () => {
     expect(screen.queryByText('dashboard.searchPlaceholder')).toBeNull();
     expect(screen.queryByText(/\$/)).toBeNull();
     expect(screen.queryByLabelText('nav.worky')).toBeNull();
+  });
+
+  it('opens the create dialog from the plus button', async () => {
+    const user = userEvent.setup();
+    renderTopBar();
+
+    await user.click(screen.getByTestId('worky-topbar-new-stream'));
+
+    expect(await screen.findByPlaceholderText('dashboard.newStreamPlaceholder')).toBeTruthy();
   });
 
   it('navigates to another stream from the switcher', async () => {

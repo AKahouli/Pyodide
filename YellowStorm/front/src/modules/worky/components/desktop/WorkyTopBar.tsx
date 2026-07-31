@@ -1,6 +1,6 @@
-import type { JSX } from 'react';
+import { useState, type JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Zap, ChevronDown, LayoutGrid } from 'lucide-react';
+import { Zap, ChevronDown, LayoutGrid, Plus } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import {
   DropdownMenu,
@@ -9,8 +9,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useStream, useStreams } from '../../query/hooks';
+import { NewStreamDialog } from '../NewStreamDialog';
 
 /**
  * Desktop Worky top bar: logo + wordmark and the stream switcher. The switcher
@@ -25,6 +27,7 @@ export function WorkyTopBar({ streamId }: { streamId: string }): JSX.Element {
   const navigate = useNavigate();
   const { data: stream } = useStream(streamId);
   const { data: streams = [] } = useStreams();
+  const [createOpen, setCreateOpen] = useState(false);
 
   return (
     <div className="flex h-14 shrink-0 items-center border-b border-border bg-card px-4">
@@ -64,7 +67,23 @@ export function WorkyTopBar({ streamId }: { streamId: string }): JSX.Element {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {/* Start a stream without going back to the landing page first. */}
+        <Button
+          type="button"
+          size="icon"
+          variant="outline"
+          onClick={() => setCreateOpen(true)}
+          aria-label={t('dashboard.newStream')}
+          title={t('dashboard.newStream')}
+          data-testid="worky-topbar-new-stream"
+          className="size-9 shrink-0"
+        >
+          <Plus className="size-4" />
+        </Button>
       </div>
+
+      <NewStreamDialog open={createOpen} onOpenChange={setCreateOpen} />
     </div>
   );
 }

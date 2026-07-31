@@ -90,6 +90,71 @@ describe('WorkyElectricConsumerService.handleMessages', () => {
     );
   });
 
+  it('adopts the locally-persisted owner message instead of inserting a duplicate', async () => {
+    const { service, messageModel, streamService, events } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+    // The doc appendOwnerMessage already wrote for this same turn.
+    messageModel.findOneAndUpdate.mockReturnValue({
+      exec: () => Promise.resolve({ _id: 'mongo-1' }),
+    } as any);
+
+    await service.handleMessages([
+      {
+        key: '"public"."messages"/"pg-msg-1"',
+        headers: { operation: 'insert' },
+        value: {
+          id: 'pg-msg-1',
+          session_id: 'sess-xyz',
+          role: 'user',
+          content: 'ship the report',
+          created_at: '2026-07-03T00:00:00Z',
+        },
+      },
+    ]);
+
+    // Matched on the un-mirrored local copy, not upserted by externalId.
+    expect(messageModel.findOneAndUpdate).toHaveBeenCalledTimes(1);
+    expect(messageModel.findOneAndUpdate).toHaveBeenCalledWith(
+      { streamId: 'stream-1', role: 'owner', content: 'ship the report', externalId: null },
+      expect.objectContaining({ $set: expect.objectContaining({ externalId: 'pg-msg-1' }) }),
+      expect.objectContaining({ new: true }),
+    );
+    // The SSE id is the Mongo id so it matches what the REST history returns.
+    expect(events.emit).toHaveBeenCalledWith(
+      'owner-1',
+      'stream-1',
+      expect.objectContaining({ payload: expect.objectContaining({ id: 'mongo-1' }) }),
+    );
+  });
+
+  it('falls back to an externalId upsert when there is no local owner copy', async () => {
+    const { service, messageModel, streamService } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: 'stream-1', ownerUserId: 'owner-1' });
+    messageModel.findOneAndUpdate
+      .mockReturnValueOnce({ exec: () => Promise.resolve(null) } as any) // nothing to adopt
+      .mockReturnValueOnce({ exec: () => Promise.resolve({ _id: 'mongo-2' }) } as any);
+
+    await service.handleMessages([
+      {
+        key: '"public"."messages"/"pg-msg-9"',
+        headers: { operation: 'insert' },
+        value: {
+          id: 'pg-msg-9',
+          session_id: 'sess-xyz',
+          role: 'user',
+          content: 'from whatsapp',
+          created_at: '2026-07-03T00:00:00Z',
+        },
+      },
+    ]);
+
+    expect(messageModel.findOneAndUpdate).toHaveBeenLastCalledWith(
+      { streamId: 'stream-1', externalId: 'pg-msg-9' },
+      expect.anything(),
+      expect.objectContaining({ upsert: true, new: true }),
+    );
+  });
+
   it('skips delete operations (manager tombstones out of scope)', async () => {
     const { service, messageModel, streamService } = makeService();
     await service.handleMessages([
