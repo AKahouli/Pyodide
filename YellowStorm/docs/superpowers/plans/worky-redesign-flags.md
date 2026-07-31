@@ -20,11 +20,11 @@ never faked. Decide per item whether to build the backing.
 - **What shipped:** `AgentAvatar` derives initials + a deterministic tint from the
   agent id/key. Swap the body for an image if an avatar field is added.
 
-## 3. `agentKey` only populates as the manager emits `Step.agent`
-- **Backed end-to-end now** (Phase A): `Step.agent` → Electric → task `agentKey` →
-  board API → frontend grouping. But until the orchestrator actually stamps AI steps
-  with an agent, groups may be sparse; unattributed tasks fall into the
-  "Unassigned / AI workers" fallback card. No fabricated agents.
+## 3. `assigneeKey` only populates as the manager emits `plan_steps.assignee`
+- **Backed end-to-end now** (Phase A): Electric `plan_steps.assignee` → task
+  `assigneeKey` → board API → frontend grouping. But until the orchestrator actually
+  stamps AI steps with an assignee, groups may be sparse; unattributed tasks fall into
+  the "Unassigned / AI workers" fallback card. No fabricated agents.
 
 ## 4. Desktop activity feed (Phase E3) — deferred
 - **Design:** a live right-rail activity feed.

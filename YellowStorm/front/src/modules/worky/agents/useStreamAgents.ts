@@ -7,14 +7,14 @@ import { groupTasksByAgent, type WorkyAgent } from './agentModel';
 export interface StreamAgentsResult {
   /** Tasks grouped by their executor agent, with derived status + progress. */
   agents: WorkyAgent[];
-  /** Tasks with no `agentKey` yet — surfaced by the caller in a fallback card. */
+  /** Tasks with no `assigneeKey` yet — surfaced by the caller in a fallback card. */
   ungrouped: WorkyTask[];
 }
 
 /**
  * Compose the current stream's board (Zustand mirror, kept live by SSE) with the
  * agent roster (`modules/agent` store) into agent-grouped views. Agent identity
- * is resolved by matching `task.agentKey` against an Agent's slug then name
+ * is resolved by matching `task.assigneeKey` against an Agent's slug then name
  * (case-insensitive); unresolved keys keep the raw key as their name.
  */
 export function useStreamAgents(): StreamAgentsResult {
@@ -32,7 +32,7 @@ export function useStreamAgents(): StreamAgentsResult {
   return useMemo(
     () => ({
       agents: groupTasksByAgent(tasks, resolve),
-      ungrouped: tasks.filter((t) => !t.agentKey),
+      ungrouped: tasks.filter((t) => !t.assigneeKey),
     }),
     [tasks, resolve],
   );
