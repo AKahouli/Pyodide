@@ -4,7 +4,6 @@ import { render, screen } from '@testing-library/react';
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
     t: (k: string, opts?: Record<string, unknown>) => {
-      if (k === 'agents.team.count') return `${opts?.count} agents`;
       if (k === 'agents.team.unassignedCount') return `${opts?.count} unassigned tasks`;
       if (k === 'agents.card.tasksProgress') return `${opts?.done} of ${opts?.total} tasks`;
       return (({
@@ -55,7 +54,7 @@ describe('AgentTeamView', () => {
     render(<AgentTeamView onOpenAgent={() => {}} />);
     expect(screen.getByText('Atlas')).toBeTruthy();
     expect(screen.getByText('Iris')).toBeTruthy();
-    expect(screen.getByText('2 agents')).toBeTruthy();
+    expect(screen.getByText('Team')).toBeTruthy();
   });
 
   it('renders an empty state when there are no agents', () => {

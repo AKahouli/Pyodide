@@ -1,15 +1,25 @@
 import type { JSX } from 'react';
-import { Users } from 'lucide-react';
+import { Users, SlidersHorizontal } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { AgentCard } from '../agents/AgentCard';
 import { useStreamAgents } from '../../agents/useStreamAgents';
 import type { WorkyAgent } from '../../agents/agentModel';
 
 /**
- * Mobile agent-team body: the stream's tasks grouped by agent. The manager
- * voice banner and bottom nav are composed by the page around this view.
+ * Agent-team body: the stream's tasks grouped by agent. `showHeader` renders the
+ * "Team" + filter row (mobile); desktop supplies its own header and passes
+ * `columns={2}` for the grid.
  */
-export function AgentTeamView({ onOpenAgent }: { onOpenAgent: (agent: WorkyAgent) => void }): JSX.Element {
+export function AgentTeamView({
+  onOpenAgent,
+  showHeader = true,
+  columns = 1,
+}: {
+  onOpenAgent: (agent: WorkyAgent) => void;
+  showHeader?: boolean;
+  columns?: 1 | 2;
+}): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const { agents, ungrouped } = useStreamAgents();
 
@@ -24,14 +34,21 @@ export function AgentTeamView({ onOpenAgent }: { onOpenAgent: (agent: WorkyAgent
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-base font-bold text-foreground">{t('agents.team.title')}</h2>
-        <span className="text-xs text-muted-foreground">{t('agents.team.count', { count: agents.length })}</span>
-      </div>
+      {showHeader ? (
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-bold text-foreground">{t('agents.team.title')}</h2>
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <SlidersHorizontal className="size-3.5" />
+            {t('agents.team.sort')}
+          </span>
+        </div>
+      ) : null}
 
-      {agents.map((agent) => (
-        <AgentCard key={agent.key} agent={agent} onOpen={onOpenAgent} />
-      ))}
+      <div className={cn('grid gap-3', columns === 2 ? 'grid-cols-2' : 'grid-cols-1')}>
+        {agents.map((agent) => (
+          <AgentCard key={agent.key} agent={agent} onOpen={onOpenAgent} />
+        ))}
+      </div>
 
       {ungrouped.length > 0 ? (
         <div className="flex items-center gap-3 rounded-2xl border border-dashed border-border bg-card/50 p-4">

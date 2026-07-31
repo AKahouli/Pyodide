@@ -4,11 +4,13 @@ import { useWorkyUiStore } from '../../uiStore';
 import type { WorkyPendingClarification, WorkyTask } from '../../types';
 import type { WorkyAgent } from '../../agents/agentModel';
 import { AgentTeamView } from './AgentTeamView';
+import { MobileStreamHeader } from './MobileStreamHeader';
 import { ManagerVoiceBanner } from './ManagerVoiceBanner';
 import { WorkyMobileNav } from './WorkyMobileNav';
 import { TaskDetailSheet } from './TaskDetailSheet';
 import { BudgetSheet } from './BudgetSheet';
 import { ApprovalSheet } from './ApprovalSheet';
+import { AgentTasksSheet } from './AgentTasksSheet';
 import { ManagerChatSheet } from './ManagerChatSheet';
 import { VoiceSession } from '../voice/VoiceSession';
 import { PlanDeltaToast } from '../PlanDeltaToast';
@@ -40,15 +42,26 @@ export function WorkyMobileStream({
   const voiceOpen = useWorkyUiStore((s) => s.voiceOpen);
   const setVoiceOpen = useWorkyUiStore((s) => s.setVoiceOpen);
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<WorkyAgent | null>(null);
 
   const openAgent = (agent: WorkyAgent): void => {
-    setSelectedTask(agent.currentTask);
+    setSelectedAgent(agent);
+    setActiveSheet('agent');
+  };
+
+  const openTask = (task: WorkyTask): void => {
+    setSelectedTask(task);
     setActiveSheet('task');
   };
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-3 pb-4">
+      <MobileStreamHeader
+        streamId={streamId}
+        onBack={() => navigate('/worky')}
+        onOpenChat={() => setActiveSheet('chat')}
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-1 pb-4">
         <div className="mb-4">
           <ManagerVoiceBanner onTalk={() => setVoiceOpen(true)} />
         </div>
@@ -68,6 +81,12 @@ export function WorkyMobileStream({
         />
       </div>
 
+      <AgentTasksSheet
+        agent={selectedAgent}
+        open={activeSheet === 'agent'}
+        onOpenChange={(o) => setActiveSheet(o ? 'agent' : null)}
+        onOpenTask={openTask}
+      />
       <TaskDetailSheet
         streamId={streamId}
         task={selectedTask}
