@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
@@ -25,6 +26,7 @@ vi.mock('../../agents/useStreamAgents', () => ({ useStreamAgents: vi.fn() }));
 import { useStreamAgents } from '../../agents/useStreamAgents';
 import { AgentTeamView } from './AgentTeamView';
 import type { WorkyAgent } from '../../agents/agentModel';
+import type { WorkyTask } from '../../types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const asMock = (fn: unknown) => fn as any;
@@ -71,5 +73,47 @@ describe('AgentTeamView', () => {
     render(<AgentTeamView onOpenTask={() => {}} />);
     expect(screen.getByText('Unassigned work')).toBeTruthy();
     expect(screen.getByText('2 unassigned tasks')).toBeTruthy();
+  });
+
+  it('expands a card in place to reveal its tasks, one card at a time', async () => {
+    const task = { id: 't1', title: 'Task one', lane: 'running' } as WorkyTask;
+    const other = { id: 't2', title: 'Task two', lane: 'done' } as WorkyTask;
+    asMock(useStreamAgents).mockReturnValue({
+      agents: [
+        mkAgent({ key: 'a', name: 'Atlas', tasks: [task] }),
+        mkAgent({ key: 'b', name: 'Iris', tasks: [other] }),
+      ],
+      ungrouped: [],
+    });
+    render(<AgentTeamView onOpenTask={() => {}} />);
+
+    expect(screen.queryByText('Task one')).toBeNull();
+
+    await userEvent.click(screen.getByTestId('agent-card-toggle-a'));
+    expect(screen.getByText('Task one')).toBeTruthy();
+
+    // Expanding another agent collapses the first.
+    await userEvent.click(screen.getByTestId('agent-card-toggle-b'));
+    expect(screen.getByText('Task two')).toBeTruthy();
+    expect(screen.queryByText('Task one')).toBeNull();
+
+    // Clicking the open card again collapses it.
+    await userEvent.click(screen.getByTestId('agent-card-toggle-b'));
+    expect(screen.queryByText('Task two')).toBeNull();
+  });
+
+  it('hands a selected task up to the caller', async () => {
+    const task = { id: 't1', title: 'Task one', lane: 'running' } as WorkyTask;
+    const onOpenTask = vi.fn();
+    asMock(useStreamAgents).mockReturnValue({
+      agents: [mkAgent({ key: 'a', name: 'Atlas', tasks: [task] })],
+      ungrouped: [],
+    });
+    render(<AgentTeamView onOpenTask={onOpenTask} />);
+
+    await userEvent.click(screen.getByTestId('agent-card-toggle-a'));
+    await userEvent.click(screen.getByText('Task one'));
+
+    expect(onOpenTask).toHaveBeenCalledWith(task);
   });
 });
