@@ -73,28 +73,49 @@ export class GovernanceWorkspaceReconciliationService {
       return current;
     }
     try {
-      const result = await this.reconcileBinding(run.bindingId.toString(), run.dryRun);
+      const binding = await this.getBinding(run.bindingId.toString());
+      const result = this.empty(run.bindingId.toString());
+      Object.assign(result, run.stats ?? {});
+      result.errors = [...(run.errors ?? [])];
+      const savedCursor = run.cursor ?? 'scan:';
+      const heartbeat = () => this.renewLease(run._id, leaseToken);
+      const checkpoint = (cursor: string) => this.checkpoint(run._id, leaseToken, cursor, result);
+      if (savedCursor.startsWith('scan:')) {
+        let cursor = savedCursor.slice('scan:'.length) || undefined;
+        do {
+          const batch = await this.reconcileBatch(binding, run.dryRun, cursor, heartbeat);
+          this.merge(result, batch.result);
+          cursor = batch.nextCursor;
+          await checkpoint(cursor ? `scan:${cursor}` : 'archive:');
+        } while (cursor);
+      }
+      const archiveCursor = savedCursor.startsWith('archive:') ? savedCursor.slice('archive:'.length) || undefined : undefined;
+      await this.archiveMissing(binding, run.dryRun, result, archiveCursor, heartbeat, checkpoint);
       const stats = this.stats(result);
-      await this.runs.updateOne({ _id: run._id, leaseToken }, { $set: { status: 'completed', stats, errors: result.errors, completedAt: new Date() }, $unset: { cursor: '', leaseToken: '', leaseExpiresAt: '' } }).exec();
+      const completion = await this.runs.updateOne({ _id: run._id, leaseToken, status: 'running' }, { $set: { status: 'completed', stats, errors: result.errors, completedAt: new Date() }, $unset: { cursor: '', leaseToken: '', leaseExpiresAt: '' } }).exec();
+      if (completion.modifiedCount !== 1) return (await this.runs.findById(run._id).exec()) ?? run;
       run.status = 'completed';
       run.stats = stats;
       run.set('errors', result.errors);
       return run;
     } catch (error) {
       const errors = [{ message: error instanceof Error ? error.message : 'Reconciliation failed' }];
-      await this.runs.updateOne({ _id: run._id, leaseToken }, { $set: { status: 'failed', errors }, $unset: { leaseToken: '', leaseExpiresAt: '' } }).exec();
+      const failure = await this.runs.updateOne({ _id: run._id, leaseToken }, { $set: { status: 'failed', errors }, $unset: { leaseToken: '', leaseExpiresAt: '' } }).exec();
+      if (failure.modifiedCount !== 1) return (await this.runs.findById(run._id).exec()) ?? run;
       run.status = 'failed';
       run.set('errors', errors);
       return run;
     }
   }
 
-  private async reconcileBatch(binding: GovernanceWorkspaceBindingDocument, dryRun: boolean, cursor?: string): Promise<{ result: GovernanceDocumentReconciliationResult; nextCursor?: string }> {
+  private async reconcileBatch(binding: GovernanceWorkspaceBindingDocument, dryRun: boolean, cursor?: string, heartbeat?: () => Promise<void>): Promise<{ result: GovernanceDocumentReconciliationResult; nextCursor?: string }> {
     const result = this.empty(binding._id.toString());
     const query: Record<string, unknown> = { workspaceId: binding.workspaceId, isFolder: false };
     if (cursor) query._id = { $gt: new Types.ObjectId(cursor) };
     const documents = await this.workspaceDocuments.find(query).sort({ _id: 1 }).limit(BATCH_SIZE).lean().exec();
-    for (const document of documents) {
+    for (let index = 0; index < documents.length; index += 1) {
+      if (heartbeat && index % 10 === 0) await heartbeat();
+      const document = documents[index];
       result.scannedDocuments += 1;
       const existing = await this.governanceDocuments.findOne({ programId: binding.programId, documentId: document._id }).exec();
       if (!existing) {
@@ -116,26 +137,25 @@ export class GovernanceWorkspaceReconciliationService {
     return { result, nextCursor: documents.length === BATCH_SIZE ? documents[documents.length - 1]._id.toString() : undefined };
   }
 
-  private async archiveMissing(binding: GovernanceWorkspaceBindingDocument, dryRun: boolean, result: GovernanceDocumentReconciliationResult): Promise<void> {
-    let cursor: Types.ObjectId | undefined;
+  private async archiveMissing(binding: GovernanceWorkspaceBindingDocument, dryRun: boolean, result: GovernanceDocumentReconciliationResult, startCursor?: string, heartbeat?: () => Promise<void>, checkpoint?: (cursor: string) => Promise<void>): Promise<void> {
+    let cursor = startCursor ? new Types.ObjectId(startCursor) : undefined;
     while (true) {
       const query: Record<string, unknown> = { programId: binding.programId, workspaceId: binding.workspaceId };
       if (cursor) query._id = { $gt: cursor };
       const records = await this.governanceDocuments.find(query).sort({ _id: 1 }).limit(BATCH_SIZE).exec();
-      for (const record of records) {
+      for (let index = 0; index < records.length; index += 1) {
+        if (heartbeat && index % 10 === 0) await heartbeat();
+        const record = records[index];
         if (await this.workspaceDocuments.exists({ _id: record.documentId, workspaceId: binding.workspaceId, isFolder: false })) continue;
         result.staleGovernanceDocuments += 1;
         if (!dryRun && record.status !== 'archived') {
-          record.status = 'archived';
-          record.archivedAt = new Date();
-          record.archiveReason = 'Workspace document no longer exists';
-          record.governanceRevision += 1;
-          await record.save();
-          result.archivedMissingArtifacts += 1;
+          const archived = await this.governanceDocuments.updateOne({ _id: record._id, governanceRevision: record.governanceRevision, status: { $ne: 'archived' } }, { $set: { status: 'archived', archivedAt: new Date(), archiveReason: 'Workspace document no longer exists' }, $inc: { governanceRevision: 1 } }).exec();
+          result.archivedMissingArtifacts += archived.modifiedCount;
         }
       }
-      if (records.length < BATCH_SIZE) return;
+      if (records.length < BATCH_SIZE) { if (checkpoint && records.length > 0) await checkpoint(`archive:${records[records.length - 1]._id.toString()}`); return; }
       cursor = records[records.length - 1]._id;
+      if (checkpoint) await checkpoint(`archive:${cursor.toString()}`);
     }
   }
 
@@ -148,4 +168,14 @@ export class GovernanceWorkspaceReconciliationService {
   private empty(bindingId: string): GovernanceDocumentReconciliationResult { return { bindingId, scannedDocuments: 0, missingGovernanceDocuments: 0, createdGovernanceDocuments: 0, staleGovernanceDocuments: 0, archivedMissingArtifacts: 0, emittedEvents: 0, errors: [] }; }
   private stats(result: GovernanceDocumentReconciliationResult): Record<string, number> { const { scannedDocuments, missingGovernanceDocuments, createdGovernanceDocuments, staleGovernanceDocuments, archivedMissingArtifacts, emittedEvents } = result; return { scannedDocuments, missingGovernanceDocuments, createdGovernanceDocuments, staleGovernanceDocuments, archivedMissingArtifacts, emittedEvents }; }
   private merge(target: GovernanceDocumentReconciliationResult, addition: GovernanceDocumentReconciliationResult): void { for (const key of ['scannedDocuments', 'missingGovernanceDocuments', 'createdGovernanceDocuments', 'staleGovernanceDocuments', 'archivedMissingArtifacts', 'emittedEvents'] as const) target[key] += addition[key]; target.errors.push(...addition.errors); }
+
+  private async renewLease(runId: Types.ObjectId, leaseToken: string): Promise<void> {
+    const result = await this.runs.updateOne({ _id: runId, leaseToken, status: 'running' }, { $set: { leaseExpiresAt: new Date(Date.now() + LEASE_MS) } }).exec();
+    if (result.modifiedCount !== 1) throw new Error('Reconciliation lease lost');
+  }
+
+  private async checkpoint(runId: Types.ObjectId, leaseToken: string, cursor: string, result: GovernanceDocumentReconciliationResult): Promise<void> {
+    const update = await this.runs.updateOne({ _id: runId, leaseToken, status: 'running' }, { $set: { cursor, stats: this.stats(result), errors: result.errors, leaseExpiresAt: new Date(Date.now() + LEASE_MS) } }).exec();
+    if (update.modifiedCount !== 1) throw new Error('Reconciliation lease lost');
+  }
 }

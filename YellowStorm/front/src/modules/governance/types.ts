@@ -83,7 +83,7 @@ export interface GovernanceDocument {
   documentId: string;
   workspaceId: string;
   document: { originalName: string; mimeType: string; type: 'doc' | 'url'; sourceUrl?: string; contentHash?: string; status: string; indexingStatus: string; updatedAt: string };
-  governance: { status: GovernanceDocumentLifecycleStatus; validity: DocumentValidity; tags: string[]; metadata: Record<string, unknown>; ownerUserId?: string; ownerScopeId?: string; archivedAt?: string; archiveReason?: string; createdAt: string; updatedAt: string };
+  governance: { status: GovernanceDocumentLifecycleStatus; revision: number; validity: DocumentValidity; tags: string[]; metadata: Record<string, unknown>; ownerUserId?: string; ownerScopeId?: string; archivedAt?: string; archiveReason?: string; createdAt: string; updatedAt: string };
 }
 export interface GovernanceTemporalCandidate { candidateId: string; field: 'effectiveFrom' | 'effectiveUntil' | 'publishedAt' | 'modifiedAt' | 'validityMode'; value?: string; mode?: DocumentValidity['mode']; interpretation: string; confidence: number; evidenceRefs: string[]; reasoningSummary: string; criticality: 'low' | 'medium' | 'high'; }
 export interface GovernanceTemporalCandidateRecord { id: string; candidate: GovernanceTemporalCandidate; validation: { status: 'accepted_candidate' | 'ambiguous' | 'conflicting' | 'rejected'; issues: Array<{ code: string; severity: 'warning' | 'blocking'; message: string }> }; evidence: ValidityEvidence[]; decisionStatus: 'pending' | 'processing' | 'confirmed' | 'corrected' | 'rejected'; decidedAt?: string; decisionComment?: string; }
@@ -126,7 +126,7 @@ export type UpdateGovernanceScopePayload = Partial<CreateGovernanceScopePayload>
   metadata?: GovernanceScopeMetadata;
 };
 
-export interface UpdateGovernanceDocumentPayload { tags?: string[]; metadata?: Record<string, unknown>; ownerUserId?: string; ownerScopeId?: string; }
+export interface UpdateGovernanceDocumentPayload { expectedGovernanceRevision: number; tags?: string[]; metadata?: Record<string, unknown>; ownerUserId?: string; ownerScopeId?: string; }
 
 export interface GovernanceReadinessCheck {
   key: string;

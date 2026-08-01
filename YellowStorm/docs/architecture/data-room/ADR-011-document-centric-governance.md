@@ -28,6 +28,8 @@ Governance events and Knowledge Intelligence records identify the Workspace docu
 - Content updates do not create a second governance identity or immutable source version.
 - Artifact availability and indexing state remain Workspace concerns.
 - Governance lifecycle and validity remain program-specific overlay concerns.
+- Editable overlay operations require the caller's expected governance revision and fail
+  with a conflict rather than overwriting concurrent changes.
 - Visibility and deployment scope are workspace-granular. Per-document deployment
   inclusion or exclusion is no longer represented.
 - Runtime application code does not read legacy source collections.

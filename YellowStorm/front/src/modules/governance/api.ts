@@ -91,8 +91,8 @@ export const governanceApi = {
     return res.data.data;
   },
 
-  async archiveDocument(programId: string, documentId: string, reason?: string): Promise<GovernanceDocument> { const res = await apiClient.post(API_ENDPOINTS.governance.documentAction(programId, documentId, 'archive'), { reason }); return res.data.data; },
-  async restoreDocument(programId: string, documentId: string): Promise<GovernanceDocument> { const res = await apiClient.post(API_ENDPOINTS.governance.documentAction(programId, documentId, 'restore'), {}); return res.data.data; },
+  async archiveDocument(programId: string, documentId: string, expectedGovernanceRevision: number, reason?: string): Promise<GovernanceDocument> { const res = await apiClient.post(API_ENDPOINTS.governance.documentAction(programId, documentId, 'archive'), { expectedGovernanceRevision, reason }); return res.data.data; },
+  async restoreDocument(programId: string, documentId: string, expectedGovernanceRevision: number): Promise<GovernanceDocument> { const res = await apiClient.post(API_ENDPOINTS.governance.documentAction(programId, documentId, 'restore'), { expectedGovernanceRevision }); return res.data.data; },
 
   async getScopeAudience(programId: string, scopeId: string): Promise<GovernanceScopeAudienceConfiguration> {
     const res = await apiClient.get(API_ENDPOINTS.governance.scopeAudience(programId, scopeId));
@@ -145,12 +145,12 @@ export const governanceApi = {
     const res = await apiClient.get(API_ENDPOINTS.governance.documentEvents(programId, documentId));
     return res.data.data;
   },
-  async transitionDocument(programId: string, documentId: string, action: 'submit-review' | 'return-to-editing' | 'approve' | 'reject' | 'publish', comment?: string): Promise<GovernanceDocument> {
-    const res = await apiClient.post(API_ENDPOINTS.governance.documentAction(programId, documentId, action), { commandId: crypto.randomUUID(), comment });
+  async transitionDocument(programId: string, documentId: string, action: 'submit-review' | 'return-to-editing' | 'approve' | 'reject' | 'publish', expectedGovernanceRevision: number, comment?: string): Promise<GovernanceDocument> {
+    const res = await apiClient.post(API_ENDPOINTS.governance.documentAction(programId, documentId, action), { commandId: crypto.randomUUID(), expectedGovernanceRevision, comment });
     return res.data.data;
   },
-  async updateDocumentValidity(programId: string, documentId: string, payload: Partial<import('./types').DocumentValidity>): Promise<GovernanceDocument> {
-    const res = await apiClient.patch(API_ENDPOINTS.governance.documentValidity(programId, documentId), payload);
+  async updateDocumentValidity(programId: string, documentId: string, expectedGovernanceRevision: number, payload: Partial<import('./types').DocumentValidity>): Promise<GovernanceDocument> {
+    const res = await apiClient.patch(API_ENDPOINTS.governance.documentValidity(programId, documentId), { ...payload, expectedGovernanceRevision });
     return res.data.data;
   },
   async listTemporalCandidates(programId: string, documentId: string): Promise<import('./types').GovernanceTemporalCandidateRecord[]> { const res = await apiClient.get(API_ENDPOINTS.governance.temporalCandidates(programId, documentId)); return res.data.data; },

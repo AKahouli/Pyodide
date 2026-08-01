@@ -79,6 +79,23 @@ describe('governanceApi', () => {
     expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/documents/document-1/temporal-candidates/candidate-1/decision', { action: 'confirm' });
   });
 
+  it('sends optimistic concurrency revisions with document mutations', async () => {
+    mocks.post.mockResolvedValue({ data: { data: {} } });
+    mocks.patch.mockResolvedValue({ data: { data: {} } });
+
+    await governanceApi.archiveDocument('program-1', 'document-1', 4, 'Retired');
+    await governanceApi.restoreDocument('program-1', 'document-1', 5);
+    await governanceApi.updateDocument('program-1', 'document-1', { expectedGovernanceRevision: 6, tags: ['policy'] });
+    await governanceApi.transitionDocument('program-1', 'document-1', 'submit-review', 6);
+    await governanceApi.updateDocumentValidity('program-1', 'document-1', 7, { mode: 'open_ended' });
+
+    expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/documents/document-1/archive', { expectedGovernanceRevision: 4, reason: 'Retired' });
+    expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/documents/document-1/restore', { expectedGovernanceRevision: 5 });
+    expect(mocks.patch).toHaveBeenCalledWith('/governance/programs/program-1/documents/document-1', { expectedGovernanceRevision: 6, tags: ['policy'] });
+    expect(mocks.post).toHaveBeenCalledWith('/governance/programs/program-1/documents/document-1/submit-review', expect.objectContaining({ commandId: expect.any(String), expectedGovernanceRevision: 6 }));
+    expect(mocks.patch).toHaveBeenCalledWith('/governance/programs/program-1/documents/document-1/validity', { mode: 'open_ended', expectedGovernanceRevision: 7 });
+  });
+
   it('uses the knowledge intelligence endpoints for health and governed decisions', async () => {
     mocks.get.mockResolvedValue({ data: { data: [] } }); mocks.post.mockResolvedValue({ data: { data: {} } });
     await governanceApi.refreshKnowledge('program-1', 'scope-1');

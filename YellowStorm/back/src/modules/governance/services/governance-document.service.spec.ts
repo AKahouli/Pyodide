@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { GovernanceDocumentService } from './governance-document.service';
 
@@ -47,5 +47,17 @@ describe('GovernanceDocumentService', () => {
       { new: true },
     );
     expect(events.append).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'document.archived', deduplicationKey: 'workspace-deleted:deleted-1' }));
+  });
+
+  it('rejects an edit based on a stale governance revision', async () => {
+    const workspaceId = new Types.ObjectId();
+    const record = { _id: new Types.ObjectId(), programId: new Types.ObjectId(programId), documentId: new Types.ObjectId(documentId), workspaceId, governanceRevision: 3 };
+    const model = { findOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(record) })), findOneAndUpdate: jest.fn() };
+    const bindings = { find: jest.fn(() => ({ select: jest.fn().mockReturnThis(), lean: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue([{ workspaceId }]) })) };
+    const access = { getAccessibleScopeIds: jest.fn().mockResolvedValue(['*']) };
+    const service = new GovernanceDocumentService(model as never, {} as never, bindings as never, {} as never, access as never, {} as never, {} as never);
+
+    await expect(service.update(actorId, programId, documentId, { expectedGovernanceRevision: 2, tags: ['policy'] })).rejects.toBeInstanceOf(ConflictException);
+    expect(model.findOneAndUpdate).not.toHaveBeenCalled();
   });
 });

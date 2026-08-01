@@ -19,7 +19,98 @@
 | UI primitives | Radix UI + shadcn/ui wrappers under `src/components/ui/` |
 | Styling | Tailwind CSS v4 + `class-variance-authority` + `clsx` + `tailwind-merge` |
 | Icons | `lucide-react` + custom `Icons` map in `src/components/icons.tsx` |
-| i18n | `i18next` + `react-i18next` (lazy namespace loading) |
+| i18n | `i18next` + `react-i18next` (lazy namespace loading) |Identifying Playbook State Management
+terminal:powershell
+ wwhat stack are we using for state managment in playbook ?
+12:05 PM
+In the playbook module, we use a layered state management stack as documented in the 
+
+FRONTEND_GUIDELINES.md
+:
+
+Zustand (v5):
+Used as the default local module/UI state store.
+Defined in 
+
+store.ts
+ and 
+
+uiStore.ts
+.
+TanStack Query (v5):
+Used for server-state caching, fetching, cache invalidation, and mutations under the query/ subdirectory.
+XState (v5):
+Used for orchestration of complex stateful lifecycles (e.g., execution lifecycles, autosave coordination, stream lifecycles) under the machines/ subdirectory.
+React Context:
+Provides client scope mapping, such as PlaybookQueryProvider.
+Migration and feature coexistence between these layers (e.g., Zustand vs. TanStack Query / XState) are controlled by the local flags configured in 
+
+features.ts
+ (see 
+
+playbookFeatures
+).
+
+Summary of Actions
+Read and verified state management guidelines in 
+
+FRONTEND_GUIDELINES.md
+.
+Checked the playbook module structure using list_dir to confirm files such as 
+
+store.ts
+ and 
+
+uiStore.ts
+.
+Verified the state migration feature flags in 
+
+features.ts
+.
+12:05 PM
+by implementing elerticsql is trhere any chance to reduce the app complexity and improve reliability and maintainbility
+12:07 PM
+Implementing a full client-side integration of ElectricSQL (subscribing directly from the React frontend rather than using NestJS as an intermediate mirror) offers significant potential to reduce application complexity, improve reliability, and enhance maintainability.
+
+Here is an analysis of how this architectural shift would impact the application.
+
+1. Reducing App Complexity
+Currently, the system uses a CDC (Change Data Capture) hybrid mirror architecture as described in the 
+
+Worky gRPC Manager + Electric SQL Sync Plan
+:
+
+Python/Postgres (ADK Agent) 
+   └── [ElectricSQL Shape Stream] 
+           └── NestJS WorkyElectricConsumerService 
+                   └── [Mapper & MongoDB Upsert] 
+                           └── MongoDB 
+                                   └── [NestJS SSE Broadcast] 
+                                           └── Frontend (SSE Listener -> TanStack Query Refetch -> MongoDB Read API)
+By allowing the React client to subscribe directly to ElectricSQL's HTTP Shape Streams:
+
+Eliminate NestJS Mirroring Layer: We could delete the 
+
+WorkyElectricConsumerService
+, Mongoose schemas (WorkyTask, WorkyMessage, WorkyPlanProjection), and mapper files.
+Eliminate Custom SSE Channels: You would no longer need to manage custom SSE connection logic and event dispatchers for UI synchronization.
+Fewer Data Hops: The data pipeline simplifies from a 7-step process to a direct sync channel: Postgres (Python ADK) -> ElectricSQL -> React Client.
+2. Improving Reliability
+Network & Offline Resilience: ElectricSQL handles connection drops, exponential backoff, and offset-resuming out of the box. In case of network timeout issues (like the Mongo and gRPC timeout errors seen in your terminal logs), a local-first client will seamlessly resume the shape stream from its last acknowledged offset as soon as connection is restored.
+Reduced Database Serialization Overhead: Storing Postgres rows, mapping them, and then re-upserting them into MongoDB creates multiple points of serialization failure. Removing the Mongo persistence step on the read-path reduces write bottlenecks on the database.
+3. Improving Maintainability
+Single Source of Truth: Postgres remains the sole database schema for Worky session states. A schema change on the Python ADK side would propagate directly to the frontend types without needing updates to NestJS contract/mapper files.
+Less Backend Boilerplate: No need to write or maintain REST read endpoints (like /worky/board or /worky/messages), nor shape stream cursor-persistence tables in MongoDB (WorkyElectricCursor).
+Key Trade-offs & Caveats to Consider
+Write Path Stays RPC-Based: ElectricSQL simplifies the read (sync) path, but the write path (e.g. user messages, execution commands like start/pause) must still pass through a NestJS/gRPC gateway for authorization, validation, and agent kickoff.
+Access Control & Scoping: Direct frontend sync requires configuring Electric shapes to dynamically filter rows based on the logged-in user's session identifier (typically verified using a proxy or JWT middleware), preventing users from reading other sessions.
+ElectricSQL Versioning: ElectricSQL v1.0 recently pivoted to focus on lightweight HTTP-based Shape Streams, which can easily map into TanStack Query or custom React state. This avoids the bundle size and setup complexity (e.g. OPFS/Wasm headers) of the previous SQLite-in-Wasm local-first client.
+Summary of Actions
+Analyzed the existing 
+
+WorkyElectricConsumerService
+ sync mechanisms.
+Assessed the architectural trade-offs of the current Postgres $\rightarrow$ Electric $\rightarrow$ Mongo $\rightarrow$ SSE 
 | Toasts | `sonner` via `@/lib/notifications` wrapper |
 | Streaming | Native `EventSource` SSE, fetch + `ReadableStream` SSE, singleton services, BroadcastChannel leader-election, per-session hooks |
 | Charts / tables / graphs / flow | `recharts`, `@tanstack/react-table`, `@xyflow/react`, `@dagrejs/dagre` |

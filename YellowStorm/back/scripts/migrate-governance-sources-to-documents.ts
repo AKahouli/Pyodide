@@ -144,6 +144,7 @@ async function main(): Promise<void> {
 async function planWorkspaceBindings(db: mongoose.mongo.Db, sourcesByWorkspace: Map<string, { programId: ObjectId; workspaceId: ObjectId; shared: boolean; scopeIds: Map<string, ObjectId> }>, report: MigrationReport): Promise<WorkspaceBindingPlan[]> {
   const bindings = db.collection('governance_workspace_bindings');
   const programs = db.collection('governance_programs');
+  const scopes = db.collection('governance_scopes');
   const plans: WorkspaceBindingPlan[] = [];
   for (const source of sourcesByWorkspace.values()) {
     const scopeIds = [...source.scopeIds.values()].sort((a, b) => a.toString().localeCompare(b.toString()));
@@ -154,6 +155,15 @@ async function planWorkspaceBindings(db: mongoose.mongo.Db, sourcesByWorkspace: 
       report.conflicts.push({ programId: source.programId.toString(), type: 'workspace_binding_scope_missing', message: `Scoped legacy sources for workspace ${source.workspaceId.toString()} do not identify a scope` });
       continue;
     }
+    let invalidScope = false;
+    for (const scopeId of expectedScopeIds) {
+      if (await scopes.countDocuments({ _id: scopeId, programId: source.programId }, { limit: 1 }) === 0) {
+        report.conflictingVisibilityAssignments += 1;
+        report.conflicts.push({ programId: source.programId.toString(), type: 'workspace_binding_scope_invalid', message: `Scope ${scopeId.toString()} for workspace ${source.workspaceId.toString()} is missing or belongs to another program` });
+        invalidScope = true;
+      }
+    }
+    if (invalidScope) continue;
     const existing = await bindings.findOne({ programId: source.programId, workspaceId: source.workspaceId });
     if (existing) {
       const existingScopes = ((existing.scopeIds as ObjectId[] | undefined) ?? []).map(String).sort();

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -16,7 +16,7 @@ const transitions: Record<GovernanceDocumentLifecycleStatus, GovernanceDocumentL
   archived: [],
 };
 
-export interface GovernanceDocumentTransitionCommand { commandId: string; actorId: string; actorEmail?: string; programId: string; documentId: string; target: GovernanceDocumentLifecycleStatus; comment?: string; correlationId?: string }
+export interface GovernanceDocumentTransitionCommand { commandId: string; expectedGovernanceRevision: number; actorId: string; actorEmail?: string; programId: string; documentId: string; target: GovernanceDocumentLifecycleStatus; comment?: string; correlationId?: string }
 
 @Injectable()
 export class GovernanceDocumentTransitionService {
@@ -31,6 +31,7 @@ export class GovernanceDocumentTransitionService {
     const record = await this.documents.findRecord(command.actorId, command.programId, command.documentId);
     const key = `transition:${command.commandId}`;
     if (await this.events.findByDeduplicationKey(record._id.toString(), key)) return record;
+    if (record.governanceRevision !== command.expectedGovernanceRevision) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Document governance changed concurrently; reload and retry');
     if (!transitions[record.status].includes(command.target)) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid document governance lifecycle transition');
     if (command.target === 'published') await this.assertPublishable(record);
     const before = record.status;
@@ -39,8 +40,8 @@ export class GovernanceDocumentTransitionService {
     if (command.target === 'to_review') Object.assign(set, { submittedForReviewBy: new Types.ObjectId(command.actorId), submittedForReviewAt: now });
     if (command.target === 'approved') Object.assign(set, { reviewedBy: new Types.ObjectId(command.actorId), reviewedAt: now, approvedBy: new Types.ObjectId(command.actorId), approvedAt: now });
     if (command.target === 'published') Object.assign(set, { publishedBy: new Types.ObjectId(command.actorId), publishedAt: now });
-    const updated = await this.model.findOneAndUpdate({ _id: record._id, status: before, governanceRevision: record.governanceRevision }, { $set: set, $inc: { governanceRevision: 1 } }, { new: true }).exec();
-    if (!updated) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Document governance changed concurrently');
+    const updated = await this.model.findOneAndUpdate({ _id: record._id, status: before, governanceRevision: command.expectedGovernanceRevision }, { $set: set, $inc: { governanceRevision: 1 } }, { new: true }).exec();
+    if (!updated) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Document governance changed concurrently; reload and retry');
     const eventType = ({ to_review: 'document.submitted_for_review', captured: 'document.returned_to_editing', approved: 'document.approved', rejected: 'document.rejected', published: 'document.published' } as const)[command.target as Exclude<GovernanceDocumentLifecycleStatus, 'archived'>];
     if (!eventType) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Unsupported document governance lifecycle transition');
     await this.events.append({ programId: command.programId, governanceDocumentId: updated._id.toString(), documentId: command.documentId, actorId: command.actorId, actorEmail: command.actorEmail, actorType: 'user', eventType, before: { status: before }, after: { status: command.target }, reason: command.comment, correlationId: command.correlationId, deduplicationKey: key });

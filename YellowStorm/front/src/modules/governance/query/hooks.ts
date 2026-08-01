@@ -226,7 +226,7 @@ export function useResumeGovernanceReconciliationRun(programId: string | null) {
 export function useArchiveGovernanceDocument(programId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (documentId: string) => governanceApi.archiveDocument(programId ?? '', documentId),
+    mutationFn: ({ documentId, expectedGovernanceRevision }: { documentId: string; expectedGovernanceRevision: number }) => governanceApi.archiveDocument(programId ?? '', documentId, expectedGovernanceRevision),
     onSuccess: () => {
       if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.all });
     },

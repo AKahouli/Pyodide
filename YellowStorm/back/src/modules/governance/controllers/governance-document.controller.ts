@@ -49,17 +49,17 @@ export class GovernanceDocumentController {
       ...(dto.confidence !== undefined ? { confidence: dto.confidence } : {}),
       ...(dto.manuallyOverridden !== undefined ? { manuallyOverridden: dto.manuallyOverridden } : {}),
     };
-    return this.documents.updateValidity(user._id.toString(), programId, documentId, patch);
+    return this.documents.updateValidity(user._id.toString(), programId, documentId, dto.expectedGovernanceRevision, patch);
   }
 
   @Post(':documentId/archive') @RequirePermissions([Permissions.GOVERNANCE_DOCUMENTS_EDIT, Permissions.GOVERNANCE_ALL], 'any')
-  archive(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('documentId') documentId: string, @Body() dto: ArchiveGovernanceDocumentDto) { return this.documents.archive(user._id.toString(), programId, documentId, dto.reason); }
+  archive(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('documentId') documentId: string, @Body() dto: ArchiveGovernanceDocumentDto) { return this.documents.archive(user._id.toString(), programId, documentId, dto.expectedGovernanceRevision, dto.reason); }
 
   @Post(':documentId/restore') @RequirePermissions([Permissions.GOVERNANCE_DOCUMENTS_EDIT, Permissions.GOVERNANCE_ALL], 'any')
-  restore(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('documentId') documentId: string) { return this.documents.restore(user._id.toString(), programId, documentId); }
+  restore(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('documentId') documentId: string, @Body() dto: ArchiveGovernanceDocumentDto) { return this.documents.restore(user._id.toString(), programId, documentId, dto.expectedGovernanceRevision); }
 
   @Delete(':documentId/governance') @HttpCode(HttpStatus.NO_CONTENT) @RequirePermissions([Permissions.GOVERNANCE_ALL], 'all')
-  deleteGovernance(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('documentId') documentId: string, @Body() dto: DeleteGovernanceDocumentDto) { return this.documents.deleteGovernance(user._id.toString(), programId, documentId, dto.confirm); }
+  deleteGovernance(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('documentId') documentId: string, @Body() dto: DeleteGovernanceDocumentDto) { return this.documents.deleteGovernance(user._id.toString(), programId, documentId, dto.confirm, dto.expectedGovernanceRevision); }
 
   @Get(':documentId/temporal-candidates') @RequirePermissions([Permissions.GOVERNANCE_READ, Permissions.GOVERNANCE_ALL], 'any')
   listTemporalCandidates(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('documentId') documentId: string) { return this.temporalCandidates.list(user._id.toString(), programId, documentId); }
@@ -74,10 +74,11 @@ export class GovernanceDocumentController {
   decideTemporalCandidate(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('documentId') documentId: string, @Param('recordId') recordId: string, @Body() dto: DecideTemporalCandidateDto) { return this.temporalCandidates.decide(user._id.toString(), user.email, programId, documentId, recordId, dto); }
 
   @Post(':documentId/:action') @RequirePermissions([Permissions.GOVERNANCE_DOCUMENTS_REVIEW, Permissions.GOVERNANCE_PUBLISH, Permissions.GOVERNANCE_ALL], 'any')
-  transition(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('documentId') documentId: string, @Param('action') action: string, @Body() dto: DocumentLifecycleTransitionDto) {
+  async transition(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('documentId') documentId: string, @Param('action') action: string, @Body() dto: DocumentLifecycleTransitionDto) {
     const target = ({ 'submit-review': 'to_review', 'return-to-editing': 'captured', approve: 'approved', reject: 'rejected', publish: 'published' } satisfies Record<string, GovernanceDocumentLifecycleStatus>)[action];
     if (!target) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Unsupported document governance action');
-    return this.transitions.transition({ commandId: dto.commandId, actorId: user._id.toString(), actorEmail: user.email, programId, documentId, target, comment: dto.comment });
+    await this.transitions.transition({ commandId: dto.commandId, expectedGovernanceRevision: dto.expectedGovernanceRevision, actorId: user._id.toString(), actorEmail: user.email, programId, documentId, target, comment: dto.comment });
+    return this.documents.findByDocumentId(user._id.toString(), programId, documentId);
   }
 
   @Get(':documentId/events') @RequirePermissions([Permissions.GOVERNANCE_READ, Permissions.GOVERNANCE_ALL], 'any')

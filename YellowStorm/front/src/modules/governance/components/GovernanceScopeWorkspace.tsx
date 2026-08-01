@@ -174,11 +174,8 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
         if (!settingsDraft.name.trim()) return;
         await updateScope.mutateAsync(buildScopeSettingsPayload(overview.scope, settingsDraft));
       }
-      if (programId) {
-        await queryClient.invalidateQueries({ queryKey: governanceQueryKeys.scopeOverview(programId, scopeId) });
-        await queryClient.refetchQueries({ queryKey: governanceQueryKeys.scopeOverview(programId, scopeId), type: 'active' });
-      }
       onTabChange(tab);
+      if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.scopeOverview(programId, scopeId) });
     } catch (error) {
       showError(t('scopeShell.workspace.navigationError'), { description: parseApiError(error).message });
     } finally {

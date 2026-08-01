@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { NotFoundException } from '@modules/exceptions';
@@ -19,7 +19,7 @@ export interface GovernanceDocumentResponse {
   documentId: string;
   workspaceId: string;
   document: { originalName: string; mimeType: string; type: string; sourceUrl?: string; contentHash?: string; status: string; indexingStatus: string; updatedAt: string };
-  governance: { status: string; validity: DocumentValidity; tags: string[]; metadata: Record<string, unknown>; ownerUserId?: string; ownerScopeId?: string; archivedAt?: string; archiveReason?: string; createdAt: string; updatedAt: string };
+  governance: { status: string; revision: number; validity: DocumentValidity; tags: string[]; metadata: Record<string, unknown>; ownerUserId?: string; ownerScopeId?: string; archivedAt?: string; archiveReason?: string; createdAt: string; updatedAt: string };
 }
 
 @Injectable()
@@ -85,54 +85,47 @@ export class GovernanceDocumentService {
 
   async update(actorId: string, programId: string, documentId: string, dto: UpdateGovernanceDocumentDto): Promise<GovernanceDocumentResponse> {
     const record = await this.findRecord(actorId, programId, documentId);
-    if (dto.tags !== undefined) record.tags = dto.tags;
-    if (dto.metadata !== undefined) record.metadata = dto.metadata;
-    if (dto.ownerUserId !== undefined) record.ownerUserId = new Types.ObjectId(dto.ownerUserId);
-    if (dto.ownerScopeId !== undefined) record.ownerScopeId = new Types.ObjectId(dto.ownerScopeId);
-    record.governanceRevision += 1;
-    await record.save();
-    return this.toResponse(record);
+    this.assertExpectedRevision(record, dto.expectedGovernanceRevision);
+    const set: Record<string, unknown> = {};
+    if (dto.tags !== undefined) set.tags = dto.tags;
+    if (dto.metadata !== undefined) set.metadata = dto.metadata;
+    if (dto.ownerUserId !== undefined) set.ownerUserId = new Types.ObjectId(dto.ownerUserId);
+    if (dto.ownerScopeId !== undefined) set.ownerScopeId = new Types.ObjectId(dto.ownerScopeId);
+    const updated = await this.model.findOneAndUpdate({ _id: record._id, governanceRevision: dto.expectedGovernanceRevision }, { $set: set, $inc: { governanceRevision: 1 } }, { new: true }).exec();
+    if (!updated) throw this.concurrentChange();
+    return this.toResponse(updated);
   }
 
-  async updateValidity(actorId: string, programId: string, documentId: string, patch: Partial<DocumentValidity>): Promise<GovernanceDocumentResponse> {
+  async updateValidity(actorId: string, programId: string, documentId: string, expectedGovernanceRevision: number, patch: Partial<DocumentValidity>): Promise<GovernanceDocumentResponse> {
     const record = await this.findRecord(actorId, programId, documentId);
+    this.assertExpectedRevision(record, expectedGovernanceRevision);
     const validity = { ...record.validity, ...patch, evidence: record.validity.evidence ?? [], manuallyOverridden: patch.manuallyOverridden ?? true };
     this.validityCalculator.assertValid(validity);
     const before = record.validity;
-    record.validity = validity;
-    record.governanceRevision += 1;
-    await record.save();
-    await this.events.append({ programId, governanceDocumentId: record._id.toString(), documentId, actorId, eventType: 'validity.updated', before: { validity: before }, after: { validity } });
-    return this.toResponse(record);
+    const updated = await this.model.findOneAndUpdate({ _id: record._id, governanceRevision: expectedGovernanceRevision }, { $set: { validity }, $inc: { governanceRevision: 1 } }, { new: true }).exec();
+    if (!updated) throw this.concurrentChange();
+    await this.events.append({ programId, governanceDocumentId: updated._id.toString(), documentId, actorId, eventType: 'validity.updated', before: { validity: before }, after: { validity } });
+    return this.toResponse(updated);
   }
 
-  async archive(actorId: string, programId: string, documentId: string, reason?: string): Promise<GovernanceDocumentResponse> {
+  async archive(actorId: string, programId: string, documentId: string, expectedGovernanceRevision: number, reason?: string): Promise<GovernanceDocumentResponse> {
     const record = await this.findRecord(actorId, programId, documentId);
-    if (record.status !== 'archived') {
-      const before = record.status;
-      record.status = 'archived';
-      record.archivedAt = new Date();
-      record.archivedBy = new Types.ObjectId(actorId);
-      record.archiveReason = reason;
-      record.governanceRevision += 1;
-      await record.save();
-      await this.events.append({ programId, governanceDocumentId: record._id.toString(), documentId, actorId, eventType: 'document.archived', reason, before: { status: before }, after: { status: 'archived' } });
-    }
-    return this.toResponse(record);
+    this.assertExpectedRevision(record, expectedGovernanceRevision);
+    if (record.status === 'archived') return this.toResponse(record);
+    const updated = await this.model.findOneAndUpdate({ _id: record._id, governanceRevision: expectedGovernanceRevision, status: { $ne: 'archived' } }, { $set: { status: 'archived', archivedAt: new Date(), archivedBy: new Types.ObjectId(actorId), archiveReason: reason }, $inc: { governanceRevision: 1 } }, { new: true }).exec();
+    if (!updated) throw this.concurrentChange();
+    await this.events.append({ programId, governanceDocumentId: updated._id.toString(), documentId, actorId, eventType: 'document.archived', reason, before: { status: record.status }, after: { status: 'archived' } });
+    return this.toResponse(updated);
   }
 
-  async restore(actorId: string, programId: string, documentId: string): Promise<GovernanceDocumentResponse> {
+  async restore(actorId: string, programId: string, documentId: string, expectedGovernanceRevision: number): Promise<GovernanceDocumentResponse> {
     const record = await this.findRecord(actorId, programId, documentId);
-    if (record.status === 'archived') {
-      record.status = 'captured';
-      record.archivedAt = undefined;
-      record.archivedBy = undefined;
-      record.archiveReason = undefined;
-      record.governanceRevision += 1;
-      await record.save();
-      await this.events.append({ programId, governanceDocumentId: record._id.toString(), documentId, actorId, eventType: 'document.restored', before: { status: 'archived' }, after: { status: 'captured' } });
-    }
-    return this.toResponse(record);
+    this.assertExpectedRevision(record, expectedGovernanceRevision);
+    if (record.status !== 'archived') return this.toResponse(record);
+    const updated = await this.model.findOneAndUpdate({ _id: record._id, governanceRevision: expectedGovernanceRevision, status: 'archived' }, { $set: { status: 'captured' }, $unset: { archivedAt: '', archivedBy: '', archiveReason: '' }, $inc: { governanceRevision: 1 } }, { new: true }).exec();
+    if (!updated) throw this.concurrentChange();
+    await this.events.append({ programId, governanceDocumentId: updated._id.toString(), documentId, actorId, eventType: 'document.restored', before: { status: 'archived' }, after: { status: 'captured' } });
+    return this.toResponse(updated);
   }
 
   async archiveFromWorkspaceDeletion(programId: string, documentId: string, actorId: string, integrationEvent: { id: string; occurredAt: Date }): Promise<void> {
@@ -145,12 +138,14 @@ export class GovernanceDocumentService {
     await this.events.append({ programId, governanceDocumentId: record._id.toString(), documentId, actorId, actorType: 'integration', eventType: 'document.archived', occurredAt: integrationEvent.occurredAt, reason: 'Workspace document deleted', after: { status: 'archived' }, deduplicationKey: `workspace-deleted:${integrationEvent.id}` });
   }
 
-  async deleteGovernance(actorId: string, programId: string, documentId: string, confirm: boolean): Promise<void> {
+  async deleteGovernance(actorId: string, programId: string, documentId: string, confirm: boolean, expectedGovernanceRevision: number): Promise<void> {
     if (!confirm) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Governance deletion requires explicit confirmation');
     const record = await this.findRecord(actorId, programId, documentId);
+    this.assertExpectedRevision(record, expectedGovernanceRevision);
     if (record.status !== 'archived') throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Archive document governance before deletion');
+    const result = await this.model.deleteOne({ _id: record._id, governanceRevision: expectedGovernanceRevision, status: 'archived' }).exec();
+    if (result.deletedCount !== 1) throw this.concurrentChange();
     await this.events.append({ programId, governanceDocumentId: record._id.toString(), documentId, actorId, eventType: 'document.governance_deleted' });
-    await record.deleteOne();
   }
 
   private async findAccessible(actorId: string, programId: string, documentId: string): Promise<GovernanceDocumentDocument> {
@@ -181,7 +176,10 @@ export class GovernanceDocumentService {
       documentId: record.documentId.toString(),
       workspaceId: record.workspaceId.toString(),
       document: { originalName: document.originalName, mimeType: document.mimeType, type: document.type, sourceUrl: document.sourceUrl, contentHash: document.contentHash, status: document.status, indexingStatus: document.indexingStatus, updatedAt: iso(document.updatedAt) ?? '' },
-      governance: { status: record.status, validity: record.validity, tags: record.tags ?? [], metadata: record.metadata ?? {}, ownerUserId: record.ownerUserId?.toString(), ownerScopeId: record.ownerScopeId?.toString(), archivedAt: iso(record.archivedAt), archiveReason: record.archiveReason, createdAt: iso(record.createdAt) ?? '', updatedAt: iso(record.updatedAt) ?? '' },
+      governance: { status: record.status, revision: record.governanceRevision, validity: record.validity, tags: record.tags ?? [], metadata: record.metadata ?? {}, ownerUserId: record.ownerUserId?.toString(), ownerScopeId: record.ownerScopeId?.toString(), archivedAt: iso(record.archivedAt), archiveReason: record.archiveReason, createdAt: iso(record.createdAt) ?? '', updatedAt: iso(record.updatedAt) ?? '' },
     };
   }
+
+  private assertExpectedRevision(record: GovernanceDocumentDocument, expected: number): void { if (record.governanceRevision !== expected) throw this.concurrentChange(); }
+  private concurrentChange(): ConflictException { return new ConflictException(ErrorCode.VALIDATION_ERROR, 'Document governance changed concurrently; reload and retry'); }
 }

@@ -20,7 +20,7 @@ describe('KnowledgeActionCenter', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('renders explainable health and executes governed decisions', () => {
-    render(<KnowledgeActionCenter programId='program-1' scopeId='scope-1' documents={[{ id: 'governance-document-1', programId: 'program-1', documentId: 'document-1', workspaceId: 'workspace-1', document: { originalName: 'parkour.pdf', mimeType: 'application/pdf', type: 'doc', status: 'active', indexingStatus: 'indexed', updatedAt: '2026-07-14T00:00:00Z' }, governance: { status: 'captured', validity: { mode: 'unknown', businessStatus: 'unknown', confidence: 0 }, tags: [], metadata: {}, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' } }]} workspaceNames={{ 'workspace-1': 'Public guidance' }} onOpenDocument={mocks.openDocument} />);
+    render(<KnowledgeActionCenter programId='program-1' scopeId='scope-1' documents={[{ id: 'governance-document-1', programId: 'program-1', documentId: 'document-1', workspaceId: 'workspace-1', document: { originalName: 'parkour.pdf', mimeType: 'application/pdf', type: 'doc', status: 'active', indexingStatus: 'indexed', updatedAt: '2026-07-14T00:00:00Z' }, governance: { status: 'captured', revision: 0, validity: { mode: 'unknown', businessStatus: 'unknown', confidence: 0 }, tags: [], metadata: {}, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' } }]} workspaceNames={{ 'workspace-1': 'Public guidance' }} onOpenDocument={mocks.openDocument} />);
     expect(screen.getByRole('heading', { name: 'knowledge.actionCenter.workspaceTitle' })).toBeInTheDocument();
     const sourceGroup = screen.getByRole('button', { name: /Public guidance/ });
     expect(screen.queryByText('Validity requires attention')).not.toBeInTheDocument();

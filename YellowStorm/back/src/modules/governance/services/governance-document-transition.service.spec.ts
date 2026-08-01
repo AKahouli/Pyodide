@@ -19,21 +19,21 @@ describe('GovernanceDocumentTransitionService', () => {
 
   it('publishes an approved, indexed document and records the transition', async () => {
     const { service, model, events } = setup();
-    await expect(service.transition({ commandId: 'command-1', actorId, programId, documentId, target: 'published' })).resolves.toEqual(expect.objectContaining({ status: 'published' }));
+    await expect(service.transition({ commandId: 'command-1', expectedGovernanceRevision: 2, actorId, programId, documentId, target: 'published' })).resolves.toEqual(expect.objectContaining({ status: 'published' }));
     expect(model.findOneAndUpdate).toHaveBeenCalledWith(expect.objectContaining({ status: 'approved', governanceRevision: 2 }), expect.anything(), { new: true });
     expect(events.append).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'document.published', documentId }));
   });
 
   it('blocks publication when validity is expired', async () => {
     const { service, model } = setup('approved', 'expired');
-    await expect(service.transition({ commandId: 'command-2', actorId, programId, documentId, target: 'published' })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.transition({ commandId: 'command-2', expectedGovernanceRevision: 2, actorId, programId, documentId, target: 'published' })).rejects.toBeInstanceOf(BadRequestException);
     expect(model.findOneAndUpdate).not.toHaveBeenCalled();
   });
 
   it('returns the current record for a duplicate command', async () => {
     const setupResult = setup('captured');
     setupResult.events.findByDeduplicationKey.mockResolvedValue({ _id: new Types.ObjectId() });
-    await expect(setupResult.service.transition({ commandId: 'command-3', actorId, programId, documentId, target: 'to_review' })).resolves.toEqual(expect.objectContaining({ status: 'captured' }));
+    await expect(setupResult.service.transition({ commandId: 'command-3', expectedGovernanceRevision: 1, actorId, programId, documentId, target: 'to_review' })).resolves.toEqual(expect.objectContaining({ status: 'captured' }));
     expect(setupResult.model.findOneAndUpdate).not.toHaveBeenCalled();
   });
 });
