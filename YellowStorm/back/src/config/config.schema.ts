@@ -32,6 +32,30 @@ export const configValidationSchema = Joi.object({
   MEMORY_PG_SSL: Joi.boolean().optional(),
   MEMORY_LIMIT_MB: Joi.number().min(64).default(512),
 
+  // Semantic Model PostgreSQL / Apache AGE
+  SEMANTIC_MODELS_ENABLED: Joi.boolean().default(false),
+  SEMANTIC_MODELS_AUTO_PROVISION: Joi.boolean().default(false),
+  SEMANTIC_PG_HOST: Joi.string().when('SEMANTIC_MODELS_ENABLED', {
+    is: true,
+    then: Joi.required(),
+    otherwise: Joi.optional().allow(''),
+  }),
+  SEMANTIC_PG_PORT: Joi.number().min(1).max(65535).default(5432),
+  SEMANTIC_PG_USER: Joi.string().when('SEMANTIC_MODELS_ENABLED', {
+    is: true,
+    then: Joi.required(),
+    otherwise: Joi.optional().allow(''),
+  }),
+  SEMANTIC_PG_PASSWORD: Joi.string().allow('').optional(),
+  SEMANTIC_PG_DATABASE: Joi.string().when('SEMANTIC_MODELS_ENABLED', {
+    is: true,
+    then: Joi.required(),
+    otherwise: Joi.optional().allow(''),
+  }),
+  SEMANTIC_PG_SSL: Joi.boolean().default(false),
+  SEMANTIC_PG_POOL_MAX: Joi.number().min(1).max(50).default(10),
+  SEMANTIC_AGE_GRAPH: Joi.string().pattern(/^[a-z][a-z0-9_]{0,62}$/).default('semantic_model_graph'),
+
   // Encryption
   ENCRYPTION_KEY: Joi.string().hex().length(64).when('NODE_ENV', {
     is: 'production',

@@ -38,6 +38,7 @@ import {
   useConversationV2Store,
 } from '@/modules/conversation-v2/store';
 import { WorkspaceButton } from '@/modules/workspace';
+import { SemanticModelButton } from '@/modules/semantic-model/components/SemanticModelButton';
 import { AgentButton } from '@/modules/agent';
 import { TeamButton } from '@/modules/team';
 import { GroupsButton } from '@/modules/groups';
@@ -308,6 +309,8 @@ export const AppSidebar = memo(function AppSidebar() {
             </SidebarMenuItem>}
 
             {featureVisibility.workspace && <WorkspaceButton />}
+
+            <SemanticModelButton />
 
             {featureVisibility.agents && <AgentButton />}
 

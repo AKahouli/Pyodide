@@ -166,5 +166,16 @@
   "ERR_3685": "The model is controlled by the published scope.",
   "ERR_3686": "Connectors and skills are not available in governed conversations.",
   "ERR_3687": "Teams are not available in governed conversations.",
-  "ERR_3688": "Governed conversation settings cannot be changed."
+  "ERR_3688": "Governed conversation settings cannot be changed.",
+  "ERR_3700": "Semantic Model not found.",
+  "ERR_3701": "A Semantic Model with this name already exists.",
+  "ERR_3702": "You do not have access to this Semantic Model.",
+  "ERR_3703": "This model changed elsewhere. Reload it before continuing.",
+  "ERR_3704": "Resolve the blocking model issues before continuing.",
+  "ERR_3705": "This system-managed item cannot be changed.",
+  "ERR_3706": "This workspace is not available to the model.",
+  "ERR_3707": "This knowledge link is not valid.",
+  "ERR_3708": "Published versions cannot be changed.",
+  "ERR_3709": "This model has no editable draft.",
+  "ERR_3710": "Semantic Models are temporarily unavailable."
 }

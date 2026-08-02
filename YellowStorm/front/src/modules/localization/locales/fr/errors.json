@@ -159,5 +159,16 @@
   "ERR_3685": "Le modèle est contrôlé par le périmètre publié.",
   "ERR_3686": "Les connecteurs et compétences ne sont pas disponibles dans les conversations gouvernées.",
   "ERR_3687": "Les équipes ne sont pas disponibles dans les conversations gouvernées.",
-  "ERR_3688": "Les paramètres d’une conversation gouvernée ne peuvent pas être modifiés."
+  "ERR_3688": "Les paramètres d’une conversation gouvernée ne peuvent pas être modifiés.",
+  "ERR_3700": "Modèle sémantique introuvable.",
+  "ERR_3701": "Un modèle sémantique portant ce nom existe déjà.",
+  "ERR_3702": "Vous n’avez pas accès à ce modèle sémantique.",
+  "ERR_3703": "Ce modèle a été modifié ailleurs. Rechargez-le avant de continuer.",
+  "ERR_3704": "Corrigez les problèmes bloquants avant de continuer.",
+  "ERR_3705": "Cet élément géré par le système ne peut pas être modifié.",
+  "ERR_3706": "Cet espace de travail n’est pas disponible pour le modèle.",
+  "ERR_3707": "Ce lien de connaissance n’est pas valide.",
+  "ERR_3708": "Les versions publiées ne peuvent pas être modifiées.",
+  "ERR_3709": "Ce modèle n’a pas de brouillon modifiable.",
+  "ERR_3710": "Les modèles sémantiques sont temporairement indisponibles."
 }

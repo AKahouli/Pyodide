@@ -23,6 +23,7 @@ import workyConfig from './config/worky.config';
 import memoryCardsConfig from './config/memory-cards.config';
 import dataRoomConfig from './config/data-room.config';
 import governedConversationsConfig from './config/governed-conversations.config';
+import semanticModelConfig from './config/semantic-model.config';
 
 // Global Modules
 import { LoggerModule } from './modules/logger';
@@ -72,6 +73,7 @@ import { MemoryCardsModule } from './modules/memory-cards/memory-cards.module';
 import { GovernanceModule } from './modules/governance';
 import { IntegrationEventsModule } from './modules/integration-events/integration-events.module';
 import { WorkspaceArtifactModule } from './modules/workspace-artifact/workspace-artifact.module';
+import { SemanticModelModule } from './modules/semantic-model/semantic-model.module';
 
 @Module({
   imports: [
@@ -79,7 +81,7 @@ import { WorkspaceArtifactModule } from './modules/workspace-artifact/workspace-
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig, memoryCardsConfig, dataRoomConfig, governedConversationsConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig, memoryCardsConfig, dataRoomConfig, governedConversationsConfig, semanticModelConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -137,6 +139,7 @@ import { WorkspaceArtifactModule } from './modules/workspace-artifact/workspace-
     GuardrailsModule,
     MemoryCardsModule,
     GovernanceModule,
+    SemanticModelModule,
   ],
   providers: [
     // Global JWT Auth Guard - all routes require authentication by default

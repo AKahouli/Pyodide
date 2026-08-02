@@ -16,6 +16,7 @@ import type notifications from '../notifications/locales/en.json';
 import type platformOverview from '../platform-overview/locales/en.json';
 import type playbook from '../playbook/locales/en.json';
 import type profile from '../profile/locales/en.json';
+import type semanticModel from '../semantic-model/locales/en.json';
 import type sidebar from '../sidebar/locales/en.json';
 import type team from '../team/locales/en.json';
 import type usage from '../usage/locales/en.json';
@@ -43,6 +44,7 @@ export type NamespaceResourceMap = {
   'platform-overview': typeof platformOverview;
   playbook: typeof playbook;
   profile: typeof profile;
+  'semantic-model': typeof semanticModel;
   sidebar: typeof sidebar;
   team: typeof team;
   usage: typeof usage;

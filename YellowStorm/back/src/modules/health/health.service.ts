@@ -9,6 +9,7 @@ import { ModelsService } from '../models';
 import { LiteLLMConnectionService } from '../models/litellm-connection.service';
 import { StreamService } from '../conversation/services/stream.service';
 import { ConversationV2GrpcClientService } from '../conversation-v2/services/conversation-v2.grpc-client.service';
+import { SemanticModelDatabaseService } from '../semantic-model/infrastructure/semantic-model-database.service';
 
 @Injectable()
 export class HealthService {
@@ -26,6 +27,7 @@ export class HealthService {
     private readonly litellmConnection: LiteLLMConnectionService,
     private readonly streamService: StreamService,
     private readonly conversationV2Grpc: ConversationV2GrpcClientService,
+    private readonly semanticModelDatabase: SemanticModelDatabaseService,
   ) {
     const memoryLimitMb = this.configService.get<number>('app.memoryLimitMb', 512);
     this.memoryLimitBytes = memoryLimitMb * 1024 * 1024;
@@ -33,7 +35,7 @@ export class HealthService {
 
   async check(userId?:string): Promise<HealthCheckResult> {
     // Run all checks in parallel — network pings are independent
-    const [memory, eventLoop, database, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp] =
+    const [memory, eventLoop, database, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp, semanticModel] =
       await Promise.all([
         this.checkMemory(),
         this.checkEventLoop(),
@@ -44,10 +46,11 @@ export class HealthService {
         this.checkConversationGrpc(),
         this.checkConversationV2Grpc(),
         this.checkPlaybookMcp(),
+        this.checkSemanticModel(),
       ]);
 
     const checks: Record<string, HealthCheckDetail> = {
-      memory, eventLoop, database, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp,
+      memory, eventLoop, database, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp, semanticModel,
     };
 
     const allUp = Object.values(checks).every((c) => c.status === 'up');
@@ -100,6 +103,9 @@ export class HealthService {
     const playbookMcpCheck = await this.checkPlaybookMcp();
     checks.playbookMcp = playbookMcpCheck.status === 'up';
 
+    const semanticModelCheck = await this.checkSemanticModel();
+    checks.semanticModel = semanticModelCheck.status === 'up';
+
     const allReady = Object.values(checks).every(Boolean);
 
     return {
@@ -136,6 +142,26 @@ export class HealthService {
       message,
       lastChecked: new Date().toISOString(),
     };
+  }
+
+  private async checkSemanticModel(): Promise<HealthCheckDetail> {
+    const startedAt = Date.now();
+    try {
+      const health = await this.semanticModelDatabase.health();
+      return {
+        status: health.ready ? 'up' : 'down',
+        message: health.enabled ? (health.ready ? 'Semantic Model schema and graph are ready' : 'Semantic Model schema or graph is missing') : 'Semantic Models are disabled',
+        responseTime: Date.now() - startedAt,
+        lastChecked: new Date().toISOString(),
+      };
+    } catch (error) {
+      return {
+        status: 'down',
+        message: error instanceof Error ? error.message : 'Semantic Model health check failed',
+        responseTime: Date.now() - startedAt,
+        lastChecked: new Date().toISOString(),
+      };
+    }
   }
 
   private async checkPlaybookMcp(): Promise<HealthCheckDetail> {

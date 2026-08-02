@@ -407,6 +407,19 @@ export enum ErrorCode {
   GOVERNED_CONNECTOR_NOT_ALLOWED = 'ERR_3686',
   GOVERNED_TEAM_NOT_ALLOWED = 'ERR_3687',
   GOVERNED_CONVERSATION_RUNTIME_IMMUTABLE = 'ERR_3688',
+
+  // Semantic Model errors (3700-3799)
+  SEMANTIC_MODEL_NOT_FOUND = 'ERR_3700',
+  SEMANTIC_MODEL_NAME_EXISTS = 'ERR_3701',
+  SEMANTIC_MODEL_ACCESS_DENIED = 'ERR_3702',
+  SEMANTIC_MODEL_REVISION_CONFLICT = 'ERR_3703',
+  SEMANTIC_MODEL_VALIDATION_FAILED = 'ERR_3704',
+  SEMANTIC_MODEL_PROTECTED_RESOURCE = 'ERR_3705',
+  SEMANTIC_MODEL_WORKSPACE_INVALID = 'ERR_3706',
+  SEMANTIC_MODEL_BINDING_INVALID = 'ERR_3707',
+  SEMANTIC_MODEL_VERSION_IMMUTABLE = 'ERR_3708',
+  SEMANTIC_MODEL_NO_DRAFT = 'ERR_3709',
+  SEMANTIC_MODEL_UNAVAILABLE = 'ERR_3710',
 }
 
 export const ErrorMessages: Record<ErrorCode, string> = {
@@ -732,6 +745,18 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.GOVERNED_CONNECTOR_NOT_ALLOWED]: 'Connectors are not available in governed conversations.',
   [ErrorCode.GOVERNED_TEAM_NOT_ALLOWED]: 'Teams are not available in governed conversations.',
   [ErrorCode.GOVERNED_CONVERSATION_RUNTIME_IMMUTABLE]: 'Governed conversation runtime settings cannot be changed.',
+
+  [ErrorCode.SEMANTIC_MODEL_NOT_FOUND]: 'Semantic Model not found.',
+  [ErrorCode.SEMANTIC_MODEL_NAME_EXISTS]: 'A Semantic Model with this name already exists.',
+  [ErrorCode.SEMANTIC_MODEL_ACCESS_DENIED]: 'You do not have access to this Semantic Model.',
+  [ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT]: 'This Semantic Model was changed elsewhere. Reload it before continuing.',
+  [ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED]: 'Resolve the blocking model issues before continuing.',
+  [ErrorCode.SEMANTIC_MODEL_PROTECTED_RESOURCE]: 'This system-managed model resource cannot be changed.',
+  [ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID]: 'The workspace is not available to this Semantic Model.',
+  [ErrorCode.SEMANTIC_MODEL_BINDING_INVALID]: 'The knowledge binding is not valid for this Semantic Model.',
+  [ErrorCode.SEMANTIC_MODEL_VERSION_IMMUTABLE]: 'Published Semantic Model versions cannot be changed.',
+  [ErrorCode.SEMANTIC_MODEL_NO_DRAFT]: 'This Semantic Model has no editable draft.',
+  [ErrorCode.SEMANTIC_MODEL_UNAVAILABLE]: 'Semantic Model storage is temporarily unavailable.',
 
   [ErrorCode.CONNECTOR_NOT_FOUND]: 'Connector not found.',
   [ErrorCode.CONNECTOR_ALREADY_EXISTS]: 'A connector with this slug already exists.',

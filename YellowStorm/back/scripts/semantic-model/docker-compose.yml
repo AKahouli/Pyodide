@@ -1,0 +1,21 @@
+services:
+  semantic-model-db:
+    image: apache/age:latest
+    container_name: yellostorm-semantic-model-db
+    environment:
+      POSTGRES_DB: yellostorm_semantic
+      POSTGRES_USER: semantic_model
+      POSTGRES_PASSWORD: semantic_model_dev
+    ports:
+      - "5455:5432"
+    volumes:
+      - semantic-model-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U semantic_model -d yellostorm_semantic"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+volumes:
+  semantic-model-pgdata:
