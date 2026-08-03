@@ -7,6 +7,15 @@ export interface BaseEvent {
   sequence?: number;          // present on every persisted event; absent on optimistic client-side user echo
 }
 
+/** Nested source tree from Manus `/app/code` (files_tree_json). */
+export interface FilesTreeNode {
+  name: string;
+  type: 'file' | 'directory';
+  path?: string;
+  size?: number;
+  children?: FilesTreeNode[];
+}
+
 export type AgentEvent =
   | ({ type: 'message' } & BaseEvent & {
       role: 'user' | 'assistant';
@@ -21,7 +30,13 @@ export type AgentEvent =
   | ({ type: 'done' } & BaseEvent)
   | ({ type: 'wait' } & BaseEvent)
   | ({ type: 'error' } & BaseEvent & { error: string })
-  | ({ type: 'application_component' } & BaseEvent & { url: string; title?: string });
+  | ({ type: 'application_component' } & BaseEvent & {
+      url: string;
+      title?: string;
+      ceph_path?: string;
+      files_tree?: FilesTreeNode | null;
+      file_count?: number;
+    });
 
 export type ToolContent =
   | { kind: 'browser'; screenshot_url: string; url?: string; title?: string }

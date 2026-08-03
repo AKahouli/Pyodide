@@ -48,10 +48,23 @@ export interface ErrorEventPayload extends ConversationV2BaseEvent {
   error: string;
 }
 
-// Agent-pushed embeddable web app / preview, rendered in the side panel.
+// Agent-pushed embeddable web app. Frontend boots Nodepod from Ceph sources
+// when `ceph_path` + `files_tree` are present.
 export interface ApplicationComponentEventPayload extends ConversationV2BaseEvent {
   url: string;
   title?: string;
+  ceph_path?: string;
+  files_tree?: FilesTreeNode | null;
+  file_count?: number;
+}
+
+/** Nested source tree produced by Manus `/app/code` → files_tree_json. */
+export interface FilesTreeNode {
+  name: string;
+  type: 'file' | 'directory';
+  path?: string;
+  size?: number;
+  children?: FilesTreeNode[];
 }
 
 export type DoneEventPayload = ConversationV2BaseEvent;

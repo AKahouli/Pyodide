@@ -20,6 +20,7 @@ import {
   ConversationV2Event,
   SessionWithEvents,
   ConversationV2EventType,
+  FilesTreeNode,
 } from '../types/conversation-v2.types';
 import {
   buildGrpcChannelCredentials,
@@ -74,7 +75,13 @@ interface RawProtoEvent {
   done?: Record<string, never>;
   wait?: Record<string, never>;
   error?: { error: string };
-  application_component?: { url: string; title?: string };
+  application_component?: {
+    url: string;
+    title?: string;
+    ceph_path?: string;
+    files_tree_json?: string;
+    file_count?: number;
+  };
   heartbeat?: Record<string, never>;
 }
 
@@ -501,15 +508,28 @@ export class ConversationV2GrpcClientService
         return { type: 'heartbeat', payload: base };
       case 'error':
         return { type: 'error', payload: { ...base, error: raw.error!.error } };
-      case 'application_component':
+      case 'application_component': {
+        const rawApp = raw.application_component!;
+        let filesTree: FilesTreeNode | null = null;
+        if (rawApp.files_tree_json) {
+          try {
+            filesTree = parseFilesTree(JSON.parse(rawApp.files_tree_json));
+          } catch {
+            filesTree = null;
+          }
+        }
         return {
           type: 'application_component',
           payload: {
             ...base,
-            url: raw.application_component!.url,
-            title: raw.application_component!.title,
+            url: rawApp.url,
+            title: rawApp.title,
+            ceph_path: rawApp.ceph_path || undefined,
+            files_tree: filesTree,
+            file_count: rawApp.file_count || undefined,
           },
         };
+      }
       default:
         throw new Error(`Unknown event payload: ${raw.payload}`);
     }
@@ -522,4 +542,24 @@ function safeJson(s: string): unknown {
   } catch {
     return s;
   }
+}
+
+function parseFilesTree(value: unknown): FilesTreeNode | null {
+  if (!value || typeof value !== 'object') return null;
+  const node = value as Record<string, unknown>;
+  if (node.type !== 'file' && node.type !== 'directory') return null;
+  if (typeof node.name !== 'string') return null;
+
+  const childrenRaw = Array.isArray(node.children) ? node.children : undefined;
+  const children = childrenRaw
+    ?.map(parseFilesTree)
+    .filter((child): child is FilesTreeNode => child != null);
+
+  return {
+    name: node.name,
+    type: node.type,
+    path: typeof node.path === 'string' ? node.path : undefined,
+    size: typeof node.size === 'number' ? node.size : undefined,
+    children,
+  };
 }

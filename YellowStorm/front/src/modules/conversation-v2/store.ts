@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import type { AgentEvent, ConversationV2PointerSummary } from './types';
+import type { AgentEvent, ConversationV2PointerSummary, FilesTreeNode } from './types';
 import { conversationV2Api } from './api';
 import type { DeployStatus } from './api';
 import {
@@ -15,10 +15,16 @@ interface State {
   streaming: boolean;
   streamError: string | null;
   rightPanelMode: 'closed' | 'tool' | 'app';
-  /** Latest agent-pushed application component (embeddable web app / preview)
-   *  for the current session, shown in the right panel when rightPanelMode is
-   *  'app'. Null until an `application_component` event lands. */
-  applicationComponent: { url: string; title: string } | null;
+  /** Latest agent-pushed application component for the current session.
+   *  Nodepod boots from cephPath + filesTree; `url` is retained for deploy links. */
+  applicationComponent: {
+    url: string;
+    title: string;
+    cephPath?: string;
+    filesTree?: FilesTreeNode | null;
+    fileCount?: number;
+    revision: string;
+  } | null;
   /** Files-in-this-conversation sheet open state. Independent of the right
    *  panel so the user can keep the tool detail open while browsing files. */
   filesSheetOpen: boolean;
@@ -538,14 +544,11 @@ export const useConversationV2Store = create<State & Actions>()(
       setWorkspaceIds: (ids) => set({ workspaceIds: ids }, false, 'setWorkspaceIds'),
       setDeployState: ({ deployStatus, deployedUrl, lastDeployedAt }) =>
         set(
-          (s) => ({
+          {
             deployStatus,
             deployedUrl,
             ...(lastDeployedAt !== undefined ? { lastDeployedAt } : {}),
-            ...(deployedUrl && s.applicationComponent
-              ? { applicationComponent: { ...s.applicationComponent, url: deployedUrl } }
-              : {}),
-          }),
+          },
           false,
           'setDeployState',
         ),
@@ -620,12 +623,7 @@ export const useConversationV2Store = create<State & Actions>()(
       setFilesSheetOpen: (open) =>
         set({ filesSheetOpen: open }, false, `setFilesSheetOpen/${open}`),
       replayEvents: (events) => {
-        const pushedApplication = deriveApplicationComponent(events);
-        const deployedUrl = get().deployedUrl;
-        const applicationComponent =
-          pushedApplication && deployedUrl
-            ? { ...pushedApplication, url: deployedUrl }
-            : pushedApplication;
+        const applicationComponent = deriveApplicationComponent(events);
         set(
           {
             events: dedupeReplayEvents(events),
@@ -793,12 +791,17 @@ export const useConversationV2Store = create<State & Actions>()(
                 // Agent paused for the user's reply — re-enable the composer.
                 return withSeq({ streaming: false, liveToolCallId: null });
               case 'application_component':
-                // Agent pushed an embeddable app/preview: surface it in the side
-                // panel immediately. Keep selectedToolCallId so the Code tab of
-                // the Code/Preview toggle stays available alongside the preview.
+                // Agent pushed an embeddable app: boot Nodepod from Ceph sources.
                 return withSeq({
                   events: [...state.events, event],
-                  applicationComponent: { url: event.url, title: event.title ?? '' },
+                  applicationComponent: {
+                    url: event.url,
+                    title: event.title ?? '',
+                    cephPath: event.ceph_path,
+                    filesTree: event.files_tree ?? null,
+                    fileCount: event.file_count,
+                    revision: event.event_id,
+                  },
                   rightPanelMode: 'app',
                 });
               case 'message': {
@@ -847,11 +850,25 @@ function deriveTitle(events: AgentEvent[]): string | undefined {
  */
 function deriveApplicationComponent(
   events: AgentEvent[],
-): { url: string; title: string } | null {
+): {
+  url: string;
+  title: string;
+  cephPath?: string;
+  filesTree?: FilesTreeNode | null;
+  fileCount?: number;
+  revision: string;
+} | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
     if (ev.type === 'application_component') {
-      return { url: ev.url, title: ev.title ?? '' };
+      return {
+        url: ev.url,
+        title: ev.title ?? '',
+        cephPath: ev.ceph_path,
+        filesTree: ev.files_tree ?? null,
+        fileCount: ev.file_count,
+        revision: ev.event_id,
+      };
     }
   }
   return null;

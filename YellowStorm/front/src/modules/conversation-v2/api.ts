@@ -233,4 +233,17 @@ export const conversationV2Api = {
     );
     return res.data.data;
   },
+  /**
+   * Batch-presign Ceph object keys under an app `ceph_path` for Nodepod hydration.
+   */
+  async getAppSourceUrls(
+    sessionId: string,
+    cephPath: string,
+    paths: string[],
+  ): Promise<{ items: Array<{ path: string; url: string }> }> {
+    const res = await apiClient.post<
+      ApiResponse<{ items: Array<{ path: string; url: string }> }>
+    >(`/conversation-v2/sessions/${sessionId}/app-source/urls`, { cephPath, paths });
+    return res.data.data;
+  },
 };

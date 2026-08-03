@@ -1,7 +1,20 @@
 import { act, render, screen, fireEvent } from '@testing-library/react';
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { RightPanel } from './RightPanel';
 import { useConversationV2Store } from '../../store';
+
+vi.mock('../../hooks/useNodepodPreview', () => ({
+  useNodepodPreview: () => ({
+    status: 'ready',
+    previewUrl: 'https://nodepod.local/__virtual__/3000/',
+    error: null,
+    files: {
+      '/package.json': '{"name":"demo"}',
+      '/app/page.tsx': 'export default function Page() { return null }',
+    },
+    retry: vi.fn(),
+  }),
+}));
 
 describe('RightPanel', () => {
   beforeEach(() => {
@@ -33,19 +46,39 @@ describe('RightPanel', () => {
     expect(screen.queryByRole('button', { name: /publish/i })).not.toBeInTheDocument();
   });
 
-  it('shows application title, URL, and deploy control after an application event', () => {
+  it('shows application title and deploy control after an application event', () => {
     useConversationV2Store.setState({
       rightPanelMode: 'app',
       applicationComponent: {
         title: 'Generated app',
         url: 'https://preview.example/app',
+        cephPath: 'yellowstorm/user/app/projectSRC',
+        filesTree: {
+          name: '',
+          type: 'directory',
+          children: [
+            { name: 'package.json', type: 'file', path: 'package.json', size: 40 },
+            {
+              name: 'app',
+              type: 'directory',
+              children: [
+                { name: 'page.tsx', type: 'file', path: 'app/page.tsx', size: 100 },
+              ],
+            },
+          ],
+        },
+        fileCount: 2,
+        revision: 'app-1',
       },
     });
 
     render(<RightPanel />);
 
     expect(screen.getAllByText('Generated app').length).toBeGreaterThan(0);
-    expect(screen.getByDisplayValue('https://preview.example/app')).toBeInTheDocument();
+    expect(document.querySelector('iframe')).toHaveAttribute(
+      'src',
+      'https://nodepod.local/__virtual__/3000/',
+    );
     expect(screen.getByRole('button', { name: /publish/i })).toBeInTheDocument();
   });
 
@@ -55,6 +88,7 @@ describe('RightPanel', () => {
       applicationComponent: {
         title: 'Generated app',
         url: 'https://preview.example/app',
+        revision: 'app-1',
       },
       deployStatus: 'deploying',
     });
@@ -66,19 +100,20 @@ describe('RightPanel', () => {
     expect(deployButton).not.toHaveTextContent(/publish/i);
   });
 
-  it('replaces the iframe URL when deployment returns the live URL', () => {
+  it('keeps the Nodepod preview when deployment returns a live URL', () => {
     useConversationV2Store.setState({
       rightPanelMode: 'app',
       applicationComponent: {
         title: 'Generated app',
         url: 'https://preview.example/app',
+        revision: 'app-1',
       },
     });
     render(<RightPanel />);
 
-    expect(screen.getByTitle('Preview')).toHaveAttribute(
+    expect(document.querySelector('iframe')).toHaveAttribute(
       'src',
-      'https://preview.example/app',
+      'https://nodepod.local/__virtual__/3000/',
     );
     act(() => {
       useConversationV2Store.getState().setDeployState({
@@ -88,38 +123,12 @@ describe('RightPanel', () => {
       });
     });
 
-    expect(screen.getByTitle('Preview')).toHaveAttribute(
+    // Nodepod preview stays local; deployed URL is exposed via DeployControls.
+    expect(document.querySelector('iframe')).toHaveAttribute(
       'src',
-      'https://apps.example/app-1',
+      'https://nodepod.local/__virtual__/3000/',
     );
-    expect(screen.getByDisplayValue('https://apps.example/app-1')).toBeInTheDocument();
-  });
-
-  it('remounts the iframe when redeploy keeps the same URL', () => {
-    useConversationV2Store.setState({
-      rightPanelMode: 'app',
-      applicationComponent: {
-        title: 'Generated app',
-        url: 'https://apps.example/app-1',
-      },
-      deployStatus: 'deployed',
-      deployedUrl: 'https://apps.example/app-1',
-      lastDeployedAt: '2026-07-17T10:00:00.000Z',
-    });
-    const { container } = render(<RightPanel />);
-    const firstIframe = container.querySelector('iframe');
-
-    act(() => {
-      useConversationV2Store.getState().setDeployState({
-        deployStatus: 'deployed',
-        deployedUrl: 'https://apps.example/app-1',
-        lastDeployedAt: '2026-07-17T10:05:00.000Z',
-      });
-    });
-
-    const secondIframe = container.querySelector('iframe');
-    expect(secondIframe).not.toBe(firstIframe);
-    expect(secondIframe).toHaveAttribute('src', 'https://apps.example/app-1');
+    expect(useConversationV2Store.getState().deployedUrl).toBe('https://apps.example/app-1');
   });
 
   it('shows the jump-to-live button when streaming and viewing a past tool', () => {
@@ -157,6 +166,7 @@ describe('RightPanel', () => {
       applicationComponent: {
         title: 'Generated app',
         url: 'https://preview.example/app',
+        revision: 'app-1',
       },
     });
     const { container } = render(<RightPanel />);

@@ -153,13 +153,15 @@ message WaitEvent  {}
 message HeartbeatEvent {}
 message ErrorEvent { string error = 1; }
 
-// Pushes a UI "application component" (an embeddable web app / preview) for the
-// frontend to render in the conversation's side panel. Unlike a tool result,
-// this is not tied to a tool_call — the agent asks the app to display `url`
-// (shown in an <iframe>) directly. `title` labels the panel.
+// Pushes a UI "application component" for the conversation side panel.
+// `url` is kept for deploy/open-tab; Nodepod boots from Ceph sources
+// (`ceph_path` + `files_tree_json`) in the browser.
 message ApplicationComponentEvent {
   string url = 1;
   string title = 2;
+  string ceph_path = 3;         // Ceph storage path of the generated project
+  string files_tree_json = 4;   // JSON-encoded nested source file tree
+  int32  file_count = 5;        // total number of generated source files
 }
 
 message ToolContent {

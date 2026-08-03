@@ -231,13 +231,15 @@ describe('useConversationV2Store', () => {
     expect((evs[0] as any).event_id).toBe('r1');
   });
 
-  it('setDeployState replaces the active application preview URL', () => {
+  it('setDeployState stores the live URL without rewriting Nodepod sources', () => {
     useConversationV2Store.getState().handleEvent({
       type: 'application_component',
       event_id: 'app-1',
       timestamp: 1,
       title: 'Generated app',
       url: 'https://preview.example/app',
+      ceph_path: 'yellowstorm/user/app/projectSRC',
+      file_count: 2,
     });
 
     useConversationV2Store.getState().setDeployState({
@@ -247,8 +249,13 @@ describe('useConversationV2Store', () => {
 
     expect(useConversationV2Store.getState().applicationComponent).toEqual({
       title: 'Generated app',
-      url: 'https://deployed.example/app',
+      url: 'https://preview.example/app',
+      cephPath: 'yellowstorm/user/app/projectSRC',
+      filesTree: null,
+      fileCount: 2,
+      revision: 'app-1',
     });
+    expect(useConversationV2Store.getState().deployedUrl).toBe('https://deployed.example/app');
   });
 
   it('deploy sends the application component title to the backend', async () => {
@@ -262,6 +269,7 @@ describe('useConversationV2Store', () => {
       applicationComponent: {
         title: 'Generated app',
         url: 'https://preview.example/app',
+        revision: 'app-1',
       },
     });
 
@@ -273,7 +281,7 @@ describe('useConversationV2Store', () => {
     );
   });
 
-  it('replayEvents restores the deployed URL over the original preview URL', () => {
+  it('replayEvents restores application sources without overwriting with deployed URL', () => {
     useConversationV2Store.setState({
       deployedUrl: 'https://deployed.example/app',
       deployStatus: 'deployed',
@@ -286,11 +294,17 @@ describe('useConversationV2Store', () => {
         timestamp: 1,
         title: 'Generated app',
         url: 'https://preview.example/app',
+        ceph_path: 'yellowstorm/user/app/projectSRC',
       },
     ]);
 
-    expect(useConversationV2Store.getState().applicationComponent?.url).toBe(
-      'https://deployed.example/app',
-    );
+    expect(useConversationV2Store.getState().applicationComponent).toEqual({
+      title: 'Generated app',
+      url: 'https://preview.example/app',
+      cephPath: 'yellowstorm/user/app/projectSRC',
+      filesTree: null,
+      fileCount: undefined,
+      revision: 'app-1',
+    });
   });
 });

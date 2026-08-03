@@ -1,6 +1,7 @@
 import path from 'path';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import nodepod from '@scelar/nodepod/vite';
 import { defineConfig } from 'vite';
 
 function getManualChunk(id: string): string | undefined {
@@ -71,7 +72,7 @@ function getManualChunk(id: string): string | undefined {
 export default defineConfig(() => {
   return {
     base: '/',
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), nodepod()],
     build: {
       target: 'es2022',
       rollupOptions: {

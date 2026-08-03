@@ -24,7 +24,6 @@ export function RightPanel() {
     jumpToLive,
     streaming,
     applicationComponent,
-    lastDeployedAt,
     setRightPanelView,
   } = useConversationV2Store(
     useShallow((s) => ({
@@ -35,7 +34,6 @@ export function RightPanel() {
       jumpToLive: s.jumpToLive,
       streaming: s.streaming,
       applicationComponent: s.applicationComponent,
-      lastDeployedAt: s.lastDeployedAt,
       setRightPanelView: s.setRightPanelView,
     })),
   );
@@ -101,12 +99,14 @@ export function RightPanel() {
         </header>
         <div className='relative flex min-h-0 flex-1 flex-col'>
           {showPreview ? (
-            // Key on the URL so a newly-pushed preview remounts the iframe on the
-            // new address (WebPreview reads defaultUrl only on mount).
+            // Key on revision so a newly-pushed generation remounts Nodepod.
             <ApplicationComponentView
-              key={`${applicationComponent!.url}:${lastDeployedAt ?? ''}`}
-              url={applicationComponent!.url}
+              key={applicationComponent!.revision}
               title={applicationComponent!.title}
+              cephPath={applicationComponent!.cephPath}
+              filesTree={applicationComponent!.filesTree}
+              fileCount={applicationComponent!.fileCount}
+              revision={applicationComponent!.revision}
             />
           ) : (
             <div className='relative flex min-h-0 flex-1 flex-col p-3'>
