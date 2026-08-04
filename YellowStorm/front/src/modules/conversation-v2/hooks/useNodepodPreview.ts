@@ -70,10 +70,19 @@ async function fetchProjectFiles(
   const files: Record<string, string | Uint8Array> = {};
   let textCount = 0;
   let binaryCount = 0;
+  let skippedCount = 0;
   await Promise.all(
     items.map(async ({ path, url }) => {
       const res = await fetch(url);
       if (!res.ok) {
+        // Dotfiles / assets must not hard-fail the whole preview boot.
+        const base = path.split('/').pop() ?? path;
+        const required = base === 'package.json';
+        if (!required) {
+          skippedCount += 1;
+          logPhase('3.download-sources:skip', { path, status: res.status });
+          return;
+        }
         throw new Error(`Failed to download ${path} (${res.status})`);
       }
       const vfsPath = path.startsWith('/') ? path : `/${path}`;
@@ -90,6 +99,7 @@ async function fetchProjectFiles(
     vfsFileCount: Object.keys(files).length,
     textCount,
     binaryCount,
+    skippedCount,
     hasPackageJson: typeof files['/package.json'] === 'string',
   });
   return files;
