@@ -74,15 +74,26 @@ export class HumainAgentService {
       const role = this.deriveRole(input, name);
       const description = (input.description ?? '').slice(0, 1000);
 
-      const update = overwriteProfileFields
-        ? { $set: { name, slug, role, description }, $setOnInsert: { createdBy, agentType } }
-        : { $setOnInsert: { name, slug, role, description, createdBy, agentType } };
+      // Use findOne + create/save rather than findOneAndUpdate({ upsert, setDefaultsOnInsert }):
+      // the Agent schema's `slug` default is `function() { return deriveAgentSlug(this.name); }`,
+      // which Mongoose evaluates with `this === null` during setDefaultsOnInsert and throws.
+      // create()/save() build a real document instance, so all schema defaults apply correctly.
+      const existing = await this.agentModel.findOne({ createdBy, agentType }).exec();
 
-      await this.agentModel
-        .findOneAndUpdate({ createdBy, agentType }, update, { upsert: true, new: true, setDefaultsOnInsert: true })
-        .exec();
+      if (!existing) {
+        await this.agentModel.create({ name, slug, role, description, createdBy, agentType });
+        this.logger.log('Human agent created', { userId: input.userId });
+        return;
+      }
 
-      this.logger.log('Human agent upserted', { userId: input.userId, overwriteProfileFields });
+      if (overwriteProfileFields) {
+        existing.name = name;
+        existing.slug = slug;
+        existing.role = role;
+        existing.description = description;
+        await existing.save();
+        this.logger.log('Human agent synced', { userId: input.userId });
+      }
     } catch (error) {
       // Never throw: human-agent maintenance must not break auth/profile flows.
       this.logger.warn('Failed to upsert human agent', { userId: input.userId, error: (error as Error).message });
