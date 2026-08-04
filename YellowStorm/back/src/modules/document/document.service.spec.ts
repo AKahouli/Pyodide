@@ -549,6 +549,15 @@ describe('DocumentService', () => {
       await expect(service.generateSasUrl('folder/subfolder')).rejects.toThrow(BadRequestException);
     });
 
+    it('should allow extensionless keys when allowExtensionless is set', async () => {
+      const result = await service.generateSasUrl(
+        'yellowstorm/user/app/projectSRC/Dockerfile',
+        { allowExtensionless: true },
+      );
+      expect(result).toBeDefined();
+      expect(mockGetSignedUrl).toHaveBeenCalled();
+    });
+
     it('should throw InternalServerException when service is not available', async () => {
       connectionService.isConnectedNow.mockReturnValue(false);
 
