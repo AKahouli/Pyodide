@@ -13,6 +13,12 @@ export class UserProfile {
 
   @Prop({ trim: true, maxlength: 200 })
   company?: string;
+
+  @Prop({ trim: true, maxlength: 200, default: '' })
+  role?: string;
+
+  @Prop({ trim: true, maxlength: 1000, default: '' })
+  description?: string;
 }
 
 @Schema({ _id: false })
