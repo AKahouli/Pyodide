@@ -561,7 +561,11 @@ export class ConversationV2Controller {
         throw new BadRequestException(`Invalid source path: ${relative}`);
       }
       const objectKey = `${prefix}/${normalized}`;
-      const url = await this.workspaceDocuments.generateReadUrl(objectKey);
+      // App trees include extensionless files (Dockerfile, LICENSE, …) under a
+      // Ceph prefix that itself has no dots — bypass the workspace "folder" guard.
+      const url = await this.workspaceDocuments.generateReadUrl(objectKey, {
+        allowExtensionless: true,
+      });
       items.push({ path: normalized, url });
     }
 
