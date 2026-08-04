@@ -165,7 +165,7 @@ class TestStreamingEventProcessor:
   @pytest.mark.asyncio
   async def test_manager_emits_each_repeated_tool_occurrence(self, processor):
     queue = AsyncMock()
-    queue.include_private_tool_results = False
+    queue.include_tool_results = True
 
     def event_for(part):
       return SimpleNamespace(
@@ -208,4 +208,6 @@ class TestStreamingEventProcessor:
       "tool-mgr-1-call-1", "tool-mgr-1-call-2", "tool-mgr-1-call-1", "tool-mgr-1-call-2",
     ]
     assert [event["action"] for event in tool_events] == ["add", "add", "update", "update"]
-    assert all("result_json" not in event["component"]["data"] for event in tool_events)
+    assert [event["component"]["data"].get("result_json") for event in tool_events] == [
+      None, None, '{"matches":1}', '{"matches":2}',
+    ]

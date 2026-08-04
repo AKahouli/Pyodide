@@ -1,6 +1,4 @@
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import type { MouseEvent, ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { FileViewerContent } from './FileViewerContent';
 
@@ -24,14 +22,6 @@ const tabsState = vi.hoisted(() => [
   },
 ]);
 
-vi.mock('@/components/ui/button', () => ({
-  Button: ({ children, onClick }: { children: ReactNode; onClick?: (e: MouseEvent) => void }) => (
-    <button tabIndex={0} onClick={onClick}>
-      {children}
-    </button>
-  ),
-}));
-
 vi.mock('../store', () => ({
   useFileViewerTabs: () => tabsState,
   useFileViewerActiveTabId: () => 't1',
@@ -52,14 +42,14 @@ vi.mock('../renderers/UnsupportedRenderer', () => ({
 }));
 
 describe('FileViewerContent', () => {
-  it('renders active renderer and closes tab from tab bar', async () => {
+  it('renders file instances without a document tab bar', () => {
     render(<FileViewerContent />);
 
     expect(screen.getByText('renderer-a.pdf')).toBeInTheDocument();
     expect(screen.getByText('unsupported-b.unknown')).toBeInTheDocument();
-
-    const closeButtons = screen.getAllByRole('button');
-    await userEvent.click(closeButtons[1]);
-    expect(closeTabMock).toHaveBeenCalledWith('t1');
+    expect(screen.queryByText('a.pdf')).not.toBeInTheDocument();
+    expect(screen.queryByText('b.unknown')).not.toBeInTheDocument();
+    expect(setActiveTabMock).not.toHaveBeenCalled();
+    expect(closeTabMock).not.toHaveBeenCalled();
   });
 });

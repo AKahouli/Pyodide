@@ -176,7 +176,6 @@ async def _run_provided_agent_team(team, user_request, manager_prompt, session_i
         manager_user_prompt = user_request.message
     # Run the agent team with manager_memory configuration
     image_input = user_request.image_input if hasattr(user_request, 'image_input') else None
-    q.include_private_tool_results = user_request.correction_replay_context is not None
     await team.run_agent_team(
         build_corrective_replay_user_message(
             manager_user_prompt,

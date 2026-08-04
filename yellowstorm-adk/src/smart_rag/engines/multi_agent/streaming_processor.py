@@ -468,7 +468,7 @@ class StreamingEventProcessor:
                                     break
                     if tool_component_id:
                         result_json = ""
-                        if getattr(q, "include_private_tool_results", False) and func_name != "generate_web_preview" and not func_name.startswith("delegate_to_"):
+                        if getattr(q, "include_tool_results", False) and func_name != "generate_web_preview" and not func_name.startswith("delegate_to_"):
                             try:
                                 candidate = json.dumps(part.function_response.response, default=str, separators=(",", ":"))
                                 if len(candidate.encode("utf-8")) <= 65536:

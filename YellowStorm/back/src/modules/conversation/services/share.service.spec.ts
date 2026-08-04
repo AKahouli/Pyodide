@@ -16,7 +16,7 @@ describe('ShareService public share sanitization', () => {
 
   const components: MessageComponent[] = [
     { id: 'reasoning', type: 'reasoning', data: { content: 'Internal instructions' } },
-    { id: 'tool', type: 'toolInfo', data: { title: 'activate_skill', params: '{"secret":"value"}' } },
+    { id: 'tool', type: 'toolInfo', data: { title: 'activate_skill', params: '{"secret":"value"}', resultJson: '{"private":true}' } },
     { id: 'thought', type: 'chainOfThought', data: { steps: ['Internal step'] } },
     { id: 'task', type: 'task', data: { title: 'Smart Agent', items: ['Raw private context'], status: 'completed' } },
     { id: 'answer', type: 'text', data: { content: 'Public answer' } },

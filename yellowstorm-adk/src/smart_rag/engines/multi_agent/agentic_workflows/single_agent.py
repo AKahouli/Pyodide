@@ -105,7 +105,6 @@ async def handle_single_agent_workflow(
             await q.put(None)
             return
 
-        q.include_private_tool_results = user_request.correction_replay_context is not None
         await team.run_single_agent(
             user_prompt=build_corrective_replay_user_message(
                 guarded.text,

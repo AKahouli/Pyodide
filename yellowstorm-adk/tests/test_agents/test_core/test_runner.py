@@ -361,7 +361,7 @@ class TestAgentRunner:
         mock_queue = AsyncMock()
         mock_content = types.Content(role="user", parts=[types.Part(text="test")])
 
-        mock_queue.include_private_tool_results = True
+        mock_queue.include_tool_results = True
 
         # Mock event with function call
         mock_event = MagicMock()

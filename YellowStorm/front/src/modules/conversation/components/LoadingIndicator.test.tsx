@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import { LoadingIndicator, StreamingCursor } from './LoadingIndicator';
 
 describe('LoadingIndicator', () => {
@@ -70,7 +70,7 @@ describe('LoadingIndicator', () => {
     expect(screen.getByText('Reviewed the request')).toBeInTheDocument();
   });
 
-  it('shows the tool datetime without exposing a raw tool response', () => {
+  it('shows the tool datetime and opens a formatted tool response', async () => {
     const startedAt = '2026-07-21T10:13:42Z';
     const expectedDate = new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(startedAt));
     render(<LoadingIndicator isComplete components={[{
@@ -86,11 +86,19 @@ describe('LoadingIndicator', () => {
     }] as never} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'stream.activity.detailsAria' }));
+    const toolSummary = screen.getByText('1. Search Documents').closest('summary');
+    const viewResponse = screen.getByRole('button', { name: 'stream.activity.viewResponse' });
+    expect(toolSummary).toContainElement(viewResponse);
+
     fireEvent.click(screen.getByText('1. Search Documents'));
 
     expect(screen.getByText((content) => content.includes(expectedDate))).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'stream.activity.viewResponse' })).not.toBeInTheDocument();
     expect(screen.queryByText(/doc-1/)).not.toBeInTheDocument();
+    fireEvent.click(viewResponse);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText(/doc-1/)).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    await waitFor(() => expect(viewResponse).toHaveFocus());
   });
 
   it('omits response controls for legacy tool activity', () => {
@@ -103,6 +111,23 @@ describe('LoadingIndicator', () => {
     fireEvent.click(screen.getByRole('button', { name: 'stream.activity.detailsAria' }));
     fireEvent.click(screen.getByText('1. Search Documents'));
     expect(screen.queryByRole('button', { name: 'stream.activity.viewResponse' })).not.toBeInTheDocument();
+  });
+
+  it('copies the exact raw tool response from the clipboard icon', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const response = '{"matches":[{"id":"doc-1"}]}';
+    render(<LoadingIndicator isComplete components={[{
+      id: 'tool',
+      type: 'toolInfo',
+      data: { title: 'search_documents', status: 'completed', resultJson: response },
+    }] as never} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.detailsAria' }));
+    fireEvent.click(screen.getByRole('button', { name: 'messageActions.copyAria' }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(response));
+    expect(screen.getByText('1. Search Documents').closest('details')).not.toHaveAttribute('open');
   });
 
   it('numbers tool executions and calculates duration from the next tool start', () => {

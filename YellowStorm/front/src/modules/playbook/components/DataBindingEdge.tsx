@@ -37,10 +37,10 @@ export function DataBindingEdge({
         path={edgePath}
         markerEnd={markerEnd}
         style={{
-          stroke: isWarning ? 'var(--destructive)' : 'hsl(var(--chart-4))',
+          stroke: isWarning ? 'var(--destructive)' : 'var(--chart-4)',
           strokeDasharray: edgeData?.sourceKind === 'trigger' ? '3 3' : '4 4',
-          strokeWidth: 1.5,
-          opacity: 0.85,
+          strokeWidth: 2.5,
+          opacity: 1,
         }}
       />
       {edgeData?.label ? (
@@ -56,8 +56,8 @@ export function DataBindingEdge({
             <span
               className="rounded border bg-background/95 px-1.5 py-0.5 text-[10px] font-medium shadow-sm"
               style={{
-                borderColor: isWarning ? 'var(--destructive)' : 'hsl(var(--chart-4) / 0.35)',
-                color: isWarning ? 'var(--destructive)' : 'hsl(var(--chart-4))',
+                borderColor: isWarning ? 'var(--destructive)' : 'color-mix(in oklch, var(--chart-4) 35%, transparent)',
+                color: isWarning ? 'var(--destructive)' : 'var(--chart-4)',
               }}
               title={title}
             >

@@ -736,7 +736,7 @@ class AgentRunner:
 
                             if tool_component_id:
                                 result_json = ""
-                                if getattr(q, "include_private_tool_results", False) and func_name != "generate_web_preview":
+                                if getattr(q, "include_tool_results", False) and func_name != "generate_web_preview":
                                     try:
                                         candidate_result_json = json.dumps(
                                             part.function_response.response,

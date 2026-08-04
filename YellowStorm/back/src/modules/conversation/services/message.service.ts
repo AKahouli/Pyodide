@@ -913,7 +913,7 @@ export class MessageService {
       conversationId: toStr(message.conversationId),
       conversationType: message.conversationType as 'user' | 'ai',
       content: message.content,
-      components: this.publicComponents(message.components) as any,
+      components: this.publicComponents(message.components, true) as any,
       attachedFileIds: message.attachedFileIds?.map((id: any) => toStr(id)),
       modelId: message.modelId,
       webSearchEnabled: message.webSearchEnabled,
@@ -955,7 +955,7 @@ export class MessageService {
     };
   }
 
-  private publicComponents(components: unknown): MessageComponent[] | undefined {
+  private publicComponents(components: unknown, includeToolResults = false): MessageComponent[] | undefined {
     if (!Array.isArray(components)) return undefined;
     return components.map((component) => {
       if (component?.type === 'task' && component.data) {
@@ -966,6 +966,9 @@ export class MessageService {
         };
       }
       if (component?.type !== 'toolInfo' || !component.data) return component;
+      if (includeToolResults) {
+        return { id: component.id, type: component.type, data: { ...component.data } };
+      }
       const { resultJson: _resultJson, result_json: _resultJsonSnake, ...publicData } = component.data;
       return { id: component.id, type: component.type, data: publicData };
     });

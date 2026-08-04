@@ -61,7 +61,7 @@ describe('StreamService guardrail metadata buffering', () => {
       id: 'tool-call-1',
       type: 'toolInfo',
       data: { title: 'search_documents', status: 'completed', resultJson: '{"matches":2}' },
-    }, undefined, true);
+    });
 
     expect(buffer.get('tool-call-1')?.data).toEqual({
       title: 'search_documents',
@@ -72,7 +72,7 @@ describe('StreamService guardrail metadata buffering', () => {
     });
   });
 
-  it('strips raw tool results from public stream buffers', () => {
+  it('retains bounded tool results in conversation stream buffers', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     const buffer = new Map<string, MessageComponent>();
 
@@ -81,7 +81,11 @@ describe('StreamService guardrail metadata buffering', () => {
       data: { title: 'connector', status: 'completed', resultJson: '{"secret":"value"}' },
     });
 
-    expect(buffer.get('tool-call-public')?.data).toEqual({ title: 'connector', status: 'completed' });
+    expect(buffer.get('tool-call-public')?.data).toEqual({
+      title: 'connector',
+      status: 'completed',
+      resultJson: '{"secret":"value"}',
+    });
   });
 
   it('upserts tool occurrences and never regresses a terminal status', () => {
@@ -96,8 +100,7 @@ describe('StreamService guardrail metadata buffering', () => {
     apply('add', 'tool-agent-call-2', { title: 'search', status: 'running', params: '{"q":"two"}' });
 
     expect(buffer.size).toBe(2);
-    expect(buffer.get('tool-agent-call-1')?.data).toMatchObject({ status: 'completed', params: '{"q":"one"}' });
-    expect(buffer.get('tool-agent-call-1')?.data).not.toHaveProperty('resultJson');
+    expect(buffer.get('tool-agent-call-1')?.data).toMatchObject({ status: 'completed', params: '{"q":"one"}', resultJson: '{"matches":1}' });
     expect(buffer.get('tool-agent-call-2')?.data).toMatchObject({ status: 'running', params: '{"q":"two"}' });
   });
 });

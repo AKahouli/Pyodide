@@ -160,12 +160,6 @@ function upsertMessage(messages: Message[], message: Message): { messages: Messa
  * Called on 'add' action.
  */
 function initializeStreamingData(type: string, data: Record<string, unknown>): Record<string, unknown> {
-  if (type === 'toolInfo') {
-    const sanitized = { ...data };
-    delete sanitized.resultJson;
-    delete sanitized.result_json;
-    return sanitized;
-  }
   if (type === 'chart') {
     // Backend sends chart data as an object with:
     // - data: array of data points (or nested object with data.data)
@@ -273,8 +267,6 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
         params: (incoming.params as string) || (existing.params as string) || '',
         startedAt: (incoming.startedAt as string) || (existing.startedAt as string) || '',
       };
-      delete merged.resultJson;
-      delete merged.result_json;
       return merged;
     case 'chart': {
       // For charts, data is an object with properties (title, data, config, etc.)

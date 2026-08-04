@@ -117,7 +117,7 @@ describe('MessageService createUserMessage agent tagging', () => {
     expect(conversationService.updateTaggedAgents).not.toHaveBeenCalled();
   });
 
-  it('removes raw tool results from public message responses', () => {
+  it('includes bounded tool results in authorized message responses', () => {
     const toolComponent = {
       id: 'tool-1',
       data: { title: 'connector', status: 'completed', resultJson: '{"secret":"value"}', params: '{"query":"safe"}' },
@@ -134,7 +134,7 @@ describe('MessageService createUserMessage agent tagging', () => {
     expect(response.components[0]).toEqual({
       id: 'tool-1',
       type: 'toolInfo',
-      data: { title: 'connector', status: 'completed', params: '{"query":"safe"}' },
+      data: { title: 'connector', status: 'completed', resultJson: '{"secret":"value"}', params: '{"query":"safe"}' },
     });
   });
 
@@ -172,7 +172,7 @@ describe('MessageService createUserMessage agent tagging', () => {
           messageId: messageId.toString(),
           message: expect.objectContaining({
             isComplete: true,
-            components: [expect.objectContaining({ data: expect.not.objectContaining({ resultJson: expect.anything() }) })],
+            components: [expect.objectContaining({ data: expect.objectContaining({ resultJson: '{"secret":true}' }) })],
           }),
         }),
       }),

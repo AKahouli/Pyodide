@@ -560,7 +560,7 @@ describe('conversation streaming component updates', () => {
     expect(useConversationStore.getState().streamingStateCache.has('conv-1')).toBe(false);
   });
 
-  it('merges public tool metadata without retaining raw results', () => {
+  it('merges tool metadata while retaining bounded results', () => {
     const components = applyChunksToComponents([], [
       {
         action: 'add',
@@ -589,6 +589,7 @@ describe('conversation streaming component updates', () => {
           status: 'completed',
           params: '{"query":"contract"}',
           startedAt: '2026-07-21T10:13:42Z',
+          resultJson: '{"matches":2}',
         },
       },
     ]);
@@ -603,8 +604,7 @@ describe('conversation streaming component updates', () => {
     ] as never);
 
     expect(components).toHaveLength(2);
-    expect(components[0].data).toMatchObject({ status: 'completed', params: '{"q":"one"}' });
-    expect(components[0].data).not.toHaveProperty('resultJson');
+    expect(components[0].data).toMatchObject({ status: 'completed', params: '{"q":"one"}', resultJson: '{"matches":1}' });
     expect(components[1].data).toMatchObject({ status: 'running', params: '{"q":"two"}' });
   });
 });

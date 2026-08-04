@@ -15,6 +15,7 @@ export function ConditionalEdge({
   targetY,
   targetPosition,
   markerEnd,
+  style,
   data,
 }: EdgeProps) {
   const edgeData = data as ConditionalEdgeData | undefined;
@@ -37,8 +38,10 @@ export function ConditionalEdge({
         path={edgePath}
         markerEnd={markerEnd}
         style={{
+          ...style,
           strokeDasharray: '6 4',
-          stroke: isError ? 'var(--destructive)' : undefined,
+          stroke: isError ? 'var(--destructive)' : (style?.stroke ?? 'var(--primary)'),
+          strokeWidth: 2.5,
         }}
       />
       {routerLabel && (
