@@ -5,7 +5,6 @@ import type { FilesTreeNode } from '../types';
 import { isTextSourcePath } from '../utils/app-source';
 import { flattenFilesTree } from '../utils/files-tree';
 import { parseNpmAddedPackages } from '../utils/npm-install-output';
-import { readNextVersionFromPackageJson } from '../utils/read-next-version';
 
 export type NodepodPreviewStatus =
   | 'idle'
@@ -27,20 +26,21 @@ export interface UseNodepodPreviewResult {
   status: NodepodPreviewStatus;
   previewUrl: string | null;
   error: string | null;
-  /** Downloaded project files (VFS paths like `/app/page.tsx`). Read-only for UI. */
+  /** Downloaded project files (VFS paths like `/src/App.tsx`). Read-only for UI. */
   files: Record<string, string | Uint8Array> | null;
   retry: () => void;
 }
 
 const LOG = '[Nodepod]';
-const SWC_WASM_PATH = '/node_modules/@next/swc-wasm-nodejs';
-const SWC_WASM_JS = `${SWC_WASM_PATH}/wasm.js`;
-const SWC_WASM_BIN = `${SWC_WASM_PATH}/wasm_bg.wasm`;
-const NEXT_PKG_PATH = '/node_modules/next';
-/** Try ports soon after spawn — Next+local SWC is typically ready in <15s. */
+const VITE_PKG_PATH = '/node_modules/vite';
+const REACT_PKG_PATH = '/node_modules/react';
+/** Vite usually binds quickly; keep a soft window then keep waiting if alive. */
 const READY_SOFT_MS = 20_000;
-/** Absolute give-up if still no port and process has not exited. */
 const READY_HARD_MS = 90_000;
+/** Prefer Vite's default, then common fallbacks. */
+const PREVIEW_PORTS = [5173, 3000, 8080] as const;
+
+type NodepodInstance = Awaited<ReturnType<typeof Nodepod.boot>>;
 
 function logPhase(phase: string, details?: Record<string, unknown>) {
   if (details) {
@@ -85,7 +85,6 @@ async function fetchProjectFiles(
     items.map(async ({ path, url }) => {
       const res = await fetch(url);
       if (!res.ok) {
-        // Dotfiles / assets must not hard-fail the whole preview boot.
         const base = path.split('/').pop() ?? path;
         const required = base === 'package.json';
         if (!required) {
@@ -141,10 +140,12 @@ function detectDevCommand(files: Record<string, string | Uint8Array>): {
   return { cmd: 'npm', args: ['run', 'dev'] };
 }
 
-function readNextVersion(files: Record<string, string | Uint8Array>): string | null {
-  const pkgRaw = files['/package.json'];
-  if (typeof pkgRaw !== 'string') return null;
-  return readNextVersionFromPackageJson(pkgRaw);
+function looksLikeDevServerReady(text: string): boolean {
+  return (
+    /ready in /i.test(text) ||
+    /Local:\s+https?:\/\//i.test(text) ||
+    /VITE\s+v?\d/i.test(text)
+  );
 }
 
 async function waitUntilDirectServerReady(
@@ -163,7 +164,6 @@ async function waitUntilDirectServerReady(
         statusCode: res.statusCode,
         statusMessage: res.statusMessage,
       });
-      // 503 here means Nodepod registry has no server yet; keep waiting.
       if (res.statusCode && res.statusCode !== 503) return true;
     } catch (err) {
       logPhase('6.direct-probe:error', {
@@ -190,7 +190,6 @@ async function waitUntilPreviewReachable(
       if (res.status !== 503) {
         return { ok: true, lastStatus, bodyHint };
       }
-      // Diagnose Nodepod SW 503 pages vs ingress/generic 503.
       try {
         const text = await res.text();
         bodyHint = text.includes('Powered by Nodepod')
@@ -212,70 +211,9 @@ async function waitUntilPreviewReachable(
   return { ok: false, lastStatus, bodyHint };
 }
 
-type NodepodInstance = Awaited<ReturnType<typeof Nodepod.boot>>;
-
-async function swcWasmFilesPresent(pod: NodepodInstance): Promise<{
-  hasJs: boolean;
-  hasBin: boolean;
-  binBytes: number | null;
-}> {
-  const hasJs = await pod.fs.exists(SWC_WASM_JS);
-  const hasBin = await pod.fs.exists(SWC_WASM_BIN);
-  let binBytes: number | null = null;
-  if (hasBin) {
-    try {
-      binBytes = (await pod.fs.stat(SWC_WASM_BIN)).size;
-    } catch {
-      binBytes = null;
-    }
-  }
-  return { hasJs, hasBin, binBytes };
-}
-
-/** Ensure local WASM bindings exist and point Next at them (skip CDN/npm download). */
-async function ensureLocalSwcWasm(
-  pod: NodepodInstance,
-  projectFiles: Record<string, string | Uint8Array>,
-): Promise<string> {
-  const nextVersion = readNextVersion(projectFiles);
-  let files = await swcWasmFilesPresent(pod);
-  logPhase('5.swc-wasm:check', { nextVersion, ...files });
-
-  // Incomplete snapshot often leaves an empty package dir without the 28MB wasm.
-  const incomplete =
-    !files.hasJs || !files.hasBin || (files.binBytes != null && files.binBytes < 1_000_000);
-
-  if (incomplete) {
-    const spec = nextVersion
-      ? `@next/swc-wasm-nodejs@${nextVersion}`
-      : '@next/swc-wasm-nodejs';
-    logPhase('5.swc-wasm:install', { spec });
-    const install = await pod.spawn('npm', ['install', spec, '--no-save']);
-    install.on('output', (text: string) => {
-      console.log(`${LOG} [5.swc-wasm:install:stdout]`, text);
-    });
-    install.on('error', (text: string) => {
-      console.warn(`${LOG} [5.swc-wasm:install:stderr]`, text);
-    });
-    const result = await install.completion;
-    files = await swcWasmFilesPresent(pod);
-    logPhase('5.swc-wasm:install:done', {
-      exitCode: result.exitCode,
-      ...files,
-    });
-    if (result.exitCode !== 0 || !files.hasJs || !files.hasBin) {
-      throw new Error(
-        `Failed to install ${spec} for Nodepod (need wasm.js + wasm_bg.wasm).`,
-      );
-    }
-  }
-
-  return SWC_WASM_PATH;
-}
-
 /**
- * Boots a Nodepod instance from Ceph-backed app sources, installs deps, and
- * starts the app's dev server. Teardown on unmount / revision change.
+ * Boots a Nodepod instance from Ceph-backed Vite/React app sources, installs
+ * deps, and starts the app's dev server. Teardown on unmount / revision change.
  */
 export function useNodepodPreview({
   sessionId,
@@ -288,7 +226,7 @@ export function useNodepodPreview({
   const [error, setError] = useState<string | null>(null);
   const [files, setFiles] = useState<Record<string, string | Uint8Array> | null>(null);
   const [retryToken, setRetryToken] = useState(0);
-  const podRef = useRef<Awaited<ReturnType<typeof Nodepod.boot>> | null>(null);
+  const podRef = useRef<NodepodInstance | null>(null);
   const readyRef = useRef(false);
   // Event polling rebuilds applicationComponent objects; keep the tree in a
   // ref so identity churn does not cancel an in-flight Nodepod boot.
@@ -355,7 +293,11 @@ export function useNodepodPreview({
       setStatus('error');
     };
 
-    /** Promote preview only after Next answers directly AND the SW proxy works. */
+    let pendingPort: number | null = null;
+    let pendingUrl: string | null = null;
+    const promotingRef = { current: false };
+
+    /** Promote preview only after the app answers directly AND the SW proxy works. */
     const promotePreview = (url: string, port: number, source: string) => {
       if (cancelled || readyRef.current || promotingRef.current) return;
       promotingRef.current = true;
@@ -376,9 +318,7 @@ export function useNodepodPreview({
           const directOk = await waitUntilDirectServerReady(pod, port, isStale);
           if (cancelled || readyRef.current) return;
           if (!directOk) {
-            fail(
-              'Next.js started but did not answer HTTP requests inside Nodepod.',
-            );
+            fail('Dev server started but did not answer HTTP requests inside Nodepod.');
             return;
           }
 
@@ -404,10 +344,6 @@ export function useNodepodPreview({
         }
       })();
     };
-
-    let pendingPort: number | null = null;
-    let pendingUrl: string | null = null;
-    const promotingRef = { current: false };
 
     const run = async () => {
       await teardown();
@@ -457,7 +393,7 @@ export function useNodepodPreview({
             }
             const resolved = url || pod.port(port) || null;
             logPhase('6.server-ready', { port, url, resolvedPreviewUrl: resolved });
-            // Too early to iframe: Next often emits listen before "Ready".
+            // Listen can fire before Vite prints "ready" — store and promote later.
             pendingPort = port;
             pendingUrl = resolved;
           },
@@ -473,44 +409,38 @@ export function useNodepodPreview({
         setStatus('installing');
         logPhase('5.npm-install:start');
         const install = await pod.spawn('npm', ['install']);
-        install.on('output', (text) => {
+        install.on('output', (text: string) => {
           console.log(`${LOG} [5.npm-install:stdout]`, text);
         });
-        install.on('error', (text) => {
+        install.on('error', (text: string) => {
           console.warn(`${LOG} [5.npm-install:stderr]`, text);
         });
         const installResult = await install.completion;
         const addedPackages = parseNpmAddedPackages(installResult.stdout);
-        const hasNext = await pod.fs.exists(NEXT_PKG_PATH);
-        const hasSwcWasmDir = await pod.fs.exists(SWC_WASM_PATH);
+        const hasVite = await pod.fs.exists(VITE_PKG_PATH);
+        const hasReact = await pod.fs.exists(REACT_PKG_PATH);
         logPhase('5.npm-install:verify', {
           exitCode: installResult.exitCode,
           addedPackages,
-          hasNext,
-          hasSwcWasmDir,
-          swcWasmPath: SWC_WASM_PATH,
+          hasVite,
+          hasReact,
         });
         if (installResult.exitCode !== 0) {
           throw new Error(`npm install failed (exit ${installResult.exitCode}).`);
         }
-        if (!hasNext) {
+        if (!hasVite && !hasReact) {
           throw new Error(
             addedPackages === 0
-              ? 'npm install added 0 packages and node_modules/next is missing.'
-              : 'node_modules/next is missing after npm install.',
+              ? 'npm install added 0 packages and node_modules/vite (or react) is missing.'
+              : 'node_modules/vite (or react) is missing after npm install.',
           );
         }
         if (addedPackages !== null && addedPackages === 0) {
           console.warn(
-            `${LOG} [5.npm-install:warn] added 0 packages (cache/snapshot hit or empty install). hasNext=${hasNext}`,
+            `${LOG} [5.npm-install:warn] added 0 packages (cache/snapshot hit or empty install). hasVite=${hasVite} hasReact=${hasReact}`,
           );
         }
-        const swcWasmDir = await ensureLocalSwcWasm(pod, projectFiles);
-        logPhase('5.npm-install:done', {
-          addedPackages,
-          hasNext,
-          swcWasmDir,
-        });
+        logPhase('5.npm-install:done', { addedPackages, hasVite, hasReact });
         if (cancelled) {
           logPhase('cancelled:after-install');
           return;
@@ -518,19 +448,17 @@ export function useNodepodPreview({
 
         setStatus('starting');
         const { cmd, args } = detectDevCommand(projectFiles);
-        // NEXT_TEST_WASM_DIR forces Next to load local wasm.js (skips CDN/registry download).
-        const devEnv = {
-          NEXT_TEST_WASM_DIR: swcWasmDir,
-          NEXT_TELEMETRY_DISABLED: '1',
-        };
-        logPhase('6.dev-server:spawn', { cmd, args, env: devEnv });
-        const proc = await pod.spawn(cmd, args, { env: devEnv });
+        logPhase('6.dev-server:spawn', { cmd, args });
+        const proc = await pod.spawn(cmd, args);
         proc.on('output', (text: string) => {
           console.log(`${LOG} [6.dev-server:stdout]`, text);
-          // Next finished booting — now wait for direct HTTP + SW proxy.
-          if (!readyRef.current && !cancelled && /Ready in /i.test(text)) {
-            const port = pendingPort ?? 3000;
-            const url = pendingUrl || pod.port(port) || pod.port(3000);
+          if (!readyRef.current && !cancelled && looksLikeDevServerReady(text)) {
+            const port = pendingPort ?? 5173;
+            const url =
+              pendingUrl ||
+              pod.port(port) ||
+              PREVIEW_PORTS.map((p) => pod.port(p)).find(Boolean) ||
+              null;
             if (url) promotePreview(url, port, 'stdout-ready');
           }
         });
@@ -541,15 +469,14 @@ export function useNodepodPreview({
           devExited = true;
           logPhase('6.dev-server:exit', { code, ready: readyRef.current });
           if (cancelled || readyRef.current) return;
-          fail(
-            `Dev server exited before becoming ready (code ${code}). ` +
-              'Often caused by Next downloading SWC at runtime inside Nodepod.',
-          );
+          fail(`Dev server exited before becoming ready (code ${code}).`);
           void teardown();
         });
 
-        const tryFallbackPorts = (phase: string): { url: string; port: number } | null => {
-          for (const port of [pendingPort, 3000, 5173, 8080]) {
+        const tryFallbackPorts = (
+          phase: string,
+        ): { url: string; port: number } | null => {
+          for (const port of [pendingPort, ...PREVIEW_PORTS]) {
             if (port == null) continue;
             const url = pod.port(port);
             if (url) {
@@ -558,11 +485,9 @@ export function useNodepodPreview({
             }
           }
           logPhase(phase, {
-            port3000: pod.port(3000),
-            port5173: pod.port(5173),
-            port8080: pod.port(8080),
             pendingPort,
             pendingUrl,
+            ports: Object.fromEntries(PREVIEW_PORTS.map((p) => [p, pod.port(p)])),
             devExited,
           });
           return pendingUrl && pendingPort != null
