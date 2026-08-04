@@ -12,6 +12,7 @@ import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@/modules/auth';
 import { useApiAction } from '@/lib/use-api-action';
@@ -26,6 +27,8 @@ const buildProfileSchema = (translate: ProfileTranslator) =>
     firstName: z.string().min(1, translate('profileSection.validation.firstNameRequired')).max(50, translate('profileSection.validation.firstNameMax')),
     lastName: z.string().min(1, translate('profileSection.validation.lastNameRequired')).max(50, translate('profileSection.validation.lastNameMax')),
     company: z.string().max(100, translate('profileSection.validation.companyMax')).optional(),
+    role: z.string().max(200, translate('profileSection.validation.roleMax')).optional(),
+    description: z.string().max(1000, translate('profileSection.validation.descriptionMax')).optional(),
   });
 
 type ProfileSchema = ReturnType<typeof buildProfileSchema>;
@@ -48,6 +51,8 @@ export function ProfileSection() {
       firstName: user?.profile?.firstName || '',
       lastName: user?.profile?.lastName || '',
       company: user?.profile?.company || '',
+      role: user?.profile?.role || '',
+      description: user?.profile?.description || '',
     },
   });
 
@@ -58,6 +63,8 @@ export function ProfileSection() {
         firstName: user.profile?.firstName || '',
         lastName: user.profile?.lastName || '',
         company: user.profile?.company || '',
+        role: user.profile?.role || '',
+        description: user.profile?.description || '',
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -128,6 +135,34 @@ export function ProfileSection() {
                   <Input placeholder={t('profileSection.fields.company.placeholder')} disabled={isLoading} {...field} />
                 </FormControl>
                 <FormDescription>{t('profileSection.fields.company.optional')}</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='role'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('profileSection.fields.role.label')}</FormLabel>
+                <FormControl>
+                  <Input placeholder={t('profileSection.fields.role.placeholder')} disabled={isLoading} {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='description'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('profileSection.fields.description.label')}</FormLabel>
+                <FormControl>
+                  <Textarea placeholder={t('profileSection.fields.description.placeholder')} disabled={isLoading} {...field} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )}
