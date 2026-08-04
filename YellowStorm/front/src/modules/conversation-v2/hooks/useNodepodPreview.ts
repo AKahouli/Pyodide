@@ -34,6 +34,10 @@ export interface UseNodepodPreviewResult {
 const LOG = '[Nodepod]';
 const SWC_WASM_PATH = '/node_modules/@next/swc-wasm-nodejs';
 const NEXT_PKG_PATH = '/node_modules/next';
+/** Try ports / keep waiting — Next in Nodepod often needs ~15–45s (SWC). */
+const READY_SOFT_MS = 60_000;
+/** Absolute give-up if still no port and process has not exited. */
+const READY_HARD_MS = 120_000;
 
 function logPhase(phase: string, details?: Record<string, unknown>) {
   if (details) {
@@ -159,7 +163,9 @@ export function useNodepodPreview({
 
   useEffect(() => {
     let cancelled = false;
-    let fallbackTimer: number | undefined;
+    let softTimer: number | undefined;
+    let hardTimer: number | undefined;
+    let devExited = false;
     readyRef.current = false;
 
     logPhase('0.effect-start', {
@@ -171,6 +177,17 @@ export function useNodepodPreview({
       crossOriginIsolated: globalThis.crossOriginIsolated === true,
       hasSharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
     });
+
+    const clearReadyTimers = () => {
+      if (softTimer !== undefined) {
+        window.clearTimeout(softTimer);
+        softTimer = undefined;
+      }
+      if (hardTimer !== undefined) {
+        window.clearTimeout(hardTimer);
+        hardTimer = undefined;
+      }
+    };
 
     const teardown = async () => {
       const pod = podRef.current;
@@ -189,10 +206,20 @@ export function useNodepodPreview({
     };
 
     const fail = (message: string) => {
-      if (cancelled) return;
+      if (cancelled || readyRef.current) return;
+      clearReadyTimers();
       logPhase('8.error', { message });
       setError(message);
       setStatus('error');
+    };
+
+    const markReady = (url: string | null, source: string) => {
+      if (cancelled || readyRef.current) return;
+      readyRef.current = true;
+      clearReadyTimers();
+      logPhase('6.ready', { source, previewUrl: url });
+      setPreviewUrl(url);
+      setStatus('ready');
     };
 
     const run = async () => {
@@ -236,11 +263,9 @@ export function useNodepodPreview({
               logPhase('6.server-ready:ignored-cancelled', { port, url });
               return;
             }
-            readyRef.current = true;
             const resolved = url || pod.port(port) || null;
             logPhase('6.server-ready', { port, url, resolvedPreviewUrl: resolved });
-            setPreviewUrl(resolved);
-            setStatus('ready');
+            markReady(resolved, 'onServerReady');
           },
         });
         logPhase('4.boot:done');
@@ -312,12 +337,9 @@ export function useNodepodPreview({
           console.warn(`${LOG} [6.dev-server:stderr]`, text);
         });
         proc.on('exit', (code) => {
+          devExited = true;
           logPhase('6.dev-server:exit', { code, ready: readyRef.current });
           if (cancelled || readyRef.current) return;
-          if (fallbackTimer !== undefined) {
-            window.clearTimeout(fallbackTimer);
-            fallbackTimer = undefined;
-          }
           fail(
             `Dev server exited before becoming ready (code ${code}). ` +
               'Often caused by Next downloading SWC at runtime inside Nodepod.',
@@ -325,30 +347,63 @@ export function useNodepodPreview({
           void teardown();
         });
 
-        fallbackTimer = window.setTimeout(() => {
+        const tryFallbackPorts = (phase: string): string | null => {
+          const fallback = pod.port(3000) || pod.port(5173) || pod.port(8080);
+          logPhase(phase, {
+            port3000: pod.port(3000),
+            port5173: pod.port(5173),
+            port8080: pod.port(8080),
+            fallback,
+            devExited,
+          });
+          return fallback;
+        };
+
+        // Soft: adopt a port if Next is up; if the process is still alive with
+        // no port yet, keep waiting (Next+SWC in Nodepod often exceeds 15s).
+        softTimer = window.setTimeout(() => {
           if (cancelled || podRef.current !== pod || readyRef.current) {
-            logPhase('7.fallback-url:skipped', {
+            logPhase('7.soft-timeout:skipped', {
               cancelled,
               ready: readyRef.current,
               samePod: podRef.current === pod,
             });
             return;
           }
-          const fallback = pod.port(3000) || pod.port(5173) || pod.port(8080);
-          logPhase('7.fallback-url', {
-            port3000: pod.port(3000),
-            port5173: pod.port(5173),
-            port8080: pod.port(8080),
-            fallback,
-          });
+          const fallback = tryFallbackPorts('7.soft-timeout');
           if (fallback) {
-            readyRef.current = true;
-            setPreviewUrl(fallback);
-            setStatus('ready');
+            markReady(fallback, 'soft-timeout-port');
             return;
           }
-          fail('Dev server did not become ready in time (no listening port).');
-        }, 15_000);
+          if (!devExited) {
+            logPhase('7.soft-timeout:still-starting', {
+              softMs: READY_SOFT_MS,
+              hardMs: READY_HARD_MS,
+            });
+            return;
+          }
+          fail('Dev server exited without opening a preview port.');
+        }, READY_SOFT_MS);
+
+        hardTimer = window.setTimeout(() => {
+          if (cancelled || podRef.current !== pod || readyRef.current) {
+            logPhase('7.hard-timeout:skipped', {
+              cancelled,
+              ready: readyRef.current,
+              samePod: podRef.current === pod,
+            });
+            return;
+          }
+          const fallback = tryFallbackPorts('7.hard-timeout');
+          if (fallback) {
+            markReady(fallback, 'hard-timeout-port');
+            return;
+          }
+          fail(
+            `Dev server did not become ready within ${READY_HARD_MS / 1000}s (no listening port).`,
+          );
+          void teardown();
+        }, READY_HARD_MS);
       } catch (err) {
         if (cancelled) {
           logPhase('cancelled:after-error');
@@ -365,7 +420,7 @@ export function useNodepodPreview({
     return () => {
       logPhase('0.effect-cleanup', { sessionId, revision });
       cancelled = true;
-      if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer);
+      clearReadyTimers();
       void teardown();
     };
   }, [sessionId, cephPath, filesTree, revision, retryToken]);
