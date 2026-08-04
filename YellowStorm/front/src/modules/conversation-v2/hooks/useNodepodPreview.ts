@@ -30,23 +30,46 @@ export interface UseNodepodPreviewResult {
   retry: () => void;
 }
 
+const LOG = '[Nodepod]';
+
+function logPhase(phase: string, details?: Record<string, unknown>) {
+  if (details) {
+    console.log(`${LOG} [${phase}]`, details);
+  } else {
+    console.log(`${LOG} [${phase}]`);
+  }
+}
+
 async function fetchProjectFiles(
   sessionId: string,
   cephPath: string,
   filesTree: FilesTreeNode,
 ): Promise<Record<string, string | Uint8Array>> {
   const flat = flattenFilesTree(filesTree);
+  logPhase('1.flatten-tree', {
+    fileCount: flat.length,
+    samplePaths: flat.slice(0, 8).map((f) => f.path),
+  });
   if (flat.length === 0) {
     throw new Error('No source files in tree');
   }
 
-  const { items } = await conversationV2Api.getAppSourceUrls(
+  const paths = flat.map((f) => f.path);
+  logPhase('2.presign-urls:request', {
     sessionId,
     cephPath,
-    flat.map((f) => f.path),
-  );
+    pathCount: paths.length,
+  });
+  const { items } = await conversationV2Api.getAppSourceUrls(sessionId, cephPath, paths);
+  logPhase('2.presign-urls:response', {
+    itemCount: items.length,
+    sample: items.slice(0, 3).map((i) => ({ path: i.path, urlHost: safeHost(i.url) })),
+  });
 
+  logPhase('3.download-sources:start', { itemCount: items.length });
   const files: Record<string, string | Uint8Array> = {};
+  let textCount = 0;
+  let binaryCount = 0;
   await Promise.all(
     items.map(async ({ path, url }) => {
       const res = await fetch(url);
@@ -56,12 +79,28 @@ async function fetchProjectFiles(
       const vfsPath = path.startsWith('/') ? path : `/${path}`;
       if (isTextSourcePath(path)) {
         files[vfsPath] = await res.text();
+        textCount += 1;
       } else {
         files[vfsPath] = new Uint8Array(await res.arrayBuffer());
+        binaryCount += 1;
       }
     }),
   );
+  logPhase('3.download-sources:done', {
+    vfsFileCount: Object.keys(files).length,
+    textCount,
+    binaryCount,
+    hasPackageJson: typeof files['/package.json'] === 'string',
+  });
   return files;
+}
+
+function safeHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '(invalid-url)';
+  }
 }
 
 function detectDevCommand(files: Record<string, string | Uint8Array>): {
@@ -100,21 +139,36 @@ export function useNodepodPreview({
   const podRef = useRef<Awaited<ReturnType<typeof Nodepod.boot>> | null>(null);
   const readyRef = useRef(false);
 
-  const retry = useCallback(() => setRetryToken((n) => n + 1), []);
+  const retry = useCallback(() => {
+    logPhase('retry', { sessionId, cephPath, revision });
+    setRetryToken((n) => n + 1);
+  }, [sessionId, cephPath, revision]);
 
   useEffect(() => {
     let cancelled = false;
     let fallbackTimer: number | undefined;
     readyRef.current = false;
 
+    logPhase('0.effect-start', {
+      sessionId,
+      cephPath,
+      revision,
+      retryToken,
+      hasFilesTree: !!filesTree,
+    });
+
     const teardown = async () => {
       const pod = podRef.current;
       podRef.current = null;
       if (pod) {
+        logPhase('9.teardown:start');
         try {
           await pod.teardown();
-        } catch {
-          // ignore teardown races
+          logPhase('9.teardown:done');
+        } catch (err) {
+          logPhase('9.teardown:error', {
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
     };
@@ -126,6 +180,11 @@ export function useNodepodPreview({
       setError(null);
 
       if (!sessionId || !cephPath || !filesTree) {
+        logPhase('0.skip-missing-sources', {
+          hasSessionId: !!sessionId,
+          hasCephPath: !!cephPath,
+          hasFilesTree: !!filesTree,
+        });
         setStatus('idle');
         setError(
           !cephPath || !filesTree
@@ -136,40 +195,86 @@ export function useNodepodPreview({
       }
 
       setStatus('loading');
+      logPhase('flow:loading');
       try {
         const projectFiles = await fetchProjectFiles(sessionId, cephPath, filesTree);
-        if (cancelled) return;
+        if (cancelled) {
+          logPhase('cancelled:after-download');
+          return;
+        }
         setFiles(projectFiles);
 
+        logPhase('4.boot:start', { fileCount: Object.keys(projectFiles).length });
         const pod = await Nodepod.boot({
           files: projectFiles,
           workdir: '/',
           watermark: false,
           onServerReady: (port, url) => {
-            if (cancelled) return;
+            if (cancelled) {
+              logPhase('6.server-ready:ignored-cancelled', { port, url });
+              return;
+            }
             readyRef.current = true;
-            setPreviewUrl(url || pod.port(port) || null);
+            const resolved = url || pod.port(port) || null;
+            logPhase('6.server-ready', { port, url, resolvedPreviewUrl: resolved });
+            setPreviewUrl(resolved);
             setStatus('ready');
           },
         });
+        logPhase('4.boot:done');
         if (cancelled) {
+          logPhase('cancelled:after-boot');
           await pod.teardown();
           return;
         }
         podRef.current = pod;
 
         setStatus('installing');
+        logPhase('5.npm-install:start');
         const install = await pod.spawn('npm', ['install']);
+        install.on('output', (text) => {
+          console.log(`${LOG} [5.npm-install:stdout]`, text);
+        });
+        install.on('error', (text) => {
+          console.warn(`${LOG} [5.npm-install:stderr]`, text);
+        });
         await install.completion;
-        if (cancelled) return;
+        logPhase('5.npm-install:done');
+        if (cancelled) {
+          logPhase('cancelled:after-install');
+          return;
+        }
 
         setStatus('starting');
         const { cmd, args } = detectDevCommand(projectFiles);
-        void pod.spawn(cmd, args);
+        logPhase('6.dev-server:spawn', { cmd, args });
+        const proc = await pod.spawn(cmd, args);
+        proc.on('output', (text) => {
+          console.log(`${LOG} [6.dev-server:stdout]`, text);
+        });
+        proc.on('error', (text) => {
+          console.warn(`${LOG} [6.dev-server:stderr]`, text);
+        });
+        proc.on('exit', (code) => {
+          logPhase('6.dev-server:exit', { code });
+        });
 
         fallbackTimer = window.setTimeout(() => {
-          if (cancelled || podRef.current !== pod || readyRef.current) return;
+          if (cancelled || podRef.current !== pod || readyRef.current) {
+            logPhase('7.fallback-url:skipped', {
+              cancelled,
+              ready: readyRef.current,
+              samePod: podRef.current === pod,
+            });
+            return;
+          }
           const fallback = pod.port(3000) || pod.port(5173) || pod.port(8080);
+          logPhase('7.fallback-url', {
+            port3000: pod.port(3000),
+            port5173: pod.port(5173),
+            port8080: pod.port(8080),
+            fallback,
+          });
           if (fallback) {
             readyRef.current = true;
             setPreviewUrl(fallback);
@@ -177,8 +282,12 @@ export function useNodepodPreview({
           }
         }, 15_000);
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled) {
+          logPhase('cancelled:after-error');
+          return;
+        }
         const message = err instanceof Error ? err.message : String(err);
+        logPhase('8.error', { message, err });
         setError(message);
         setStatus('error');
         await teardown();
@@ -188,6 +297,7 @@ export function useNodepodPreview({
     void run();
 
     return () => {
+      logPhase('0.effect-cleanup', { sessionId, revision });
       cancelled = true;
       if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer);
       void teardown();

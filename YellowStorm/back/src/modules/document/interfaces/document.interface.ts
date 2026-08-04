@@ -61,12 +61,6 @@ export interface SasUrlOptions {
 
   /** Check if the blob exists before generating the URL (throws NotFoundException if not) */
   checkExists?: boolean;
-
-  /**
-   * Allow object keys without a file extension (e.g. Dockerfile, LICENSE).
-   * Default false — keys without '.' are treated as folders and rejected.
-   */
-  allowExtensionless?: boolean;
 }
 
 export interface DocumentListOptions {

@@ -792,6 +792,14 @@ export const useConversationV2Store = create<State & Actions>()(
                 return withSeq({ streaming: false, liveToolCallId: null });
               case 'application_component':
                 // Agent pushed an embeddable app: boot Nodepod from Ceph sources.
+                console.log('[Nodepod] [sse:application_component]', {
+                  event_id: event.event_id,
+                  url: event.url,
+                  title: event.title,
+                  ceph_path: event.ceph_path,
+                  file_count: event.file_count,
+                  hasFilesTree: !!event.files_tree,
+                });
                 return withSeq({
                   events: [...state.events, event],
                   applicationComponent: {
@@ -861,6 +869,14 @@ function deriveApplicationComponent(
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
     if (ev.type === 'application_component') {
+      console.log('[Nodepod] [replay:deriveApplicationComponent]', {
+        event_id: ev.event_id,
+        url: ev.url,
+        title: ev.title,
+        ceph_path: ev.ceph_path,
+        file_count: ev.file_count,
+        hasFilesTree: !!ev.files_tree,
+      });
       return {
         url: ev.url,
         title: ev.title ?? '',

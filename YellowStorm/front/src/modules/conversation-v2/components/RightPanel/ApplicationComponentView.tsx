@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   EyeIcon,
   FileCodeIcon,
@@ -93,6 +93,20 @@ export function ApplicationComponentView({
     filesTree,
     revision,
   });
+
+  useEffect(() => {
+    console.log('[Nodepod] [ui:ApplicationComponentView]', {
+      sessionId,
+      title,
+      cephPath,
+      fileCount,
+      revision,
+      status,
+      previewUrl,
+      error,
+      hydratedFiles: files ? Object.keys(files).length : 0,
+    });
+  }, [sessionId, title, cephPath, fileCount, revision, status, previewUrl, error, files]);
 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [mainPane, setMainPane] = useState<MainPane>('preview');

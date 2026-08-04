@@ -241,9 +241,23 @@ export const conversationV2Api = {
     cephPath: string,
     paths: string[],
   ): Promise<{ items: Array<{ path: string; url: string }> }> {
-    const res = await apiClient.post<
-      ApiResponse<{ items: Array<{ path: string; url: string }> }>
-    >(`/conversation-v2/sessions/${sessionId}/app-source/urls`, { cephPath, paths });
-    return res.data.data;
+    console.log('[Nodepod] [api:getAppSourceUrls:request]', {
+      sessionId,
+      cephPath,
+      pathCount: paths.length,
+      samplePaths: paths.slice(0, 5),
+    });
+    try {
+      const res = await apiClient.post<
+        ApiResponse<{ items: Array<{ path: string; url: string }> }>
+      >(`/conversation-v2/sessions/${sessionId}/app-source/urls`, { cephPath, paths });
+      console.log('[Nodepod] [api:getAppSourceUrls:response]', {
+        itemCount: res.data.data?.items?.length ?? 0,
+      });
+      return res.data.data;
+    } catch (err) {
+      console.error('[Nodepod] [api:getAppSourceUrls:error]', err);
+      throw err;
+    }
   },
 };

@@ -2076,6 +2076,13 @@ export class PlaybookExecutionService {
     playbookName: string = '',
     playbookId: string = '',
   ): Promise<void> {
+    // Validate before scheduling idle timers. A missing/invalid stream used to
+    // arm setTimeout then throw on call.on(...), leaving a leaked timer that
+    // later crashed the process with "Cannot read properties of undefined (reading 'cancel')".
+    if (!call || typeof (call as { on?: unknown }).on !== 'function') {
+      throw new Error('Playbook workflow stream is unavailable');
+    }
+
     const stepBuffer = new Map<string, BufferedStepResult>();
     this.bufferService.activeStepBuffers.set(executionId, stepBuffer);
     const suspendedInterrupts: Array<{ interrupt: any; threadId: string }> = [];
@@ -2098,12 +2105,30 @@ export class PlaybookExecutionService {
     const timeoutMs = this.grpcService.workflowTimeoutMs;
     let timeoutHandle: NodeJS.Timeout | null = null;
 
+    const clearIdleTimeout = () => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+    };
+
     const resetIdleTimeout = () => {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
+      clearIdleTimeout();
       timeoutHandle = setTimeout(() => {
+        timeoutHandle = null;
         this.logger.error('Workflow stream idle timeout', { executionId, timeoutMs });
-        call.cancel();
+        // Optional: cancel may be absent on test doubles or already-destroyed streams.
+        try {
+          call.cancel?.();
+        } catch (cancelErr) {
+          this.logger.warn('Idle timeout failed to cancel workflow stream', {
+            executionId,
+            error: cancelErr instanceof Error ? cancelErr.message : String(cancelErr),
+          });
+        }
       }, timeoutMs);
+      // Do not keep the Node event loop alive solely for idle cancellation (Jest / shutdown).
+      timeoutHandle.unref?.();
     };
 
     resetIdleTimeout();
@@ -2139,7 +2164,11 @@ export class PlaybookExecutionService {
               error: (err as Error).message,
               stack: (err as Error).stack,
             });
-            call.cancel();
+            try {
+              call.cancel?.();
+            } catch {
+              // Best-effort cancel after handler failure.
+            }
             reject(err);
             return;
           }
@@ -2212,7 +2241,7 @@ export class PlaybookExecutionService {
       });
 
       call.on('end', async () => {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
+        clearIdleTimeout();
         this.grpcService.removeStream(executionId);
         try {
           await this.bufferService.flushStepBuffer(executionId, stepBuffer, async (taskId, buffered) => {
@@ -2330,7 +2359,7 @@ export class PlaybookExecutionService {
 
       call.on('error', (err: Error) => {
         void (async () => {
-          if (timeoutHandle) clearTimeout(timeoutHandle);
+          clearIdleTimeout();
           this.grpcService.removeStream(executionId);
 
           const wasCancelled = this.grpcService.wasCancelled(executionId);

@@ -33,7 +33,6 @@ import type { ConversationV2SessionPermission } from './constants/conversation-v
 import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { GetFileSignedUrlDto } from './dto/get-file-signed-url.dto';
-import { GetAppSourceUrlsDto } from './dto/get-app-source-urls.dto';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
@@ -533,43 +532,6 @@ export class ConversationV2Controller {
   ): Promise<{ url: string }> {
     const url = await this.workspaceDocuments.generateReadUrl(body.path);
     return { url };
-  }
-
-  /**
-   * Batch-presign read URLs for generated app sources under a Ceph prefix.
-   * Used by the frontend to hydrate Nodepod's virtual filesystem.
-   */
-  @Post('sessions/:id/app-source/urls')
-  @HttpCode(HttpStatus.OK)
-  @UseGuards(ConversationV2SessionAccessGuard)
-  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_READ)
-  async getAppSourceUrls(
-    @Param('id') _id: string,
-    @Body() body: GetAppSourceUrlsDto,
-  ): Promise<{ items: Array<{ path: string; url: string }> }> {
-    const prefix = body.cephPath.replace(/\/+$/, '');
-    const items: Array<{ path: string; url: string }> = [];
-
-    for (const relative of body.paths) {
-      const normalized = relative.replace(/^\/+/, '').replace(/\\/g, '/');
-      if (
-        !normalized ||
-        normalized.includes('..') ||
-        normalized.startsWith('/') ||
-        normalized.includes('\0')
-      ) {
-        throw new BadRequestException(`Invalid source path: ${relative}`);
-      }
-      const objectKey = `${prefix}/${normalized}`;
-      // App trees include extensionless files (Dockerfile, LICENSE, …) under a
-      // Ceph prefix that itself has no dots — bypass the workspace "folder" guard.
-      const url = await this.workspaceDocuments.generateReadUrl(objectKey, {
-        allowExtensionless: true,
-      });
-      items.push({ path: normalized, url });
-    }
-
-    return { items };
   }
 
   @Get('sessions/:id/vnc/signed-url')

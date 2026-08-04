@@ -344,16 +344,11 @@ export class WorkspaceDocumentService {
 
   /**
    * Generate a presigned read URL for a document by its path.
-   * Pass `allowExtensionless` for app-source objects like Dockerfile / LICENSE.
    */
-  async generateReadUrl(
-    path: string,
-    options?: { allowExtensionless?: boolean },
-  ): Promise<string> {
+  async generateReadUrl(path: string): Promise<string> {
     return this.documentService.generateSasUrl(path, {
       permissions: 'r',
       expiryMinutes: this.sasUrlExpiryMinutes,
-      allowExtensionless: options?.allowExtensionless,
     });
   }
 

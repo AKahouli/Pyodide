@@ -264,9 +264,7 @@ export class DocumentService {
     this.ensureAvailable();
 
     // Folders have no extension and no underlying S3 object — reject early.
-    // App-source keys (Dockerfile, LICENSE, …) under a Ceph prefix with no dots
-    // must opt in via allowExtensionless.
-    if (!options.allowExtensionless && !objectKey.includes('.')) {
+    if (!objectKey.includes('.')) {
       throw new BadRequestException('Cannot generate download URL for folders');
     }
 
