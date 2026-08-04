@@ -5,6 +5,7 @@ import type { FilesTreeNode } from '../types';
 import { isTextSourcePath } from '../utils/app-source';
 import { flattenFilesTree } from '../utils/files-tree';
 import { parseNpmAddedPackages } from '../utils/npm-install-output';
+import { readNextVersionFromPackageJson } from '../utils/read-next-version';
 
 export type NodepodPreviewStatus =
   | 'idle'
@@ -33,6 +34,8 @@ export interface UseNodepodPreviewResult {
 
 const LOG = '[Nodepod]';
 const SWC_WASM_PATH = '/node_modules/@next/swc-wasm-nodejs';
+const SWC_WASM_JS = `${SWC_WASM_PATH}/wasm.js`;
+const SWC_WASM_BIN = `${SWC_WASM_PATH}/wasm_bg.wasm`;
 const NEXT_PKG_PATH = '/node_modules/next';
 /** Try ports / keep waiting — Next in Nodepod often needs ~15–45s (SWC). */
 const READY_SOFT_MS = 60_000;
@@ -136,6 +139,73 @@ function detectDevCommand(files: Record<string, string | Uint8Array>): {
     }
   }
   return { cmd: 'npm', args: ['run', 'dev'] };
+}
+
+function readNextVersion(files: Record<string, string | Uint8Array>): string | null {
+  const pkgRaw = files['/package.json'];
+  if (typeof pkgRaw !== 'string') return null;
+  return readNextVersionFromPackageJson(pkgRaw);
+}
+
+type NodepodInstance = Awaited<ReturnType<typeof Nodepod.boot>>;
+
+async function swcWasmFilesPresent(pod: NodepodInstance): Promise<{
+  hasJs: boolean;
+  hasBin: boolean;
+  binBytes: number | null;
+}> {
+  const hasJs = await pod.fs.exists(SWC_WASM_JS);
+  const hasBin = await pod.fs.exists(SWC_WASM_BIN);
+  let binBytes: number | null = null;
+  if (hasBin) {
+    try {
+      binBytes = (await pod.fs.stat(SWC_WASM_BIN)).size;
+    } catch {
+      binBytes = null;
+    }
+  }
+  return { hasJs, hasBin, binBytes };
+}
+
+/** Ensure local WASM bindings exist and point Next at them (skip CDN/npm download). */
+async function ensureLocalSwcWasm(
+  pod: NodepodInstance,
+  projectFiles: Record<string, string | Uint8Array>,
+): Promise<string> {
+  const nextVersion = readNextVersion(projectFiles);
+  let files = await swcWasmFilesPresent(pod);
+  logPhase('5.swc-wasm:check', { nextVersion, ...files });
+
+  // Incomplete snapshot often leaves an empty package dir without the 28MB wasm.
+  const incomplete =
+    !files.hasJs || !files.hasBin || (files.binBytes != null && files.binBytes < 1_000_000);
+
+  if (incomplete) {
+    const spec = nextVersion
+      ? `@next/swc-wasm-nodejs@${nextVersion}`
+      : '@next/swc-wasm-nodejs';
+    logPhase('5.swc-wasm:install', { spec });
+    const install = await pod.spawn('npm', ['install', spec, '--no-save']);
+    install.on('output', (text) => {
+      console.log(`${LOG} [5.swc-wasm:install:stdout]`, text);
+    });
+    install.on('error', (text) => {
+      console.warn(`${LOG} [5.swc-wasm:install:stderr]`, text);
+    });
+    const result = await install.completion;
+    files = await swcWasmFilesPresent(pod);
+    logPhase('5.swc-wasm:install:done', {
+      exitCode: result.exitCode,
+      ...files,
+    });
+    if (result.exitCode !== 0 || !files.hasJs || !files.hasBin) {
+      throw new Error(
+        `Failed to install ${spec} for Nodepod (need wasm.js + wasm_bg.wasm).`,
+      );
+    }
+  }
+
+  return SWC_WASM_PATH;
 }
 
 /**
@@ -288,12 +358,12 @@ export function useNodepodPreview({
         const installResult = await install.completion;
         const addedPackages = parseNpmAddedPackages(installResult.stdout);
         const hasNext = await pod.fs.exists(NEXT_PKG_PATH);
-        const hasSwcWasm = await pod.fs.exists(SWC_WASM_PATH);
+        const hasSwcWasmDir = await pod.fs.exists(SWC_WASM_PATH);
         logPhase('5.npm-install:verify', {
           exitCode: installResult.exitCode,
           addedPackages,
           hasNext,
-          hasSwcWasm,
+          hasSwcWasmDir,
           swcWasmPath: SWC_WASM_PATH,
         });
         if (installResult.exitCode !== 0) {
@@ -306,20 +376,16 @@ export function useNodepodPreview({
               : 'node_modules/next is missing after npm install.',
           );
         }
-        if (!hasSwcWasm) {
-          console.warn(
-            `${LOG} [5.npm-install:warn] ${SWC_WASM_PATH} missing — Next may try to download SWC at runtime and fail in Nodepod.`,
-          );
-        }
         if (addedPackages !== null && addedPackages === 0) {
           console.warn(
-            `${LOG} [5.npm-install:warn] added 0 packages (cache/snapshot hit or empty install). hasNext=${hasNext} hasSwcWasm=${hasSwcWasm}`,
+            `${LOG} [5.npm-install:warn] added 0 packages (cache/snapshot hit or empty install). hasNext=${hasNext}`,
           );
         }
+        const swcWasmDir = await ensureLocalSwcWasm(pod, projectFiles);
         logPhase('5.npm-install:done', {
           addedPackages,
           hasNext,
-          hasSwcWasm,
+          swcWasmDir,
         });
         if (cancelled) {
           logPhase('cancelled:after-install');
@@ -328,8 +394,13 @@ export function useNodepodPreview({
 
         setStatus('starting');
         const { cmd, args } = detectDevCommand(projectFiles);
-        logPhase('6.dev-server:spawn', { cmd, args });
-        const proc = await pod.spawn(cmd, args);
+        // NEXT_TEST_WASM_DIR forces Next to load local wasm.js (skips CDN/registry download).
+        const devEnv = {
+          NEXT_TEST_WASM_DIR: swcWasmDir,
+          NEXT_TELEMETRY_DISABLED: '1',
+        };
+        logPhase('6.dev-server:spawn', { cmd, args, env: devEnv });
+        const proc = await pod.spawn(cmd, args, { env: devEnv });
         proc.on('output', (text) => {
           console.log(`${LOG} [6.dev-server:stdout]`, text);
         });
