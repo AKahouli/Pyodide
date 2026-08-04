@@ -34,6 +34,8 @@ export interface UseNodepodPreviewResult {
 const LOG = '[Nodepod]';
 const VITE_PKG_PATH = '/node_modules/vite';
 const REACT_PKG_PATH = '/node_modules/react';
+const ROLLDOWN_PKG_PATH = '/node_modules/rolldown';
+const ROLLDOWN_WASM_PATH = '/node_modules/@rolldown/binding-wasm32-wasi';
 /** Vite usually binds quickly; keep a soft window then keep waiting if alive. */
 const READY_SOFT_MS = 20_000;
 const READY_HARD_MS = 90_000;
@@ -41,6 +43,63 @@ const READY_HARD_MS = 90_000;
 const PREVIEW_PORTS = [5173, 3000, 8080] as const;
 
 type NodepodInstance = Awaited<ReturnType<typeof Nodepod.boot>>;
+
+async function readPackageVersion(
+  pod: NodepodInstance,
+  packageJsonPath: string,
+): Promise<string | null> {
+  try {
+    const raw = await pod.fs.readFile(packageJsonPath, 'utf-8');
+    const pkg = JSON.parse(raw) as { version?: string };
+    return pkg.version ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Vite 8+/rolldown needs the wasm32-wasi optional binding inside Nodepod.
+ * npm skips cpu:["wasm32"] packages unless installed explicitly with --cpu=wasm32.
+ */
+async function ensureRolldownWasmBinding(pod: NodepodInstance): Promise<boolean> {
+  const hasRolldown = await pod.fs.exists(ROLLDOWN_PKG_PATH);
+  if (!hasRolldown) {
+    logPhase('5.rolldown-wasm:skip', { reason: 'no-rolldown' });
+    return false;
+  }
+
+  const version =
+    (await readPackageVersion(pod, `${ROLLDOWN_PKG_PATH}/package.json`)) ?? 'latest';
+  const already = await pod.fs.exists(ROLLDOWN_WASM_PATH);
+  logPhase('5.rolldown-wasm:check', { version, alreadyInstalled: already });
+
+  const spec = `@rolldown/binding-wasm32-wasi@${version}`;
+  logPhase('5.rolldown-wasm:install', { spec });
+  const install = await pod.spawn('npm', [
+    'install',
+    spec,
+    '--no-save',
+    '--cpu=wasm32',
+  ]);
+  install.on('output', (text: string) => {
+    console.log(`${LOG} [5.rolldown-wasm:install:stdout]`, text);
+  });
+  install.on('error', (text: string) => {
+    console.warn(`${LOG} [5.rolldown-wasm:install:stderr]`, text);
+  });
+  const result = await install.completion;
+  const present = await pod.fs.exists(ROLLDOWN_WASM_PATH);
+  logPhase('5.rolldown-wasm:install:done', {
+    exitCode: result.exitCode,
+    present,
+  });
+  if (result.exitCode !== 0 || !present) {
+    throw new Error(
+      `Failed to install ${spec} for Nodepod (Vite/rolldown needs the WASI binding).`,
+    );
+  }
+  return true;
+}
 
 function logPhase(phase: string, details?: Record<string, unknown>) {
   if (details) {
@@ -440,7 +499,21 @@ export function useNodepodPreview({
             `${LOG} [5.npm-install:warn] added 0 packages (cache/snapshot hit or empty install). hasVite=${hasVite} hasReact=${hasReact}`,
           );
         }
-        logPhase('5.npm-install:done', { addedPackages, hasVite, hasReact });
+        const needsRolldownWasm = await ensureRolldownWasmBinding(pod);
+        if (
+          needsRolldownWasm &&
+          typeof SharedArrayBuffer === 'undefined'
+        ) {
+          throw new Error(
+            'Vite/rolldown requires SharedArrayBuffer (COOP/COEP). Hard-refresh after confirming Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers.',
+          );
+        }
+        logPhase('5.npm-install:done', {
+          addedPackages,
+          hasVite,
+          hasReact,
+          needsRolldownWasm,
+        });
         if (cancelled) {
           logPhase('cancelled:after-install');
           return;
@@ -448,8 +521,13 @@ export function useNodepodPreview({
 
         setStatus('starting');
         const { cmd, args } = detectDevCommand(projectFiles);
-        logPhase('6.dev-server:spawn', { cmd, args });
-        const proc = await pod.spawn(cmd, args);
+        // Force rolldown's NAPI loader onto the wasm32-wasi package in Nodepod.
+        // Nodepod already sets NAPI_RS_FORCE_WASM=1; FORCE_WASI is the napi-rs flag.
+        const devEnv = needsRolldownWasm
+          ? { NAPI_RS_FORCE_WASI: 'true', NAPI_RS_FORCE_WASM: '1' }
+          : undefined;
+        logPhase('6.dev-server:spawn', { cmd, args, env: devEnv ?? null });
+        const proc = await pod.spawn(cmd, args, devEnv ? { env: devEnv } : undefined);
         proc.on('output', (text: string) => {
           console.log(`${LOG} [6.dev-server:stdout]`, text);
           if (!readyRef.current && !cancelled && looksLikeDevServerReady(text)) {
