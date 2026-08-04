@@ -13,6 +13,7 @@ import { UserModule } from '../user';
 import { UsageModule } from '../usage';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { WorkspaceModule } from '../workspace/workspace.module';
+import { HumainAgentModule } from '../humain-agent/humain-agent.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { WorkspaceModule } from '../workspace/workspace.module';
     forwardRef(() => UsageModule),
     forwardRef(() => AuthorizationModule),
     forwardRef(() => WorkspaceModule),
+    HumainAgentModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, JwtAuthGuard, InternalServiceGuard],

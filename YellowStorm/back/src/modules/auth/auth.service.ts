@@ -20,6 +20,7 @@ import { BadRequestException, UnauthorizedException, ForbiddenException, NotFoun
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { HumainAgentService } from '../humain-agent/humain-agent.service';
 
 @Injectable()
 export class AuthService {
@@ -45,6 +46,7 @@ export class AuthService {
     private readonly systemService: SystemService,
     @Inject(forwardRef(() => WorkspaceInitializerService))
     private readonly workspaceInitializer: WorkspaceInitializerService,
+    private readonly humainAgentService: HumainAgentService,
   ) {
     this.logger.setContext(AuthService.name);
     this.bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 12);
@@ -110,6 +112,12 @@ export class AuthService {
       });
     }
 
+    // Create the user's human agent (empty role/description until profile completion)
+    await this.humainAgentService.ensureForUser({
+      userId: user._id.toString(),
+      email: user.email,
+    });
+
     this.logger.log('User registered', { userId: user._id, email: user.email });
 
     // Send verification email
@@ -170,6 +178,16 @@ export class AuthService {
 
     // Update last login
     await this.userService.updateLastLogin(user._id.toString());
+
+    // Ensure the user has a human agent (covers already-registered users on next login)
+    await this.humainAgentService.ensureForUser({
+      userId: user._id.toString(),
+      email: user.email,
+      firstName: user.profile?.firstName,
+      lastName: user.profile?.lastName,
+      role: user.profile?.role,
+      description: user.profile?.description,
+    });
 
     this.logger.log('User logged in', {
       userId: user._id,
