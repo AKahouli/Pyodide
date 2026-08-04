@@ -140,6 +140,12 @@ jobs:
           path: yellowstorm-adk/
         continue-on-error: true
 
+      - name: Fix Python coverage paths
+        run: |
+          if [ -f yellowstorm-adk/coverage.xml ]; then
+            sed -i 's/filename="/filename="yellowstorm-adk\//g' yellowstorm-adk/coverage.xml
+          fi
+
       - name: Download backend coverage
         uses: actions/download-artifact@v4
         with:
