@@ -37,10 +37,10 @@ const SWC_WASM_PATH = '/node_modules/@next/swc-wasm-nodejs';
 const SWC_WASM_JS = `${SWC_WASM_PATH}/wasm.js`;
 const SWC_WASM_BIN = `${SWC_WASM_PATH}/wasm_bg.wasm`;
 const NEXT_PKG_PATH = '/node_modules/next';
-/** Try ports / keep waiting — Next in Nodepod often needs ~15–45s (SWC). */
-const READY_SOFT_MS = 60_000;
+/** Try ports soon after spawn — Next+local SWC is typically ready in <15s. */
+const READY_SOFT_MS = 20_000;
 /** Absolute give-up if still no port and process has not exited. */
-const READY_HARD_MS = 120_000;
+const READY_HARD_MS = 90_000;
 
 function logPhase(phase: string, details?: Record<string, unknown>) {
   if (details) {
@@ -147,6 +147,24 @@ function readNextVersion(files: Record<string, string | Uint8Array>): string | n
   return readNextVersionFromPackageJson(pkgRaw);
 }
 
+async function waitUntilPreviewReachable(
+  url: string,
+  isStale: () => boolean,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    if (isStale()) return false;
+    try {
+      const res = await fetch(url, { cache: 'no-store', redirect: 'follow' });
+      // Nodepod SW returns 503 until the worker proxy is wired; retry those.
+      if (res.status !== 503) return true;
+    } catch {
+      // Transient network / SW race — retry.
+    }
+    await new Promise((r) => window.setTimeout(r, 400));
+  }
+  return false;
+}
+
 type NodepodInstance = Awaited<ReturnType<typeof Nodepod.boot>>;
 
 async function swcWasmFilesPresent(pod: NodepodInstance): Promise<{
@@ -186,10 +204,10 @@ async function ensureLocalSwcWasm(
       : '@next/swc-wasm-nodejs';
     logPhase('5.swc-wasm:install', { spec });
     const install = await pod.spawn('npm', ['install', spec, '--no-save']);
-    install.on('output', (text) => {
+    install.on('output', (text: string) => {
       console.log(`${LOG} [5.swc-wasm:install:stdout]`, text);
     });
-    install.on('error', (text) => {
+    install.on('error', (text: string) => {
       console.warn(`${LOG} [5.swc-wasm:install:stderr]`, text);
     });
     const result = await install.completion;
@@ -225,6 +243,10 @@ export function useNodepodPreview({
   const [retryToken, setRetryToken] = useState(0);
   const podRef = useRef<Awaited<ReturnType<typeof Nodepod.boot>> | null>(null);
   const readyRef = useRef(false);
+  // Event polling rebuilds applicationComponent objects; keep the tree in a
+  // ref so identity churn does not cancel an in-flight Nodepod boot.
+  const filesTreeRef = useRef(filesTree);
+  filesTreeRef.current = filesTree;
 
   const retry = useCallback(() => {
     logPhase('retry', { sessionId, cephPath, revision });
@@ -237,13 +259,14 @@ export function useNodepodPreview({
     let hardTimer: number | undefined;
     let devExited = false;
     readyRef.current = false;
+    const tree = filesTreeRef.current;
 
     logPhase('0.effect-start', {
       sessionId,
       cephPath,
       revision,
       retryToken,
-      hasFilesTree: !!filesTree,
+      hasFilesTree: !!tree,
       crossOriginIsolated: globalThis.crossOriginIsolated === true,
       hasSharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
     });
@@ -258,6 +281,8 @@ export function useNodepodPreview({
         hardTimer = undefined;
       }
     };
+
+    const isStale = () => cancelled || podRef.current === null;
 
     const teardown = async () => {
       const pod = podRef.current;
@@ -284,12 +309,21 @@ export function useNodepodPreview({
     };
 
     const markReady = (url: string | null, source: string) => {
-      if (cancelled || readyRef.current) return;
+      if (cancelled || readyRef.current || !url) return;
       readyRef.current = true;
       clearReadyTimers();
-      logPhase('6.ready', { source, previewUrl: url });
-      setPreviewUrl(url);
-      setStatus('ready');
+      void (async () => {
+        const reachable = await waitUntilPreviewReachable(url, isStale);
+        if (cancelled) return;
+        logPhase('6.ready', { source, previewUrl: url, reachable });
+        setPreviewUrl(url);
+        setStatus('ready');
+        if (!reachable) {
+          console.warn(
+            `${LOG} [6.ready:warn] preview URL still returning errors after retries: ${url}`,
+          );
+        }
+      })();
     };
 
     const run = async () => {
@@ -298,15 +332,15 @@ export function useNodepodPreview({
       setFiles(null);
       setError(null);
 
-      if (!sessionId || !cephPath || !filesTree) {
+      if (!sessionId || !cephPath || !tree) {
         logPhase('0.skip-missing-sources', {
           hasSessionId: !!sessionId,
           hasCephPath: !!cephPath,
-          hasFilesTree: !!filesTree,
+          hasFilesTree: !!tree,
         });
         setStatus('idle');
         setError(
-          !cephPath || !filesTree
+          !cephPath || !tree
             ? 'Source files are not available yet for in-browser preview.'
             : null,
         );
@@ -316,7 +350,7 @@ export function useNodepodPreview({
       setStatus('loading');
       logPhase('flow:loading');
       try {
-        const projectFiles = await fetchProjectFiles(sessionId, cephPath, filesTree);
+        const projectFiles = await fetchProjectFiles(sessionId, cephPath, tree);
         if (cancelled) {
           logPhase('cancelled:after-download');
           return;
@@ -329,8 +363,13 @@ export function useNodepodPreview({
           workdir: '/',
           watermark: false,
           onServerReady: (port, url) => {
-            if (cancelled) {
-              logPhase('6.server-ready:ignored-cancelled', { port, url });
+            if (cancelled || podRef.current !== pod) {
+              logPhase('6.server-ready:ignored-stale', {
+                port,
+                url,
+                cancelled,
+                samePod: podRef.current === pod,
+              });
               return;
             }
             const resolved = url || pod.port(port) || null;
@@ -403,6 +442,12 @@ export function useNodepodPreview({
         const proc = await pod.spawn(cmd, args, { env: devEnv });
         proc.on('output', (text) => {
           console.log(`${LOG} [6.dev-server:stdout]`, text);
+          // Belt-and-suspenders: Nodepod onServerReady can be dropped if the
+          // effect was briefly cancelled; adopt the port when Next prints Ready.
+          if (!readyRef.current && !cancelled && /Ready in /i.test(text)) {
+            const url = pod.port(3000) || pod.port(5173) || pod.port(8080);
+            if (url) markReady(url, 'stdout-ready');
+          }
         });
         proc.on('error', (text) => {
           console.warn(`${LOG} [6.dev-server:stderr]`, text);
@@ -494,7 +539,7 @@ export function useNodepodPreview({
       clearReadyTimers();
       void teardown();
     };
-  }, [sessionId, cephPath, filesTree, revision, retryToken]);
+  }, [sessionId, cephPath, revision, retryToken]);
 
   return { status, previewUrl, error, files, retry };
 }

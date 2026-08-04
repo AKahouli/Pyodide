@@ -358,7 +358,10 @@ export const useConversationV2Store = create<State & Actions>()(
         if (cached) {
           const newCache = new Map(cache);
           newCache.delete(id);
-          const applicationComponent = deriveApplicationComponent(cached.events);
+          const applicationComponent = deriveApplicationComponent(
+            cached.events,
+            s.applicationComponent,
+          );
           set(
             {
               ...freshViewState(),
@@ -623,7 +626,10 @@ export const useConversationV2Store = create<State & Actions>()(
       setFilesSheetOpen: (open) =>
         set({ filesSheetOpen: open }, false, `setFilesSheetOpen/${open}`),
       replayEvents: (events) => {
-        const applicationComponent = deriveApplicationComponent(events);
+        const applicationComponent = deriveApplicationComponent(
+          events,
+          get().applicationComponent,
+        );
         set(
           {
             events: dedupeReplayEvents(events),
@@ -855,9 +861,20 @@ function deriveTitle(events: AgentEvent[]): string | undefined {
  * The application component to show in the side panel is whatever the agent
  * pushed last. Used on replay/session-switch to restore the app viewer from
  * persisted history (the live path sets it directly in handleEvent).
+ *
+ * Reuses `previous` when the revision (event_id) is unchanged so React effects
+ * that depend on `filesTree` identity are not torn down by event polling.
  */
 function deriveApplicationComponent(
   events: AgentEvent[],
+  previous?: {
+    url: string;
+    title: string;
+    cephPath?: string;
+    filesTree?: FilesTreeNode | null;
+    fileCount?: number;
+    revision: string;
+  } | null,
 ): {
   url: string;
   title: string;
@@ -869,6 +886,9 @@ function deriveApplicationComponent(
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
     if (ev.type === 'application_component') {
+      if (previous && previous.revision === ev.event_id) {
+        return previous;
+      }
       console.log('[Nodepod] [replay:deriveApplicationComponent]', {
         event_id: ev.event_id,
         url: ev.url,
