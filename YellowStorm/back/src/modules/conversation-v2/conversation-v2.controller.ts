@@ -47,6 +47,7 @@ import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2EventStoreService, PersistedEventRow } from './services/conversation-v2-event-store.service';
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
+import { normalizeAppSourceCephPrefix } from './utils/normalize-app-source-ceph-prefix';
 
 interface AuthUser { id: string; }
 
@@ -547,7 +548,14 @@ export class ConversationV2Controller {
     @Param('id') _id: string,
     @Body() body: GetAppSourceUrlsDto,
   ): Promise<{ items: Array<{ path: string; url: string }> }> {
-    const prefix = body.cephPath.replace(/\/+$/, '');
+    // Manus/Sandbox Manager may prefix ceph_path with the bucket name; strip it
+    // so signed URLs are `{public}/{bucket}/{userId}/appbuilder/...` not
+    // `{public}/{bucket}/{bucket}/{userId}/...`.
+    const bucket = this.config.get<string>('storage.s3.bucket') || '';
+    const prefix = normalizeAppSourceCephPrefix(body.cephPath, bucket);
+    if (!prefix) {
+      throw new BadRequestException('Invalid cephPath');
+    }
     const items: Array<{ path: string; url: string }> = [];
 
     for (const relative of body.paths) {
