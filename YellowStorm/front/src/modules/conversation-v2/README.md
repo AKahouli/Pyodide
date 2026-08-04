@@ -157,6 +157,17 @@ import nodepod from '@scelar/nodepod/vite';
 plugins: [react(), tailwindcss(), nodepod()],
 ```
 
+SharedArrayBuffer also requires cross-origin isolation headers on the
+document origin (dev + prod):
+
+- `Cross-Origin-Opener-Policy: same-origin`
+- `Cross-Origin-Embedder-Policy: credentialless`
+
+Set in `vite.config.ts` (`server` / `preview`) and
+[`nginx.conf`](../../../nginx.conf) for the production image. Prefer
+`credentialless` over `require-corp` so Ceph/S3 signed downloads and API
+calls keep working without CORP on every upstream.
+
 Dependency: `@scelar/nodepod` in `front/package.json`.
 
 ## i18n

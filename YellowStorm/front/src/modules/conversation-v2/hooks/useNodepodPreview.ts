@@ -4,6 +4,7 @@ import { conversationV2Api } from '../api';
 import type { FilesTreeNode } from '../types';
 import { isTextSourcePath } from '../utils/app-source';
 import { flattenFilesTree } from '../utils/files-tree';
+import { parseNpmAddedPackages } from '../utils/npm-install-output';
 
 export type NodepodPreviewStatus =
   | 'idle'
@@ -31,6 +32,8 @@ export interface UseNodepodPreviewResult {
 }
 
 const LOG = '[Nodepod]';
+const SWC_WASM_PATH = '/node_modules/@next/swc-wasm-nodejs';
+const NEXT_PKG_PATH = '/node_modules/next';
 
 function logPhase(phase: string, details?: Record<string, unknown>) {
   if (details) {
@@ -165,6 +168,8 @@ export function useNodepodPreview({
       revision,
       retryToken,
       hasFilesTree: !!filesTree,
+      crossOriginIsolated: globalThis.crossOriginIsolated === true,
+      hasSharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
     });
 
     const teardown = async () => {
@@ -181,6 +186,13 @@ export function useNodepodPreview({
           });
         }
       }
+    };
+
+    const fail = (message: string) => {
+      if (cancelled) return;
+      logPhase('8.error', { message });
+      setError(message);
+      setStatus('error');
     };
 
     const run = async () => {
@@ -248,8 +260,42 @@ export function useNodepodPreview({
         install.on('error', (text) => {
           console.warn(`${LOG} [5.npm-install:stderr]`, text);
         });
-        await install.completion;
-        logPhase('5.npm-install:done');
+        const installResult = await install.completion;
+        const addedPackages = parseNpmAddedPackages(installResult.stdout);
+        const hasNext = await pod.fs.exists(NEXT_PKG_PATH);
+        const hasSwcWasm = await pod.fs.exists(SWC_WASM_PATH);
+        logPhase('5.npm-install:verify', {
+          exitCode: installResult.exitCode,
+          addedPackages,
+          hasNext,
+          hasSwcWasm,
+          swcWasmPath: SWC_WASM_PATH,
+        });
+        if (installResult.exitCode !== 0) {
+          throw new Error(`npm install failed (exit ${installResult.exitCode}).`);
+        }
+        if (!hasNext) {
+          throw new Error(
+            addedPackages === 0
+              ? 'npm install added 0 packages and node_modules/next is missing.'
+              : 'node_modules/next is missing after npm install.',
+          );
+        }
+        if (!hasSwcWasm) {
+          console.warn(
+            `${LOG} [5.npm-install:warn] ${SWC_WASM_PATH} missing — Next may try to download SWC at runtime and fail in Nodepod.`,
+          );
+        }
+        if (addedPackages !== null && addedPackages === 0) {
+          console.warn(
+            `${LOG} [5.npm-install:warn] added 0 packages (cache/snapshot hit or empty install). hasNext=${hasNext} hasSwcWasm=${hasSwcWasm}`,
+          );
+        }
+        logPhase('5.npm-install:done', {
+          addedPackages,
+          hasNext,
+          hasSwcWasm,
+        });
         if (cancelled) {
           logPhase('cancelled:after-install');
           return;
@@ -266,7 +312,17 @@ export function useNodepodPreview({
           console.warn(`${LOG} [6.dev-server:stderr]`, text);
         });
         proc.on('exit', (code) => {
-          logPhase('6.dev-server:exit', { code });
+          logPhase('6.dev-server:exit', { code, ready: readyRef.current });
+          if (cancelled || readyRef.current) return;
+          if (fallbackTimer !== undefined) {
+            window.clearTimeout(fallbackTimer);
+            fallbackTimer = undefined;
+          }
+          fail(
+            `Dev server exited before becoming ready (code ${code}). ` +
+              'Often caused by Next downloading SWC at runtime inside Nodepod.',
+          );
+          void teardown();
         });
 
         fallbackTimer = window.setTimeout(() => {
@@ -289,7 +345,9 @@ export function useNodepodPreview({
             readyRef.current = true;
             setPreviewUrl(fallback);
             setStatus('ready');
+            return;
           }
+          fail('Dev server did not become ready in time (no listening port).');
         }, 15_000);
       } catch (err) {
         if (cancelled) {
@@ -297,9 +355,7 @@ export function useNodepodPreview({
           return;
         }
         const message = err instanceof Error ? err.message : String(err);
-        logPhase('8.error', { message, err });
-        setError(message);
-        setStatus('error');
+        fail(message);
         await teardown();
       }
     };
