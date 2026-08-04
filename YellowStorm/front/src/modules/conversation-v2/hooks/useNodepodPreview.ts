@@ -147,22 +147,69 @@ function readNextVersion(files: Record<string, string | Uint8Array>): string | n
   return readNextVersionFromPackageJson(pkgRaw);
 }
 
+async function waitUntilDirectServerReady(
+  pod: NodepodInstance,
+  port: number,
+  isStale: () => boolean,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (isStale()) return false;
+    try {
+      const res = await pod.proxy.handleRequest(pod.instanceId, port, 'GET', '/', {
+        accept: 'text/html,*/*',
+      });
+      logPhase('6.direct-probe', {
+        attempt,
+        statusCode: res.statusCode,
+        statusMessage: res.statusMessage,
+      });
+      // 503 here means Nodepod registry has no server yet; keep waiting.
+      if (res.statusCode && res.statusCode !== 503) return true;
+    } catch (err) {
+      logPhase('6.direct-probe:error', {
+        attempt,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    await new Promise((r) => window.setTimeout(r, 500));
+  }
+  return false;
+}
+
 async function waitUntilPreviewReachable(
   url: string,
   isStale: () => boolean,
-): Promise<boolean> {
-  for (let attempt = 0; attempt < 25; attempt += 1) {
-    if (isStale()) return false;
+): Promise<{ ok: boolean; lastStatus: number | null; bodyHint: string | null }> {
+  let lastStatus: number | null = null;
+  let bodyHint: string | null = null;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (isStale()) return { ok: false, lastStatus, bodyHint };
     try {
       const res = await fetch(url, { cache: 'no-store', redirect: 'follow' });
-      // Nodepod SW returns 503 until the worker proxy is wired; retry those.
-      if (res.status !== 503) return true;
+      lastStatus = res.status;
+      if (res.status !== 503) {
+        return { ok: true, lastStatus, bodyHint };
+      }
+      // Diagnose Nodepod SW 503 pages vs ingress/generic 503.
+      try {
+        const text = await res.text();
+        bodyHint = text.includes('Powered by Nodepod')
+          ? text.includes('still initializing')
+            ? 'nodepod-sw-initializing'
+            : text.includes('no longer connected')
+              ? 'nodepod-sw-disconnected'
+              : 'nodepod-sw-503'
+          : 'non-nodepod-503';
+      } catch {
+        bodyHint = '503-body-unreadable';
+      }
+      logPhase('6.sw-probe', { attempt, lastStatus, bodyHint });
     } catch {
       // Transient network / SW race — retry.
     }
-    await new Promise((r) => window.setTimeout(r, 400));
+    await new Promise((r) => window.setTimeout(r, 500));
   }
-  return false;
+  return { ok: false, lastStatus, bodyHint };
 }
 
 type NodepodInstance = Awaited<ReturnType<typeof Nodepod.boot>>;
@@ -308,23 +355,59 @@ export function useNodepodPreview({
       setStatus('error');
     };
 
-    const markReady = (url: string | null, source: string) => {
-      if (cancelled || readyRef.current || !url) return;
-      readyRef.current = true;
+    /** Promote preview only after Next answers directly AND the SW proxy works. */
+    const promotePreview = (url: string, port: number, source: string) => {
+      if (cancelled || readyRef.current || promotingRef.current) return;
+      promotingRef.current = true;
       clearReadyTimers();
       void (async () => {
-        const reachable = await waitUntilPreviewReachable(url, isStale);
-        if (cancelled) return;
-        logPhase('6.ready', { source, previewUrl: url, reachable });
-        setPreviewUrl(url);
-        setStatus('ready');
-        if (!reachable) {
-          console.warn(
-            `${LOG} [6.ready:warn] preview URL still returning errors after retries: ${url}`,
-          );
+        try {
+          const pod = podRef.current;
+          if (!pod || cancelled) return;
+
+          logPhase('6.promote:start', {
+            source,
+            url,
+            port,
+            swController: !!navigator.serviceWorker?.controller,
+            crossOriginIsolated: globalThis.crossOriginIsolated === true,
+          });
+
+          const directOk = await waitUntilDirectServerReady(pod, port, isStale);
+          if (cancelled || readyRef.current) return;
+          if (!directOk) {
+            fail(
+              'Next.js started but did not answer HTTP requests inside Nodepod.',
+            );
+            return;
+          }
+
+          const sw = await waitUntilPreviewReachable(url, isStale);
+          if (cancelled || readyRef.current) return;
+          logPhase('6.promote:sw', sw);
+          if (!sw.ok) {
+            fail(
+              sw.bodyHint === 'nodepod-sw-initializing' ||
+                sw.bodyHint === 'nodepod-sw-disconnected'
+                ? 'Nodepod service worker cannot reach this preview (503). Hard-refresh the page (Ctrl+Shift+R) so /__sw__.js reconnects.'
+                : `Preview URL stayed unreachable (HTTP ${sw.lastStatus ?? '???'}). Check that /__sw__.js is served as JavaScript and COOP/COEP headers are present.`,
+            );
+            return;
+          }
+
+          readyRef.current = true;
+          logPhase('6.ready', { source, previewUrl: url });
+          setPreviewUrl(url);
+          setStatus('ready');
+        } finally {
+          promotingRef.current = false;
         }
       })();
     };
+
+    let pendingPort: number | null = null;
+    let pendingUrl: string | null = null;
+    const promotingRef = { current: false };
 
     const run = async () => {
       await teardown();
@@ -374,7 +457,9 @@ export function useNodepodPreview({
             }
             const resolved = url || pod.port(port) || null;
             logPhase('6.server-ready', { port, url, resolvedPreviewUrl: resolved });
-            markReady(resolved, 'onServerReady');
+            // Too early to iframe: Next often emits listen before "Ready".
+            pendingPort = port;
+            pendingUrl = resolved;
           },
         });
         logPhase('4.boot:done');
@@ -440,19 +525,19 @@ export function useNodepodPreview({
         };
         logPhase('6.dev-server:spawn', { cmd, args, env: devEnv });
         const proc = await pod.spawn(cmd, args, { env: devEnv });
-        proc.on('output', (text) => {
+        proc.on('output', (text: string) => {
           console.log(`${LOG} [6.dev-server:stdout]`, text);
-          // Belt-and-suspenders: Nodepod onServerReady can be dropped if the
-          // effect was briefly cancelled; adopt the port when Next prints Ready.
+          // Next finished booting — now wait for direct HTTP + SW proxy.
           if (!readyRef.current && !cancelled && /Ready in /i.test(text)) {
-            const url = pod.port(3000) || pod.port(5173) || pod.port(8080);
-            if (url) markReady(url, 'stdout-ready');
+            const port = pendingPort ?? 3000;
+            const url = pendingUrl || pod.port(port) || pod.port(3000);
+            if (url) promotePreview(url, port, 'stdout-ready');
           }
         });
-        proc.on('error', (text) => {
+        proc.on('error', (text: string) => {
           console.warn(`${LOG} [6.dev-server:stderr]`, text);
         });
-        proc.on('exit', (code) => {
+        proc.on('exit', (code: number) => {
           devExited = true;
           logPhase('6.dev-server:exit', { code, ready: readyRef.current });
           if (cancelled || readyRef.current) return;
@@ -463,20 +548,28 @@ export function useNodepodPreview({
           void teardown();
         });
 
-        const tryFallbackPorts = (phase: string): string | null => {
-          const fallback = pod.port(3000) || pod.port(5173) || pod.port(8080);
+        const tryFallbackPorts = (phase: string): { url: string; port: number } | null => {
+          for (const port of [pendingPort, 3000, 5173, 8080]) {
+            if (port == null) continue;
+            const url = pod.port(port);
+            if (url) {
+              logPhase(phase, { port, url, devExited });
+              return { url, port };
+            }
+          }
           logPhase(phase, {
             port3000: pod.port(3000),
             port5173: pod.port(5173),
             port8080: pod.port(8080),
-            fallback,
+            pendingPort,
+            pendingUrl,
             devExited,
           });
-          return fallback;
+          return pendingUrl && pendingPort != null
+            ? { url: pendingUrl, port: pendingPort }
+            : null;
         };
 
-        // Soft: adopt a port if Next is up; if the process is still alive with
-        // no port yet, keep waiting (Next+SWC in Nodepod often exceeds 15s).
         softTimer = window.setTimeout(() => {
           if (cancelled || podRef.current !== pod || readyRef.current) {
             logPhase('7.soft-timeout:skipped', {
@@ -488,7 +581,7 @@ export function useNodepodPreview({
           }
           const fallback = tryFallbackPorts('7.soft-timeout');
           if (fallback) {
-            markReady(fallback, 'soft-timeout-port');
+            promotePreview(fallback.url, fallback.port, 'soft-timeout-port');
             return;
           }
           if (!devExited) {
@@ -512,7 +605,7 @@ export function useNodepodPreview({
           }
           const fallback = tryFallbackPorts('7.hard-timeout');
           if (fallback) {
-            markReady(fallback, 'hard-timeout-port');
+            promotePreview(fallback.url, fallback.port, 'hard-timeout-port');
             return;
           }
           fail(
