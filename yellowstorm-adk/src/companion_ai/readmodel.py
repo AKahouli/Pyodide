@@ -67,6 +67,7 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 assignee_name  TEXT,          -- resolved display name, cached at creation
                 assignee_role  TEXT,          -- resolved role text, cached at creation
                 is_persona     BOOLEAN NOT NULL DEFAULT FALSE,  -- true only for a human-agent persona
+                is_dynamic_delegate BOOLEAN NOT NULL DEFAULT FALSE,  -- true only if created by delegate_to_human_agent
                 updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
                 PRIMARY KEY (session_id, step_id)
             )""")
@@ -74,7 +75,8 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                          ("question", "TEXT"), ("title", "TEXT"),
                          ("interrupt_id", "TEXT"), ("assignee", "TEXT"),
                          ("assignee_name", "TEXT"), ("assignee_role", "TEXT"),
-                         ("is_persona", "BOOLEAN NOT NULL DEFAULT FALSE")):
+                         ("is_persona", "BOOLEAN NOT NULL DEFAULT FALSE"),
+                         ("is_dynamic_delegate", "BOOLEAN NOT NULL DEFAULT FALSE")):
             await con.execute(
                 f'ALTER TABLE {_q(schema,"plan_steps")} ADD COLUMN IF NOT EXISTS {col} {typ}')
         await con.execute(f"""
@@ -192,14 +194,15 @@ class ReadModel:
             """, session_id, plan_id, title, goal, status)
 
     async def upsert_steps(self, session_id: str,
-                           steps: List[Tuple[str, int, int, str, str, str, str, str, str, str, str, str, bool]]) -> None:
+                           steps: List[Tuple[str, int, int, str, str, str, str, str, str, str, str, str, bool, bool]]) -> None:
         """steps: (step_id, ordinal, wave, status, kind, question, title,
-        description, depends_on, assignee, assignee_name, assignee_role, is_persona)."""
+        description, depends_on, assignee, assignee_name, assignee_role, is_persona,
+        is_dynamic_delegate)."""
         async with self._pool.acquire() as con:
             await con.executemany(f"""
                 INSERT INTO {_q(self._schema,'plan_steps')}
-                    (session_id,step_id,ordinal,wave,status,kind,question,title,description,depends_on,assignee,assignee_name,assignee_role,is_persona)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                    (session_id,step_id,ordinal,wave,status,kind,question,title,description,depends_on,assignee,assignee_name,assignee_role,is_persona,is_dynamic_delegate)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
                 ON CONFLICT (session_id,step_id) DO UPDATE
                   SET ordinal=EXCLUDED.ordinal, wave=EXCLUDED.wave,
                       kind=EXCLUDED.kind, question=EXCLUDED.question,
@@ -207,6 +210,7 @@ class ReadModel:
                       depends_on=EXCLUDED.depends_on, assignee=EXCLUDED.assignee,
                       assignee_name=EXCLUDED.assignee_name, assignee_role=EXCLUDED.assignee_role,
                       is_persona=EXCLUDED.is_persona,
+                      is_dynamic_delegate=EXCLUDED.is_dynamic_delegate,
                       updated_at=now()
             """, [(session_id, *s) for s in steps])
 

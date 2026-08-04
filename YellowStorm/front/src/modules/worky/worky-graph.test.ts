@@ -35,7 +35,9 @@ describe('buildWorkyGraph', () => {
     const upstream = task({ id: 'a', externalId: 'step-1', title: 'Send the email' });
     const downstream = task({ id: 'b', externalId: 'step-2', dependsOnStepIds: ['step-1'] });
     const { edges } = buildWorkyGraph([upstream, downstream]);
-    expect(edges).toEqual([{ id: 'a->b', source: 'a', target: 'b', markerEnd: expect.anything() }]);
+    expect(edges).toEqual([
+      { id: 'a->b', source: 'a', target: 'b', type: 'workyDependency', markerEnd: expect.anything() },
+    ]);
   });
 
   it('produces one node per task, keyed by the Mongo id', () => {

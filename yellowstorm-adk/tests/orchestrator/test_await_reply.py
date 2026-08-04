@@ -66,6 +66,45 @@ def test_the_node_factory_builds_await_reply_from_the_step_kind():
     assert factory(step, "a").name == "a"
 
 
+async def _run_single_node(node, name: str):
+    wf = Workflow(name="single_node_test", edges=[(START, node)])
+    r = InMemoryRunner(node=wf, app_name="t")
+    await r.session_service.create_session(app_name="t", user_id="u", session_id="s")
+    outputs = []
+    async for ev in r.run_async(user_id="u", session_id="s",
+            new_message=types.Content(role="user", parts=[types.Part(text="go")])):
+        # _apply_event (service.py) reads a completed node's result from
+        # ev.content.parts[0].text, not ev.output -- match that here, since a
+        # bare-string return would (silently) never reach the read model.
+        if ev.content and ev.content.parts and getattr(ev.content.parts[0], "text", None):
+            outputs.append(ev.content.parts[0].text)
+    return outputs
+
+
+def test_a_completed_dynamic_delegate_step_replays_its_stored_result_instead_of_rerunning(monkeypatch):
+    """delegate_to_human_agent's step runs its FIRST time inside a throwaway
+    nested Workflow (service.py:_delegate_tool_for), at a node path ADK's own
+    session replay can't match once resume_turn later rebuilds it as a plain
+    top-level node -- so ADK can't tell it already ran and would silently
+    re-call the LLM, producing a different answer and discarding the
+    original (seen live: session e95815c5aded45b4bda9348fdb765c0d, where
+    James's and Sarah's answers changed and shortened after a resume).
+    nodes.py must short-circuit an already-completed one instead."""
+    def _must_not_build_a_real_llm(*a, **k):
+        raise AssertionError("an already-completed dynamic delegate must not re-call the LLM")
+    monkeypatch.setattr(nodes, "build_llm", _must_not_build_a_real_llm)
+
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[])
+    step = Step(id="f2c7bd13e74f", kind="execute", is_persona=True, is_dynamic_delegate=True,
+                status=Status.COMPLETED, result="James's original second opinion.",
+                assignee="james", assignee_name="James")
+
+    node = factory(step, "f2c7bd13e74f")
+    outputs = asyncio.run(_run_single_node(node, "f2c7bd13e74f"))
+
+    assert outputs == ["James's original second opinion."]
+
+
 def test_an_executor_never_sees_the_plan_wide_goal_or_another_steps_task():
     """Every executor shares one full toolset, so a step told the whole goal
     (and every other step's job) has both motive and means to reach for a tool
@@ -133,6 +172,43 @@ def test_a_persona_step_is_never_told_and_nothing_else():
     assert "Do exactly this and nothing else:" not in factory(persona_step, "a").instruction
     assert "using whatever consultation your role above requires" in factory(persona_step, "a").instruction
     assert "Do exactly this and nothing else:" in factory(plain_step, "b").instruction
+
+
+def test_a_persona_step_is_told_to_act_on_a_reply_already_in_context_not_just_note_it():
+    """Seen live (session b931fb5e59a94de7875683dfffe9af77): a persona correctly
+    read a real email reply's content and correctly judged escalation was
+    needed, then only wrote "requires senior-management approval" as a
+    condition in her own answer instead of actually calling
+    delegate_to_human_agent for it -- exactly the "I'll check with so-and-so"
+    non-pattern the preamble already warns against, just for a reply instead
+    of a colleague. A plain step gets no such instruction, since it never has
+    delegate_to_human_agent to act with in the first place."""
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[])
+
+    persona_step = Step(id="a", kind="execute", description="Give the final decision.",
+                        is_persona=True, assignee_name="Sarah", assignee_role="Compliance officer.")
+    plain_step = Step(id="b", kind="execute", description="Search the web for Tesla news.")
+
+    instruction = factory(persona_step, "a").instruction
+    assert "act on it directly" in instruction
+    assert "without doing anything about it yourself" in instruction
+    assert "act on it directly" not in factory(plain_step, "b").instruction
+
+
+def test_instruction_for_step_reaches_a_plain_steps_own_instruction():
+    """nodes.py has no visibility into the plan's edges on its own -- whether
+    a step is the one directly downstream of an await_reply (and so may need
+    to act on instructions the reply itself contains) is something only
+    _build_workflow can compute, and instruction_for_step is how it hands
+    that down, mirroring tools_for_step's existing pattern."""
+    factory = nodes.make_llm_node_factory(
+        model_name="x", tools=[],
+        instruction_for_step=lambda step: "ACT ON THE REPLY" if step.id == "b" else None)
+    step_a = Step(id="a", kind="execute", description="do a")
+    step_b = Step(id="b", kind="execute", description="do b")
+
+    assert "ACT ON THE REPLY" not in factory(step_a, "a").instruction
+    assert "ACT ON THE REPLY" in factory(step_b, "b").instruction
 
 
 def test_the_instruction_template_carries_no_goal_placeholder():

@@ -17,7 +17,7 @@ from google.genai import types as genai_types
 
 from . import mail_token
 from .graph import NodeFactory
-from .plan import Step
+from .plan import Status, Step
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +150,7 @@ def make_llm_node_factory(
     temperature: float = 0.0,
     custom_instruction: Optional[str] = None,
     tools_for_step: Optional[Callable[[Step, List], List]] = None,
+    instruction_for_step: Optional[Callable[[Step], Optional[str]]] = None,
 ) -> NodeFactory:
     """Build a NodeFactory that creates one LlmAgent per step.
 
@@ -168,7 +169,10 @@ def make_llm_node_factory(
     interpolate, so a client prompt that forgets to reference it can't produce
     a step that doesn't know its own task. `tools_for_step` may swap a step's
     tools for step-specific ones — used to stamp the routing token into a mail
-    whose reply another step is waiting on.
+    whose reply another step is waiting on. `instruction_for_step` mirrors
+    that same pattern for extra instruction text instead of tools — used to
+    tell the step directly downstream of an await_reply that the reply it is
+    reading may itself carry further instructions (see _build_workflow).
     """
     from . import hitl
 
@@ -185,6 +189,27 @@ def make_llm_node_factory(
         if step.kind == "await_reply":
             return hitl.make_await_reply_node(
                 name, step.question or step.description or "Awaiting an email reply.")
+        # A dynamically-delegated step (delegate_to_human_agent) that already
+        # completed: its ORIGINAL run happened inside a throwaway nested
+        # Workflow, at a node path ADK's own session replay can't match once
+        # resume_turn rebuilds it as a plain top-level node here — so ADK
+        # can't tell it already ran and would otherwise silently re-call the
+        # LLM, producing a different answer and discarding the original.
+        # Short-circuit with the stored result instead of risking that.
+        if step.is_dynamic_delegate and step.status == Status.COMPLETED:
+            from google.adk.workflow import FunctionNode
+            stored_result = step.result or ""
+
+            # Must return types.Content, not a plain string: _function_node.py's
+            # _to_event() only populates ev.content (what _apply_event reads
+            # the result text from, below) for a Content return — a bare
+            # string instead becomes ev.output, which _apply_event never
+            # looks at, so the read model would silently get "" for a step
+            # that actually already has a real answer.
+            async def _replay_stored_result():
+                return genai_types.Content(role="model", parts=[genai_types.Part(text=stored_result)])
+
+            return FunctionNode(func=_replay_stored_result, name=name)
         # A persona step already has an identity ("You are Rabeb."); a second,
         # contradicting "You are an execution agent" right after undermines it.
         identity = ("You are working on ONE step of a larger plan." if step.is_persona else
@@ -215,7 +240,19 @@ def make_llm_node_factory(
             "else yourself, and never leave your turn on 'I'll check with "
             "so-and-so' without having actually checked. You can't ask "
             "yourself, and you don't reach out just because a question is "
-            "hard — only when the authority or expertise genuinely isn't yours."
+            "hard — only when the authority or expertise genuinely isn't yours. "
+            "If an email reply relevant to your task already arrived earlier "
+            "in this conversation, treat it as real, given information: read "
+            "it and act on it directly — approve, reject, or proceed "
+            "accordingly — rather than restating it back as still pending, "
+            "asking for it again, or writing it down as a condition for "
+            "later without doing anything about it yourself right now. If "
+            "acting on it means real follow-up work needs to actually happen "
+            "— a check to run, something to verify, another email to send "
+            "and wait on — and it isn't a specific named colleague's "
+            "judgment (that's delegate_to_human_agent), spin it off yourself "
+            "with create_task and use its result, instead of writing that "
+            "work down as something still owed."
         ) if step.is_persona else None
         # A client prompt may carry a literal "{description}" token (see
         # PROMPTS.txt); ADK's instruction templating treats any unresolved
@@ -225,7 +262,8 @@ def make_llm_node_factory(
         custom_instruction_resolved = (
             custom_instruction.replace("{description}", step.description)
             if custom_instruction else None)
-        preambles = [p for p in (custom_instruction_resolved, persona_preamble) if p]
+        mail_reply_instruction = instruction_for_step(step) if instruction_for_step else None
+        preambles = [p for p in (custom_instruction_resolved, persona_preamble, mail_reply_instruction) if p]
         instruction = "\n\n".join(preambles + [base_instruction]) if preambles else base_instruction
         step_tools = tools_for_step(step, shared_tools) if tools_for_step else shared_tools
         tool_names = [getattr(getattr(t, "func", None), "__name__", "?") for t in step_tools]

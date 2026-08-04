@@ -152,6 +152,25 @@ def test_plan_from_snapshot_reconstructs_kind_and_deps():
     assert s2.kind == "execute" and s2.depends_on == ["s1"] and s2.wave == 1
 
 
+def test_plan_from_snapshot_restores_is_dynamic_delegate():
+    """Without this surviving the round trip, resume_turn/continue_turn can't
+    tell a delegate_to_human_agent step from a plain one, and nodes.py's
+    short-circuit (see test_await_reply.py) never fires — the step silently
+    re-runs its LLM call on every resume instead of replaying its answer."""
+    snap = {
+        "session": {"id": "s", "status": "waiting", "interrupt_id": None},
+        "plan": {"id": "p1", "title": "T", "goal": "G", "status": "running"},
+        "steps": [
+            {"step_id": "s1", "description": "ask James", "kind": "execute",
+             "status": "completed", "wave": 1, "depends_on": "", "result": "answer",
+             "assignee": "james", "assignee_name": "James",
+             "is_persona": True, "is_dynamic_delegate": True},
+        ],
+    }
+    plan = svc._plan_from_snapshot(snap)
+    assert plan.steps[0].is_dynamic_delegate is True
+
+
 def test_plan_turn_never_gives_the_workflow_the_users_real_message():
     """The trigger passed to Runner.run_async becomes a session event with no
     branch, and ADK makes an unbranched event visible to every node in the
@@ -346,6 +365,174 @@ def test_delegate_tool_keeps_two_consultations_from_the_same_caller_parallel(mon
     # The genuinely later step picks up BOTH, and lands one wave after them.
     assert plan.step("s3").depends_on == ["s1", david.id, oussama.id]
     assert plan.step("s3").wave == 2
+
+
+def test_create_task_tool_appends_a_step_and_calls_run_node():
+    """create_task mirrors delegate_to_human_agent's mechanics but for a
+    generic follow-up task, not a named colleague — e.g. Sarah reads a
+    compliance reply revealing a PEP and spins off an actual screening
+    check instead of just writing "requires senior approval" in her own
+    answer."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="s1", kind="execute", description="review compliance reply",
+            is_persona=True, assignee="sarah", assignee_name="Sarah"),
+    ])
+    name_to_step = {"s1": "s1"}
+    tool = service._create_task_tool_for("sess1", "u1", plan, _fn_factory_holder(), name_to_step, "s1")
+
+    tool_context = MagicMock()
+    tool_context.run_node = AsyncMock(return_value="Screening complete: no sanctions hits.")
+
+    result = asyncio.run(tool.func("Run a sanctions screening check on the UBO.",
+                                   tool_context=tool_context))
+
+    assert result == "Screening complete: no sanctions hits."
+    assert len(plan.steps) == 2
+    new_step = plan.steps[-1]
+    assert new_step.description == "Run a sanctions screening check on the UBO."
+    assert new_step.kind == "execute"
+    assert new_step.is_persona is False  # a plain follow-up task, not a colleague
+    assert new_step.is_dynamic_delegate is True  # same resume short-circuit as a delegate
+    assert new_step.depends_on == ["s1"]
+    tool_context.run_node.assert_awaited_once()
+    assert tool_context.run_node.await_args.kwargs["use_sub_branch"] is True
+
+
+def test_create_task_and_delegate_share_siblings_instead_of_chaining():
+    """Both tools grow the SAME plan mid-turn (see _build_workflow, which
+    passes them one shared siblings set) -- a create_task call and a
+    delegate_to_human_agent call from the same caller must land as
+    parallel siblings, not get sequentialized, exactly like two
+    delegate_to_human_agent calls already must (see the sibling test
+    above) -- otherwise a persona using both tools together regresses
+    the wave-chaining bug that fix originally solved."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="s1", kind="execute", description="review compliance reply",
+            is_persona=True, assignee="sarah", assignee_name="Sarah"),
+        Step(id="s2", kind="execute", description="final memo", depends_on=["s1"]),
+    ])
+    scheduler.assign_waves(plan)
+
+    name_to_step = {"s1": "s1", "s2": "s2"}
+    siblings: set = set()
+    factory_holder = _fn_factory_holder()
+    delegate_tool = service._delegate_tool_for("sess1", "u1", plan, factory_holder,
+                                               name_to_step, "s1", siblings)
+    task_tool = service._create_task_tool_for("sess1", "u1", plan, factory_holder,
+                                              name_to_step, "s1", siblings)
+
+    async def fake_search_human_agents(*, name=None, role=None):
+        return [{"id": "oussama", "name": "Oussama", "role": "Investment approver"}]
+    import unittest.mock as mock
+    with mock.patch.object(svc.human_agents, "search_human_agents", fake_search_human_agents):
+        tool_context = MagicMock()
+        tool_context.run_node = AsyncMock(return_value="ok")
+        asyncio.run(task_tool.func("Run a sanctions screening check.", tool_context=tool_context))
+        asyncio.run(delegate_tool.func("Oussama", "sign off?", tool_context=tool_context))
+
+    task_step, delegate_step = plan.steps[2], plan.steps[3]
+    # Neither spawned step depends on the other -- parallel siblings.
+    assert task_step.depends_on == ["s1"]
+    assert delegate_step.depends_on == ["s1"]
+    assert task_step.wave == delegate_step.wave == 1
+    # The genuinely later step picks up BOTH.
+    assert plan.step("s2").depends_on == ["s1", task_step.id, delegate_step.id]
+    assert plan.step("s2").wave == 2
+
+
+def test_apply_event_marks_a_completed_dynamic_delegate_step_as_completed():
+    """_apply_event -- not a test harness that bypasses it -- must recognize
+    the is_dynamic_delegate short-circuit's FunctionNode event as a real
+    completion. output_for, the field _apply_event used to gate on alone,
+    is confirmed empirically unset for a FunctionNode's event regardless of
+    downstream dependents (checked directly against a real Runner) -- so
+    before this fix the step stayed "running" in the read model forever,
+    even though it had a real, correct result and correctly unblocked
+    whatever depended on it via ADK's own session state (seen live: session
+    ee477bcc88ed43b299a8d17356064855 -- Sarah/David/James stuck "running"
+    after a resume while the step depending on them still finished)."""
+    from google.adk.runners import InMemoryRunner
+    from google.genai import types
+
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", steps=[
+        Step(id="a", kind="execute", is_persona=True, is_dynamic_delegate=True,
+            status=Status.COMPLETED, result="James's original second opinion.",
+            assignee_name="James"),
+    ])
+    factory = svc.nodes.make_llm_node_factory(model_name="x", tools=[])
+    wf = svc.graph.to_workflow(plan, factory, name="t", max_concurrency=4)
+    name_to_step = {svc.graph.node_name(s.id): s.id for s in plan.steps}
+
+    runner = InMemoryRunner(node=wf, app_name="t")
+    asyncio.run(runner.session_service.create_session(app_name="t", user_id="u", session_id="s"))
+    asyncio.run(service._drive(
+        runner, "s", "u", plan, name_to_step,
+        types.Content(role="user", parts=[types.Part(text="go")])))
+
+    assert plan.step("a").status is Status.COMPLETED
+    completed_calls = [c for c in rm.set_step_status.call_args_list if c.args[2] == "completed"]
+    assert completed_calls, "step should have been marked completed in the read model, not left running"
+    assert completed_calls[0].kwargs.get("result") == "James's original second opinion."
+
+
+def test_apply_event_does_not_complete_an_await_reply_step_on_the_interrupt_it_raises():
+    """The event that RAISES an await_reply/ask interrupt also satisfies
+    is_final_response() (it carries long_running_tool_ids, which
+    is_final_response() treats as final) -- the opposite of complete. If
+    that event were mistaken for completion, every await_reply/ask step
+    would flip to "completed" the instant it parks, before anyone replies."""
+    from google.adk.runners import InMemoryRunner
+    from google.genai import types
+
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", steps=[Step(id="a", kind="await_reply", question="Awaiting a reply")])
+    factory = svc.nodes.make_llm_node_factory(model_name="x", tools=[])
+    wf = svc.graph.to_workflow(plan, factory, name="t", max_concurrency=4)
+    name_to_step = {svc.graph.node_name(s.id): s.id for s in plan.steps}
+
+    runner = InMemoryRunner(node=wf, app_name="t")
+    asyncio.run(runner.session_service.create_session(app_name="t", user_id="u", session_id="s"))
+    asyncio.run(service._drive(
+        runner, "s", "u", plan, name_to_step,
+        types.Content(role="user", parts=[types.Part(text="go")])))
+
+    assert plan.step("a").status is not Status.COMPLETED
+    assert not any(c.args[2] == "completed" for c in rm.set_step_status.call_args_list)
+
+
+def test_a_plain_step_reading_a_mail_reply_gets_delegation_tools_too():
+    """Only the step directly downstream of an await_reply is positioned to
+    notice the reply itself says e.g. "loop in Oussama" or "email x" -- it
+    needs the tools to act on that even though it's a plain executor step,
+    not a persona (seen live: session 7752a273b2054d4d921d9514eb933d85 --
+    the final memo step correctly caught a data discrepancy in a reply but
+    had no way to act on it, since is_persona=False steps never got
+    delegate_to_human_agent/create_task at all before this)."""
+    service = svc.OrchestratorService(MagicMock(), None, planner_model="m")
+    plan = Plan(id="p", steps=[
+        Step(id="s3", kind="await_reply", question="Awaiting a reply"),
+        Step(id="s4", kind="execute", description="write the memo", depends_on=["s3"]),
+        # A step NOT downstream of the reply must not get these tools --
+        # otherwise every step in the plan ends up able to delegate, which
+        # is a much bigger, unintended widening than "the step reading a
+        # mail reply specifically".
+        Step(id="s5", kind="execute", description="unrelated step"),
+    ])
+    wf, _ = service._build_workflow("sess1", "u1", plan, "x", None, None)
+    nodes_by_name = {n.name: n for n in wf.graph.nodes}
+
+    def tool_names(node):
+        return {getattr(getattr(t, "func", None), "__name__", "?") for t in getattr(node, "tools", [])}
+
+    assert {"find_human_agents", "delegate_to_human_agent", "create_task"} <= tool_names(nodes_by_name["s4"])
+    assert not tool_names(nodes_by_name["s5"]) & {"delegate_to_human_agent", "create_task"}
 
 
 def test_delegate_tool_unblocks_the_caller_even_when_the_delegate_errors(monkeypatch):
