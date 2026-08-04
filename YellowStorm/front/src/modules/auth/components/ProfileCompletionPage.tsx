@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Icons, AppLogo } from '@/components/icons';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
@@ -25,6 +26,8 @@ type ProfileFormValues = {
   firstName: string;
   lastName: string;
   company: string;
+  role: string;
+  description: string;
   privacyPolicy: boolean;
   dataSharing: boolean;
 };
@@ -39,6 +42,8 @@ export function ProfileCompletionPage() {
         firstName: z.string().min(1, t('profileCompletion.error.firstNameRequired')).max(50, t('profileCompletion.error.firstNameMax')),
         lastName: z.string().min(1, t('profileCompletion.error.lastNameRequired')).max(50, t('profileCompletion.error.lastNameMax')),
         company: z.string().min(1, t('profileCompletion.error.companyRequired')).max(100, t('profileCompletion.error.companyMax')),
+        role: z.string().max(200, t('profileCompletion.error.roleMax')),
+        description: z.string().max(1000, t('profileCompletion.error.descriptionMax')),
         privacyPolicy: z.boolean().refine((val) => val === true, {
           message: t('profileCompletion.privacyPolicy.required'),
         }),
@@ -58,6 +63,8 @@ export function ProfileCompletionPage() {
       firstName: user?.profile?.firstName || '',
       lastName: user?.profile?.lastName || '',
       company: user?.profile?.company || '',
+      role: user?.profile?.role || '',
+      description: user?.profile?.description || '',
       privacyPolicy: false,
       dataSharing: false,
     },
@@ -103,6 +110,8 @@ export function ProfileCompletionPage() {
         firstName: data.firstName,
         lastName: data.lastName,
         company: data.company,
+        role: data.role,
+        description: data.description,
         privacyPolicy: data.privacyPolicy,
         dataSharing: data.dataSharing,
       });
@@ -187,6 +196,34 @@ export function ProfileCompletionPage() {
                       </FormLabel>
                       <FormControl>
                         <Input placeholder={t('profileCompletion.company.placeholder')} disabled={isSubmitting} className='bg-neutral-800 border-neutral-700 text-white placeholder:text-neutral-500' {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name='role'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className='text-neutral-200'>{t('profileCompletion.role.label')}</FormLabel>
+                      <FormControl>
+                        <Input placeholder={t('profileCompletion.role.placeholder')} disabled={isSubmitting} className='bg-neutral-800 border-neutral-700 text-white placeholder:text-neutral-500' {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name='description'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className='text-neutral-200'>{t('profileCompletion.description.label')}</FormLabel>
+                      <FormControl>
+                        <Textarea placeholder={t('profileCompletion.description.placeholder')} disabled={isSubmitting} className='bg-neutral-800 border-neutral-700 text-white placeholder:text-neutral-500' {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
