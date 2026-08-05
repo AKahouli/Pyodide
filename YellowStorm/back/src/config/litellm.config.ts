@@ -7,6 +7,11 @@ export default registerAs('litellm', () => ({
   modelsEndpoint: '/v1/model/info',
   timeoutMs: Number.parseInt(process.env.LITELLM_TIMEOUT_MS || '10000', 10),
 
+  // Embeddings (used to index humain-agent roles via pgvector)
+  embeddingsEndpoint: '/v1/embeddings',
+  embeddingModel: process.env.EMBEDDING_MODEL || 'text-embedding-3-large',
+  embeddingDimension: Number.parseInt(process.env.EMBEDDING_DIMENSION || '3072', 10),
+
   // Connection health check settings
   healthCheck: {
     enabled: process.env.LITELLM_HEALTH_CHECK_ENABLED !== 'false',

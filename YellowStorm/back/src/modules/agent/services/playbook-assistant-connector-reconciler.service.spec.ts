@@ -4,19 +4,18 @@ import { PlaybookAssistantConnectorReconcilerService } from './playbook-assistan
 describe('PlaybookAssistantConnectorReconcilerService', () => {
   it('attaches the hidden system connector only to the dedicated Playbook assistant', async () => {
     const connectorId = new Types.ObjectId().toString();
-    const agent = {
-      id: new Types.ObjectId().toString(),
-      createdBy: new Types.ObjectId(),
-      connectorActionSelections: [],
+    const sourceAgent = {
+      _id: new Types.ObjectId().toString(),
+      createdBy: new Types.ObjectId().toString(),
+      llmModel: '',
     };
-    const dedicatedAgentId = new Types.ObjectId().toString();
-    const agentModel = {
-      find: jest.fn()
-        .mockReturnValueOnce({ limit: () => ({ exec: async () => [agent] }) })
-        .mockReturnValueOnce({ select: () => ({ lean: () => ({ exec: async () => [] }) }) }),
-      findOneAndUpdate: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ id: dedicatedAgentId }) }),
-      updateMany: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({}) }),
-      bulkWrite: jest.fn(),
+    const agentRepository = {
+      findActiveDefaultsByType: jest.fn().mockResolvedValue([sourceAgent]),
+      findBySlug: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue(undefined),
+      updateById: jest.fn().mockResolvedValue(undefined),
+      pullConnectorFromAllExcept: jest.fn().mockResolvedValue(undefined),
+      findIdsByInstructionLike: jest.fn().mockResolvedValue([]),
     };
     const connectorService = {
       reconcilePlaybookMcpSystemConnector: jest.fn().mockResolvedValue({ id: connectorId }),
@@ -38,7 +37,7 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
         mcpIngressToken: 'configured',
         mcpServerUrl: 'http://playbook-mcp:8025/mcp',
       } as any,
-      agentModel as any,
+      agentRepository as any,
       {
         findAllActive: jest.fn().mockResolvedValue([{ id: new Types.ObjectId().toString(), slug: 'mono-agent' }]),
         findOrCreateBySlug: jest.fn().mockResolvedValue({ id: new Types.ObjectId().toString(), slug: 'playbook_assistant' }),
@@ -49,35 +48,33 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
     await service.onModuleInit();
 
     expect(connectorService.reconcilePlaybookMcpSystemConnector).toHaveBeenCalledWith(
-      agent.createdBy.toString(),
+      sourceAgent.createdBy,
       'http://playbook-mcp:8025/mcp',
     );
-    expect(agentModel.findOneAndUpdate).toHaveBeenCalledWith(
-      { slug: 'playbook-ai-workflow-assistant', isDefault: true },
+    // No existing dedicated agent -> created fresh with the system connector attached exclusively.
+    expect(agentRepository.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        $set: expect.objectContaining({
-          connectors: [new Types.ObjectId(connectorId)],
-          connectorActionSelections: [expect.objectContaining({ actionKeys: expect.arrayContaining(['start_playbook_construction']) })],
-          instruction: expect.stringContaining('[Playbook MCP]'),
-        }),
+        slug: 'playbook-ai-workflow-assistant',
+        isDefault: true,
+        connectors: [connectorId],
+        connectorActionSelections: [expect.objectContaining({ connectorId, actionKeys: expect.arrayContaining(['start_playbook_construction']) })],
+        instruction: expect.stringContaining('[Playbook MCP]'),
       }),
-      { upsert: true, new: true, setDefaultsOnInsert: false },
     );
-    expect(agentModel.updateMany).toHaveBeenCalledWith(
-      { _id: { $ne: dedicatedAgentId }, connectors: new Types.ObjectId(connectorId) },
-      { $pull: { connectors: new Types.ObjectId(connectorId), connectorActionSelections: { connector: new Types.ObjectId(connectorId) } } },
-    );
+    // The connector is pulled from every other agent (all but the dedicated one).
+    expect(agentRepository.pullConnectorFromAllExcept).toHaveBeenCalledWith(connectorId, expect.any(String));
   });
 
   it('fails closed when more than one default mono-agent exists', async () => {
-    const agentModel = {
-      find: jest.fn().mockReturnValue({ limit: () => ({ exec: async () => [{}, {}] }) }),
-      findOneAndUpdate: jest.fn(),
+    const agentRepository = {
+      findActiveDefaultsByType: jest.fn().mockResolvedValue([{}, {}]),
+      findBySlug: jest.fn(),
+      create: jest.fn(),
     };
     const connectorService = { reconcilePlaybookMcpSystemConnector: jest.fn(), inspectMcp: jest.fn() };
     const service = new PlaybookAssistantConnectorReconcilerService(
       { mcpAssistantEnabled: true, mcpConnectorReconciliationEnabled: true, mcpIngressToken: 'configured' } as any,
-      agentModel as any,
+      agentRepository as any,
       { findAllActive: jest.fn().mockResolvedValue([{ id: new Types.ObjectId().toString(), slug: 'mono-agent' }]) } as any,
       connectorService as any,
     );
@@ -85,6 +82,7 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
     await service.onModuleInit();
 
     expect(connectorService.reconcilePlaybookMcpSystemConnector).not.toHaveBeenCalled();
-    expect(agentModel.findOneAndUpdate).not.toHaveBeenCalled();
+    expect(agentRepository.findBySlug).not.toHaveBeenCalled();
+    expect(agentRepository.create).not.toHaveBeenCalled();
   });
 });

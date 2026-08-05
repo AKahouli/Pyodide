@@ -18,6 +18,7 @@ import {
 import { LoggerService } from '../../logger';
 import { NotFoundException, ForbiddenException, BadRequestException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { AgentRepository } from '../../agent/repositories/agent.repository';
 import { WorkspaceService } from '../../workspace/workspace.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { MessageService } from './message.service';
@@ -45,6 +46,7 @@ export class ConversationService {
     @Inject(forwardRef(() => MessageService))
     private readonly messageService: MessageService,
     private readonly emailService: EmailService,
+    private readonly agentRepository: AgentRepository,
   ) {
     this.logger.setContext('ConversationService');
   }
@@ -670,7 +672,6 @@ export class ConversationService {
     const conversation = await this.conversationModel
       .findById(conversationId)
       .select('groupMeta.taggedAgents groupMeta.isGroup')
-      .populate('groupMeta.taggedAgents')
       .lean()
       .exec();
 
@@ -685,15 +686,13 @@ export class ConversationService {
       return [];
     }
 
-    return (conversation.groupMeta.taggedAgents || []).map((agent: any) => {
-      if (agent && typeof agent === 'object') {
-        // Handle MongoDB _id to id mapping if needed, similar to Agent schema JSON transform
-        const ret = { ...agent, id: agent._id?.toString() || agent.id };
-        delete ret._id;
-        delete ret.__v;
-        return ret;
-      }
-      return agent;
+    const taggedAgentIds = (conversation.groupMeta.taggedAgents || []).map((agentId) => String(agentId));
+    const agents = await this.agentRepository.findByIds(taggedAgentIds);
+    // Map _id -> id, matching the previous populated Agent shape.
+    return agents.map((agent) => {
+      const ret: Record<string, unknown> = { ...agent, id: agent._id };
+      delete ret._id;
+      return ret;
     });
   }
 

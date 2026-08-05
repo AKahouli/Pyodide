@@ -1,11 +1,10 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Types } from 'mongoose';
 import playbookFlowConfig from '@config/playbook-flow.config';
 import { ConnectorService } from '@modules/connector/connector.service';
 import { AgentTypeService } from '@modules/agent-type/agent-type.service';
-import { Agent, AgentDocument } from '../schemas/agent.schema';
+import { AgentRepository } from '../repositories/agent.repository';
 
 const PLAYBOOK_MCP_ACTIONS = [
   'open_playbook_context',
@@ -44,7 +43,7 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
 
   constructor(
     @Inject(playbookFlowConfig.KEY) private readonly config: ConfigType<typeof playbookFlowConfig>,
-    @InjectModel(Agent.name) private readonly agentModel: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
     private readonly agentTypeService: AgentTypeService,
     private readonly connectorService: ConnectorService,
   ) {}
@@ -62,11 +61,7 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
       this.logger.error('Playbook MCP connector reconciliation skipped: mono-agent type is missing');
       return;
     }
-    const monoAgents = await this.agentModel.find({
-      agentType: new Types.ObjectId(monoType.id),
-      isDefault: true,
-      isActive: true,
-    }).limit(2).exec();
+    const monoAgents = await this.agentRepository.findActiveDefaultsByType(monoType.id, 2);
     if (monoAgents.length !== 1) {
       this.logger.error(`Playbook MCP connector reconciliation skipped: expected one default mono-agent, found ${monoAgents.length}`);
       return;
@@ -97,55 +92,54 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
       actingUserId,
       this.config.mcpServerUrl,
     );
-    const connectorId = new Types.ObjectId(connector.id);
+    const connectorId = connector.id;
     const assistantType = await this.agentTypeService.findOrCreateBySlug('playbook_assistant', {
       name: 'Playbook Assistant',
       defaultPrompt: '',
       isActive: true,
     });
-    const dedicatedAgent = await this.agentModel.findOneAndUpdate(
-      { slug: PLAYBOOK_ASSISTANT_AGENT_SLUG, isDefault: true },
-      {
-        $set: {
-          name: 'Playbook AI Workflow Assistant',
-          agentType: new Types.ObjectId(assistantType.id),
-          role: 'Design, inspect, and optimize the current Playbook through Playbook MCP.',
-          description: 'System-managed assistant for the Playbook Designer.',
-          llmModel: sourceAgent.llmModel,
-          temperature: 0,
-          instruction: PLAYBOOK_MCP_INSTRUCTION,
-          ignorePrePrompt: true,
-          knowledgeBases: [],
-          tools: [],
-          skills: [],
-          disabledSkills: [],
-          connectors: [connectorId],
-          connectorActionSelections: [{ connector: connectorId, actionKeys: PLAYBOOK_MCP_ACTIONS }],
-          enable_temporary_child_agents: false,
-          isActive: true,
-          isDefault: true,
-          isDefaultForType: true,
-        },
-        $setOnInsert: { createdBy: sourceAgent.createdBy },
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: false },
-    ).exec();
-    const dedicatedAgentId = dedicatedAgent.id;
-    await this.agentModel.updateMany(
-      { _id: { $ne: dedicatedAgentId }, connectors: connectorId },
-      { $pull: { connectors: connectorId, connectorActionSelections: { connector: connectorId } } },
-    ).exec();
-    const agentsWithLegacyInstruction = await this.agentModel.find({
-      _id: { $ne: dedicatedAgentId },
-      instruction: { $regex: '\\[Playbook MCP\\]' },
-    }).select('_id instruction').lean().exec();
-    if (agentsWithLegacyInstruction.length > 0) {
-      await this.agentModel.bulkWrite(agentsWithLegacyInstruction.map((agent) => ({
-        updateOne: {
-          filter: { _id: agent._id },
-          update: { $set: { instruction: this.removePlaybookInstruction(agent.instruction ?? '') } },
-        },
-      })));
+    const assistantFields = {
+      name: 'Playbook AI Workflow Assistant',
+      slug: PLAYBOOK_ASSISTANT_AGENT_SLUG,
+      agentType: assistantType.id,
+      agentTypeSlug: assistantType.slug,
+      role: 'Design, inspect, and optimize the current Playbook through Playbook MCP.',
+      description: 'System-managed assistant for the Playbook Designer.',
+      llmModel: sourceAgent.llmModel,
+      temperature: 0,
+      instruction: PLAYBOOK_MCP_INSTRUCTION,
+      ignorePrePrompt: true,
+      knowledgeBases: [],
+      tools: [],
+      skills: [],
+      disabledSkills: [],
+      connectors: [connectorId],
+      connectorActionSelections: [{ connectorId, actionKeys: [...PLAYBOOK_MCP_ACTIONS] }],
+      enable_temporary_child_agents: false,
+      isActive: true,
+      isDefault: true,
+      isDefaultForType: true,
+    };
+    const existingDedicated = await this.agentRepository.findBySlug({ slug: PLAYBOOK_ASSISTANT_AGENT_SLUG, isDefault: true });
+    let dedicatedAgentId: string;
+    if (existingDedicated) {
+      await this.agentRepository.updateById(existingDedicated._id, assistantFields);
+      dedicatedAgentId = existingDedicated._id;
+    } else {
+      dedicatedAgentId = new Types.ObjectId().toString();
+      await this.agentRepository.create({
+        id: dedicatedAgentId,
+        ...assistantFields,
+        guardrails: {},
+        deploymentSettings: {},
+        max_temporary_child_agents: 4,
+        createdBy: sourceAgent.createdBy,
+      });
+    }
+    await this.agentRepository.pullConnectorFromAllExcept(connectorId, dedicatedAgentId);
+    const agentsWithLegacyInstruction = await this.agentRepository.findIdsByInstructionLike('%[Playbook MCP]%', dedicatedAgentId);
+    for (const agent of agentsWithLegacyInstruction) {
+      await this.agentRepository.updateById(agent.id, { instruction: this.removePlaybookInstruction(agent.instruction ?? '') });
     }
     this.logger.log(`Playbook MCP system connector attached exclusively to dedicated assistant agentId=${dedicatedAgentId}`);
   }

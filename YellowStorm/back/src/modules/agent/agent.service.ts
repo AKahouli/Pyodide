@@ -1,9 +1,7 @@
 import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
-import { Model, FilterQuery, Types } from 'mongoose';
+import { Types } from 'mongoose';
 import { LoggerService } from '../logger';
-import { Agent, AgentDocument } from './schemas/agent.schema';
 import { IAgentResponse, IAgentForStream, IGrpcAgent, ISharedAgentInfo } from './interfaces/agent.interface';
 import { AgentShareService } from './services/agent-share.service';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
@@ -32,6 +30,9 @@ import {
   normalizePromptInjectionGuardrails,
 } from '../guardrails/services/guardrails-settings.service';
 import { normalizeWidgetSettings } from './constants/widget-default-settings';
+import { AgentRepository, CreateAgentInput, UpdateAgentInput } from './repositories/agent.repository';
+import { AgentRecord } from './repositories/agent-record.mapper';
+import { AgentRoleEmbeddingService } from './services/agent-role-embedding.service';
 
 /** Agent-type slug of the orchestrating manager agent. */
 const MANAGER_SLUG = 'manager';
@@ -45,8 +46,6 @@ export class AgentService {
   private fallbackConnectorRuntimeService?: AgentConnectorRuntimeService;
 
   constructor(
-    @InjectModel(Agent.name)
-    private readonly agentModel: Model<AgentDocument>,
     private readonly logger: LoggerService,
     private readonly toolService: ToolService,
     private readonly agentTypeService: AgentTypeService,
@@ -61,6 +60,8 @@ export class AgentService {
     private readonly teamService: TeamService,
     private readonly agentShareService: AgentShareService,
     private readonly guardrailsSettingsService: GuardrailsSettingsService,
+    private readonly agentRepository: AgentRepository,
+    private readonly agentRoleEmbedding: AgentRoleEmbeddingService,
     @Optional() private readonly connectorRuntimeService?: AgentConnectorRuntimeService,
   ) {
     this.logger.setContext(AgentService.name);
@@ -78,10 +79,7 @@ export class AgentService {
     }
 
     // Check name uniqueness within user
-    const existing = await this.agentModel
-      .findOne({ name: dto.name, createdBy: new Types.ObjectId(userId) })
-      .lean()
-      .exec();
+    const existing = await this.agentRepository.findByNameAndOwner(dto.name, userId);
     if (existing) {
       throw new ConflictException(ErrorCode.CUSTOM_AGENT_ALREADY_EXISTS);
     }
@@ -97,34 +95,12 @@ export class AgentService {
 
     await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
 
-    const agent = await this.agentModel.create({
-      name: dto.name,
-      slug: normalizedSlug,
-      agentType: new Types.ObjectId(dto.agentType),
-      role: dto.role,
-      description: dto.description ?? '',
-      temperature: dto.temperature ?? 0,
-      llmModel: dto.model,
-      instruction: dto.instruction ?? '',
-      ignorePrePrompt: dto.ignorePrePrompt ?? false,
-      knowledgeBases: (dto.knowledgeBases ?? []).map((id) => new Types.ObjectId(id)),
-      tools: (dto.tools ?? []).map((id) => new Types.ObjectId(id)),
-      skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
-      disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
-      connectors: (dto.connectors ?? []).map((id) => new Types.ObjectId(id)),
-      connectorActionSelections: this.normalizeConnectorActionSelections(
-        dto.connectors,
-        dto.connectorActionSelections,
-      ),
-      guardrails: dto.guardrails,
-      deploymentSettings: this.normalizeDeploymentSettings(dto.deploymentSettings),
-      enable_temporary_child_agents: dto.enable_temporary_child_agents ?? false,
-      max_temporary_child_agents: dto.max_temporary_child_agents ?? 4,
-      isDefault: false,
-      isDefaultForType: dto.isDefaultForType ?? false,
-      isActive: dto.isActive ?? true,
-      createdBy: new Types.ObjectId(userId),
-    });
+    const id = new Types.ObjectId().toString();
+    const agentTypeSlug = await this.resolveAgentTypeSlug(dto.agentType);
+    const agent = await this.agentRepository.create(
+      this.dtoToCreateInput(userId, dto, { id, isDefault: false, slug: normalizedSlug, agentTypeSlug }),
+    );
+    this.agentRoleEmbedding.reindexHumainRole(agent._id, agent.agentTypeSlug, agent.name, agent.role);
 
     this.logger.log('Personal agent created', {
       agentId: agent._id.toString(),
@@ -132,45 +108,25 @@ export class AgentService {
       userId,
     });
 
-    return this.toResponse(agent, { id: agentType.id, name: agentType.name });
+    return this.toResponse((await this.hydrateOne(agent))!);
   }
 
   async findUserAgents(userId: string, query: QueryAgentDto): Promise<PaginatedResponseDto<IAgentResponse>> {
-    const filter: FilterQuery<AgentDocument> = {
-      createdBy: new Types.ObjectId(userId),
-      isDefault: false,
-    };
-
-    if (query.search) {
-      filter.name = { $regex: escapeRegex(query.search), $options: 'i' };
-    }
-
-    if (query.agentType) {
-      filter.agentType = new Types.ObjectId(query.agentType);
-    }
-
-    if (query.isActive !== undefined) {
-      filter.isActive = query.isActive;
-    }
-
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
-    const skip = (page - 1) * limit;
 
-    const [agents, total] = await Promise.all([
-      this.agentModel
-        .find(filter)
-        .populate('agentType', 'name skills')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean()
-        .exec(),
-      this.agentModel.countDocuments(filter).exec(),
-    ]);
+    const { items, total } = await this.agentRepository.listUserAgents({
+      userId,
+      search: query.search,
+      agentType: query.agentType,
+      isActive: query.isActive,
+      page,
+      limit,
+    });
 
+    const hydrated = await this.hydrate(items);
     return new PaginatedResponseDto(
-      agents.map((a) => this.toResponse(a)),
+      hydrated.map((a) => this.toResponse(a)),
       total,
       page,
       limit,
@@ -195,38 +151,18 @@ export class AgentService {
       return new PaginatedResponseDto([], 0, page, limit);
     }
 
-    const filter: FilterQuery<AgentDocument> = {
-      agentType: new Types.ObjectId(humainType.id),
-    };
+    const { items, total } = await this.agentRepository.listHumainPublic({
+      agentTypeId: humainType.id,
+      name: query.name,
+      role: query.role,
+      description: query.description,
+      page,
+      limit,
+    });
 
-    if (query.name) {
-      filter.name = { $regex: escapeRegex(query.name), $options: 'i' };
-    }
-
-    if (query.role) {
-      filter.role = { $regex: escapeRegex(query.role), $options: 'i' };
-    }
-
-    if (query.description) {
-      filter.description = { $regex: escapeRegex(query.description), $options: 'i' };
-    }
-
-    const skip = (page - 1) * limit;
-
-    const [agents, total] = await Promise.all([
-      this.agentModel
-        .find(filter)
-        .populate('agentType', 'name skills')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean()
-        .exec(),
-      this.agentModel.countDocuments(filter).exec(),
-    ]);
-
+    const hydrated = await this.hydrate(items);
     return new PaginatedResponseDto(
-      agents.map((a) => this.toResponse(a)),
+      hydrated.map((a) => this.toResponse(a)),
       total,
       page,
       limit,
@@ -234,11 +170,7 @@ export class AgentService {
   }
 
   async findUserAgentById(userId: string, agentId: string): Promise<IAgentResponse> {
-    const agent = await this.agentModel
-      .findById(agentId)
-      .populate('agentType', 'name skills')
-      .lean()
-      .exec();
+    const agent = await this.agentRepository.findById(agentId);
 
     if (!agent) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
@@ -246,7 +178,7 @@ export class AgentService {
 
     const isOwner = agent.createdBy.toString() === userId;
     if (agent.isDefault) {
-      return this.toResponse(agent);
+      return this.toResponse((await this.hydrateOne(agent))!);
     }
     let shareInfo: ISharedAgentInfo | undefined;
     if (!isOwner) {
@@ -258,13 +190,13 @@ export class AgentService {
       shareInfo = info;
     }
 
-    const response = this.toResponse(agent);
+    const response = this.toResponse((await this.hydrateOne(agent))!);
     if (shareInfo) response.shareInfo = shareInfo;
     return response;
   }
 
   async updatePersonal(userId: string, agentId: string, dto: UpdateAgentDto): Promise<IAgentResponse> {
-    const agent = await this.agentModel.findById(agentId).lean().exec();
+    const agent = await this.agentRepository.findById(agentId);
 
     if (!agent) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
@@ -293,10 +225,7 @@ export class AgentService {
 
     // Uniqueness is scoped to the agent's owner, not the (possibly shared) editor.
     if (dto.name && dto.name !== agent.name) {
-      const duplicate = await this.agentModel
-        .findOne({ name: dto.name, createdBy: new Types.ObjectId(ownerId) })
-        .lean()
-        .exec();
+      const duplicate = await this.agentRepository.findByNameAndOwner(dto.name, ownerId);
       if (duplicate) {
         throw new ConflictException(ErrorCode.CUSTOM_AGENT_ALREADY_EXISTS);
       }
@@ -316,52 +245,17 @@ export class AgentService {
 
     await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
 
-    // Build update object
-    const updateData: Record<string, unknown> = { ...dto };
-    if (normalizedSlug) {
-      updateData.slug = normalizedSlug;
-    }
-    if (dto.agentType) {
-      updateData.agentType = new Types.ObjectId(dto.agentType);
-    }
-    // Remap DTO field 'model' to schema field 'llmModel'
-    if ('model' in dto) {
-      updateData.llmModel = dto.model || '';
-      delete updateData.model;
-    }
-    if (dto.knowledgeBases) {
-      updateData.knowledgeBases = dto.knowledgeBases.map((id) => new Types.ObjectId(id));
-    }
-    if (dto.tools) {
-      updateData.tools = dto.tools.map((id) => new Types.ObjectId(id));
-    }
-    if (dto.skills) {
-      updateData.skills = dto.skills.map((id) => new Types.ObjectId(id));
-    }
-    if (dto.disabledSkills) {
-      updateData.disabledSkills = dto.disabledSkills.map((id) => new Types.ObjectId(id));
-    }
-    if (dto.connectors) {
-      updateData.connectors = dto.connectors.map((id) => new Types.ObjectId(id));
-    }
-    if (dto.connectorActionSelections) {
-      updateData.connectorActionSelections = this.normalizeConnectorActionSelections(
-        dto.connectors ?? ((agent.connectors as Array<{ toString(): string }>) || []).map((id) => id.toString()),
-        dto.connectorActionSelections,
-      );
-    }
-    if (dto.deploymentSettings) {
-      updateData.deploymentSettings = this.normalizeDeploymentSettings(dto.deploymentSettings, agent.deploymentSettings);
-    }
-
-    const updated = await this.agentModel
-      .findByIdAndUpdate(agentId, { $set: updateData }, { new: true })
-      .populate('agentType', 'name skills')
-      .lean()
-      .exec();
+    const agentTypeSlug = dto.agentType ? await this.resolveAgentTypeSlug(dto.agentType) : undefined;
+    const patch = this.dtoToUpdateInput(dto, agent, { agentTypeSlug, normalizedSlug });
+    const updated = await this.agentRepository.updateById(agentId, patch);
 
     if (!updated) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
+    }
+
+    // Re-index the role embedding only when name/role actually changed (humain agents only).
+    if (dto.name !== undefined || dto.role !== undefined) {
+      this.agentRoleEmbedding.reindexHumainRole(updated._id, updated.agentTypeSlug, updated.name, updated.role);
     }
 
     this.logger.log('Personal agent updated', {
@@ -370,11 +264,11 @@ export class AgentService {
       changes: Object.keys(dto),
     });
 
-    return this.toResponse(updated);
+    return this.toResponse((await this.hydrateOne(updated))!);
   }
 
   async deletePersonal(userId: string, agentId: string): Promise<void> {
-    const agent = await this.agentModel.findById(agentId).lean().exec();
+    const agent = await this.agentRepository.findById(agentId);
 
     if (!agent) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
@@ -388,7 +282,7 @@ export class AgentService {
       throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
     }
 
-    await this.agentModel.findByIdAndDelete(agentId).exec();
+    await this.agentRepository.deleteById(agentId);
 
     // Keep teams consistent: drop this agent from any team that referenced it.
     await this.teamService.removeAgentFromAllTeams(agentId);
@@ -414,10 +308,7 @@ export class AgentService {
     }
 
     // Check name uniqueness among default agents
-    const existing = await this.agentModel
-      .findOne({ name: dto.name, isDefault: true })
-      .lean()
-      .exec();
+    const existing = await this.agentRepository.findByNameDefault(dto.name);
     if (existing) {
       throw new ConflictException(ErrorCode.CUSTOM_AGENT_ALREADY_EXISTS);
     }
@@ -433,76 +324,35 @@ export class AgentService {
 
     await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
 
-    const agent = await this.agentModel.create({
-      name: dto.name,
-      slug: normalizedSlug,
-      agentType: new Types.ObjectId(dto.agentType),
-      role: dto.role,
-      description: dto.description ?? '',
-      temperature: dto.temperature ?? 0,
-      llmModel: dto.model,
-      instruction: dto.instruction ?? '',
-      ignorePrePrompt: dto.ignorePrePrompt ?? false,
-      knowledgeBases: (dto.knowledgeBases ?? []).map((id) => new Types.ObjectId(id)),
-      tools: (dto.tools ?? []).map((id) => new Types.ObjectId(id)),
-      skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
-      disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
-      connectors: (dto.connectors ?? []).map((id) => new Types.ObjectId(id)),
-      connectorActionSelections: this.normalizeConnectorActionSelections(
-        dto.connectors,
-        dto.connectorActionSelections,
-      ),
-      guardrails: dto.guardrails,
-      deploymentSettings: this.normalizeDeploymentSettings(dto.deploymentSettings),
-      enable_temporary_child_agents: dto.enable_temporary_child_agents ?? false,
-      max_temporary_child_agents: dto.max_temporary_child_agents ?? 4,
-      isDefault: true,
-      isDefaultForType: dto.isDefaultForType ?? false,
-      isActive: dto.isActive ?? true,
-      createdBy: new Types.ObjectId(adminUserId),
-    });
+    const id = new Types.ObjectId().toString();
+    const agentTypeSlug = await this.resolveAgentTypeSlug(dto.agentType);
+    const agent = await this.agentRepository.create(
+      this.dtoToCreateInput(adminUserId, dto, { id, isDefault: true, slug: normalizedSlug, agentTypeSlug }),
+    );
 
     this.logger.log('Default agent created', {
       agentId: agent._id.toString(),
       name: agent.name,
     });
 
-    return this.toResponse(agent, { id: agentType.id, name: agentType.name });
+    return this.toResponse((await this.hydrateOne(agent))!);
   }
 
   async findDefaultAgents(query: QueryAgentDto): Promise<PaginatedResponseDto<IAgentResponse>> {
-    const filter: FilterQuery<AgentDocument> = { isDefault: true };
-
-    if (query.search) {
-      filter.name = { $regex: escapeRegex(query.search), $options: 'i' };
-    }
-
-    if (query.agentType) {
-      filter.agentType = new Types.ObjectId(query.agentType);
-    }
-
-    if (query.isActive !== undefined) {
-      filter.isActive = query.isActive;
-    }
-
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
-    const skip = (page - 1) * limit;
 
-    const [agents, total] = await Promise.all([
-      this.agentModel
-        .find(filter)
-        .populate('agentType', 'name skills')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean()
-        .exec(),
-      this.agentModel.countDocuments(filter).exec(),
-    ]);
+    const { items, total } = await this.agentRepository.listDefaultAgents({
+      search: query.search,
+      agentType: query.agentType,
+      isActive: query.isActive,
+      page,
+      limit,
+    });
 
+    const hydrated = await this.hydrate(items);
     return new PaginatedResponseDto(
-      agents.map((a) => this.toResponse(a)),
+      hydrated.map((a) => this.toResponse(a)),
       total,
       page,
       limit,
@@ -510,52 +360,29 @@ export class AgentService {
   }
 
   async findDefaultAgentById(agentId: string): Promise<IAgentResponse> {
-    const agent = await this.agentModel
-      .findOne({ _id: agentId, isDefault: true })
-      .populate('agentType', 'name skills')
-      .lean()
-      .exec();
+    const agent = await this.agentRepository.findByIdDefault(agentId);
 
     if (!agent) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
 
-    return this.toResponse(agent);
+    return this.toResponse((await this.hydrateOne(agent))!);
   }
 
   async findDefaultByAgentType(agentTypeId: string): Promise<IAgentResponse | null> {
-    const agent = await this.agentModel
-      .findOne({
-        agentType: new Types.ObjectId(agentTypeId),
-        isDefault: true,
-        isActive: true,
-      })
-      .populate('agentType', 'name skills')
-      .lean()
-      .exec();
+    const agent = await this.agentRepository.findDefaultByType(agentTypeId);
     if (!agent) return null;
-    // After
-    const populatedType = agent.agentType as unknown as { _id: { toString(): string }; name: string };
-    return this.toResponse(agent, { id: populatedType._id.toString(), name: populatedType.name });
+    return this.toResponse((await this.hydrateOne(agent))!);
   }
 
   async findDefaultAgentByName(name: string): Promise<IAgentResponse | null> {
-    const agent = await this.agentModel
-      .findOne({
-        name: { $regex: `^${name}$`, $options: 'i' },
-        isDefault: true,
-        isActive: true,
-      })
-      .populate('agentType', 'name skills')
-      .lean()
-      .exec();
+    const agent = await this.agentRepository.findDefaultByNameActive(name);
     if (!agent) return null;
-    const populatedType = agent.agentType as unknown as { _id: { toString(): string }; name: string };
-    return this.toResponse(agent, { id: populatedType._id.toString(), name: populatedType.name });
+    return this.toResponse((await this.hydrateOne(agent))!);
   }
 
   async updateDefault(agentId: string, dto: UpdateAgentDto): Promise<IAgentResponse> {
-    const agent = await this.agentModel.findOne({ _id: agentId, isDefault: true }).lean().exec();
+    const agent = await this.agentRepository.findByIdDefault(agentId);
     if (!agent) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
@@ -568,10 +395,7 @@ export class AgentService {
     }
 
     if (dto.name && dto.name !== agent.name) {
-      const duplicate = await this.agentModel
-        .findOne({ name: dto.name, isDefault: true })
-        .lean()
-        .exec();
+      const duplicate = await this.agentRepository.findByNameDefault(dto.name);
       if (duplicate) {
         throw new ConflictException(ErrorCode.CUSTOM_AGENT_ALREADY_EXISTS);
       }
@@ -591,48 +415,9 @@ export class AgentService {
 
     await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
 
-    const updateData: Record<string, unknown> = { ...dto };
-    if (normalizedSlug) {
-      updateData.slug = normalizedSlug;
-    }
-    if (dto.agentType) {
-      updateData.agentType = new Types.ObjectId(dto.agentType);
-    }
-    // Remap DTO field 'model' to schema field 'llmModel'
-    if ('model' in dto) {
-      updateData.llmModel = dto.model || '';
-      delete updateData.model;
-    }
-    if (dto.knowledgeBases) {
-      updateData.knowledgeBases = dto.knowledgeBases.map((id) => new Types.ObjectId(id));
-    }
-    if (dto.tools) {
-      updateData.tools = dto.tools.map((id) => new Types.ObjectId(id));
-    }
-    if (dto.skills) {
-      updateData.skills = dto.skills.map((id) => new Types.ObjectId(id));
-    }
-    if (dto.disabledSkills) {
-      updateData.disabledSkills = dto.disabledSkills.map((id) => new Types.ObjectId(id));
-    }
-    if (dto.connectors) {
-      updateData.connectors = dto.connectors.map((id) => new Types.ObjectId(id));
-    }
-    if (dto.connectorActionSelections) {
-      updateData.connectorActionSelections = this.normalizeConnectorActionSelections(
-        dto.connectors ?? ((agent.connectors as Array<{ toString(): string }>) || []).map((id) => id.toString()),
-        dto.connectorActionSelections,
-      );
-    }
-    if (dto.deploymentSettings) {
-      updateData.deploymentSettings = this.normalizeDeploymentSettings(dto.deploymentSettings, agent.deploymentSettings);
-    }
-
-    const updated = await this.agentModel
-      .findByIdAndUpdate(agentId, { $set: updateData }, { new: true })
-      .populate('agentType', 'name skills')
-      .lean()
-      .exec();
+    const agentTypeSlug = dto.agentType ? await this.resolveAgentTypeSlug(dto.agentType) : undefined;
+    const patch = this.dtoToUpdateInput(dto, agent, { agentTypeSlug, normalizedSlug });
+    const updated = await this.agentRepository.updateById(agentId, patch);
 
     if (!updated) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
@@ -643,16 +428,16 @@ export class AgentService {
       changes: Object.keys(dto),
     });
 
-    return this.toResponse(updated);
+    return this.toResponse((await this.hydrateOne(updated))!);
   }
 
   async deleteDefault(agentId: string): Promise<void> {
-    const agent = await this.agentModel.findOne({ _id: agentId, isDefault: true }).lean().exec();
+    const agent = await this.agentRepository.findByIdDefault(agentId);
     if (!agent) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
 
-    await this.agentModel.findByIdAndDelete(agentId).exec();
+    await this.agentRepository.deleteById(agentId);
 
     this.logger.log('Default agent deleted', {
       agentId,
@@ -666,19 +451,9 @@ export class AgentService {
 
   async getAgentsForUser(userId: string): Promise<IAgentForStream[]> {
     // Get personal active agents + all active default agents
-    const agents = await this.agentModel
-      .find({
-        isActive: true,
-        $or: [
-          { createdBy: new Types.ObjectId(userId), isDefault: false },
-          { isDefault: true },
-        ],
-      })
-      .populate('agentType', 'name slug skills')
-      .lean()
-      .exec();
-
-    return agents.map((agent) => this.toStreamAgent(agent));
+    const agents = await this.agentRepository.findForUser(userId);
+    const hydrated = await this.hydrate(agents);
+    return hydrated.map((agent) => this.toStreamAgent(agent));
   }
 
   /**
@@ -712,16 +487,9 @@ export class AgentService {
       const missingSharedIds = sharedAgentIds.filter((id) => !existingIds.has(id));
 
       if (missingSharedIds.length > 0) {
-        const sharedAgents = await this.agentModel
-          .find({
-            _id: { $in: missingSharedIds.map((id) => new Types.ObjectId(id)) },
-            isActive: true,
-          })
-          .populate('agentType', 'name slug skills')
-          .lean()
-          .exec();
-
-        const streamSharedAgents = sharedAgents.map((agent) => this.toStreamAgent(agent));
+        const sharedAgents = await this.agentRepository.findByIds(missingSharedIds, { activeOnly: true });
+        const hydratedShared = await this.hydrate(sharedAgents);
+        const streamSharedAgents = hydratedShared.map((agent) => this.toStreamAgent(agent));
         finalUserAgents = [...finalUserAgents, ...streamSharedAgents];
 
         this.logger.log('Shared agents fetched for stream', {
@@ -748,18 +516,12 @@ export class AgentService {
         const authorizedSharedIds = unresolvedTaggedIds.filter((id) => shareMap.has(id));
 
         if (authorizedSharedIds.length > 0) {
-          const sharedWithUserAgents = await this.agentModel
-            .find({
-              _id: { $in: authorizedSharedIds.map((id) => new Types.ObjectId(id)) },
-              isActive: true,
-            })
-            .populate('agentType', 'name slug skills')
-            .lean()
-            .exec();
+          const sharedWithUserAgents = await this.agentRepository.findByIds(authorizedSharedIds, { activeOnly: true });
+          const hydratedSharedWithUser = await this.hydrate(sharedWithUserAgents);
 
           finalUserAgents = [
             ...finalUserAgents,
-            ...sharedWithUserAgents.map((agent) => this.toStreamAgent(agent)),
+            ...hydratedSharedWithUser.map((agent) => this.toStreamAgent(agent)),
           ];
 
           this.logger.log('Shared-with-user agents resolved for stream', {
@@ -1052,16 +814,10 @@ export class AgentService {
     this.logger.log('Building gRPC agents for playbook', { userId, agentIds, fallbackModelId });
 
     // Fetch agents by exact IDs (with agentType populated including slug)
-    const agents = await this.agentModel
-      .find({
-        _id: { $in: agentIds.map((id) => new Types.ObjectId(id)) },
-        isActive: true,
-      })
-      .populate('agentType', 'name slug skills')
-      .lean()
-      .exec();
+    const agents = await this.agentRepository.findByIds(agentIds, { activeOnly: true });
+    const hydratedAgents = await this.hydrate(agents);
 
-    const streamAgents = agents.map((agent) => this.toStreamAgent(agent));
+    const streamAgents = hydratedAgents.map((agent) => this.toStreamAgent(agent));
 
     // Resolve the admin's default model once so inherited (empty) agent.model
     // values fall back to it instead of becoming a hardcoded "gpt-4o-mini"
@@ -1249,36 +1005,17 @@ export class AgentService {
 
   async getAllForUserResponse(userId: string): Promise<IAgentResponse[]> {
     const [agents, shareMap] = await Promise.all([
-      this.agentModel
-        .find({
-          isActive: true,
-          $or: [
-            { createdBy: new Types.ObjectId(userId), isDefault: false },
-            { isDefault: true },
-          ],
-        })
-        .populate('agentType', 'name skills')
-        .sort({ isDefault: -1, createdAt: -1 })
-        .lean()
-        .exec(),
+      this.agentRepository.findForUser(userId),
       this.agentShareService.getShareInfoMapForUser(userId),
     ]);
 
-    const owned = agents.map((a) => this.toResponse(a));
+    const owned = (await this.hydrate(agents)).map((a) => this.toResponse(a));
 
     // Append agents shared with the user (active only), tagged with shareInfo.
     if (shareMap.size > 0) {
-      const sharedAgents = await this.agentModel
-        .find({
-          _id: { $in: Array.from(shareMap.keys()).map((id) => new Types.ObjectId(id)) },
-          isActive: true,
-        })
-        .populate('agentType', 'name skills')
-        .sort({ createdAt: -1 })
-        .lean()
-        .exec();
+      const sharedAgents = await this.agentRepository.findByIds(Array.from(shareMap.keys()), { activeOnly: true });
 
-      for (const doc of sharedAgents) {
+      for (const doc of await this.hydrate(sharedAgents)) {
         const response = this.toResponse(doc);
         response.shareInfo = shareMap.get(response.id);
         owned.push(response);
@@ -1321,11 +1058,7 @@ export class AgentService {
    * agent-memory deletion so read-only recipients can view but not delete.
    */
   async canWriteAgent(userId: string, agentId: string): Promise<boolean> {
-    const agent = await this.agentModel
-      .findById(agentId)
-      .select('createdBy isDefault')
-      .lean()
-      .exec();
+    const agent = await this.agentRepository.findById(agentId);
     if (!agent || agent.isDefault) return false;
     if (agent.createdBy?.toString() === userId) return true;
     const permission = await this.agentShareService.getSharePermission(userId, agentId);
@@ -1333,20 +1066,8 @@ export class AgentService {
   }
 
   async findByIds(ids: string[], userId: string): Promise<IAgentResponse[]> {
-    const agents = await this.agentModel
-      .find({
-        _id: { $in: ids.map((id) => new Types.ObjectId(id)) },
-        isActive: true,
-        $or: [
-          { createdBy: new Types.ObjectId(userId), isDefault: false },
-          { isDefault: true },
-        ],
-      })
-      .populate('agentType', 'name skills')
-      .lean()
-      .exec();
-
-    return agents.map((a) => this.toResponse(a));
+    const agents = await this.agentRepository.findByIdsForUser(ids, userId);
+    return (await this.hydrate(agents)).map((a) => this.toResponse(a));
   }
 
   /**
@@ -1356,16 +1077,8 @@ export class AgentService {
    * team-level access themselves before calling this.
    */
   async findByIdsUnrestricted(ids: string[]): Promise<IAgentResponse[]> {
-    const agents = await this.agentModel
-      .find({
-        _id: { $in: ids.map((id) => new Types.ObjectId(id)) },
-        isActive: true,
-      })
-      .populate('agentType', 'name skills')
-      .lean()
-      .exec();
-
-    return agents.map((a) => this.toResponse(a));
+    const agents = await this.agentRepository.findByIds(ids, { activeOnly: true });
+    return (await this.hydrate(agents)).map((a) => this.toResponse(a));
   }
 
   // ==========================================
@@ -1373,7 +1086,7 @@ export class AgentService {
   // ==========================================
 
   async countByAgentType(agentTypeId: string): Promise<number> {
-    return this.agentModel.countDocuments({ agentType: new Types.ObjectId(agentTypeId) }).exec();
+    return this.agentRepository.countByAgentType(agentTypeId);
   }
 
   // ==========================================
@@ -1386,20 +1099,12 @@ export class AgentService {
     userId?: string,
     excludeAgentId?: string,
   ): Promise<void> {
-    const filter: FilterQuery<AgentDocument> = {
-      agentType: new Types.ObjectId(agentTypeId),
-      isDefaultForType: true,
-    };
-    if (isPersonal) {
-      filter.isDefault = false;
-      filter.createdBy = new Types.ObjectId(userId);
-    } else {
-      filter.isDefault = true;
-    }
-    if (excludeAgentId) {
-      filter._id = { $ne: new Types.ObjectId(excludeAgentId) };
-    }
-    await this.agentModel.updateMany(filter, { $set: { isDefaultForType: false } }).exec();
+    await this.agentRepository.clearDefaultForType({
+      agentTypeId,
+      isPersonal,
+      userId,
+      excludeId: excludeAgentId,
+    });
   }
 
   private normalizeSlug(value: string): string {
@@ -1426,20 +1131,12 @@ export class AgentService {
     userId?: string,
     excludeAgentId?: string,
   ): Promise<void> {
-    const filter: FilterQuery<AgentDocument> = {
+    const existing = await this.agentRepository.findBySlug({
       slug,
       isDefault,
-    };
-
-    if (!isDefault) {
-      filter.createdBy = new Types.ObjectId(userId);
-    }
-
-    if (excludeAgentId) {
-      filter._id = { $ne: new Types.ObjectId(excludeAgentId) };
-    }
-
-    const existing = await this.agentModel.findOne(filter).lean().exec();
+      userId,
+      excludeId: excludeAgentId,
+    });
     if (existing) {
       throw new ConflictException(ErrorCode.CUSTOM_AGENT_ALREADY_EXISTS);
     }
@@ -1501,15 +1198,7 @@ export class AgentService {
       return undefined;
     }
 
-    const monoAgentDoc = await this.agentModel
-      .findOne({
-        agentType: new Types.ObjectId(monoType.id),
-        isDefault: true,
-        isActive: true,
-      })
-      .populate('agentType', 'name slug skills')
-      .lean()
-      .exec();
+    const monoAgentDoc = await this.agentRepository.findDefaultByType(monoType.id);
 
     if (!monoAgentDoc) {
       this.logger.warn('No admin default agent of the "mono-agent" type is configured', {
@@ -1519,7 +1208,7 @@ export class AgentService {
       return undefined;
     }
 
-    return this.toStreamAgent(monoAgentDoc);
+    return this.toStreamAgent((await this.hydrateOne(monoAgentDoc))!);
   }
 
   private resolveDefaultAgentBySlug(
@@ -1556,6 +1245,121 @@ export class AgentService {
   }
 
   // ==========================================
+  // Postgres hydration + DTO mapping helpers
+  // ==========================================
+
+  /** Replace each record's bare agentType id with a populated {_id,name,slug,skills}. */
+  private async hydrate(records: AgentRecord[]): Promise<Array<Record<string, unknown>>> {
+    const typeIds = [...new Set(records.map((r) => r.agentType).filter(Boolean))];
+    const typeMap = await this.agentTypeService.getManyForHydration(typeIds);
+    return records.map((r) => {
+      const t = typeMap.get(r.agentType);
+      return {
+        ...r,
+        agentType: t
+          ? { _id: t.id, name: t.name, slug: t.slug, skills: t.skills }
+          : { _id: r.agentType, name: '', slug: '', skills: [] },
+      };
+    });
+  }
+
+  private async hydrateOne(record: AgentRecord | null): Promise<Record<string, unknown> | null> {
+    if (!record) return null;
+    const [one] = await this.hydrate([record]);
+    return one;
+  }
+
+  private async resolveAgentTypeSlug(agentTypeId: string): Promise<string> {
+    const map = await this.agentTypeService.getManyForHydration([agentTypeId]);
+    return map.get(agentTypeId)?.slug ?? '';
+  }
+
+  private dtoToCreateInput(
+    userId: string,
+    dto: CreateAgentDto,
+    opts: { id: string; isDefault: boolean; slug: string; agentTypeSlug: string },
+  ): CreateAgentInput {
+    return {
+      id: opts.id,
+      name: dto.name,
+      slug: opts.slug,
+      agentType: dto.agentType,
+      agentTypeSlug: opts.agentTypeSlug,
+      role: dto.role,
+      description: dto.description ?? '',
+      temperature: dto.temperature ?? 0,
+      llmModel: dto.model,
+      instruction: dto.instruction ?? '',
+      ignorePrePrompt: dto.ignorePrePrompt ?? false,
+      knowledgeBases: dto.knowledgeBases ?? [],
+      tools: dto.tools ?? [],
+      skills: dto.skills ?? [],
+      disabledSkills: dto.disabledSkills ?? [],
+      connectors: dto.connectors ?? [],
+      connectorActionSelections: this.normalizeConnectorActionSelectionsForInput(dto.connectors, dto.connectorActionSelections),
+      guardrails: (dto.guardrails as Record<string, unknown>) ?? {},
+      deploymentSettings: this.normalizeDeploymentSettings(dto.deploymentSettings) as unknown as Record<string, unknown>,
+      enable_temporary_child_agents: dto.enable_temporary_child_agents ?? false,
+      max_temporary_child_agents: dto.max_temporary_child_agents ?? 4,
+      isDefault: opts.isDefault,
+      isActive: dto.isActive ?? true,
+      isDefaultForType: dto.isDefaultForType ?? false,
+      createdBy: userId,
+    };
+  }
+
+  /** connectorActionSelections for the repository input: {connectorId, actionKeys} scoped to attached connectors. */
+  private normalizeConnectorActionSelectionsForInput(
+    connectorIds: string[] | undefined,
+    selections?: Array<{ connectorId: string; actionKeys: string[] }>,
+  ): Array<{ connectorId: string; actionKeys: string[] }> {
+    if (!connectorIds?.length || !selections?.length) return [];
+    const allowed = new Set(connectorIds);
+    return selections
+      .filter((s) => allowed.has(s.connectorId))
+      .map((s) => ({ connectorId: s.connectorId, actionKeys: [...new Set((s.actionKeys || []).filter((k) => k?.trim()))] }))
+      .filter((s) => s.actionKeys.length > 0);
+  }
+
+  private dtoToUpdateInput(
+    dto: UpdateAgentDto,
+    existing: AgentRecord,
+    opts: { agentTypeSlug?: string; normalizedSlug?: string },
+  ): UpdateAgentInput {
+    const patch: UpdateAgentInput = {};
+    if (dto.name !== undefined) patch.name = dto.name;
+    if (opts.normalizedSlug !== undefined) patch.slug = opts.normalizedSlug;
+    if (dto.agentType !== undefined) { patch.agentType = dto.agentType; patch.agentTypeSlug = opts.agentTypeSlug ?? ''; }
+    if (dto.role !== undefined) patch.role = dto.role;
+    if (dto.description !== undefined) patch.description = dto.description;
+    if (dto.temperature !== undefined) patch.temperature = dto.temperature;
+    if ('model' in dto) patch.llmModel = dto.model || '';
+    if (dto.instruction !== undefined) patch.instruction = dto.instruction;
+    if (dto.ignorePrePrompt !== undefined) patch.ignorePrePrompt = dto.ignorePrePrompt;
+    if (dto.enable_temporary_child_agents !== undefined) patch.enable_temporary_child_agents = dto.enable_temporary_child_agents;
+    if (dto.max_temporary_child_agents !== undefined) patch.max_temporary_child_agents = dto.max_temporary_child_agents;
+    if (dto.isActive !== undefined) patch.isActive = dto.isActive;
+    if (dto.isDefaultForType !== undefined) patch.isDefaultForType = dto.isDefaultForType;
+    if (dto.knowledgeBases !== undefined) patch.knowledgeBases = dto.knowledgeBases;
+    if (dto.tools !== undefined) patch.tools = dto.tools;
+    if (dto.skills !== undefined) patch.skills = dto.skills;
+    if (dto.disabledSkills !== undefined) patch.disabledSkills = dto.disabledSkills;
+    if (dto.connectors !== undefined) patch.connectors = dto.connectors;
+    if (dto.guardrails !== undefined) patch.guardrails = dto.guardrails as Record<string, unknown>;
+    if (dto.connectorActionSelections !== undefined) {
+      patch.connectorActionSelections = this.normalizeConnectorActionSelectionsForInput(
+        dto.connectors ?? existing.connectors, dto.connectorActionSelections,
+      );
+    }
+    if (dto.deploymentSettings !== undefined) {
+      patch.deploymentSettings = this.normalizeDeploymentSettings(
+        dto.deploymentSettings, existing.deploymentSettings,
+      ) as unknown as Record<string, unknown>;
+    }
+    return patch;
+  }
+
+  // ==========================================
   // Private mapping helpers
   // ==========================================
 
@@ -1576,15 +1380,11 @@ export class AgentService {
   }
 
   async listActiveDefaultAgentOptions(): Promise<Array<{ id: string; name: string; description?: string; agentTypeName?: string; model?: string }>> {
-    const agents = await this.agentModel
-      .find({ isDefault: true, isActive: true })
-      .populate('agentType', 'name')
-      .sort({ name: 1 })
-      .lean()
-      .exec();
-    return agents.map((agent) => {
+    const agents = await this.agentRepository.findActiveDefaults();
+    const hydrated = await this.hydrate(agents);
+    return hydrated.map((agent) => {
       const agentType = agent.agentType as unknown as { name?: string } | undefined;
-      return { id: agent._id.toString(), name: agent.name, description: agent.description || undefined, agentTypeName: agentType?.name, model: agent.llmModel };
+      return { id: agent._id as string, name: agent.name as string, description: (agent.description as string) || undefined, agentTypeName: agentType?.name, model: agent.llmModel as string | undefined };
     });
   }
 
@@ -1592,23 +1392,18 @@ export class AgentService {
     if (!Types.ObjectId.isValid(agentId)) {
       throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected decision-flow agent is invalid');
     }
-    const agent = await this.agentModel.findOne({ _id: agentId, isDefault: true, isActive: true }).select('_id').lean().exec();
-    if (!agent) {
+    const exists = await this.agentRepository.existsActiveDefault(agentId);
+    if (!exists) {
       throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected decision-flow agent must be an active default agent');
     }
   }
 
   async findActiveDefaultAgentIdBySlug(slug: string): Promise<string | null> {
-    const agent = await this.agentModel
-      .findOne({ slug, isDefault: true, isActive: true })
-      .select('_id')
-      .lean()
-      .exec();
-    return agent?._id.toString() ?? null;
+    return this.agentRepository.findActiveDefaultIdBySlug(slug);
   }
 
   private toResponse(
-    doc: AgentDocument | Record<string, unknown>,
+    doc: Record<string, unknown>,
     agentTypeDoc?: { id: string; name: string },
   ): IAgentResponse {
     const d = doc as Record<string, unknown>;
@@ -1680,7 +1475,7 @@ export class AgentService {
     };
   }
 
-  private toStreamAgent(doc: AgentDocument | Record<string, unknown>): IAgentForStream {
+  private toStreamAgent(doc: Record<string, unknown>): IAgentForStream {
     const d = doc as Record<string, unknown>;
     const populatedAgentType = d.agentType as Record<string, unknown> | undefined;
     const agentTypeName =

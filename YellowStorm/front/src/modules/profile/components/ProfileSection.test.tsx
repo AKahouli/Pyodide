@@ -26,7 +26,7 @@ vi.mock('react-hook-form', () => ({
     control: {},
     handleSubmit: (fn: (values: any) => void) => (event?: { preventDefault?: () => void }) => {
       event?.preventDefault?.();
-      return fn({ firstName: 'Jane', lastName: 'Doe', company: 'ACME' });
+      return fn({ firstName: 'Jane', lastName: 'Doe', company: 'ACME', role: 'Engineer', description: 'Builds things' });
     },
     reset: vi.fn(),
   }),
@@ -44,6 +44,10 @@ vi.mock('@/components/ui/form', () => ({
 
 vi.mock('@/components/ui/input', () => ({
   Input: (props: any) => <input {...props} />,
+}));
+
+vi.mock('@/components/ui/textarea', () => ({
+  Textarea: (props: any) => <textarea {...props} />,
 }));
 
 vi.mock('@/components/ui/button', () => ({
@@ -66,6 +70,8 @@ describe('ProfileSection', () => {
       firstName: 'Jane',
       lastName: 'Doe',
       company: 'ACME',
+      role: 'Engineer',
+      description: 'Builds things',
     });
   });
 });

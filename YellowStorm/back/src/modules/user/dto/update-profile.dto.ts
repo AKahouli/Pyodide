@@ -45,6 +45,18 @@ export class UpdateProfileDto {
   @MaxLength(200)
   company?: string;
 
+  @ApiPropertyOptional({ description: 'Job role / title', maxLength: 200 })
+  @IsString()
+  @IsOptional()
+  @MaxLength(200)
+  role?: string;
+
+  @ApiPropertyOptional({ description: 'Short description / bio', maxLength: 1000 })
+  @IsString()
+  @IsOptional()
+  @MaxLength(1000)
+  description?: string;
+
   @ApiPropertyOptional({ description: 'Accept privacy policy' })
   @IsOptional()
   privacyPolicy?: boolean;

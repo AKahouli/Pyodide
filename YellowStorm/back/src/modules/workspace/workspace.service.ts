@@ -10,7 +10,7 @@ import {
   Conversation,
   ConversationDocument,
 } from '../conversation/schemas/conversation.schema';
-import { Agent, AgentDocument } from '../agent/schemas/agent.schema';
+import { AgentRepository } from '../agent/repositories/agent.repository';
 import { Flow, FlowDocument } from '../playbook-flow/schemas/playbook-flow.schema';
 import {
   CreateWorkspaceData,
@@ -40,8 +40,7 @@ export class WorkspaceService implements OnModuleInit {
     private readonly shareModel: Model<WorkspaceShareDocument>,
     @InjectModel(Conversation.name)
     private readonly conversationModel: Model<ConversationDocument>,
-    @InjectModel(Agent.name)
-    private readonly agentModel: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
     @InjectModel(Flow.name)
     private readonly playbookModel: Model<FlowDocument>,
     private readonly logger: LoggerService,
@@ -554,10 +553,7 @@ export class WorkspaceService implements OnModuleInit {
     );
 
     // Remove workspace reference from all agents' knowledge bases
-    await this.agentModel.updateMany(
-      { knowledgeBases: new Types.ObjectId(workspaceId) },
-      { $pull: { knowledgeBases: new Types.ObjectId(workspaceId) } },
-    );
+    await this.agentRepository.pullKnowledgeBaseFromAll(workspaceId);
 
     // Remove workspace reference from all playbooks
     await this.playbookModel.updateMany(

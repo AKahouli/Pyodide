@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, FilterQuery, Types } from 'mongoose';
 import { LoggerService } from '../logger';
 import { Tool, ToolDocument, ToolAttributeType } from './schemas/tool.schema';
-import { Agent, AgentDocument } from '../agent/schemas/agent.schema';
+import { AgentRepository } from '../agent/repositories/agent.repository';
 import { IToolResponse } from './interfaces/tool.interface';
 import { CreateToolDto } from './dto/create-tool.dto';
 import { UpdateToolDto } from './dto/update-tool.dto';
@@ -19,8 +19,7 @@ export class ToolService {
   constructor(
     @InjectModel(Tool.name)
     private readonly toolModel: Model<ToolDocument>,
-    @InjectModel(Agent.name)
-    private readonly agentModel: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(ToolService.name);
@@ -201,10 +200,7 @@ export class ToolService {
     }
 
     // Remove tool reference from all agents
-    await this.agentModel.updateMany(
-      { tools: new Types.ObjectId(id) },
-      { $pull: { tools: new Types.ObjectId(id) } },
-    );
+    await this.agentRepository.pullToolFromAll(id);
 
     this.logger.log('Tool deleted', {
       toolId: id,

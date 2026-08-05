@@ -40,10 +40,12 @@ export class UserController {
     @Body() dto: UpdateProfileDto,
   ): Promise<UserResponse> {
     // Only include defined properties to avoid overwriting with undefined
-    const profile: { firstName?: string; lastName?: string; company?: string } = {};
+    const profile: { firstName?: string; lastName?: string; company?: string; role?: string; description?: string } = {};
     if (dto.firstName !== undefined) profile.firstName = dto.firstName;
     if (dto.lastName !== undefined) profile.lastName = dto.lastName;
     if (dto.company !== undefined) profile.company = dto.company;
+    if (dto.role !== undefined) profile.role = dto.role;
+    if (dto.description !== undefined) profile.description = dto.description;
 
     const consents: { privacyPolicy?: boolean; dataSharing?: boolean } = {};
     if (dto.privacyPolicy !== undefined) consents.privacyPolicy = dto.privacyPolicy;
@@ -76,6 +78,8 @@ export class UserController {
       company: dto.company,
       privacyPolicy: dto.privacyPolicy,
       dataSharing: dto.dataSharing,
+      role: dto.role,
+      description: dto.description,
     });
 
     return this.mapUserToResponse(updatedUser);
