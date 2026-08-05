@@ -37,6 +37,29 @@ jobs:
           fi
           echo "companion_ai proto files match"
 
+  frontend-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: YellowStorm/front
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: YellowStorm/front/package-lock.json
+      - run: npm ci
+      - name: Run frontend tests with coverage
+        run: npm run test -- --coverage || true
+      - name: Upload frontend coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: YellowStorm/front/coverage/lcov.info
+          if-no-files-found: warn
+
   backend-tests:
     runs-on: ubuntu-latest
     defaults:
@@ -141,7 +164,7 @@ jobs:
           path: yellowstorm-adk/coverage.xml
 
   sonarcloud:
-    needs: [backend-tests, python-tests]
+    needs: [backend-tests, python-tests, frontend-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -180,10 +203,23 @@ jobs:
           path: YellowStorm/back/coverage/
         continue-on-error: true
 
+      - name: Download frontend coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-coverage
+          path: YellowStorm/front/coverage/
+        continue-on-error: true
+
       - name: Run SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
-            ${{ github.event_name == 'pull_request' && format('-Dsonar.pullrequest.key={0} -Dsonar.pullrequest.branch={1} -Dsonar.pullrequest.base={2}', github.event.pull_request.number, github.head_ref, github.base_ref) || format('-Dsonar.branch.name={0}', github.ref_name) }}
+            -Dsonar.ci.autoconfig.disabled=true
+            ${{ github.event_name == 'pull_request'
+              && format('-Dsonar.pullrequest.key={0} -Dsonar.pullrequest.branch={1} -Dsonar.pullrequest.base={2}',
+                        github.event.pull_request.number,
+                        github.head_ref,
+                        github.base_ref)
+              || format('-Dsonar.branch.name={0}', github.ref_name) }}
