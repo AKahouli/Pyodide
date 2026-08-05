@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { LoggerService } from '../logger';
-import { Agent, AgentDocument } from '../agent/schemas/agent.schema';
+import { AgentRepository } from '../agent/repositories/agent.repository';
 import { AgentType, AgentTypeDocument } from '../agent-type/schemas/agent-type.schema';
 import { collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '../../common/utils';
 
@@ -39,7 +39,7 @@ function deriveAgentSlug(value: string): string {
 @Injectable()
 export class HumainAgentService {
   constructor(
-    @InjectModel(Agent.name) private readonly agentModel: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
     @InjectModel(AgentType.name) private readonly agentTypeModel: Model<AgentTypeDocument>,
     private readonly logger: LoggerService,
   ) {
@@ -67,31 +67,31 @@ export class HumainAgentService {
         return;
       }
 
-      const createdBy = new Types.ObjectId(input.userId);
-      const agentType = humainType._id;
+      const agentType = String(humainType._id);
+      const agentTypeSlug = String(humainType.slug ?? '');
       const name = this.deriveName(input);
       const slug = deriveAgentSlug(name);
       const role = this.deriveRole(input, name);
       const description = (input.description ?? '').slice(0, 1000);
 
-      // Use findOne + create/save rather than findOneAndUpdate({ upsert, setDefaultsOnInsert }):
-      // the Agent schema's `slug` default is `function() { return deriveAgentSlug(this.name); }`,
-      // which Mongoose evaluates with `this === null` during setDefaultsOnInsert and throws.
-      // create()/save() build a real document instance, so all schema defaults apply correctly.
-      const existing = await this.agentModel.findOne({ createdBy, agentType }).exec();
+      const existing = await this.agentRepository.findByOwnerAndType(input.userId, agentType);
 
       if (!existing) {
-        await this.agentModel.create({ name, slug, role, description, createdBy, agentType });
+        await this.agentRepository.create({
+          id: new Types.ObjectId().toString(),
+          name, slug, agentType, agentTypeSlug, role, description,
+          temperature: 0, llmModel: undefined, instruction: '', ignorePrePrompt: false,
+          knowledgeBases: [], tools: [], skills: [], disabledSkills: [], connectors: [], connectorActionSelections: [],
+          guardrails: {}, deploymentSettings: {},
+          enable_temporary_child_agents: false, max_temporary_child_agents: 4,
+          isDefault: false, isDefaultForType: false, isActive: true, createdBy: input.userId,
+        });
         this.logger.log('Human agent created', { userId: input.userId });
         return;
       }
 
       if (overwriteProfileFields) {
-        existing.name = name;
-        existing.slug = slug;
-        existing.role = role;
-        existing.description = description;
-        await existing.save();
+        await this.agentRepository.updateById(existing._id, { name, slug, role, description });
         this.logger.log('Human agent synced', { userId: input.userId });
       }
     } catch (error) {

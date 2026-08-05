@@ -5,7 +5,6 @@ import { AgentModule } from '@modules/agent/agent.module';
 import { ModelsModule } from '@modules/models/models.module';
 import { DocumentModule } from '@modules/document/document.module';
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
-import { Agent, AgentSchema } from '@modules/agent/schemas/agent.schema';
 import { SharedAgent, SharedAgentSchema } from '@modules/agent/schemas/shared-agent.schema';
 import { LoggerModule } from '@modules/logger';
 import { WidgetChatController } from './controllers/widget-chat.controller';
@@ -24,7 +23,6 @@ import { WidgetTokenGuard } from './guards/widget-token.guard';
       { name: WidgetToken.name, schema: WidgetTokenSchema },
       { name: WidgetSession.name, schema: WidgetSessionSchema },
       { name: WidgetMessage.name, schema: WidgetMessageSchema },
-      { name: Agent.name, schema: AgentSchema },
       { name: SharedAgent.name, schema: SharedAgentSchema },
     ]),
     AgentModule,

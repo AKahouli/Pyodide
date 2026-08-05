@@ -8,20 +8,21 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { WidgetToken, WidgetTokenDocument } from '../schemas/widget-token.schema';
-import { Agent, AgentDocument } from '@modules/agent/schemas/agent.schema';
+import { AgentRepository } from '@modules/agent/repositories/agent.repository';
+import { AgentRecord } from '@modules/agent/repositories/agent-record.mapper';
 import { WIDGET_DEPLOYMENT_MODE_KEY, type WidgetDeploymentMode } from '../decorators/widget-deployment-mode.decorator';
 
 interface RequestWithWidget extends Request {
   widgetTokenHash?: string;
   widgetAgentId?: string;
-  widgetAgent?: AgentDocument;
+  widgetAgent?: AgentRecord;
 }
 
 @Injectable()
 export class WidgetTokenGuard implements CanActivate {
   constructor(
     @InjectModel(WidgetToken.name) private readonly widgetTokenModel: Model<WidgetTokenDocument>,
-    @InjectModel(Agent.name) private readonly agentModel: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
     private readonly reflector: Reflector,
     private readonly logger: LoggerService,
   ) {
@@ -80,7 +81,7 @@ export class WidgetTokenGuard implements CanActivate {
       origin: origin ?? null,
     });
 
-    const agent = await this.agentModel.findById(widgetToken.agentId).lean().exec() as any;
+    const agent = await this.agentRepository.findById(widgetToken.agentId.toString());
     if (!agent || !agent.isActive) {
       throw new NotFoundException(ErrorCode.WIDGET_AGENT_NOT_FOUND, 'Agent not found or inactive');
     }
