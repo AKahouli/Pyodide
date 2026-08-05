@@ -6,6 +6,7 @@ import { UserController } from './user.controller';
 import { AdminUserController } from './admin-user.controller';
 import { UsageModule } from '../usage/usage.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
+import { HumainAgentModule } from '../humain-agent/humain-agent.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { AuthorizationModule } from '../authorization/authorization.module';
     ]),
     forwardRef(() => UsageModule),
     forwardRef(() => AuthorizationModule),
+    HumainAgentModule,
   ],
   controllers: [UserController, AdminUserController],
   providers: [UserService],

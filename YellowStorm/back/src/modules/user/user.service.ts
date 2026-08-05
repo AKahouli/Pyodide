@@ -18,6 +18,7 @@ import {
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { escapeRegex } from '../../common/utils';
+import { HumainAgentService } from '../humain-agent/humain-agent.service';
 
 interface UserSearchResult {
   id: string;
@@ -41,6 +42,7 @@ export class UserService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly logger: LoggerService,
     private readonly configService: ConfigService,
+    private readonly humainAgentService: HumainAgentService,
   ) {
     this.logger.setContext(UserService.name);
     this.passwordResetExpiryHours = this.configService.get<number>('auth.passwordResetExpiry', 1);
@@ -183,6 +185,17 @@ export class UserService {
 
     this.logger.log('User profile updated', { userId });
 
+    if (data.profile) {
+      await this.humainAgentService.syncFromProfile({
+        userId,
+        email: user.email,
+        firstName: user.profile.firstName,
+        lastName: user.profile.lastName,
+        role: user.profile.role,
+        description: user.profile.description,
+      });
+    }
+
     return user;
   }
 
@@ -204,6 +217,8 @@ export class UserService {
     user.profile.firstName = data.firstName;
     user.profile.lastName = data.lastName;
     user.profile.company = data.company;
+    user.profile.role = data.role ?? user.profile.role ?? '';
+    user.profile.description = data.description ?? user.profile.description ?? '';
     user.consents.privacyPolicy = data.privacyPolicy;
     user.consents.privacyPolicyAcceptedAt = now;
     user.consents.dataSharing = data.dataSharing;
@@ -215,6 +230,15 @@ export class UserService {
     await user.save();
 
     this.logger.log('User profile completed', { userId });
+
+    await this.humainAgentService.syncFromProfile({
+      userId,
+      email: user.email,
+      firstName: user.profile.firstName,
+      lastName: user.profile.lastName,
+      role: user.profile.role,
+      description: user.profile.description,
+    });
 
     return user;
   }

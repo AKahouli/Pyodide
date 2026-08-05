@@ -24,6 +24,8 @@ export interface UpdateProfileData {
   firstName?: string;
   lastName?: string;
   company?: string;
+  role?: string;
+  description?: string;
 }
 
 // Appearance settings

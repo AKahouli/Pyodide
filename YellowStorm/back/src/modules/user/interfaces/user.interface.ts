@@ -4,6 +4,8 @@ export interface IUserProfile {
   firstName?: string;
   lastName?: string;
   company?: string;
+  role?: string;
+  description?: string;
 }
 
 export interface IUserConsents {
@@ -57,6 +59,8 @@ export interface CompleteProfileData {
   company: string;
   privacyPolicy: boolean;
   dataSharing: boolean;
+  role?: string;
+  description?: string;
 }
 
 export interface UserResponse {
