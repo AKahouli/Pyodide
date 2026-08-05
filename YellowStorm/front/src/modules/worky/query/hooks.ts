@@ -20,6 +20,20 @@ export function useStreams(params: WorkyStreamQueryParams = {}) {
   });
 }
 
+/**
+ * Resolve humain agents by id (task assignees that are other users' humain
+ * agents delegated into the stream, so not in the caller's own roster).
+ * `ids` should already be de-duplicated and sorted for a stable cache key.
+ */
+export function useResolveHumainAgents(ids: readonly string[]) {
+  return useQuery({
+    queryKey: workyKeys.humainResolve(ids),
+    queryFn: () => api.resolveHumainAgents([...ids]),
+    enabled: ids.length > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 export function useStream(streamId: string | null | undefined) {
   return useQuery({
     queryKey: streamId ? workyKeys.detail(streamId) : ['worky', 'detail', 'noop'],

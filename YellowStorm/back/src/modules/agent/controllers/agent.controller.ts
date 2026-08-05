@@ -56,6 +56,21 @@ export class AgentController {
     return this.agentService.getAllForUserResponse(user._id.toString());
   }
 
+  @Get('humain/resolve')
+  @ApiOperation({
+    summary: 'Resolve humain agents by id (cross-user delegation display, e.g. Worky streams)',
+  })
+  @ApiResponse({ status: 200, description: 'Humain agents resolved' })
+  async resolveHumain(
+    @Query('ids') ids?: string,
+  ): Promise<Array<{ id: string; name: string; slug: string; role: string }>> {
+    const list = (ids ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return this.agentService.resolveHumainByIds(list);
+  }
+
   @Get(':id')
   @UseGuards(AgentPermissionGuard)
   @RequireAgentPermission('read')

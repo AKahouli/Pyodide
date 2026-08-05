@@ -1,7 +1,18 @@
-import type { Agent } from '../../agent/types';
 import type { WorkyTask } from '../types';
 
 export type WorkyAgentStatus = 'working' | 'blocked' | 'idle' | 'done';
+
+/**
+ * Minimal agent identity the board needs to render an assignee. Satisfied both
+ * by the full `Agent` from the user's own roster and by a `WorkyHumainRef`
+ * (another user's humain agent resolved by id for cross-user delegation).
+ */
+export interface ResolvableAgent {
+  id?: string;
+  name: string;
+  role?: string | null;
+  agentType?: { name?: string | null } | null;
+}
 
 export interface WorkyAgent {
   key: string;
@@ -43,7 +54,7 @@ export function agentInitials(name: string): string {
  */
 export function groupTasksByAgent(
   tasks: WorkyTask[],
-  resolve: (key: string) => Agent | undefined,
+  resolve: (key: string) => ResolvableAgent | undefined,
 ): WorkyAgent[] {
   const byKey = new Map<string, WorkyTask[]>();
   for (const t of tasks) {

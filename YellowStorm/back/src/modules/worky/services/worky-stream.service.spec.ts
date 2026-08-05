@@ -98,42 +98,41 @@ describe('WorkyStreamService.create', () => {
     return { service, streamCreate, workspaceCreate, agentCreate, workspaceFindOne, agentFindOne, streamModel, grpcClient };
   };
 
-  it('provisions a dedicated artifact workspace and a per-stream Manager agent', async () => {
+  it('persists the stream without provisioning a workspace or Manager agent', async () => {
     const { service, streamCreate, workspaceCreate, agentCreate } = makeService();
 
     const result = await service.create(userId, { title: 'Benchmark analysis' });
 
-    expect(workspaceCreate).toHaveBeenCalledTimes(1);
-    const workspaceInput = workspaceCreate.mock.calls[0][0];
-    const workspaceResolved = await workspaceCreate.mock.results[0].value;
-    expect(workspaceInput.createdBy.toString()).toBe(userId);
-    expect(workspaceInput.alias.startsWith('worky-benchmark-analysis')).toBe(true);
-    expect(workspaceInput.isSystem).toBe(false);
-    expect(workspaceInput.isPersonal).toBe(false);
-    expect(workspaceInput.storagePrefix).toBe(workspaceInput.alias);
-
-    expect(agentCreate).toHaveBeenCalledTimes(1);
-    const agentInput = agentCreate.mock.calls[0][0];
-    const agentResolved = await agentCreate.mock.results[0].value;
-    expect(agentInput.createdBy.toString()).toBe(userId);
-    expect(agentInput.name.startsWith('Worky Manager')).toBe(true);
-    expect(agentInput.isDefault).toBe(false);
-    expect(agentInput.isActive).toBe(true);
+    // No per-stream artifact workspace or Manager agent is created anymore.
+    expect(workspaceCreate).not.toHaveBeenCalled();
+    expect(agentCreate).not.toHaveBeenCalled();
 
     expect(streamCreate).toHaveBeenCalledTimes(1);
     const streamInput = streamCreate.mock.calls[0][0];
     expect(streamInput.ownerUserId.toString()).toBe(userId);
     expect(streamInput.title).toBe('Benchmark analysis');
-    expect(streamInput.artifactWorkspaceId.toString()).toBe(workspaceResolved._id.toString());
-    expect(streamInput.managerAgentId.toString()).toBe(agentResolved._id.toString());
+    // workspaceId falls back to the owner id (governance scope) when no
+    // explicit parent workspace is supplied.
+    expect(streamInput.workspaceId.toString()).toBe(userId);
+    expect(streamInput.artifactWorkspaceId).toBeUndefined();
+    expect(streamInput.managerAgentId).toBeUndefined();
     expect(streamInput.status).toBe('created');
     expect(streamInput.controlState).toBe('active');
     expect(streamInput.budget.enforcement).toBe('hard_stop');
 
-    expect(result.artifactWorkspaceId).toBe(workspaceResolved._id.toString());
-    expect(result.managerAgentId).toBe(agentResolved._id.toString());
+    expect(result.artifactWorkspaceId).toBeNull();
+    expect(result.managerAgentId).toBeNull();
     expect(result.title).toBe('Benchmark analysis');
     expect(result.status).toBe('created');
+  });
+
+  it('uses an explicit parent workspaceId when provided', async () => {
+    const { service, streamCreate } = makeService();
+    const workspaceId = new Types.ObjectId().toString();
+
+    await service.create(userId, { title: 'Scoped', workspaceId } as any);
+
+    expect(streamCreate.mock.calls[0][0].workspaceId.toString()).toBe(workspaceId);
   });
 
   it('seeds per-stream model selection to null on create', async () => {
@@ -144,44 +143,6 @@ describe('WorkyStreamService.create', () => {
     expect(streamInput.workerModelId).toBeNull();
     expect(result.managerModelId).toBeNull();
     expect(result.workerModelId).toBeNull();
-  });
-
-  it('rejects when the Worky Manager agent type is missing', async () => {
-    const { service } = makeService({
-      agentTypeFindBySlug: jest.fn().mockResolvedValue(null),
-    });
-
-    let caught: unknown;
-    try {
-      await service.create(userId, { title: 'No agent type' });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeDefined();
-    expect((caught as { code?: string }).code).toBe('ERR_2300');
-  });
-
-  it('disambiguates duplicate workspace aliases', async () => {
-    const workspaceCreate = jest.fn((doc) => Promise.resolve({ _id: new Types.ObjectId(), ...doc }));
-    const existingChain = (alias: string | null) => {
-      const chain: { lean: jest.Mock; exec: jest.Mock } = { lean: jest.fn(), exec: jest.fn() };
-      chain.lean.mockReturnValue(chain);
-      chain.exec.mockResolvedValue(alias ? { alias } : null);
-      return chain;
-    };
-    const findOne = jest
-      .fn()
-      .mockReturnValueOnce(existingChain('worky-dup'))
-      .mockReturnValueOnce(existingChain('worky-dup-1'))
-      .mockReturnValueOnce(existingChain(null));
-    const { service } = makeService({
-      workspaceCreate,
-      workspaceFindOne: findOne,
-    });
-
-    await service.create(userId, { title: 'dup' });
-
-    expect(workspaceCreate.mock.calls[0][0].alias).toBe('worky-dup-2');
   });
 
   it('does not eagerly create an orchestrator session on create()', async () => {

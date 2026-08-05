@@ -63,17 +63,23 @@ function buildService() {
   };
   const events = { emit: jest.fn() };
   const audit = { append: jest.fn().mockResolvedValue(undefined) };
+  const agentTypes = {
+    findBySlug: jest
+      .fn()
+      .mockResolvedValue({ id: new Types.ObjectId().toString(), name: 'Manager', slug: 'manager' }),
+  };
   const service = new WorkyEphemeralWorkerService(
     streams as never,
     tasks as never,
     workers as never,
     agents as never,
+    agentTypes as never,
     governance as never,
     events as never,
     audit as never,
     { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() } as never,
   );
-  return { service, streams, tasks, workers, agents, governance, events, audit };
+  return { service, streams, tasks, workers, agents, agentTypes, governance, events, audit };
 }
 
 async function seedStream(streams: FakeCollection, ownerId = new Types.ObjectId()): Promise<string> {
