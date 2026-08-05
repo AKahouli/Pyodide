@@ -23,6 +23,7 @@ describe('AgentService.findHumainAgentsPublic', () => {
   }) => {
     const agentRepository = {
       listHumainPublic: jest.fn().mockResolvedValue({ items: opts.agents ?? [], total: opts.total ?? 0 }),
+      findByIds: jest.fn().mockResolvedValue([]),
     };
     const logger = { setContext: jest.fn(), log: jest.fn(), debug: jest.fn(), warn: jest.fn() };
     const agentTypeService = {
@@ -91,5 +92,60 @@ describe('AgentService.findHumainAgentsPublic', () => {
     expect(arg.role).toBe('sup');
     expect(arg.name).toBe('ali');
     expect(arg.description).toBe('help');
+  });
+});
+
+describe('AgentService.resolveHumainByIds', () => {
+  const humainTypeId = new Types.ObjectId().toString();
+
+  const makeRecord = (over: Partial<AgentRecord> = {}): AgentRecord => ({
+    _id: new Types.ObjectId().toString(),
+    name: 'Agent', slug: 'agent', agentType: humainTypeId, agentTypeSlug: 'humain',
+    role: 'Role', description: '', temperature: 0, llmModel: undefined, email: undefined,
+    instruction: '', ignorePrePrompt: false, knowledgeBases: [], tools: [], skills: [],
+    disabledSkills: [], connectors: [], connectorActionSelections: [], guardrails: {}, deploymentSettings: {},
+    enable_temporary_child_agents: false, max_temporary_child_agents: 4,
+    isDefault: false, isActive: true, isDefaultForType: false, createdBy: 'someone-else',
+    a2aPublished: false, createdAt: new Date(), updatedAt: new Date(), ...over,
+  });
+
+  const makeService = (records: AgentRecord[]) => {
+    const agentRepository = { findByIds: jest.fn().mockResolvedValue(records) };
+    const logger = { setContext: jest.fn(), log: jest.fn(), debug: jest.fn(), warn: jest.fn() };
+    const service = new AgentService(
+      logger as never, {} as never, {} as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
+      agentRepository as never, { reindexHumainRole: jest.fn() } as never,
+    );
+    return { service, agentRepository };
+  };
+
+  it('returns humain agents by id regardless of owner (no ownership filter)', async () => {
+    const rec = makeRecord({ _id: 'a1', name: 'Oussama Knani', slug: 'oussama-knani', role: 'Engineer', createdBy: 'other-user' });
+    const { service, agentRepository } = makeService([rec]);
+
+    const result = await service.resolveHumainByIds(['a1']);
+
+    expect(agentRepository.findByIds).toHaveBeenCalledWith(['a1'], { activeOnly: true });
+    expect(result).toEqual([{ id: 'a1', name: 'Oussama Knani', slug: 'oussama-knani', role: 'Engineer' }]);
+  });
+
+  it('drops non-humain agents so no private agent is leaked', async () => {
+    const humain = makeRecord({ _id: 'h1', name: 'Human', agentTypeSlug: 'humain' });
+    const other = makeRecord({ _id: 'm1', name: 'Manager', agentTypeSlug: 'manager' });
+    const { service } = makeService([humain, other]);
+
+    const result = await service.resolveHumainByIds(['h1', 'm1']);
+
+    expect(result).toEqual([{ id: 'h1', name: 'Human', slug: 'agent', role: 'Role' }]);
+  });
+
+  it('returns an empty array and skips the query for an empty id list', async () => {
+    const { service, agentRepository } = makeService([]);
+
+    const result = await service.resolveHumainByIds([]);
+
+    expect(result).toEqual([]);
+    expect(agentRepository.findByIds).not.toHaveBeenCalled();
   });
 });

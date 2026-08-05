@@ -1,8 +1,9 @@
 import { useEffect, useMemo } from 'react';
 import { useWorkyBoard } from '../store';
 import { useAgentStore } from '../../agent/store';
+import { useResolveHumainAgents } from '../query/hooks';
 import type { WorkyTask } from '../types';
-import { groupTasksByAgent, type WorkyAgent } from './agentModel';
+import { groupTasksByAgent, type ResolvableAgent, type WorkyAgent } from './agentModel';
 
 export interface StreamAgentsResult {
   /** Tasks grouped by their executor agent, with derived status + progress. */
@@ -30,13 +31,36 @@ export function useStreamAgents(): StreamAgentsResult {
 
   const tasks = useMemo<WorkyTask[]>(() => (board ? Object.values(board).flat() : []), [board]);
 
-  const resolve = useMemo(() => {
+  // Resolution against the current user's own roster (agents they own + defaults).
+  const ownResolve = useMemo(() => {
     const byId = new Map(agents.map((a) => [a.id, a]));
     const bySlug = new Map(agents.map((a) => [a.slug?.toLowerCase(), a]));
     const byName = new Map(agents.map((a) => [a.name.toLowerCase(), a]));
-    return (key: string) =>
+    return (key: string): ResolvableAgent | undefined =>
       byId.get(key) ?? bySlug.get(key.toLowerCase()) ?? byName.get(key.toLowerCase());
   }, [agents]);
+
+  // Keys the own roster can't resolve are other users' humain agents delegated
+  // into this stream. Resolve them by id via the permission-safe humain lookup.
+  const delegatedIds = useMemo(() => {
+    const keys = new Set<string>();
+    for (const t of tasks) {
+      if (t.assigneeKey && !ownResolve(t.assigneeKey)) keys.add(t.assigneeKey);
+    }
+    return [...keys].sort();
+  }, [tasks, ownResolve]);
+
+  const { data: delegated } = useResolveHumainAgents(delegatedIds);
+
+  const delegatedById = useMemo(
+    () => new Map((delegated ?? []).map((a) => [a.id, a] as const)),
+    [delegated],
+  );
+
+  const resolve = useMemo(
+    () => (key: string): ResolvableAgent | undefined => ownResolve(key) ?? delegatedById.get(key),
+    [ownResolve, delegatedById],
+  );
 
   return useMemo(
     () => ({
