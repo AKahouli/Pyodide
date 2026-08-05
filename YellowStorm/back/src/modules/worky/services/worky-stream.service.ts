@@ -6,7 +6,6 @@ import { InjectConnection } from '@nestjs/mongoose';
 import { WorkyStream, WorkyStreamDocument } from '../schemas/worky-stream.schema';
 import { Workspace, WorkspaceDocument } from '../../workspace/schemas/workspace.schema';
 import { AgentRepository } from '../../agent/repositories/agent.repository';
-import { AgentRecord } from '../../agent/repositories/agent-record.mapper';
 import { WorkspaceService } from '../../workspace/workspace.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { AgentTypeService } from '../../agent-type/agent-type.service';
@@ -38,14 +37,9 @@ import { WorkyTaskResult } from '../schemas/worky-task-result.schema';
 import { WorkyTrace } from '../schemas/worky-trace.schema';
 import { WorkyOrchestratorGrpcClientService } from './worky-orchestrator.grpc-client.service';
 
-const ARTIFACT_WORKSPACE_NAME_PREFIX = 'Worky';
-const STREAM_AGENT_NAME_PREFIX = 'Worky Manager';
-const STREAM_AGENT_NAME_MAX = 50;
-
 /**
  * Aggregate lifecycle for Worky streams. Part 1 covers:
- *   - `create`   : provision a dedicated artifact workspace + a per-stream
- *                  Manager agent entity, persist the stream row.
+ *   - `create`   : persist the stream row (no per-stream workspace or agent).
  *   - `findAllForUser` / `findById` / `findByIdInternal` : list + read paths.
  *   - `patch`    : PATCH /worky/streams/{id} title-only.
  * Lifecycle transitions (start/pause/resume/stop) and the planning/execution
@@ -95,24 +89,17 @@ export class WorkyStreamService implements OnModuleInit {
 
   async create(userId: string, dto: CreateWorkyStreamDto): Promise<IWorkyStreamResponse> {
     const title = dto.title.trim();
-    const agentType = await this.agentTypeService.findBySlug(WORKY_MANAGER_AGENT_TYPE_SLUG);
-    if (!agentType) {
-      throw new NotFoundException(
-        ErrorCode.AGENT_TYPE_NOT_FOUND,
-        'Worky Manager agent type is not seeded.',
-      );
-    }
-
-    const artifactWorkspace = await this.createArtifactWorkspace(userId, title);
-    const managerAgent = await this.createManagerAgent(userId, title, agentType.id);
-
+    // Worky streams no longer provision a per-stream artifact workspace or a
+    // Manager agent: artifacts are unused, and planner/executor/ephemeral
+    // agents are resolved by agent *type* at turn time, so both were pure
+    // overhead (and the workspace name collided on the unique (createdBy,
+    // name) index). `workspaceId` still scopes governance; absent an explicit
+    // one we fall back to the owner id — the value previously used.
     const stream = await this.streamModel.create({
       ownerUserId: new Types.ObjectId(userId),
       workspaceId: dto.workspaceId
         ? new Types.ObjectId(dto.workspaceId)
-        : artifactWorkspace.createdBy,
-      artifactWorkspaceId: artifactWorkspace._id,
-      managerAgentId: new Types.ObjectId(managerAgent._id),
+        : new Types.ObjectId(userId),
       // aiSessionId is intentionally omitted here (defaults to null via the
       // schema). The orchestrator session is created lazily on first
       // message send — see `ensureKickoffContext` — so stream creation no
@@ -142,8 +129,6 @@ export class WorkyStreamService implements OnModuleInit {
     this.logger.log('Worky stream created', {
       streamId: stream._id.toString(),
       userId,
-      artifactWorkspaceId: artifactWorkspace._id.toString(),
-      managerAgentId: managerAgent._id.toString(),
     });
 
     return this.toResponse(stream);
@@ -369,130 +354,6 @@ export class WorkyStreamService implements OnModuleInit {
     });
   }
 
-  private async createArtifactWorkspace(
-    userId: string,
-    streamTitle: string,
-  ): Promise<WorkspaceDocument> {
-    const allocatedStorage =
-      this.config.get<number>('worky.defaultStorageBytes') ?? 52_428_800;
-    const baseAlias = this.toAlias(`worky-${streamTitle}`);
-    const alias = await this.uniqueAlias(userId, baseAlias);
-
-    const workspace = await this.workspaceModel.create({
-      name: `${ARTIFACT_WORKSPACE_NAME_PREFIX}: ${streamTitle}`.slice(0, 100),
-      alias,
-      storagePrefix: alias,
-      description: `Dedicated Worky artifact workspace for "${streamTitle}".`,
-      createdBy: new Types.ObjectId(userId),
-      documentCount: 0,
-      usedStorage: 0,
-      allocatedStorage,
-      isSystem: false,
-      isPersonal: false,
-    });
-
-    this.logger.log('Worky artifact workspace created', {
-      workspaceId: workspace._id.toString(),
-      alias,
-      userId,
-    });
-    return workspace;
-  }
-
-  private async createManagerAgent(
-    userId: string,
-    streamTitle: string,
-    agentTypeId: string,
-  ): Promise<AgentRecord> {
-    const baseName = `${STREAM_AGENT_NAME_PREFIX} — ${streamTitle}`.slice(0, STREAM_AGENT_NAME_MAX);
-    const name = await this.uniqueAgentName(userId, baseName);
-
-    const id = new Types.ObjectId().toString();
-    const agentTypeSlug = (await this.agentTypeService.getManyForHydration([agentTypeId])).get(agentTypeId)?.slug ?? '';
-    const agent = await this.agentRepository.create({
-      id,
-      name,
-      slug: this.toSlug(`${name}-${Date.now()}`),
-      agentType: agentTypeId,
-      agentTypeSlug,
-      role: 'Worky Manager Agent — orchestrates the stream, plans tasks, and dispatches ephemeral workers.',
-      description: 'Per-stream Manager. Created automatically when the Worky stream is created.',
-      temperature: 0,
-      llmModel: '',
-      instruction: '',
-      ignorePrePrompt: false,
-      knowledgeBases: [],
-      tools: [],
-      skills: [],
-      disabledSkills: [],
-      connectors: [],
-      connectorActionSelections: [],
-      guardrails: {},
-      deploymentSettings: {},
-      enable_temporary_child_agents: false,
-      max_temporary_child_agents: 4,
-      isDefault: false,
-      isDefaultForType: false,
-      isActive: true,
-      createdBy: userId,
-    });
-
-    this.logger.log('Worky Manager agent created', {
-      agentId: agent._id.toString(),
-      userId,
-    });
-    return agent;
-  }
-
-  private async uniqueAlias(userId: string, baseAlias: string): Promise<string> {
-    let alias = baseAlias;
-    let counter = 1;
-    while (counter < 100) {
-      const existing = await this.workspaceModel
-        .findOne({ createdBy: new Types.ObjectId(userId), alias })
-        .lean()
-        .exec();
-      if (!existing) return alias;
-      alias = `${baseAlias}-${counter}`;
-      counter++;
-    }
-    return `${baseAlias}-${Date.now()}`;
-  }
-
-  private async uniqueAgentName(userId: string, baseName: string): Promise<string> {
-    let name = baseName;
-    let counter = 1;
-    while (counter < 100) {
-      const existing = await this.agentRepository.findByNameAndOwner(name, userId);
-      if (!existing) return name;
-      name = `${baseName} (${counter})`.slice(0, STREAM_AGENT_NAME_MAX);
-      counter++;
-    }
-    return `${baseName}-${Date.now()}`.slice(0, STREAM_AGENT_NAME_MAX);
-  }
-
-  private toAlias(value: string): string {
-    return value
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '')
-      .substring(0, 100);
-  }
-
-  private toSlug(value: string): string {
-    return value
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '')
-      .substring(0, 100);
-  }
-
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private toResponse(doc: any): IWorkyStreamResponse {
     const id = (doc._id as Types.ObjectId).toString();
@@ -500,8 +361,12 @@ export class WorkyStreamService implements OnModuleInit {
       id,
       ownerUserId: (doc.ownerUserId as Types.ObjectId).toString(),
       workspaceId: (doc.workspaceId as Types.ObjectId).toString(),
-      artifactWorkspaceId: (doc.artifactWorkspaceId as Types.ObjectId).toString(),
-      managerAgentId: (doc.managerAgentId as Types.ObjectId).toString(),
+      artifactWorkspaceId: doc.artifactWorkspaceId
+        ? (doc.artifactWorkspaceId as Types.ObjectId).toString()
+        : null,
+      managerAgentId: doc.managerAgentId
+        ? (doc.managerAgentId as Types.ObjectId).toString()
+        : null,
       managerModelId: (doc.managerModelId as string | null | undefined) ?? null,
       workerModelId: (doc.workerModelId as string | null | undefined) ?? null,
       governancePolicyRef: doc.governancePolicyRef
