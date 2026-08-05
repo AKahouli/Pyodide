@@ -7,7 +7,6 @@ import { AdminModelsController } from './admin-models.controller';
 import { ModelsService } from './models.service';
 import { LiteLLMClient } from './litellm.client';
 import { LiteLLMConnectionService } from './litellm-connection.service';
-import { EmbeddingService } from './embedding.service';
 import { AiModel, AiModelSchema } from './schemas/model.schema';
 import { AuthorizationModule } from '../authorization/authorization.module';
 
@@ -18,7 +17,7 @@ import { AuthorizationModule } from '../authorization/authorization.module';
     AuthorizationModule,
   ],
   controllers: [ModelsController, AdminModelsController],
-  providers: [LiteLLMConnectionService, LiteLLMClient, ModelsService, EmbeddingService],
-  exports: [ModelsService, LiteLLMConnectionService, EmbeddingService],
+  providers: [LiteLLMConnectionService, LiteLLMClient, ModelsService],
+  exports: [ModelsService, LiteLLMConnectionService],
 })
 export class ModelsModule {}
