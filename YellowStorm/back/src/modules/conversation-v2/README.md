@@ -47,12 +47,16 @@ ConversationV2GrpcClientService  (dial Manus, normaliseEvent)
 Manus gRPC ConversationV2.Chat (server-stream Event)
 ```
 
-Manus side (APImanus), when the agent calls `send_app_to_user`:
+Manus side (APImanus), when the React app build is ready (files under
+`/opt/react-project`, plus optional npm install/build):
 
-1. Resolves public preview via Sandbox Manager `POST /app/preview` (+ status poll).
-2. Polls `POST /app/code` until `found: true` (every ~10s, timeout configurable).
-3. Emits `ApplicationComponentEvent` with `url`, `title`, `ceph_path`,
+1. Emits `app_build_progress` phases while coding/building.
+2. Resolves public preview via Sandbox Manager `POST /app/preview` (+ status poll).
+3. Triggers / polls `POST /app/code` until ready (every ~10s, timeout configurable).
+4. Emits `ApplicationComponentEvent` with `url`, `title`, `ceph_path`,
    `files_tree_json`, `file_count`.
+
+No agent tool is required — YellowStorm only consumes the streamed events.
 
 ## Application component / Nodepod
 
