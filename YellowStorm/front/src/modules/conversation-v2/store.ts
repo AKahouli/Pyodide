@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import type { AgentEvent, ConversationV2PointerSummary, FilesTreeNode } from './types';
+import type { AgentEvent, ConversationV2PointerSummary, FilesTreeNode, AppBuildProgress } from './types';
 import { conversationV2Api } from './api';
 import type { DeployStatus } from './api';
 import {
@@ -12,6 +12,7 @@ import {
   reduceSession,
   deriveTitle,
   deriveApplicationComponent,
+  deriveAppBuildProgress,
   dedupeReplayEvents,
   currentTurnStartIndex,
   findIndexFrom,
@@ -34,6 +35,8 @@ interface State {
     fileCount?: number;
     revision: string;
   } | null;
+  /** Latest agent-reported build phase before sources / preview are ready. */
+  appBuildProgress: AppBuildProgress | null;
   /** Files-in-this-conversation sheet open state. Independent of the right
    *  panel so the user can keep the tool detail open while browsing files. */
   filesSheetOpen: boolean;
@@ -182,6 +185,7 @@ const initial: State = {
   streamError: null,
   rightPanelMode: 'closed',
   applicationComponent: null,
+  appBuildProgress: null,
   filesSheetOpen: false,
   selectedToolCallId: null,
   liveToolCallId: null,
@@ -227,6 +231,7 @@ function freshViewState(): Partial<State> {
     selectedToolCallId: null,
     rightPanelMode: 'closed',
     applicationComponent: null,
+    appBuildProgress: null,
     filesSheetOpen: false,
     systemWorkspaceId: null,
     workspaceIds: [],
@@ -267,6 +272,7 @@ export const useConversationV2Store = create<State & Actions>()(
             cached.events,
             s.applicationComponent,
           );
+          const appBuildProgress = deriveAppBuildProgress(cached.events, s.appBuildProgress);
           set(
             {
               ...freshViewState(),
@@ -279,7 +285,10 @@ export const useConversationV2Store = create<State & Actions>()(
               streaming: cached.streaming,
               streamError: cached.streamError,
               applicationComponent,
-              ...(applicationComponent ? { rightPanelMode: 'app' as const } : {}),
+              appBuildProgress,
+              ...(applicationComponent || appBuildProgress
+                ? { rightPanelMode: 'app' as const }
+                : {}),
               streamingStateCache: newCache,
             },
             false,
@@ -535,6 +544,7 @@ export const useConversationV2Store = create<State & Actions>()(
           events,
           get().applicationComponent,
         );
+        const appBuildProgress = deriveAppBuildProgress(events, get().appBuildProgress);
         set(
           {
             events: dedupeReplayEvents(events),
@@ -542,8 +552,10 @@ export const useConversationV2Store = create<State & Actions>()(
             liveToolCallId: null,
             liveAssistantIds: new Set<string>(),
             applicationComponent,
-            // Re-surface the app viewer on reload when the session has one.
-            ...(applicationComponent ? { rightPanelMode: 'app' as const } : {}),
+            appBuildProgress: applicationComponent ? null : appBuildProgress,
+            ...(applicationComponent || appBuildProgress
+              ? { rightPanelMode: 'app' as const }
+              : {}),
             lastSequence: events.reduce(
               (max, e) =>
                 typeof (e as { sequence?: number }).sequence === 'number'
@@ -701,6 +713,19 @@ export const useConversationV2Store = create<State & Actions>()(
               case 'wait':
                 // Agent paused for the user's reply — re-enable the composer.
                 return withSeq({ streaming: false, liveToolCallId: null });
+              case 'app_build_progress': {
+                const progress: AppBuildProgress = {
+                  phase: event.phase,
+                  message: event.message,
+                  revision: event.event_id,
+                };
+                console.log('[Nodepod] [sse:app_build_progress]', progress);
+                return withSeq({
+                  events: [...state.events, event],
+                  appBuildProgress: progress,
+                  rightPanelMode: 'app',
+                });
+              }
               case 'application_component':
                 // Agent pushed an embeddable app: boot Nodepod from Ceph sources.
                 console.log('[Nodepod] [sse:application_component]', {
@@ -721,6 +746,7 @@ export const useConversationV2Store = create<State & Actions>()(
                     fileCount: event.file_count,
                     revision: event.event_id,
                   },
+                  appBuildProgress: null,
                   rightPanelMode: 'app',
                 });
               case 'message': {

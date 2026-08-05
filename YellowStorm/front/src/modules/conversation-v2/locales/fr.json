@@ -80,7 +80,19 @@
     "waitingSources": "En attente des fichiers sources générés…",
     "error": "Impossible de démarrer l'aperçu dans le navigateur.",
     "retry": "Réessayer",
-    "openInNewTab": "Ouvrir dans un nouvel onglet"
+    "openInNewTab": "Ouvrir dans un nouvel onglet",
+    "buildPhase": {
+      "generation_started": "Génération démarrée",
+      "creating_files": "Création des fichiers",
+      "coding_complete": "Code terminé",
+      "installing_dependencies": "Installation des dépendances",
+      "building_project": "Build du projet",
+      "waiting_for_build": "En attente du build",
+      "validating_preview": "Validation de l'aperçu",
+      "fetching_app_code": "Récupération des sources",
+      "fetching_app_preview": "Démarrage de l'aperçu",
+      "ready": "Prêt"
+    }
   },
   "vnc": {
     "unavailable": "Aucune VM attachée à cette session",

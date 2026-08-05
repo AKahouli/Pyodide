@@ -8,6 +8,7 @@ export type ConversationV2EventType =
   | 'wait'
   | 'error'
   | 'application_component'
+  | 'app_build_progress'
   | 'heartbeat';
 
 export interface ConversationV2BaseEvent {
@@ -58,6 +59,12 @@ export interface ApplicationComponentEventPayload extends ConversationV2BaseEven
   file_count?: number;
 }
 
+/** Agent workflow progress while generating / validating an app before preview. */
+export interface AppBuildProgressEventPayload extends ConversationV2BaseEvent {
+  phase: string;
+  message: string;
+}
+
 /** Nested source tree produced by Manus `/app/code` → files_tree_json. */
 export interface FilesTreeNode {
   name: string;
@@ -104,6 +111,7 @@ export interface ConversationV2Event {
     | DoneEventPayload
     | WaitEventPayload
     | ApplicationComponentEventPayload
+    | AppBuildProgressEventPayload
     | HeartbeatEventPayload;
 }
 

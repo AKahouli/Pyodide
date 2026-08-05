@@ -1,4 +1,4 @@
-import type { AgentEvent, FilesTreeNode } from '../types';
+import type { AgentEvent, FilesTreeNode, AppBuildProgress } from '../types';
 import type { SessionSlice } from '../store';
 
 export function emptySlice(): SessionSlice {
@@ -133,6 +133,29 @@ export function deriveApplicationComponent(
         fileCount: ev.file_count,
         revision: ev.event_id,
       };
+    }
+  }
+  return null;
+}
+
+export function deriveAppBuildProgress(
+  events: AgentEvent[],
+  previous?: AppBuildProgress | null,
+): AppBuildProgress | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.type === 'app_build_progress') {
+      if (previous && previous.revision === ev.event_id) {
+        return previous;
+      }
+      return {
+        phase: ev.phase,
+        message: ev.message,
+        revision: ev.event_id,
+      };
+    }
+    if (ev.type === 'application_component') {
+      return null;
     }
   }
   return null;

@@ -1,5 +1,6 @@
 export type ConversationV2EventType =
-  | 'message' | 'tool' | 'step' | 'plan' | 'title' | 'done' | 'wait' | 'error' | 'application_component';
+  | 'message' | 'tool' | 'step' | 'plan' | 'title' | 'done' | 'wait' | 'error'
+  | 'application_component' | 'app_build_progress';
 
 export interface BaseEvent {
   event_id: string;
@@ -36,6 +37,10 @@ export type AgentEvent =
       ceph_path?: string;
       files_tree?: RawFilesTreeNode | null;
       file_count?: number;
+    })
+  | ({ type: 'app_build_progress' } & BaseEvent & {
+      phase: string;
+      message: string;
     });
 
 export interface FileInfo {

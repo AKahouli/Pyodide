@@ -38,6 +38,7 @@ interface ApplicationComponentViewProps {
   filesTree?: FilesTreeNode | null;
   fileCount?: number;
   revision: string;
+  buildProgress?: import('../../types').AppBuildProgress | null;
 }
 
 function statusBadgeClass(status: NodepodPreviewStatus): string | null {
@@ -93,6 +94,7 @@ export function ApplicationComponentView({
   filesTree,
   fileCount,
   revision,
+  buildProgress,
 }: ApplicationComponentViewProps) {
   const { t } = useConversationV2Translation();
   const sessionId = useConversationV2Store((s) => s.sessionId);
@@ -268,6 +270,12 @@ export function ApplicationComponentView({
               {busy && <Loader2Icon className='size-3 animate-spin' />}
               {badge.label}
             </Badge>
+          )}
+
+          {buildProgress && buildProgress.phase !== 'ready' && (
+            <span className='hidden max-w-[12rem] truncate text-[10px] text-muted-foreground lg:inline'>
+              {buildProgress.message}
+            </span>
           )}
 
           {fileCount != null && (

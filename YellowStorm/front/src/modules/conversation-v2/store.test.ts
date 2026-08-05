@@ -220,6 +220,36 @@ describe('useConversationV2Store', () => {
     expect(tools.map((t: any) => t.event_id)).toEqual(['t1a', 't2a']);
   });
 
+  it('app_build_progress opens the app panel and is cleared on application_component', () => {
+    const { handleEvent } = useConversationV2Store.getState();
+    handleEvent({
+      type: 'app_build_progress',
+      event_id: 'p1',
+      timestamp: 1,
+      phase: 'creating_files',
+      message: 'Creating project files',
+    });
+    expect(useConversationV2Store.getState().appBuildProgress).toEqual({
+      phase: 'creating_files',
+      message: 'Creating project files',
+      revision: 'p1',
+    });
+    expect(useConversationV2Store.getState().rightPanelMode).toBe('app');
+    expect(useConversationV2Store.getState().applicationComponent).toBeNull();
+
+    handleEvent({
+      type: 'application_component',
+      event_id: 'app-1',
+      timestamp: 2,
+      title: 'App',
+      url: 'http://localhost:5173',
+      ceph_path: 'yellowstorm/user/app/projectSRC',
+      file_count: 1,
+    });
+    expect(useConversationV2Store.getState().applicationComponent?.revision).toBe('app-1');
+    expect(useConversationV2Store.getState().appBuildProgress).toBeNull();
+  });
+
   it('replayEvents replaces events wholesale', () => {
     const { handleEvent, replayEvents } = useConversationV2Store.getState();
     handleEvent({ type: 'message', event_id: 'e1', timestamp: 1, role: 'assistant', content: 'a' });

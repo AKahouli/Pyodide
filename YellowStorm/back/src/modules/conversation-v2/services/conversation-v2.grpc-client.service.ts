@@ -83,6 +83,7 @@ interface RawProtoEvent {
     file_count?: number;
   };
   heartbeat?: Record<string, never>;
+  app_build_progress?: { phase: string; message: string };
 }
 
 @Injectable()
@@ -506,6 +507,17 @@ export class ConversationV2GrpcClientService
         return { type: 'wait', payload: base };
       case 'heartbeat':
         return { type: 'heartbeat', payload: base };
+      case 'app_build_progress': {
+        const rawProgress = raw.app_build_progress!;
+        return {
+          type: 'app_build_progress',
+          payload: {
+            ...base,
+            phase: rawProgress.phase,
+            message: rawProgress.message,
+          },
+        };
+      }
       case 'error':
         return { type: 'error', payload: { ...base, error: raw.error!.error } };
       case 'application_component': {
