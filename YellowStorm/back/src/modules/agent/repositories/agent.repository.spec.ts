@@ -154,6 +154,17 @@ describeIntegration('AgentRepository update/delete (integration)', () => {
     expect(updated!.tools).toEqual([t1]);
   });
 
+  it('updateById persists new guardrails and deploymentSettings jsonb', async () => {
+    const input = createInput({ guardrails: {}, deploymentSettings: {} });
+    created.push(input.id); await repo.create(input);
+    const updated = await repo.updateById(input.id, {
+      guardrails: { promptInjection: { inputGuardrailEnabled: true } },
+      deploymentSettings: { embedEnabled: true, restEnabled: false, widget: null },
+    });
+    expect(updated!.guardrails).toEqual({ promptInjection: { inputGuardrailEnabled: true } });
+    expect(updated!.deploymentSettings).toEqual({ embedEnabled: true, restEnabled: false, widget: null });
+  });
+
   it('deleteById removes the agent and cascades junctions', async () => {
     const input = createInput({ tools: [oid()] });
     created.push(input.id); await repo.create(input);

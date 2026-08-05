@@ -52,6 +52,7 @@ export interface UpdateAgentInput {
   instruction?: string; ignorePrePrompt?: boolean;
   enable_temporary_child_agents?: boolean; max_temporary_child_agents?: number;
   isDefault?: boolean; isActive?: boolean; isDefaultForType?: boolean;
+  guardrails?: Record<string, unknown>; deploymentSettings?: Record<string, unknown>;
   a2aPublished?: boolean; a2aAgentId?: string | null; a2aAgentCardUrl?: string | null;
   a2aApiKeyHeader?: string | null; a2aPublishedAt?: Date | null;
   tools?: string[]; skills?: string[]; disabledSkills?: string[]; connectors?: string[];
@@ -220,6 +221,7 @@ export class AgentRepository {
         ['email', 'email'], ['instruction', 'instruction'], ['ignorePrePrompt', 'ignorePrePrompt'],
         ['enable_temporary_child_agents', 'enableTemporaryChildAgents'], ['max_temporary_child_agents', 'maxTemporaryChildAgents'],
         ['isDefault', 'isDefault'], ['isActive', 'isActive'], ['isDefaultForType', 'isDefaultForType'],
+        ['guardrails', 'guardrails'], ['deploymentSettings', 'deploymentSettings'],
         ['a2aPublished', 'a2aPublished'], ['a2aAgentId', 'a2aAgentId'], ['a2aAgentCardUrl', 'a2aAgentCardUrl'],
         ['a2aApiKeyHeader', 'a2aApiKeyHeader'], ['a2aPublishedAt', 'a2aPublishedAt'],
       ];

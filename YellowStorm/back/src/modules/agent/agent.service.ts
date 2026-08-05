@@ -32,6 +32,8 @@ import {
   normalizePromptInjectionGuardrails,
 } from '../guardrails/services/guardrails-settings.service';
 import { normalizeWidgetSettings } from './constants/widget-default-settings';
+import { AgentRepository, CreateAgentInput, UpdateAgentInput } from './repositories/agent.repository';
+import { AgentRecord } from './repositories/agent-record.mapper';
 
 /** Agent-type slug of the orchestrating manager agent. */
 const MANAGER_SLUG = 'manager';
@@ -61,6 +63,7 @@ export class AgentService {
     private readonly teamService: TeamService,
     private readonly agentShareService: AgentShareService,
     private readonly guardrailsSettingsService: GuardrailsSettingsService,
+    private readonly agentRepository: AgentRepository,
     @Optional() private readonly connectorRuntimeService?: AgentConnectorRuntimeService,
   ) {
     this.logger.setContext(AgentService.name);
@@ -1553,6 +1556,121 @@ export class AgentService {
     if (admin.length > 0) return admin[0];
 
     return undefined;
+  }
+
+  // ==========================================
+  // Postgres hydration + DTO mapping helpers
+  // ==========================================
+
+  /** Replace each record's bare agentType id with a populated {_id,name,slug,skills}. */
+  private async hydrate(records: AgentRecord[]): Promise<Array<Record<string, unknown>>> {
+    const typeIds = [...new Set(records.map((r) => r.agentType).filter(Boolean))];
+    const typeMap = await this.agentTypeService.getManyForHydration(typeIds);
+    return records.map((r) => {
+      const t = typeMap.get(r.agentType);
+      return {
+        ...r,
+        agentType: t
+          ? { _id: t.id, name: t.name, slug: t.slug, skills: t.skills }
+          : { _id: r.agentType, name: '', slug: '', skills: [] },
+      };
+    });
+  }
+
+  private async hydrateOne(record: AgentRecord | null): Promise<Record<string, unknown> | null> {
+    if (!record) return null;
+    const [one] = await this.hydrate([record]);
+    return one;
+  }
+
+  private async resolveAgentTypeSlug(agentTypeId: string): Promise<string> {
+    const map = await this.agentTypeService.getManyForHydration([agentTypeId]);
+    return map.get(agentTypeId)?.slug ?? '';
+  }
+
+  private dtoToCreateInput(
+    userId: string,
+    dto: CreateAgentDto,
+    opts: { id: string; isDefault: boolean; slug: string; agentTypeSlug: string },
+  ): CreateAgentInput {
+    return {
+      id: opts.id,
+      name: dto.name,
+      slug: opts.slug,
+      agentType: dto.agentType,
+      agentTypeSlug: opts.agentTypeSlug,
+      role: dto.role,
+      description: dto.description ?? '',
+      temperature: dto.temperature ?? 0,
+      llmModel: dto.model,
+      instruction: dto.instruction ?? '',
+      ignorePrePrompt: dto.ignorePrePrompt ?? false,
+      knowledgeBases: dto.knowledgeBases ?? [],
+      tools: dto.tools ?? [],
+      skills: dto.skills ?? [],
+      disabledSkills: dto.disabledSkills ?? [],
+      connectors: dto.connectors ?? [],
+      connectorActionSelections: this.normalizeConnectorActionSelectionsForInput(dto.connectors, dto.connectorActionSelections),
+      guardrails: (dto.guardrails as Record<string, unknown>) ?? {},
+      deploymentSettings: this.normalizeDeploymentSettings(dto.deploymentSettings) as unknown as Record<string, unknown>,
+      enable_temporary_child_agents: dto.enable_temporary_child_agents ?? false,
+      max_temporary_child_agents: dto.max_temporary_child_agents ?? 4,
+      isDefault: opts.isDefault,
+      isActive: dto.isActive ?? true,
+      isDefaultForType: dto.isDefaultForType ?? false,
+      createdBy: userId,
+    };
+  }
+
+  /** connectorActionSelections for the repository input: {connectorId, actionKeys} scoped to attached connectors. */
+  private normalizeConnectorActionSelectionsForInput(
+    connectorIds: string[] | undefined,
+    selections?: Array<{ connectorId: string; actionKeys: string[] }>,
+  ): Array<{ connectorId: string; actionKeys: string[] }> {
+    if (!connectorIds?.length || !selections?.length) return [];
+    const allowed = new Set(connectorIds);
+    return selections
+      .filter((s) => allowed.has(s.connectorId))
+      .map((s) => ({ connectorId: s.connectorId, actionKeys: [...new Set((s.actionKeys || []).filter((k) => k?.trim()))] }))
+      .filter((s) => s.actionKeys.length > 0);
+  }
+
+  private dtoToUpdateInput(
+    dto: UpdateAgentDto,
+    existing: AgentRecord,
+    opts: { agentTypeSlug?: string; normalizedSlug?: string },
+  ): UpdateAgentInput {
+    const patch: UpdateAgentInput = {};
+    if (dto.name !== undefined) patch.name = dto.name;
+    if (opts.normalizedSlug !== undefined) patch.slug = opts.normalizedSlug;
+    if (dto.agentType !== undefined) { patch.agentType = dto.agentType; patch.agentTypeSlug = opts.agentTypeSlug ?? ''; }
+    if (dto.role !== undefined) patch.role = dto.role;
+    if (dto.description !== undefined) patch.description = dto.description;
+    if (dto.temperature !== undefined) patch.temperature = dto.temperature;
+    if ('model' in dto) patch.llmModel = dto.model || '';
+    if (dto.instruction !== undefined) patch.instruction = dto.instruction;
+    if (dto.ignorePrePrompt !== undefined) patch.ignorePrePrompt = dto.ignorePrePrompt;
+    if (dto.enable_temporary_child_agents !== undefined) patch.enable_temporary_child_agents = dto.enable_temporary_child_agents;
+    if (dto.max_temporary_child_agents !== undefined) patch.max_temporary_child_agents = dto.max_temporary_child_agents;
+    if (dto.isActive !== undefined) patch.isActive = dto.isActive;
+    if (dto.isDefaultForType !== undefined) patch.isDefaultForType = dto.isDefaultForType;
+    if (dto.knowledgeBases !== undefined) patch.knowledgeBases = dto.knowledgeBases;
+    if (dto.tools !== undefined) patch.tools = dto.tools;
+    if (dto.skills !== undefined) patch.skills = dto.skills;
+    if (dto.disabledSkills !== undefined) patch.disabledSkills = dto.disabledSkills;
+    if (dto.connectors !== undefined) patch.connectors = dto.connectors;
+    if (dto.guardrails !== undefined) patch.guardrails = dto.guardrails as Record<string, unknown>;
+    if (dto.connectorActionSelections !== undefined) {
+      patch.connectorActionSelections = this.normalizeConnectorActionSelectionsForInput(
+        dto.connectors ?? existing.connectors, dto.connectorActionSelections,
+      );
+    }
+    if (dto.deploymentSettings !== undefined) {
+      patch.deploymentSettings = this.normalizeDeploymentSettings(
+        dto.deploymentSettings, existing.deploymentSettings,
+      ) as unknown as Record<string, unknown>;
+    }
+    return patch;
   }
 
   // ==========================================
