@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, inArray, or, desc, asc, ilike, sql, count } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { DRIZZLE_DB } from '../../postgres';
+import { DRIZZLE_DB } from '../../postgres/postgres.constants';
 import * as schema from '../../postgres/schema';
 import { AgentRecord, AgentJunctions, rowToRecord, trim24 } from './agent-record.mapper';
 
