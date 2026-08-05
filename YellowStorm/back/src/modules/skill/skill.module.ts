@@ -6,7 +6,6 @@ import { Skill, SkillSchema } from './schemas/skill.schema';
 import { SkillCategory, SkillCategorySchema } from './schemas/skill-category.schema';
 import { SkillController } from './skill.controller';
 import { SkillCategoryController } from './skill-category.controller';
-import { Agent, AgentSchema } from '../agent/schemas/agent.schema';
 import { AgentType, AgentTypeSchema } from '../agent-type/schemas/agent-type.schema';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { AdminSkillController } from './admin-skill.controller';
@@ -16,7 +15,6 @@ import { AdminSkillController } from './admin-skill.controller';
     MongooseModule.forFeature([
       { name: Skill.name, schema: SkillSchema },
       { name: SkillCategory.name, schema: SkillCategorySchema },
-      { name: Agent.name, schema: AgentSchema },
       { name: AgentType.name, schema: AgentTypeSchema },
     ]),
     AuthorizationModule,
