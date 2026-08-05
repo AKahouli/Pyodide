@@ -25,9 +25,15 @@ logger = logging.getLogger(__name__)
 # step in the plan) and hard-aborts the whole run on trip. This caps a
 # single step instead, and recovers gracefully.
 MAX_STEP_MODEL_CALLS = 15
+# A persona step's own job is now longer by design (find the real person's
+# email, send it, create_task(await_reply)) before it can even reach a
+# genuine parked state — the plain cap was tripping before that chain
+# finished, forcing a fabricated decision.
+MAX_PERSONA_STEP_MODEL_CALLS = 25
 
 
-def _stop_after_n_calls(limit: int, model_name: str):
+def _stop_after_n_calls(limit: int, model_name: str, *,
+                         is_persona: bool = False, assignee_name: Optional[str] = None):
     """Forces a real answer once a step exceeds `limit` model calls, instead
     of looping forever or returning a non-answer a caller could mistake for
     a genuine one.
@@ -39,6 +45,14 @@ def _stop_after_n_calls(limit: int, model_name: str):
     Azure outright ("parallel_tool_calls is only allowed when tools are
     specified") — litellm.drop_params doesn't catch this, it's a value-level
     conflict, not an unsupported param.
+
+    A persona step gets a DIFFERENT nudge: "give your best answer" is exactly
+    the fabricated-decision behavior persona_preamble forbids (the whole point
+    of the new design is that {assignee_name}'s real decision comes from their
+    own email reply, never a guess) — and since this fallback call has no
+    tools, the step can't place its usual create_task(kind='await_reply')
+    escalation here either. So it must say plainly that it ran out of budget
+    before reaching them, not present a guess as their answer.
     """
     state = {"n": 0, "forced": False}
 
@@ -48,10 +62,18 @@ def _stop_after_n_calls(limit: int, model_name: str):
             state["forced"] = True
             logger.warning("[worky] step exceeded %d model calls — forcing a final answer", limit)
             from google.adk.models.llm_request import LlmRequest
-            nudge = genai_types.Content(role="user", parts=[genai_types.Part(
-                text="Stop calling tools now. Give your best answer using only what you "
-                     "already know from this conversation so far — do not ask for more "
-                     "information and do not say you are unable to answer.")])
+            if is_persona:
+                nudge_text = (
+                    "Stop calling tools now. You have run out of budget before reaching "
+                    f"{assignee_name}'s real decision — do NOT invent one now. Say plainly "
+                    "that this could not be escalated to them within this turn and needs "
+                    "manual follow-up; never present your own guess as their answer.")
+            else:
+                nudge_text = (
+                    "Stop calling tools now. Give your best answer using only what you "
+                    "already know from this conversation so far — do not ask for more "
+                    "information and do not say you are unable to answer.")
+            nudge = genai_types.Content(role="user", parts=[genai_types.Part(text=nudge_text)])
             fallback_request = LlmRequest(model=model_name, contents=llm_request.contents + [nudge])
             # contents alone drops the task/persona instruction — a separate field.
             fallback_request.config.system_instruction = llm_request.config.system_instruction
@@ -223,36 +245,39 @@ def make_llm_node_factory(
         base_instruction = EXECUTOR_INSTRUCTION.format(
             identity=identity, do_this_line=do_this_line, description=step.description)
         persona_preamble = (
-            f"You are {step.assignee_name} — a real person at this company."
+            f"You represent {step.assignee_name} — a real person at this company."
             + (f" {step.assignee_role}" if step.assignee_role else "")
             + "\n\n"
-            f"Act exactly as {step.assignee_name} would in real life: do your "
-            "own job yourself, using your own judgment and expertise — you "
-            "don't need anyone's permission for what's already inside your "
-            "role, and a question that just happens to match your job title "
-            "is still your own job to answer, not a reason to go find "
-            "yourself. But you're not the only person here: if something "
-            "genuinely falls outside your role or authority, do what any "
-            "real colleague would — find the right person (find_human_agents, "
-            "there is no fixed roster) and actually ask them "
-            "(delegate_to_human_agent), then answer using what they told you. "
-            "Never invent their answer, never tell the user to go ask someone "
-            "else yourself, and never leave your turn on 'I'll check with "
-            "so-and-so' without having actually checked. You can't ask "
-            "yourself, and you don't reach out just because a question is "
-            "hard — only when the authority or expertise genuinely isn't yours. "
-            "If an email reply relevant to your task already arrived earlier "
-            "in this conversation, treat it as real, given information: read "
-            "it and act on it directly — approve, reject, or proceed "
-            "accordingly — rather than restating it back as still pending, "
-            "asking for it again, or writing it down as a condition for "
-            "later without doing anything about it yourself right now. If "
-            "acting on it means real follow-up work needs to actually happen "
-            "— a check to run, something to verify, another email to send "
-            "and wait on — and it isn't a specific named colleague's "
-            "judgment (that's delegate_to_human_agent), spin it off yourself "
-            "with create_task and use its result, instead of writing that "
-            "work down as something still owed."
+            f"You never make the final call in {step.assignee_name}'s place — "
+            "your job is to PREPARE, not decide. Think it through with their "
+            "judgment and expertise, draft the analysis, recommendation, or "
+            f"answer they would need — then get the actual decision from "
+            f"{step.assignee_name} themselves: look up their email via "
+            "find_human_agents (there is no fixed roster), send them your "
+            "draft as a real email laying out the situation and asking for "
+            "their call, then call create_task(kind='await_reply') to wait "
+            "for their real reply. Give your final answer only once that "
+            "reply is in, based on exactly what they said — never on your "
+            "own draft, and never invented or assumed. If a reply from them "
+            "settling this already arrived earlier in this conversation, "
+            "treat it as their real decision and act on it directly — "
+            "approve, reject, or proceed accordingly — instead of emailing "
+            "again or restating it as still pending.\n\n"
+            f"Before you draft anything: if the matter genuinely falls "
+            f"outside {step.assignee_name}'s own role or authority, do what "
+            "any real colleague would first — find the right person "
+            "(find_human_agents) and actually ask them "
+            "(delegate_to_human_agent), then fold what they told you into "
+            f"the draft that goes to {step.assignee_name}. Never invent "
+            "their input, and never leave your turn on 'I'll check with "
+            "so-and-so' without having actually checked. You don't reach "
+            "out just because a question is hard — only when the authority "
+            f"or expertise genuinely isn't {step.assignee_name}'s. If other "
+            "real follow-up work turns up that isn't a specific named "
+            "colleague's judgment call — a check to run, something to "
+            "verify, another email to send and wait on — spin it off "
+            "yourself with create_task and use its result, instead of "
+            "writing it down as something still owed."
         ) if step.is_persona else None
         # A client prompt may carry a literal "{description}" token (see
         # PROMPTS.txt); ADK's instruction templating treats any unresolved
@@ -275,7 +300,9 @@ def make_llm_node_factory(
             instruction=instruction,
             tools=step_tools,
             output_key=name,  # step result lands in session state under this key
-            before_model_callback=_stop_after_n_calls(MAX_STEP_MODEL_CALLS, model_name),
+            before_model_callback=_stop_after_n_calls(
+                MAX_PERSONA_STEP_MODEL_CALLS if step.is_persona else MAX_STEP_MODEL_CALLS,
+                model_name, is_persona=step.is_persona, assignee_name=step.assignee_name),
         )
 
     return factory

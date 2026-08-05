@@ -155,7 +155,7 @@ def test_a_persona_step_never_gets_a_competing_execution_agent_identity():
     plain_step = Step(id="b", kind="execute", description="Search the web for Tesla news.")
 
     assert "You are an execution agent" not in factory(persona_step, "a").instruction
-    assert "You are Rabeb" in factory(persona_step, "a").instruction
+    assert "You represent Rabeb" in factory(persona_step, "a").instruction
     assert "You are an execution agent" in factory(plain_step, "b").instruction
 
 
@@ -191,7 +191,7 @@ def test_a_persona_step_is_told_to_act_on_a_reply_already_in_context_not_just_no
 
     instruction = factory(persona_step, "a").instruction
     assert "act on it directly" in instruction
-    assert "without doing anything about it yourself" in instruction
+    assert "restating it as still pending" in instruction
     assert "act on it directly" not in factory(plain_step, "b").instruction
 
 
