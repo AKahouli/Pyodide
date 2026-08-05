@@ -51,7 +51,6 @@ import { GovernanceSourceVersionService } from './services/governance-source-ver
 import { GovernanceSourceTransitionService } from './services/governance-source-transition.service';
 import { GovernanceSourceEventService } from './services/governance-source-event.service';
 import { GovernancePublicationAttempt, GovernancePublicationAttemptSchema } from './schemas/governance-publication-attempt.schema';
-import { Agent, AgentSchema } from '@modules/agent/schemas/agent.schema';
 import { User, UserSchema } from '@modules/user/schemas/user.schema';
 import governedConversationsConfig from '../../config/governed-conversations.config';
 import { GovernanceRuntimeModule } from './governance-runtime.module';
@@ -103,7 +102,6 @@ import { GovernanceQualityEvaluator } from './services/knowledge-evaluators/gove
       { name: GovernanceDryRun.name, schema: GovernanceDryRunSchema },
       { name: GovernanceMetric.name, schema: GovernanceMetricSchema },
       { name: GovernancePublicationAttempt.name, schema: GovernancePublicationAttemptSchema },
-      { name: Agent.name, schema: AgentSchema },
       { name: User.name, schema: UserSchema },
       { name: WorkspaceDoc.name, schema: WorkspaceDocumentSchema },
       { name: Workspace.name, schema: WorkspaceSchema },

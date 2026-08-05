@@ -37,15 +37,15 @@ describe('AgentPermissionGuard default agent authorization', () => {
     const reflector = {
       getAllAndOverride: jest.fn().mockReturnValue(requiredPermission),
     } as unknown as Reflector;
-    const agentModel = {
-      findById: jest.fn().mockReturnValue(createLeanExec(defaultAgent)),
+    const agentRepository = {
+      findById: jest.fn().mockResolvedValue(defaultAgent),
     };
     const sharedAgentModel = {
       findOne: jest.fn(),
     };
 
     return {
-      guard: new AgentPermissionGuard(reflector, agentModel as any, sharedAgentModel as any),
+      guard: new AgentPermissionGuard(reflector, agentRepository as any, sharedAgentModel as any),
       sharedAgentModel,
     };
   }

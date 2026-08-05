@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { LoggerService } from '../logger';
-import { Agent, AgentDocument } from '../agent/schemas/agent.schema';
+import { AgentRepository } from '../agent/repositories/agent.repository';
+import { AgentRoleEmbeddingService } from '../agent/services/agent-role-embedding.service';
 import { AgentType, AgentTypeDocument } from '../agent-type/schemas/agent-type.schema';
 import { collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '../../common/utils';
 
@@ -39,8 +40,9 @@ function deriveAgentSlug(value: string): string {
 @Injectable()
 export class HumainAgentService {
   constructor(
-    @InjectModel(Agent.name) private readonly agentModel: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
     @InjectModel(AgentType.name) private readonly agentTypeModel: Model<AgentTypeDocument>,
+    private readonly roleEmbedding: AgentRoleEmbeddingService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(HumainAgentService.name);
@@ -67,32 +69,40 @@ export class HumainAgentService {
         return;
       }
 
-      const createdBy = new Types.ObjectId(input.userId);
-      const agentType = humainType._id;
+      const agentType = String(humainType._id);
+      const agentTypeSlug = String(humainType.slug ?? '');
       const name = this.deriveName(input);
       const slug = deriveAgentSlug(name);
       const role = this.deriveRole(input, name);
       const description = (input.description ?? '').slice(0, 1000);
 
-      // Use findOne + create/save rather than findOneAndUpdate({ upsert, setDefaultsOnInsert }):
-      // the Agent schema's `slug` default is `function() { return deriveAgentSlug(this.name); }`,
-      // which Mongoose evaluates with `this === null` during setDefaultsOnInsert and throws.
-      // create()/save() build a real document instance, so all schema defaults apply correctly.
-      const existing = await this.agentModel.findOne({ createdBy, agentType }).exec();
+      const existing = await this.agentRepository.findByOwnerAndType(input.userId, agentType);
 
       if (!existing) {
-        await this.agentModel.create({ name, slug, role, description, createdBy, agentType });
+        const id = new Types.ObjectId().toString();
+        await this.agentRepository.create({
+          id,
+          name, slug, agentType, agentTypeSlug, role, description, email: input.email,
+          temperature: 0, llmModel: undefined, instruction: '', ignorePrePrompt: false,
+          knowledgeBases: [], tools: [], skills: [], disabledSkills: [], connectors: [], connectorActionSelections: [],
+          guardrails: {}, deploymentSettings: {},
+          enable_temporary_child_agents: false, max_temporary_child_agents: 4,
+          isDefault: false, isDefaultForType: false, isActive: true, createdBy: input.userId,
+        });
+        this.roleEmbedding.reindexHumainRole(id, agentTypeSlug, name, role);
         this.logger.log('Human agent created', { userId: input.userId });
         return;
       }
 
       if (overwriteProfileFields) {
-        existing.name = name;
-        existing.slug = slug;
-        existing.role = role;
-        existing.description = description;
-        await existing.save();
+        await this.agentRepository.updateById(existing._id, { name, slug, role, description, email: input.email });
+        this.roleEmbedding.reindexHumainRole(existing._id, agentTypeSlug, name, role);
         this.logger.log('Human agent synced', { userId: input.userId });
+      } else if (input.email && existing.email !== input.email) {
+        // Keep the humain agent's email aligned with the user's email even on plain
+        // login (fills it for agents that predate the email field).
+        await this.agentRepository.updateById(existing._id, { email: input.email });
+        this.logger.log('Human agent email updated', { userId: input.userId });
       }
     } catch (error) {
       // Never throw: human-agent maintenance must not break auth/profile flows.

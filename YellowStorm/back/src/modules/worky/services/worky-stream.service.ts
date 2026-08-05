@@ -5,7 +5,8 @@ import { Connection, Model, Types } from 'mongoose';
 import { InjectConnection } from '@nestjs/mongoose';
 import { WorkyStream, WorkyStreamDocument } from '../schemas/worky-stream.schema';
 import { Workspace, WorkspaceDocument } from '../../workspace/schemas/workspace.schema';
-import { Agent, AgentDocument } from '../../agent/schemas/agent.schema';
+import { AgentRepository } from '../../agent/repositories/agent.repository';
+import { AgentRecord } from '../../agent/repositories/agent-record.mapper';
 import { WorkspaceService } from '../../workspace/workspace.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { AgentTypeService } from '../../agent-type/agent-type.service';
@@ -58,8 +59,7 @@ export class WorkyStreamService implements OnModuleInit {
     private readonly streamModel: Model<WorkyStreamDocument>,
     @InjectModel(Workspace.name)
     private readonly workspaceModel: Model<WorkspaceDocument>,
-    @InjectModel(Agent.name)
-    private readonly agentModel: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
     @InjectConnection()
     private readonly connection: Connection,
     private readonly agentTypeService: AgentTypeService,
@@ -112,7 +112,7 @@ export class WorkyStreamService implements OnModuleInit {
         ? new Types.ObjectId(dto.workspaceId)
         : artifactWorkspace.createdBy,
       artifactWorkspaceId: artifactWorkspace._id,
-      managerAgentId: managerAgent._id,
+      managerAgentId: new Types.ObjectId(managerAgent._id),
       // aiSessionId is intentionally omitted here (defaults to null via the
       // schema). The orchestrator session is created lazily on first
       // message send — see `ensureKickoffContext` — so stream creation no
@@ -211,7 +211,7 @@ export class WorkyStreamService implements OnModuleInit {
       await this.workspaceService.delete(artifactWorkspaceId, userId);
     }
     if (stream.managerAgentId) {
-      await this.agentModel.deleteOne({ _id: stream.managerAgentId, createdBy: stream.ownerUserId }).exec();
+      await this.agentRepository.deleteByIdAndOwner(String(stream.managerAgentId), String(stream.ownerUserId));
     }
     await this.deleteStreamScopedRecords(stream._id as Types.ObjectId);
     await this.streamModel.deleteOne({ _id: stream._id }).exec();
@@ -403,14 +403,18 @@ export class WorkyStreamService implements OnModuleInit {
     userId: string,
     streamTitle: string,
     agentTypeId: string,
-  ): Promise<AgentDocument> {
+  ): Promise<AgentRecord> {
     const baseName = `${STREAM_AGENT_NAME_PREFIX} — ${streamTitle}`.slice(0, STREAM_AGENT_NAME_MAX);
     const name = await this.uniqueAgentName(userId, baseName);
 
-    const agent = await this.agentModel.create({
+    const id = new Types.ObjectId().toString();
+    const agentTypeSlug = (await this.agentTypeService.getManyForHydration([agentTypeId])).get(agentTypeId)?.slug ?? '';
+    const agent = await this.agentRepository.create({
+      id,
       name,
       slug: this.toSlug(`${name}-${Date.now()}`),
-      agentType: new Types.ObjectId(agentTypeId),
+      agentType: agentTypeId,
+      agentTypeSlug,
       role: 'Worky Manager Agent — orchestrates the stream, plans tasks, and dispatches ephemeral workers.',
       description: 'Per-stream Manager. Created automatically when the Worky stream is created.',
       temperature: 0,
@@ -423,10 +427,14 @@ export class WorkyStreamService implements OnModuleInit {
       disabledSkills: [],
       connectors: [],
       connectorActionSelections: [],
+      guardrails: {},
+      deploymentSettings: {},
+      enable_temporary_child_agents: false,
+      max_temporary_child_agents: 4,
       isDefault: false,
       isDefaultForType: false,
       isActive: true,
-      createdBy: new Types.ObjectId(userId),
+      createdBy: userId,
     });
 
     this.logger.log('Worky Manager agent created', {
@@ -455,10 +463,7 @@ export class WorkyStreamService implements OnModuleInit {
     let name = baseName;
     let counter = 1;
     while (counter < 100) {
-      const existing = await this.agentModel
-        .findOne({ name, createdBy: new Types.ObjectId(userId) })
-        .lean()
-        .exec();
+      const existing = await this.agentRepository.findByNameAndOwner(name, userId);
       if (!existing) return name;
       name = `${baseName} (${counter})`.slice(0, STREAM_AGENT_NAME_MAX);
       counter++;

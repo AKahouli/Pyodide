@@ -27,6 +27,7 @@ describe('ConversationService sticky / tagged agents', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
     );
   });
 

@@ -8,7 +8,8 @@ import {
 import { Reflector } from '@nestjs/core';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Agent, AgentDocument } from '../schemas/agent.schema';
+import { AgentRepository } from '../repositories/agent.repository';
+import { AgentRecord } from '../repositories/agent-record.mapper';
 import { SharedAgent, SharedAgentDocument } from '../schemas/shared-agent.schema';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import {
@@ -18,7 +19,7 @@ import {
 import { AgentPermissionLevel } from '../interfaces/agent.interface';
 
 export interface AgentContext {
-  agent: AgentDocument;
+  agent: AgentRecord;
   isOwner: boolean;
   permission: AgentPermissionLevel | 'owner';
   shareId?: string;
@@ -34,8 +35,7 @@ interface RequestWithAgentContext {
 export class AgentPermissionGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
-    @InjectModel(Agent.name)
-    private readonly agentModel: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
     @InjectModel(SharedAgent.name)
     private readonly sharedAgentModel: Model<SharedAgentDocument>,
   ) {}
@@ -58,11 +58,7 @@ export class AgentPermissionGuard implements CanActivate {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
 
-    const agent = await this.agentModel
-      .findById(agentId)
-      .select('createdBy isActive isDefault')
-      .lean()
-      .exec();
+    const agent = await this.agentRepository.findById(agentId);
 
     if (!agent) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
@@ -85,7 +81,7 @@ export class AgentPermissionGuard implements CanActivate {
       }
 
       request.agentContext = {
-        agent: agent as AgentDocument,
+        agent,
         isOwner: false,
         permission: requiredPermission === 'read' ? 'read' : 'owner',
       };
@@ -94,7 +90,7 @@ export class AgentPermissionGuard implements CanActivate {
 
     if (isOwner) {
       request.agentContext = {
-        agent: agent as AgentDocument,
+        agent,
         isOwner: true,
         permission: 'owner',
       };
@@ -127,7 +123,7 @@ export class AgentPermissionGuard implements CanActivate {
     }
 
     request.agentContext = {
-      agent: agent as AgentDocument,
+      agent,
       isOwner: false,
       permission: sharePermission,
       shareId: share._id.toString(),

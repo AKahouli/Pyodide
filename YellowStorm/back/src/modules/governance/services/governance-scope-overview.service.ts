@@ -13,7 +13,7 @@ import { GovernanceMetric, GovernanceMetricDocument } from '../schemas/governanc
 import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
 import { GovernanceSource, GovernanceSourceDocument } from '../schemas/governance-source.schema';
 import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
-import { Agent, AgentDocument } from '@modules/agent/schemas/agent.schema';
+import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { User, UserDocument } from '@modules/user/schemas/user.schema';
 
 interface GovernanceActorSummary { id: string; displayName: string; email: string }
@@ -57,7 +57,7 @@ export class GovernanceScopeOverviewService {
     @InjectModel(GovernanceDryRun.name) private readonly dryRunModel: Model<GovernanceDryRunDocument>,
     @InjectModel(GovernanceMembership.name) private readonly membershipModel: Model<GovernanceMembershipDocument>,
     @InjectModel(GovernanceMetric.name) private readonly metricModel: Model<GovernanceMetricDocument>,
-    @InjectModel(Agent.name) private readonly agentModel: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly programService: GovernanceProgramService,
     private readonly accessService: GovernanceAccessService,
@@ -163,7 +163,7 @@ export class GovernanceScopeOverviewService {
   private async findMappedAgents(agentIds: unknown[]): Promise<Record<string, unknown>[]> {
     const ids = Array.isArray(agentIds) ? agentIds.filter((id): id is Types.ObjectId | string => Boolean(id)) : [];
     if (ids.length === 0) return [];
-    return this.agentModel.find({ _id: { $in: ids.map((id) => new Types.ObjectId(String(id))) } }).lean().exec();
+    return this.agentRepository.findByIds(ids.map(String)) as unknown as Promise<Record<string, unknown>[]>;
   }
 
   private async findRevisionActors(revisions: Array<Record<string, unknown> | null>): Promise<Map<string, GovernanceActorSummary>> {

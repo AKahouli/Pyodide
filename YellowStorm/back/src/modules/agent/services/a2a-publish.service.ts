@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
-import { Model, Types } from 'mongoose';
+import { Types } from 'mongoose';
 import { LoggerService } from '../../logger';
 import { stripTrailingChar } from '@common/utils';
-import { Agent, AgentDocument } from '../schemas/agent.schema';
+import { AgentRepository } from '../repositories/agent.repository';
+import { AgentRecord } from '../repositories/agent-record.mapper';
 import { AgentService } from '../agent.service';
 import { A2AAdminGrpcClientService } from './a2a-admin.grpc-client.service';
 import {
@@ -31,8 +31,7 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 @Injectable()
 export class A2APublishService {
   constructor(
-    @InjectModel(Agent.name)
-    private readonly agentModel: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
     private readonly agentService: AgentService,
     private readonly grpcClient: A2AAdminGrpcClientService,
     private readonly config: ConfigService,
@@ -87,17 +86,13 @@ export class A2APublishService {
 
     const agentCardUrl = this.toAbsoluteCardUrl(result.agentCardUrl);
 
-    await this.agentModel
-      .findByIdAndUpdate(agentId, {
-        $set: {
-          a2aPublished: true,
-          a2aAgentId: result.agentId,
-          a2aAgentCardUrl: agentCardUrl,
-          a2aApiKeyHeader: result.apiKeyHeader,
-          a2aPublishedAt: new Date(),
-        },
-      })
-      .exec();
+    await this.agentRepository.updateById(agentId, {
+      a2aPublished: true,
+      a2aAgentId: result.agentId,
+      a2aAgentCardUrl: agentCardUrl,
+      a2aApiKeyHeader: result.apiKeyHeader,
+      a2aPublishedAt: new Date(),
+    });
 
     this.logger.log('Agent published over A2A', {
       agentId,
@@ -122,14 +117,10 @@ export class A2APublishService {
     const result = await this.grpcClient.rotateKey(agent.a2aAgentId);
     const agentCardUrl = this.toAbsoluteCardUrl(result.agentCardUrl);
 
-    await this.agentModel
-      .findByIdAndUpdate(agentId, {
-        $set: {
-          a2aApiKeyHeader: result.apiKeyHeader,
-          a2aAgentCardUrl: agentCardUrl,
-        },
-      })
-      .exec();
+    await this.agentRepository.updateById(agentId, {
+      a2aApiKeyHeader: result.apiKeyHeader,
+      a2aAgentCardUrl: agentCardUrl,
+    });
 
     this.logger.log('A2A API key rotated', {
       agentId,
@@ -153,17 +144,13 @@ export class A2APublishService {
 
     const result = await this.grpcClient.revokeAgent(agent.a2aAgentId);
 
-    await this.agentModel
-      .findByIdAndUpdate(agentId, {
-        $set: { a2aPublished: false },
-        $unset: {
-          a2aAgentId: '',
-          a2aAgentCardUrl: '',
-          a2aApiKeyHeader: '',
-          a2aPublishedAt: '',
-        },
-      })
-      .exec();
+    await this.agentRepository.updateById(agentId, {
+      a2aPublished: false,
+      a2aAgentId: null,
+      a2aAgentCardUrl: null,
+      a2aApiKeyHeader: null,
+      a2aPublishedAt: null,
+    });
 
     this.logger.log('Agent revoked from A2A', {
       agentId,
@@ -182,12 +169,12 @@ export class A2APublishService {
     userId: string,
     agentId: string,
     canManageDefault: boolean,
-  ): Promise<AgentDocument> {
+  ): Promise<AgentRecord> {
     if (!Types.ObjectId.isValid(agentId)) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
 
-    const agent = await this.agentModel.findById(agentId).exec();
+    const agent = await this.agentRepository.findById(agentId);
     if (!agent) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
