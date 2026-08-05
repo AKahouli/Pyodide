@@ -72,8 +72,8 @@ export function RightPanel() {
       resizeHandleLabel={t('rightPanel.resizeHandle')}
       className='border-l bg-card/40'
     >
-      <aside className='flex h-full min-w-0 flex-col'>
-        <header className='flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3'>
+      <aside className='flex h-full min-w-0 flex-col overflow-hidden'>
+        <header className='flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3'>
           {canToggle ? (
             <div className='inline-flex items-center rounded-lg border bg-muted/40 p-0.5'>
               <button type='button' onClick={() => setRightPanelView('code')} className={tabClass(!showPreview)}>
@@ -97,9 +97,8 @@ export function RightPanel() {
             </Button>
           </div>
         </header>
-        <div className='relative flex min-h-0 flex-1 flex-col'>
+        <div className='relative flex min-h-0 flex-1 flex-col overflow-hidden'>
           {showPreview ? (
-            // Key on revision so a newly-pushed generation remounts Nodepod.
             <ApplicationComponentView
               key={applicationComponent!.revision}
               title={applicationComponent!.title}

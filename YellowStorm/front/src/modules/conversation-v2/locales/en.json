@@ -53,6 +53,18 @@
     "readOnly": "Read-only",
     "tabPreview": "Preview",
     "tabSource": "Source",
+    "layoutPreviewOnly": "Preview",
+    "layoutPreviewOnlyHint": "Full-width live preview",
+    "layoutSplit": "Split",
+    "layoutSplitHint": "File explorer and preview side by side",
+    "explorer": "Project files",
+    "explorerHint": "Browse generated sources (read-only)",
+    "searchFiles": "Search files…",
+    "clearSearch": "Clear search",
+    "expandAll": "Expand all",
+    "collapseAll": "Collapse all",
+    "noSearchResults": "No files match your search.",
+    "lines": "lines",
     "showFiles": "Show file tree",
     "hideFiles": "Hide file tree",
     "statusReady": "Live",
@@ -67,7 +79,8 @@
     "starting": "Starting the app…",
     "waitingSources": "Waiting for generated source files…",
     "error": "Could not start the in-browser preview.",
-    "retry": "Retry"
+    "retry": "Retry",
+    "openInNewTab": "Open in new tab"
   },
   "vnc": {
     "unavailable": "No VM attached to this session",

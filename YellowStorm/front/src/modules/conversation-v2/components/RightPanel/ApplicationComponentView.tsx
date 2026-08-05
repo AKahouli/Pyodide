@@ -1,13 +1,26 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
+  ColumnsIcon,
   EyeIcon,
   FileCodeIcon,
   Loader2Icon,
+  Maximize2Icon,
   RefreshCwIcon,
-  SparklesIcon,
+  ExternalLinkIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from '@/components/ui/resizable';
 import { cn } from '@/lib/utils';
 import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
@@ -16,14 +29,14 @@ import { useNodepodPreview, type NodepodPreviewStatus } from '../../hooks/useNod
 import { AppSourceFileTree } from './AppSourceFileTree';
 import { AppSourceFileViewer } from './AppSourceFileViewer';
 
-type MainPane = 'preview' | 'source';
+type LayoutMode = 'preview-only' | 'split';
+type ContentPane = 'preview' | 'source';
 
 interface ApplicationComponentViewProps {
   title?: string;
   cephPath?: string | null;
   filesTree?: FilesTreeNode | null;
   fileCount?: number;
-  /** Changes when the agent pushes a new generation — remounts Nodepod. */
   revision: string;
 }
 
@@ -74,10 +87,6 @@ function statusBadgeKey(
   }
 }
 
-/**
- * Dual-pane app viewer: read-only file tree + web preview (Nodepod).
- * Users can inspect generated sources but cannot edit them.
- */
 export function ApplicationComponentView({
   title,
   cephPath,
@@ -94,23 +103,10 @@ export function ApplicationComponentView({
     revision,
   });
 
-  useEffect(() => {
-    console.log('[Nodepod] [ui:ApplicationComponentView]', {
-      sessionId,
-      title,
-      cephPath,
-      fileCount,
-      revision,
-      status,
-      previewUrl,
-      error,
-      hydratedFiles: files ? Object.keys(files).length : 0,
-    });
-  }, [sessionId, title, cephPath, fileCount, revision, status, previewUrl, error, files]);
-
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [mainPane, setMainPane] = useState<MainPane>('preview');
-  const [treeCollapsed, setTreeCollapsed] = useState(false);
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>('preview-only');
+  const [contentPane, setContentPane] = useState<ContentPane>('preview');
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const badgeKey = statusBadgeKey(status);
   const badgeClass = statusBadgeClass(status);
@@ -138,142 +134,266 @@ export function ApplicationComponentView({
 
   const handleSelectFile = (path: string) => {
     setSelectedPath(path);
-    setMainPane('source');
+    setContentPane('source');
+    if (layoutMode === 'preview-only') {
+      setLayoutMode('split');
+    }
   };
 
-  const paneTab = (id: MainPane, active: boolean) =>
+  const handleOpenExternal = useCallback(() => {
+    if (!previewUrl) return;
+    window.open(previewUrl, '_blank', 'noopener,noreferrer');
+  }, [previewUrl]);
+
+  const setPreviewOnly = () => {
+    setLayoutMode('preview-only');
+    setContentPane('preview');
+  };
+
+  const setSplitLayout = () => {
+    setLayoutMode('split');
+    setContentPane('preview');
+  };
+
+  const tabClass = (active: boolean, disabled?: boolean) =>
     cn(
-      'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+      'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
+      disabled && 'pointer-events-none opacity-40',
       active
         ? 'bg-background text-foreground shadow-sm'
         : 'text-muted-foreground hover:text-foreground',
     );
 
+  const iconBtn = (
+    icon: React.ReactNode,
+    onClick: () => void,
+    disabled: boolean,
+    label: string,
+  ) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type='button'
+          onClick={onClick}
+          disabled={disabled}
+          className={cn(
+            'inline-flex size-7 shrink-0 items-center justify-center rounded-md transition-colors',
+            disabled
+              ? 'text-muted-foreground/40'
+              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+          )}
+          aria-label={label}
+        >
+          {icon}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side='bottom' className='text-xs'>
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+
+  const previewPane = (
+    <>
+      {status === 'ready' && previewUrl ? (
+        <div className='relative h-full min-h-0 overflow-hidden bg-muted/20'>
+          <iframe
+            ref={iframeRef}
+            title={title || t('nodepod.previewTitle')}
+            src={previewUrl}
+            className='absolute inset-0 size-full border-0 bg-white'
+            sandbox='allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts'
+          />
+        </div>
+      ) : (
+        <div className='flex h-full min-h-0 flex-col items-center justify-center gap-3 overflow-hidden bg-muted/15 px-4 text-center'>
+          {busy && (
+            <div className='relative'>
+              <div className='absolute inset-0 animate-ping rounded-full bg-primary/20' />
+              <div className='relative flex size-10 items-center justify-center rounded-full bg-primary/10'>
+                <Loader2Icon className='size-4 animate-spin text-primary' />
+              </div>
+            </div>
+          )}
+          {!busy && status === 'error' && (
+            <div className='flex size-10 items-center justify-center rounded-full bg-destructive/10'>
+              <RefreshCwIcon className='size-4 text-destructive' />
+            </div>
+          )}
+          <div className='space-y-1'>
+            <p className='text-sm font-medium'>{statusLabel}</p>
+            {error && (
+              <p className='max-w-xs text-xs text-destructive leading-relaxed'>{error}</p>
+            )}
+            {busy && (
+              <p className='max-w-xs text-xs text-muted-foreground'>{t('nodepod.bootHint')}</p>
+            )}
+          </div>
+          {(status === 'error' || status === 'idle') && (
+            <Button type='button' variant='outline' size='sm' onClick={retry}>
+              <RefreshCwIcon className='mr-1.5 size-3.5' />
+              {t('nodepod.retry')}
+            </Button>
+          )}
+        </div>
+      )}
+    </>
+  );
+
+  const mainContent = (
+    <div className='flex h-full min-h-0 min-w-0 flex-col overflow-hidden'>
+      <div className='relative min-h-0 flex-1 overflow-hidden'>
+        {layoutMode === 'split' && contentPane === 'source' ? (
+          <AppSourceFileViewer path={selectedPath ?? ''} content={selectedContent} />
+        ) : (
+          previewPane
+        )}
+      </div>
+    </div>
+  );
+
   return (
-    <div className='flex size-full min-h-0 flex-col bg-gradient-to-b from-muted/30 to-transparent'>
-      {/* Toolbar */}
-      <div className='flex shrink-0 flex-wrap items-center gap-2 border-b bg-card/60 px-3 py-2 backdrop-blur-sm'>
-        <div className='flex min-w-0 flex-1 items-center gap-2'>
-          <span className='flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
-            <SparklesIcon className='size-3.5' />
-          </span>
-          <div className='min-w-0'>
-            <p className='truncate text-sm font-semibold leading-tight' title={title}>
-              {title || t('nodepod.previewTitle')}
-            </p>
-            <p className='truncate text-[11px] text-muted-foreground'>
-              {fileCount != null
-                ? t('nodepod.fileCount', { count: fileCount })
-                : t('nodepod.inBrowser')}
-            </p>
+    <TooltipProvider delayDuration={300}>
+      <div className='flex h-full min-h-0 flex-col overflow-hidden'>
+        {/* Compact control bar — title lives in RightPanel header */}
+        <div
+          className='flex h-10 shrink-0 items-center gap-1.5 border-b bg-card/60 px-2'
+          role='toolbar'
+        >
+          {badge && (
+            <Badge
+              variant='secondary'
+              className={cn('shrink-0 gap-1 border-0 text-[10px] font-normal', badge.className)}
+            >
+              {busy && <Loader2Icon className='size-3 animate-spin' />}
+              {badge.label}
+            </Badge>
+          )}
+
+          {fileCount != null && (
+            <span className='hidden shrink-0 text-[10px] text-muted-foreground sm:inline'>
+              {t('nodepod.fileCount', { count: fileCount })}
+            </span>
+          )}
+
+          <div className='ml-auto flex shrink-0 items-center gap-0.5'>
+            {layoutMode === 'split' && (
+              <div className='mr-1 inline-flex items-center rounded-md border bg-muted/30 p-0.5'>
+                <button
+                  type='button'
+                  onClick={() => setContentPane('preview')}
+                  className={tabClass(contentPane === 'preview')}
+                  aria-pressed={contentPane === 'preview'}
+                >
+                  <EyeIcon className='size-3.5' />
+                  <span className='hidden sm:inline'>{t('nodepod.tabPreview')}</span>
+                </button>
+                <button
+                  type='button'
+                  onClick={() => setContentPane('source')}
+                  className={tabClass(contentPane === 'source', !selectedPath)}
+                  disabled={!selectedPath}
+                  aria-pressed={contentPane === 'source'}
+                >
+                  <FileCodeIcon className='size-3.5' />
+                  <span className='hidden sm:inline'>{t('nodepod.tabSource')}</span>
+                </button>
+              </div>
+            )}
+
+            <div className='inline-flex items-center rounded-md border bg-muted/30 p-0.5'>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type='button'
+                    onClick={setPreviewOnly}
+                    className={tabClass(layoutMode === 'preview-only')}
+                    aria-pressed={layoutMode === 'preview-only'}
+                    aria-label={t('nodepod.layoutPreviewOnlyHint')}
+                  >
+                    <Maximize2Icon className='size-3.5' />
+                    <span className='hidden md:inline'>{t('nodepod.layoutPreviewOnly')}</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side='bottom' className='text-xs'>
+                  {t('nodepod.layoutPreviewOnlyHint')}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type='button'
+                    onClick={setSplitLayout}
+                    className={tabClass(layoutMode === 'split')}
+                    aria-pressed={layoutMode === 'split'}
+                    aria-label={t('nodepod.layoutSplitHint')}
+                  >
+                    <ColumnsIcon className='size-3.5' />
+                    <span className='hidden md:inline'>{t('nodepod.layoutSplit')}</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side='bottom' className='text-xs'>
+                  {t('nodepod.layoutSplitHint')}
+                </TooltipContent>
+              </Tooltip>
+            </div>
+
+            {status === 'ready' && previewUrl && (
+              iconBtn(
+                <ExternalLinkIcon className='size-3.5' />,
+                handleOpenExternal,
+                false,
+                t('nodepod.openInNewTab'),
+              )
+            )}
+
+            {(status === 'error' || status === 'idle' || status === 'ready') &&
+              iconBtn(
+                <RefreshCwIcon className='size-3.5' />,
+                retry,
+                false,
+                t('nodepod.retry'),
+              )}
           </div>
         </div>
 
-        {badge && (
-          <Badge variant='secondary' className={cn('gap-1.5 border-0 font-normal', badge.className)}>
-            {busy && <Loader2Icon className='size-3 animate-spin' />}
-            {badge.label}
-          </Badge>
-        )}
-
-        <div className='inline-flex items-center rounded-lg border bg-muted/40 p-0.5'>
-          <button
-            type='button'
-            onClick={() => setMainPane('preview')}
-            className={paneTab('preview', mainPane === 'preview')}
-          >
-            <EyeIcon className='size-3.5' />
-            {t('nodepod.tabPreview')}
-          </button>
-          <button
-            type='button'
-            onClick={() => setMainPane('source')}
-            className={paneTab('source', mainPane === 'source')}
-            disabled={!selectedPath}
-          >
-            <FileCodeIcon className='size-3.5' />
-            {t('nodepod.tabSource')}
-          </button>
-        </div>
-
-        <Button
-          type='button'
-          variant='ghost'
-          size='icon-sm'
-          onClick={() => setTreeCollapsed((v) => !v)}
-          aria-label={treeCollapsed ? t('nodepod.showFiles') : t('nodepod.hideFiles')}
-          title={treeCollapsed ? t('nodepod.showFiles') : t('nodepod.hideFiles')}
-        >
-          <FileCodeIcon className={cn('size-4', !treeCollapsed && 'text-primary')} />
-        </Button>
-
-        {(status === 'error' || status === 'idle' || status === 'ready') && (
-          <Button type='button' variant='ghost' size='icon-sm' onClick={retry} aria-label={t('nodepod.retry')}>
-            <RefreshCwIcon className='size-4' />
-          </Button>
-        )}
-      </div>
-
-      {/* Body: tree + main */}
-      <div className='flex min-h-0 flex-1'>
-        {!treeCollapsed && (
-          <aside className='flex w-[min(42%,240px)] shrink-0 flex-col border-r bg-card/40'>
-            <AppSourceFileTree
-              tree={filesTree}
-              selectedPath={selectedPath}
-              onSelect={handleSelectFile}
-              className='min-h-0 flex-1'
-            />
-          </aside>
-        )}
-
-        <section className='relative flex min-h-0 min-w-0 flex-1 flex-col'>
-          {mainPane === 'source' ? (
-            <AppSourceFileViewer path={selectedPath ?? ''} content={selectedContent} />
-          ) : status === 'ready' && previewUrl ? (
-            <iframe
-              title={title || t('nodepod.previewTitle')}
-              src={previewUrl}
-              className='size-full border-0 bg-background'
-              sandbox='allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts'
-            />
+        <div className='min-h-0 flex-1 overflow-hidden'>
+          {layoutMode === 'split' ? (
+            <ResizablePanelGroup
+              id='nodepod-app-split'
+              orientation='horizontal'
+              className='h-full min-h-0'
+              defaultLayout={{ 'source-tree': 30, 'preview-pane': 56 }}
+            >
+              <ResizablePanel
+                id='source-tree'
+                defaultSize='30%'
+                minSize='25%'
+                maxSize='60%'
+                className='flex min-h-0 min-w-0 flex-col overflow-hidden'
+              >
+                <AppSourceFileTree
+                  tree={filesTree}
+                  selectedPath={selectedPath}
+                  onSelect={handleSelectFile}
+                  className='h-full min-h-0'
+                />
+              </ResizablePanel>
+              <ResizableHandle withHandle className='w-px shrink-0' />
+              <ResizablePanel
+                id='preview-pane'
+                defaultSize='56%'
+                minSize='40%'
+                className='flex min-h-0 min-w-0 flex-col overflow-hidden'
+              >
+                {mainContent}
+              </ResizablePanel>
+            </ResizablePanelGroup>
           ) : (
-            <div className='flex size-full flex-col items-center justify-center gap-3 bg-muted/20 px-6 text-center'>
-              {busy && (
-                <div className='relative'>
-                  <div className='absolute inset-0 animate-ping rounded-full bg-primary/20' />
-                  <div className='relative flex size-12 items-center justify-center rounded-full bg-primary/10'>
-                    <Loader2Icon className='size-5 animate-spin text-primary' />
-                  </div>
-                </div>
-              )}
-              {!busy && status === 'error' && (
-                <div className='flex size-12 items-center justify-center rounded-full bg-destructive/10'>
-                  <RefreshCwIcon className='size-5 text-destructive' />
-                </div>
-              )}
-              {!busy && status === 'idle' && (
-                <div className='flex size-12 items-center justify-center rounded-full bg-muted'>
-                  <SparklesIcon className='size-5 text-muted-foreground' />
-                </div>
-              )}
-              <div className='space-y-1'>
-                <p className='text-sm font-medium'>{statusLabel}</p>
-                {error && <p className='max-w-sm text-xs text-destructive'>{error}</p>}
-                {busy && (
-                  <p className='max-w-sm text-xs text-muted-foreground'>{t('nodepod.bootHint')}</p>
-                )}
-              </div>
-              {(status === 'error' || status === 'idle') && (
-                <Button type='button' variant='outline' size='sm' onClick={retry}>
-                  <RefreshCwIcon className='mr-1.5 size-3.5' />
-                  {t('nodepod.retry')}
-                </Button>
-              )}
-            </div>
+            mainContent
           )}
-        </section>
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }

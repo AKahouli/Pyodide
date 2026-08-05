@@ -41,3 +41,40 @@ export function flattenFilesTree(
   walk(tree);
   return out;
 }
+
+/** Count file nodes in a tree. */
+export function countFilesInTree(tree: FilesTreeNode | null | undefined): number {
+  return flattenFilesTree(tree).length;
+}
+
+/**
+ * Prune a tree to nodes matching `query` (name or path), keeping ancestor folders.
+ */
+export function filterFilesTree(
+  tree: FilesTreeNode | null | undefined,
+  query: string,
+): FilesTreeNode | null {
+  if (!tree) return null;
+  const q = query.trim().toLowerCase();
+  if (!q) return tree;
+
+  const matchNode = (node: FilesTreeNode): boolean => {
+    const path = (node.path ?? node.name).toLowerCase();
+    return node.name.toLowerCase().includes(q) || path.includes(q);
+  };
+
+  const walk = (node: FilesTreeNode): FilesTreeNode | null => {
+    if (node.type === 'file') {
+      return matchNode(node) ? node : null;
+    }
+    const children = (node.children ?? [])
+      .map(walk)
+      .filter((child): child is FilesTreeNode => child != null);
+    if (children.length > 0) {
+      return { ...node, children };
+    }
+    return matchNode(node) ? { ...node, children: [] } : null;
+  };
+
+  return walk(tree);
+}

@@ -53,6 +53,18 @@
     "readOnly": "Lecture seule",
     "tabPreview": "Aperçu",
     "tabSource": "Source",
+    "layoutPreviewOnly": "Aperçu",
+    "layoutPreviewOnlyHint": "Aperçu en pleine largeur",
+    "layoutSplit": "Split",
+    "layoutSplitHint": "Explorateur de fichiers et aperçu côte à côte",
+    "explorer": "Fichiers du projet",
+    "explorerHint": "Parcourir les sources générées (lecture seule)",
+    "searchFiles": "Rechercher un fichier…",
+    "clearSearch": "Effacer la recherche",
+    "expandAll": "Tout développer",
+    "collapseAll": "Tout réduire",
+    "noSearchResults": "Aucun fichier correspond à votre recherche.",
+    "lines": "lignes",
     "showFiles": "Afficher l'arbre des fichiers",
     "hideFiles": "Masquer l'arbre des fichiers",
     "statusReady": "En ligne",
@@ -67,7 +79,8 @@
     "starting": "Démarrage de l'application…",
     "waitingSources": "En attente des fichiers sources générés…",
     "error": "Impossible de démarrer l'aperçu dans le navigateur.",
-    "retry": "Réessayer"
+    "retry": "Réessayer",
+    "openInNewTab": "Ouvrir dans un nouvel onglet"
   },
   "vnc": {
     "unavailable": "Aucune VM attachée à cette session",

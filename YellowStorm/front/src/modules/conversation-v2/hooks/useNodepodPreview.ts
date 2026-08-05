@@ -44,6 +44,62 @@ const PREVIEW_PORTS = [5173, 3000, 8080] as const;
 
 type NodepodInstance = Awaited<ReturnType<typeof Nodepod.boot>>;
 
+// ---------------------------------------------------------------------------
+// Module-level pod cache
+// ---------------------------------------------------------------------------
+
+interface PodCacheEntry {
+  pod: NodepodInstance;
+  previewUrl: string | null;
+  files: Record<string, string | Uint8Array> | null;
+  alive: boolean;
+  lastAccessed: number;
+}
+
+const MAX_CACHE_AGE_MS = 10 * 60 * 1000;
+
+const podCache = new Map<string, PodCacheEntry>();
+
+function cacheKey(sessionId: string, revision: string) {
+  return `${sessionId}:${revision}`;
+}
+
+function invalidateSession(sessionId: string) {
+  const prefix = `${sessionId}:`;
+  for (const [key, entry] of podCache) {
+    if (key.startsWith(prefix)) {
+      entry.alive = false;
+      try { entry.pod.teardown(); } catch { /* noop */ }
+      podCache.delete(key);
+    }
+  }
+}
+
+function cleanupStaleEntries() {
+  const now = Date.now();
+  for (const [key, entry] of podCache) {
+    if (!entry.alive || now - entry.lastAccessed > MAX_CACHE_AGE_MS) {
+      entry.alive = false;
+      try { entry.pod.teardown(); } catch { /* noop */ }
+      podCache.delete(key);
+    }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    for (const entry of podCache.values()) {
+      entry.alive = false;
+      try { entry.pod.teardown(); } catch { /* noop */ }
+    }
+    podCache.clear();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 async function readPackageVersion(
   pod: NodepodInstance,
   packageJsonPath: string,
@@ -57,10 +113,6 @@ async function readPackageVersion(
   }
 }
 
-/**
- * Vite 8+/rolldown needs the wasm32-wasi optional binding inside Nodepod.
- * npm skips cpu:["wasm32"] packages unless installed explicitly with --cpu=wasm32.
- */
 async function ensureRolldownWasmBinding(pod: NodepodInstance): Promise<boolean> {
   const hasRolldown = await pod.fs.exists(ROLLDOWN_PKG_PATH);
   if (!hasRolldown) {
@@ -68,10 +120,15 @@ async function ensureRolldownWasmBinding(pod: NodepodInstance): Promise<boolean>
     return false;
   }
 
+  const already = await pod.fs.exists(ROLLDOWN_WASM_PATH);
+  if (already) {
+    logPhase('5.rolldown-wasm:skip', { reason: 'already-installed' });
+    return true;
+  }
+
   const version =
     (await readPackageVersion(pod, `${ROLLDOWN_PKG_PATH}/package.json`)) ?? 'latest';
-  const already = await pod.fs.exists(ROLLDOWN_WASM_PATH);
-  logPhase('5.rolldown-wasm:check', { version, alreadyInstalled: already });
+  logPhase('5.rolldown-wasm:check', { version, alreadyInstalled: false });
 
   const spec = `@rolldown/binding-wasm32-wasi@${version}`;
   logPhase('5.rolldown-wasm:install', { spec });
@@ -238,10 +295,11 @@ async function waitUntilDirectServerReady(
 async function waitUntilPreviewReachable(
   url: string,
   isStale: () => boolean,
+  maxAttempts = 60,
 ): Promise<{ ok: boolean; lastStatus: number | null; bodyHint: string | null }> {
   let lastStatus: number | null = null;
   let bodyHint: string | null = null;
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (isStale()) return { ok: false, lastStatus, bodyHint };
     try {
       const res = await fetch(url, { cache: 'no-store', redirect: 'follow' });
@@ -270,9 +328,15 @@ async function waitUntilPreviewReachable(
   return { ok: false, lastStatus, bodyHint };
 }
 
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
+
 /**
  * Boots a Nodepod instance from Ceph-backed Vite/React app sources, installs
- * deps, and starts the app's dev server. Teardown on unmount / revision change.
+ * deps, and starts the app's dev server. The pod is cached at module level so
+ * that navigating away and returning to the same session+revision restores the
+ * preview instantly without re-booting.
  */
 export function useNodepodPreview({
   sessionId,
@@ -287,23 +351,55 @@ export function useNodepodPreview({
   const [retryToken, setRetryToken] = useState(0);
   const podRef = useRef<NodepodInstance | null>(null);
   const readyRef = useRef(false);
-  // Event polling rebuilds applicationComponent objects; keep the tree in a
-  // ref so identity churn does not cancel an in-flight Nodepod boot.
   const filesTreeRef = useRef(filesTree);
   filesTreeRef.current = filesTree;
 
+  const HARD_REFRESH_ERRORS = [
+    'Dev server started but did not answer HTTP requests inside Nodepod.',
+  ] as const;
+
   const retry = useCallback(() => {
+    if (error && HARD_REFRESH_ERRORS.some((msg) => error.startsWith(msg))) {
+      logPhase('retry:hard-refresh', { sessionId, cephPath, revision, error });
+      const key = sessionId && revision ? cacheKey(sessionId, revision) : null;
+      if (key && sessionId) invalidateSession(sessionId);
+      window.location.reload();
+      return;
+    }
     logPhase('retry', { sessionId, cephPath, revision });
+    if (sessionId) invalidateSession(sessionId);
     setRetryToken((n) => n + 1);
-  }, [sessionId, cephPath, revision]);
+  }, [sessionId, cephPath, revision, error]);
 
   useEffect(() => {
+    const key = sessionId && revision ? cacheKey(sessionId, revision) : null;
+    const tree = filesTreeRef.current;
+    cleanupStaleEntries();
+
+    // --- CACHE HIT ---
+    if (key) {
+      const entry = podCache.get(key);
+      if (entry?.alive && entry.pod) {
+        logPhase('cache-hit', { key });
+        podRef.current = entry.pod;
+        readyRef.current = entry.previewUrl != null;
+        entry.lastAccessed = Date.now();
+        setStatus(entry.previewUrl != null ? 'ready' : 'idle');
+        setPreviewUrl(entry.previewUrl);
+        setFiles(entry.files);
+        setError(null);
+        return () => {
+          // Intentionally no teardown on unmount — keep the pod alive in cache.
+        };
+      }
+    }
+
+    // --- CACHE MISS: full boot ---
     let cancelled = false;
     let softTimer: number | undefined;
     let hardTimer: number | undefined;
     let devExited = false;
     readyRef.current = false;
-    const tree = filesTreeRef.current;
 
     logPhase('0.effect-start', {
       sessionId,
@@ -352,6 +448,22 @@ export function useNodepodPreview({
       setStatus('error');
     };
 
+    const storeInCache = (
+      pod: NodepodInstance,
+      url: string | null,
+      projectFiles: Record<string, string | Uint8Array> | null,
+    ) => {
+      if (key) {
+        podCache.set(key, {
+          pod,
+          previewUrl: url,
+          files: projectFiles,
+          alive: true,
+          lastAccessed: Date.now(),
+        });
+      }
+    };
+
     let pendingPort: number | null = null;
     let pendingUrl: string | null = null;
     const promotingRef = { current: false };
@@ -384,28 +496,50 @@ export function useNodepodPreview({
           const sw = await waitUntilPreviewReachable(url, isStale);
           if (cancelled || readyRef.current) return;
           logPhase('6.promote:sw', sw);
+
           if (!sw.ok) {
-            fail(
+            const isSwTransient =
               sw.bodyHint === 'nodepod-sw-initializing' ||
-                sw.bodyHint === 'nodepod-sw-disconnected'
-                ? 'Nodepod service worker cannot reach this preview (503). Hard-refresh the page (Ctrl+Shift+R) so /__sw__.js reconnects.'
-                : `Preview URL stayed unreachable (HTTP ${sw.lastStatus ?? '???'}). Check that /__sw__.js is served as JavaScript and COOP/COEP headers are present.`,
-            );
-            return;
+              sw.bodyHint === 'nodepod-sw-disconnected';
+
+            if (isSwTransient) {
+              logPhase('6.promote:sw-retry', { bodyHint: sw.bodyHint });
+              await new Promise((r) => window.setTimeout(r, 1_000));
+              const sw2 = await waitUntilPreviewReachable(url, isStale, 40);
+              if (cancelled || readyRef.current) return;
+              logPhase('6.promote:sw-retry-result', sw2);
+              if (!sw2.ok) {
+                fail(
+                  sw2.bodyHint === 'nodepod-sw-initializing' ||
+                    sw2.bodyHint === 'nodepod-sw-disconnected'
+                    ? 'Nodepod service worker cannot reach this preview (503). Hard-refresh the page (Ctrl+Shift+R) so /__sw__.js reconnects.'
+                    : `Preview URL stayed unreachable (HTTP ${sw2.lastStatus ?? '???'}). Check that /__sw__.js is served as JavaScript and COOP/COEP headers are present.`,
+                );
+                return;
+              }
+            } else {
+              fail(
+                `Preview URL stayed unreachable (HTTP ${sw.lastStatus ?? '???'}). Check that /__sw__.js is served as JavaScript and COOP/COEP headers are present.`,
+              );
+              return;
+            }
           }
 
           readyRef.current = true;
           logPhase('6.ready', { source, previewUrl: url });
           setPreviewUrl(url);
           setStatus('ready');
+          storeInCache(pod, url, downloadedFiles);
         } finally {
           promotingRef.current = false;
         }
       })();
     };
 
+    let downloadedFiles: Record<string, string | Uint8Array> | null = null;
+
     const run = async () => {
-      await teardown();
+      if (sessionId) invalidateSession(sessionId);
       setPreviewUrl(null);
       setFiles(null);
       setError(null);
@@ -434,6 +568,7 @@ export function useNodepodPreview({
           return;
         }
         setFiles(projectFiles);
+        downloadedFiles = projectFiles;
 
         logPhase('4.boot:start', { fileCount: Object.keys(projectFiles).length });
         const pod = await Nodepod.boot({
@@ -452,7 +587,6 @@ export function useNodepodPreview({
             }
             const resolved = url || pod.port(port) || null;
             logPhase('6.server-ready', { port, url, resolvedPreviewUrl: resolved });
-            // Listen can fire before Vite prints "ready" — store and promote later.
             pendingPort = port;
             pendingUrl = resolved;
           },
@@ -521,8 +655,6 @@ export function useNodepodPreview({
 
         setStatus('starting');
         const { cmd, args } = detectDevCommand(projectFiles);
-        // Force rolldown's NAPI loader onto the wasm32-wasi package in Nodepod.
-        // Nodepod already sets NAPI_RS_FORCE_WASM=1; FORCE_WASI is the napi-rs flag.
         const devEnv = needsRolldownWasm
           ? { NAPI_RS_FORCE_WASI: 'true', NAPI_RS_FORCE_WASM: '1' }
           : undefined;
@@ -633,7 +765,8 @@ export function useNodepodPreview({
       logPhase('0.effect-cleanup', { sessionId, revision });
       cancelled = true;
       clearReadyTimers();
-      void teardown();
+      // Intentionally no teardown — keep the pod alive in cache for instant
+      // restore when the user navigates back to this session.
     };
   }, [sessionId, cephPath, revision, retryToken]);
 

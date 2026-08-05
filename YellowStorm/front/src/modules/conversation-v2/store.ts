@@ -7,6 +7,15 @@ import {
   readSelectedModelForSession,
   writeSelectedModelForSession,
 } from './selectedModelStorage';
+import {
+  emptySlice,
+  reduceSession,
+  deriveTitle,
+  deriveApplicationComponent,
+  dedupeReplayEvents,
+  currentTurnStartIndex,
+  findIndexFrom,
+} from './utils/session-reducer';
 
 interface State {
   sessionId: string | null;
@@ -194,109 +203,6 @@ const initial: State = {
 
 const sessionReconciliations = new Map<string, Promise<void>>();
 
-/** Empty slice for a not-yet-seen background session. */
-function emptySlice(): SessionSlice {
-  return {
-    events: [],
-    lastSequence: 0,
-    liveToolCallId: null,
-    liveAssistantIds: new Set<string>(),
-    title: null,
-    streaming: true,
-    streamError: null,
-  };
-}
-
-/**
- * Pure reducer applying a single agent event to a session slice. Mirrors the
- * data transforms in `handleEvent` (upsert tool/step/message by id, replace
- * plan, track liveToolCallId/liveAssistantIds, terminal flags) WITHOUT the
- * current-session UI side effects (panel auto-open, typewriter). Used for
- * background sessions in `streamingStateCache`.
- */
-function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSlice {
-  const incomingSeq = (event as { sequence?: number }).sequence;
-  if (typeof incomingSeq === 'number' && incomingSeq <= slice.lastSequence) {
-    return slice; // stale or duplicate
-  }
-  const lastSequence =
-    typeof incomingSeq === 'number'
-      ? Math.max(slice.lastSequence, incomingSeq)
-      : slice.lastSequence;
-  const base: SessionSlice = { ...slice, lastSequence };
-
-  switch (event.type) {
-    case 'title':
-      return { ...base, title: event.title };
-    case 'done':
-      return { ...base, streaming: false, liveToolCallId: null };
-    case 'error':
-      return { ...base, streamError: event.error, streaming: false, liveToolCallId: null };
-    case 'tool': {
-      const turnStart = currentTurnStartIndex(slice.events);
-      const idx = findIndexFrom(
-        slice.events,
-        turnStart,
-        (e) => e.type === 'tool' && e.tool_call_id === event.tool_call_id,
-      );
-      const isMessageTool = (event.name || '').toLowerCase() === 'message';
-      const liveToolCallId = !isMessageTool ? event.tool_call_id : slice.liveToolCallId;
-      let events: AgentEvent[];
-      if (idx >= 0) {
-        events = slice.events.slice();
-        events[idx] = event;
-      } else {
-        events = [...slice.events, event];
-      }
-      return { ...base, events, liveToolCallId };
-    }
-    case 'step': {
-      const turnStart = currentTurnStartIndex(slice.events);
-      const idx = findIndexFrom(
-        slice.events,
-        turnStart,
-        (e) => e.type === 'step' && e.id === event.id,
-      );
-      let events: AgentEvent[];
-      if (idx >= 0) {
-        events = slice.events.slice();
-        events[idx] = event;
-      } else {
-        events = [...slice.events, event];
-      }
-      return { ...base, events };
-    }
-    case 'plan': {
-      const filtered = slice.events.filter((e) => e.type !== 'plan');
-      return { ...base, events: [...filtered, event] };
-    }
-    case 'wait':
-      // The agent is paused waiting for the user's reply — re-enable the input
-      // (same as 'done'), otherwise the composer stays stuck in streaming.
-      return { ...base, streaming: false, liveToolCallId: null };
-    case 'message': {
-      const liveAssistantIds =
-        event.role === 'assistant'
-          ? new Set(slice.liveAssistantIds).add(event.event_id)
-          : slice.liveAssistantIds;
-      const existingIdx = slice.events.findIndex(
-        (e) => e.type === 'message' && e.event_id === event.event_id,
-      );
-      let events: AgentEvent[];
-      if (existingIdx >= 0) {
-        events = slice.events.slice();
-        events[existingIdx] = event;
-      } else {
-        events = [...slice.events, event];
-      }
-      return { ...base, events, liveAssistantIds };
-    }
-    default:
-      return { ...base, events: [...slice.events, event] };
-  }
-}
-
-/** Snapshot the current top-level session state into a slice (for caching). */
 function sliceFromState(s: State): SessionSlice {
   return {
     events: s.events,
@@ -309,7 +215,6 @@ function sliceFromState(s: State): SessionSlice {
   };
 }
 
-/** The view fields reset when entering a session with no cached slice. */
 function freshViewState(): Partial<State> {
   return {
     events: [],
@@ -851,159 +756,6 @@ export const useConversationV2Store = create<State & Actions>()(
     { name: 'conversation-v2' },
   ),
 );
-
-function deriveTitle(events: AgentEvent[]): string | undefined {
-  const last = [...events].reverse().find((e) => e.type === 'title');
-  return last?.type === 'title' ? last.title : undefined;
-}
-
-/**
- * The application component to show in the side panel is whatever the agent
- * pushed last. Used on replay/session-switch to restore the app viewer from
- * persisted history (the live path sets it directly in handleEvent).
- *
- * Reuses `previous` when the revision (event_id) is unchanged so React effects
- * that depend on `filesTree` identity are not torn down by event polling.
- */
-function deriveApplicationComponent(
-  events: AgentEvent[],
-  previous?: {
-    url: string;
-    title: string;
-    cephPath?: string;
-    filesTree?: FilesTreeNode | null;
-    fileCount?: number;
-    revision: string;
-  } | null,
-): {
-  url: string;
-  title: string;
-  cephPath?: string;
-  filesTree?: FilesTreeNode | null;
-  fileCount?: number;
-  revision: string;
-} | null {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const ev = events[i];
-    if (ev.type === 'application_component') {
-      if (previous && previous.revision === ev.event_id) {
-        return previous;
-      }
-      console.log('[Nodepod] [replay:deriveApplicationComponent]', {
-        event_id: ev.event_id,
-        url: ev.url,
-        title: ev.title,
-        ceph_path: ev.ceph_path,
-        file_count: ev.file_count,
-        hasFilesTree: !!ev.files_tree,
-      });
-      return {
-        url: ev.url,
-        title: ev.title ?? '',
-        cephPath: ev.ceph_path,
-        filesTree: ev.files_tree ?? null,
-        fileCount: ev.file_count,
-        revision: ev.event_id,
-      };
-    }
-  }
-  return null;
-}
-
-/**
- * Returns the index immediately after the last "turn boundary" — a `user`
- * message. Tool/step upserts only consider events at or after this index so
- * the next turn never collides with the previous one when ids are reused.
- */
-function currentTurnStartIndex(events: AgentEvent[]): number {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const ev = events[i];
-    if (ev.type === 'message' && ev.role === 'user') return i;
-  }
-  return 0;
-}
-
-function findIndexFrom<T>(arr: T[], start: number, pred: (t: T) => boolean): number {
-  for (let i = start; i < arr.length; i++) if (pred(arr[i])) return i;
-  return -1;
-}
-
-/**
- * Server-side history can contain multiple records per logical entity (a tool
- * call yields `calling` + `called`, a step yields `running` + `completed`, the
- * plan is re-emitted every step). The live SSE path upserts those in place;
- * replayEvents must apply the same collapse so the rendered list has one row
- * per tool_call_id / step.id and only the latest plan, otherwise React renders
- * duplicate keys and the conversation appears to repeat itself.
- */
-function dedupeReplayEvents(events: AgentEvent[]): AgentEvent[] {
-  // Indices are scoped to the current "turn". A turn ends at every user
-  // message and at every done/error marker so that the next turn can reuse
-  // step ids (which Manus does — every task starts numbering at "1") without
-  // colliding with the previous turn's bookkeeping.
-  let toolIndex = new Map<string, number>();
-  let stepIndex = new Map<string, number>();
-  let latestPlanIdx: number | null = null;
-  const result: AgentEvent[] = [];
-
-  const resetTurn = () => {
-    toolIndex = new Map();
-    stepIndex = new Map();
-    latestPlanIdx = null;
-  };
-
-  for (const ev of events) {
-    if (ev.type === 'title' || ev.type === 'wait') continue;
-
-    if (ev.type === 'done' || ev.type === 'error') {
-      result.push(ev);
-      resetTurn();
-      continue;
-    }
-
-    if (ev.type === 'message') {
-      if (ev.role === 'user') resetTurn();
-      result.push(ev);
-      continue;
-    }
-
-    if (ev.type === 'tool') {
-      const existing = toolIndex.get(ev.tool_call_id);
-      if (existing !== undefined) {
-        result[existing] = ev;
-      } else {
-        toolIndex.set(ev.tool_call_id, result.length);
-        result.push(ev);
-      }
-      continue;
-    }
-
-    if (ev.type === 'step') {
-      const existing = stepIndex.get(ev.id);
-      if (existing !== undefined) {
-        result[existing] = ev;
-      } else {
-        stepIndex.set(ev.id, result.length);
-        result.push(ev);
-      }
-      continue;
-    }
-
-    if (ev.type === 'plan') {
-      if (latestPlanIdx !== null) {
-        result[latestPlanIdx] = ev;
-      } else {
-        latestPlanIdx = result.length;
-        result.push(ev);
-      }
-      continue;
-    }
-
-    result.push(ev);
-  }
-
-  return result;
-}
 
 export const DEFAULT_V2_LIMIT = 20;
 
