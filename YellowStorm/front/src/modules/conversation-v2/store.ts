@@ -49,6 +49,12 @@ interface State {
   deployStatus: DeployStatus;
   deployedUrl: string | null;
   lastDeployedAt: string | null;
+  /**
+   * Which surface the app right-panel shows after a deployment exists:
+   * - `nodepod` — in-browser Nodepod preview + file explorer toolbar
+   * - `deployed` — iframe of the published URL (Nodepod chrome hidden)
+   */
+  appViewMode: 'nodepod' | 'deployed';
   selectedToolCallId: string | null;
   /** Latest non-message tool emitted by the agent — the "live" target the panel follows. */
   liveToolCallId: string | null;
@@ -160,6 +166,8 @@ interface Actions {
   /** Publish/deploy the current session's app. Flips to 'deploying' immediately,
    *  then 'deployed' (+ url) or 'error' once the backend responds. */
   deploy: () => Promise<void>;
+  /** Toggle between Nodepod preview and the deployed-app iframe. */
+  setAppViewMode: (mode: 'nodepod' | 'deployed') => void;
   clearTypewriter: () => void;
   /** Set the selected connector repository for the session. */
   setSelectedConnectorRepo: (repo: State['selectedConnectorRepo']) => void;
@@ -197,6 +205,7 @@ const initial: State = {
   deployStatus: 'idle',
   deployedUrl: null,
   lastDeployedAt: null,
+  appViewMode: 'nodepod',
       typewriterSessionId: null,
       typewriterName: null,
       selectedConnectorRepo: null,
@@ -238,6 +247,7 @@ function freshViewState(): Partial<State> {
     deployStatus: 'idle',
     deployedUrl: null,
     lastDeployedAt: null,
+    appViewMode: 'nodepod',
     typewriterSessionId: null,
     typewriterName: null,
     selectedConnectorRepo: null,
@@ -461,14 +471,19 @@ export const useConversationV2Store = create<State & Actions>()(
       setWorkspaceIds: (ids) => set({ workspaceIds: ids }, false, 'setWorkspaceIds'),
       setDeployState: ({ deployStatus, deployedUrl, lastDeployedAt }) =>
         set(
-          {
+          (s) => ({
             deployStatus,
             deployedUrl,
             ...(lastDeployedAt !== undefined ? { lastDeployedAt } : {}),
-          },
+            // Session hydrate with an existing live URL → show deployed iframe.
+            ...(deployStatus === 'deployed' && deployedUrl && s.appViewMode === 'nodepod' && !s.deployedUrl
+              ? { appViewMode: 'deployed' as const }
+              : {}),
+          }),
           false,
           'setDeployState',
         ),
+      setAppViewMode: (mode) => set({ appViewMode: mode }, false, 'setAppViewMode'),
       deploy: async () => {
         const id = get().sessionId;
         if (!id) return;
@@ -478,11 +493,18 @@ export const useConversationV2Store = create<State & Actions>()(
             id,
             get().applicationComponent?.title,
           );
-          get().setDeployState({
-            deployStatus: r.deployStatus,
-            deployedUrl: r.deployedUrl,
-            lastDeployedAt: r.lastDeployedAt,
-          });
+          set(
+            {
+              deployStatus: r.deployStatus,
+              deployedUrl: r.deployedUrl,
+              lastDeployedAt: r.lastDeployedAt,
+              ...(r.deployStatus === 'deployed' && r.deployedUrl
+                ? { appViewMode: 'deployed' as const }
+                : {}),
+            },
+            false,
+            'deploy/done',
+          );
         } catch (err) {
           set({ deployStatus: 'error' }, false, 'deploy/error');
           throw err;

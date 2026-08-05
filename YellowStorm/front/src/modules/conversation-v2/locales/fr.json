@@ -148,7 +148,11 @@
     "copy": "Copier le lien",
     "open": "Ouvrir",
     "viewUrl": "Voir l'URL déployée",
-    "menu": "Options de déploiement"
+    "menu": "Options de déploiement",
+    "switchToNodepod": "Revenir à l'aperçu dans le navigateur",
+    "switchToDeployed": "Afficher l'application déployée",
+    "embedUnavailable": "Cette URL ne peut pas être affichée dans le panneau.",
+    "embedHint": "Si l'application reste vide ou bloquée, elle refuse probablement d'être intégrée — utilisez Ouvrir pour l'afficher dans un nouvel onglet."
   },
   "share": {
     "title": "Partager l'application et la conversation",

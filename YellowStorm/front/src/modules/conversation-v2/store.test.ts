@@ -286,6 +286,7 @@ describe('useConversationV2Store', () => {
       revision: 'app-1',
     });
     expect(useConversationV2Store.getState().deployedUrl).toBe('https://deployed.example/app');
+    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
   });
 
   it('deploy sends the application component title to the backend', async () => {
@@ -309,6 +310,7 @@ describe('useConversationV2Store', () => {
     expect(useConversationV2Store.getState().lastDeployedAt).toBe(
       '2026-07-17T10:00:00.000Z',
     );
+    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
   });
 
   it('replayEvents restores application sources without overwriting with deployed URL', () => {
