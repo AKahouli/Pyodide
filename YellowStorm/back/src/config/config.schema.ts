@@ -35,6 +35,17 @@ export const configValidationSchema = Joi.object({
   MEMORY_PG_SSL: Joi.boolean().optional(),
   MEMORY_LIMIT_MB: Joi.number().min(64).default(512),
 
+  // App-owned Postgres (agents datastore — Drizzle)
+  POSTGRES_HOST: Joi.string().default('localhost'),
+  POSTGRES_PORT: Joi.number().default(5432),
+  POSTGRES_USER: Joi.string().default('postgres'),
+  POSTGRES_PASSWORD: Joi.string().allow('').default('postgres'),
+  POSTGRES_DB: Joi.string().default('yellostorm'),
+  POSTGRES_SSL: Joi.boolean().default(false),
+  POSTGRES_MAX_POOL_SIZE: Joi.number().min(1).max(100).default(10),
+  POSTGRES_IDLE_TIMEOUT: Joi.number().min(0).default(30000),
+  POSTGRES_CONNECT_TIMEOUT: Joi.number().min(1000).default(10000),
+
   // Encryption
   ENCRYPTION_KEY: Joi.string().hex().length(64).when('NODE_ENV', {
     is: 'production',
