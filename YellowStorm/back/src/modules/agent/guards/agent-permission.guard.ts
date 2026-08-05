@@ -8,8 +8,8 @@ import {
 import { Reflector } from '@nestjs/core';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { AgentDocument } from '../schemas/agent.schema';
 import { AgentRepository } from '../repositories/agent.repository';
+import { AgentRecord } from '../repositories/agent-record.mapper';
 import { SharedAgent, SharedAgentDocument } from '../schemas/shared-agent.schema';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import {
@@ -19,7 +19,7 @@ import {
 import { AgentPermissionLevel } from '../interfaces/agent.interface';
 
 export interface AgentContext {
-  agent: AgentDocument;
+  agent: AgentRecord;
   isOwner: boolean;
   permission: AgentPermissionLevel | 'owner';
   shareId?: string;
@@ -81,7 +81,7 @@ export class AgentPermissionGuard implements CanActivate {
       }
 
       request.agentContext = {
-        agent: agent as unknown as AgentDocument,
+        agent,
         isOwner: false,
         permission: requiredPermission === 'read' ? 'read' : 'owner',
       };
@@ -90,7 +90,7 @@ export class AgentPermissionGuard implements CanActivate {
 
     if (isOwner) {
       request.agentContext = {
-        agent: agent as unknown as AgentDocument,
+        agent,
         isOwner: true,
         permission: 'owner',
       };
@@ -123,7 +123,7 @@ export class AgentPermissionGuard implements CanActivate {
     }
 
     request.agentContext = {
-      agent: agent as unknown as AgentDocument,
+      agent,
       isOwner: false,
       permission: sharePermission,
       shareId: share._id.toString(),

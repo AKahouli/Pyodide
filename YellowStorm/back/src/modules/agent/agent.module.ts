@@ -12,7 +12,6 @@ import { AgentConnectorRuntimeService } from './services/agent-connector-runtime
 import { AgentPermissionGuard } from './guards/agent-permission.guard';
 import { A2AAdminGrpcClientService } from './services/a2a-admin.grpc-client.service';
 import { A2APublishService } from './services/a2a-publish.service';
-import { Agent, AgentSchema } from './schemas/agent.schema';
 import { SharedAgent, SharedAgentSchema } from './schemas/shared-agent.schema';
 import a2aAdminConfig from '@config/a2a-admin.config';
 import { AgentTypeModule } from '../agent-type/agent-type.module';
@@ -38,7 +37,6 @@ import { AgentRepositoryModule } from './repositories/agent-repository.module';
     ConfigModule.forFeature(a2aAdminConfig),
     ConfigModule.forFeature(playbookFlowConfig),
     MongooseModule.forFeature([
-      { name: Agent.name, schema: AgentSchema },
       { name: SharedAgent.name, schema: SharedAgentSchema },
     ]),
     AgentTypeModule,

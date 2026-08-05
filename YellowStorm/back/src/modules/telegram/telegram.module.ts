@@ -6,7 +6,6 @@ import { CryptoService } from '@common/services/crypto.service';
 import { AgentModule } from '@modules/agent/agent.module';
 import { ConversationModule } from '@modules/conversation/conversation.module';
 import { LoggerModule } from '@modules/logger';
-import { Agent, AgentSchema } from '@modules/agent/schemas/agent.schema';
 import { SharedAgent, SharedAgentSchema } from '@modules/agent/schemas/shared-agent.schema';
 import { User, UserSchema } from '@modules/user/schemas/user.schema';
 import {
@@ -30,7 +29,6 @@ import { TelegramWebhookService } from './services/telegram-webhook.service';
       { name: TelegramChatBinding.name, schema: TelegramChatBindingSchema },
       { name: TelegramLinkCode.name, schema: TelegramLinkCodeSchema },
       { name: User.name, schema: UserSchema },
-      { name: Agent.name, schema: AgentSchema },
       { name: SharedAgent.name, schema: SharedAgentSchema },
     ]),
     LoggerModule,

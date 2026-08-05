@@ -2,7 +2,6 @@ import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { LoggerService } from '../logger';
-import { AgentDocument } from './schemas/agent.schema';
 import { IAgentResponse, IAgentForStream, IGrpcAgent, ISharedAgentInfo } from './interfaces/agent.interface';
 import { AgentShareService } from './services/agent-share.service';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
@@ -1396,7 +1395,7 @@ export class AgentService {
   }
 
   private toResponse(
-    doc: AgentDocument | Record<string, unknown>,
+    doc: Record<string, unknown>,
     agentTypeDoc?: { id: string; name: string },
   ): IAgentResponse {
     const d = doc as Record<string, unknown>;
@@ -1468,7 +1467,7 @@ export class AgentService {
     };
   }
 
-  private toStreamAgent(doc: AgentDocument | Record<string, unknown>): IAgentForStream {
+  private toStreamAgent(doc: Record<string, unknown>): IAgentForStream {
     const d = doc as Record<string, unknown>;
     const populatedAgentType = d.agentType as Record<string, unknown> | undefined;
     const agentTypeName =
