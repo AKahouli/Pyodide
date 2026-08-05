@@ -30,6 +30,7 @@ describe('HumainAgentService', () => {
       slug: 'jane-doe',
       role: 'You are Jane Doe, a human agent.',
       description: '',
+      email: 'jane.doe@acme.io',
       createdBy: userId,
       agentType: String(humainTypeId),
     }));
@@ -44,8 +45,8 @@ describe('HumainAgentService', () => {
     expect(agentRepository.create).toHaveBeenCalledWith(expect.objectContaining({ name: 'solo', slug: 'solo' }));
   });
 
-  it('ensureForUser is a no-op when the agent already exists (does not create or modify)', async () => {
-    const existing = { _id: new Types.ObjectId().toString(), name: 'Old', slug: 'old', role: 'r', description: 'd' };
+  it('ensureForUser is a no-op when the agent already exists and email already matches', async () => {
+    const existing = { _id: new Types.ObjectId().toString(), name: 'Old', slug: 'old', role: 'r', description: 'd', email: 'jane@acme.io' };
     const agentRepository = makeAgentRepository(existing);
     const service = new HumainAgentService(agentRepository as never, makeAgentTypeModel({ _id: humainTypeId, slug: 'humain' }) as never, makeLogger() as never);
 
@@ -53,6 +54,17 @@ describe('HumainAgentService', () => {
 
     expect(agentRepository.create).not.toHaveBeenCalled();
     expect(agentRepository.updateById).not.toHaveBeenCalled();
+  });
+
+  it('ensureForUser fills the humain agent email from the user email when it is missing/stale', async () => {
+    const existing = { _id: new Types.ObjectId().toString(), name: 'Jane Doe', slug: 'jane-doe', role: 'r', description: 'd', email: undefined };
+    const agentRepository = makeAgentRepository(existing);
+    const service = new HumainAgentService(agentRepository as never, makeAgentTypeModel({ _id: humainTypeId, slug: 'humain' }) as never, makeLogger() as never);
+
+    await service.ensureForUser({ userId, email: 'jane@acme.io', firstName: 'Jane', lastName: 'Doe' });
+
+    expect(agentRepository.create).not.toHaveBeenCalled();
+    expect(agentRepository.updateById).toHaveBeenCalledWith(existing._id, { email: 'jane@acme.io' });
   });
 
   it('syncFromProfile overwrites name/role/description on the existing agent via updateById', async () => {
@@ -67,6 +79,7 @@ describe('HumainAgentService', () => {
       slug: 'jane-doe',
       role: 'Product Manager',
       description: 'Leads discovery',
+      email: 'jane@acme.io',
     }));
     expect(agentRepository.create).not.toHaveBeenCalled();
   });

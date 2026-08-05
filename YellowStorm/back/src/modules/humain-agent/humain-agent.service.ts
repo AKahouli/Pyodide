@@ -79,7 +79,7 @@ export class HumainAgentService {
       if (!existing) {
         await this.agentRepository.create({
           id: new Types.ObjectId().toString(),
-          name, slug, agentType, agentTypeSlug, role, description,
+          name, slug, agentType, agentTypeSlug, role, description, email: input.email,
           temperature: 0, llmModel: undefined, instruction: '', ignorePrePrompt: false,
           knowledgeBases: [], tools: [], skills: [], disabledSkills: [], connectors: [], connectorActionSelections: [],
           guardrails: {}, deploymentSettings: {},
@@ -91,8 +91,13 @@ export class HumainAgentService {
       }
 
       if (overwriteProfileFields) {
-        await this.agentRepository.updateById(existing._id, { name, slug, role, description });
+        await this.agentRepository.updateById(existing._id, { name, slug, role, description, email: input.email });
         this.logger.log('Human agent synced', { userId: input.userId });
+      } else if (input.email && existing.email !== input.email) {
+        // Keep the humain agent's email aligned with the user's email even on plain
+        // login (fills it for agents that predate the email field).
+        await this.agentRepository.updateById(existing._id, { email: input.email });
+        this.logger.log('Human agent email updated', { userId: input.userId });
       }
     } catch (error) {
       // Never throw: human-agent maintenance must not break auth/profile flows.
