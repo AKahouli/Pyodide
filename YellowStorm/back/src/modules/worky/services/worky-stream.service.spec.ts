@@ -416,7 +416,7 @@ describe('WorkyStreamService.delete', () => {
       deleteOne: jest.fn(() => writeQuery()),
     };
     const workspaceModel = { create: jest.fn(), findOne: jest.fn() };
-    const agentModel = { create: jest.fn(), findOne: jest.fn(), deleteOne: jest.fn(() => writeQuery()) };
+    const agentRepository = { create: jest.fn(), findByNameAndOwner: jest.fn(), deleteByIdAndOwner: jest.fn().mockResolvedValue(undefined) };
     const agentTypeService = { findBySlug: jest.fn() };
     const connection = makeConnection();
     const workspaceService = { delete: jest.fn() };
@@ -442,7 +442,7 @@ describe('WorkyStreamService.delete', () => {
       logger as any,
       grpcClient as any,
     );
-    return { service, streamModel, agentModel, connection, workspaceService, workspaceDocuments };
+    return { service, streamModel, agentRepository, connection, workspaceService, workspaceDocuments };
   };
 
   it('deletes the stream, manager agent, stream records, and artifact workspace', async () => {
@@ -452,13 +452,13 @@ describe('WorkyStreamService.delete', () => {
       artifactWorkspaceId,
       managerAgentId,
     };
-    const { service, streamModel, agentModel, connection, workspaceService, workspaceDocuments } = makeDeleteService(streamDoc);
+    const { service, streamModel, agentRepository, connection, workspaceService, workspaceDocuments } = makeDeleteService(streamDoc);
 
     const result = await service.delete(userId, streamObjectId.toString());
 
     expect(result).toEqual({ ok: true, deletedWorkspaceId: artifactWorkspaceId.toString() });
     expect(streamModel.deleteOne).toHaveBeenCalledWith({ _id: streamObjectId });
-    expect(agentModel.deleteOne).toHaveBeenCalledWith({ _id: managerAgentId, createdBy: userObjectId });
+    expect(agentRepository.deleteByIdAndOwner).toHaveBeenCalledWith(String(managerAgentId), String(userObjectId));
     expect(workspaceDocuments.deleteAllByWorkspace).toHaveBeenCalledWith(artifactWorkspaceId.toString());
     expect(workspaceService.delete).toHaveBeenCalledWith(artifactWorkspaceId.toString(), userId);
     expect(connection.models.has('WorkyGovernancePolicy')).toBe(false);
