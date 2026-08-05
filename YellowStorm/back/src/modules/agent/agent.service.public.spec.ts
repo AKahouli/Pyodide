@@ -45,6 +45,7 @@ describe('AgentService.findHumainAgentsPublic', () => {
       {} as never, // agentShareService
       {} as never, // guardrailsSettingsService
       agentRepository as never,
+      { reindexHumainRole: jest.fn() } as never, // agentRoleEmbedding
     );
     return { service, agentRepository, agentTypeService };
   };
