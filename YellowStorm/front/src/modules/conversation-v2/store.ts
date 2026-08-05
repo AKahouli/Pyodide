@@ -49,6 +49,11 @@ interface State {
   deployStatus: DeployStatus;
   deployedUrl: string | null;
   lastDeployedAt: string | null;
+  /**
+   * Which surface the app panel shows: Nodepod preview vs the live deployed URL.
+   * Nodepod stays mounted/warm in the background when this is `'deployed'`.
+   */
+  appViewMode: 'nodepod' | 'deployed';
   selectedToolCallId: string | null;
   /** Latest non-message tool emitted by the agent — the "live" target the panel follows. */
   liveToolCallId: string | null;
@@ -157,6 +162,8 @@ interface Actions {
     deployedUrl: string | null;
     lastDeployedAt?: string | null;
   }) => void;
+  /** Switch between Nodepod preview and the deployed iframe (manual toggle). */
+  setAppViewMode: (mode: 'nodepod' | 'deployed') => void;
   /** Publish/deploy the current session's app. Flips to 'deploying' immediately,
    *  then 'deployed' (+ url) or 'error' once the backend responds. */
   deploy: () => Promise<void>;
@@ -197,6 +204,7 @@ const initial: State = {
   deployStatus: 'idle',
   deployedUrl: null,
   lastDeployedAt: null,
+  appViewMode: 'nodepod',
       typewriterSessionId: null,
       typewriterName: null,
       selectedConnectorRepo: null,
@@ -238,6 +246,7 @@ function freshViewState(): Partial<State> {
     deployStatus: 'idle',
     deployedUrl: null,
     lastDeployedAt: null,
+    appViewMode: 'nodepod',
     typewriterSessionId: null,
     typewriterName: null,
     selectedConnectorRepo: null,
@@ -461,14 +470,23 @@ export const useConversationV2Store = create<State & Actions>()(
       setWorkspaceIds: (ids) => set({ workspaceIds: ids }, false, 'setWorkspaceIds'),
       setDeployState: ({ deployStatus, deployedUrl, lastDeployedAt }) =>
         set(
-          {
+          (s) => ({
             deployStatus,
             deployedUrl,
             ...(lastDeployedAt !== undefined ? { lastDeployedAt } : {}),
-          },
+            // Opening a session that already has a live URL → show deployed iframe.
+            // Nodepod preview keeps booting in the background for instant switch-back.
+            ...(deployStatus === 'deployed' &&
+            deployedUrl &&
+            s.appViewMode === 'nodepod' &&
+            !s.deployedUrl
+              ? { appViewMode: 'deployed' as const }
+              : {}),
+          }),
           false,
           'setDeployState',
         ),
+      setAppViewMode: (mode) => set({ appViewMode: mode }, false, 'setAppViewMode'),
       deploy: async () => {
         const id = get().sessionId;
         if (!id) return;
@@ -478,11 +496,18 @@ export const useConversationV2Store = create<State & Actions>()(
             id,
             get().applicationComponent?.title,
           );
-          get().setDeployState({
-            deployStatus: r.deployStatus,
-            deployedUrl: r.deployedUrl,
-            lastDeployedAt: r.lastDeployedAt,
-          });
+          set(
+            {
+              deployStatus: r.deployStatus,
+              deployedUrl: r.deployedUrl,
+              lastDeployedAt: r.lastDeployedAt,
+              ...(r.deployStatus === 'deployed' && r.deployedUrl
+                ? { appViewMode: 'deployed' as const }
+                : {}),
+            },
+            false,
+            'deploy/done',
+          );
         } catch (err) {
           set({ deployStatus: 'error' }, false, 'deploy/error');
           throw err;

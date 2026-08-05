@@ -146,9 +146,13 @@
     "update": "Update",
     "liveUrl": "Live URL",
     "copy": "Copy link",
-    "open": "Open",
+    "open": "Open in new tab",
     "viewUrl": "View deployed URL",
-    "menu": "Deployment options"
+    "menu": "Deployment options",
+    "switchToNodepod": "Back to Nodepod preview",
+    "switchToDeployed": "Show deployed app",
+    "embedUnavailable": "This app cannot be embedded here",
+    "embedHint": "If the page stays blank, open it in a new tab — some hosts block embedding."
   },
   "share": {
     "title": "Share app & conversation",

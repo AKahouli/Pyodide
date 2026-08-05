@@ -146,9 +146,13 @@
     "update": "Mettre à jour",
     "liveUrl": "URL en ligne",
     "copy": "Copier le lien",
-    "open": "Ouvrir",
+    "open": "Ouvrir dans un nouvel onglet",
     "viewUrl": "Voir l'URL déployée",
-    "menu": "Options de déploiement"
+    "menu": "Options de déploiement",
+    "switchToNodepod": "Retour à l'aperçu Nodepod",
+    "switchToDeployed": "Afficher l'application déployée",
+    "embedUnavailable": "Cette application ne peut pas être intégrée ici",
+    "embedHint": "Si la page reste blanche, ouvrez-la dans un nouvel onglet — certains hôtes bloquent l'intégration."
   },
   "share": {
     "title": "Partager l'application et la conversation",

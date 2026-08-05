@@ -25,6 +25,7 @@ describe('RightPanel', () => {
       applicationComponent: null,
       deployStatus: 'idle',
       deployedUrl: null,
+      appViewMode: 'nodepod',
     });
   });
 
@@ -100,7 +101,7 @@ describe('RightPanel', () => {
     expect(deployButton).not.toHaveTextContent(/publish/i);
   });
 
-  it('keeps the Nodepod preview when deployment returns a live URL', () => {
+  it('switches to the deployed iframe after publish while keeping Nodepod warm', () => {
     useConversationV2Store.setState({
       rightPanelMode: 'app',
       applicationComponent: {
@@ -108,13 +109,14 @@ describe('RightPanel', () => {
         url: 'https://preview.example/app',
         revision: 'app-1',
       },
+      appViewMode: 'nodepod',
     });
     render(<RightPanel />);
 
-    expect(document.querySelector('iframe')).toHaveAttribute(
-      'src',
-      'https://nodepod.local/__virtual__/3000/',
-    );
+    expect(
+      document.querySelector('iframe[src="https://nodepod.local/__virtual__/3000/"]'),
+    ).toBeInTheDocument();
+
     act(() => {
       useConversationV2Store.getState().setDeployState({
         deployStatus: 'deployed',
@@ -123,12 +125,44 @@ describe('RightPanel', () => {
       });
     });
 
-    // Nodepod preview stays local; deployed URL is exposed via DeployControls.
-    expect(document.querySelector('iframe')).toHaveAttribute(
-      'src',
-      'https://nodepod.local/__virtual__/3000/',
-    );
+    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
+    expect(
+      document.querySelector('iframe[src="https://apps.example/app-1"]'),
+    ).toBeInTheDocument();
+    // Nodepod iframe stays mounted (warm) underneath.
+    expect(
+      document.querySelector('iframe[src="https://nodepod.local/__virtual__/3000/"]'),
+    ).toBeInTheDocument();
     expect(useConversationV2Store.getState().deployedUrl).toBe('https://apps.example/app-1');
+  });
+
+  it('can switch back to Nodepod preview after deploy', () => {
+    useConversationV2Store.setState({
+      rightPanelMode: 'app',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'https://preview.example/app',
+        revision: 'app-1',
+      },
+      deployStatus: 'deployed',
+      deployedUrl: 'https://apps.example/app-1',
+      appViewMode: 'deployed',
+    });
+    render(<RightPanel />);
+
+    expect(
+      document.querySelector('iframe[src="https://apps.example/app-1"]'),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /switchToNodepod/i }));
+
+    expect(useConversationV2Store.getState().appViewMode).toBe('nodepod');
+    expect(
+      document.querySelector('iframe[src="https://apps.example/app-1"]'),
+    ).not.toBeInTheDocument();
+    expect(
+      document.querySelector('iframe[src="https://nodepod.local/__virtual__/3000/"]'),
+    ).toBeInTheDocument();
   });
 
   it('shows the jump-to-live button when streaming and viewing a past tool', () => {
