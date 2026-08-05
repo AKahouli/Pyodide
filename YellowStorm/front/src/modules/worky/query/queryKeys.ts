@@ -15,4 +15,6 @@ export const workyKeys = {
   governancePolicy: (workspaceId: string) =>
     [...workyKeys.all, 'governance-policy', workspaceId] as const,
   whatsappIntegration: (id: string) => [...workyKeys.detail(id), 'whatsapp'] as const,
+  humainResolve: (ids: readonly string[]) =>
+    [...workyKeys.all, 'humain-resolve', ids.join(',')] as const,
 };
