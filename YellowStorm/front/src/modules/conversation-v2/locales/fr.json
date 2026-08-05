@@ -151,8 +151,7 @@
     "menu": "Options de déploiement",
     "switchToNodepod": "Retour à l'aperçu Nodepod",
     "switchToDeployed": "Afficher l'application déployée",
-    "embedUnavailable": "Cette application ne peut pas être intégrée ici",
-    "embedHint": "Si la page reste blanche, ouvrez-la dans un nouvel onglet — certains hôtes bloquent l'intégration."
+    "embedUnavailable": "Cette application ne peut pas être intégrée ici"
   },
   "share": {
     "title": "Partager l'application et la conversation",

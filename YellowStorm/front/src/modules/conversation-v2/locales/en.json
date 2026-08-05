@@ -151,8 +151,7 @@
     "menu": "Deployment options",
     "switchToNodepod": "Back to Nodepod preview",
     "switchToDeployed": "Show deployed app",
-    "embedUnavailable": "This app cannot be embedded here",
-    "embedHint": "If the page stays blank, open it in a new tab — some hosts block embedding."
+    "embedUnavailable": "This app cannot be embedded here"
   },
   "share": {
     "title": "Share app & conversation",

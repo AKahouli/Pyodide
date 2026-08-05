@@ -457,7 +457,6 @@ export function ApplicationComponentView({
                 <ExternalLinkIcon className='size-8 text-muted-foreground/50' />
                 <div className='space-y-1'>
                   <p className='text-sm font-medium'>{t('deploy.embedUnavailable')}</p>
-                  <p className='max-w-sm text-xs text-muted-foreground'>{t('deploy.embedHint')}</p>
                 </div>
                 <Button type='button' size='sm' onClick={handleOpenDeployed} className='gap-1.5'>
                   <ExternalLinkIcon className='size-3.5' />
@@ -486,11 +485,6 @@ export function ApplicationComponentView({
                 {t('deploy.open')}
               </Button>
             </div>
-            {canEmbedDeployed && (
-              <p className='shrink-0 border-t bg-muted/30 px-2 py-1 text-[10px] leading-snug text-muted-foreground'>
-                {t('deploy.embedHint')}
-              </p>
-            )}
           </div>
         )}
       </div>
