@@ -33,7 +33,7 @@ import { HumainAgentModule } from '../humain-agent/humain-agent.module';
     MongooseModule.forFeature([
       { name: Session.name, schema: SessionSchema },
     ]),
-    UserModule,
+    forwardRef(() => UserModule),
     forwardRef(() => UsageModule),
     forwardRef(() => AuthorizationModule),
     forwardRef(() => WorkspaceModule),
