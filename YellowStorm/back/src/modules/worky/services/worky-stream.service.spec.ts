@@ -56,7 +56,7 @@ describe('WorkyStreamService.create', () => {
     const agentCreate =
       overrides.agentCreate ?? jest.fn((doc) => Promise.resolve({ _id: new Types.ObjectId(), ...doc }));
     const workspaceFindOne = overrides.workspaceFindOne ?? jest.fn(() => chainableQuery(null));
-    const agentFindOne = overrides.agentFindOne ?? jest.fn(() => chainableQuery(null));
+    const agentFindOne = overrides.agentFindOne ?? jest.fn().mockResolvedValue(null);
     const agentTypeFindBySlug =
       overrides.agentTypeFindBySlug ??
       jest.fn().mockResolvedValue({ id: new Types.ObjectId().toString(), name: 'Manager' });
@@ -68,8 +68,8 @@ describe('WorkyStreamService.create', () => {
       findOne: overrides.streamFindOne ?? jest.fn(),
     };
     const workspaceModel = { create: workspaceCreate, findOne: workspaceFindOne };
-    const agentModel = { create: agentCreate, findOne: agentFindOne };
-    const agentTypeService = { findBySlug: agentTypeFindBySlug };
+    const agentRepository = { create: agentCreate, findByNameAndOwner: agentFindOne, deleteByIdAndOwner: jest.fn().mockResolvedValue(undefined) };
+    const agentTypeService = { findBySlug: agentTypeFindBySlug, getManyForHydration: jest.fn().mockResolvedValue(new Map()) };
     const connection = makeConnection();
     const workspaceService = { delete: jest.fn() };
     const workspaceDocuments = { deleteAllByWorkspace: jest.fn() };
@@ -86,7 +86,7 @@ describe('WorkyStreamService.create', () => {
     const service = new WorkyStreamService(
       streamModel as any,
       workspaceModel as any,
-      agentModel as any,
+      agentRepository as any,
       connection as any,
       agentTypeService as any,
       workspaceService as any,
@@ -223,7 +223,7 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
       updateOne,
     };
     const workspaceModel = { create: jest.fn(), findOne: jest.fn() };
-    const agentModel = { create: jest.fn(), findOne: jest.fn() };
+    const agentRepository = { create: jest.fn(), findByNameAndOwner: jest.fn(), deleteByIdAndOwner: jest.fn() };
     const agentTypeService = { findBySlug: jest.fn() };
     const connection = makeConnection();
     const workspaceService = { delete: jest.fn() };
@@ -240,7 +240,7 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
     const service = new WorkyStreamService(
       streamModel as any,
       workspaceModel as any,
-      agentModel as any,
+      agentRepository as any,
       connection as any,
       agentTypeService as any,
       workspaceService as any,
@@ -331,7 +331,7 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
       findOne: jest.fn(() => chainableQuery(null)),
     };
     const workspaceModel = { create: jest.fn(), findOne: jest.fn() };
-    const agentModel = { create: jest.fn(), findOne: jest.fn() };
+    const agentRepository = { create: jest.fn(), findByNameAndOwner: jest.fn(), deleteByIdAndOwner: jest.fn() };
     const agentTypeService = { findBySlug: jest.fn() };
     const connection = makeConnection();
     const workspaceService = { delete: jest.fn() };
@@ -348,7 +348,7 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
     const service = new WorkyStreamService(
       streamModel as any,
       workspaceModel as any,
-      agentModel as any,
+      agentRepository as any,
       connection as any,
       agentTypeService as any,
       workspaceService as any,
@@ -433,7 +433,7 @@ describe('WorkyStreamService.delete', () => {
     const service = new WorkyStreamService(
       streamModel as any,
       workspaceModel as any,
-      agentModel as any,
+      agentRepository as any,
       connection as any,
       agentTypeService as any,
       workspaceService as any,
