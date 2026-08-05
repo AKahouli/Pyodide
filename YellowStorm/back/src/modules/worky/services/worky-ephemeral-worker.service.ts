@@ -11,6 +11,7 @@ import {
 } from '../schemas/worky-ephemeral-worker.schema';
 import { WorkyStream, WorkyStreamDocument } from '../schemas/worky-stream.schema';
 import { AgentRepository } from '../../agent/repositories/agent.repository';
+import { AgentTypeService } from '../../agent-type/agent-type.service';
 import { LoggerService } from '../../logger';
 import {
   BadRequestException,
@@ -66,6 +67,7 @@ export class WorkyEphemeralWorkerService {
     @InjectModel(WorkyEphemeralWorker.name)
     private readonly workers: Model<WorkyEphemeralWorkerDocument>,
     private readonly agentRepository: AgentRepository,
+    private readonly agentTypeService: AgentTypeService,
     private readonly governance: WorkyGovernanceService,
     private readonly events: WorkyEventService,
     private readonly audit: WorkyAuditService,
@@ -116,9 +118,16 @@ export class WorkyEphemeralWorkerService {
     const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const agentName = `Worky Worker — ${input.role} (${suffix})`.slice(0, 50);
     const slug = `worky-ephemeral-${suffix}`.slice(0, 100);
-    const managerAgentTypeId = stream.managerAgentId
-      ? (await this.agentRepository.findById(String(stream.managerAgentId)))?.agentType ?? new Types.ObjectId().toString()
-      : new Types.ObjectId().toString();
+    // Streams no longer carry a per-stream Manager agent; resolve the shared
+    // Manager agent *type* by slug (seeded on WorkyStreamService init). Legacy
+    // streams that still have a managerAgentId fall back to its type.
+    const managerType = await this.agentTypeService.findBySlug(WORKY_MANAGER_AGENT_TYPE_SLUG);
+    const managerAgentTypeId =
+      managerType?.id ??
+      (stream.managerAgentId
+        ? (await this.agentRepository.findById(String(stream.managerAgentId)))?.agentType
+        : undefined) ??
+      new Types.ObjectId().toString();
     const agent = await this.agentRepository.create({
       id: new Types.ObjectId().toString(),
       name: agentName,

@@ -21,12 +21,21 @@ export class AgentRoleEmbeddingService {
     this.logger.setContext(AgentRoleEmbeddingService.name);
   }
 
-  /** Reindex a humain agent's role embedding. No-op for non-humain agents. Never throws. */
+  /**
+   * Reindex a humain agent's role embedding. No-op for non-humain agents. Never throws.
+   *
+   * Fully detached: scheduled on a later event-loop tick via setImmediate so the
+   * create/update request completes and responds FIRST — no embedding work (not
+   * even the outbound HTTP setup) runs on the request's synchronous path. The
+   * embedding then computes on its own and sets `role_embedding` when done.
+   */
   reindexHumainRole(agentId: string, agentTypeSlug: string, name: string, role: string): void {
     if (agentTypeSlug !== HUMAIN_SLUG) return;
-    void this.run(agentId, name, role).catch((error) =>
-      this.logger.warn('Role embedding reindex failed', { agentId, error: (error as Error).message }),
-    );
+    setImmediate(() => {
+      void this.run(agentId, name, role).catch((error) =>
+        this.logger.warn('Role embedding reindex failed', { agentId, error: (error as Error).message }),
+      );
+    });
   }
 
   private async run(agentId: string, name: string, role: string): Promise<void> {

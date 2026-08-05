@@ -68,8 +68,10 @@ export interface WorkyStream {
   id: string;
   ownerUserId: string;
   workspaceId: string;
-  artifactWorkspaceId: string;
-  managerAgentId: string;
+  /** Legacy: null for streams created after the workspace/agent removal. */
+  artifactWorkspaceId: string | null;
+  /** Legacy: null for streams created after the workspace/agent removal. */
+  managerAgentId: string | null;
   /**
    * Per-stream Manager model. LiteLLM model identifier
    * (e.g. `gpt-4o-mini`) — the value `LiteLlm(model=...)` expects.

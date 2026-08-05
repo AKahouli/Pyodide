@@ -1,6 +1,6 @@
 import { AgentRoleEmbeddingService } from './agent-role-embedding.service';
 
-const flush = () => new Promise((r) => setImmediate(r));
+const flush = () => new Promise((r) => setTimeout(r, 10));
 function loggerStub() {
   return { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() } as any;
 }
