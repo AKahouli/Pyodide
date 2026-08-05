@@ -31,6 +31,7 @@ import { RateLimiterModule } from './modules/rate-limiter';
 import { RequestContextModule } from './modules/request-context';
 import { ResponseModule } from './modules/response';
 import { DatabaseModule } from './modules/database';
+import { PostgresModule } from './modules/postgres';
 import { DocumentModule } from './modules/document';
 import { EmailModule } from './modules/email';
 
@@ -92,6 +93,7 @@ import { WorkspaceArtifactModule } from './modules/workspace-artifact/workspace-
     // Global Modules
     LoggerModule,
     DatabaseModule,
+    PostgresModule,
     DocumentModule,
     EmailModule,
     RequestContextModule,
