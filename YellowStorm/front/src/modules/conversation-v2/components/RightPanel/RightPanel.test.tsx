@@ -25,7 +25,6 @@ describe('RightPanel', () => {
       applicationComponent: null,
       deployStatus: 'idle',
       deployedUrl: null,
-      appViewMode: 'nodepod',
     });
   });
 
@@ -101,7 +100,7 @@ describe('RightPanel', () => {
     expect(deployButton).not.toHaveTextContent(/publish/i);
   });
 
-  it('switches the preview iframe to the deployed URL after publish', () => {
+  it('keeps the Nodepod preview when deployment returns a live URL', () => {
     useConversationV2Store.setState({
       rightPanelMode: 'app',
       applicationComponent: {
@@ -109,7 +108,6 @@ describe('RightPanel', () => {
         url: 'https://preview.example/app',
         revision: 'app-1',
       },
-      appViewMode: 'nodepod',
     });
     render(<RightPanel />);
 
@@ -125,40 +123,12 @@ describe('RightPanel', () => {
       });
     });
 
-    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
-    expect(document.querySelector('iframe')).toHaveAttribute(
-      'src',
-      'https://apps.example/app-1',
-    );
-    expect(useConversationV2Store.getState().deployedUrl).toBe('https://apps.example/app-1');
-  });
-
-  it('can switch back to Nodepod preview after deploy', () => {
-    useConversationV2Store.setState({
-      rightPanelMode: 'app',
-      applicationComponent: {
-        title: 'Generated app',
-        url: 'https://preview.example/app',
-        revision: 'app-1',
-      },
-      deployStatus: 'deployed',
-      deployedUrl: 'https://apps.example/app-1',
-      appViewMode: 'deployed',
-    });
-    render(<RightPanel />);
-
-    expect(document.querySelector('iframe')).toHaveAttribute(
-      'src',
-      'https://apps.example/app-1',
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: /switchToNodepod/i }));
-
-    expect(useConversationV2Store.getState().appViewMode).toBe('nodepod');
+    // Nodepod preview stays local; deployed URL is exposed via DeployControls.
     expect(document.querySelector('iframe')).toHaveAttribute(
       'src',
       'https://nodepod.local/__virtual__/3000/',
     );
+    expect(useConversationV2Store.getState().deployedUrl).toBe('https://apps.example/app-1');
   });
 
   it('shows the jump-to-live button when streaming and viewing a past tool', () => {

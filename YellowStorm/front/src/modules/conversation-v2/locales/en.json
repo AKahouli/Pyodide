@@ -148,11 +148,7 @@
     "copy": "Copy link",
     "open": "Open",
     "viewUrl": "View deployed URL",
-    "menu": "Deployment options",
-    "switchToNodepod": "Back to in-browser preview",
-    "switchToDeployed": "Show deployed app",
-    "embedUnavailable": "This URL cannot be shown inside the panel.",
-    "embedHint": "If the app stays blank or blocked, it may refuse to be embedded — use Open to view it in a new tab."
+    "menu": "Deployment options"
   },
   "share": {
     "title": "Share app & conversation",

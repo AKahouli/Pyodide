@@ -1,22 +1,7 @@
 import { useState } from 'react';
-import {
-  Copy,
-  ExternalLink,
-  Globe,
-  Loader2,
-  Monitor,
-  RefreshCw,
-  Rocket,
-  Share2,
-} from 'lucide-react';
+import { Copy, ExternalLink, Globe, Loader2, RefreshCw, Rocket, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { showError, showSuccess } from '@/lib/notifications';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,23 +13,25 @@ import { useConversationV2Translation } from '../../translation';
 import { ShareDeployDialog } from './ShareDeployDialog';
 
 /**
- * Publish/deploy control in the conv v2 RightPanel header.
- * After deploy: toggles between deployed iframe and Nodepod preview.
+ * Publish/deploy control, rendered in the conv v2 RightPanel header (v2-only —
+ * never leaks into the shared file-viewer/v1 surfaces). Idle → "Publish";
+ * deploying → spinner; deployed → a Globe dropdown (live URL / copy / open) to
+ * the left of an "Update" button.
  */
 export function DeployControls() {
   const { t } = useConversationV2Translation();
   const deployStatus = useConversationV2Store((s) => s.deployStatus);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
-  const appViewMode = useConversationV2Store((s) => s.appViewMode);
   const sessionId = useConversationV2Store((s) => s.sessionId);
   const deploy = useConversationV2Store((s) => s.deploy);
-  const setAppViewMode = useConversationV2Store((s) => s.setAppViewMode);
   const [shareOpen, setShareOpen] = useState(false);
 
   const isDeploying = deployStatus === 'deploying';
   const isDeployed = deployStatus === 'deployed' && !!deployedUrl;
+  // Keep the globe (live URL) visible while an update is in flight — we still
+  // have the previous URL, so don't hide it just because status flipped back to
+  // 'deploying'.
   const hasUrl = !!deployedUrl;
-  const showingDeployed = hasUrl && appViewMode === 'deployed';
 
   const handleDeploy = async () => {
     try {
@@ -66,55 +53,12 @@ export function DeployControls() {
   };
 
   return (
-    <TooltipProvider delayDuration={300}>
-      {hasUrl && showingDeployed && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant='ghost'
-              size='icon-sm'
-              className='shrink-0'
-              onClick={() => setAppViewMode('nodepod')}
-              aria-label={t('deploy.switchToNodepod')}
-            >
-              <Monitor className='h-4 w-4' />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side='bottom' className='text-xs'>
-            {t('deploy.switchToNodepod')}
-          </TooltipContent>
-        </Tooltip>
-      )}
-
-      {hasUrl && !showingDeployed && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant='ghost'
-              size='icon-sm'
-              className='shrink-0'
-              onClick={() => setAppViewMode('deployed')}
-              aria-label={t('deploy.switchToDeployed')}
-            >
-              <Globe className='h-4 w-4' />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side='bottom' className='text-xs'>
-            {t('deploy.switchToDeployed')}
-          </TooltipContent>
-        </Tooltip>
-      )}
-
-      {hasUrl && showingDeployed && (
+    <>
+      {hasUrl && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button
-              variant='ghost'
-              size='icon-sm'
-              className='shrink-0'
-              aria-label={t('deploy.viewUrl')}
-            >
-              <ExternalLink className='h-4 w-4' />
+            <Button variant='ghost' size='icon-sm' className='shrink-0' aria-label={t('deploy.viewUrl')}>
+              <Globe className='h-4 w-4' />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align='end' className='w-80'>
@@ -180,6 +124,6 @@ export function DeployControls() {
         )}
         {!isDeploying && (isDeployed ? t('deploy.update') : t('deploy.publish'))}
       </Button>
-    </TooltipProvider>
+    </>
   );
 }
