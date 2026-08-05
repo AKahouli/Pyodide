@@ -80,6 +80,11 @@ CREATE TABLE IF NOT EXISTS agents (
   a2a_api_key_header            text,
   a2a_published_at              timestamptz,
 
+  -- Semantic index of the agent role. Populated ONLY for humain-type agents
+  -- (embedding of `name. role`, text-embedding-3-large, 3072-dim). halfvec is
+  -- required because pgvector's index types cap plain `vector` at 2000 dims.
+  role_embedding                halfvec(3072),
+
   -- Timestamps (Mongoose `timestamps: true`)
   created_at                    timestamptz  NOT NULL DEFAULT now(),
   updated_at                    timestamptz  NOT NULL DEFAULT now()
@@ -107,6 +112,12 @@ CREATE INDEX  IF NOT EXISTS idx_agents_type_is_default_default_for_type
 -- Added for external readers (NOT in the Mongo schema) — review/keep or drop:
 CREATE INDEX  IF NOT EXISTS idx_agents_agent_type_slug ON agents (agent_type_slug);
 CREATE INDEX  IF NOT EXISTS idx_agents_is_active        ON agents (is_active);
+
+-- Semantic (vector) index for humain-agent role search. Requires the pgvector
+-- extension (>= 0.7 for halfvec). HNSW + cosine distance.
+-- CREATE EXTENSION IF NOT EXISTS vector;
+CREATE INDEX IF NOT EXISTS idx_agents_role_embedding
+  ON agents USING hnsw (role_embedding halfvec_cosine_ops);
 
 -- -----------------------------------------------------------------------------
 -- Junction tables (the reference arrays on the agent document).
