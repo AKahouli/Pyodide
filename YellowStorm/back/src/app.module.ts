@@ -33,6 +33,7 @@ import { ResponseModule } from './modules/response';
 import { DatabaseModule } from './modules/database';
 import { PostgresModule } from './modules/postgres';
 import { AgentRepositoryModule } from './modules/agent/repositories/agent-repository.module';
+import { AgentEmbeddingModule } from './modules/agent/agent-embedding.module';
 import { DocumentModule } from './modules/document';
 import { EmailModule } from './modules/email';
 
@@ -96,6 +97,7 @@ import { WorkspaceArtifactModule } from './modules/workspace-artifact/workspace-
     DatabaseModule,
     PostgresModule,
     AgentRepositoryModule,
+    AgentEmbeddingModule,
     DocumentModule,
     EmailModule,
     RequestContextModule,

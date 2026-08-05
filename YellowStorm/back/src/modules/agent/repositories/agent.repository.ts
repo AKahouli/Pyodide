@@ -283,6 +283,12 @@ export class AgentRepository {
     });
   }
 
+  /** Store the role embedding (pgvector halfvec) for an agent. */
+  async setRoleEmbedding(id: string, embedding: number[]): Promise<void> {
+    const literal = `[${embedding.join(',')}]`;
+    await this.db.execute(sql`UPDATE agents SET role_embedding = ${literal}::halfvec WHERE id = ${id}`);
+  }
+
   async findIdsByInstructionLike(pattern: string, exceptAgentId: string): Promise<Array<{ id: string; instruction: string }>> {
     const rows = await this.db.select({ id: agents.id, instruction: agents.instruction }).from(agents)
       .where(and(ilike(agents.instruction, pattern), sql`${agents.id} <> ${exceptAgentId}`));

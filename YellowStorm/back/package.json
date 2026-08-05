@@ -24,6 +24,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "backfill:agents": "ts-node scripts/backfill-agents-to-postgres.ts",
+    "backfill:humain-embeddings": "ts-node scripts/backfill-humain-role-embeddings.ts",
     "release": "commit-and-tag-version",
     "release:minor": "commit-and-tag-version --release-as minor",
     "release:major": "commit-and-tag-version --release-as major",

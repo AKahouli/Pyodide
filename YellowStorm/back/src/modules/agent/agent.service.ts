@@ -32,6 +32,7 @@ import {
 import { normalizeWidgetSettings } from './constants/widget-default-settings';
 import { AgentRepository, CreateAgentInput, UpdateAgentInput } from './repositories/agent.repository';
 import { AgentRecord } from './repositories/agent-record.mapper';
+import { AgentRoleEmbeddingService } from './services/agent-role-embedding.service';
 
 /** Agent-type slug of the orchestrating manager agent. */
 const MANAGER_SLUG = 'manager';
@@ -60,6 +61,7 @@ export class AgentService {
     private readonly agentShareService: AgentShareService,
     private readonly guardrailsSettingsService: GuardrailsSettingsService,
     private readonly agentRepository: AgentRepository,
+    private readonly agentRoleEmbedding: AgentRoleEmbeddingService,
     @Optional() private readonly connectorRuntimeService?: AgentConnectorRuntimeService,
   ) {
     this.logger.setContext(AgentService.name);
@@ -98,6 +100,7 @@ export class AgentService {
     const agent = await this.agentRepository.create(
       this.dtoToCreateInput(userId, dto, { id, isDefault: false, slug: normalizedSlug, agentTypeSlug }),
     );
+    this.agentRoleEmbedding.reindexHumainRole(agent._id, agent.agentTypeSlug, agent.name, agent.role);
 
     this.logger.log('Personal agent created', {
       agentId: agent._id.toString(),
@@ -248,6 +251,11 @@ export class AgentService {
 
     if (!updated) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
+    }
+
+    // Re-index the role embedding only when name/role actually changed (humain agents only).
+    if (dto.name !== undefined || dto.role !== undefined) {
+      this.agentRoleEmbedding.reindexHumainRole(updated._id, updated.agentTypeSlug, updated.name, updated.role);
     }
 
     this.logger.log('Personal agent updated', {

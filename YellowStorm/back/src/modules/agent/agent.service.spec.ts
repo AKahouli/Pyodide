@@ -161,6 +161,8 @@ describe('AgentService connector skill inheritance', () => {
       }),
     };
 
+    const agentRoleEmbedding = { reindexHumainRole: jest.fn() };
+
     const service = new AgentService(
       logger as any,
       toolService as any,
@@ -175,6 +177,7 @@ describe('AgentService connector skill inheritance', () => {
       agentShareService as any,
       guardrailsSettingsService as any,
       agentRepository as any,
+      agentRoleEmbedding as any,
       new AgentConnectorRuntimeService(
         logger as any,
         skillService as any,

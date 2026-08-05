@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { LoggerService } from '../logger';
 import { AgentRepository } from '../agent/repositories/agent.repository';
+import { AgentRoleEmbeddingService } from '../agent/services/agent-role-embedding.service';
 import { AgentType, AgentTypeDocument } from '../agent-type/schemas/agent-type.schema';
 import { collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '../../common/utils';
 
@@ -41,6 +42,7 @@ export class HumainAgentService {
   constructor(
     private readonly agentRepository: AgentRepository,
     @InjectModel(AgentType.name) private readonly agentTypeModel: Model<AgentTypeDocument>,
+    private readonly roleEmbedding: AgentRoleEmbeddingService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(HumainAgentService.name);
@@ -77,8 +79,9 @@ export class HumainAgentService {
       const existing = await this.agentRepository.findByOwnerAndType(input.userId, agentType);
 
       if (!existing) {
+        const id = new Types.ObjectId().toString();
         await this.agentRepository.create({
-          id: new Types.ObjectId().toString(),
+          id,
           name, slug, agentType, agentTypeSlug, role, description, email: input.email,
           temperature: 0, llmModel: undefined, instruction: '', ignorePrePrompt: false,
           knowledgeBases: [], tools: [], skills: [], disabledSkills: [], connectors: [], connectorActionSelections: [],
@@ -86,12 +89,14 @@ export class HumainAgentService {
           enable_temporary_child_agents: false, max_temporary_child_agents: 4,
           isDefault: false, isDefaultForType: false, isActive: true, createdBy: input.userId,
         });
+        this.roleEmbedding.reindexHumainRole(id, agentTypeSlug, name, role);
         this.logger.log('Human agent created', { userId: input.userId });
         return;
       }
 
       if (overwriteProfileFields) {
         await this.agentRepository.updateById(existing._id, { name, slug, role, description, email: input.email });
+        this.roleEmbedding.reindexHumainRole(existing._id, agentTypeSlug, name, role);
         this.logger.log('Human agent synced', { userId: input.userId });
       } else if (input.email && existing.email !== input.email) {
         // Keep the humain agent's email aligned with the user's email even on plain
