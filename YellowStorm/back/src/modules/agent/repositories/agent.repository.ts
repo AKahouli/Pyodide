@@ -265,6 +265,30 @@ export class AgentRepository {
     });
   }
 
+  async deleteByIdAndOwner(id: string, ownerId: string): Promise<void> {
+    await this.db.delete(agents).where(and(eq(agents.id, id), eq(agents.createdBy, ownerId)));
+  }
+
+  async findActiveDefaultsByType(agentTypeId: string, limit: number): Promise<AgentRecord[]> {
+    const rows = await this.db.select().from(agents)
+      .where(and(eq(agents.agentTypeId, agentTypeId), eq(agents.isDefault, true), eq(agents.isActive, true)))
+      .limit(limit);
+    return this.assemble(rows);
+  }
+
+  async pullConnectorFromAllExcept(connectorId: string, exceptAgentId: string): Promise<void> {
+    await this.db.transaction(async (tx: Tx) => {
+      await tx.delete(agentConnectors).where(and(eq(agentConnectors.connectorId, connectorId), sql`${agentConnectors.agentId} <> ${exceptAgentId}`));
+      await tx.delete(agentConnectorActions).where(and(eq(agentConnectorActions.connectorId, connectorId), sql`${agentConnectorActions.agentId} <> ${exceptAgentId}`));
+    });
+  }
+
+  async findIdsByInstructionLike(pattern: string, exceptAgentId: string): Promise<Array<{ id: string; instruction: string }>> {
+    const rows = await this.db.select({ id: agents.id, instruction: agents.instruction }).from(agents)
+      .where(and(ilike(agents.instruction, pattern), sql`${agents.id} <> ${exceptAgentId}`));
+    return rows.map((r) => ({ id: trim24(r.id), instruction: r.instruction }));
+  }
+
   // ---- internals ----
 
   private async insertJunctions(

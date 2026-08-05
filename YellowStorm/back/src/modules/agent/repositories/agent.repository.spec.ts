@@ -181,6 +181,54 @@ describeIntegration('AgentRepository update/delete (integration)', () => {
   });
 });
 
+describeIntegration('AgentRepository plan-4 methods (integration)', () => {
+  const { db, close } = makeTestDb();
+  const repo = new AgentRepository(db as never);
+  const created: string[] = [];
+  afterEach(async () => { await deleteAgents(db, created.splice(0)); });
+  afterAll(async () => { await close(); });
+
+  it('deleteByIdAndOwner deletes only when the owner matches', async () => {
+    const owner = oid();
+    const a = createInput({ createdBy: owner });
+    created.push(a.id); await repo.create(a);
+    await repo.deleteByIdAndOwner(a.id, oid()); // wrong owner -> no-op
+    expect(await repo.findById(a.id)).not.toBeNull();
+    await repo.deleteByIdAndOwner(a.id, owner);
+    expect(await repo.findById(a.id)).toBeNull();
+  });
+
+  it('findActiveDefaultsByType returns up to limit active defaults of a type', async () => {
+    const typeId = oid();
+    const a = createInput({ agentType: typeId, isDefault: true, isActive: true });
+    const b = createInput({ agentType: typeId, isDefault: true, isActive: true });
+    await seed(repo, created, [a, b]);
+    const found = await repo.findActiveDefaultsByType(typeId, 2);
+    expect(found).toHaveLength(2);
+  });
+
+  it('pullConnectorFromAllExcept removes the connector from all agents but the excepted one', async () => {
+    const connectorId = oid();
+    const keep = createInput({ connectors: [connectorId], connectorActionSelections: [{ connectorId, actionKeys: ['x'] }] });
+    const strip = createInput({ connectors: [connectorId], connectorActionSelections: [{ connectorId, actionKeys: ['x'] }] });
+    await seed(repo, created, [keep, strip]);
+    await repo.pullConnectorFromAllExcept(connectorId, keep.id);
+    expect((await repo.findById(keep.id))!.connectors).toEqual([connectorId]);
+    expect((await repo.findById(strip.id))!.connectors).toEqual([]);
+    expect((await repo.findById(strip.id))!.connectorActionSelections).toEqual([]);
+  });
+
+  it('findIdsByInstructionLike matches by ILIKE and excludes the given id', async () => {
+    const tag = `[Playbook MCP ${oid().slice(-6)}]`;
+    const a = createInput({ instruction: `hello ${tag} world` });
+    const b = createInput({ instruction: `hello ${tag} world` });
+    await seed(repo, created, [a, b]);
+    const found = await repo.findIdsByInstructionLike(`%${tag}%`, a.id);
+    expect(found.map((r) => r.id)).toEqual([b.id]);
+    expect(found[0].instruction).toContain(tag);
+  });
+});
+
 describeIntegration('AgentRepository pull ops (integration)', () => {
   const { db, close } = makeTestDb();
   const repo = new AgentRepository(db as never);
