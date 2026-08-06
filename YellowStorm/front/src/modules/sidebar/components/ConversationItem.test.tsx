@@ -19,7 +19,7 @@ vi.mock('@/components/ui/sidebar', () => ({
   SidebarMenuButton: ({ children, isActive }: { children: ReactNode; isActive?: boolean }) => (
     <div data-active={String(Boolean(isActive))}>{children}</div>
   ),
-  SidebarMenuAction: ({ children }: { children: ReactNode }) => <button type='button'>{children}</button>,
+  SidebarMenuAction: ({ children, showOnHover: _showOnHover, draggable: _draggable, ...props }: { children: ReactNode; showOnHover?: boolean; draggable?: boolean; 'aria-label'?: string }) => <button type='button' {...props}>{children}</button>,
 }));
 
 vi.mock('@/components/ui/dropdown-menu', () => ({
@@ -84,6 +84,7 @@ describe('ConversationItem', () => {
     );
 
     expect(screen.getByText('Typing title')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'conversations.actions' })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'conversations.rename' }));
     expect(screen.getByText('rename-open')).toBeInTheDocument();

@@ -1,9 +1,9 @@
 import { cn } from '@/lib/utils';
 
 export function readinessTone(score: number): { hex: string; text: string } {
-  if (score >= 80) return { hex: '#10b981', text: 'text-emerald-600 dark:text-emerald-400' };
-  if (score >= 50) return { hex: '#f59e0b', text: 'text-amber-600 dark:text-amber-400' };
-  return { hex: '#ef4444', text: 'text-red-600 dark:text-red-400' };
+  if (score >= 80) return { hex: '#047857', text: 'text-emerald-700 dark:text-emerald-300' };
+  if (score >= 50) return { hex: '#b45309', text: 'text-amber-700 dark:text-amber-300' };
+  return { hex: '#b91c1c', text: 'text-red-700 dark:text-red-300' };
 }
 
 export function ReadinessRing({ score, size = 44 }: Readonly<{ score: number; size?: number }>): JSX.Element {

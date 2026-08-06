@@ -3,10 +3,10 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { AIMessageContent, type TaskPart } from './ai-message-content';
 
-function renderTask(status: TaskPart['status']) {
+function renderTask(status: TaskPart['status'], isStreaming = true) {
   return render(
     <AIMessageContent
-      isStreaming
+      isStreaming={isStreaming}
       parts={[{ type: 'task', title: 'smart_agent', items: ['Working'], status }]}
     />,
   );
@@ -17,18 +17,32 @@ describe('AIMessageContent task activity', () => {
     const { container } = renderTask('in_progress');
 
     expect(screen.getByText('Smart Agent').parentElement).toHaveAttribute('data-active', 'true');
-    expect(container.querySelector('.animate-agent-scan')).toBeInTheDocument();
+    expect(container.querySelector('[data-agent-spinner]')).toHaveClass('animate-spin');
+    expect(container.querySelector('[data-agent-spinner]')).not.toHaveClass('motion-reduce:animate-none');
+    expect(container.querySelector('[data-agent-scan]')).toHaveClass('animate-agent-scan');
+    expect(container.querySelector('[data-agent-scan]')).not.toHaveClass('motion-reduce:animate-none');
   });
 
-  it.each([undefined, 'pending', 'completed'] as const)(
-    'keeps %s tasks static while streaming',
+  it.each([undefined, 'pending'] as const)(
+    'keeps %s tasks visibly active while the response is streaming',
     (status) => {
       const { container } = renderTask(status);
 
-      expect(screen.getByText('Smart Agent').parentElement).not.toHaveAttribute('data-active');
-      expect(container.querySelector('.animate-agent-scan')).not.toBeInTheDocument();
+      expect(screen.getByText('Smart Agent').parentElement).toHaveAttribute('data-active', 'true');
+      expect(container.querySelector('[data-agent-scan]')).toBeInTheDocument();
     },
   );
+
+  it('keeps completed and non-streaming tasks static', () => {
+    const completed = renderTask('completed');
+    expect(screen.getByText('Smart Agent').parentElement).not.toHaveAttribute('data-active');
+    expect(completed.container.querySelector('[data-agent-scan]')).not.toBeInTheDocument();
+    completed.unmount();
+
+    const idle = renderTask('in_progress', false);
+    expect(screen.getByText('Smart Agent').parentElement).not.toHaveAttribute('data-active');
+    expect(idle.container.querySelector('[data-agent-spinner]')).not.toBeInTheDocument();
+  });
 
   it('shows safe activity and moves raw task context into diagnostics', async () => {
     render(

@@ -123,6 +123,18 @@ describe('MessageReliabilityCard', () => {
     expect(screen.getByRole('button', { name: 'Rerun the original answer reliability evaluation' })).toBeDisabled();
   });
 
+  it('places mobile actions on a second grid row without compressing the summary', () => {
+    render(<MessageReliabilityCard
+      conversationId='conversation-1'
+      messageId='message-1'
+      evaluation={completedEvaluation}
+    />);
+
+    const rerun = screen.getByRole('button', { name: 'Rerun the original answer reliability evaluation' });
+    expect(rerun.parentElement).toHaveClass('col-start-2', 'row-start-2', 'md:col-start-3', 'md:row-start-1');
+    expect(screen.getByText('Answer reliability').parentElement).toHaveClass('col-start-2', 'row-start-1');
+  });
+
   it('queues the original answer evaluation from the dedicated action', async () => {
     rerunReliabilityEvaluationMock.mockResolvedValueOnce({ messageId: 'message-1', reliabilityEvaluation: { status: 'pending' } });
     render(<MessageReliabilityCard
@@ -174,6 +186,28 @@ describe('MessageReliabilityCard', () => {
     expect(screen.getByText('Missing claim')).toBeInTheDocument();
     expect(screen.getByText('Key claim')).toBeInTheDocument();
     expect(screen.queryByText('judge-name')).not.toBeInTheDocument();
+  });
+
+  it('uses caution colors through 70 and switches to green above the threshold', () => {
+    const { rerender } = render(<MessageReliabilityCard evaluation={{ ...completedEvaluation, score: 0 }} />);
+    let meter = screen.getByRole('meter', { name: 'Reliability score: 0 out of 100' });
+    expect(meter).toHaveAttribute('data-score-band', 'caution');
+    expect(meter.style.getPropertyValue('--reliability-score-color')).toContain('var(--reliability-critical) 100%');
+
+    rerender(<MessageReliabilityCard evaluation={{ ...completedEvaluation, score: 70 }} />);
+    meter = screen.getByRole('meter', { name: 'Reliability score: 70 out of 100' });
+    expect(meter).toHaveAttribute('data-score-band', 'caution');
+    expect(meter.style.getPropertyValue('--reliability-score-color')).toContain('var(--reliability-critical) 0%');
+
+    rerender(<MessageReliabilityCard evaluation={{ ...completedEvaluation, score: 71 }} />);
+    meter = screen.getByRole('meter', { name: 'Reliability score: 71 out of 100' });
+    expect(meter).toHaveAttribute('data-score-band', 'positive');
+    expect(meter.style.getPropertyValue('--reliability-score-color')).toContain('var(--reliability-positive) 100%');
+
+    rerender(<MessageReliabilityCard evaluation={{ ...completedEvaluation, score: 100 }} />);
+    meter = screen.getByRole('meter', { name: 'Reliability score: 100 out of 100' });
+    expect(meter).toHaveAttribute('data-score-band', 'positive');
+    expect(meter.style.getPropertyValue('--reliability-score-color')).toContain('var(--reliability-positive) 0%');
   });
 
   it('keeps historical evaluations without complete claims readable', () => {

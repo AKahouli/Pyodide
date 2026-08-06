@@ -110,7 +110,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
         <TooltipProvider delayDuration={300}>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant='ghost' size='icon' className={`h-7 w-7 ${message.feedback === 'like' ? 'text-primary' : ''}`} onClick={handleLike} disabled={message.feedback === 'like'} aria-pressed={message.feedback === 'like'} aria-label={t('messageActions.likeAria')}>
+              <Button variant='ghost' size='icon' className={`size-11 md:size-7 ${message.feedback === 'like' ? 'text-primary' : ''}`} onClick={handleLike} disabled={message.feedback === 'like'} aria-pressed={message.feedback === 'like'} aria-label={t('messageActions.likeAria')}>
                 <ThumbsUp className={`h-3.5 w-3.5 ${message.feedback === 'like' ? 'fill-current' : ''}`} />
               </Button>
             </TooltipTrigger>
@@ -119,7 +119,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant='ghost' size='icon' className={`h-7 w-7 ${message.feedback === 'dislike' ? 'text-primary' : ''}`} onClick={handleDislike} disabled={message.feedback === 'dislike'} aria-pressed={message.feedback === 'dislike'} aria-label={t('messageActions.dislikeAria')}>
+              <Button variant='ghost' size='icon' className={`size-11 md:size-7 ${message.feedback === 'dislike' ? 'text-primary' : ''}`} onClick={handleDislike} disabled={message.feedback === 'dislike'} aria-pressed={message.feedback === 'dislike'} aria-label={t('messageActions.dislikeAria')}>
                 <ThumbsDown className={`h-3.5 w-3.5 ${message.feedback === 'dislike' ? 'fill-current' : ''}`} />
               </Button>
             </TooltipTrigger>
@@ -128,7 +128,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleCopy} aria-label={t('messageActions.copyAria')}>
+              <Button variant='ghost' size='icon' className='size-11 md:size-7' onClick={handleCopy} aria-label={t('messageActions.copyAria')}>
                 <Copy className='h-3.5 w-3.5' />
               </Button>
             </TooltipTrigger>
@@ -138,7 +138,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
           {isLastAiMessage && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleRegenerate} aria-label={t('messageActions.regenerateAria')}>
+                <Button variant='ghost' size='icon' className='size-11 md:size-7' onClick={handleRegenerate} aria-label={t('messageActions.regenerateAria')}>
                   <RotateCcw className='h-3.5 w-3.5' />
                 </Button>
               </TooltipTrigger>
@@ -149,7 +149,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant='ghost' size='icon' className='h-7 w-7' aria-label={t('messageActions.moreActions')}>
+            <Button variant='ghost' size='icon' className='size-11 md:size-7' aria-label={t('messageActions.moreActions')}>
               <MoreHorizontal className='h-3.5 w-3.5' />
             </Button>
           </DropdownMenuTrigger>

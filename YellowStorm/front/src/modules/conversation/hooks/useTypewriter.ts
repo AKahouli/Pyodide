@@ -10,10 +10,25 @@ import { useState, useEffect, useCallback } from 'react';
  */
 export function useTypewriter(text: string | null, speed: number = 30, onComplete?: () => void): string {
   const [displayedText, setDisplayedText] = useState('');
+  const [reduceMotion, setReduceMotion] = useState(() => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    if (!mediaQuery) return;
+    const handleChange = (event: MediaQueryListEvent) => setReduceMotion(event.matches);
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
 
   useEffect(() => {
     if (!text) {
       setDisplayedText('');
+      return;
+    }
+
+    if (reduceMotion) {
+      setDisplayedText(text);
+      onComplete?.();
       return;
     }
 
@@ -31,7 +46,7 @@ export function useTypewriter(text: string | null, speed: number = 30, onComplet
     }, speed);
 
     return () => clearInterval(interval);
-  }, [text, speed, onComplete]);
+  }, [text, speed, onComplete, reduceMotion]);
 
   return displayedText;
 }

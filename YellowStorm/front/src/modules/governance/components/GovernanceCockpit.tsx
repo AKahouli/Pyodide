@@ -100,8 +100,8 @@ export function GovernanceCockpit({ programId, onSelectScope, onCreateScope }: R
       <section className='grid gap-4 sm:grid-cols-2 xl:grid-cols-4'>
         <KpiTile label={t('cockpit.kpis.scopes')} value={scopes.length} active={activeFilter === 'all'}>
           <div className='mt-2 flex flex-wrap gap-1.5'>
-            <button type='button' className='rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-600 transition hover:bg-emerald-500/20 dark:text-emerald-400' onClick={() => setActiveFilter('published')}>{t('cockpit.kpis.publishedCount', { count: publishedCount })}</button>
-            <button type='button' className='rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground transition hover:bg-muted/80' onClick={() => setActiveFilter('draft')}>{t('cockpit.kpis.draftCount', { count: Math.max(scopes.length - publishedCount, 0) })}</button>
+            <button type='button' className='min-h-11 rounded-full bg-emerald-500/15 px-2 text-xs font-medium text-emerald-600 transition hover:bg-emerald-500/20 dark:text-emerald-400 sm:min-h-0 sm:py-0.5' onClick={() => setActiveFilter('published')}>{t('cockpit.kpis.publishedCount', { count: publishedCount })}</button>
+            <button type='button' className='min-h-11 rounded-full bg-muted px-2 text-xs font-medium text-muted-foreground transition hover:bg-muted/80 sm:min-h-0 sm:py-0.5' onClick={() => setActiveFilter('draft')}>{t('cockpit.kpis.draftCount', { count: Math.max(scopes.length - publishedCount, 0) })}</button>
           </div>
         </KpiTile>
         <KpiTile label={t('cockpit.kpis.readiness')} value={`${avgReadiness}%`} />
@@ -112,17 +112,17 @@ export function GovernanceCockpit({ programId, onSelectScope, onCreateScope }: R
       <div className='grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]'>
         <section className='rounded-2xl border bg-card shadow-sm'>
           <header className='flex flex-wrap items-center gap-3 border-b p-4'>
-            <h3 className='text-sm font-semibold'>{t('cockpit.scopes.title')}</h3>
+            <h2 className='text-sm font-semibold'>{t('cockpit.scopes.title')}</h2>
             <span className='rounded-full border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground'>{t('cockpit.scopes.count', { count: visibleScopes.length })}</span>
-            {activeFilter !== 'all' && <span className='inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary'>{t(`cockpit.filters.${activeFilter}`)}<button type='button' onClick={() => setActiveFilter('all')} aria-label={t('cockpit.filters.clear')}><X className='h-3 w-3' /></button></span>}
+            {activeFilter !== 'all' && <span className='inline-flex min-h-11 items-center gap-1 rounded-full bg-primary/10 px-2 text-xs font-medium text-primary sm:min-h-0 sm:py-0.5'>{t(`cockpit.filters.${activeFilter}`)}<button type='button' className='grid h-11 w-11 place-items-center sm:h-auto sm:w-auto' onClick={() => setActiveFilter('all')} aria-label={t('cockpit.filters.clear')}><X className='h-3 w-3' /></button></span>}
             <span className='flex-1' />
-            {programId && <Button type='button' size='sm' onClick={onCreateScope}><Plus className='h-4 w-4' />{t('cockpit.newScope')}</Button>}
+            {programId && <Button type='button' variant='secondary' size='sm' className='min-h-11 sm:min-h-0' onClick={onCreateScope}><Plus className='h-4 w-4' />{t('cockpit.newScope')}</Button>}
           </header>
           {scopes.length === 0 ? (
             <div className='m-4 grid justify-items-center gap-3 rounded-xl border border-dashed p-6 text-center'>
               <p className='text-sm text-muted-foreground'>{t('cockpit.scopes.empty')}</p>
               {programId && (
-                <Button type='button' variant='outline' size='sm' onClick={onCreateScope}>
+                <Button type='button' variant='outline' size='sm' className='min-h-11 sm:min-h-0' onClick={onCreateScope}>
                   <Plus className='h-4 w-4' />{t('cockpit.newScope')}
                 </Button>
               )}
@@ -140,14 +140,14 @@ export function GovernanceCockpit({ programId, onSelectScope, onCreateScope }: R
         <div className='grid content-start gap-4'>
           <section className='rounded-2xl border bg-card shadow-sm'>
             <header className='flex items-center gap-3 border-b p-4'>
-              <h3 className='text-sm font-semibold'>{t('cockpit.attention.title')}</h3>
+              <h2 className='text-sm font-semibold'>{t('cockpit.attention.title')}</h2>
               <span className='rounded-full border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground'>{attentionItems.length}</span>
             </header>
             {attentionItems.length === 0 ? (
               <div className='m-4 rounded-xl border border-dashed p-4'>
                 <p className='text-sm font-medium'>{t('cockpit.attention.emptyTitle')}</p>
                 <p className='mt-1 text-sm text-muted-foreground'>{t('cockpit.attention.empty')}</p>
-                <Button type='button' variant='outline' size='sm' className='mt-3' onClick={() => setActiveFilter('ready')}>{t('cockpit.attention.reviewReady')}</Button>
+                <Button type='button' variant='outline' size='sm' className='mt-3 min-h-11 sm:min-h-0' onClick={() => setActiveFilter('ready')}>{t('cockpit.attention.reviewReady')}</Button>
               </div>
             ) : (
               <div className='flex flex-col p-2'>
@@ -221,7 +221,7 @@ function ScopeCard({ scope, overview, onOpen, onClone, onDelete, isCloning, isDe
   const dryRun = overview?.latestDryRun?.status ? `${dryRunLabel}: ${translateDryRunStatus(overview.latestDryRun.status)}` : noDryRun;
   return (
     <article className='group relative rounded-xl border bg-card transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-sm'>
-      <button type='button' onClick={onOpen} className='grid w-full grid-cols-[44px_1fr] items-center gap-3 p-4 text-left sm:pr-20'>
+      <button type='button' onClick={onOpen} className='grid w-full grid-cols-[44px_1fr] items-center gap-3 p-4 pr-24 text-left sm:pr-20'>
         <ReadinessRing score={score} />
         <span className='min-w-0'>
           <span className='block truncate font-medium'>{scope.name}</span>
@@ -242,12 +242,12 @@ function ScopeCard({ scope, overview, onOpen, onClone, onDelete, isCloning, isDe
           </span>
         </span>
       </button>
-      <Button type='button' variant='ghost' size='icon' className='absolute right-10 top-2 h-8 w-8 text-muted-foreground opacity-100 hover:text-foreground sm:opacity-0 sm:transition sm:group-hover:opacity-100 sm:group-focus-within:opacity-100' aria-label={cloneLabel} onClick={onClone} disabled={isCloning}>
+      <Button type='button' variant='ghost' size='icon' className='absolute right-12 top-1 h-11 w-11 text-muted-foreground opacity-100 hover:text-foreground sm:right-10 sm:top-2 sm:h-8 sm:w-8 sm:opacity-0 sm:transition sm:group-hover:opacity-100 sm:group-focus-within:opacity-100' aria-label={cloneLabel} onClick={onClone} disabled={isCloning}>
         <Copy className='h-4 w-4' />
       </Button>
       <AlertDialog>
         <AlertDialogTrigger asChild>
-          <Button type='button' variant='ghost' size='icon' className='absolute right-2 top-2 h-8 w-8 text-muted-foreground opacity-100 hover:text-destructive sm:opacity-0 sm:transition sm:group-hover:opacity-100 sm:group-focus-within:opacity-100' aria-label={deleteLabel} disabled={isDeleting}>
+          <Button type='button' variant='ghost' size='icon' className='absolute right-1 top-1 h-11 w-11 text-muted-foreground opacity-100 hover:text-destructive sm:right-2 sm:top-2 sm:h-8 sm:w-8 sm:opacity-0 sm:transition sm:group-hover:opacity-100 sm:group-focus-within:opacity-100' aria-label={deleteLabel} disabled={isDeleting}>
             <Trash2 className='h-4 w-4' />
           </Button>
         </AlertDialogTrigger>

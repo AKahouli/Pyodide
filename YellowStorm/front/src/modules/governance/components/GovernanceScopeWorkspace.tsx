@@ -51,8 +51,10 @@ import { WorkspaceBindingList as WorkspaceBindingListPanel } from './bindings/Wo
 import { KnowledgeActionCenter } from './intelligence/KnowledgeActionCenter';
 import { dataRoomFeatures } from '@/config/dataRoomFeatures';
 import { governanceQueryKeys } from '../query/queryKeys';
-import { governedConversationFeatures } from '@/config/governedConversationFeatures';
 import { ScopeAudienceTab } from './scope/ScopeAudienceTab';
+import { getLatestDryRunRevisionNumber, governanceScopeTabs, isCurrentDraftDryRunPassed, isScopeKnowledgeReady, type TabKey } from './scope-readiness';
+
+export type { TabKey } from './scope-readiness';
 
 const DEFAULT_PROMPT_INJECTION_GUARDRAILS: PromptInjectionGuardrailsConfig = {
   inputGuardrailEnabled: false,
@@ -68,13 +70,9 @@ const channelKeys = ['widget', 'whatsapp', 'telegram', 'api'] as const;
 
 const scopeTypeOptions: GovernanceScope['type'][] = ['organization', 'municipality', 'department', 'business_unit', 'country', 'team', 'custom'];
 const SCOPE_DESCRIPTION_MAX_LENGTH = 2000;
+type GovernanceTranslation = ReturnType<typeof useModuleTranslation<'governance'>>['t'];
 
 const inviteRoles: GovernanceMembershipRole[] = ['program_admin', 'scope_admin', 'scope_approver', 'scope_reviewer', 'scope_editor', 'scope_viewer'];
-
-export type TabKey = 'overview' | 'knowledge' | 'agents' | 'audience' | 'ownership' | 'guardrails' | 'review' | 'testPublish' | 'monitor';
-
-export const governanceScopeTabs: TabKey[] = ['overview', 'knowledge', 'agents', ...(governedConversationFeatures.conversationsEnabled ? ['audience' as const] : []), 'ownership', 'guardrails', 'testPublish', 'review', 'monitor'];
-
 
 const tabReadinessKeys: Partial<Record<TabKey, string>> = {
   overview: 'scope_active',
@@ -185,16 +183,16 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
 
   return (
     <section className='min-w-0 rounded-2xl border bg-card shadow-sm'>
-      <div className='flex items-start justify-between gap-3 border-b p-5'>
+      <div className='flex flex-wrap items-start justify-between gap-3 border-b p-5'>
         <div className='min-w-0'>
           <p className='text-xs font-semibold uppercase tracking-wide text-primary'>{t('scopeShell.workspace.kicker')}</p>
           <h2 className='mt-1 text-2xl font-semibold'>{overview.scope.name}</h2>
           <p className='mt-2 text-sm text-muted-foreground'>{t('scopeShell.workspace.description')}</p>
         </div>
-        {nextTab && <Button type='button' disabled={isChangingTab || updateScope.isPending} onClick={() => void changeTab(nextTab)}>{isChangingTab ? t('scopeShell.workspace.saving') : t('scopeShell.workspace.next')}<ArrowRight className='ml-1 h-4 w-4' /></Button>}
+        {nextTab && <Button type='button' className='min-h-11' disabled={isChangingTab || updateScope.isPending} onClick={() => void changeTab(nextTab)}>{isChangingTab ? t('scopeShell.workspace.saving') : t('scopeShell.workspace.next')}<ArrowRight className='ml-1 h-4 w-4' /></Button>}
       </div>
       <div className='border-b p-3'>
-        <div className='flex min-w-0 gap-2 overflow-x-auto'>
+        <div className='flex min-w-0 flex-wrap gap-2'>
           {governanceScopeTabs.map((tab) => <ScopeTabButton key={tab} tab={tab} overview={overview} active={activeTab === tab} onClick={() => void changeTab(tab)} />)}
         </div>
       </div>
@@ -222,7 +220,7 @@ function ScopeTabButton({ tab, overview, active, onClick }: Readonly<{ tab: TabK
   const Icon = isDone ? Check : isPending ? AlertTriangle : Circle;
 
   return (
-    <button type='button' className={cn('inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 text-sm text-muted-foreground transition hover:bg-muted', active && 'bg-primary text-primary-foreground hover:bg-primary')} onClick={onClick}>
+    <button type='button' className={cn('inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground', active && 'bg-foreground text-background hover:bg-foreground/90 hover:text-background')} onClick={onClick}>
       {readinessCheck && <Icon className='h-3.5 w-3.5' />}
       {t(`scopeShell.tabs.${tab}`)}
     </button>
@@ -242,7 +240,7 @@ function OverviewTab({ programId, overview, settingsDraft, onSettingsDraftChange
         <Button type='button' size='sm' variant='outline' onClick={() => setShowSettings((value) => !value)}><Pencil className='mr-1 h-3.5 w-3.5' />{showSettings ? t('scopeShell.settings.close') : t('scopeShell.settings.edit')}</Button>
       </section>
       {showSettings && <ScopeSettingsCard programId={programId} overview={overview} draft={settingsDraft} onDraftChange={onSettingsDraftChange} />}
-      <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
+      <div className='grid gap-3 sm:grid-cols-2'>
       <OverviewCard title={t('scopeShell.overview.knowledgeCard')} onClick={() => onNavigate('knowledge')}>
         <OverviewRow label={t('scopeShell.knowledge.shared')} value={String(overview.knowledge.sharedWorkspaces.length)} />
         <OverviewRow label={t('scopeShell.knowledge.local')} value={String(overview.knowledge.localWorkspaces.length)} />
@@ -273,7 +271,8 @@ function OverviewTab({ programId, overview, settingsDraft, onSettingsDraftChange
         <OverviewRow label={t('scopeShell.review.lastChangedBy')} value={overview.draftRevision ? `${revisionActor(overview.draftRevision, t('scopeShell.review.formerUser'))} · ${formatGovernanceDate(overview.draftRevision.createdAt, t('scopeShell.overview.none'))}` : t('scopeShell.overview.none')} />
         <OverviewRow label={t('scopeShell.testPublish.published')} value={overview.publishedRevision ? `${t('scopeShell.testPublish.revisionNumber', { number: overview.publishedRevision.revisionNumber })} · ${formatGovernanceDate(overview.publishedRevision.publishedAt ?? overview.publishedRevision.createdAt, t('scopeShell.overview.none'))}` : t('scopeShell.overview.none')} />
         <OverviewRow label={t('scopeShell.review.publishedBy')} value={overview.publishedRevision?.publishedByUser?.displayName ?? overview.publishedRevision?.publishedByUser?.email ?? t('scopeShell.overview.none')} />
-        <OverviewRow label={t('scopeShell.testPublish.latestDryRun')} value={overview.latestDryRun?.status ? t(`scopeShell.testPublish.status.${overview.latestDryRun.status}`) : t('scopeShell.overview.none')} />
+        <OverviewRow label={t('scopeShell.testPublish.latestDryRun')} value={latestDryRunSummary(overview, t)} />
+        <OverviewRow label={t('scopeShell.testPublish.currentDraftDryRun')} value={currentDraftDryRunSummary(overview, t)} />
       </OverviewCard>
       </div>
       {incompleteChecks.length > 1 && <section className='rounded-xl border bg-background p-4'><h3 className='text-sm font-semibold'>{t('scopeShell.overview.openActions')}</h3><div className='mt-2 grid gap-2'>{incompleteChecks.slice(0, 4).map((check) => <div key={check.key} className='flex items-start gap-2 text-sm'><Circle className='mt-0.5 h-4 w-4 text-muted-foreground' /><div><p className='font-medium'>{check.label}</p>{check.message && <p className='text-xs text-muted-foreground'>{check.message}</p>}</div></div>)}</div></section>}
@@ -289,6 +288,22 @@ function formatGovernanceDate(value: string | undefined, fallback = '—'): stri
 
 function revisionActor(revision: GovernanceDeploymentRevision | undefined, fallback: string): string {
   return revision?.createdByUser?.displayName ?? revision?.createdByUser?.email ?? fallback;
+}
+
+function latestDryRunSummary(overview: GovernanceScopeOverview, t: GovernanceTranslation): string {
+  if (!overview.latestDryRun) return t('scopeShell.overview.none');
+  const status = t(`scopeShell.testPublish.status.${overview.latestDryRun.status}`);
+  const revisionNumber = getLatestDryRunRevisionNumber(overview);
+  return revisionNumber
+    ? t('scopeShell.testPublish.resultForRevision', { status, number: revisionNumber })
+    : t('scopeShell.testPublish.resultForPreviousRevision', { status });
+}
+
+function currentDraftDryRunSummary(overview: GovernanceScopeOverview, t: GovernanceTranslation): string {
+  if (!overview.draftRevision) return t('scopeShell.overview.none');
+  const currentRun = overview.latestDryRun?.revisionId === overview.draftRevision.id ? overview.latestDryRun : undefined;
+  const status = currentRun ? t(`scopeShell.testPublish.status.${currentRun.status}`) : t('scopeShell.testPublish.status.not_run');
+  return t('scopeShell.testPublish.resultForRevision', { status, number: overview.draftRevision.revisionNumber });
 }
 
 function ScopeSettingsCard({ programId, overview, draft, onDraftChange }: Readonly<{ programId: string | null; overview: GovernanceScopeOverview; draft: ScopeSettingsDraft; onDraftChange: (draft: ScopeSettingsDraft) => void }>): JSX.Element {
@@ -434,6 +449,7 @@ function KnowledgeTab({ programId, scopeId, overview }: Readonly<{ programId: st
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const { data: bindings = [] } = useGovernanceWorkspaceBindings(dataRoomFeatures.workspaceBindingEnabled ? programId : null);
   const documents = overview.knowledge.documents;
+  const knowledgeReady = isScopeKnowledgeReady(overview);
   const workspaceNames = Object.fromEntries(workspaces.map((workspace) => [workspace.id, workspace.name]));
   const scopeBindings = bindings.filter((binding) => binding.visibility === 'program_shared' || binding.scopeIds?.includes(scopeId));
   const mappedWorkspaceIds = [...documents.map((document) => document.workspaceId), ...scopeBindings.map((binding) => binding.workspaceId)].filter((id): id is string => Boolean(id));
@@ -443,13 +459,13 @@ function KnowledgeTab({ programId, scopeId, overview }: Readonly<{ programId: st
   return (
     <div className='grid gap-4'>
       {dataRoomFeatures.knowledgeAssessmentEnabled && documents.length > 0 && <KnowledgeActionCenter programId={programId} scopeId={scopeId} documents={documents} workspaceNames={workspaceNames} onOpenDocument={(documentId) => { const document = documents.find((item) => item.documentId === documentId); if (document) setPassportDocument(document); }} />}
-      {documents.length === 0 && scopeBindings.length > 0 && <div className='rounded-xl border border-primary/30 bg-primary/5 p-4'><p className='text-sm font-medium'>{t('scopeShell.knowledge.connectedTitle')}</p><p className='mt-1 text-xs text-muted-foreground'>{t('scopeShell.knowledge.connectedDescription')}</p></div>}
+      {scopeBindings.length > 0 && !knowledgeReady && <div className='rounded-xl border bg-muted/40 p-4'><p className='text-sm font-medium'>{t('scopeShell.knowledge.connectedTitle')}</p><p className='mt-1 text-xs text-muted-foreground'>{t('scopeShell.knowledge.connectedDescription')}</p></div>}
       <div className='flex items-center justify-between gap-3'>
         <div>
           <h3 className='text-sm font-semibold'>{t('scopeShell.knowledge.mapTitle')}</h3>
           <p className='mt-0.5 text-xs text-muted-foreground'>{t('scopeShell.knowledge.mapHint')}</p>
         </div>
-        <Button type='button' size='sm' onClick={() => setDialogOpen(true)}>{t('scopeShell.knowledge.addWorkspace')}</Button>
+        <Button type='button' size='sm' className='min-h-11' onClick={() => setDialogOpen(true)}>{t('scopeShell.knowledge.addWorkspace')}</Button>
       </div>
       <div className='grid gap-2'>
         {dataRoomFeatures.workspaceBindingEnabled && <WorkspaceBindingListPanel programId={programId} bindings={scopeBindings} />}
@@ -1096,7 +1112,7 @@ function ReviewTab({ programId, memberships, scopeId, overview, onNavigateTab }:
   const canApprove = overview.authorization.canApprove;
   const approverNames = activeApprovers.map(membershipDisplayName).filter(Boolean);
   const hasDraft = Boolean(overview.draftRevision && deploymentId);
-  const latestDraftDryRunPassed = overview.latestDryRun?.revisionId === overview.draftRevision?.id && overview.latestDryRun?.status === 'passed';
+  const latestDraftDryRunPassed = isCurrentDraftDryRunPassed(overview);
   const canPublish = canApprove
     && overview.publishedRevision?.id !== overview.draftRevision?.id
     && hasDraft
@@ -1125,7 +1141,7 @@ function ReviewTab({ programId, memberships, scopeId, overview, onNavigateTab }:
 
   return (
     <div className='grid gap-4'>
-      <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-4'>
+      <div className='grid gap-3 md:grid-cols-2'>
         <SummaryCard label={t('scopeShell.review.status')} value={t(`scopeShell.review.statusOptions.${overview.scope.metadata?.review?.status ?? 'not_started'}`)} />
         <SummaryCard label={t('scopeShell.review.draftVersion')} value={overview.draftRevision ? `${t('scopeShell.testPublish.revisionNumber', { number: overview.draftRevision.revisionNumber })} · ${formatGovernanceDate(overview.draftRevision.createdAt, t('scopeShell.overview.none'))}` : t('scopeShell.overview.none')} />
         <SummaryCard label={t('scopeShell.review.publishedVersion')} value={overview.publishedRevision ? `${t('scopeShell.testPublish.revisionNumber', { number: overview.publishedRevision.revisionNumber })} · ${formatGovernanceDate(overview.publishedRevision.publishedAt ?? overview.publishedRevision.createdAt, t('scopeShell.overview.none'))}` : t('scopeShell.overview.none')} />
@@ -1211,10 +1227,11 @@ function TestPublishTab({ programId, scopeId, overview }: Readonly<{ programId: 
 
   return (
     <div className='grid gap-4'>
-      <div className='grid gap-3 md:grid-cols-3'>
+      <div className='grid gap-3 md:grid-cols-2'>
         <SummaryCard label={t('scopeShell.testPublish.draft')} value={overview.draftRevision ? t('scopeShell.testPublish.revisionNumber', { number: overview.draftRevision.revisionNumber }) : t('scopeShell.overview.none')} />
         <SummaryCard label={t('scopeShell.testPublish.published')} value={overview.publishedRevision ? t('scopeShell.testPublish.revisionNumber', { number: overview.publishedRevision.revisionNumber }) : t('scopeShell.overview.none')} />
-        <SummaryCard label={t('scopeShell.testPublish.latestDryRun')} value={overview.latestDryRun?.status ? t(`scopeShell.testPublish.status.${overview.latestDryRun.status}`) : t('scopeShell.overview.none')} />
+        <SummaryCard label={t('scopeShell.testPublish.latestDryRun')} value={latestDryRunSummary(overview, t)} />
+        <SummaryCard label={t('scopeShell.testPublish.currentDraftDryRun')} value={currentDraftDryRunSummary(overview, t)} />
       </div>
 
       {overview.draftRevision && (
@@ -1268,7 +1285,7 @@ function MonitorTab({ overview, metrics, scopeId }: Readonly<{ overview: Governa
       <div><h3 id='scope-monitor-title' className='font-semibold'>{t('scopeShell.monitor.title')}</h3><p className='text-sm text-muted-foreground'>{t('scopeShell.monitor.hint')}</p></div>
       <div className='flex flex-wrap gap-2' role='group' aria-label={t('scopeShell.monitor.periodLabel')}>{([7, 30, 90] as const).map((days) => <Button key={days} type='button' size='sm' variant={periodDays === days ? 'default' : 'outline'} aria-pressed={periodDays === days} onClick={() => setPeriodDays(days)}>{t('scopeShell.monitor.periodDays', { days })}</Button>)}</div>
     </div>
-    <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+    <div className='grid gap-3 sm:grid-cols-2'>
       <SummaryCard label={t('scopeShell.monitor.totalValue')} value={String(totalValue)} />
       <SummaryCard label={t('scopeShell.monitor.metricRecords')} value={String(scopeMetrics.length)} />
       <SummaryCard label={t('scopeShell.monitor.metricTypes')} value={String(metricTypes.length)} />

@@ -20,7 +20,7 @@ vi.mock('@/components/ui/sidebar', () => ({
       {children}
     </button>
   ),
-  SidebarMenuAction: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SidebarMenuAction: ({ children, showOnHover: _showOnHover, ...props }: { children: ReactNode; showOnHover?: boolean; 'aria-label'?: string }) => <button type='button' {...props}>{children}</button>,
 }));
 
 vi.mock('@/components/ui/dropdown-menu', () => ({
@@ -41,5 +41,6 @@ describe('AgentButton', () => {
     fireEvent.click(screen.getByText('button.agents'));
 
     expect(navigateSpy).toHaveBeenCalledWith('/agents');
+    expect(screen.getByRole('button', { name: 'sidebar.moreActions' })).toBeInTheDocument();
   });
 });

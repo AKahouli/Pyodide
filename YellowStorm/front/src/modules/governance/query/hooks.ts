@@ -1,7 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { governanceApi } from '../api';
 import { governanceQueryKeys } from './queryKeys';
-import type { CreateGovernanceDeploymentPayload, CreateGovernanceDryRunPayload, CreateGovernanceMembershipPayload, CreateGovernanceProgramPayload, CreateGovernanceRevisionPayload, CreateGovernanceScopePayload, GovernanceDryRun, UpdateGovernanceDeploymentPayload, UpdateGovernanceMembershipPayload, UpdateGovernanceScopePayload } from '../types';
+import type { CreateGovernanceDeploymentPayload, CreateGovernanceDryRunPayload, CreateGovernanceMembershipPayload, CreateGovernanceProgramPayload, CreateGovernanceRevisionPayload, CreateGovernanceScopePayload, GovernanceDryRun, UpdateGovernanceDeploymentPayload, UpdateGovernanceMembershipPayload, UpdateGovernanceProgramPayload, UpdateGovernanceScopePayload } from '../types';
 
 export function useGovernancePrograms() {
   return useQuery({
@@ -31,6 +31,7 @@ export function useGovernanceScopeOverview(programId: string | null, scopeId: st
     queryKey: programId && scopeId ? governanceQueryKeys.scopeOverview(programId, scopeId) : governanceQueryKeys.scopeOverview('none', 'none'),
     queryFn: () => governanceApi.getScopeOverview(programId ?? '', scopeId ?? ''),
     enabled: Boolean(programId && scopeId),
+    staleTime: 30_000,
   });
 }
 
@@ -100,6 +101,14 @@ export function useCreateGovernanceProgram() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: CreateGovernanceProgramPayload) => governanceApi.createProgram(payload),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: governanceQueryKeys.programs() }),
+  });
+}
+
+export function useUpdateGovernanceProgram(programId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: UpdateGovernanceProgramPayload) => governanceApi.updateProgram(programId ?? '', payload),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: governanceQueryKeys.programs() }),
   });
 }

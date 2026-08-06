@@ -58,7 +58,7 @@ describe('ViewerToolbar', () => {
     expect(scrollToPreviousPageMock).toHaveBeenCalled();
     expect(scrollToNextPageMock).toHaveBeenCalled();
 
-    const pageInput = screen.getByRole('spinbutton');
+    const pageInput = screen.getByRole('spinbutton', { name: 'toolbar.pageLabel' });
     await userEvent.clear(pageInput);
     await userEvent.type(pageInput, '7');
     const form = pageInput.closest('form');

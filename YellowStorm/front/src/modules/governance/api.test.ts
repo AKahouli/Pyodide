@@ -13,6 +13,14 @@ vi.mock('@/lib/api/client', () => ({ apiClient: mocks }));
 describe('governanceApi', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('updates a program through its registered endpoint', async () => {
+    mocks.patch.mockResolvedValueOnce({ data: { data: { id: 'program-1', name: 'Renamed program' } } });
+
+    await governanceApi.updateProgram('program-1', { name: 'Renamed program' });
+
+    expect(mocks.patch).toHaveBeenCalledWith('/governance/programs/program-1', { name: 'Renamed program' });
+  });
+
   it('uses endpoint registry paths for memberships and deployments', async () => {
     mocks.get.mockResolvedValueOnce({ data: { data: [] } });
     mocks.post.mockResolvedValueOnce({ data: { data: { id: 'deployment-1' } } });

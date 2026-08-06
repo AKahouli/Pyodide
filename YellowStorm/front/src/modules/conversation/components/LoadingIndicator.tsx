@@ -135,7 +135,7 @@ export function LoadingIndicator({ activity = 'thinking', components = [], isCom
           {isComplete ? (
             <Sparkles className='size-4 text-primary' />
           ) : (
-            <Loader2 className='size-5 animate-spin text-primary [animation-duration:1.1s] motion-reduce:animate-none' />
+            <Loader2 data-thinking-spinner className='size-5 animate-spin text-running [animation-duration:1.1s]' />
           )}
         </span>
         <div className='min-w-0 flex-1'>
@@ -154,7 +154,7 @@ export function LoadingIndicator({ activity = 'thinking', components = [], isCom
           )}
         </div>
         {details.length > 0 && (
-            <CollapsibleTrigger className='inline-flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted' aria-label={t('stream.activity.detailsAria')}>
+            <CollapsibleTrigger className='inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted md:min-h-8 md:px-2'>
               {t('stream.activity.details', { count: details.length })}
               <ChevronDown className='size-3.5 transition-transform data-[state=open]:rotate-180' />
             </CollapsibleTrigger>

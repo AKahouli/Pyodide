@@ -30,6 +30,7 @@
   "input.limitCountdownHours": "Limite atteinte · Réinitialisation dans {{hours}}h {{minutes}}min",
   "input.limitCountdownMinutes": "Limite atteinte · Réinitialisation dans {{minutes}}min",
   "input.deepSearch": "Recherche approfondie",
+  "input.cancelReply": "Annuler la réponse",
   "composerSuggestions.loading": "Suggestions…",
   "composerSuggestions.unavailable": "Suggestions indisponibles pour le moment.",
   "composerSuggestions.barLabel": "Suggestions de formulation",

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -66,7 +66,7 @@ export function MessageReliabilityCard({ conversationId, messageId, evaluation, 
     type='button'
     variant='outline'
     size='sm'
-    className='h-7 shrink-0 px-2 text-xs'
+    className='min-h-11 shrink-0 px-3 text-xs md:min-h-7 md:px-2'
     onClick={() => void rerun(conversationId, messageId)}
     disabled={rerunDisabled}
     aria-label={t('reliability.rerunAria')}
@@ -150,6 +150,10 @@ function ScoreIndicator({ score, size = 'small' }: Readonly<{ score: number; siz
   const dashOffset = circumference * (1 - normalizedScore / 100);
   const diameterClassName = size === 'large' ? 'size-11' : 'size-8';
   const textClassName = size === 'large' ? 'text-sm' : 'text-[10px]';
+  const scoreBand = normalizedScore > 70 ? 'positive' : 'caution';
+  const scoreColor = normalizedScore > 70
+    ? `color-mix(in oklch, var(--reliability-positive) ${100 - ((normalizedScore - 71) / 29) * 100}%, var(--reliability-excellent))`
+    : `color-mix(in oklch, var(--reliability-critical) ${100 - (normalizedScore / 70) * 100}%, var(--reliability-warning))`;
 
   return <div
     role='meter'
@@ -157,10 +161,12 @@ function ScoreIndicator({ score, size = 'small' }: Readonly<{ score: number; siz
     aria-valuemin={0}
     aria-valuemax={100}
     aria-valuenow={normalizedScore}
-    className={cn('relative shrink-0 text-primary', diameterClassName)}
+    data-score-band={scoreBand}
+    className={cn('relative shrink-0 text-[var(--reliability-score-color)]', diameterClassName)}
+    style={{ '--reliability-score-color': scoreColor } as CSSProperties}
   >
     <svg viewBox='0 0 36 36' className='size-full -rotate-90' aria-hidden='true'>
-      <circle cx='18' cy='18' r={radius} fill='none' stroke='currentColor' strokeWidth='4' className='text-primary/20' />
+      <circle cx='18' cy='18' r={radius} fill='none' stroke='currentColor' strokeWidth='4' className='opacity-25' />
       <circle cx='18' cy='18' r={radius} fill='none' stroke='currentColor' strokeWidth='4' strokeDasharray={circumference} strokeDashoffset={dashOffset} strokeLinecap='butt' />
     </svg>
     <span className={cn('absolute inset-0 flex items-center justify-center font-semibold tabular-nums', textClassName)}>{normalizedScore}</span>
@@ -403,18 +409,18 @@ function ReliabilityPanel({ action, icon, title, description, score, children }:
   const [open, setOpen] = useState(false);
   return (
     <Collapsible open={open} onOpenChange={setOpen} className={conversationPanelClassName}>
-      <div className='flex min-w-0 items-center gap-3 px-1'>
-        <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
+      <div className='grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-1 md:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto]'>
+        <span className='relative col-start-1 row-start-1 flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
           <span className='absolute inset-1 rounded-full bg-primary/20 ring-1 ring-primary/40' />
           {icon || <ShieldCheck className='size-4 text-primary' />}
         </span>
-        <div className='min-w-0 flex-1'>
+        <div className='col-start-2 row-start-1 min-w-0'>
           <p className='text-sm font-medium text-foreground'>{title}</p>
           {description && <p className='text-xs leading-relaxed text-muted-foreground'>{description}</p>}
         </div>
-        {action}
-        {score}
-        {children ? <CollapsibleTrigger className='inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&[data-state=open]>svg]:rotate-180' aria-label={open ? t('reliability.collapseAria') : t('reliability.expandAria')}>
+        {action ? <div className='col-start-2 row-start-2 justify-self-start md:col-start-3 md:row-start-1'>{action}</div> : null}
+        {score ? <div className='col-start-3 row-start-2 justify-self-end md:col-start-4 md:row-start-1'>{score}</div> : null}
+        {children ? <CollapsibleTrigger className='col-start-3 row-start-1 inline-flex size-11 shrink-0 items-center justify-center justify-self-end rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:col-start-5 md:size-8 [&[data-state=open]>svg]:rotate-180' aria-label={open ? t('reliability.collapseAria') : t('reliability.expandAria')}>
           <ChevronDown className='size-4 transition-transform' aria-hidden='true' />
         </CollapsibleTrigger> : null}
       </div>

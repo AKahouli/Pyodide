@@ -313,7 +313,7 @@ const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components
   },
   a({ children, ...props }) {
     return (
-      <a className='inline-flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors' target='_blank' rel='noopener noreferrer' {...props}>
+      <a className='inline-flex items-center gap-1 rounded-full border border-primary/40 bg-background px-2 py-0.5 text-xs font-semibold text-foreground underline decoration-primary/70 underline-offset-2 transition-colors hover:bg-primary/10' target='_blank' rel='noopener noreferrer' {...props}>
         {children}
       </a>
     );
@@ -763,7 +763,7 @@ const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity,
   const statusIcon = (stepStatus: TaskActivityStep['status'], index: number) => {
     const resolvedStatus = stepStatus ?? (status === 'completed' ? 'completed' : isStreaming && index === (activity?.length ?? 0) - 1 ? 'running' : 'completed');
     if (resolvedStatus === 'failed') return <XCircle className='size-4 shrink-0 text-destructive' />;
-    if (resolvedStatus === 'running') return <Loader2 className='size-4 shrink-0 animate-spin text-primary motion-reduce:animate-none' />;
+    if (resolvedStatus === 'running') return <Loader2 className='size-4 shrink-0 animate-spin text-running motion-reduce:animate-none' />;
     return <CheckCircle2 className='size-4 shrink-0 text-primary' />;
   };
 
@@ -771,7 +771,7 @@ const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity,
     <>
       <Task className='my-2' defaultOpen={isStreaming}>
         <div className='flex items-center gap-1'>
-          <TaskTrigger className='min-w-0 flex-1' title={formatLabel(title)} active={isStreaming && status === 'in_progress'} />
+          <TaskTrigger className='min-w-0 flex-1' title={formatLabel(title)} active={isStreaming && status !== 'completed'} />
           {activityMode && showDiagnostics && <TaskDiagnosticsTrigger aria-label={tCommon('ai.task.diagnostics.open')} title={tCommon('ai.task.diagnostics.open')} onClick={() => setDiagnosticsOpen(true)} />}
         </div>
         <TaskContent>

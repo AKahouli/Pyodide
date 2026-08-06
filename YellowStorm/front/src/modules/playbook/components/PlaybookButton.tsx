@@ -14,7 +14,7 @@ export function PlaybookButton() {
         <Workflow />
         <span className="flex items-center gap-1.5">
           {t('sidebar.playbooks')}
-          <Badge variant="outline" className="px-1 py-0 text-[9px] font-semibold leading-tight border-primary/40 text-primary/70">
+          <Badge variant="outline" className="border-sidebar-border bg-sidebar-accent px-1 py-0 text-[10px] font-semibold leading-tight text-sidebar-accent-foreground">
             BETA
           </Badge>
         </span>

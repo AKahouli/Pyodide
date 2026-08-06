@@ -23,4 +23,19 @@ describe('useTypewriter', () => {
 
     vi.useRealTimers();
   });
+
+  it('shows the completed text immediately when reduced motion is requested', () => {
+    const onComplete = vi.fn();
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+
+    const { result } = renderHook(() => useTypewriter('complete', 30, onComplete));
+
+    expect(result.current).toBe('complete');
+    expect(onComplete).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
 });

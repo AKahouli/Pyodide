@@ -16,6 +16,7 @@ import { useModuleTranslation } from '@/modules/localization';
 export function TeamButton() {
   const navigate = useNavigate();
   const { t } = useModuleTranslation('team');
+  const { t: tCommon } = useModuleTranslation('common');
   const goToTeams = () => navigate('/teams');
 
   return (
@@ -26,7 +27,7 @@ export function TeamButton() {
       </SidebarMenuButton>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <SidebarMenuAction showOnHover>
+          <SidebarMenuAction showOnHover aria-label={tCommon('sidebar.moreActions', { name: t('button.teams') })}>
             <MoreHorizontal />
           </SidebarMenuAction>
         </DropdownMenuTrigger>

@@ -7,9 +7,10 @@ describe('LoadingIndicator', () => {
     const { container } = render(<LoadingIndicator activity='usingTools' />);
     expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
     expect(screen.getByRole('status')).toHaveAttribute('aria-atomic', 'true');
-    const spinner = container.querySelector('.animate-spin');
+    const spinner = container.querySelector('[data-thinking-spinner]');
     expect(spinner).toBeInTheDocument();
-    expect(spinner).toHaveClass('motion-reduce:animate-none');
+    expect(spinner).toHaveClass('animate-spin', 'text-running');
+    expect(spinner).not.toHaveClass('motion-reduce:animate-none');
     expect(container.firstChild).toHaveClass('mx-2', 'md:mx-4', 'w-auto', 'rounded-xl', 'p-2');
   });
 
@@ -85,7 +86,7 @@ describe('LoadingIndicator', () => {
       },
     }] as never} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.detailsAria' }));
+    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.details' }));
     const toolSummary = screen.getByText('1. Search Documents').closest('summary');
     const viewResponse = screen.getByRole('button', { name: 'stream.activity.viewResponse' });
     expect(toolSummary).toContainElement(viewResponse);
@@ -108,7 +109,7 @@ describe('LoadingIndicator', () => {
       data: { title: 'search_documents', status: 'completed', params: '{"query":"contract"}' },
     }] as never} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.detailsAria' }));
+    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.details' }));
     fireEvent.click(screen.getByText('1. Search Documents'));
     expect(screen.queryByRole('button', { name: 'stream.activity.viewResponse' })).not.toBeInTheDocument();
   });
@@ -123,7 +124,7 @@ describe('LoadingIndicator', () => {
       data: { title: 'search_documents', status: 'completed', resultJson: response },
     }] as never} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.detailsAria' }));
+    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.details' }));
     fireEvent.click(screen.getByRole('button', { name: 'messageActions.copyAria' }));
 
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(response));
@@ -136,7 +137,7 @@ describe('LoadingIndicator', () => {
       { id: 'tool-2', type: 'toolInfo', data: { title: 'create_report', status: 'running', startedAt: '2026-07-21T10:14:00.400Z' } },
     ] as never} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.detailsAria' }));
+    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.details' }));
 
     expect(screen.getByText('1. Search Documents')).toBeInTheDocument();
     expect(screen.getByText('2. Create Report')).toBeInTheDocument();
@@ -154,7 +155,7 @@ describe('LoadingIndicator', () => {
       { id: 'tool-manager-call-1', type: 'toolInfo', data: { title: 'delegate_to_researcher', status: 'completed' } },
     ] as never} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.detailsAria' }));
+    fireEvent.click(screen.getByRole('button', { name: 'stream.activity.details' }));
     expect(screen.getByText('1. Perform Document Search')).toBeInTheDocument();
     expect(screen.getByText('2. Perform Document Search')).toBeInTheDocument();
     expect(screen.getByText('3. Delegate To Researcher')).toBeInTheDocument();

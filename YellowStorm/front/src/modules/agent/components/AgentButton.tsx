@@ -16,6 +16,7 @@ import { useModuleTranslation } from "@/modules/localization";
 export function AgentButton() {
   const navigate = useNavigate();
   const { t } = useModuleTranslation('agent');
+  const { t: tCommon } = useModuleTranslation('common');
   const goToHub = () => navigate('/agents');
 
   return (
@@ -26,7 +27,7 @@ export function AgentButton() {
       </SidebarMenuButton>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <SidebarMenuAction showOnHover>
+          <SidebarMenuAction showOnHover aria-label={tCommon('sidebar.moreActions', { name: t('button.agents') })}>
             <MoreHorizontal />
           </SidebarMenuAction>
         </DropdownMenuTrigger>

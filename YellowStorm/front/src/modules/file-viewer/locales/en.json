@@ -86,6 +86,7 @@
   "pdf.highlightFailed.title": "Highlight failed",
   "pdf.highlightFailed.description": "Unable to highlight the referenced text. Try searching manually.",
   "toolbar.pageLabel": "Page",
+  "pdf.pageAria": "PDF page {{page}}",
   "toolbar.print": "Print",
   "toolbar.download": "Download",
   "toolbar.printFailed.title": "Printing failed",

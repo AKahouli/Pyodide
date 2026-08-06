@@ -11,6 +11,7 @@ import { AIMessageContent, type MessageContentPart } from '@/components/ai-eleme
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 import type { ChoiceInteractionMetadata } from '@/modules/conversation/types';
 import type { BundledLanguage } from 'shiki';
+import { useModuleTranslation } from '@/modules/localization';
 
 // Types - Re-export for external use
 export type { MessageContentPart } from '@/components/ai-elements/ai-message-content';
@@ -20,17 +21,17 @@ export type { MessageContentPart } from '@/components/ai-elements/ai-message-con
  * - Today: shows time only (e.g., "14:30")
  * - Older than 1 day: shows date and time (e.g., "Jan 27, 14:30")
  */
-function formatMessageTimestamp(date: Date): string {
+function formatMessageTimestamp(date: Date, locale: string): string {
   const now = new Date();
   const isToday = date.getDate() === now.getDate() && date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
 
-  const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const timeStr = date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
 
   if (isToday) {
     return timeStr;
   }
 
-  const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const dateStr = date.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
 
   return `${dateStr}, ${timeStr}`;
 }
@@ -77,6 +78,7 @@ export type ChatMessageBubbleProps = HTMLAttributes<HTMLDivElement> & {
  * AI messages support structured content with reasoning, queues, plans, etc.
  */
 export const ChatMessageBubble = ({ message, className, showAvatar = true, userAvatar, assistantAvatar, isStreaming = false, showTaskDiagnostics = true, ...props }: ChatMessageBubbleProps) => {
+  const { t: tCommon, language } = useModuleTranslation('common');
   const isUser = message.role === 'user';
   const isStructuredContent = Array.isArray(message.content);
 
@@ -110,7 +112,7 @@ export const ChatMessageBubble = ({ message, className, showAvatar = true, userA
                 {otherParts.length > 0 && (
                   <div className={cn('rounded-2xl text-sm shadow-xs', 'rounded-tl-sm border border-border/70 bg-muted/45 px-4 py-4 text-foreground dark:bg-muted/30')}>
                     <AIMessageContent parts={otherParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} taskDisplay='activity' showTaskDiagnostics={showTaskDiagnostics} />
-                    {message.timestamp && <time className='mt-2 block text-[10px] opacity-50'>{formatMessageTimestamp(message.timestamp)}</time>}
+                    {message.timestamp && <time className='mt-2 block text-xs text-muted-foreground'>{formatMessageTimestamp(message.timestamp, language)}</time>}
                   </div>
                 )}
               </>
@@ -135,8 +137,8 @@ export const ChatMessageBubble = ({ message, className, showAvatar = true, userA
           </div>
         )}
         <div className='flex flex-1 items-end justify-end gap-2 mt-2'>
-          {isUser && message.timestamp && <time className='text-xs block text-[10px] opacity-50 '>{formatMessageTimestamp(message.timestamp)}</time>}
-          {message.isEdited && <span className='text-xs text-muted-foreground text-[12px] opacity-70'>(edited)</span>}
+          {isUser && message.timestamp && <time className='block text-xs text-muted-foreground'>{formatMessageTimestamp(message.timestamp, language)}</time>}
+          {message.isEdited && <span className='text-xs text-muted-foreground text-[12px] opacity-70'>{tCommon('message.edited')}</span>}
         </div>
       </div>
     </div>
@@ -174,20 +176,26 @@ export type ChatConversationEmptyStateProps = HTMLAttributes<HTMLDivElement> & {
 /**
  * ChatConversationEmptyState - Shown when there are no messages
  */
-export const ChatConversationEmptyState = ({ className, title = 'Start a conversation', description = 'Send a message to begin chatting with the AI', icon, children, ...props }: ChatConversationEmptyStateProps) => (
-  <div className={cn('flex size-full flex-col items-center justify-center gap-3 p-8 text-center', className)} {...props}>
-    {children ?? (
-      <>
-        {icon ?? (
-          <div className='rounded-full bg-gradient-to-br from-rose-500/20 to-red-500/20 p-4'>
-            <Bot className='h-8 w-8 text-rose-500' />
+export const ChatConversationEmptyState = ({ className, title, description, icon, children, ...props }: ChatConversationEmptyStateProps) => {
+  const { t: tCommon } = useModuleTranslation('common');
+  const resolvedTitle = title ?? tCommon('message.empty.title');
+  const resolvedDescription = description ?? tCommon('message.empty.description');
+
+  return (
+    <div className={cn('flex size-full flex-col items-center justify-center gap-3 p-8 text-center', className)} {...props}>
+      {children ?? (
+        <>
+          {icon ?? (
+            <div className='rounded-full bg-gradient-to-br from-rose-500/20 to-red-500/20 p-4'>
+              <Bot className='h-8 w-8 text-rose-500' />
+            </div>
+          )}
+          <div className='space-y-1'>
+            <h3 className='font-medium text-base'>{resolvedTitle}</h3>
+            {resolvedDescription && <p className='text-muted-foreground text-sm max-w-xs'>{resolvedDescription}</p>}
           </div>
-        )}
-        <div className='space-y-1'>
-          <h3 className='font-medium text-base'>{title}</h3>
-          {description && <p className='text-muted-foreground text-sm max-w-xs'>{description}</p>}
-        </div>
-      </>
-    )}
-  </div>
-);
+        </>
+      )}
+    </div>
+  );
+};

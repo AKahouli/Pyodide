@@ -177,9 +177,9 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
           <Button
             variant='ghost'
             size='icon'
-            className='h-8 w-8 shrink-0 rounded-full hover:bg-muted-foreground/10'
+            className='size-11 shrink-0 rounded-full md:size-8 hover:bg-muted-foreground/10'
             onClick={clearReplyingTo}
-            aria-label='Cancel reply'
+            aria-label={t('input.cancelReply')}
           >
             <X className='h-4 w-4' />
           </Button>
@@ -211,6 +211,8 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
             onClick={() => setDeepSearchEnabled(!deepSearchEnabled)}
             className={cn(deepSearchEnabled && 'bg-primary/10 text-primary')}
             title={t('input.deepSearch')}
+            aria-label={t('input.deepSearch')}
+            aria-pressed={deepSearchEnabled}
           >
             <Search className="h-4 w-4" />
           </PromptInputButton>

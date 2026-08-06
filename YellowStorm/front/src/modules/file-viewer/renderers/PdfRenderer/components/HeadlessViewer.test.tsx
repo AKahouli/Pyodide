@@ -1,5 +1,5 @@
-import { fireEvent, render } from '@testing-library/react';
-import type { ReactNode } from 'react';
+import { fireEvent, render, screen } from '@testing-library/react';
+import type { ImgHTMLAttributes, ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { HeadlessViewer } from './HeadlessViewer';
 
@@ -28,7 +28,7 @@ vi.mock('@embedpdf/plugin-document-manager/react', () => ({
 
 vi.mock('@embedpdf/plugin-viewport/react', () => ({ Viewport: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock('@embedpdf/plugin-scroll/react', () => ({ Scroller: ({ renderPage }: { renderPage: (args: { pageIndex: number }) => ReactNode }) => <>{renderPage({ pageIndex: 0 })}</> }));
-vi.mock('@embedpdf/plugin-render/react', () => ({ RenderLayer: () => <div>render-layer</div> }));
+vi.mock('@embedpdf/plugin-render/react', () => ({ RenderLayer: ({ documentId: _documentId, pageIndex: _pageIndex, ...props }: ImgHTMLAttributes<HTMLImageElement> & { documentId: string; pageIndex: number }) => <img {...props} /> }));
 vi.mock('@embedpdf/plugin-interaction-manager/react', () => ({
   GlobalPointerProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
   PagePointerProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -79,6 +79,7 @@ describe('HeadlessViewer', () => {
     expect(getSelectedTextWaitMock).toHaveBeenCalled();
     expect(writeText).toHaveBeenCalledWith('hello\nworld');
     expect(registryRef.current.has('tab-1')).toBe(true);
+    expect(screen.getByRole('img', { name: 'pdf.pageAria' })).toBeInTheDocument();
 
     unmount();
     expect(registryRef.current.has('tab-1')).toBe(false);

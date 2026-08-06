@@ -86,6 +86,7 @@
   "pdf.highlightFailed.title": "Impossible de surligner",
   "pdf.highlightFailed.description": "Impossible de surligner le texte. Essayez une recherche manuelle.",
   "toolbar.pageLabel": "Page",
+  "pdf.pageAria": "Page PDF {{page}}",
   "toolbar.print": "Imprimer",
   "toolbar.download": "Télécharger",
   "toolbar.printFailed.title": "Échec de l'impression",

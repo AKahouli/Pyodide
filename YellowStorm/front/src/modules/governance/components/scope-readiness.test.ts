@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GovernanceReadinessCheck, GovernanceScopeOverview } from '@/modules/governance';
-import { findNextReadinessCheck, getTabReadinessState, governanceScopeTabs, sortReadinessChecks } from './scope-readiness';
+import { findNextReadinessCheck, getLatestDryRunRevisionNumber, getTabReadinessState, governanceScopeTabs, isCurrentDraftDryRunPassed, isScopeKnowledgeReady, sortReadinessChecks } from './scope-readiness';
 
 function readinessCheck(key: string, status: GovernanceReadinessCheck['status'] = 'passed', targetType: GovernanceReadinessCheck['targetType'] = 'rule'): GovernanceReadinessCheck {
   return { key, label: key, status, severity: status === 'passed' ? 'info' : 'blocking', targetType };
@@ -14,9 +14,8 @@ function overviewWith(checks: GovernanceReadinessCheck[], published = false): Go
 }
 
 describe('scope readiness sequence', () => {
-  it('places Guardrails directly after Agents in the lifecycle', () => {
-    const agentsIndex = governanceScopeTabs.indexOf('agents');
-    expect(governanceScopeTabs[agentsIndex + 1]).toBe('guardrails');
+  it('keeps the canonical lifecycle order with Dry-run before Review', () => {
+    expect(governanceScopeTabs.filter((tab) => tab !== 'audience')).toEqual(['overview', 'knowledge', 'agents', 'ownership', 'guardrails', 'testPublish', 'review', 'monitor']);
   });
 
   it('sorts checklist items by their lifecycle tab', () => {
@@ -27,7 +26,7 @@ describe('scope readiness sequence', () => {
       readinessCheck('scope_active'),
     ]);
 
-    expect(checks.map((check) => check.key)).toEqual(['scope_active', 'agents_mapped', 'guardrails_reviewed', 'knowledge_mapped']);
+    expect(checks.map((check) => check.key)).toEqual(['scope_active', 'knowledge_mapped', 'agents_mapped', 'guardrails_reviewed']);
   });
 
   it('chooses the first incomplete step even when a later step is a blocker', () => {
@@ -47,6 +46,27 @@ describe('scope readiness sequence', () => {
 
   it('marks Knowledge ready independently from draft preparation', () => {
     expect(getTabReadinessState('knowledge', overviewWith([readinessCheck('knowledge_mapped', 'passed', 'document')]))).toBe('ready');
+  });
+
+  it('uses the readiness check rather than a connected workspace to determine usable knowledge', () => {
+    const overview = overviewWith([readinessCheck('knowledge_mapped', 'failed', 'workspace')]);
+    overview.knowledge = { sharedWorkspaces: [{ workspaceId: 'workspace-1' }], localWorkspaces: [], documents: [], reviewBlockers: [] } as unknown as GovernanceScopeOverview['knowledge'];
+
+    expect(isScopeKnowledgeReady(overview)).toBe(false);
+  });
+
+  it('passes the draft dry-run gate only for a matching passed revision', () => {
+    const overview = overviewWith([]);
+    overview.draftRevision = { id: 'revision-2', revisionNumber: 2 } as GovernanceScopeOverview['draftRevision'];
+    overview.publishedRevision = { id: 'revision-1', revisionNumber: 1 } as GovernanceScopeOverview['publishedRevision'];
+    overview.latestDryRun = { revisionId: 'revision-1', status: 'passed' } as GovernanceScopeOverview['latestDryRun'];
+
+    expect(isCurrentDraftDryRunPassed(overview)).toBe(false);
+    expect(getLatestDryRunRevisionNumber(overview)).toBe(1);
+
+    overview.latestDryRun = { revisionId: 'revision-2', status: 'passed' } as GovernanceScopeOverview['latestDryRun'];
+    expect(isCurrentDraftDryRunPassed(overview)).toBe(true);
+    expect(getLatestDryRunRevisionNumber(overview)).toBe(2);
   });
 
   it('shows Monitor as ready only after a revision is published', () => {
