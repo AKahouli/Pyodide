@@ -51,11 +51,10 @@ jobs:
           cache-dependency-path: YellowStorm/front/package-lock.json
       - run: npm ci
       - name: Run frontend tests with coverage
-        # Default forks pool is used (vmForks has known incompatibilities with
-        # jsdom + certain global mocks, causing "Worker exited unexpectedly" which
-        # prevents lcov.info from being written).
-        # --testTimeout caps hanging tests so coverage is always flushed to disk.
-        run: npm run test -- --coverage --reporter=dot --testTimeout=30000 || true
+        # coverage.reportOnFailure=true is required because vitest v2 defaults
+        # to NOT writing the coverage report when any test fails. Without this,
+        # lcov.info is never created and the artifact upload silently skips.
+        run: npm run test -- --coverage --coverage.reportOnFailure --reporter=dot --testTimeout=30000 || true
       - name: Upload frontend coverage
         if: always()
         uses: actions/upload-artifact@v4
