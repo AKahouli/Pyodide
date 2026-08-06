@@ -1,5 +1,5 @@
-import type { AgentEvent, FilesTreeNode, AppBuildProgress } from '../types';
-import type { SessionSlice } from '../store';
+import type { AgentEvent, AppBuildProgress } from '../types';
+import type { ApplicationComponentState, SessionSlice } from '../store';
 
 export function emptySlice(): SessionSlice {
   return {
@@ -10,6 +10,20 @@ export function emptySlice(): SessionSlice {
     title: null,
     streaming: true,
     streamError: null,
+    rightPanelMode: 'closed',
+    applicationComponent: null,
+    appBuildProgress: null,
+    filesSheetOpen: false,
+    systemWorkspaceId: null,
+    workspaceIds: [],
+    deployStatus: 'idle',
+    deployedUrl: null,
+    lastDeployedAt: null,
+    appViewMode: 'nodepod',
+    selectedToolCallId: null,
+    selectedConnectorRepo: null,
+    selectedSkillIds: [],
+    selectedConnectorIds: [],
   };
 }
 
@@ -71,6 +85,36 @@ export function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSl
     }
     case 'wait':
       return { ...base, streaming: false, liveToolCallId: null };
+    case 'app_build_progress': {
+      const progress: AppBuildProgress = {
+        phase: event.phase,
+        message: event.message,
+        revision: event.event_id,
+      };
+      return {
+        ...base,
+        events: [...slice.events, event],
+        appBuildProgress: progress,
+        rightPanelMode: 'app',
+      };
+    }
+    case 'application_component': {
+      const applicationComponent: ApplicationComponentState = {
+        url: event.url,
+        title: event.title ?? '',
+        cephPath: event.ceph_path,
+        filesTree: event.files_tree ?? null,
+        fileCount: event.file_count,
+        revision: event.event_id,
+      };
+      return {
+        ...base,
+        events: [...slice.events, event],
+        applicationComponent,
+        appBuildProgress: null,
+        rightPanelMode: 'app',
+      };
+    }
     case 'message': {
       const liveAssistantIds =
         event.role === 'assistant'
@@ -98,19 +142,10 @@ export function deriveTitle(events: AgentEvent[]): string | undefined {
   return last?.type === 'title' ? last.title : undefined;
 }
 
-interface ApplicationComponent {
-  url: string;
-  title: string;
-  cephPath?: string;
-  filesTree?: FilesTreeNode | null;
-  fileCount?: number;
-  revision: string;
-}
-
 export function deriveApplicationComponent(
   events: AgentEvent[],
-  previous?: ApplicationComponent | null,
-): ApplicationComponent | null {
+  previous?: ApplicationComponentState | null,
+): ApplicationComponentState | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
     if (ev.type === 'application_component') {

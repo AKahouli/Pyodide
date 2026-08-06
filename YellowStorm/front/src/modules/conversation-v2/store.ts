@@ -18,6 +18,23 @@ import {
   findIndexFrom,
 } from './utils/session-reducer';
 
+export interface ApplicationComponentState {
+  url: string;
+  title: string;
+  cephPath?: string;
+  filesTree?: FilesTreeNode | null;
+  fileCount?: number;
+  revision: string;
+}
+
+export interface SelectedConnectorRepoState {
+  connectorId: string;
+  connectorName: string;
+  repoId: string;
+  repoName: string;
+  repoUrl?: string;
+}
+
 interface State {
   sessionId: string | null;
   title: string | null;
@@ -27,14 +44,7 @@ interface State {
   rightPanelMode: 'closed' | 'tool' | 'app';
   /** Latest agent-pushed application component for the current session.
    *  Nodepod boots from cephPath + filesTree; `url` is retained for deploy links. */
-  applicationComponent: {
-    url: string;
-    title: string;
-    cephPath?: string;
-    filesTree?: FilesTreeNode | null;
-    fileCount?: number;
-    revision: string;
-  } | null;
+  applicationComponent: ApplicationComponentState | null;
   /** Latest agent-reported build phase before sources / preview are ready. */
   appBuildProgress: AppBuildProgress | null;
   /** Files-in-this-conversation sheet open state. Independent of the right
@@ -72,13 +82,7 @@ interface State {
   /** Highest sequence number seen from live SSE events. Used to discard stale/duplicate events. */
   lastSequence: number;
   /** Selected connector repository for the current session. */
-  selectedConnectorRepo: {
-    connectorId: string;
-    connectorName: string;
-    repoId: string;
-    repoName: string;
-    repoUrl?: string;
-  } | null;
+  selectedConnectorRepo: SelectedConnectorRepoState | null;
   /** Skill IDs selected for the conversation; sent with every message. */
   selectedSkillIds: string[];
   /** Connector IDs selected for the conversation; sent with every message. */
@@ -106,6 +110,20 @@ export interface SessionSlice {
   title: string | null;
   streaming: boolean;
   streamError: string | null;
+  rightPanelMode: State['rightPanelMode'];
+  applicationComponent: State['applicationComponent'];
+  appBuildProgress: State['appBuildProgress'];
+  filesSheetOpen: boolean;
+  systemWorkspaceId: string | null;
+  workspaceIds: string[];
+  deployStatus: DeployStatus;
+  deployedUrl: string | null;
+  lastDeployedAt: string | null;
+  appViewMode: State['appViewMode'];
+  selectedToolCallId: string | null;
+  selectedConnectorRepo: State['selectedConnectorRepo'];
+  selectedSkillIds: string[];
+  selectedConnectorIds: string[];
 }
 
 interface Actions {
@@ -210,24 +228,35 @@ const initial: State = {
       selectedConnectorRepo: null,
       selectedSkillIds: [],
       selectedConnectorIds: [],
-      streamingStateCache: new Map<string, SessionSlice>(),
+  streamingStateCache: new Map<string, SessionSlice>(),
 };
 
 const sessionReconciliations = new Map<string, Promise<void>>();
 
-function sliceFromState(s: State): SessionSlice {
-  return {
-    events: s.events,
-    lastSequence: s.lastSequence,
-    liveToolCallId: s.liveToolCallId,
-    liveAssistantIds: s.liveAssistantIds,
-    title: s.title,
-    streaming: s.streaming,
-    streamError: s.streamError,
-  };
-}
-
-function freshViewState(): Partial<State> {
+function createSessionViewDefaults(): Pick<
+  State,
+  | 'events'
+  | 'title'
+  | 'streaming'
+  | 'streamError'
+  | 'lastSequence'
+  | 'liveToolCallId'
+  | 'liveAssistantIds'
+  | 'selectedToolCallId'
+  | 'rightPanelMode'
+  | 'applicationComponent'
+  | 'appBuildProgress'
+  | 'filesSheetOpen'
+  | 'systemWorkspaceId'
+  | 'workspaceIds'
+  | 'deployStatus'
+  | 'deployedUrl'
+  | 'lastDeployedAt'
+  | 'appViewMode'
+  | 'selectedConnectorRepo'
+  | 'selectedSkillIds'
+  | 'selectedConnectorIds'
+> {
   return {
     events: [],
     title: null,
@@ -247,9 +276,43 @@ function freshViewState(): Partial<State> {
     deployedUrl: null,
     lastDeployedAt: null,
     appViewMode: 'nodepod',
+    selectedConnectorRepo: null,
+    selectedSkillIds: [],
+    selectedConnectorIds: [],
+  };
+}
+
+function sliceFromState(s: State): SessionSlice {
+  return {
+    events: s.events,
+    lastSequence: s.lastSequence,
+    liveToolCallId: s.liveToolCallId,
+    liveAssistantIds: s.liveAssistantIds,
+    title: s.title,
+    streaming: s.streaming,
+    streamError: s.streamError,
+    rightPanelMode: s.rightPanelMode,
+    applicationComponent: s.applicationComponent,
+    appBuildProgress: s.appBuildProgress,
+    filesSheetOpen: s.filesSheetOpen,
+    systemWorkspaceId: s.systemWorkspaceId,
+    workspaceIds: s.workspaceIds,
+    deployStatus: s.deployStatus,
+    deployedUrl: s.deployedUrl,
+    lastDeployedAt: s.lastDeployedAt,
+    appViewMode: s.appViewMode,
+    selectedToolCallId: s.selectedToolCallId,
+    selectedConnectorRepo: s.selectedConnectorRepo,
+    selectedSkillIds: s.selectedSkillIds,
+    selectedConnectorIds: s.selectedConnectorIds,
+  };
+}
+
+function freshViewState(): Partial<State> {
+  return {
+    ...createSessionViewDefaults(),
     typewriterSessionId: null,
     typewriterName: null,
-    selectedConnectorRepo: null,
   };
 }
 
@@ -269,7 +332,7 @@ export const useConversationV2Store = create<State & Actions>()(
         let cache = s.streamingStateCache;
         // Stash the outgoing session's live state if it is still streaming, so
         // returning to it is instant and nothing streamed off-screen is lost.
-        if (s.sessionId && s.sessionId !== id && s.streaming) {
+        if (s.sessionId && s.sessionId !== id) {
           cache = new Map(cache);
           cache.set(s.sessionId, sliceFromState(s));
         }
@@ -277,11 +340,6 @@ export const useConversationV2Store = create<State & Actions>()(
         if (cached) {
           const newCache = new Map(cache);
           newCache.delete(id);
-          const applicationComponent = deriveApplicationComponent(
-            cached.events,
-            s.applicationComponent,
-          );
-          const appBuildProgress = deriveAppBuildProgress(cached.events, s.appBuildProgress);
           set(
             {
               ...freshViewState(),
@@ -293,11 +351,20 @@ export const useConversationV2Store = create<State & Actions>()(
               title: cached.title,
               streaming: cached.streaming,
               streamError: cached.streamError,
-              applicationComponent,
-              appBuildProgress,
-              ...(applicationComponent || appBuildProgress
-                ? { rightPanelMode: 'app' as const }
-                : {}),
+              rightPanelMode: cached.rightPanelMode,
+              applicationComponent: cached.applicationComponent,
+              appBuildProgress: cached.appBuildProgress,
+              filesSheetOpen: cached.filesSheetOpen,
+              systemWorkspaceId: cached.systemWorkspaceId,
+              workspaceIds: cached.workspaceIds,
+              deployStatus: cached.deployStatus,
+              deployedUrl: cached.deployedUrl,
+              lastDeployedAt: cached.lastDeployedAt,
+              appViewMode: cached.appViewMode,
+              selectedToolCallId: cached.selectedToolCallId,
+              selectedConnectorRepo: cached.selectedConnectorRepo,
+              selectedSkillIds: cached.selectedSkillIds,
+              selectedConnectorIds: cached.selectedConnectorIds,
               streamingStateCache: newCache,
             },
             false,
@@ -447,7 +514,11 @@ export const useConversationV2Store = create<State & Actions>()(
         return reconciliation;
       },
       openToolPanel: (toolCallId) =>
-        set({ rightPanelMode: 'tool', selectedToolCallId: toolCallId }, false, 'openToolPanel'),
+        set(
+          { rightPanelMode: 'tool', selectedToolCallId: toolCallId, filesSheetOpen: false },
+          false,
+          'openToolPanel',
+        ),
       setRightPanelView: (view) =>
         set(
           { rightPanelMode: view === 'preview' ? 'app' : 'tool' },
@@ -563,7 +634,14 @@ export const useConversationV2Store = create<State & Actions>()(
         await useConversationV2PointersStore.getState().remove(id);
       },
       setFilesSheetOpen: (open) =>
-        set({ filesSheetOpen: open }, false, `setFilesSheetOpen/${open}`),
+        set(
+          {
+            filesSheetOpen: open,
+            ...(open ? { rightPanelMode: get().rightPanelMode } : {}),
+          },
+          false,
+          `setFilesSheetOpen/${open}`,
+        ),
       replayEvents: (events) => {
         const applicationComponent = deriveApplicationComponent(
           events,

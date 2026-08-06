@@ -6,6 +6,7 @@ describe('useConversationV2Store', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     useConversationV2Store.getState().reset();
+    useConversationV2Store.setState({ streamingStateCache: new Map() });
   });
 
   it('handleEvent("message") appends a bubble', () => {
@@ -82,6 +83,94 @@ describe('useConversationV2Store', () => {
     await vi.waitFor(() => expect(useConversationV2Store.getState().streaming).toBe(false));
 
     expect(conversationV2Api.listEvents).toHaveBeenCalledWith('background', 1, 200);
+  });
+
+  it('preserves Nodepod and deploy state when switching away from a non-streaming session', () => {
+    useConversationV2Store.getState().setSessionId('session-a');
+    useConversationV2Store.getState().handleEvent({
+      type: 'application_component',
+      event_id: 'app-a',
+      timestamp: 1,
+      title: 'App A',
+      url: 'https://preview.example/app-a',
+      ceph_path: 'yellowstorm/user/app-a/projectSRC',
+      file_count: 3,
+    });
+    useConversationV2Store.getState().setDeployState({
+      deployStatus: 'deployed',
+      deployedUrl: 'https://apps.example/app-a',
+      lastDeployedAt: '2026-08-06T10:00:00.000Z',
+    });
+    useConversationV2Store.getState().setAppViewMode('deployed');
+    useConversationV2Store.getState().setSystemWorkspaceId('ws-system-a');
+    useConversationV2Store.getState().setWorkspaceIds(['ws-a-1', 'ws-a-2']);
+    useConversationV2Store.getState().setSelectedSkillIds(['skill-a']);
+    useConversationV2Store.getState().setSelectedConnectorIds(['connector-a']);
+    useConversationV2Store.getState().setFilesSheetOpen(true);
+
+    expect(useConversationV2Store.getState().switchToSession('session-b')).toBe(false);
+    expect(useConversationV2Store.getState().switchToSession('session-a')).toBe(true);
+
+    const state = useConversationV2Store.getState();
+    expect(state.applicationComponent).toEqual({
+      title: 'App A',
+      url: 'https://preview.example/app-a',
+      cephPath: 'yellowstorm/user/app-a/projectSRC',
+      filesTree: null,
+      fileCount: 3,
+      revision: 'app-a',
+    });
+    expect(state.deployStatus).toBe('deployed');
+    expect(state.deployedUrl).toBe('https://apps.example/app-a');
+    expect(state.appViewMode).toBe('deployed');
+    expect(state.systemWorkspaceId).toBe('ws-system-a');
+    expect(state.workspaceIds).toEqual(['ws-a-1', 'ws-a-2']);
+    expect(state.selectedSkillIds).toEqual(['skill-a']);
+    expect(state.selectedConnectorIds).toEqual(['connector-a']);
+    expect(state.filesSheetOpen).toBe(true);
+  });
+
+  it('hydrates background Nodepod progress and preview state from stream cache', () => {
+    useConversationV2Store.getState().setSessionId('foreground');
+
+    useConversationV2Store.getState().handleStreamEvent('app_build_progress', {
+      sessionId: 'background',
+      event_id: 'progress-1',
+      timestamp: 1,
+      sequence: 1,
+      phase: 'creating_files',
+      message: 'Creating files',
+    });
+    useConversationV2Store.getState().handleStreamEvent('application_component', {
+      sessionId: 'background',
+      event_id: 'app-1',
+      timestamp: 2,
+      sequence: 2,
+      title: 'Background app',
+      url: 'https://preview.example/background',
+      ceph_path: 'yellowstorm/user/background/projectSRC',
+      file_count: 2,
+    });
+    useConversationV2Store.getState().handleStreamEvent('done', {
+      sessionId: 'background',
+      event_id: 'done-1',
+      timestamp: 3,
+      sequence: 3,
+    });
+
+    expect(useConversationV2Store.getState().switchToSession('background')).toBe(true);
+
+    const state = useConversationV2Store.getState();
+    expect(state.rightPanelMode).toBe('app');
+    expect(state.appBuildProgress).toBeNull();
+    expect(state.applicationComponent).toEqual({
+      title: 'Background app',
+      url: 'https://preview.example/background',
+      cephPath: 'yellowstorm/user/background/projectSRC',
+      filesTree: null,
+      fileCount: 2,
+      revision: 'app-1',
+    });
   });
 
   it('handleEvent("error") sets streamError and clears streaming', () => {
