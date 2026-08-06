@@ -51,10 +51,11 @@ jobs:
           cache-dependency-path: YellowStorm/front/package-lock.json
       - run: npm ci
       - name: Run frontend tests with coverage
-        # --pool=vmForks avoids the heavy per-file jsdom environment creation
-        # that was causing 228s of environment setup overhead.
-        # --reporter=dot keeps output concise; failures still show details.
-        run: npm run test -- --coverage --reporter=dot --pool=vmForks || true
+        # Default forks pool is used (vmForks has known incompatibilities with
+        # jsdom + certain global mocks, causing "Worker exited unexpectedly" which
+        # prevents lcov.info from being written).
+        # --testTimeout caps hanging tests so coverage is always flushed to disk.
+        run: npm run test -- --coverage --reporter=dot --testTimeout=30000 || true
       - name: Upload frontend coverage
         if: always()
         uses: actions/upload-artifact@v4
