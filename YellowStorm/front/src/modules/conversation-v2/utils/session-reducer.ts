@@ -95,9 +95,6 @@ export function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSl
         ...base,
         events: [...slice.events, event],
         appBuildProgress: progress,
-        // New turn progress supersedes the previous Nodepod / deployed preview.
-        applicationComponent: null,
-        appViewMode: 'nodepod',
         rightPanelMode: 'app',
       };
     }
@@ -115,7 +112,6 @@ export function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSl
         events: [...slice.events, event],
         applicationComponent,
         appBuildProgress: null,
-        appViewMode: 'nodepod',
         rightPanelMode: 'app',
       };
     }
