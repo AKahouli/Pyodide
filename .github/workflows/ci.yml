@@ -78,23 +78,19 @@ jobs:
           cache: 'npm'
           cache-dependency-path: YellowStorm/back/package-lock.json
       - run: npm ci
-        # NOTE: 'npm run build' is intentionally skipped here — ts-jest handles
-        # TypeScript compilation at test time; the build step is only needed for deployment.
-      - name: Run backend tests
+        # NOTE: 'npm run build' is intentionally skipped — ts-jest handles
+        # TypeScript compilation at test time; the build step is only for deployment.
+      - name: Run backend tests with coverage
         env:
-          # 2048MB per process: GitHub runner has 7GB. With 2 workers the main
-          # process + 2 workers each inherit NODE_OPTIONS → 3x this value must
-          # fit in RAM. 3 x 2048 = 6144MB < 7168MB available.
+          # 2048MB per process. GitHub runner has 7GB RAM.
+          # Main process + 2 workers = 3 × 2048 = 6144MB < 7168MB available.
           NODE_OPTIONS: --max-old-space-size=2048
-        # First pass: run full suite without coverage to surface failures.
-        run: npm test -- --ci --forceExit --bail=0 --maxWorkers=2 --workerIdleMemoryLimit=512MB || true
-      - name: Collect backend coverage
-        env:
-          NODE_OPTIONS: --max-old-space-size=2048
-        # Second coverage pass excludes the spec whose dangling gRPC timer crashes
-        # the process before Jest can write lcov.info.
+        # Single pass: runs all specs except the one whose dangling gRPC timer
+        # crashes the Node process before Jest can flush lcov.info to disk.
+        # --forceExit ensures the process terminates after tests complete.
+        # || true so the upload step always runs even if some tests fail.
         run: |
-          npm test -- --ci --forceExit --bail=0 --maxWorkers=2 --workerIdleMemoryLimit=512MB \
+          npm test -- --ci --forceExit --bail=0 --maxWorkers=2 \
             --coverage --coverageProvider=v8 \
             --testPathIgnorePatterns="playbook-execution.service.spec.ts" \
             || true
