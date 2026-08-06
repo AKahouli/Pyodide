@@ -50,14 +50,11 @@ jobs:
           cache: 'npm'
           cache-dependency-path: YellowStorm/front/package-lock.json
       - run: npm ci
-      - name: Run frontend tests
-        # Run tests first; ignore exit code so failures don't prevent coverage.
-        run: npm run test || true
-      - name: Collect frontend coverage
-        # Second pass: generate coverage without failing the step.
-        # Vitest skips writing reports when workers crash, so a clean
-        # second pass ensures the lcov file is always written.
-        run: npm run test -- --coverage --reporter=dot || true
+      - name: Run frontend tests with coverage
+        # --pool=vmForks avoids the heavy per-file jsdom environment creation
+        # that was causing 228s of environment setup overhead.
+        # --reporter=dot keeps output concise; failures still show details.
+        run: npm run test -- --coverage --reporter=dot --pool=vmForks || true
       - name: Upload frontend coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -81,20 +78,21 @@ jobs:
           cache: 'npm'
           cache-dependency-path: YellowStorm/back/package-lock.json
       - run: npm ci
-      - run: npm run build
+        # NOTE: 'npm run build' is intentionally skipped here — ts-jest handles
+        # TypeScript compilation at test time; the build step is only needed for deployment.
       - name: Run backend tests
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-        # Run tests first without coverage to catch failures, exit code ignored
-        # so the coverage pass below always runs.
-        run: npm test -- --ci --forceExit --bail=0 || true
+        # First pass: run full suite without coverage to surface failures.
+        # --maxWorkers=2 uses both CPUs on the GitHub runner (default is 1).
+        run: npm test -- --ci --forceExit --bail=0 --maxWorkers=2 || true
       - name: Collect backend coverage
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-        # Separate coverage pass. Excludes the spec file whose dangling gRPC timer
-        # crashes the process before Jest can write lcov.info.
+        # Second coverage pass excludes the spec whose dangling gRPC timer crashes
+        # the process before Jest can write lcov.info.
         run: |
-          npm test -- --ci --forceExit --bail=0 \
+          npm test -- --ci --forceExit --bail=0 --maxWorkers=2 \
             --coverage --coverageProvider=v8 \
             --testPathIgnorePatterns="playbook-execution.service.spec.ts" \
             || true
