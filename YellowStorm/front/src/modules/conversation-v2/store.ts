@@ -643,11 +643,15 @@ export const useConversationV2Store = create<State & Actions>()(
           `setFilesSheetOpen/${open}`,
         ),
       replayEvents: (events) => {
-        const applicationComponent = deriveApplicationComponent(
+        const appBuildProgress = deriveAppBuildProgress(
           events,
-          get().applicationComponent,
+          get().appBuildProgress,
         );
-        const appBuildProgress = deriveAppBuildProgress(events, get().appBuildProgress);
+        // Prefer in-progress build over a stale previous application_component
+        // when the latest turn is still emitting app_build_progress.
+        const applicationComponent = appBuildProgress
+          ? null
+          : deriveApplicationComponent(events, get().applicationComponent);
         set(
           {
             events: dedupeReplayEvents(events),
@@ -655,9 +659,14 @@ export const useConversationV2Store = create<State & Actions>()(
             liveToolCallId: null,
             liveAssistantIds: new Set<string>(),
             applicationComponent,
-            appBuildProgress: applicationComponent ? null : appBuildProgress,
+            appBuildProgress,
             ...(applicationComponent || appBuildProgress
-              ? { rightPanelMode: 'app' as const }
+              ? {
+                  rightPanelMode: 'app' as const,
+                  // Rebuild / in-progress turns always show Nodepod (or the
+                  // progress tracker), never the stale deployed iframe.
+                  appViewMode: 'nodepod' as const,
+                }
               : {}),
             lastSequence: events.reduce(
               (max, e) =>
@@ -823,9 +832,14 @@ export const useConversationV2Store = create<State & Actions>()(
                   revision: event.event_id,
                 };
                 console.log('[Nodepod] [sse:app_build_progress]', progress);
+                // New bot turn (create or modify): hide previous Nodepod /
+                // deployed preview and show the build-progress tracker until
+                // a fresh application_component arrives.
                 return withSeq({
                   events: [...state.events, event],
                   appBuildProgress: progress,
+                  applicationComponent: null,
+                  appViewMode: 'nodepod',
                   rightPanelMode: 'app',
                 });
               }
@@ -850,6 +864,9 @@ export const useConversationV2Store = create<State & Actions>()(
                     revision: event.event_id,
                   },
                   appBuildProgress: null,
+                  // Always land on Nodepod after a rebuild — even if the user
+                  // was previously watching the deployed URL.
+                  appViewMode: 'nodepod',
                   rightPanelMode: 'app',
                 });
               case 'message': {

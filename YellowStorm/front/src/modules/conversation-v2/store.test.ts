@@ -339,6 +339,86 @@ describe('useConversationV2Store', () => {
     expect(useConversationV2Store.getState().appBuildProgress).toBeNull();
   });
 
+  it('app_build_progress on a modification turn clears the previous application preview', () => {
+    const { handleEvent } = useConversationV2Store.getState();
+    handleEvent({
+      type: 'application_component',
+      event_id: 'app-1',
+      timestamp: 1,
+      title: 'Calculator',
+      url: 'http://localhost:5173',
+      ceph_path: 'yellowstorm/user/app/projectSRC',
+      file_count: 2,
+    });
+    expect(useConversationV2Store.getState().applicationComponent?.revision).toBe('app-1');
+
+    handleEvent({
+      type: 'app_build_progress',
+      event_id: 'p2',
+      timestamp: 2,
+      phase: 'generation_started',
+      message: 'App generation started',
+    });
+    expect(useConversationV2Store.getState().applicationComponent).toBeNull();
+    expect(useConversationV2Store.getState().appBuildProgress).toEqual({
+      phase: 'generation_started',
+      message: 'App generation started',
+      revision: 'p2',
+    });
+    expect(useConversationV2Store.getState().rightPanelMode).toBe('app');
+    expect(useConversationV2Store.getState().appViewMode).toBe('nodepod');
+  });
+
+  it('app_build_progress while viewing deployed switches to tracker then Nodepod on ready', () => {
+    const { handleEvent, setDeployState, setAppViewMode } = useConversationV2Store.getState();
+    handleEvent({
+      type: 'application_component',
+      event_id: 'app-1',
+      timestamp: 1,
+      title: 'Calculator',
+      url: 'http://localhost:5173',
+      ceph_path: 'yellowstorm/user/app/projectSRC',
+      file_count: 2,
+    });
+    setDeployState({
+      deployStatus: 'deployed',
+      deployedUrl: 'https://apps.example/calc',
+      lastDeployedAt: '2026-08-06T10:00:00.000Z',
+    });
+    setAppViewMode('deployed');
+    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
+
+    handleEvent({
+      type: 'app_build_progress',
+      event_id: 'p-mod',
+      timestamp: 2,
+      phase: 'creating_files',
+      message: 'Creating project files',
+    });
+    let state = useConversationV2Store.getState();
+    expect(state.appViewMode).toBe('nodepod');
+    expect(state.applicationComponent).toBeNull();
+    expect(state.appBuildProgress?.phase).toBe('creating_files');
+    // Deployed URL is kept for DeployControls, but the panel shows the tracker.
+    expect(state.deployedUrl).toBe('https://apps.example/calc');
+    expect(state.rightPanelMode).toBe('app');
+
+    handleEvent({
+      type: 'application_component',
+      event_id: 'app-2',
+      timestamp: 3,
+      title: 'Calculator v2',
+      url: 'http://localhost:5173',
+      ceph_path: 'yellowstorm/user/app/projectSRC',
+      file_count: 3,
+    });
+    state = useConversationV2Store.getState();
+    expect(state.appBuildProgress).toBeNull();
+    expect(state.applicationComponent?.revision).toBe('app-2');
+    expect(state.appViewMode).toBe('nodepod');
+    expect(state.deployedUrl).toBe('https://apps.example/calc');
+  });
+
   it('replayEvents replaces events wholesale', () => {
     const { handleEvent, replayEvents } = useConversationV2Store.getState();
     handleEvent({ type: 'message', event_id: 'e1', timestamp: 1, role: 'assistant', content: 'a' });
