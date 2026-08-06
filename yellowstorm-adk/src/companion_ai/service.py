@@ -244,7 +244,8 @@ def _plan_from_snapshot(snap: dict) -> Plan:
             is_dynamic_delegate=bool(row.get("is_dynamic_delegate"))))
     return Plan(id=p.get("id") or "", title=p.get("title") or "",
                 goal=p.get("goal") or "", status=Status(p.get("status") or "running"),
-                steps=steps)
+                steps=steps, executor_id=p.get("executor_id"),
+                executor_name=p.get("executor_name"))
 
 
 async def _ensure_session(runner, app_name: str, user_id: str, session_id: str) -> None:
@@ -566,8 +567,15 @@ class OrchestratorService:
             if len(plan.steps) >= MAX_PLAN_STEPS:
                 return "Cannot create another task — this plan has reached its step limit."
 
+            # This step is born mid-turn, after plan_turn's one-time stamping
+            # pass — read the client's executor identity straight off the
+            # plan (set once at plan_turn) rather than a sibling step, since
+            # a plan can be entirely persona-assigned with no plain step to
+            # copy from (e.g. the planner routed straight to a human agent).
             sub_step = Step(title=description[:60], description=description, kind=kind,
-                            is_dynamic_delegate=True, depends_on=[caller_step_id])
+                            is_dynamic_delegate=True, depends_on=[caller_step_id],
+                            assignee=plan.executor_id,
+                            assignee_name=plan.executor_name or DEFAULT_EXECUTOR_LABEL)
             plan.steps.append(sub_step)
             # Same sibling/wave bookkeeping as _delegate_tool_for — see there
             # for why this matters.
@@ -754,6 +762,8 @@ class OrchestratorService:
         # every later read (projection, re-projection, the delegate-tool gate)
         # then just uses assignee/assignee_name like it already does for a
         # persona, no separate fallback plumbing needed downstream.
+        plan.executor_id = executor_id
+        plan.executor_name = executor_name or DEFAULT_EXECUTOR_LABEL
         for s in plan.steps:
             if not s.is_persona:
                 s.assignee = executor_id
@@ -1054,7 +1064,8 @@ class OrchestratorService:
 
     async def _project_plan(self, session_id: str, plan: Plan, user_id: str) -> None:
         await self._project(self._rm and self._rm.upsert_plan(
-            session_id, plan.id, plan.title, plan.goal, "running"))
+            session_id, plan.id, plan.title, plan.goal, "running",
+            executor_id=plan.executor_id, executor_name=plan.executor_name))
         rows = [self._step_row(i, s) for i, s in enumerate(plan.steps)]
         await self._project(self._rm and self._rm.upsert_steps(session_id, rows))
         await self._register_mail_waits(session_id, plan, user_id)

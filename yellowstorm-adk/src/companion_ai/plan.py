@@ -67,6 +67,12 @@ class Plan(BaseModel):
     answer: Optional[str] = None
     status: Status = Status.PENDING
     steps: List[Step] = Field(default_factory=list)
+    # The client's default executor for this turn, set once at plan_turn.
+    # A step born later (create_task) reads it here — every non-persona step
+    # in the plan could, in principle, be turned into a persona by the
+    # planner, leaving no plain sibling to copy an executor name from.
+    executor_id: Optional[str] = None
+    executor_name: Optional[str] = None
 
     def step(self, step_id: str) -> Optional[Step]:
         return next((s for s in self.steps if s.id == step_id), None)

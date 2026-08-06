@@ -400,6 +400,59 @@ def test_create_task_tool_appends_a_step_and_calls_run_node():
     assert tool_context.run_node.await_args.kwargs["use_sub_branch"] is True
 
 
+def test_create_task_step_inherits_the_plans_executor_name_not_the_generic_label():
+    """A dynamically-created step (create_task/await_reply spawned mid-turn
+    from inside a persona's own tool calls) is born after plan_turn's
+    one-time stamping pass. Regression: it used to derive the executor name
+    by scanning for a non-persona sibling step, which fails whenever the
+    WHOLE plan is persona-assigned (e.g. the planner routed straight to a
+    human agent, with no plain step anywhere) — live example: a plan with
+    only "Ask Oussama" + his own delegate to Rabeb, no plain step at all,
+    still showed the generic "Executor" label on his await_reply sub-step.
+    The executor identity now lives on the plan itself, set once at
+    plan_turn, so it's always available regardless of step composition."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", executor_id="exec1", executor_name="Worky executor",
+                steps=[
+        # Every step is a persona — no plain sibling to copy from.
+        Step(id="s1", kind="execute", description="review compliance reply",
+            is_persona=True, assignee="sarah", assignee_name="Sarah"),
+    ])
+    name_to_step = {"s1": "s1"}
+    tool = service._create_task_tool_for("sess1", "u1", plan, _fn_factory_holder(), name_to_step, "s1")
+
+    tool_context = MagicMock()
+    tool_context.run_node = AsyncMock(return_value="done")
+
+    asyncio.run(tool.func("Email someone and wait.", kind="await_reply", tool_context=tool_context))
+
+    new_step = plan.steps[-1]
+    assert new_step.assignee_name == "Worky executor"
+    assert new_step.assignee == "exec1"
+
+
+def test_create_task_step_falls_back_to_the_generic_label_with_no_executor_on_the_plan():
+    """The plan carries no executor identity at all (e.g. a snapshot from
+    before this field existed) — DEFAULT_EXECUTOR_LABEL is still the right
+    fallback, not a crash or a blank."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="s1", kind="execute", description="review compliance reply",
+            is_persona=True, assignee="sarah", assignee_name="Sarah"),
+    ])
+    name_to_step = {"s1": "s1"}
+    tool = service._create_task_tool_for("sess1", "u1", plan, _fn_factory_holder(), name_to_step, "s1")
+
+    tool_context = MagicMock()
+    tool_context.run_node = AsyncMock(return_value="done")
+
+    asyncio.run(tool.func("Email someone and wait.", kind="await_reply", tool_context=tool_context))
+
+    assert plan.steps[-1].assignee_name == svc.DEFAULT_EXECUTOR_LABEL
+
+
 def test_create_task_and_delegate_share_siblings_instead_of_chaining():
     """Both tools grow the SAME plan mid-turn (see _build_workflow, which
     passes them one shared siblings set) -- a create_task call and a

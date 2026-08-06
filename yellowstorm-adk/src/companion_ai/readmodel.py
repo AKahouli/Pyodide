@@ -41,13 +41,22 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
             f'ALTER TABLE {_q(schema,"sessions")} ADD COLUMN IF NOT EXISTS interrupt_id TEXT')
         await con.execute(f"""
             CREATE TABLE IF NOT EXISTS {_q(schema,'plans')} (
-                session_id TEXT PRIMARY KEY,
-                id         TEXT NOT NULL,
-                title      TEXT,
-                goal       TEXT,
-                status     TEXT NOT NULL DEFAULT 'pending',
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                session_id    TEXT PRIMARY KEY,
+                id            TEXT NOT NULL,
+                title         TEXT,
+                goal          TEXT,
+                status        TEXT NOT NULL DEFAULT 'pending',
+                executor_id   TEXT,   -- the client's default executor for this turn
+                executor_name TEXT,   -- resolved once at plan_turn; steps born later
+                                       -- (create_task) read it here, not by scanning
+                                       -- sibling steps, which may all be personas
+                updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
             )""")
+        # Idempotent migration for an existing plans table.
+        await con.execute(
+            f'ALTER TABLE {_q(schema,"plans")} ADD COLUMN IF NOT EXISTS executor_id TEXT')
+        await con.execute(
+            f'ALTER TABLE {_q(schema,"plans")} ADD COLUMN IF NOT EXISTS executor_name TEXT')
         await con.execute(f"""
             CREATE TABLE IF NOT EXISTS {_q(schema,'plan_steps')} (
                 session_id     TEXT NOT NULL,
@@ -183,15 +192,24 @@ class ReadModel:
                 session_id, status, interrupt_id)
 
     async def upsert_plan(self, session_id: str, plan_id: str, title: str,
-                          goal: str, status: str) -> None:
+                          goal: str, status: str, *,
+                          executor_id: Optional[str] = None,
+                          executor_name: Optional[str] = None) -> None:
         async with self._pool.acquire() as con:
             await con.execute(f"""
-                INSERT INTO {_q(self._schema,'plans')} (session_id,id,title,goal,status)
-                VALUES ($1,$2,$3,$4,$5)
+                INSERT INTO {_q(self._schema,'plans')}
+                    (session_id,id,title,goal,status,executor_id,executor_name)
+                VALUES ($1,$2,$3,$4,$5,$6,$7)
                 ON CONFLICT (session_id) DO UPDATE
                   SET id=EXCLUDED.id, title=EXCLUDED.title, goal=EXCLUDED.goal,
-                      status=EXCLUDED.status, updated_at=now()
-            """, session_id, plan_id, title, goal, status)
+                      status=EXCLUDED.status,
+                      -- Set once at plan_turn and never blank afterward: a
+                      -- resume/continue re-projection passes neither, and
+                      -- must not erase the value the first projection wrote.
+                      executor_id=COALESCE(EXCLUDED.executor_id, {_q(self._schema,'plans')}.executor_id),
+                      executor_name=COALESCE(EXCLUDED.executor_name, {_q(self._schema,'plans')}.executor_name),
+                      updated_at=now()
+            """, session_id, plan_id, title, goal, status, executor_id, executor_name)
 
     async def upsert_steps(self, session_id: str,
                            steps: List[Tuple[str, int, int, str, str, str, str, str, str, str, str, str, bool, bool]]) -> None:
