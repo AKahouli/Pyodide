@@ -4,7 +4,6 @@ import {
   extractPortFromDevServerOutput,
   resolvePreviewPort,
 } from './useNodepodPreview';
-import { createRuntimeKey } from '../services/nodepod-runtime-registry';
 
 describe('useNodepodPreview port resolution helpers', () => {
   it('extracts the internal port from a Nodepod virtual URL', () => {
@@ -30,9 +29,5 @@ describe('useNodepodPreview port resolution helpers', () => {
         reportedPort: 5173,
       }),
     ).toBe(3000);
-  });
-
-  it('builds a runtime key from session and revision', () => {
-    expect(createRuntimeKey('session-1', 'rev-2')).toBe('session-1:rev-2');
   });
 });

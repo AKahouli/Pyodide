@@ -47,10 +47,7 @@ Replaces the previous remote-sandbox **iframe-only** preview.
 
 | Piece | Role |
 |---|---|
-| `useNodepodPreview` | Hook UI mince qui lit la runtime registry et demande `ensureRuntime()` |
-| `services/nodepod-runtime-manager.ts` | Boot / retry / eviction / warm pool Nodepod |
-| `services/nodepod-runtime-registry.ts` | Registry memoire des runtimes par `sessionId:revision` |
-| `services/nodepod-runtime-health.ts` | Resolution du port runtime + probes preview |
+| `useNodepodPreview` | Download files → `Nodepod.boot` → install → spawn → `previewUrl` |
 | `ApplicationComponentView` | Toolbar + split: file tree \| Preview / Source |
 | `AppSourceFileTree` | Expandable, read-only tree |
 | `AppSourceFileViewer` | Read-only code (CodeArtifact) + lock badge |
@@ -129,24 +126,13 @@ files show a size message instead of a viewer.
 
 ## Boot lifecycle
 
-`useNodepodPreview` delegue desormais a une architecture runtime en memoire:
+`useNodepodPreview` status machine:
 
-- `runtimeKey = sessionId:revision`
-- une runtime registry conserve les pods actifs en memoire
-- un runtime manager orchestre `boot`, `reuse`, `retry`, `eviction`
-- la detection de port est dynamique a partir de l'URL Nodepod, `onServerReady`
-  et des logs du dev server
-- un warm pool limite le nombre de runtimes actifs simultanes
-
-Statuts:
-
-`idle` → `queued` → `loading` (download) → `installing` (`npm install`) →
-`starting` (`npm run dev`) → `ready` | `error`
+`idle` → `loading` (download) → `installing` (`npm install`) → `starting`
+(`npm run dev`) → `ready` | `error`
 
 - Exposes `files` map for the Source viewer once downloads succeed.
-- Runtime state is session-scoped by `sessionId:revision`.
-- Old runtimes for the same session are evicted when a new revision boots.
-- Inactive runtimes are evicted automatically after a TTL / active-pool cap.
+- Teardown on unmount / `revision` change / retry.
 - Without `cephPath` + `filesTree`: stays `idle` with a waiting message
   (no remote sandbox iframe fallback).
 
@@ -193,10 +179,7 @@ Keys under `nodepod.*` in [`locales/en.json`](locales/en.json) and
 
 | Path | Role |
 |---|---|
-| `hooks/useNodepodPreview.ts` | Hook React → registry/manager |
-| `services/nodepod-runtime-manager.ts` | Lifecycle manager |
-| `services/nodepod-runtime-registry.ts` | Runtime registry |
-| `services/nodepod-runtime-health.ts` | Health + port resolution |
+| `hooks/useNodepodPreview.ts` | Nodepod boot / teardown / file download |
 | `components/RightPanel/ApplicationComponentView.tsx` | Dual-pane UI |
 | `components/RightPanel/AppSourceFileTree.tsx` | File tree |
 | `components/RightPanel/AppSourceFileViewer.tsx` | Read-only source |

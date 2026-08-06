@@ -4,13 +4,10 @@ export type FilesTreeNode = RawFilesTreeNode;
 
 export type NodepodPreviewStatus =
   | 'idle'
-  | 'queued'
   | 'loading'
   | 'installing'
   | 'starting'
   | 'ready'
-  | 'stale'
-  | 'evicted'
   | 'error';
 
 /** Manus app-build workflow phases streamed before application_component. */
@@ -48,30 +45,4 @@ export interface UseNodepodPreviewResult {
   /** Downloaded project files (VFS paths like `/src/App.tsx`). Read-only for UI. */
   files: Record<string, string | Uint8Array> | null;
   retry: () => void;
-}
-
-export interface NodepodRuntimeHealth {
-  directProbeOk: boolean;
-  swProbeOk: boolean;
-  detectedPort: number | null;
-  previewUrl: string | null;
-  lastCheckedAt: number | null;
-  bodyHint: string | null;
-  lastStatus: number | null;
-}
-
-export interface NodepodRuntimeSnapshot {
-  runtimeKey: string;
-  sessionId: string;
-  revision: string;
-  status: NodepodPreviewStatus;
-  previewUrl: string | null;
-  detectedPort: number | null;
-  error: string | null;
-  files: Record<string, string | Uint8Array> | null;
-  podInstanceId: string | null;
-  createdAt: number;
-  lastAccessedAt: number;
-  lastHealthcheckAt: number | null;
-  health: NodepodRuntimeHealth | null;
 }

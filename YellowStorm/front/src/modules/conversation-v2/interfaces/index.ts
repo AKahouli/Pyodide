@@ -24,8 +24,6 @@ export type {
   NodepodPreviewStatus,
   AppBuildPhase,
   AppBuildProgress,
-  NodepodRuntimeHealth,
-  NodepodRuntimeSnapshot,
 } from './application';
 
 export type {
