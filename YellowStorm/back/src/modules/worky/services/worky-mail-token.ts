@@ -26,3 +26,38 @@ export function extractMailToken(...texts: Array<string | null | undefined>): st
   }
   return null;
 }
+
+/**
+ * The reply's actual text. Graph's `bodyPreview` is a plain-text summary
+ * silently capped at 255 characters — fine for a one-line "ok, approved",
+ * but it truncates anything longer mid-sentence, discarding the rest of a
+ * real decision. Prefer the full body; fall back to bodyPreview only when
+ * the body itself is empty (seen: a step correctly noticed a reply looked
+ * "truncated mid-word" and worked around it via a mailbox search instead —
+ * this is the actual fix, not a workaround for the model to route around).
+ */
+export function fullReplyText(
+  body: { contentType?: string; content?: string } | null | undefined,
+  bodyPreview: string | null | undefined,
+): string {
+  const content = body?.content?.trim();
+  if (!content) return (bodyPreview ?? '').trim();
+  return (body?.contentType === 'html' ? stripHtml(content) : content).trim();
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n')
+    .trim();
+}

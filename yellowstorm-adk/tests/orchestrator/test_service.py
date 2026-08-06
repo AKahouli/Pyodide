@@ -171,6 +171,100 @@ def test_plan_from_snapshot_restores_is_dynamic_delegate():
     assert plan.steps[0].is_dynamic_delegate is True
 
 
+def test_resume_turn_completes_a_dynamic_await_reply_step_out_of_band():
+    """A create_task(kind='await_reply')-spawned step's first park happened
+    inside a throwaway nested run (ctx.run_node) whose node path a later
+    flat resume rebuild can never reproduce — so hitl.resume_part's
+    node-path-keyed matching can never actually reach IT; ADK just re-blocks
+    it under a brand new interrupt id and the real answer is silently
+    dropped. Live example: a persona's create_task(kind='await_reply') step
+    got its reply matched and claimed in mail_waits, yet stayed blocked
+    forever because the resume never landed on the right node. resume_turn
+    must apply the answer directly to the step instead of relying on that
+    match. It must still drive with hitl.resume_part, though (see the next
+    test) — a generic trigger was tried and reverted after live sessions
+    showed it makes the CALLER (e.g. the persona that spawned this step)
+    replay as a fresh turn instead of a continuation, redoing its entire
+    reasoning including sending a second real email."""
+    session = MagicMock()
+    session.session_service.get_session = AsyncMock(return_value=object())
+    rm = MagicMock()
+    rm.snapshot = AsyncMock(return_value={
+        "session": {"id": "s1", "status": "blocked", "interrupt_id": None},
+        "plan": {"id": "p1", "title": "T", "goal": "G", "status": "blocked",
+                "executor_id": "exec1", "executor_name": "Worky executor"},
+        "steps": [
+            {"step_id": "s0", "description": "persona step", "kind": "execute",
+             "status": "completed", "wave": 0, "depends_on": "", "result": "sent",
+             "is_persona": True, "assignee": "hamdi", "assignee_name": "Hamdi Imed"},
+            {"step_id": "n1", "description": "", "kind": "await_reply",
+             "status": "blocked", "wave": 1, "depends_on": "s0", "result": None,
+             "is_dynamic_delegate": True},
+        ],
+    })
+    rm.outstanding_interrupts = AsyncMock(return_value=[("mail:task_n1@1/n_n1@1", "n1")])
+    rm.set_step_status = AsyncMock()
+
+    service = svc.OrchestratorService(lambda node, app_name: session, rm, planner_model="m")
+    service._build_workflow = MagicMock(return_value=(MagicMock(), {}))
+    service._drive = AsyncMock(return_value=[])
+    service._finalize = AsyncMock()
+
+    plan = asyncio.run(service.resume_turn(
+        session_id="s1", user_id="u1", answer="Go ahead, migrate.", model="m",
+        interrupt_id="mail:task_n1@1/n_n1@1"))
+
+    assert plan.step("n1").status is Status.COMPLETED
+    assert plan.step("n1").result == "Go ahead, migrate."
+    rm.set_step_status.assert_awaited_once_with(
+        "s1", "n1", "completed", result="Go ahead, migrate.")
+
+    # Still driven with hitl.resume_part (using the stale-but-real id) — it
+    # doesn't need to match anything current since this step's own node
+    # never gets rebuilt as a real await_reply this turn (short-circuited
+    # above); what matters is that the trigger correctly resolves to a real
+    # prior invocation so ADK replays the caller instead of re-running it.
+    trigger = service._drive.await_args.args[-1]
+    assert trigger.parts[0].text is None
+    assert trigger.parts[0].function_response is not None
+
+
+def test_resume_turn_still_uses_hitl_resume_part_for_an_ordinary_step():
+    """A top-level ask/await_reply step's node path IS stable across resume
+    (the same flat top-level workflow both times) — this must keep going
+    through ADK's normal interrupt matching, not the out-of-band shortcut
+    above, which is only for a step that never had a stable path to begin
+    with."""
+    session = MagicMock()
+    session.session_service.get_session = AsyncMock(return_value=object())
+    rm = MagicMock()
+    rm.snapshot = AsyncMock(return_value={
+        "session": {"id": "s1", "status": "waiting", "interrupt_id": "ask:plan_s1@1/q@1"},
+        "plan": {"id": "p1", "title": "T", "goal": "G", "status": "blocked",
+                "executor_id": None, "executor_name": None},
+        "steps": [
+            {"step_id": "q", "description": "", "kind": "ask", "question": "Which format?",
+             "status": "blocked", "wave": 0, "depends_on": "", "result": None},
+        ],
+    })
+    rm.outstanding_interrupts = AsyncMock(return_value=[("ask:plan_s1@1/q@1", "q")])
+    rm.set_step_status = AsyncMock()
+
+    service = svc.OrchestratorService(lambda node, app_name: session, rm, planner_model="m")
+    service._build_workflow = MagicMock(return_value=(MagicMock(), {}))
+    service._drive = AsyncMock(return_value=[])
+    service._finalize = AsyncMock()
+
+    asyncio.run(service.resume_turn(
+        session_id="s1", user_id="u1", answer="CSV", model="m",
+        interrupt_id="ask:plan_s1@1/q@1"))
+
+    rm.set_step_status.assert_not_awaited()
+    trigger = service._drive.await_args.args[-1]
+    assert trigger.parts[0].text is None
+    assert trigger.parts[0].function_response is not None
+
+
 def test_plan_turn_never_gives_the_workflow_the_users_real_message():
     """The trigger passed to Runner.run_async becomes a session event with no
     branch, and ADK makes an unbranched event visible to every node in the
@@ -225,7 +319,8 @@ def _fn_factory_holder():
 def test_delegate_tool_appends_a_step_assigned_to_the_target_and_calls_run_node(monkeypatch):
     monkeypatch.setattr(svc.human_agents, "search_human_agents", AsyncMock(
         return_value=[{"id": "oussama", "name": "Oussama", "role": "Investment approver"}]))
-    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     plan = Plan(id="p", title="t", goal="g", steps=[
         Step(id="s1", kind="execute", description="search bitcoin price"),
@@ -274,7 +369,8 @@ def test_delegate_tool_propagates_dependency_to_siblings_for_an_accurate_wave(mo
     a later wave than the delegate, not the same one."""
     monkeypatch.setattr(svc.human_agents, "search_human_agents", AsyncMock(
         return_value=[{"id": "david", "name": "David", "role": "Risk manager"}]))
-    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     plan = Plan(id="p", title="t", goal="g", steps=[
         Step(id="s1", kind="execute", description="ask James",
@@ -307,7 +403,8 @@ def test_delegate_tool_reprojects_a_plain_sibling_without_losing_its_executor_id
     back on."""
     monkeypatch.setattr(svc.human_agents, "search_human_agents", AsyncMock(
         return_value=[{"id": "david", "name": "David", "role": "Risk manager"}]))
-    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     plan = Plan(id="p", title="t", goal="g", steps=[
         Step(id="s1", kind="execute", description="ask James",
@@ -339,7 +436,8 @@ def test_delegate_tool_keeps_two_consultations_from_the_same_caller_parallel(mon
         [{"id": "david", "name": "David", "role": "Risk manager"}],
         [{"id": "oussama", "name": "Oussama", "role": "Investment approver"}],
     ]))
-    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     plan = Plan(id="p", title="t", goal="g", steps=[
         Step(id="s1", kind="execute", description="ask James",
@@ -373,7 +471,8 @@ def test_create_task_tool_appends_a_step_and_calls_run_node():
     compliance reply revealing a PEP and spins off an actual screening
     check instead of just writing "requires senior approval" in her own
     answer."""
-    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     plan = Plan(id="p", title="t", goal="g", steps=[
         Step(id="s1", kind="execute", description="review compliance reply",
@@ -411,7 +510,8 @@ def test_create_task_step_inherits_the_plans_executor_name_not_the_generic_label
     still showed the generic "Executor" label on his await_reply sub-step.
     The executor identity now lives on the plan itself, set once at
     plan_turn, so it's always available regardless of step composition."""
-    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     plan = Plan(id="p", title="t", goal="g", executor_id="exec1", executor_name="Worky executor",
                 steps=[
@@ -427,16 +527,50 @@ def test_create_task_step_inherits_the_plans_executor_name_not_the_generic_label
 
     asyncio.run(tool.func("Email someone and wait.", kind="await_reply", tool_context=tool_context))
 
-    new_step = plan.steps[-1]
-    assert new_step.assignee_name == "Worky executor"
-    assert new_step.assignee == "exec1"
+    # kind='await_reply' now creates TWO steps: the bare await_reply wait
+    # (generic executor, unrelated to the caller's own identity) and a
+    # follow-up step that inherits the PERSONA caller's identity — see the
+    # next test for that half.
+    await_step = plan.steps[-2]
+    assert await_step.assignee_name == "Worky executor"
+    assert await_step.assignee == "exec1"
+
+
+def test_create_task_await_reply_followup_step_inherits_the_personas_identity():
+    """The follow-up step is what actually gives the real, final answer once
+    the reply is in — see service.py's create_task docstring on why the
+    caller's own tool call can't survive that long. It must run AS the
+    persona (not the generic executor), or the "final answer" comes out in
+    nobody's voice."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", executor_id="exec1", executor_name="Worky executor",
+                steps=[
+        Step(id="s1", kind="execute", description="review compliance reply",
+            is_persona=True, assignee="sarah", assignee_name="Sarah", assignee_role="Compliance officer."),
+    ])
+    name_to_step = {"s1": "s1"}
+    tool = service._create_task_tool_for("sess1", "u1", plan, _fn_factory_holder(), name_to_step, "s1")
+
+    tool_context = MagicMock()
+    tool_context.run_node = AsyncMock(return_value="done")
+    asyncio.run(tool.func("Give the real final answer once Hamdi replies.",
+                          kind="await_reply", tool_context=tool_context))
+
+    followup = plan.steps[-1]
+    assert followup.is_persona is True
+    assert followup.assignee_name == "Sarah"
+    assert followup.assignee_role == "Compliance officer."
+    assert followup.depends_on == [plan.steps[-2].id]  # depends on the AWAIT step, not the caller
 
 
 def test_create_task_step_falls_back_to_the_generic_label_with_no_executor_on_the_plan():
     """The plan carries no executor identity at all (e.g. a snapshot from
     before this field existed) — DEFAULT_EXECUTOR_LABEL is still the right
-    fallback, not a crash or a blank."""
-    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    fallback for the await_reply step itself, not a crash or a blank."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     plan = Plan(id="p", title="t", goal="g", steps=[
         Step(id="s1", kind="execute", description="review compliance reply",
@@ -450,7 +584,51 @@ def test_create_task_step_falls_back_to_the_generic_label_with_no_executor_on_th
 
     asyncio.run(tool.func("Email someone and wait.", kind="await_reply", tool_context=tool_context))
 
-    assert plan.steps[-1].assignee_name == svc.DEFAULT_EXECUTOR_LABEL
+    assert plan.steps[-2].assignee_name == svc.DEFAULT_EXECUTOR_LABEL
+
+
+def test_create_task_await_reply_rebinds_the_callers_pending_token_onto_the_new_step():
+    """create_task(kind='await_reply') creates the wait AFTER the caller has
+    already sent its mail — _mail_stamping minted that mail's token eagerly
+    under a placeholder (__pending__:<caller>) since the real waiting step
+    didn't exist yet. This must retarget that token onto the real new AWAIT
+    step (not the follow-up step that depends on it), or the reply that
+    arrives has no wait to match against and the step blocks forever —
+    exactly the bug a live session hit: a step emailed a follow-up, called
+    create_task(kind='await_reply'), and the new step stayed blocked with no
+    way for any reply to ever reach it."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g",
+               steps=[Step(id="s3", kind="execute", description="handle the reply")])
+    name_to_step = {"s3": "s3"}
+    tool = service._create_task_tool_for("sess1", "u1", plan, _fn_factory_holder(), name_to_step, "s3")
+
+    tool_context = MagicMock()
+    tool_context.run_node = AsyncMock(return_value="done")
+    asyncio.run(tool.func("Email someone and wait.", kind="await_reply", tool_context=tool_context))
+
+    await_step = plan.steps[-2]
+    rm.rebind_mail_wait.assert_awaited_once_with("sess1", "__pending__:s3", await_step.id)
+
+
+def test_create_task_execute_never_touches_mail_waits():
+    """Only kind='await_reply' means a wait was possibly minted for this
+    step — an ordinary follow-up task has nothing to rebind."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g",
+               steps=[Step(id="s3", kind="execute", description="handle the reply")])
+    name_to_step = {"s3": "s3"}
+    tool = service._create_task_tool_for("sess1", "u1", plan, _fn_factory_holder(), name_to_step, "s3")
+
+    tool_context = MagicMock()
+    tool_context.run_node = AsyncMock(return_value="done")
+    asyncio.run(tool.func("Run a quick check.", kind="execute", tool_context=tool_context))
+
+    rm.rebind_mail_wait.assert_not_awaited()
 
 
 def test_create_task_and_delegate_share_siblings_instead_of_chaining():
@@ -461,7 +639,8 @@ def test_create_task_and_delegate_share_siblings_instead_of_chaining():
     delegate_to_human_agent calls already must (see the sibling test
     above) -- otherwise a persona using both tools together regresses
     the wave-chaining bug that fix originally solved."""
-    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     plan = Plan(id="p", title="t", goal="g", steps=[
         Step(id="s1", kind="execute", description="review compliance reply",
@@ -497,6 +676,48 @@ def test_create_task_and_delegate_share_siblings_instead_of_chaining():
     assert plan.step("s2").wave == 2
 
 
+def test_create_task_does_not_chain_onto_an_already_blocked_step_from_an_earlier_turn():
+    """`siblings` is a FRESH set() every _build_workflow call (i.e. every
+    turn) — it only protects steps spawned in THIS same LLM tool-call burst.
+    A dynamic step created on an EARLIER turn, already parked on its own
+    external reply, is not part of this burst and must not retroactively
+    gain a dependency on a brand new, unrelated step just because it shares
+    the same caller and isn't in the (empty, since this is a new turn)
+    siblings set. Live example: a step already holding a real reply
+    (status=BLOCKED, its own separate mail wait, matched and everything) got
+    wired to depend on a second, completely unrelated await_reply created on
+    a later resume — corrupting its dependency graph even though its answer
+    had already arrived."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="s1", kind="execute", description="persona step", is_persona=True,
+            assignee="hamdi", assignee_name="Hamdi Imed"),
+        # Spawned on an EARLIER turn, already parked on its own reply --
+        # simulates crossing a resume boundary, where this turn's siblings
+        # set starts fresh and empty even though this step still exists.
+        Step(id="earlier-wait", kind="await_reply", depends_on=["s1"],
+            status=Status.BLOCKED, is_dynamic_delegate=True),
+    ])
+    scheduler.assign_waves(plan)
+
+    name_to_step = {"s1": "s1", "earlier-wait": "earlier-wait"}
+    siblings: set = set()  # fresh, as it would be on a new _build_workflow call
+    task_tool = service._create_task_tool_for("sess1", "u1", plan, _fn_factory_holder(),
+                                              name_to_step, "s1", siblings)
+
+    tool_context = MagicMock()
+    tool_context.run_node = AsyncMock(return_value="ok")
+    asyncio.run(task_tool.func("Email someone else and wait.", kind="await_reply",
+                               tool_context=tool_context))
+
+    earlier = plan.step("earlier-wait")
+    assert earlier.depends_on == ["s1"], (
+        "an already-blocked step from an earlier turn must not be retroactively "
+        "chained onto a brand new, unrelated dynamic step")
+
+
 def test_apply_event_marks_a_completed_dynamic_delegate_step_as_completed():
     """_apply_event -- not a test harness that bypasses it -- must recognize
     the is_dynamic_delegate short-circuit's FunctionNode event as a real
@@ -511,7 +732,8 @@ def test_apply_event_marks_a_completed_dynamic_delegate_step_as_completed():
     from google.adk.runners import InMemoryRunner
     from google.genai import types
 
-    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     plan = Plan(id="p", steps=[
         Step(id="a", kind="execute", is_persona=True, is_dynamic_delegate=True,
@@ -543,7 +765,8 @@ def test_apply_event_does_not_complete_an_await_reply_step_on_the_interrupt_it_r
     from google.adk.runners import InMemoryRunner
     from google.genai import types
 
-    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     plan = Plan(id="p", steps=[Step(id="a", kind="await_reply", question="Awaiting a reply")])
     factory = svc.nodes.make_llm_node_factory(model_name="x", tools=[])
@@ -593,7 +816,8 @@ def test_delegate_tool_unblocks_the_caller_even_when_the_delegate_errors(monkeyp
     forever on the plan card."""
     monkeypatch.setattr(svc.human_agents, "search_human_agents", AsyncMock(
         return_value=[{"id": "oussama", "name": "Oussama", "role": "Investment approver"}]))
-    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     plan = Plan(id="p", steps=[
         Step(id="s2", kind="execute", description="ask", is_persona=True,
@@ -653,3 +877,140 @@ def test_delegate_tool_refuses_past_the_step_cap(monkeypatch):
 
     assert "step limit" in result
     assert len(plan.steps) == svc.MAX_PLAN_STEPS
+
+
+# --- end-to-end: a persona's create_task(kind='await_reply') across a real
+# turn boundary, on the real ADK engine (no mocked run_node/tool_context) ---
+
+def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
+    """The actual bug this whole mechanism exists for: a persona's own tool
+    call cannot stay alive across a turn boundary (a real email reply can
+    take hours or days) — so nothing was ever positioned to use the reply
+    once it arrived, and the persona's turn-1 placeholder ("draft sent,
+    awaiting reply") silently became the plan's permanent final answer. Live
+    example: session 4fe2162b307d411d875a2aed918702db — Hamdi's reply
+    correctly landed in the await_reply step's own .result, but nothing
+    ever produced a real recommendation from it.
+
+    Drives the REAL _build_workflow/_drive/_finalize/resume_turn (not
+    mocked) through two actual turns on the real ADK engine, with a
+    scripted LLM standing in for the model. Confirms the follow-up step
+    create_task now spawns alongside the await_reply step is what reads the
+    reply and gives the real answer — not a resumption of the persona's own
+    turn-1 tool call, which structurally can't happen."""
+    from pydantic import PrivateAttr
+    from google.adk.models import BaseLlm
+    from google.adk.models.llm_response import LlmResponse
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+    from google.genai import types
+    import unittest.mock as mock
+    from src.companion_ai import nodes as nodes_mod
+
+    class _ScriptedLlm(BaseLlm):
+        _n: int = PrivateAttr(default=0)
+
+        def __init__(self):
+            super().__init__(model="fake")
+            object.__setattr__(self, "_n", 0)
+
+        async def generate_content_async(self, llm_request, stream=False):
+            object.__setattr__(self, "_n", self._n + 1)
+            n = self._n
+            instr = llm_request.config.system_instruction or ""
+            is_followup = "Give the real final answer" in instr
+            seen_reply = any(
+                "APPROVED THE PILOT" in (getattr(p, "text", "") or "")
+                for c in llm_request.contents for p in (c.parts or []))
+            if is_followup:
+                yield LlmResponse(content=types.Content(role="model", parts=[
+                    types.Part(text=f"REAL FINAL ANSWER — reply seen: {seen_reply}")]))
+                return
+            if n == 1:
+                yield LlmResponse(content=types.Content(role="model", parts=[
+                    types.Part(function_call=types.FunctionCall(
+                        name="create_task",
+                        args={"description": "Give the real final answer once Hamdi "
+                                              "replies, using exactly what he decided.",
+                              "kind": "await_reply"},
+                        id="call_1"))
+                ]))
+                return
+            yield LlmResponse(content=types.Content(role="model", parts=[
+                types.Part(text="Draft sent to Hamdi, awaiting his reply.")]))
+
+    session_id = "sess1"
+    plan = Plan(id="p", title="t", goal="g", executor_id="exec1", executor_name="Worky executor",
+               steps=[Step(id="s1", kind="execute", is_persona=True,
+                          assignee="hamdi", assignee_name="Hamdi Imed",
+                          description="Should we migrate?")])
+
+    rm = MagicMock()
+    rm.upsert_steps = AsyncMock(); rm.set_step_status = AsyncMock()
+    rm.upsert_plan = AsyncMock(); rm.cancel_mail_waits = AsyncMock()
+    rm.bind_mail_wait_interrupt = AsyncMock(); rm.set_waiting = AsyncMock()
+    rm.set_session_status = AsyncMock(); rm.add_message = AsyncMock()
+    rm.rebind_mail_wait = AsyncMock(); rm.register_mail_wait = AsyncMock()
+    rm.mail_token_for = AsyncMock(return_value=None)
+    rm.snapshot = AsyncMock(); rm.outstanding_interrupts = AsyncMock()
+
+    session_service = InMemorySessionService()
+
+    def runner_factory(node, app_name):
+        return Runner(app_name=app_name, agent=node, session_service=session_service)
+
+    scripted = _ScriptedLlm()
+    with mock.patch.object(nodes_mod, "build_llm", lambda *a, **k: scripted):
+        service = svc.OrchestratorService(runner_factory, rm, planner_model="m")
+
+        # TURN 1: s1 sends its draft, calls create_task(kind='await_reply'),
+        # ends its own turn with a placeholder — this part already worked.
+        wf, n2s = service._build_workflow(session_id, "u1", plan, "fake", None, None)
+        runner1 = runner_factory(wf, f"orch_{session_id}")
+        asyncio.run(session_service.create_session(
+            app_name=f"orch_{session_id}", user_id="u1", session_id=session_id))
+        interrupts = asyncio.run(service._drive(
+            runner1, session_id, "u1", plan, n2s,
+            types.Content(role="user", parts=[types.Part(text="go")])))
+        asyncio.run(service._finalize(session_id, plan, interrupts))
+
+        await_step = next(s for s in plan.steps if s.kind == "await_reply")
+        followup_step = next(s for s in plan.steps if s.depends_on == [await_step.id])
+        assert followup_step.is_persona is True
+        assert followup_step.assignee_name == "Hamdi Imed"
+        assert await_step.status is Status.BLOCKED
+        # s1 itself must NOT have fabricated a decision — this is the exact
+        # false-completion failure mode that made the bug hard to see.
+        assert "REAL FINAL ANSWER" not in (plan.step("s1").result or "")
+
+        # TURN 2: the reply arrives. resume_turn (real, unmocked) must get
+        # the FOLLOW-UP step — not s1 — to actually read it and answer.
+        # The real interrupt id from turn 1 (not reconstructed) — its
+        # "n_" node-name prefix is conditional on the step id's first
+        # character (see graph.node_name), so guessing it is unreliable.
+        interrupt_id = next(iid for iid, step_id in interrupts if step_id == await_step.id)
+
+        def step_row(s):
+            return {"step_id": s.id, "description": s.description, "kind": s.kind,
+                    "question": s.question, "status": s.status.value, "wave": s.wave,
+                    "depends_on": ",".join(s.depends_on), "result": s.result,
+                    "assignee": s.assignee, "assignee_name": s.assignee_name,
+                    "assignee_role": s.assignee_role, "is_persona": s.is_persona,
+                    "is_dynamic_delegate": s.is_dynamic_delegate}
+
+        rm.snapshot.return_value = {
+            "session": {"id": session_id, "status": "blocked", "interrupt_id": None},
+            "plan": {"id": plan.id, "title": plan.title, "goal": plan.goal, "status": "blocked",
+                    "executor_id": plan.executor_id, "executor_name": plan.executor_name},
+            "steps": [step_row(s) for s in plan.steps],
+        }
+        rm.outstanding_interrupts.return_value = [(interrupt_id, await_step.id)]
+
+        plan2 = asyncio.run(service.resume_turn(
+            session_id=session_id, user_id="u1",
+            answer="Hamdi says: APPROVED THE PILOT.", model="fake",
+            interrupt_id=interrupt_id))
+
+        followup_final = plan2.step(followup_step.id)
+        assert followup_final.status is Status.COMPLETED
+        assert followup_final.result == "REAL FINAL ANSWER — reply seen: True"

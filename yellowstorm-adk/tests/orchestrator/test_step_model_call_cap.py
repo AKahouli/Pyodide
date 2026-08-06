@@ -43,7 +43,7 @@ class _NeverStopsLlm(BaseLlm):
         ]))
 
 
-async def dummy_search(query: str) -> str:
+async def dummy_search(query: str, role: str = "") -> str:
     return "no useful result"
 
 
@@ -129,3 +129,162 @@ async def test_a_persona_step_never_fabricates_a_decision_when_cut_off(monkeypat
     assert "do not invent" in nudge.lower() or "do not fabricate" in nudge.lower() \
         or "not invent" in nudge.lower()
     assert "Oussama" in nudge
+
+
+class _LoopingLlm(BaseLlm):
+    """Calls the SAME tool with the SAME args every round, until it sees the
+    stuck-loop nudge appear in its own incoming request — then switches to
+    real text, standing in for a model that actually responds to being told
+    to stop re-checking and move on."""
+
+    _n: int = PrivateAttr(default=0)
+
+    def __init__(self):
+        super().__init__(model="fake")
+        object.__setattr__(self, "_n", 0)
+
+    async def generate_content_async(self, llm_request, stream=False):
+        object.__setattr__(self, "_n", self._n + 1)
+        saw_nudge = any(
+            "not tell you anything new" in (getattr(p, "text", "") or "")
+            for c in llm_request.contents for p in (c.parts or []))
+        if saw_nudge:
+            yield LlmResponse(content=types.Content(role="model", parts=[
+                types.Part(text="Moving on now.")]))
+            return
+        yield LlmResponse(content=types.Content(role="model", parts=[
+            types.Part(function_call=types.FunctionCall(
+                name="dummy_search", args={"query": "same"}, id=f"call_{self._n}"))
+        ]))
+
+
+async def test_a_step_stuck_repeating_the_same_tool_call_gets_nudged_to_move_on(monkeypatch):
+    """Seen live: a step re-verified the same already-confirmed
+    find_human_agents lookup 7+ times, identical args, identical successful
+    result every time, making no other progress — a model reasoning stall,
+    not a budget problem. Must be caught well before the full step-call
+    budget (MAX_STEP_MODEL_CALLS=15) grinds through blind, and — unlike the
+    budget-exhausted fallback — with tools still available, so the step can
+    actually act on the nudge instead of being forced into a no-tools
+    final answer."""
+    scripted = _LoopingLlm()
+    monkeypatch.setattr(nodes_mod, "build_llm", lambda *a, **k: scripted)
+
+    factory = nodes_mod.make_llm_node_factory(model_name="fake", tools=[FunctionTool(dummy_search)])
+    step = Step(id="s1", kind="execute", description="Find and confirm someone.")
+    agent: LlmAgent = factory(step, "s1")
+
+    session_service = InMemorySessionService()
+    await session_service.create_session(app_name="test", user_id="u1", session_id="sess1")
+    runner = Runner(app_name="test", agent=agent, session_service=session_service)
+
+    events = [e async for e in runner.run_async(
+        user_id="u1", session_id="sess1",
+        new_message=types.Content(role="user", parts=[types.Part(text="go")]))]
+
+    final_text = events[-1].content.parts[0].text
+    assert final_text == "Moving on now."
+    # Broke out right after the stuck-loop window, nowhere near the full budget.
+    assert scripted._n <= nodes_mod.STUCK_LOOP_WINDOW + 1
+
+
+async def test_a_step_repeating_DIFFERENT_tool_calls_is_not_flagged_as_stuck(monkeypatch):
+    """Only IDENTICAL repeats look like a stall — a step that keeps calling
+    the same tool with genuinely different arguments each time (e.g. trying
+    several names) is making progress and must not get nudged to stop."""
+    class _VariedLlm(BaseLlm):
+        _n: int = PrivateAttr(default=0)
+
+        def __init__(self):
+            super().__init__(model="fake")
+            object.__setattr__(self, "_n", 0)
+
+        async def generate_content_async(self, llm_request, stream=False):
+            object.__setattr__(self, "_n", self._n + 1)
+            n = self._n
+            if n > 4:
+                yield LlmResponse(content=types.Content(role="model", parts=[
+                    types.Part(text="Done searching.")]))
+                return
+            yield LlmResponse(content=types.Content(role="model", parts=[
+                types.Part(function_call=types.FunctionCall(
+                    name="dummy_search", args={"query": f"candidate {n}"}, id=f"call_{n}"))
+            ]))
+
+    scripted = _VariedLlm()
+    monkeypatch.setattr(nodes_mod, "build_llm", lambda *a, **k: scripted)
+
+    factory = nodes_mod.make_llm_node_factory(model_name="fake", tools=[FunctionTool(dummy_search)])
+    step = Step(id="s1", kind="execute", description="Find and confirm someone.")
+    agent: LlmAgent = factory(step, "s1")
+
+    session_service = InMemorySessionService()
+    await session_service.create_session(app_name="test", user_id="u1", session_id="sess1")
+    runner = Runner(app_name="test", agent=agent, session_service=session_service)
+
+    events = [e async for e in runner.run_async(
+        user_id="u1", session_id="sess1",
+        new_message=types.Content(role="user", parts=[types.Part(text="go")]))]
+
+    final_text = events[-1].content.parts[0].text
+    assert final_text == "Done searching."
+    assert scripted._n == 5  # never short-circuited early by the loop nudge
+
+
+async def test_a_step_rechecking_the_same_target_with_jittered_args_gets_nudged(monkeypatch):
+    """Seen live: find_human_agents('Firas Kahia') called 6+ times across one
+    step, but the args shape changed almost every round (sometimes bare
+    {'name': ...}, sometimes with an added role='', sometimes paired with a
+    lookup for a different name, sometimes interleaved with an unrelated
+    search_m365 call) -- never 3 byte-identical rounds in a row, so the old
+    exact-match check missed it entirely. The nudge must fire on the
+    repeated SUBJECT being looked up, not the literal arg dict. (Uses
+    dummy_search, the tool actually registered on this test agent, but the
+    args jitter the same way: same 'name' target, role='' added on and off.)"""
+    class _JitteringLlm(BaseLlm):
+        _n: int = PrivateAttr(default=0)
+
+        def __init__(self):
+            super().__init__(model="fake")
+            object.__setattr__(self, "_n", 0)
+
+        async def generate_content_async(self, llm_request, stream=False):
+            object.__setattr__(self, "_n", self._n + 1)
+            saw_nudge = any(
+                "not tell you anything new" in (getattr(p, "text", "") or "")
+                for c in llm_request.contents for p in (c.parts or []))
+            if saw_nudge:
+                yield LlmResponse(content=types.Content(role="model", parts=[
+                    types.Part(text="Moving on now.")]))
+                return
+            # Same subject every round, args shape jittered -- never
+            # byte-identical to the previous round.
+            variants = [
+                {"query": "Firas Kahia"},
+                {"query": "Firas Kahia", "role": ""},
+                {"query": "Firas Kahia"},
+            ]
+            args = variants[(self._n - 1) % len(variants)]
+            yield LlmResponse(content=types.Content(role="model", parts=[
+                types.Part(function_call=types.FunctionCall(
+                    name="dummy_search", args=args, id=f"call_{self._n}"))
+            ]))
+
+    scripted = _JitteringLlm()
+    monkeypatch.setattr(nodes_mod, "build_llm", lambda *a, **k: scripted)
+
+    factory = nodes_mod.make_llm_node_factory(model_name="fake", tools=[FunctionTool(dummy_search)])
+    step = Step(id="s1", kind="execute", description="Find and confirm someone.")
+    agent: LlmAgent = factory(step, "s1")
+
+    session_service = InMemorySessionService()
+    await session_service.create_session(app_name="test", user_id="u1", session_id="sess1")
+    runner = Runner(app_name="test", agent=agent, session_service=session_service)
+
+    events = [e async for e in runner.run_async(
+        user_id="u1", session_id="sess1",
+        new_message=types.Content(role="user", parts=[types.Part(text="go")]))]
+
+    final_text = events[-1].content.parts[0].text
+    assert final_text == "Moving on now."
+    assert scripted._n <= nodes_mod.STUCK_LOOP_WINDOW + 1

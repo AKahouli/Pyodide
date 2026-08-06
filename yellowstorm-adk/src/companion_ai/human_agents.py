@@ -74,8 +74,7 @@ def make_find_human_agents_tool():
     async def find_human_agents(name: str = "", role: str = "") -> list:
         logger.info("[worky] find_human_agents called name=%r role=%r", name, role)
         agents = await search_human_agents(name=name or None, role=role or None)
-        logger.info("[worky] find_human_agents → %d match(es): %s",
-                    len(agents), [a.get("name") for a in agents])
+        logger.info("[worky] find_human_agents → %d match(es): %s", len(agents), agents)
         return agents
 
     schema = {"function": {

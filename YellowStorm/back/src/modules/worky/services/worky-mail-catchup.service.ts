@@ -10,7 +10,7 @@ import {
 } from '../schemas/worky-mail-subscription.schema';
 import { WorkyOrchestratorGrpcClientService } from './worky-orchestrator.grpc-client.service';
 import { WorkyTurnContextService } from './worky-turn-context.service';
-import { extractMailToken } from './worky-mail-token';
+import { extractMailToken, fullReplyText } from './worky-mail-token';
 
 /** How far back to look when a mailbox has never been swept. */
 const COLD_START_LOOKBACK_MS = 60 * 60 * 1000;
@@ -49,6 +49,7 @@ export class WorkyMailCatchupService {
   @Cron(CronExpression.EVERY_5_MINUTES)
   async sweep(): Promise<void> {
     const subscriptions = await this.subscriptionModel.find().lean().exec();
+    this.logger.log('Mail catch-up sweep tick', { mailboxes: subscriptions.length });
     for (const subscription of subscriptions) {
       try {
         await this.sweepMailbox(subscription);
@@ -110,10 +111,10 @@ export class WorkyMailCatchupService {
 
       const result = await this.orchestrator.deliverMailReply({
         token,
-        replyBody:
-          ((message.bodyPreview as string) ||
-            ((message.body as Record<string, unknown>)?.content as string) ||
-            '').trim(),
+        replyBody: fullReplyText(
+          message.body as { contentType?: string; content?: string },
+          message.bodyPreview as string,
+        ),
         replyFrom:
           ((message.from as Record<string, any>)?.emailAddress?.address as string) ?? '',
         agents: context.agents,

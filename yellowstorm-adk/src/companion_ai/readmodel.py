@@ -300,6 +300,21 @@ class ReadModel:
                 f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
                 session_id, step_id, interrupt_id)
 
+    async def rebind_mail_wait(self, session_id: str, old_step_id: str, new_step_id: str) -> None:
+        """Move a pending wait onto the real step it belongs to.
+
+        A step with create_task access mints its wait eagerly, the moment it
+        sends mail — under a placeholder id, since the await_reply step that
+        will actually wait on the reply (via create_task) doesn't exist yet at
+        send time. Once/if that step is created, this retargets the token onto
+        it. A no-op if nothing is pending under the placeholder (the step
+        never followed its mail with create_task(kind='await_reply'))."""
+        async with self._pool.acquire() as con:
+            await con.execute(
+                f"UPDATE {_q(self._schema,'mail_waits')} SET step_id=$3 "
+                f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
+                session_id, old_step_id, new_step_id)
+
     async def mail_token_for(self, session_id: str, step_id: str) -> Optional[str]:
         """The token to stamp into the mail this step is waiting on a reply to."""
         async with self._pool.acquire() as con:

@@ -16,6 +16,7 @@ from collections import Counter
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from google.adk.runners import InMemoryRunner
+from google.adk.workflow import BaseNode
 from google.genai import types
 
 from src.companion_ai.plan import Plan, Step
@@ -99,11 +100,60 @@ def test_node_name_sanitizes_digit_leading_ids():
     assert graph.node_name("a-b.c").isidentifier()
 
 
+def _node_names(wf):
+    names = set()
+    for a, b in wf.edges:
+        names.add(a.name)
+        names.add(b.name)
+    return names
+
+
+def test_plan_done_sink_present_even_with_a_single_terminal():
+    # Regression: plan_done used to be gated on len(terminals) > 1, so a
+    # single-terminal plan built no such node. Since to_workflow() is rebuilt
+    # fresh every turn from the CURRENT plan.steps, and create_task can append
+    # steps that shrink a prior turn's multi-terminal set down to one, that
+    # gate let "plan_done" silently vanish from a later turn's graph even
+    # though an earlier turn's session events already recorded its
+    # completion — permanently stalling ADK's replay barrier, which waits
+    # forever for a "plan_done@N" event that will never come (RuntimeError:
+    # "Replay divergence detected ..."). plan_done's own output isn't
+    # consumed anywhere, so it must always be built, regardless of terminal
+    # count.
+    plan = Plan(title="t", goal="g", steps=[Step(id="a")])
+    wf = graph.to_workflow(plan, lambda s, n: BaseNode(name=n))
+    assert "plan_done" in _node_names(wf)
+
+
+def test_plan_done_sink_stays_present_after_terminals_shrink_across_turns():
+    # Same regression, reproduced across two turns: turn 1 has two
+    # independent terminals (a, b) -> plan_done joins both. Turn 2 (as
+    # create_task/a consolidating step would do) adds c depending on BOTH a
+    # and b, shrinking the terminal set to just {c}. plan_done must still be
+    # present in turn 2's freshly rebuilt graph, under the same name, so ADK's
+    # replay barrier can find a matching completion for the "plan_done@N" key
+    # it already recorded from turn 1.
+    def factory(step, name):
+        return BaseNode(name=name)
+
+    plan_turn1 = Plan(title="t", goal="g", steps=[Step(id="a"), Step(id="b")])
+    wf1 = graph.to_workflow(plan_turn1, factory, name="p")
+    assert "plan_done" in _node_names(wf1)
+
+    plan_turn2 = Plan(title="t", goal="g", steps=[
+        Step(id="a"), Step(id="b"), Step(id="c", depends_on=["a", "b"]),
+    ])
+    wf2 = graph.to_workflow(plan_turn2, factory, name="p")
+    assert "plan_done" in _node_names(wf2)
+
+
 if __name__ == "__main__":
     test_node_name_sanitizes_digit_leading_ids(); print("ok  node_name sanitize")
     test_independent_steps_all_start_together(); print("ok  independent parallel")
     test_linear_chain_is_ordered(); print("ok  linear ordered")
     test_diamond_runs_each_step_once_with_parallel_and_join(); print("ok  diamond once + join")
+    test_plan_done_sink_present_even_with_a_single_terminal(); print("ok  plan_done present, single terminal")
+    test_plan_done_sink_stays_present_after_terminals_shrink_across_turns(); print("ok  plan_done stable across shrinking terminals")
     try:
         test_invalid_dag_rejected_before_build(); print("ok  invalid dag rejected")
     except ImportError:

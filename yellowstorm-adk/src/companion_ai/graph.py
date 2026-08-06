@@ -68,9 +68,23 @@ def to_workflow(
 
     # ADK requires a single terminal output. A plan can end in several parallel
     # leaves (steps nothing depends on), so join them into one sink.
+    #
+    # This sink is unconditional (even with a single terminal), not just an
+    # ADK nicety: to_workflow() is rebuilt from scratch every turn from the
+    # CURRENT plan.steps, and create_task/delegate_to_human_agent can append
+    # new steps in a later turn, shrinking today's multi-terminal set down to
+    # one. ADK's replay barrier expects every node NAME that ever completed in
+    # a prior turn's recorded session events to still be reachable in later
+    # turns' rebuilt graphs — gating "plan_done" on len(terminals) > 1 let it
+    # silently vanish once a chain absorbed a former sibling terminal, which
+    # permanently stalled the barrier on replay (it waits forever for a
+    # "plan_done@N" completion that will never come): RuntimeError("Replay
+    # divergence detected: Timed out waiting for sequence key ... to be
+    # unblocked."). Its output isn't consumed anywhere (service.py recomputes
+    # terminals itself), so always creating it is free.
     depended = {d for step in plan.steps for d in step.depends_on}
     terminals = [step for step in plan.steps if step.id not in depended]
-    if len(terminals) > 1:
+    if terminals:
         sink = JoinNode(name="plan_done")
         for step in terminals:
             edges.append((nodes[step.id], sink))
