@@ -21,6 +21,13 @@ const actions = {
 
 vi.mock('../../hooks', () => ({
   useDocumentActions: () => actions,
+  useSelectedWorkspace: () => ({ id: 'w-1', isPersonal: true }),
+  useWorkspaceStore: (selector: (s: { isUploading: boolean }) => unknown) =>
+    selector({ isUploading: false }),
+}));
+
+vi.mock('../CreateFolderDialog', () => ({
+  CreateFolderDialog: () => null,
 }));
 
 vi.mock('@/hooks/use-mobile', () => ({
@@ -63,15 +70,19 @@ vi.mock('./IndexingStatusBadge', () => ({
   IndexingStatusBadge: () => <span>status-badge</span>,
 }));
 
-vi.mock('lucide-react', () => ({
-  FileText: () => <span>FileText</span>,
-  Download: () => <span>Download</span>,
-  Eye: () => <span>Eye</span>,
-  RefreshCw: () => <span>RefreshCw</span>,
-  Search: () => <span>Search</span>,
-  Trash2: () => <span>Trash2</span>,
-  Loader2: () => <span>Loader2</span>,
-}));
+vi.mock('lucide-react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('lucide-react')>();
+  return {
+    ...actual,
+    FileText: () => <span>FileText</span>,
+    Download: () => <span>Download</span>,
+    Eye: () => <span>Eye</span>,
+    RefreshCw: () => <span>RefreshCw</span>,
+    Search: () => <span>Search</span>,
+    Trash2: () => <span>Trash2</span>,
+    Loader2: () => <span>Loader2</span>,
+  };
+});
 
 describe('DocumentRow', () => {
   it('triggers document action callbacks', async () => {

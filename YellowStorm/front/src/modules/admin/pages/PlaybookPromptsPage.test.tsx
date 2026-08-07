@@ -185,7 +185,15 @@ describe('PlaybookPromptsPage', () => {
     const sourceInput = screen.getByDisplayValue('{{items}}');
     fireEvent.change(sourceInput, { target: { value: '{{records}}' } });
 
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('{{records}}')).toBeInTheDocument();
+    });
+
     fireEvent.click(screen.getByRole('button', { name: /playbook\.templates\.actions\.saveTemplate/i }));
+
+    await waitFor(() => {
+      expect(vi.mocked(updatePlaybookNodeTemplate)).toHaveBeenCalled();
+    });
 
     const updateCall = vi.mocked(updatePlaybookNodeTemplate).mock.calls[0];
     expect(updateCall).toBeTruthy();
@@ -195,6 +203,7 @@ describe('PlaybookPromptsPage', () => {
       expect.objectContaining({
         source: '{{records}}',
         mode: 'item',
+        batchSize: 10,
         itemVariable: 'item',
         outputVariable: 'processed_items',
         errorStrategy: 'stop',

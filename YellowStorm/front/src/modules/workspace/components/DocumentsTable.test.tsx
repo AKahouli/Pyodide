@@ -29,11 +29,22 @@ const state = {
 };
 
 vi.mock('../store', () => ({
-  useDocuments: () => state.documents,
+  useDocuments: () => ({ documents: state.documents }),
   useSelectedWorkspace: () => ({ id: 'w-1' }),
   useDocumentPagination: () => ({ currentPage: 1, totalPages: 2, totalDocuments: 25 }),
   useWorkspaceLoading: () => ({ isLoadingDocuments: state.isLoadingDocuments }),
-  useWorkspaceStore: (selector: (s: { fetchDocuments: typeof fetchDocumentsMock }) => unknown) => selector({ fetchDocuments: fetchDocumentsMock }),
+  useWorkspaceStore: (selector: (s: {
+    fetchDocuments: typeof fetchDocumentsMock;
+    addFilesToQueue: ReturnType<typeof vi.fn>;
+    startUpload: ReturnType<typeof vi.fn>;
+    currentFolderId: string | null;
+  }) => unknown) =>
+    selector({
+      fetchDocuments: fetchDocumentsMock,
+      addFilesToQueue: vi.fn(),
+      startUpload: vi.fn(),
+      currentFolderId: null,
+    }),
 }));
 
 vi.mock('../hooks', () => ({
@@ -46,6 +57,19 @@ vi.mock('../hooks', () => ({
     toggleSelectAll: toggleSelectAllMock,
     clearSelection: vi.fn(),
     getSelectedIds: () => ['d1'],
+  }),
+}));
+
+vi.mock('../hooks/useDocumentDragDrop', () => ({
+  useDocumentDragDrop: () => ({
+    isDragging: false,
+    dropTargetId: null,
+    handleDragStart: vi.fn(),
+    handleDragEnd: vi.fn(),
+    handleDragOver: vi.fn(),
+    handleDragLeave: vi.fn(),
+    handleDropOnFolder: vi.fn(),
+    handleDropOnRoot: vi.fn(),
   }),
 }));
 
@@ -86,7 +110,17 @@ vi.mock('@/components/ui/table', () => ({
   TableRow: ({ children }: { children: ReactNode }) => <tr>{children}</tr>,
 }));
 
-vi.mock('lucide-react', () => ({ Loader2: () => <span>Loader2</span>, Upload: () => <span>Upload</span>, ChevronLeft: () => <span>ChevronLeft</span>, ChevronRight: () => <span>ChevronRight</span> }));
+vi.mock('lucide-react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('lucide-react')>();
+  return {
+    ...actual,
+    Loader2: () => <span>Loader2</span>,
+    Upload: () => <span>Upload</span>,
+    ChevronLeft: () => <span>ChevronLeft</span>,
+    ChevronRight: () => <span>ChevronRight</span>,
+    FolderPlus: () => <span>FolderPlus</span>,
+  };
+});
 
 describe('DocumentsTable', () => {
   beforeEach(() => {
