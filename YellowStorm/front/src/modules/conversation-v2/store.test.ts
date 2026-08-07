@@ -378,6 +378,56 @@ describe('useConversationV2Store', () => {
     expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
   });
 
+  it('sendMessage does not leave deployed mode on the first user message', async () => {
+    vi.spyOn(conversationV2Api, 'sendMessage').mockResolvedValueOnce(undefined);
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      appViewMode: 'deployed',
+      deployedUrl: 'https://deployed.example/app',
+      deployStatus: 'deployed',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'https://preview.example/app',
+        revision: 'app-1',
+      },
+    });
+
+    await useConversationV2Store.getState().sendMessage('first prompt');
+
+    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
+  });
+
+  it('sendMessage switches deployed → nodepod from the second user message', async () => {
+    vi.spyOn(conversationV2Api, 'sendMessage').mockResolvedValue(undefined);
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      appViewMode: 'deployed',
+      deployedUrl: 'https://deployed.example/app',
+      deployStatus: 'deployed',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'https://preview.example/app',
+        revision: 'app-1',
+      },
+      events: [
+        {
+          type: 'message',
+          event_id: 'u1',
+          timestamp: 1,
+          role: 'user',
+          content: 'first',
+          attachments: [],
+        },
+      ],
+      rightPanelMode: 'closed',
+    });
+
+    await useConversationV2Store.getState().sendMessage('follow-up');
+
+    expect(useConversationV2Store.getState().appViewMode).toBe('nodepod');
+    expect(useConversationV2Store.getState().rightPanelMode).toBe('app');
+  });
+
   it('deploy sends the application component title to the backend', async () => {
     const deploySpy = vi.spyOn(conversationV2Api, 'deploySession').mockResolvedValueOnce({
       deployStatus: 'deployed',

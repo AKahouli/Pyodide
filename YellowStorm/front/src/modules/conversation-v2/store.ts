@@ -384,6 +384,26 @@ export const useConversationV2Store = create<State & Actions>()(
       sendMessage: async (message, model) => {
         const sessionId = get().sessionId;
         if (!sessionId) return;
+
+        // Follow-up turns (2nd user message and later): leave the deployed
+        // iframe and show Nodepod preview so the user watches the rebuild.
+        const priorUserMessages = get().events.filter(
+          (e) => e.type === 'message' && (e as { role?: string }).role === 'user',
+        ).length;
+        const isFollowUp = priorUserMessages >= 1;
+        if (isFollowUp && get().appViewMode === 'deployed') {
+          set(
+            {
+              appViewMode: 'nodepod' as const,
+              ...(get().applicationComponent || get().appBuildProgress
+                ? { rightPanelMode: 'app' as const }
+                : {}),
+            },
+            false,
+            'sendMessage/switch-to-preview',
+          );
+        }
+
         // Optimistically echo the user message under a client id; the backend
         // persists the same id and re-emits it over the pipe, where the
         // `message` upsert replaces this echo instead of duplicating it.
