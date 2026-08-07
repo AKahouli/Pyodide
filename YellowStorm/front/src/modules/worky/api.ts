@@ -18,6 +18,7 @@ import type {
   WorkyBudgetSnapshot,
   WorkyExecutionReport,
   WorkyGovernancePolicy,
+  WorkyHumainRef,
   WorkyHumanUpdateKind,
   WorkyMemoryEntry,
   WorkyMemoryProposal,
@@ -90,6 +91,20 @@ export async function sendMessage(
 export async function getBoard(streamId: string): Promise<WorkyBoardResponse> {
   const response = await apiClient.get<ApiResponse<WorkyBoardResponse>>(
     API_ENDPOINTS.worky.streamBoard(streamId),
+  );
+  return unwrap(response);
+}
+
+/**
+ * Resolve humain agents by id. Used to render task assignees that are other
+ * users' humain agents delegated into a stream (not in the caller's own
+ * roster). Humain-only + active on the server, so no private agent leaks.
+ */
+export async function resolveHumainAgents(ids: string[]): Promise<WorkyHumainRef[]> {
+  if (ids.length === 0) return [];
+  const response = await apiClient.get<ApiResponse<WorkyHumainRef[]>>(
+    API_ENDPOINTS.agents.humainResolve,
+    { params: { ids: ids.join(',') } },
   );
   return unwrap(response);
 }

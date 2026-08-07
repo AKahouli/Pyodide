@@ -169,6 +169,27 @@ export class AgentService {
     );
   }
 
+  /**
+   * Resolve humain agents by id for cross-user delegation display (e.g. a
+   * Worky stream can delegate tasks to *another* user's humain agent). Owner-
+   * ship is intentionally NOT enforced: humain agents are public — the same
+   * data is already exposed unauthenticated via {@link findHumainAgentsPublic}
+   * — so a stream owner must be able to render a delegated agent they don't
+   * own. Scoped strictly to the "humain" type, so no private (non-humain)
+   * agent is ever leaked, and to active agents. Unknown/non-humain ids are
+   * silently dropped. Capped to avoid unbounded id lists.
+   */
+  async resolveHumainByIds(
+    ids: string[],
+  ): Promise<Array<{ id: string; name: string; slug: string; role: string }>> {
+    const unique = [...new Set(ids.filter(Boolean))].slice(0, 100);
+    if (unique.length === 0) return [];
+    const records = await this.agentRepository.findByIds(unique, { activeOnly: true });
+    return records
+      .filter((r) => r.agentTypeSlug === HUMAIN_AGENT_TYPE_SLUG)
+      .map((r) => ({ id: r._id, name: r.name, slug: r.slug, role: r.role }));
+  }
+
   async findUserAgentById(userId: string, agentId: string): Promise<IAgentResponse> {
     const agent = await this.agentRepository.findById(agentId);
 

@@ -64,12 +64,26 @@ export interface WorkyStreamBudget {
   enforcement: 'hard_stop' | 'notify';
 }
 
+/**
+ * Minimal identity for a humain agent resolved by id. Used to render task
+ * assignees that are *other users'* humain agents delegated into a stream —
+ * they aren't in the current user's own agent roster.
+ */
+export interface WorkyHumainRef {
+  id: string;
+  name: string;
+  slug: string;
+  role: string;
+}
+
 export interface WorkyStream {
   id: string;
   ownerUserId: string;
   workspaceId: string;
-  artifactWorkspaceId: string;
-  managerAgentId: string;
+  /** Legacy: null for streams created after the workspace/agent removal. */
+  artifactWorkspaceId: string | null;
+  /** Legacy: null for streams created after the workspace/agent removal. */
+  managerAgentId: string | null;
   /**
    * Per-stream Manager model. LiteLLM model identifier
    * (e.g. `gpt-4o-mini`) — the value `LiteLlm(model=...)` expects.

@@ -370,6 +370,7 @@ export const API_ENDPOINTS = {
   agents: {
     list: '/agents',
     all: '/agents/all',
+    humainResolve: '/agents/humain/resolve',
     byId: (id: string) => `/agents/${id}`,
     telegramIntegration: (id: string) => `/agents/${id}/telegram-integration`,
     whatsappIntegration: (id: string) => `/agents/${id}/whatsapp-integration`,

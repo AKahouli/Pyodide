@@ -50,14 +50,11 @@ jobs:
           cache: 'npm'
           cache-dependency-path: YellowStorm/front/package-lock.json
       - run: npm ci
-      - name: Run frontend tests
-        # Run tests first; ignore exit code so failures don't prevent coverage.
-        run: npm run test || true
-      - name: Collect frontend coverage
-        # Second pass: generate coverage without failing the step.
-        # Vitest skips writing reports when workers crash, so a clean
-        # second pass ensures the lcov file is always written.
-        run: npm run test -- --coverage --reporter=dot || true
+      - name: Run frontend tests with coverage
+        # coverage.reportOnFailure=true is required because vitest v2 defaults
+        # to NOT writing the coverage report when any test fails. Without this,
+        # lcov.info is never created and the artifact upload silently skips.
+        run: npm run test -- --coverage --coverage.reportOnFailure --reporter=dot --testTimeout=30000 || true
       - name: Upload frontend coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -81,20 +78,19 @@ jobs:
           cache: 'npm'
           cache-dependency-path: YellowStorm/back/package-lock.json
       - run: npm ci
-      - run: npm run build
-      - name: Run backend tests
+        # NOTE: 'npm run build' is intentionally skipped — ts-jest handles
+        # TypeScript compilation at test time; the build step is only for deployment.
+      - name: Run backend tests with coverage
         env:
-          NODE_OPTIONS: --max-old-space-size=4096
-        # Run tests first without coverage to catch failures, exit code ignored
-        # so the coverage pass below always runs.
-        run: npm test -- --ci --forceExit --bail=0 || true
-      - name: Collect backend coverage
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-        # Separate coverage pass. Excludes the spec file whose dangling gRPC timer
-        # crashes the process before Jest can write lcov.info.
+          # 2048MB per process. GitHub runner has 7GB RAM.
+          # Main process + 2 workers = 3 × 2048 = 6144MB < 7168MB available.
+          NODE_OPTIONS: --max-old-space-size=2048
+        # Single pass: runs all specs except the one whose dangling gRPC timer
+        # crashes the Node process before Jest can flush lcov.info to disk.
+        # --forceExit ensures the process terminates after tests complete.
+        # || true so the upload step always runs even if some tests fail.
         run: |
-          npm test -- --ci --forceExit --bail=0 \
+          npm test -- --ci --forceExit --bail=0 --maxWorkers=2 \
             --coverage --coverageProvider=v8 \
             --testPathIgnorePatterns="playbook-execution.service.spec.ts" \
             || true
@@ -229,4 +225,4 @@ jobs:
                         github.event.pull_request.number,
                         github.head_ref,
                         github.base_ref)
-              || format('-Dsonar.branch.name={0}', github.ref_name) }}
+              || (github.ref_name != 'main' && format('-Dsonar.branch.name={0}', github.ref_name) || '') }}

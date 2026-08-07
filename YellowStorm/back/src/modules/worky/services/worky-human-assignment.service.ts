@@ -16,7 +16,6 @@ import {
 } from '../schemas/worky-mail-event-ledger.schema';
 import { LoggerService } from '../../logger';
 import { EmailService } from '../../email/email.service';
-import { WorkspaceShareService } from '../../workspace/workspace-share.service';
 import { UserService } from '../../user/user.service';
 import { WorkyEventService } from './worky-event.service';
 import { WorkyAuditService } from './worky-audit.service';
@@ -75,7 +74,6 @@ export class WorkyHumanAssignmentService {
     @InjectModel(WorkyMailEventLedger.name)
     private readonly mailLedger: Model<WorkyMailEventLedgerDocument>,
     private readonly emailService: EmailService,
-    private readonly shareService: WorkspaceShareService,
     private readonly userService: UserService,
     private readonly events: WorkyEventService,
     private readonly audit: WorkyAuditService,
@@ -158,7 +156,6 @@ export class WorkyHumanAssignmentService {
       )
       .exec();
 
-    await this.grantWorkspaceShare(stream, assignee);
     await this.sendAssignmentEmail(stream, task, assignee);
     await this.scheduleReminders(stream, task, assignee, dueAt);
 
@@ -332,23 +329,6 @@ export class WorkyHumanAssignmentService {
     const d = new Date(dueAt);
     if (Number.isNaN(d.getTime())) return null;
     return d;
-  }
-
-  private async grantWorkspaceShare(
-    stream: WorkyStreamDocument,
-    assignee: CandidateUser,
-  ): Promise<void> {
-    try {
-      await this.shareService.share(stream.artifactWorkspaceId.toString(), stream.ownerUserId.toString(), {
-        shares: [{ email: assignee.email, permission: 'read' }],
-      });
-    } catch (err) {
-      this.logger.warn('Worky human-assignment: workspace share failed', {
-        streamId: stream._id.toString(),
-        assigneeEmail: assignee.email,
-        error: (err as Error).message,
-      });
-    }
   }
 
   private async sendAssignmentEmail(
