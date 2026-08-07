@@ -402,15 +402,21 @@ class OrchestratorService:
             if dynamic_eligible(step):
                 pending_id = f"__pending__:{step.id}"
 
-                async def eager_token_provider(_step_id=step.id, _pending_id=pending_id):
-                    token = mail_token.mint()
+                # Mint only — pure, no DB. The token has to be in the mail, so
+                # it must exist before the send; the WAIT must not, or a send
+                # that raises strands the step on a reply to an email that was
+                # never sent. Persisting therefore happens in on_sent below.
+                async def eager_token_provider():
+                    return mail_token.mint()
+
+                async def eager_on_sent(token, _pending_id=pending_id):
                     expires_at = datetime.now(timezone.utc) + timedelta(
                         hours=self._mail_wait_timeout_hours)
                     await rm.register_mail_wait(
                         token, session_id=session_id, step_id=_pending_id,
                         user_id=user_id, expires_at=expires_at)
-                    return token
-                return [nodes.stamp_send_email_tool(t, token_provider=eager_token_provider)
+                return [nodes.stamp_send_email_tool(
+                            t, token_provider=eager_token_provider, on_sent=eager_on_sent)
                         if nodes.is_send_email_tool(t) else t
                         for t in tools]
             return tools

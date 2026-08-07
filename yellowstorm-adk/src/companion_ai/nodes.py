@@ -192,8 +192,13 @@ def is_send_email_tool(tool) -> bool:
     return name.endswith("_send_email")
 
 
-def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Optional[str]]]):
+def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Optional[str]]],
+                          on_sent: Optional[Callable[[str], Awaitable[None]]] = None):
     """Wrap a send_email tool so the outbound mail carries its routing token.
+
+    `on_sent(token)` — optional — runs only after the underlying send returns
+    successfully, for callers that need to persist the wait (see
+    _mail_stamping's eager path). A send that raises must leave no wait behind.
 
     Deterministic on purpose. The alternative — telling the executor LLM to put a
     marker in the subject — fails open: the one time the model omits it, the
@@ -221,7 +226,17 @@ def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Option
             # that lands than a step that refuses to run.
             logger.warning("send_email: no routing token for this step — a reply "
                            "will not resume anything")
-        return await original(**kwargs)
+        result = await original(**kwargs)
+        # Only NOW does a mail exist that a reply could answer, so only now is
+        # there a wait worth recording. Registering before the send meant a send
+        # that raised (MCP transport, auth, a 4xx from Graph) still left a wait
+        # row behind: the step then parked on a reply to an email that was never
+        # sent, and nothing could ever resume it. Minting stays above — the
+        # token has to be IN the mail — but persisting waits for the send to
+        # come back.
+        if token and on_sent is not None:
+            await on_sent(token)
+        return result
 
     stamped.__name__ = original.__name__
     stamped.__signature__ = original.__signature__

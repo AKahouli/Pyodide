@@ -464,6 +464,61 @@ def test_a_send_with_no_token_still_sends():
     assert sent[0]["subject"] == "Q", "nothing to stamp, nothing stamped"
 
 
+def test_a_send_that_fails_leaves_no_wait_behind():
+    """The wait must only exist if a mail a reply could answer exists.
+
+    The row used to be written before the send was attempted, so a send that
+    raised (MCP transport, auth, a 4xx from Graph) still left a wait: the step
+    then parked on a reply to an email that was never sent, and nothing could
+    ever resume it — the plan waited forever on mail that does not exist.
+    Minting still happens first (the token has to be IN the mail); only
+    persisting waits for the send to come back.
+    """
+    import inspect
+    import pytest
+    from src.smart_rag.tools.search.tools import SearchToolADK
+    registered = []
+
+    async def _explodes(**kwargs):
+        raise RuntimeError("graph 502")
+    _explodes.__name__ = "microsoft365_send_email"
+    params = [inspect.Parameter(n, inspect.Parameter.KEYWORD_ONLY, default=None)
+              for n in ("to_recipients", "subject", "body")]
+    _explodes.__signature__ = inspect.Signature(params)
+    _explodes.__annotations__ = {}
+    failing = SearchToolADK(_explodes, {"function": {"name": "microsoft365_send_email",
+                                                     "description": "", "parameters": {}}})
+
+    async def on_sent(token):
+        registered.append(token)
+
+    wrapped = nodes.stamp_send_email_tool(
+        failing, token_provider=AsyncMock(return_value="YW-abcdefghijklmnop12"),
+        on_sent=on_sent)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(wrapped.func(to_recipients=["r@example.com"], subject="Q", body="<p>Hi</p>"))
+
+    assert registered == [], "a failed send must not register a wait"
+
+
+def test_a_successful_send_registers_the_wait_after_the_mail_is_away():
+    sent = []
+    registered = []
+
+    async def on_sent(token):
+        registered.append(token)
+
+    wrapped = nodes.stamp_send_email_tool(
+        _fake_send_tool(sent), token_provider=AsyncMock(return_value="YW-abcdefghijklmnop12"),
+        on_sent=on_sent)
+
+    asyncio.run(wrapped.func(to_recipients=["r@example.com"], subject="Q", body="<p>Hi</p>"))
+
+    assert len(sent) == 1
+    assert registered == ["YW-abcdefghijklmnop12"]
+
+
 def test_only_the_send_step_feeding_a_wait_gets_a_stamped_tool():
     svc, rm = _service()
     rm.mail_token_for = AsyncMock(return_value="YW-abcdefghijklmnop12")
