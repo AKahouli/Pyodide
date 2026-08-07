@@ -316,7 +316,7 @@ def _fn_factory_holder():
     return [lambda step, name: FunctionNode(func=_noop, name=name)]
 
 
-def test_delegate_tool_appends_a_step_assigned_to_the_target_and_calls_run_node(monkeypatch):
+def test_delegate_tool_appends_a_scheduled_step_and_never_runs_it_nested(monkeypatch):
     monkeypatch.setattr(svc.human_agents, "search_human_agents", AsyncMock(
         return_value=[{"id": "oussama", "name": "Oussama", "role": "Investment approver"}]))
     rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
@@ -336,7 +336,21 @@ def test_delegate_tool_appends_a_step_assigned_to_the_target_and_calls_run_node(
     result = asyncio.run(tool.func(
         "Oussama", "Should we invest in bitcoin today?", tool_context=tool_context))
 
-    assert result == "Approved — go ahead."
+    # Asking a colleague is asynchronous — they answer by email, hours or days
+    # later — so the delegate is a scheduled step and its answer lands THERE.
+    # It must never be run nested: run_node buffers a sub-node's events until
+    # it finishes, while ADK rebuilds the LLM contents from session events
+    # before every call, so a nested sub-agent could not see its own previous
+    # tool calls and re-issued them until the budget cap (verified live: 0
+    # model rounds, 0 function calls in context on all 25 of its calls).
+    tool_context.run_node.assert_not_awaited()
+    assert "Oussama" in result
+    # The caller must be told plainly not to wait or invent an answer.
+    assert "not hand" in result.lower() or "arrives there" in result.lower() \
+        or "own step" in result.lower(), result
+    assert "never guess" in result.lower() or "do not wait" in result.lower() \
+        or "do NOT wait" in result, result
+
     assert len(plan.steps) == 3
     new_step = plan.steps[-1]
     assert new_step.assignee == "oussama"
@@ -348,17 +362,11 @@ def test_delegate_tool_appends_a_step_assigned_to_the_target_and_calls_run_node(
     # after the caller's wave, not at wave 0 as if independent.
     assert new_step.depends_on == ["s2"]
     assert new_step.wave == 2
-    tool_context.run_node.assert_awaited_once()
-    # Without use_sub_branch=True, ADK loses track of the calling step's own
-    # function-call event once the delegate's events land on the same branch.
-    assert tool_context.run_node.await_args.kwargs["use_sub_branch"] is True
     rm.upsert_steps.assert_awaited_once()
 
-    # The caller reads "blocked" while the delegate runs, then "running" again.
+    # The caller is not blocked on it any more — it ends its own turn instead.
     caller_calls = [c for c in rm.set_step_status.call_args_list if c.args[1] == "s2"]
-    assert [c.args[2] for c in caller_calls] == ["blocked", "running"]
-    assert caller_calls[0].kwargs["blocked_reason"] == "waiting on Oussama"
-    assert plan.step("s2").status is Status.RUNNING
+    assert [c.args[2] for c in caller_calls] == []
     assert plan.step("s2").blocked_reason is None
 
 
@@ -465,12 +473,20 @@ def test_delegate_tool_keeps_two_consultations_from_the_same_caller_parallel(mon
     assert plan.step("s3").wave == 2
 
 
-def test_create_task_tool_appends_a_step_and_calls_run_node():
+def test_create_task_execute_is_scheduled_not_run_nested():
     """create_task mirrors delegate_to_human_agent's mechanics but for a
     generic follow-up task, not a named colleague — e.g. Sarah reads a
     compliance reply revealing a PEP and spins off an actual screening
     check instead of just writing "requires senior approval" in her own
-    answer."""
+    answer.
+
+    kind='execute' builds an LlmAgent, so like a delegate it must NOT run
+    nested: run_node buffers a sub-node's events until it finishes, while ADK
+    rebuilds the LLM contents from session events before every call, so the
+    sub-agent could not see its own previous tool calls and re-issued them
+    until the budget cap. ('ask'/'await_reply' are different — they build
+    one-shot wait nodes with no LLM loop, and DO run here so they park and
+    register their interrupt; see the await_reply tests.)"""
     rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
                    rebind_mail_wait=AsyncMock())
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
@@ -487,7 +503,8 @@ def test_create_task_tool_appends_a_step_and_calls_run_node():
     result = asyncio.run(tool.func("Run a sanctions screening check on the UBO.",
                                    tool_context=tool_context))
 
-    assert result == "Screening complete: no sanctions hits."
+    tool_context.run_node.assert_not_awaited()
+    assert "own step" in result.lower(), result
     assert len(plan.steps) == 2
     new_step = plan.steps[-1]
     assert new_step.description == "Run a sanctions screening check on the UBO."
@@ -495,8 +512,6 @@ def test_create_task_tool_appends_a_step_and_calls_run_node():
     assert new_step.is_persona is False  # a plain follow-up task, not a colleague
     assert new_step.is_dynamic_delegate is True  # same resume short-circuit as a delegate
     assert new_step.depends_on == ["s1"]
-    tool_context.run_node.assert_awaited_once()
-    assert tool_context.run_node.await_args.kwargs["use_sub_branch"] is True
 
 
 def test_create_task_step_inherits_the_plans_executor_name_not_the_generic_label():
@@ -811,9 +826,14 @@ def test_a_plain_step_reading_a_mail_reply_gets_delegation_tools_too():
     assert not tool_names(nodes_by_name["s5"]) & {"delegate_to_human_agent", "create_task"}
 
 
-def test_delegate_tool_unblocks_the_caller_even_when_the_delegate_errors(monkeypatch):
-    """A failed delegate must not leave the caller stuck showing "blocked"
-    forever on the plan card."""
+def test_delegating_never_blocks_the_caller_on_the_delegate(monkeypatch):
+    """The caller must never be left showing "blocked" on the plan card.
+
+    This used to be a real hazard: the caller was flipped to blocked for the
+    duration of a nested delegate run, so any failure in there could strand
+    it. Now the delegate is simply a scheduled step and the caller ends its
+    own turn, so the caller is never blocked at all — the hazard is gone by
+    construction rather than by an unwind path."""
     monkeypatch.setattr(svc.human_agents, "search_human_agents", AsyncMock(
         return_value=[{"id": "oussama", "name": "Oussama", "role": "Investment approver"}]))
     rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
@@ -826,14 +846,16 @@ def test_delegate_tool_unblocks_the_caller_even_when_the_delegate_errors(monkeyp
     tool = service._delegate_tool_for("sess1", "u1", plan, _fn_factory_holder(), {}, "s2")
 
     tool_context = MagicMock()
-    tool_context.run_node = AsyncMock(side_effect=RuntimeError("boom"))
+    tool_context.run_node = AsyncMock(side_effect=AssertionError("must not run nested"))
 
     result = asyncio.run(tool.func("Oussama", "task", tool_context=tool_context))
 
-    assert "Error asking Oussama" in result
+    assert "Oussama" in result
+    tool_context.run_node.assert_not_awaited()
     caller_calls = [c for c in rm.set_step_status.call_args_list if c.args[1] == "s2"]
-    assert [c.args[2] for c in caller_calls] == ["blocked", "running"]
-    assert plan.step("s2").status is Status.RUNNING
+    assert [c.args[2] for c in caller_calls] == []
+    assert plan.step("s2").status is not Status.BLOCKED
+    assert plan.step("s2").blocked_reason is None
 
 
 def test_delegate_tool_rejects_an_unknown_agent_without_touching_the_plan(monkeypatch):
