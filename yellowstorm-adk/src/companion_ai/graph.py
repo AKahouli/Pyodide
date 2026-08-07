@@ -14,8 +14,10 @@ edges is triggered N times. So a step with >=2 dependencies is routed through a
 from __future__ import annotations
 
 import re
-from typing import Callable, Optional
+from typing import Any, AsyncGenerator, Callable, Optional
 
+from google.adk.agents.context import Context
+from google.adk.events import Event
 from google.adk.workflow import JoinNode, RetryConfig, START, Workflow
 from google.adk.workflow import BaseNode
 
@@ -26,6 +28,35 @@ from .plan import Plan, Step
 # graph-safe node name to use. In production it wraps an LlmAgent; tests pass a
 # FunctionNode factory so the wiring is verifiable without an LLM.
 NodeFactory = Callable[[Step, str], BaseNode]
+
+
+class _SilentJoinNode(JoinNode):
+    """A JoinNode that fires once after all predecessors but emits NO output.
+
+    Why this exists (the plan_done sink, see to_workflow): ADK's replay
+    barrier pins every node that emits a *terminal event* to a fixed
+    chronological slot in the session's recorded history, and
+    `is_terminal_event()` counts anything with a non-None `output`. Stock
+    JoinNode always yields `Event(output=node_input)`, so the sink got
+    pinned to whatever position it happened to fire at on an early turn.
+
+    That is fatal here specifically because to_workflow is rebuilt every
+    turn from the CURRENT plan.steps, and create_task /
+    delegate_to_human_agent grow the plan mid-session: a step that fans out
+    into two children (one dead-ending, one continuing into a further wave)
+    pushes the sink structurally LATER, while history still insists it
+    already completed EARLIER. The barrier then waits forever for an
+    ordering that can no longer happen -- RuntimeError("Replay divergence
+    detected: Timed out waiting for sequence key ... to be unblocked.").
+
+    Emitting no output takes the sink out of the barrier entirely, so its
+    position is free to float as the plan grows. Nothing reads its output:
+    ADK's own _finalize treats zero terminal outputs as fine, and
+    service.py computes the final answer from step results directly.
+    """
+
+    async def _run_impl(self, *, ctx: Context, node_input: Any) -> AsyncGenerator[Any, None]:
+        yield Event(branch=ctx._invocation_context.branch)
 
 
 def node_name(step_id: str) -> str:
@@ -69,23 +100,15 @@ def to_workflow(
     # ADK requires a single terminal output. A plan can end in several parallel
     # leaves (steps nothing depends on), so join them into one sink.
     #
-    # This sink is unconditional (even with a single terminal), not just an
-    # ADK nicety: to_workflow() is rebuilt from scratch every turn from the
-    # CURRENT plan.steps, and create_task/delegate_to_human_agent can append
-    # new steps in a later turn, shrinking today's multi-terminal set down to
-    # one. ADK's replay barrier expects every node NAME that ever completed in
-    # a prior turn's recorded session events to still be reachable in later
-    # turns' rebuilt graphs — gating "plan_done" on len(terminals) > 1 let it
-    # silently vanish once a chain absorbed a former sibling terminal, which
-    # permanently stalled the barrier on replay (it waits forever for a
-    # "plan_done@N" completion that will never come): RuntimeError("Replay
-    # divergence detected: Timed out waiting for sequence key ... to be
-    # unblocked."). Its output isn't consumed anywhere (service.py recomputes
-    # terminals itself), so always creating it is free.
+    # Unconditional (even for a single terminal) so the graph's shape stays
+    # stable as the plan grows mid-session, and _SilentJoinNode rather than a
+    # stock JoinNode so the sink never enters ADK's replay barrier at all —
+    # see _SilentJoinNode's docstring for why both matter. Its output isn't
+    # consumed anywhere (service.py recomputes terminals itself).
     depended = {d for step in plan.steps for d in step.depends_on}
     terminals = [step for step in plan.steps if step.id not in depended]
     if terminals:
-        sink = JoinNode(name="plan_done")
+        sink = _SilentJoinNode(name="plan_done")
         for step in terminals:
             edges.append((nodes[step.id], sink))
 

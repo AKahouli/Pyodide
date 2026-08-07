@@ -147,6 +147,58 @@ def test_plan_done_sink_stays_present_after_terminals_shrink_across_turns():
     assert "plan_done" in _node_names(wf2)
 
 
+def test_plan_done_never_enters_the_replay_barrier():
+    """The plan_done sink must emit NO terminal event.
+
+    Root cause of a live crash: ADK's replay barrier pins every node that
+    emits a terminal event (anything with a non-None `output`, per
+    is_terminal_event) to a fixed chronological slot in the session's
+    recorded history. A stock JoinNode always yields Event(output=...), so
+    the sink got pinned to whatever slot it first fired at.
+
+    That deadlocks a growing plan: to_workflow is rebuilt each turn, and
+    create_task/delegate_to_human_agent append steps mid-session. Seen live
+    — a wave-2 step fanned out into two wave-3 children (one dead-ending
+    into the sink, one continuing into wave 4), pushing the sink
+    structurally LATER while history insisted it had already completed
+    EARLIER (recovered_sequence ['s1@1', 'plan_done@1', 'n_70cd...@1'] —
+    plan_done pinned at index 1, ahead of a node it must now follow). The
+    barrier then waited forever: RuntimeError("Replay divergence detected:
+    Timed out waiting for sequence key ... to be unblocked.").
+
+    Emitting no output keeps the sink out of the barrier, so its position
+    floats freely as the plan grows. Real steps must STILL be pinned.
+    """
+    from google.adk.workflow.utils._rehydration_utils import is_terminal_event
+
+    runs, when, t0 = Counter(), {}, [time.monotonic()]
+    # Two independent terminals, so the sink genuinely fans in.
+    plan = Plan(title="t", goal="g", steps=[Step(id="a"), Step(id="b")])
+    wf = graph.to_workflow(plan, _fn_factory(runs, when, t0, 0.0),
+                           name="test_plan", max_concurrency=8)
+
+    async def go():
+        runner = InMemoryRunner(node=wf, app_name="t")
+        await runner.session_service.create_session(app_name="t", user_id="u", session_id="s")
+        async for _ in runner.run_async(
+            user_id="u", session_id="s",
+            new_message=types.Content(role="user", parts=[types.Part(text="go")])):
+            pass
+        return await runner.session_service.get_session(
+            app_name="t", user_id="u", session_id="s")
+
+    session = asyncio.run(go())
+    pinned = [e.node_info.path for e in session.events
+              if is_terminal_event(e) and e.node_info and e.node_info.path]
+
+    assert not any("plan_done" in p for p in pinned), \
+        f"plan_done must not be pinned in the replay barrier, got {pinned}"
+    # The real steps still are — otherwise replay ordering breaks entirely.
+    assert any(p.endswith("a@1") for p in pinned), pinned
+    assert any(p.endswith("b@1") for p in pinned), pinned
+    assert dict(runs) == {"a": 1, "b": 1}, dict(runs)
+
+
 if __name__ == "__main__":
     test_node_name_sanitizes_digit_leading_ids(); print("ok  node_name sanitize")
     test_independent_steps_all_start_together(); print("ok  independent parallel")
