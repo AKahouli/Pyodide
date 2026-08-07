@@ -96,6 +96,64 @@ if (typeof window !== 'undefined') {
   });
 }
 
+function stripAnsi(text: string): string {
+  return text.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, '');
+}
+
+export function extractNodepodPortFromPreviewUrl(url: string | null | undefined): number | null {
+  if (!url) return null;
+
+  const parsePort = (value: string): number | null => {
+    const numeric = Number(value);
+    return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
+  };
+
+  try {
+    const parsed = new URL(url, window.location.href);
+    const virtualMatch = parsed.pathname.match(/\/__virtual__\/[^/]+\/(\d+)(?:\/|$)/i);
+    if (virtualMatch) return parsePort(virtualMatch[1]);
+
+    if (
+      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') &&
+      parsed.port
+    ) {
+      return parsePort(parsed.port);
+    }
+
+    if (parsed.port) return parsePort(parsed.port);
+  } catch {
+    const virtualMatch = url.match(/\/__virtual__\/[^/]+\/(\d+)(?:\/|$)/i);
+    if (virtualMatch) return parsePort(virtualMatch[1]);
+
+    const localMatch = url.match(/https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)/i);
+    if (localMatch) return parsePort(localMatch[1]);
+  }
+
+  return null;
+}
+
+export function extractPortFromDevServerOutput(text: string): number | null {
+  const cleaned = stripAnsi(text);
+  const match = cleaned.match(/Local:\s+https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)/i);
+  if (!match) return null;
+
+  const port = Number(match[1]);
+  return Number.isInteger(port) && port > 0 ? port : null;
+}
+
+export function resolvePreviewPort(args: {
+  previewUrl?: string | null;
+  reportedPort?: number | null;
+  stdoutText?: string | null;
+}): number | null {
+  return (
+    extractNodepodPortFromPreviewUrl(args.previewUrl) ??
+    extractPortFromDevServerOutput(args.stdoutText ?? '') ??
+    args.reportedPort ??
+    null
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -477,16 +535,17 @@ export function useNodepodPreview({
         try {
           const pod = podRef.current;
           if (!pod || cancelled) return;
+          const probePort = resolvePreviewPort({ previewUrl: url, reportedPort: port }) ?? port;
 
           logPhase('6.promote:start', {
             source,
             url,
-            port,
+            port: probePort,
             swController: !!navigator.serviceWorker?.controller,
             crossOriginIsolated: globalThis.crossOriginIsolated === true,
           });
 
-          const directOk = await waitUntilDirectServerReady(pod, port, isStale);
+          const directOk = await waitUntilDirectServerReady(pod, probePort, isStale);
           if (cancelled || readyRef.current) return;
           if (!directOk) {
             fail('Dev server started but did not answer HTTP requests inside Nodepod.');
@@ -586,8 +645,9 @@ export function useNodepodPreview({
               return;
             }
             const resolved = url || pod.port(port) || null;
+            const resolvedPort = resolvePreviewPort({ previewUrl: resolved, reportedPort: port });
             logPhase('6.server-ready', { port, url, resolvedPreviewUrl: resolved });
-            pendingPort = port;
+            pendingPort = resolvedPort ?? port;
             pendingUrl = resolved;
           },
         });
@@ -663,7 +723,12 @@ export function useNodepodPreview({
         proc.on('output', (text: string) => {
           console.log(`${LOG} [6.dev-server:stdout]`, text);
           if (!readyRef.current && !cancelled && looksLikeDevServerReady(text)) {
-            const port = pendingPort ?? 5173;
+            const port =
+              resolvePreviewPort({
+                previewUrl: pendingUrl,
+                reportedPort: pendingPort ?? 5173,
+                stdoutText: text,
+              }) ?? 5173;
             const url =
               pendingUrl ||
               pod.port(port) ||
@@ -686,7 +751,13 @@ export function useNodepodPreview({
         const tryFallbackPorts = (
           phase: string,
         ): { url: string; port: number } | null => {
-          for (const port of [pendingPort, ...PREVIEW_PORTS]) {
+          const candidatePorts = [
+            resolvePreviewPort({ previewUrl: pendingUrl, reportedPort: pendingPort }),
+            pendingPort,
+            ...PREVIEW_PORTS,
+          ];
+
+          for (const port of candidatePorts) {
             if (port == null) continue;
             const url = pod.port(port);
             if (url) {

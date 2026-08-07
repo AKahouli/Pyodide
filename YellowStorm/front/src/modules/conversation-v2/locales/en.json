@@ -80,7 +80,19 @@
     "waitingSources": "Waiting for generated source files…",
     "error": "Could not start the in-browser preview.",
     "retry": "Retry",
-    "openInNewTab": "Open in new tab"
+    "openInNewTab": "Open in new tab",
+    "buildPhase": {
+      "generation_started": "Generation started",
+      "creating_files": "Creating files",
+      "coding_complete": "Code complete",
+      "installing_dependencies": "Installing dependencies",
+      "building_project": "Building project",
+      "waiting_for_build": "Waiting for build",
+      "validating_preview": "Validating preview",
+      "fetching_app_code": "Fetching source metadata",
+      "fetching_app_preview": "Starting preview",
+      "ready": "Ready"
+    }
   },
   "vnc": {
     "unavailable": "No VM attached to this session",
@@ -134,9 +146,12 @@
     "update": "Update",
     "liveUrl": "Live URL",
     "copy": "Copy link",
-    "open": "Open",
+    "open": "Open in new tab",
     "viewUrl": "View deployed URL",
-    "menu": "Deployment options"
+    "menu": "Deployment options",
+    "switchToNodepod": "Back to Nodepod preview",
+    "switchToDeployed": "Show deployed app",
+    "embedUnavailable": "This app cannot be embedded here"
   },
   "share": {
     "title": "Share app & conversation",

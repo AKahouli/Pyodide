@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import type { AgentEvent, ConversationV2PointerSummary, FilesTreeNode } from './types';
+import type { AgentEvent, ConversationV2PointerSummary, FilesTreeNode, AppBuildProgress } from './types';
 import { conversationV2Api } from './api';
 import type { DeployStatus } from './api';
 import {
@@ -12,10 +12,28 @@ import {
   reduceSession,
   deriveTitle,
   deriveApplicationComponent,
+  deriveAppBuildProgress,
   dedupeReplayEvents,
   currentTurnStartIndex,
   findIndexFrom,
 } from './utils/session-reducer';
+
+export interface ApplicationComponentState {
+  url: string;
+  title: string;
+  cephPath?: string;
+  filesTree?: FilesTreeNode | null;
+  fileCount?: number;
+  revision: string;
+}
+
+export interface SelectedConnectorRepoState {
+  connectorId: string;
+  connectorName: string;
+  repoId: string;
+  repoName: string;
+  repoUrl?: string;
+}
 
 interface State {
   sessionId: string | null;
@@ -26,14 +44,9 @@ interface State {
   rightPanelMode: 'closed' | 'tool' | 'app';
   /** Latest agent-pushed application component for the current session.
    *  Nodepod boots from cephPath + filesTree; `url` is retained for deploy links. */
-  applicationComponent: {
-    url: string;
-    title: string;
-    cephPath?: string;
-    filesTree?: FilesTreeNode | null;
-    fileCount?: number;
-    revision: string;
-  } | null;
+  applicationComponent: ApplicationComponentState | null;
+  /** Latest agent-reported build phase before sources / preview are ready. */
+  appBuildProgress: AppBuildProgress | null;
   /** Files-in-this-conversation sheet open state. Independent of the right
    *  panel so the user can keep the tool detail open while browsing files. */
   filesSheetOpen: boolean;
@@ -46,6 +59,11 @@ interface State {
   deployStatus: DeployStatus;
   deployedUrl: string | null;
   lastDeployedAt: string | null;
+  /**
+   * Which surface the app panel shows: Nodepod preview vs the live deployed URL.
+   * Nodepod stays mounted/warm in the background when this is `'deployed'`.
+   */
+  appViewMode: 'nodepod' | 'deployed';
   selectedToolCallId: string | null;
   /** Latest non-message tool emitted by the agent — the "live" target the panel follows. */
   liveToolCallId: string | null;
@@ -64,13 +82,7 @@ interface State {
   /** Highest sequence number seen from live SSE events. Used to discard stale/duplicate events. */
   lastSequence: number;
   /** Selected connector repository for the current session. */
-  selectedConnectorRepo: {
-    connectorId: string;
-    connectorName: string;
-    repoId: string;
-    repoName: string;
-    repoUrl?: string;
-  } | null;
+  selectedConnectorRepo: SelectedConnectorRepoState | null;
   /** Skill IDs selected for the conversation; sent with every message. */
   selectedSkillIds: string[];
   /** Connector IDs selected for the conversation; sent with every message. */
@@ -98,6 +110,20 @@ export interface SessionSlice {
   title: string | null;
   streaming: boolean;
   streamError: string | null;
+  rightPanelMode: State['rightPanelMode'];
+  applicationComponent: State['applicationComponent'];
+  appBuildProgress: State['appBuildProgress'];
+  filesSheetOpen: boolean;
+  systemWorkspaceId: string | null;
+  workspaceIds: string[];
+  deployStatus: DeployStatus;
+  deployedUrl: string | null;
+  lastDeployedAt: string | null;
+  appViewMode: State['appViewMode'];
+  selectedToolCallId: string | null;
+  selectedConnectorRepo: State['selectedConnectorRepo'];
+  selectedSkillIds: string[];
+  selectedConnectorIds: string[];
 }
 
 interface Actions {
@@ -154,6 +180,8 @@ interface Actions {
     deployedUrl: string | null;
     lastDeployedAt?: string | null;
   }) => void;
+  /** Switch between Nodepod preview and the deployed iframe (manual toggle). */
+  setAppViewMode: (mode: 'nodepod' | 'deployed') => void;
   /** Publish/deploy the current session's app. Flips to 'deploying' immediately,
    *  then 'deployed' (+ url) or 'error' once the backend responds. */
   deploy: () => Promise<void>;
@@ -182,6 +210,7 @@ const initial: State = {
   streamError: null,
   rightPanelMode: 'closed',
   applicationComponent: null,
+  appBuildProgress: null,
   filesSheetOpen: false,
   selectedToolCallId: null,
   liveToolCallId: null,
@@ -193,29 +222,41 @@ const initial: State = {
   deployStatus: 'idle',
   deployedUrl: null,
   lastDeployedAt: null,
+  appViewMode: 'nodepod',
       typewriterSessionId: null,
       typewriterName: null,
       selectedConnectorRepo: null,
       selectedSkillIds: [],
       selectedConnectorIds: [],
-      streamingStateCache: new Map<string, SessionSlice>(),
+  streamingStateCache: new Map<string, SessionSlice>(),
 };
 
 const sessionReconciliations = new Map<string, Promise<void>>();
 
-function sliceFromState(s: State): SessionSlice {
-  return {
-    events: s.events,
-    lastSequence: s.lastSequence,
-    liveToolCallId: s.liveToolCallId,
-    liveAssistantIds: s.liveAssistantIds,
-    title: s.title,
-    streaming: s.streaming,
-    streamError: s.streamError,
-  };
-}
-
-function freshViewState(): Partial<State> {
+function createSessionViewDefaults(): Pick<
+  State,
+  | 'events'
+  | 'title'
+  | 'streaming'
+  | 'streamError'
+  | 'lastSequence'
+  | 'liveToolCallId'
+  | 'liveAssistantIds'
+  | 'selectedToolCallId'
+  | 'rightPanelMode'
+  | 'applicationComponent'
+  | 'appBuildProgress'
+  | 'filesSheetOpen'
+  | 'systemWorkspaceId'
+  | 'workspaceIds'
+  | 'deployStatus'
+  | 'deployedUrl'
+  | 'lastDeployedAt'
+  | 'appViewMode'
+  | 'selectedConnectorRepo'
+  | 'selectedSkillIds'
+  | 'selectedConnectorIds'
+> {
   return {
     events: [],
     title: null,
@@ -227,15 +268,51 @@ function freshViewState(): Partial<State> {
     selectedToolCallId: null,
     rightPanelMode: 'closed',
     applicationComponent: null,
+    appBuildProgress: null,
     filesSheetOpen: false,
     systemWorkspaceId: null,
     workspaceIds: [],
     deployStatus: 'idle',
     deployedUrl: null,
     lastDeployedAt: null,
+    appViewMode: 'nodepod',
+    selectedConnectorRepo: null,
+    selectedSkillIds: [],
+    selectedConnectorIds: [],
+  };
+}
+
+function sliceFromState(s: State): SessionSlice {
+  return {
+    events: s.events,
+    lastSequence: s.lastSequence,
+    liveToolCallId: s.liveToolCallId,
+    liveAssistantIds: s.liveAssistantIds,
+    title: s.title,
+    streaming: s.streaming,
+    streamError: s.streamError,
+    rightPanelMode: s.rightPanelMode,
+    applicationComponent: s.applicationComponent,
+    appBuildProgress: s.appBuildProgress,
+    filesSheetOpen: s.filesSheetOpen,
+    systemWorkspaceId: s.systemWorkspaceId,
+    workspaceIds: s.workspaceIds,
+    deployStatus: s.deployStatus,
+    deployedUrl: s.deployedUrl,
+    lastDeployedAt: s.lastDeployedAt,
+    appViewMode: s.appViewMode,
+    selectedToolCallId: s.selectedToolCallId,
+    selectedConnectorRepo: s.selectedConnectorRepo,
+    selectedSkillIds: s.selectedSkillIds,
+    selectedConnectorIds: s.selectedConnectorIds,
+  };
+}
+
+function freshViewState(): Partial<State> {
+  return {
+    ...createSessionViewDefaults(),
     typewriterSessionId: null,
     typewriterName: null,
-    selectedConnectorRepo: null,
   };
 }
 
@@ -255,7 +332,7 @@ export const useConversationV2Store = create<State & Actions>()(
         let cache = s.streamingStateCache;
         // Stash the outgoing session's live state if it is still streaming, so
         // returning to it is instant and nothing streamed off-screen is lost.
-        if (s.sessionId && s.sessionId !== id && s.streaming) {
+        if (s.sessionId && s.sessionId !== id) {
           cache = new Map(cache);
           cache.set(s.sessionId, sliceFromState(s));
         }
@@ -263,10 +340,6 @@ export const useConversationV2Store = create<State & Actions>()(
         if (cached) {
           const newCache = new Map(cache);
           newCache.delete(id);
-          const applicationComponent = deriveApplicationComponent(
-            cached.events,
-            s.applicationComponent,
-          );
           set(
             {
               ...freshViewState(),
@@ -278,8 +351,20 @@ export const useConversationV2Store = create<State & Actions>()(
               title: cached.title,
               streaming: cached.streaming,
               streamError: cached.streamError,
-              applicationComponent,
-              ...(applicationComponent ? { rightPanelMode: 'app' as const } : {}),
+              rightPanelMode: cached.rightPanelMode,
+              applicationComponent: cached.applicationComponent,
+              appBuildProgress: cached.appBuildProgress,
+              filesSheetOpen: cached.filesSheetOpen,
+              systemWorkspaceId: cached.systemWorkspaceId,
+              workspaceIds: cached.workspaceIds,
+              deployStatus: cached.deployStatus,
+              deployedUrl: cached.deployedUrl,
+              lastDeployedAt: cached.lastDeployedAt,
+              appViewMode: cached.appViewMode,
+              selectedToolCallId: cached.selectedToolCallId,
+              selectedConnectorRepo: cached.selectedConnectorRepo,
+              selectedSkillIds: cached.selectedSkillIds,
+              selectedConnectorIds: cached.selectedConnectorIds,
               streamingStateCache: newCache,
             },
             false,
@@ -299,6 +384,26 @@ export const useConversationV2Store = create<State & Actions>()(
       sendMessage: async (message, model) => {
         const sessionId = get().sessionId;
         if (!sessionId) return;
+
+        // Follow-up turns (2nd user message and later): leave the deployed
+        // iframe and show Nodepod preview so the user watches the rebuild.
+        const priorUserMessages = get().events.filter(
+          (e) => e.type === 'message' && (e as { role?: string }).role === 'user',
+        ).length;
+        const isFollowUp = priorUserMessages >= 1;
+        if (isFollowUp && get().appViewMode === 'deployed') {
+          set(
+            {
+              appViewMode: 'nodepod' as const,
+              ...(get().applicationComponent || get().appBuildProgress
+                ? { rightPanelMode: 'app' as const }
+                : {}),
+            },
+            false,
+            'sendMessage/switch-to-preview',
+          );
+        }
+
         // Optimistically echo the user message under a client id; the backend
         // persists the same id and re-emits it over the pipe, where the
         // `message` upsert replaces this echo instead of duplicating it.
@@ -429,7 +534,11 @@ export const useConversationV2Store = create<State & Actions>()(
         return reconciliation;
       },
       openToolPanel: (toolCallId) =>
-        set({ rightPanelMode: 'tool', selectedToolCallId: toolCallId }, false, 'openToolPanel'),
+        set(
+          { rightPanelMode: 'tool', selectedToolCallId: toolCallId, filesSheetOpen: false },
+          false,
+          'openToolPanel',
+        ),
       setRightPanelView: (view) =>
         set(
           { rightPanelMode: view === 'preview' ? 'app' : 'tool' },
@@ -452,14 +561,23 @@ export const useConversationV2Store = create<State & Actions>()(
       setWorkspaceIds: (ids) => set({ workspaceIds: ids }, false, 'setWorkspaceIds'),
       setDeployState: ({ deployStatus, deployedUrl, lastDeployedAt }) =>
         set(
-          {
+          (s) => ({
             deployStatus,
             deployedUrl,
             ...(lastDeployedAt !== undefined ? { lastDeployedAt } : {}),
-          },
+            // Opening a session that already has a live URL → show deployed iframe.
+            // Nodepod preview keeps booting in the background for instant switch-back.
+            ...(deployStatus === 'deployed' &&
+            deployedUrl &&
+            s.appViewMode === 'nodepod' &&
+            !s.deployedUrl
+              ? { appViewMode: 'deployed' as const }
+              : {}),
+          }),
           false,
           'setDeployState',
         ),
+      setAppViewMode: (mode) => set({ appViewMode: mode }, false, 'setAppViewMode'),
       deploy: async () => {
         const id = get().sessionId;
         if (!id) return;
@@ -469,11 +587,18 @@ export const useConversationV2Store = create<State & Actions>()(
             id,
             get().applicationComponent?.title,
           );
-          get().setDeployState({
-            deployStatus: r.deployStatus,
-            deployedUrl: r.deployedUrl,
-            lastDeployedAt: r.lastDeployedAt,
-          });
+          set(
+            {
+              deployStatus: r.deployStatus,
+              deployedUrl: r.deployedUrl,
+              lastDeployedAt: r.lastDeployedAt,
+              ...(r.deployStatus === 'deployed' && r.deployedUrl
+                ? { appViewMode: 'deployed' as const }
+                : {}),
+            },
+            false,
+            'deploy/done',
+          );
         } catch (err) {
           set({ deployStatus: 'error' }, false, 'deploy/error');
           throw err;
@@ -529,12 +654,20 @@ export const useConversationV2Store = create<State & Actions>()(
         await useConversationV2PointersStore.getState().remove(id);
       },
       setFilesSheetOpen: (open) =>
-        set({ filesSheetOpen: open }, false, `setFilesSheetOpen/${open}`),
+        set(
+          {
+            filesSheetOpen: open,
+            ...(open ? { rightPanelMode: get().rightPanelMode } : {}),
+          },
+          false,
+          `setFilesSheetOpen/${open}`,
+        ),
       replayEvents: (events) => {
         const applicationComponent = deriveApplicationComponent(
           events,
           get().applicationComponent,
         );
+        const appBuildProgress = deriveAppBuildProgress(events, get().appBuildProgress);
         set(
           {
             events: dedupeReplayEvents(events),
@@ -542,8 +675,10 @@ export const useConversationV2Store = create<State & Actions>()(
             liveToolCallId: null,
             liveAssistantIds: new Set<string>(),
             applicationComponent,
-            // Re-surface the app viewer on reload when the session has one.
-            ...(applicationComponent ? { rightPanelMode: 'app' as const } : {}),
+            appBuildProgress: applicationComponent ? null : appBuildProgress,
+            ...(applicationComponent || appBuildProgress
+              ? { rightPanelMode: 'app' as const }
+              : {}),
             lastSequence: events.reduce(
               (max, e) =>
                 typeof (e as { sequence?: number }).sequence === 'number'
@@ -701,6 +836,19 @@ export const useConversationV2Store = create<State & Actions>()(
               case 'wait':
                 // Agent paused for the user's reply — re-enable the composer.
                 return withSeq({ streaming: false, liveToolCallId: null });
+              case 'app_build_progress': {
+                const progress: AppBuildProgress = {
+                  phase: event.phase,
+                  message: event.message,
+                  revision: event.event_id,
+                };
+                console.log('[Nodepod] [sse:app_build_progress]', progress);
+                return withSeq({
+                  events: [...state.events, event],
+                  appBuildProgress: progress,
+                  rightPanelMode: 'app',
+                });
+              }
               case 'application_component':
                 // Agent pushed an embeddable app: boot Nodepod from Ceph sources.
                 console.log('[Nodepod] [sse:application_component]', {
@@ -721,6 +869,7 @@ export const useConversationV2Store = create<State & Actions>()(
                     fileCount: event.file_count,
                     revision: event.event_id,
                   },
+                  appBuildProgress: null,
                   rightPanelMode: 'app',
                 });
               case 'message': {

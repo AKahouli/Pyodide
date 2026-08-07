@@ -22,6 +22,8 @@ export type {
 export type {
   FilesTreeNode,
   NodepodPreviewStatus,
+  AppBuildPhase,
+  AppBuildProgress,
 } from './application';
 
 export type {

@@ -32,21 +32,17 @@ function createGuard(mode: 'embed' | 'rest' | undefined, deploymentSettings: { e
       agentId: { toString: () => 'agent-1' },
     }),
   };
-  const agentModel = {
-    findById: jest.fn().mockReturnValue({
-      lean: () => ({
-        exec: jest.fn().mockResolvedValue({
-          _id: 'agent-1',
-          isActive: true,
-          deploymentSettings,
-        }),
-      }),
+  const agentRepository = {
+    findById: jest.fn().mockResolvedValue({
+      _id: 'agent-1',
+      isActive: true,
+      deploymentSettings,
     }),
   };
   const logger = { setContext: jest.fn(), warn: jest.fn(), debug: jest.fn() };
   const reflector = { getAllAndOverride: jest.fn().mockReturnValue(mode) } as unknown as Reflector;
 
-  return new WidgetTokenGuard(widgetTokenModel as any, agentModel as any, reflector, logger as any);
+  return new WidgetTokenGuard(widgetTokenModel as any, agentRepository as any, reflector, logger as any);
 }
 
 describe('WidgetTokenGuard deployment mode enforcement', () => {

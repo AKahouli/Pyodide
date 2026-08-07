@@ -12,7 +12,8 @@ export type ConversationV2EventTypeName =
   | 'done'
   | 'wait'
   | 'error'
-  | 'application_component';
+  | 'application_component'
+  | 'app_build_progress';
 
 @Schema({
   timestamps: { createdAt: true, updatedAt: false },
@@ -34,7 +35,7 @@ export class ConversationV2Event extends Document {
   @Prop({
     type: String,
     required: true,
-    enum: ['message', 'tool', 'step', 'plan', 'title', 'done', 'wait', 'error', 'application_component'],
+    enum: ['message', 'tool', 'step', 'plan', 'title', 'done', 'wait', 'error', 'application_component', 'app_build_progress'],
   })
   type!: ConversationV2EventTypeName;
 

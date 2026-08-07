@@ -7,6 +7,8 @@ export interface UserProfile {
   firstName?: string;
   lastName?: string;
   company?: string;
+  role?: string;
+  description?: string;
 }
 export interface UserConsents {
   privacyPolicy: boolean;
@@ -67,6 +69,8 @@ export interface CompleteProfileData {
   company: string;
   privacyPolicy: boolean;
   dataSharing: boolean;
+  role?: string;
+  description?: string;
 }
 
 // Auth context interface

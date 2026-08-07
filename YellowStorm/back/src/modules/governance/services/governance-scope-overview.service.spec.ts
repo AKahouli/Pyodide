@@ -12,7 +12,7 @@ import { GovernanceMetric } from '../schemas/governance-metric.schema';
 import { GovernanceScope } from '../schemas/governance-scope.schema';
 import { GovernanceSource } from '../schemas/governance-source.schema';
 import { GovernanceWorkspaceBinding } from '../schemas/governance-workspace-binding.schema';
-import { Agent } from '@modules/agent/schemas/agent.schema';
+import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { User } from '@modules/user/schemas/user.schema';
 
 const execLean = (value: unknown) => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(value) }) });
@@ -33,7 +33,7 @@ describe('GovernanceScopeOverviewService', () => {
     const revisionModel = { findById: jest.fn().mockReturnValue(execLean({ _id: revisionId, deploymentId, revisionNumber: 1, status: 'draft', agentId, allowedAgentIds: [agentId, specialistAgentId], workspaceIds: [], sourceIds: [], includedSourceIds: [], excludedSourceIds: [], createdBy: agentId, createdAt: new Date(), updatedAt: new Date() })) };
     const dryRunModel = { findOne: jest.fn().mockReturnValue(sortedLean({ _id: new Types.ObjectId(), programId, scopeId, deploymentId, revisionId, testerId: agentId, status: 'passed', testCases: [], checks: {}, createdAt: new Date(), updatedAt: new Date() })) };
     const membershipModel = { find: jest.fn().mockReturnValue(execLean([{ _id: new Types.ObjectId(), programId, scopeId, role: 'scope_approver', status: 'active' }])) };
-    const agentModel = { find: jest.fn().mockReturnValue(execLean([agentId, specialistAgentId].map((_id) => ({ _id, guardrails: { promptInjection: { inputGuardrailEnabled: true, outputGuardrailEnabled: false, toolCallGuardrailEnabled: false } } })))) };
+    const agentRepository = { findByIds: jest.fn().mockResolvedValue([agentId, specialistAgentId].map((_id) => ({ _id: _id.toString(), guardrails: { promptInjection: { inputGuardrailEnabled: true, outputGuardrailEnabled: false, toolCallGuardrailEnabled: false } } }))) };
     const metricModel = { find: jest.fn().mockReturnValue(execLean([{ type: 'usage', channel: 'widget', value: 3 }])) };
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -46,7 +46,7 @@ describe('GovernanceScopeOverviewService', () => {
         { provide: getModelToken(GovernanceDryRun.name), useValue: dryRunModel },
         { provide: getModelToken(GovernanceMembership.name), useValue: membershipModel },
         { provide: getModelToken(GovernanceMetric.name), useValue: metricModel },
-        { provide: getModelToken(Agent.name), useValue: agentModel },
+        { provide: AgentRepository, useValue: agentRepository },
         { provide: getModelToken(User.name), useValue: { find: jest.fn().mockReturnValue({ select: () => execLean([]) }) } },
         { provide: GovernanceProgramService, useValue: { assertOwnedProgram: jest.fn().mockResolvedValue(undefined) } },
         { provide: GovernanceAccessService, useValue: { assertScopeAccess: jest.fn().mockResolvedValue(undefined), canActInScopeRole: jest.fn().mockResolvedValue(true) } },
@@ -93,7 +93,7 @@ describe('GovernanceScopeOverviewService', () => {
     const revisionModel = { findById: jest.fn().mockReturnValue(execLean({ _id: revisionId, deploymentId, revisionNumber: 1, status: 'draft', agentId, workspaceIds: [], sourceIds: [], includedSourceIds: [], excludedSourceIds: [], createdBy: agentId, createdAt: new Date(), updatedAt: new Date() })) };
     const dryRunModel = { findOne: jest.fn().mockReturnValue(sortedLean({ _id: new Types.ObjectId(), programId, scopeId, deploymentId, revisionId, testerId: agentId, status: 'passed', testCases: [], checks: {}, createdAt: new Date(), updatedAt: new Date() })) };
     const membershipModel = { find: jest.fn().mockReturnValue(execLean([])) };
-    const agentModel = { find: jest.fn().mockReturnValue(execLean([])) };
+    const agentRepository = { findByIds: jest.fn().mockResolvedValue([]) };
     const metricModel = { find: jest.fn().mockReturnValue(execLean([])) };
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -106,7 +106,7 @@ describe('GovernanceScopeOverviewService', () => {
         { provide: getModelToken(GovernanceDryRun.name), useValue: dryRunModel },
         { provide: getModelToken(GovernanceMembership.name), useValue: membershipModel },
         { provide: getModelToken(GovernanceMetric.name), useValue: metricModel },
-        { provide: getModelToken(Agent.name), useValue: agentModel },
+        { provide: AgentRepository, useValue: agentRepository },
         { provide: getModelToken(User.name), useValue: { find: jest.fn().mockReturnValue({ select: () => execLean([]) }) } },
         { provide: GovernanceProgramService, useValue: { assertOwnedProgram: jest.fn().mockResolvedValue(undefined) } },
         { provide: GovernanceAccessService, useValue: { assertScopeAccess: jest.fn().mockResolvedValue(undefined), canActInScopeRole: jest.fn().mockResolvedValue(true) } },
@@ -131,7 +131,7 @@ describe('GovernanceScopeOverviewService', () => {
     const revisionModel = { findById: jest.fn().mockReturnValue(execLean({ _id: revisionId, deploymentId, revisionNumber: 1, status: 'published', agentId, workspaceIds: [], sourceIds: [], includedSourceIds: [], excludedSourceIds: [], createdBy: agentId, createdAt: new Date(), updatedAt: new Date() })) };
     const dryRunModel = { findOne: jest.fn().mockReturnValue(sortedLean({ _id: new Types.ObjectId(), programId, scopeId, deploymentId, revisionId, testerId: agentId, status: 'passed', testCases: [], checks: {}, createdAt: new Date(), updatedAt: new Date() })) };
     const membershipModel = { find: jest.fn().mockReturnValue(execLean([])) };
-    const agentModel = { find: jest.fn().mockReturnValue(execLean([])) };
+    const agentRepository = { findByIds: jest.fn().mockResolvedValue([]) };
     const metricModel = { find: jest.fn().mockReturnValue(execLean([])) };
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -144,7 +144,7 @@ describe('GovernanceScopeOverviewService', () => {
         { provide: getModelToken(GovernanceDryRun.name), useValue: dryRunModel },
         { provide: getModelToken(GovernanceMembership.name), useValue: membershipModel },
         { provide: getModelToken(GovernanceMetric.name), useValue: metricModel },
-        { provide: getModelToken(Agent.name), useValue: agentModel },
+        { provide: AgentRepository, useValue: agentRepository },
         { provide: getModelToken(User.name), useValue: { find: jest.fn().mockReturnValue({ select: () => execLean([]) }) } },
         { provide: GovernanceProgramService, useValue: { assertOwnedProgram: jest.fn().mockResolvedValue(undefined) } },
         { provide: GovernanceAccessService, useValue: { assertScopeAccess: jest.fn().mockResolvedValue(undefined), canActInScopeRole: jest.fn().mockResolvedValue(true) } },

@@ -7,6 +7,7 @@ import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
 import { ToolDetailDispatch } from './tool-views/ToolDetailDispatch';
 import { ApplicationComponentView } from './ApplicationComponentView';
+import { AppBuildProgressPanel } from './AppBuildProgressPanel';
 import { DeployControls } from './DeployControls';
 
 const RIGHT_PANEL_STORAGE_KEY = 'conversation-v2-right-panel-width';
@@ -24,6 +25,7 @@ export function RightPanel() {
     jumpToLive,
     streaming,
     applicationComponent,
+    appBuildProgress,
     setRightPanelView,
   } = useConversationV2Store(
     useShallow((s) => ({
@@ -34,6 +36,7 @@ export function RightPanel() {
       jumpToLive: s.jumpToLive,
       streaming: s.streaming,
       applicationComponent: s.applicationComponent,
+      appBuildProgress: s.appBuildProgress,
       setRightPanelView: s.setRightPanelView,
     })),
   );
@@ -41,12 +44,15 @@ export function RightPanel() {
   if (mode === 'closed') return null;
 
   const hasCode = !!selectedToolCallId;
-  const hasPreview = !!applicationComponent;
+  const hasPreview = !!applicationComponent || !!appBuildProgress;
   if (!hasCode && !hasPreview) return null;
+
+  const showBuildProgress = !!appBuildProgress && !applicationComponent;
+  const showNodepod = !!applicationComponent;
 
   // Which tab is active, clamped to what's actually available: prefer the
   // preview when we're in 'app' mode (or when there's no code to show).
-  const showPreview = hasPreview && (mode === 'app' || !hasCode);
+  const showPreview = (showNodepod || showBuildProgress) && (mode === 'app' || !hasCode);
   // The Code/Preview toggle only makes sense once BOTH exist.
   const canToggle = hasCode && hasPreview;
 
@@ -87,11 +93,14 @@ export function RightPanel() {
             </div>
           ) : (
             <span className='truncate text-sm font-semibold'>
-              {showPreview ? applicationComponent!.title || t('rightPanel.title') : t('rightPanel.title')}
+              {showPreview
+                ? applicationComponent?.title ||
+                  (showBuildProgress ? t('nodepod.previewTitle') : t('rightPanel.title'))
+                : t('rightPanel.title')}
             </span>
           )}
           <div className='flex shrink-0 items-center gap-1'>
-            {hasPreview && <DeployControls />}
+            {hasPreview && showNodepod && <DeployControls />}
             <Button variant='ghost' size='icon-sm' aria-label={t('rightPanel.close')} onClick={close}>
               <XIcon className='size-4' />
             </Button>
@@ -99,14 +108,22 @@ export function RightPanel() {
         </header>
         <div className='relative flex min-h-0 flex-1 flex-col overflow-hidden'>
           {showPreview ? (
-            <ApplicationComponentView
-              key={applicationComponent!.revision}
-              title={applicationComponent!.title}
-              cephPath={applicationComponent!.cephPath}
-              filesTree={applicationComponent!.filesTree}
-              fileCount={applicationComponent!.fileCount}
-              revision={applicationComponent!.revision}
-            />
+            showNodepod ? (
+              <ApplicationComponentView
+                key={applicationComponent!.revision}
+                title={applicationComponent!.title}
+                cephPath={applicationComponent!.cephPath}
+                filesTree={applicationComponent!.filesTree}
+                fileCount={applicationComponent!.fileCount}
+                revision={applicationComponent!.revision}
+                buildProgress={appBuildProgress}
+              />
+            ) : (
+              <AppBuildProgressPanel
+                key={appBuildProgress!.revision}
+                progress={appBuildProgress!}
+              />
+            )
           ) : (
             <div className='relative flex min-h-0 flex-1 flex-col p-3'>
               <ToolDetailDispatch />

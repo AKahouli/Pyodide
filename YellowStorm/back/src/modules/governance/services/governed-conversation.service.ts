@@ -11,7 +11,7 @@ import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/g
 import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
 import { CreateGovernedConversationDto } from '../dto';
 import { GovernanceScopeAudienceService } from './governance-scope-audience.service';
-import { Agent, AgentDocument } from '@modules/agent/schemas/agent.schema';
+import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { ForbiddenException } from '@modules/exceptions';
 
 @Injectable()
@@ -20,7 +20,7 @@ export class GovernedConversationService {
     @InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>,
     @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
     @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
-    @InjectModel(Agent.name) private readonly agentModel: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
     private readonly audienceService: GovernanceScopeAudienceService,
     private readonly conversationService: ConversationService,
     private readonly configService: ConfigService,
@@ -59,7 +59,7 @@ export class GovernedConversationService {
     await this.audienceService.assertUserAuthorized(userId, conversation.governanceContext.scopeId);
     const [scope, agents, revision] = await Promise.all([
       this.scopeModel.findById(conversation.governanceContext.scopeId).select('name').lean().exec(),
-      this.agentModel.find({ _id: { $in: conversation.governanceContext.runtimeDefinition.allowedAgentIds }, isActive: true }).select('name description').lean().exec(),
+      this.agentRepository.findByIds(conversation.governanceContext.runtimeDefinition.allowedAgentIds.map(String), { activeOnly: true }),
       this.revisionModel.findById(conversation.governanceContext.revisionId).select('publishedAt').lean().exec(),
     ]);
     if (!scope) throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);

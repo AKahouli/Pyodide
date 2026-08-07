@@ -5,7 +5,8 @@ type Listener = (event: PipeEvent) => void;
 type ConnectionListener = () => void;
 
 const EVENT_TYPES: AgentEvent['type'][] = [
-  'message', 'tool', 'step', 'plan', 'title', 'done', 'wait', 'error', 'application_component',
+  'message', 'tool', 'step', 'plan', 'title', 'done', 'wait', 'error',
+  'application_component', 'app_build_progress',
 ];
 
 /**

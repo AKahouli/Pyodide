@@ -114,7 +114,7 @@ export function ManageConnectorsDialog({ open, onOpenChange, connectors, loading
             <SelectContent>
               <SelectItem value={ALL_CATEGORIES}>{t('connectors.allCategories') || 'All categories'}</SelectItem>
               {categories.map((name) => (
-                <SelectItem key={name} value={name}>{name}</SelectItem>
+                <SelectItem key={`category-${name}`} value={name}>{name}</SelectItem>
               ))}
               {hasUncategorized && (
                 <SelectItem value={UNCATEGORIZED}>{t('connectors.uncategorized') || 'Uncategorized'}</SelectItem>
