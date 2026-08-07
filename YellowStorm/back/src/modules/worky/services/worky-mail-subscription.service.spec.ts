@@ -65,6 +65,49 @@ describe('WorkyMailSubscriptionService', () => {
       await service.ensureForUser('u1');
       expect(tokenService.getM365ValidToken).toHaveBeenCalledWith('u1', 'microsoft');
     });
+
+    it("never tears down another instance's live push subscription", async () => {
+      // Environments share one database. An instance with no public URL of its
+      // own used to delete the live subscription at Graph's end (because
+      // existing.notificationUrl !== null) and then null the row. Seen live: a
+      // deployed backend with no WORKY_MAIL_NOTIFICATION_URL silently killed
+      // push for a developer's tunnel, dropping every reply back to the
+      // 5-minute sweep. It has no URL to offer, so nothing better to replace it
+      // with — it must poll and leave the row alone.
+      const { service, graphClient, updateOne } = build({
+        userId: 'u1',
+        mailboxAppKey: 'microsoft',
+        subscriptionId: 'sub-owned-by-the-other-instance',
+        notificationUrl: 'https://someones-tunnel.example/api/v1/worky/mail/webhook',
+        expiresAt: new Date(Date.now() + 48 * 3600_000),
+      });
+
+      await service.ensureForUser('u1');
+
+      expect(graphClient.deleteSubscription).not.toHaveBeenCalled();
+      expect(updateOne).not.toHaveBeenCalled();
+      expect(graphClient.createInboxSubscription).not.toHaveBeenCalled();
+    });
+
+    it('still clears a subscription that has actually expired', async () => {
+      // Nothing live to protect: leaving a dead subscriptionId on the row would
+      // make it look like push still works when Graph has long dropped it.
+      const { service, updateOne } = build({
+        userId: 'u1',
+        mailboxAppKey: 'microsoft',
+        subscriptionId: 'sub-expired',
+        notificationUrl: 'https://yesterdays-tunnel.example/worky/mail/webhook',
+        expiresAt: new Date(Date.now() - 3600_000),
+      });
+
+      await service.ensureForUser('u1');
+
+      expect(updateOne).toHaveBeenCalledWith(
+        { userId: 'u1', mailboxAppKey: 'microsoft' },
+        { $set: { subscriptionId: null, clientState: null, expiresAt: null, notificationUrl: null } },
+        { upsert: true },
+      );
+    });
   });
 
   describe('with a public webhook URL', () => {
