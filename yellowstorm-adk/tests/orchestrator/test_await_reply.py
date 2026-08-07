@@ -686,3 +686,40 @@ if __name__ == "__main__":
     test_parking_binds_the_interrupt_so_the_wait_becomes_deliverable()
     test_an_ask_step_parking_binds_no_mail_wait()
     print("ok")
+
+
+def test_every_step_is_told_to_register_a_wait_after_sending_mail():
+    """Live failure twice (sessions a198ff8e, 24a0417c): Firas replied "do me a
+    web search first", the persona spun that off with create_task(execute), and
+    the spawned step compiled the list, EMAILED it to him, then stopped —
+    registering no await_reply. His answer had nothing to match, and the session
+    reported 'completed' with the real question still open.
+
+    The model was not disobeying. "Send the mail, then call
+    create_task(kind='await_reply')" lived ONLY in the persona preamble, which
+    nodes.py attaches under `if step.is_persona` — and a create_task(execute)
+    step is born is_persona=False, so it got the bare EXECUTOR_INSTRUCTION,
+    which never mentioned waits at all.
+
+    Deliberately NOT fixed by making spun-off steps inherit the persona: the
+    preamble also says "get the actual decision from {assignee_name} by email",
+    so a step spun off to run a check would email the persona instead of doing
+    the work. The rule belongs to every step that sends mail, not to personas.
+    """
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[])
+
+    for step in (
+        # a plain spun-off task — the case that lost the reply
+        Step(id="a", kind="execute", description="Email Firas the list.",
+             is_dynamic_delegate=True, assignee_name="worky executer"),
+        # a persona step
+        Step(id="b", kind="execute", description="Ask Hamdi.", is_persona=True,
+             assignee_name="Hamdi Imed", assignee_role="data lead"),
+        # a delegate step
+        Step(id="c", kind="execute", description="Hi Firas - confirm?",
+             is_persona=True, is_dynamic_delegate=True, assignee_name="Firas Kahia"),
+    ):
+        instruction = factory(step, "n").instruction
+        assert "create_task(kind='await_reply')" in instruction, \
+            f"step {step.id} was never told to register a wait:\n{instruction[:300]}"
+        assert "REPLY matters" in instruction or "reply matters" in instruction.lower()

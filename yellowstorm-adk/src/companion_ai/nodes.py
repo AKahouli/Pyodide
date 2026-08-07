@@ -160,6 +160,15 @@ Use the available tools when needed — call them directly; there is nothing to
 schedule and nothing that runs in the background. Sending an email is instant,
 even when the answer takes days: send it, then register the wait. Waiting is a
 separate step's job, never something you sit and hold this turn open for.
+
+If you send an email whose REPLY matters to this plan, you MUST call
+create_task(kind='await_reply') before you finish, describing what to do with
+that reply. Sending and then ending your turn loses the answer for good: nothing
+is watching for it, so when they write back the plan is already finished and
+their reply goes nowhere. This applies whoever you are and whoever you wrote to.
+If no reply is expected — you were only informing someone — say so plainly and
+finish.
+
 Return a concise result for this step only — other steps are handled by other
 agents, so just produce your part directly."""
 
