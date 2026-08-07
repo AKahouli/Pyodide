@@ -73,20 +73,30 @@ export class WorkyMailSubscriptionService {
       // Dev tunnels change hostname on every restart, so this is routine.
       existing.notificationUrl === notificationUrl;
     if (live) return;
-    if (existing?.subscriptionId && existing.notificationUrl !== notificationUrl) {
-      this.logger.log('Notification URL changed — replacing the mail subscription', {
-        userId, from: existing.notificationUrl, to: notificationUrl,
-      });
-      // Drop the old one at Graph's end so it stops posting to a dead URL.
-      try {
-        await this.graphClient.deleteSubscription(
-          userId, existing.mailboxAppKey, existing.subscriptionId);
-      } catch {
-        // Already gone, or unreachable — either way we are replacing it.
-      }
-    }
+
+    // Handled BEFORE the replace path below, deliberately. Environments share
+    // one database, and an instance with no public URL of its own has no
+    // business tearing down a push subscription another instance created and is
+    // still serving. It used to do exactly that: `existing.notificationUrl !==
+    // notificationUrl` is true when ours is null, so it deleted the live
+    // subscription at Graph's end AND nulled the row. Seen live — a deployed
+    // instance with no WORKY_MAIL_NOTIFICATION_URL silently killed push for a
+    // developer's tunnel, dropping every reply back to the 5-minute sweep and
+    // widening the "reply arrives before its step parks" race.
     if (!notificationUrl) {
-      // Poll-only: record the mailbox so the catch-up sweep can read it.
+      const foreignLive =
+        existing?.subscriptionId &&
+        existing.expiresAt &&
+        existing.expiresAt.getTime() > Date.now();
+      if (foreignLive) {
+        this.logger.log(
+          "Worky mail: polling this mailbox; leaving another instance's live " +
+          'push subscription alone',
+          { userId, notificationUrl: existing.notificationUrl },
+        );
+        return;
+      }
+      // Nothing live to protect — record the mailbox so the sweep can read it.
       const { appKey } = await this.tokenService.getM365ValidToken(
         userId, existing?.mailboxAppKey ?? 'microsoft');
       await this.subscriptionModel.updateOne(
@@ -99,6 +109,23 @@ export class WorkyMailSubscriptionService {
         { userId, appKey },
       );
       return;
+    }
+
+    // We have a public URL of our own, so replacing a subscription that points
+    // elsewhere is legitimate: a subscription pointing somewhere we no longer
+    // answer is worse than none, since Graph keeps delivering into the void.
+    // Dev tunnels change hostname on every restart, so this is routine.
+    if (existing?.subscriptionId && existing.notificationUrl !== notificationUrl) {
+      this.logger.log('Notification URL changed — replacing the mail subscription', {
+        userId, from: existing.notificationUrl, to: notificationUrl,
+      });
+      // Drop the old one at Graph's end so it stops posting to a dead URL.
+      try {
+        await this.graphClient.deleteSubscription(
+          userId, existing.mailboxAppKey, existing.subscriptionId);
+      } catch {
+        // Already gone, or unreachable — either way we are replacing it.
+      }
     }
 
     // A random secret, not the user id: clientState is the only thing proving a

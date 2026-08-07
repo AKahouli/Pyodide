@@ -19,6 +19,7 @@ import grpc
 
 from src.grpc_generated import companion_ai_pb2 as pb
 from src.grpc_generated import companion_ai_pb2_grpc as pb_grpc
+from src.companion_ai import mail_token
 from src.companion_ai.readmodel import ReadModel
 from src.companion_ai.service import OrchestratorService
 
@@ -356,9 +357,15 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 except BaseException:  # noqa: BLE001 — prev's cancellation is expected
                     pass
             executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
+            # A reply quotes the mail it answers, so it carries our own
+            # outbound subject line — routing token included. That text
+            # becomes the step's result and hence the next step's context, so
+            # without this the executor sees a token it is never supposed to
+            # know about, and echoes it into the next mail's subject. See
+            # mail_token.scrub.
             await self._svc.resume_turn(
                 session_id=session_id, user_id=wait["user_id"],
-                answer=request.reply_body, model=model,
+                answer=mail_token.scrub(request.reply_body), model=model,
                 connectors=_connectors_to_dicts(request.connectors),
                 interrupt_id=wait["interrupt_id"],
                 executor_prompt=executor.prompt if executor else None)

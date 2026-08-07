@@ -66,6 +66,67 @@ def test_the_node_factory_builds_await_reply_from_the_step_kind():
     assert factory(step, "a").name == "a"
 
 
+async def _run_single_node(node, name: str):
+    wf = Workflow(name="single_node_test", edges=[(START, node)])
+    r = InMemoryRunner(node=wf, app_name="t")
+    await r.session_service.create_session(app_name="t", user_id="u", session_id="s")
+    outputs = []
+    async for ev in r.run_async(user_id="u", session_id="s",
+            new_message=types.Content(role="user", parts=[types.Part(text="go")])):
+        # _apply_event (service.py) reads a completed node's result from
+        # ev.content.parts[0].text, not ev.output -- match that here, since a
+        # bare-string return would (silently) never reach the read model.
+        if ev.content and ev.content.parts and getattr(ev.content.parts[0], "text", None):
+            outputs.append(ev.content.parts[0].text)
+    return outputs
+
+
+def test_a_completed_dynamic_delegate_step_replays_its_stored_result_instead_of_rerunning(monkeypatch):
+    """delegate_to_human_agent's step runs its FIRST time inside a throwaway
+    nested Workflow (service.py:_delegate_tool_for), at a node path ADK's own
+    session replay can't match once resume_turn later rebuilds it as a plain
+    top-level node -- so ADK can't tell it already ran and would silently
+    re-call the LLM, producing a different answer and discarding the
+    original (seen live: session e95815c5aded45b4bda9348fdb765c0d, where
+    James's and Sarah's answers changed and shortened after a resume).
+    nodes.py must short-circuit an already-completed one instead."""
+    def _must_not_build_a_real_llm(*a, **k):
+        raise AssertionError("an already-completed dynamic delegate must not re-call the LLM")
+    monkeypatch.setattr(nodes, "build_llm", _must_not_build_a_real_llm)
+
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[])
+    step = Step(id="f2c7bd13e74f", kind="execute", is_persona=True, is_dynamic_delegate=True,
+                status=Status.COMPLETED, result="James's original second opinion.",
+                assignee="james", assignee_name="James")
+
+    node = factory(step, "f2c7bd13e74f")
+    outputs = asyncio.run(_run_single_node(node, "f2c7bd13e74f"))
+
+    assert outputs == ["James's original second opinion."]
+
+
+def test_a_completed_dynamic_await_reply_step_replays_too_not_just_execute_ones():
+    """The is_dynamic_delegate+COMPLETED short-circuit above must be checked
+    BEFORE the kind=="await_reply" branch, not after it -- otherwise a
+    create_task(kind='await_reply') step that resume_turn resolved
+    out-of-band (marked COMPLETED with the real reply in .result, see
+    service.py) still gets rebuilt as a bare hitl.make_await_reply_node
+    regardless of its status, discarding that answer and re-parking under a
+    brand new interrupt id nothing can ever deliver to again. Live example:
+    session 9283fc115614466a8c207f7326c90ae8 -- Hamdi's reply was matched
+    and applied to the step, yet the very next resume immediately re-parked
+    it asking for the same reply again, because kind=="await_reply" was
+    checked first and always won."""
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[])
+    step = Step(id="b6772c4fe81c", kind="await_reply", is_dynamic_delegate=True,
+                status=Status.COMPLETED, result="Go ahead with a pilot.")
+
+    node = factory(step, "b6772c4fe81c")
+    outputs = asyncio.run(_run_single_node(node, "b6772c4fe81c"))
+
+    assert outputs == ["Go ahead with a pilot."]
+
+
 def test_an_executor_never_sees_the_plan_wide_goal_or_another_steps_task():
     """Every executor shares one full toolset, so a step told the whole goal
     (and every other step's job) has both motive and means to reach for a tool
@@ -116,8 +177,75 @@ def test_a_persona_step_never_gets_a_competing_execution_agent_identity():
     plain_step = Step(id="b", kind="execute", description="Search the web for Tesla news.")
 
     assert "You are an execution agent" not in factory(persona_step, "a").instruction
-    assert "You are Rabeb" in factory(persona_step, "a").instruction
+    assert "You represent Rabeb" in factory(persona_step, "a").instruction
     assert "You are an execution agent" in factory(plain_step, "b").instruction
+
+
+def test_a_client_prompt_carrying_the_description_replaces_the_builtin_one():
+    """Live bug: the configured executor prompt was a copy of
+    EXECUTOR_INSTRUCTION, so it got stacked ON TOP of the built-in one and
+    the step's task -- plus the whole "you are not told the plan's wider
+    goal..." block -- was sent to the model TWICE, with contradictory framing
+    between the two copies ("You are an execution agent" / "Do exactly this
+    and nothing else" against the persona-aware "You are working on ONE
+    step" / "using whatever consultation your role above requires").
+
+    A prompt carrying {description} IS the executor instruction, so it must
+    replace the built-in one, not duplicate it."""
+    factory = nodes.make_llm_node_factory(
+        model_name="x", tools=[],
+        custom_instruction=nodes.EXECUTOR_INSTRUCTION.replace(
+            "{identity}", "You are an execution agent working on ONE step of a larger plan.")
+        .replace("{do_this_line}", "Do exactly this and nothing else:"))
+
+    step = Step(id="a", kind="execute", description="Should we migrate to Databricks?",
+                is_persona=True, assignee_name="Hamdi Imed", assignee_role="data lead")
+    instruction = factory(step, "a").instruction
+
+    assert instruction.count("Should we migrate to Databricks?") == 1, instruction
+    assert instruction.count("You are not told the plan's wider goal") == 1
+    assert "{description}" not in instruction
+
+
+def test_a_client_prompt_without_the_description_still_prepends():
+    """A prompt that cannot carry the task (no {description}) must stay an
+    extra preamble ahead of the built-in instruction -- dropping the built-in
+    one there would lose the task entirely."""
+    factory = nodes.make_llm_node_factory(
+        model_name="x", tools=[], custom_instruction="Always answer in French.")
+    step = Step(id="a", kind="execute", description="Search the web for Tesla news.")
+    instruction = factory(step, "a").instruction
+
+    assert "Always answer in French." in instruction
+    assert instruction.count("Search the web for Tesla news.") == 1
+    assert "You are not told the plan's wider goal" in instruction
+
+
+def test_a_delegate_step_is_told_to_relay_not_represent():
+    """Regression: a delegate_to_human_agent-spawned step (is_persona AND
+    is_dynamic_delegate) got the SAME "you represent {assignee_name} ...
+    draft as if you were them, then get the real decision from
+    {assignee_name} themselves" preamble as a top-level persona step. But a
+    delegate's description is ALREADY the message addressed to
+    assignee_name (e.g. "Hi Firas -- ... Do you confirm?"), not an open
+    question needing an as-them draft -- telling the model it both IS Firas
+    and must email Firas and await Firas's reply is self-referential, and a
+    confirmed live trigger for the step stalling on repeated
+    find_human_agents lookups instead of ever sending the email. A delegate
+    step must be told to relay the question and wait, never to "represent"
+    or "prepare a draft as they would"."""
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[])
+
+    delegate_step = Step(id="a", kind="execute",
+                         description="Hi Firas -- do you confirm this recommendation?",
+                         is_persona=True, is_dynamic_delegate=True,
+                         assignee_name="Firas Kahia", assignee_role="Team lead.")
+    instruction = factory(delegate_step, "a").instruction
+
+    assert "You represent Firas Kahia" not in instruction
+    assert "PREPARE, not decide" not in instruction
+    assert "Firas Kahia is being asked the question below directly" in instruction
+    assert "get Firas Kahia's ACTUAL answer" in instruction
 
 
 def test_a_persona_step_is_never_told_and_nothing_else():
@@ -133,6 +261,43 @@ def test_a_persona_step_is_never_told_and_nothing_else():
     assert "Do exactly this and nothing else:" not in factory(persona_step, "a").instruction
     assert "using whatever consultation your role above requires" in factory(persona_step, "a").instruction
     assert "Do exactly this and nothing else:" in factory(plain_step, "b").instruction
+
+
+def test_a_persona_step_is_told_to_act_on_a_reply_already_in_context_not_just_note_it():
+    """Seen live (session b931fb5e59a94de7875683dfffe9af77): a persona correctly
+    read a real email reply's content and correctly judged escalation was
+    needed, then only wrote "requires senior-management approval" as a
+    condition in her own answer instead of actually calling
+    delegate_to_human_agent for it -- exactly the "I'll check with so-and-so"
+    non-pattern the preamble already warns against, just for a reply instead
+    of a colleague. A plain step gets no such instruction, since it never has
+    delegate_to_human_agent to act with in the first place."""
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[])
+
+    persona_step = Step(id="a", kind="execute", description="Give the final decision.",
+                        is_persona=True, assignee_name="Sarah", assignee_role="Compliance officer.")
+    plain_step = Step(id="b", kind="execute", description="Search the web for Tesla news.")
+
+    instruction = factory(persona_step, "a").instruction
+    assert "act on it directly" in instruction
+    assert "restating it as still pending" in instruction
+    assert "act on it directly" not in factory(plain_step, "b").instruction
+
+
+def test_instruction_for_step_reaches_a_plain_steps_own_instruction():
+    """nodes.py has no visibility into the plan's edges on its own -- whether
+    a step is the one directly downstream of an await_reply (and so may need
+    to act on instructions the reply itself contains) is something only
+    _build_workflow can compute, and instruction_for_step is how it hands
+    that down, mirroring tools_for_step's existing pattern."""
+    factory = nodes.make_llm_node_factory(
+        model_name="x", tools=[],
+        instruction_for_step=lambda step: "ACT ON THE REPLY" if step.id == "b" else None)
+    step_a = Step(id="a", kind="execute", description="do a")
+    step_b = Step(id="b", kind="execute", description="do b")
+
+    assert "ACT ON THE REPLY" not in factory(step_a, "a").instruction
+    assert "ACT ON THE REPLY" in factory(step_b, "b").instruction
 
 
 def test_the_instruction_template_carries_no_goal_placeholder():
@@ -299,6 +464,61 @@ def test_a_send_with_no_token_still_sends():
     assert sent[0]["subject"] == "Q", "nothing to stamp, nothing stamped"
 
 
+def test_a_send_that_fails_leaves_no_wait_behind():
+    """The wait must only exist if a mail a reply could answer exists.
+
+    The row used to be written before the send was attempted, so a send that
+    raised (MCP transport, auth, a 4xx from Graph) still left a wait: the step
+    then parked on a reply to an email that was never sent, and nothing could
+    ever resume it — the plan waited forever on mail that does not exist.
+    Minting still happens first (the token has to be IN the mail); only
+    persisting waits for the send to come back.
+    """
+    import inspect
+    import pytest
+    from src.smart_rag.tools.search.tools import SearchToolADK
+    registered = []
+
+    async def _explodes(**kwargs):
+        raise RuntimeError("graph 502")
+    _explodes.__name__ = "microsoft365_send_email"
+    params = [inspect.Parameter(n, inspect.Parameter.KEYWORD_ONLY, default=None)
+              for n in ("to_recipients", "subject", "body")]
+    _explodes.__signature__ = inspect.Signature(params)
+    _explodes.__annotations__ = {}
+    failing = SearchToolADK(_explodes, {"function": {"name": "microsoft365_send_email",
+                                                     "description": "", "parameters": {}}})
+
+    async def on_sent(token):
+        registered.append(token)
+
+    wrapped = nodes.stamp_send_email_tool(
+        failing, token_provider=AsyncMock(return_value="YW-abcdefghijklmnop12"),
+        on_sent=on_sent)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(wrapped.func(to_recipients=["r@example.com"], subject="Q", body="<p>Hi</p>"))
+
+    assert registered == [], "a failed send must not register a wait"
+
+
+def test_a_successful_send_registers_the_wait_after_the_mail_is_away():
+    sent = []
+    registered = []
+
+    async def on_sent(token):
+        registered.append(token)
+
+    wrapped = nodes.stamp_send_email_tool(
+        _fake_send_tool(sent), token_provider=AsyncMock(return_value="YW-abcdefghijklmnop12"),
+        on_sent=on_sent)
+
+    asyncio.run(wrapped.func(to_recipients=["r@example.com"], subject="Q", body="<p>Hi</p>"))
+
+    assert len(sent) == 1
+    assert registered == ["YW-abcdefghijklmnop12"]
+
+
 def test_only_the_send_step_feeding_a_wait_gets_a_stamped_tool():
     svc, rm = _service()
     rm.mail_token_for = AsyncMock(return_value="YW-abcdefghijklmnop12")
@@ -307,7 +527,7 @@ def test_only_the_send_step_feeding_a_wait_gets_a_stamped_tool():
         Step(id="other", kind="execute", description="unrelated work"),
         Step(id="wait", kind="await_reply", question="awaiting", depends_on=["send"]),
     ])
-    tools_for_step = svc._mail_stamping("s1", plan)
+    tools_for_step = svc._mail_stamping("s1", "u1", plan, lambda step: False)
     base = [_fake_send_tool([])]
 
     # The step whose mail is awaited: wrapped.
@@ -319,7 +539,45 @@ def test_only_the_send_step_feeding_a_wait_gets_a_stamped_tool():
 def test_a_plan_with_no_wait_builds_ordinary_tools():
     svc, _ = _service()
     plan = Plan(id="p", title="t", goal="g", steps=[Step(id="a", kind="execute")])
-    assert svc._mail_stamping("s1", plan) is None
+    tools_for_step = svc._mail_stamping("s1", "u1", plan, lambda step: False)
+    base = [_fake_send_tool([])]
+    assert tools_for_step(plan.step("a"), base)[0] is base[0]
+
+
+def test_a_step_with_create_task_access_eagerly_mints_a_pending_token_on_send():
+    """A step that CAN spin up create_task(kind='await_reply') might send its
+    mail before deciding to — the await_reply sibling doesn't exist yet at
+    send time (create_task creates it AFTER), so there is no sibling to look
+    up the way the static case does. Without eager minting, that mail goes
+    out with no token at all and no reply can ever be routed back to
+    whatever wait gets created a moment later. See the session that
+    surfaced this: a step sent a follow-up email, then called
+    create_task(kind='await_reply') — the new step blocked forever because
+    nothing had minted a token for its sender's mail."""
+    svc, rm = _service()
+    plan = Plan(id="p", title="t", goal="g",
+               steps=[Step(id="s3", kind="execute", description="handle the reply")])
+    tools_for_step = svc._mail_stamping("s1", "u1", plan, lambda step: True)
+    sent = []
+    wrapped = tools_for_step(plan.step("s3"), [_fake_send_tool(sent)])[0]
+    asyncio.run(wrapped.func(to_recipients=["r@example.com"], subject="Q", body="<p>Hi</p>"))
+
+    rm.register_mail_wait.assert_awaited_once()
+    kw = rm.register_mail_wait.await_args.kwargs
+    assert (kw["session_id"], kw["step_id"], kw["user_id"]) == ("s1", "__pending__:s3", "u1")
+    token = rm.register_mail_wait.await_args.args[0]
+    assert token.startswith("YW-")
+    assert token in sent[0]["subject"]
+
+
+def test_a_step_without_create_task_access_gets_no_eager_stamp():
+    svc, rm = _service()
+    plan = Plan(id="p", title="t", goal="g",
+               steps=[Step(id="s3", kind="execute", description="ordinary work")])
+    tools_for_step = svc._mail_stamping("s1", "u1", plan, lambda step: False)
+    base = [_fake_send_tool([])]
+    assert tools_for_step(plan.step("s3"), base)[0] is base[0]
+    rm.register_mail_wait.assert_not_awaited()
 
 
 # --- the reply that never comes ---------------------------------------------
@@ -342,6 +600,26 @@ def test_an_unanswered_wait_becomes_a_question_to_the_owner():
     assert rm.set_step_status.await_args.kwargs["blocked_reason"] == "no reply from x@example.com"
     # And the owner is actually told, rather than the plan going quiet.
     assert "reply" in rm.add_message.await_args.args[3].lower()
+
+
+def test_an_unclaimed_pending_wait_expires_quietly():
+    """A step with create_task access eagerly mints a token on every mail it
+    sends, whether or not it ever follows up with create_task(kind=
+    'await_reply') — most of the time it won't. That row never parks (no
+    step is really waiting on it), so it never gets an interrupt_id. Without
+    this guard, expiry would try to route a chat reply to a step that
+    doesn't exist and could clobber a session's real waiting state with
+    set_waiting(session_id, None)."""
+    svc, rm = _service()
+    rm.expire_mail_waits = AsyncMock(return_value=[{
+        "token": "YW-x", "session_id": "s1", "step_id": "__pending__:s3",
+        "user_id": "u1", "interrupt_id": None, "expected_from": None,
+    }])
+
+    asyncio.run(svc.expire_mail_waits())
+    rm.set_waiting.assert_not_awaited()
+    rm.set_step_status.assert_not_awaited()
+    rm.add_message.assert_not_awaited()
 
 
 def test_nothing_expires_when_every_reply_arrived():

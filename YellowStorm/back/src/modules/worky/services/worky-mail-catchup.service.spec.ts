@@ -9,11 +9,15 @@ const SUB = {
   lastSweptAt: new Date('2026-07-17T10:00:00Z'),
 };
 
-function mail(subject: string, from = 'x@example.com') {
+function mail(subject: string, from = 'x@example.com', body = 'Yellow Systems.') {
   return {
     subject,
-    body: { content: '<p>Yellow Systems.</p>' },
-    bodyPreview: 'Yellow Systems.',
+    // contentType set, matching a real Graph message.
+    body: { contentType: 'html', content: `<p>${body}</p>` },
+    // Deliberately different from `body` above, so a test asserting on the
+    // full body catches a regression back to preferring bodyPreview (which
+    // Graph silently caps at 255 chars).
+    bodyPreview: 'Yellow Systems (preview, truncated).',
     from: { emailAddress: { address: from } },
   };
 }
@@ -60,6 +64,20 @@ describe('WorkyMailCatchupService', () => {
         replyBody: 'Yellow Systems.',
         replyFrom: 'x@example.com',
       }),
+    );
+  });
+
+  it('uses the full reply body, not the 255-char-capped bodyPreview', async () => {
+    // Live bug: three real replies in a row all came through cut at EXACTLY
+    // 255 characters, mid-sentence -- Microsoft Graph's bodyPreview field is
+    // a plain-text summary hard-capped at 255 chars, and it was being
+    // preferred over the full body.content.
+    const longReply = 'A'.repeat(300) + ' END';
+    const { service, orchestrator } = build([mail(`Re: Q [${TOKEN}]`, 'x@example.com', longReply)]);
+    await service.sweep();
+
+    expect(orchestrator.deliverMailReply).toHaveBeenCalledWith(
+      expect.objectContaining({ replyBody: longReply }),
     );
   });
 

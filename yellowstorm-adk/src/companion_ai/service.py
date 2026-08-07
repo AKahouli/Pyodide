@@ -25,7 +25,7 @@ import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
@@ -128,6 +128,14 @@ Rules:
   "question" says what is awaited and from whom (e.g. "Awaiting a reply from
   x@example.com about her company"). Steps that need the answer depend on
   the await_reply step, not on the send step.
+  An await_reply step must NEVER be the last step of the plan — the reply is
+  the whole point of waiting, and nothing reads it unless a later step
+  depends on it. Even if the user's own wording named no explicit follow-up
+  ("email X asking Y" with nothing after), still add one more "execute" step
+  depending on the await_reply whose job is to read the reply and act on it:
+  report what it said, and if the reply itself asks for something further —
+  a search, another email, looping someone else in — do that directly
+  instead of leaving it as a restated pending item.
   Do NOT use it for mail you send that needs no answer (a notification, a
   report), and do NOT use it to wait for anything other than an email reply.
   NEVER use it for a human agent found via find_human_agents — see below,
@@ -164,29 +172,35 @@ assume, and never skip this because the wording sounds like a message to
 send. If the message names no one and implies no role at all, skip this
 check entirely.
 
-The default is ALWAYS the human agent, never email: a human agent answers
-INSTANTLY inside this same plan run, no message is sent, nothing is waited
-on. Reach for email/a messaging connector (Teams, etc.) ONLY when the user
-explicitly says "email" / "send an email" / gives an actual email address —
-wording like "send it to X and ask her", "tell X", "ask X" is NOT an email
-instruction by itself; it means find_human_agents first, and if she's a
-match, delegate to her, full stop. Do not also try a connector's
-send_email/send_teams_message tool "just in case" — if find_human_agents
-found her, that IS the entire interaction, and if it found no one, then and
-only then does an ordinary step / connector send make sense.
+The default is ALWAYS the human agent, never a manual email step: assigning
+to a human agent is still ONE step in your plan — they handle actually
+reaching that real person and getting their real decision themselves, as
+part of doing their own job, so you never add a separate mail-send step or
+an await_reply step around them yourself. Reach for email/a messaging
+connector (Teams, etc.) ONLY when the user explicitly says "email" / "send
+an email" / gives an actual email address — wording like "send it to X and
+ask her", "tell X", "ask X" is NOT an email instruction by itself; it means
+find_human_agents first, and if she's a match, delegate to her, full stop.
+Do not also try a connector's send_email/send_teams_message tool "just in
+case" — if find_human_agents found her, that IS the entire interaction, and
+if it found no one, then and only then does an ordinary step / connector
+send make sense.
 
 When find_human_agents finds a match, that's ONE "execute" step: set
 "assignee": "<their exact name>" and write "description" as the question/task
 addressed directly TO them (e.g. "Should we invest in Bitcoin today, given:
-<summary>?" — never "send/email/notify <name> and ask...", they are not
-emailed, they simply answer). "assignee" REPLACES the default executor for
-that step with that person, running with his own name and role as his
+<summary>?" — never "send/email/notify <name> and ask...", you are not
+writing instructions to email them, they handle actually reaching them
+themselves as part of answering). "assignee" REPLACES the default executor
+for that step with that person, running with his own name and role as his
 instructions — you never also write instructions telling the default
 executor to go find or contact him. That step's description is all he
 sees — he doesn't see the rest of this plan.
-Do NOT add a separate mail-send step or an "await_reply" step for them — no
-message is sent and nothing is awaited by mail; the single assignee step IS
-the question and IS the answer, both in that one step.
+Do NOT add a separate mail-send step or an "await_reply" step for them —
+they handle actually reaching that person and getting their real decision
+themselves, inside their own step; from your plan's point of view, the
+single assignee step IS the question and IS the answer, both in that one
+step.
 If find_human_agents finds no match, treat it as an ordinary step (or, if the
 user clearly means to email a real external person by address, use the
 normal execute + await_reply pattern above).
@@ -234,10 +248,12 @@ def _plan_from_snapshot(snap: dict) -> Plan:
             depends_on=deps, status=Status(row["status"]),
             wave=row.get("wave") or 0, result=row.get("result"),
             assignee=row.get("assignee"), assignee_name=row.get("assignee_name"),
-            assignee_role=row.get("assignee_role"), is_persona=bool(row.get("is_persona"))))
+            assignee_role=row.get("assignee_role"), is_persona=bool(row.get("is_persona")),
+            is_dynamic_delegate=bool(row.get("is_dynamic_delegate"))))
     return Plan(id=p.get("id") or "", title=p.get("title") or "",
                 goal=p.get("goal") or "", status=Status(p.get("status") or "running"),
-                steps=steps)
+                steps=steps, executor_id=p.get("executor_id"),
+                executor_name=p.get("executor_name"))
 
 
 async def _ensure_session(runner, app_name: str, user_id: str, session_id: str) -> None:
@@ -287,6 +303,13 @@ class OrchestratorService:
             return 0
         expired = await self._rm.expire_mail_waits()
         for wait in expired:
+            if not wait.get("interrupt_id"):
+                # Never parked — either the ordinary tiny window between
+                # registering and parking, or a step with create_task access
+                # that sent mail eagerly-tokened but never actually created an
+                # await_reply step to consume it. Nothing real is waiting on
+                # this one, so there is no step or owner to notify.
+                continue
             session_id, step_id = wait["session_id"], wait["step_id"]
             reason = (f"no reply from {wait['expected_from']}"
                       if wait.get("expected_from") else "no reply received")
@@ -306,8 +329,27 @@ class OrchestratorService:
 
     def _tools_for(self, connectors: Optional[List[dict]], session_id: str, user_id: str) -> List:
         """Materialize connectors into executor tools: the synchronous MCP action
-        tools plus, per connector, a fire-and-forget `schedule_*_task` tool for
-        long-running actions (records the handle in mcp_tasks for the poller).
+        tools.
+
+        The per-connector fire-and-forget `schedule_<connector>_task` tool is
+        deliberately NOT granted. It was broken and dangerous:
+
+        - long_running.start_task (and poller._poll_task) hardcode
+          streamablehttp_client and never read the connector's
+          mcp_transport_type, so on an SSE connector — which Microsoft365 is —
+          it POSTs to the /sse endpoint and dies with 405. Seen live.
+        - Worse if that were merely fixed: models were choosing it to SEND
+          MAIL, reading "their reply can take hours or days" next to the
+          prompt's "for a LONG-RUNNING action call schedule_*_task". Mail sent
+          that way bypasses send_email, which is where the routing token is
+          stamped (see _mail_stamping) — so the reply could never match its
+          wait and the step would hang forever, silently. The 405 was the
+          safer failure.
+
+        Sending mail is instant; the WAITING is create_task(kind='await_reply')'s
+        job, not a scheduled MCP task. Re-granting this needs both a transport
+        column on mcp_tasks (the poller reconnects in another process, so it
+        cannot infer it) and prompt wording that keeps it away from email.
 
         Uses the app's proven `create_connector_tools` (per-action function tools
         that open a one-shot MCP connection via call_mcp_tool) — NOT ADK's
@@ -316,19 +358,11 @@ class OrchestratorService:
         connectors = connectors or []
         from src.smart_rag.tools.utilities.connector_tools import (
             create_connector_tools, ConnectorToolContext)
-        from . import long_running, mcp_tasks
-        tools = create_connector_tools(connectors, ConnectorToolContext(session_id=session_id))
-        for c in connectors:
-            async def _record(task_id, action, args, _c=c):
-                if self._pool is not None:
-                    await mcp_tasks.enqueue(
-                        self._pool, session_id=session_id, user_id=user_id, task_id=task_id,
-                        server_name=_c.get("connector_name", ""), server_url=_c.get("mcp_server_url", ""),
-                        auth_headers=_c.get("auth_headers") or {}, mode="record", schema=self._schema)
-            tools.append(long_running.make_schedule_tool(c, on_started=_record))
-        return tools
+        return create_connector_tools(
+            connectors, ConnectorToolContext(session_id=session_id))
 
-    def _mail_stamping(self, session_id: str, plan: Plan):
+    def _mail_stamping(self, session_id: str, user_id: str, plan: Plan,
+                       dynamic_eligible: Callable[[Step], bool]):
         """Give each send step the token of the step waiting on its reply.
 
         The link is the plan's own edge: an await_reply step depends_on the step
@@ -336,8 +370,15 @@ class OrchestratorService:
         and the executor LLM never sees the token — a marker it was merely asked
         to include would be omitted eventually, and that step would wait forever.
 
-        Returns None when the plan has no await_reply step, so the ordinary case
-        builds the ordinary tools.
+        That edge only exists upfront for steps the planner already wired with
+        an await_reply sibling. A step with create_task access can spin one up
+        mid-turn (create_task(kind='await_reply'), after it has already sent
+        the mail) — at that point the sibling doesn't exist yet, so there is
+        nothing to look up. For those (`dynamic_eligible`), the token is minted
+        eagerly, the moment mail goes out, under a placeholder id; create_task
+        rebinds it onto the real step if/when one is actually created (see
+        _create_task_tool_for). If that never happens the row just expires
+        unclaimed — see expire_mail_waits's interrupt_id guard.
         """
         if self._rm is None:
             return None
@@ -348,37 +389,62 @@ class OrchestratorService:
                     # First wins: a send step feeding two waits can only carry one
                     # token, and its reply can only answer one of them.
                     await_step_for.setdefault(dep, s.id)
-        if not await_step_for:
-            return None
         rm = self._rm
 
         def tools_for_step(step: Step, tools: List) -> List:
             await_step_id = await_step_for.get(step.id)
-            if not await_step_id:
-                return tools
+            if await_step_id:
+                async def token_provider(_step_id=await_step_id):
+                    return await rm.mail_token_for(session_id, _step_id)
+                return [nodes.stamp_send_email_tool(t, token_provider=token_provider)
+                        if nodes.is_send_email_tool(t) else t
+                        for t in tools]
+            if dynamic_eligible(step):
+                pending_id = f"__pending__:{step.id}"
 
-            async def token_provider(_step_id=await_step_id):
-                return await rm.mail_token_for(session_id, _step_id)
+                # Mint only — pure, no DB. The token has to be in the mail, so
+                # it must exist before the send; the WAIT must not, or a send
+                # that raises strands the step on a reply to an email that was
+                # never sent. Persisting therefore happens in on_sent below.
+                async def eager_token_provider():
+                    return mail_token.mint()
 
-            return [nodes.stamp_send_email_tool(t, token_provider=token_provider)
-                    if nodes.is_send_email_tool(t) else t
-                    for t in tools]
+                async def eager_on_sent(token, _pending_id=pending_id):
+                    expires_at = datetime.now(timezone.utc) + timedelta(
+                        hours=self._mail_wait_timeout_hours)
+                    await rm.register_mail_wait(
+                        token, session_id=session_id, step_id=_pending_id,
+                        user_id=user_id, expires_at=expires_at)
+                return [nodes.stamp_send_email_tool(
+                            t, token_provider=eager_token_provider, on_sent=eager_on_sent)
+                        if nodes.is_send_email_tool(t) else t
+                        for t in tools]
+            return tools
 
         return tools_for_step
 
     def _delegate_tool_for(self, session_id: str, user_id: str, plan: Plan,
-                           factory_holder: list, name_to_step: dict, caller_step_id: str):
+                           factory_holder: list, name_to_step: dict, caller_step_id: str,
+                           siblings: Optional[set] = None):
         """Tool given to a persona-assigned step (see nodes.py/human_agents.py):
-        hand a question or task to ANOTHER human agent and get their answer back
-        before continuing — e.g. Rabeb decides investment approval is out of her
-        scope and asks Oussama.
+        hand a question or task to ANOTHER human agent — e.g. Rabeb decides
+        investment approval is out of her scope and asks Oussama.
 
-        Runs the delegate as a one-step nested Workflow via ADK's dynamic node
-        scheduling (`ctx.run_node`, confirmed on google.adk 2.3.0's `Context`):
-        the calling step's turn does not end until the delegate answers, and if
-        the delegate itself blocks (ask-the-user, await_reply) that interrupt
-        propagates out through this call exactly like an ordinary step's would —
-        no changes needed to _drive/_finalize for that.
+        The delegate is a normal SCHEDULED step, and the caller does not wait
+        for it: whatever needs the answer depends on that step. Asking a real
+        colleague is asynchronous — they reply by email hours or days later —
+        so it could never have completed inside the caller's turn anyway,
+        exactly as create_task(kind='await_reply') already concluded.
+
+        It also must not run nested. `ctx.run_node` buffers a sub-node's events
+        until it finishes, while ADK rebuilds llm_request contents from session
+        events before every call — so a nested sub-agent never saw its OWN
+        previous tool calls (verified live: 0 model rounds and 0 function calls
+        in context on all 25 of its calls). Any sub-agent using even one tool
+        re-issued that call forever, since turn 2 could not see what turn 1
+        did, until the budget cap forced a fabricated "could not escalate"
+        answer. Only a single-turn, tool-free sub-agent ever worked, and ADK
+        offers no flush/stream option on run_node to change that.
 
         `factory_holder` is a 1-item list filled with this turn's node factory
         right after it is built (see _build_workflow) — the delegated step is
@@ -390,6 +456,13 @@ class OrchestratorService:
         node), but the DAG/wave numbers projected to the read model would
         otherwise show it as an independent wave-0 step with no relation to
         the step that actually spawned it.
+
+        `siblings` — every dynamically-spawned step from THIS caller this
+        turn, shared with _create_task_tool_for (see _build_workflow): both
+        grow the SAME plan mid-turn, and a second one from either tool must
+        never get wired as depending on the first — a chain instead of
+        siblings is exactly the wave bug fixed earlier. Defaults to a fresh
+        set when called on its own (e.g. in tests).
         """
         from google.adk.tools.tool_context import ToolContext
         from src.smart_rag.tools.search.tools import SearchToolADK
@@ -397,7 +470,7 @@ class OrchestratorService:
         # Every delegate spawned by THIS caller this turn — siblings, not a
         # chain. Excluded below so a second consultation doesn't get wired
         # as depending on the first.
-        siblings: set = set()
+        siblings = siblings if siblings is not None else set()
 
         async def delegate_to_human_agent(agent_name: str, task: str, *,
                                           tool_context: ToolContext = None) -> str:
@@ -417,7 +490,8 @@ class OrchestratorService:
                 return "Cannot delegate further — this plan has reached its step limit."
 
             sub_step = Step(title=f"Ask {agent_display_name}", description=task, kind="execute",
-                            is_persona=True, assignee=agent.get("id") or agent_display_name,
+                            is_persona=True, is_dynamic_delegate=True,
+                            assignee=agent.get("id") or agent_display_name,
                             assignee_name=agent_display_name, assignee_role=agent.get("role"),
                             depends_on=[caller_step_id])
             plan.steps.append(sub_step)
@@ -425,10 +499,19 @@ class OrchestratorService:
             # this new child finishes either — the caller's node doesn't
             # complete until its delegate calls do. Excludes the caller's
             # own other delegates, which are parallel to this one, not before it.
+            # `siblings` only protects steps spawned in THIS SAME burst — it's
+            # a fresh set per _build_workflow call, not persisted across turns.
+            # A step from an EARLIER turn (already blocked on its own reply, or
+            # already completed) can outlive that set and still show up here on
+            # a later resume where the caller's replayed reasoning spawns
+            # another, unrelated dynamic step. Restricting to PENDING excludes
+            # it: only a same-burst sibling that hasn't started yet legitimately
+            # needs to wait on this new one too.
             affected = [o for o in plan.steps
                        if o.id != sub_step.id and o.id not in siblings
                        and caller_step_id in o.depends_on
-                       and sub_step.id not in o.depends_on]
+                       and sub_step.id not in o.depends_on
+                       and o.status == Status.PENDING]
             for other in affected:
                 other.depends_on.append(sub_step.id)
             siblings.add(sub_step.id)
@@ -441,49 +524,30 @@ class OrchestratorService:
             for other in affected:
                 await self._project_step(session_id, plan, other)
 
-            # The caller's node is still "running" in ADK, but the user sees it
-            # as blocked on the delegate — reflect that on the plan card.
-            blocked_reason = f"waiting on {agent_display_name}"
-            if caller is not None:
-                caller.status = Status.BLOCKED
-                caller.blocked_reason = blocked_reason
-            await self._project(self._rm and self._rm.set_step_status(
-                session_id, caller_step_id, "blocked", blocked_reason=blocked_reason))
-            try:
-                # depends_on=[caller_step_id] is for the OUTER plan's wave display
-                # only — the nested one-step Workflow below has no caller_step_id
-                # in it, so building it with that dependency would fail DAG
-                # validation ("depends on unknown step"). Give it a local,
-                # dependency-free copy instead.
-                sub_wf = graph.to_workflow(
-                    Plan(steps=[sub_step.model_copy(update={"depends_on": []})]),
-                    factory_holder[0], name=f"delegate_{sub_step.id}")
-                # use_sub_branch=True alone is NOT enough: the delegate's reply
-                # event carries a different `author`, and contents.py's
-                # _get_current_turn_contents scans backward for the latest
-                # foreign-author event to find the turn boundary — the
-                # delegate's reply qualifies, truncating away the calling
-                # step's own function_call event and blowing up the next LLM
-                # call ("No function call event found for function responses").
-                # override_isolation_scope=tool_context.function_call_id is
-                # ADK's own documented convention for a delegated sub-agent —
-                # it excludes the delegate's events from that scan entirely.
-                result = await tool_context.run_node(
-                    sub_wf, use_as_output=False, use_sub_branch=True,
-                    override_isolation_scope=tool_context.function_call_id)
-            except Exception as e:
-                logger.exception("[worky] delegate_to_human_agent failed session=%s step=%s",
-                                 session_id, sub_step.id)
-                return f"Error asking {agent_display_name}: {e}"
-            finally:
-                # Whether the delegate answered or errored, the caller is no
-                # longer blocked — it's back to running its own turn.
-                if caller is not None:
-                    caller.status = Status.RUNNING
-                    caller.blocked_reason = None
-                await self._project(self._rm and self._rm.set_step_status(
-                    session_id, caller_step_id, "running"))
-            return str(result) if result is not None else ""
+            # Deliberately does NOT run the delegate here and hand its answer
+            # back. Asking a real colleague is asynchronous — they answer by
+            # email, hours or days later — so it cannot complete inside the
+            # caller's turn, exactly as create_task(kind='await_reply') already
+            # concluded. The delegate is a normal scheduled step, and whatever
+            # needs its answer depends on it.
+            #
+            # Running it nested (ctx.run_node) was also actively broken:
+            # run_node buffers the sub-node's events and only flushes them to
+            # the session once it finishes, while ADK rebuilds llm_request
+            # contents from session events before every call. A nested
+            # sub-agent therefore never saw its OWN previous tool calls —
+            # verified live: contents came back with 0 model rounds and 0
+            # function calls on every one of its 25 calls. Any sub-agent using
+            # even one tool re-issued that call forever (turn 1 calls it, turn
+            # 2 cannot see the result, so it calls it again) until the budget
+            # cap forced a fabricated "could not escalate" answer. Only a
+            # single-turn, tool-free sub-agent ever worked. ADK exposes no
+            # flush/stream option on run_node to fix that in place.
+            return (f"Asked {agent_display_name}. This is now its own step in the plan — "
+                    "it will reach them and their real answer arrives there, not here. "
+                    f"Do NOT wait for it, and never guess what {agent_display_name} will "
+                    "say. End your own turn now, reporting plainly that you asked them "
+                    "and their answer is pending.")
 
         # Built directly rather than via create_search_schema: that helper adds
         # a "strict" key that OpenAI-style function schemas accept but ADK's
@@ -493,11 +557,15 @@ class OrchestratorService:
             "function": {
                 "name": "delegate_to_human_agent",
                 "description": (
-                    "Hand a question or task to ANOTHER named human agent and get their "
-                    "answer back before you continue. Use this when the task needs "
-                    "someone else's role or authority — e.g. you are not authorized to "
-                    "decide something yourself and need to ask a colleague who is. "
-                    "Use find_human_agents first if you don't already know their exact name."),
+                    "Hand a question or task to ANOTHER named human agent. Use this when "
+                    "the task needs someone else's role or authority — e.g. you are not "
+                    "authorized to decide something yourself and need to ask a colleague "
+                    "who is. They are a real person and answer by email, hours or days "
+                    "later, so this does NOT hand their answer back to you: it becomes "
+                    "its own step in the plan where their real answer lands. Call it, "
+                    "then end your own turn reporting that you asked them — never wait "
+                    "for it and never guess what they will say. Use find_human_agents "
+                    "first if you don't already know their exact name."),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -518,28 +586,281 @@ class OrchestratorService:
         }
         return SearchToolADK(delegate_to_human_agent, schema)
 
+    def _create_task_tool_for(self, session_id: str, user_id: str, plan: Plan,
+                              factory_holder: list, name_to_step: dict, caller_step_id: str,
+                              siblings: Optional[set] = None):
+        """Tool given to a persona-assigned step: spin off a brand-new follow-up
+        task and get its result back before continuing — for when something
+        just learned (e.g. an email reply) means real work needs to happen,
+        not just get written down as a condition in your own final answer.
+
+        Deliberately separate from delegate_to_human_agent: that tool is for
+        a SPECIFIC named colleague's judgment; this one is for work that
+        isn't anyone in particular — a check to run, something to verify,
+        another email to send and wait on.
+
+        Two shapes, by `kind`, and the split is not cosmetic:
+
+        - 'execute' builds an LlmAgent, so like a delegate it is a SCHEDULED
+          step and never runs nested — a nested sub-agent cannot see its own
+          previous tool calls and loops forever (see _delegate_tool_for).
+        - 'ask'/'await_reply' build one-shot WAIT nodes (hitl.make_*_node)
+          with no LLM loop, so the amnesia cannot bite them, and they DO run
+          here via ctx.run_node — they have to, so they park and register the
+          interrupt that a chat answer or an incoming mail reply later
+          resumes. Leaving one merely PENDING would strand the wait with
+          nothing to resume and silently break the whole reply path.
+
+        `siblings` must be the SAME set passed to _delegate_tool_for for this
+        caller (see _build_workflow) — both tools grow the same plan mid-turn
+        and must treat each other's spawned steps as siblings, not a chain.
+        """
+        from google.adk.tools.tool_context import ToolContext
+        from src.smart_rag.tools.search.tools import SearchToolADK
+
+        siblings = siblings if siblings is not None else set()
+
+        async def create_task(description: str, kind: str = "execute", *,
+                              tool_context: ToolContext = None) -> str:
+            if kind not in ("execute", "ask", "await_reply"):
+                return f"Unknown kind {kind!r} — use 'execute', 'ask', or 'await_reply'."
+            if len(plan.steps) >= MAX_PLAN_STEPS:
+                return "Cannot create another task — this plan has reached its step limit."
+
+            caller = plan.step(caller_step_id)
+            # This step is born mid-turn, after plan_turn's one-time stamping
+            # pass — read the client's executor identity straight off the
+            # plan (set once at plan_turn) rather than a sibling step, since
+            # a plan can be entirely persona-assigned with no plain step to
+            # copy from (e.g. the planner routed straight to a human agent).
+            sub_step = Step(title=description[:60], description=description, kind=kind,
+                            is_dynamic_delegate=True, depends_on=[caller_step_id],
+                            assignee=plan.executor_id,
+                            assignee_name=plan.executor_name or DEFAULT_EXECUTOR_LABEL)
+            plan.steps.append(sub_step)
+            followup_step = None
+            if kind == "await_reply":
+                if self._rm is not None:
+                    # The caller already sent its mail before calling us — its
+                    # send_email tool minted a token eagerly under a placeholder
+                    # (see _mail_stamping), since this step didn't exist yet at
+                    # send time. Retarget that token onto the real step now, so
+                    # the reply this step is about to park on can actually match.
+                    await self._rm.rebind_mail_wait(
+                        session_id, f"__pending__:{caller_step_id}", sub_step.id)
+                # A real reply can take hours or days — far longer than the
+                # caller's own tool call can stay alive. Confirmed live: the
+                # caller's turn simply ends once this call returns (see
+                # persona_preamble/instruction_for_step); nothing is left
+                # mid-flight to "continue" once the reply lands, no matter how
+                # the resume is driven. A genuinely separate, independently
+                # scheduled follow-up step is what reads the reply and gives
+                # the real answer, on whatever later turn it actually arrives
+                # — exactly the planner's own send/await/act shape (see
+                # PLANNER_INSTRUCTION's await_reply rule), just spawned here
+                # instead of planned upfront.
+                followup_step = Step(
+                    title=f"Act on reply: {description[:40]}", description=description,
+                    kind="execute", is_dynamic_delegate=True, depends_on=[sub_step.id],
+                    is_persona=bool(caller and caller.is_persona),
+                    assignee=(caller.assignee if caller and caller.is_persona else plan.executor_id),
+                    assignee_name=((caller.assignee_name if caller and caller.is_persona
+                                    else plan.executor_name) or DEFAULT_EXECUTOR_LABEL),
+                    assignee_role=caller.assignee_role if caller and caller.is_persona else None)
+                plan.steps.append(followup_step)
+            # Same sibling/wave bookkeeping as _delegate_tool_for — see there
+            # for why this matters.
+            # `siblings` only protects steps spawned in THIS SAME burst — it's
+            # a fresh set per _build_workflow call, not persisted across turns.
+            # A step from an EARLIER turn (already blocked on its own reply, or
+            # already completed) can outlive that set and still show up here on
+            # a later resume where the caller's replayed reasoning spawns
+            # another, unrelated dynamic step. Restricting to PENDING excludes
+            # it: only a same-burst sibling that hasn't started yet legitimately
+            # needs to wait on this new one too.
+            affected = [o for o in plan.steps
+                       if o.id != sub_step.id and o.id not in siblings
+                       and caller_step_id in o.depends_on
+                       and sub_step.id not in o.depends_on
+                       and o.status == Status.PENDING]
+            for other in affected:
+                other.depends_on.append(sub_step.id)
+            siblings.add(sub_step.id)
+            if followup_step is not None:
+                siblings.add(followup_step.id)
+            scheduler.validate(plan)
+            scheduler.assign_waves(plan)
+            name_to_step[graph.node_name(sub_step.id)] = sub_step.id
+            if followup_step is not None:
+                name_to_step[graph.node_name(followup_step.id)] = followup_step.id
+            logger.info("[worky] create_task session=%s → %r (step=%s, kind=%s)",
+                        session_id, sub_step.title, sub_step.id, kind)
+            await self._project_step(session_id, plan, sub_step)
+            if followup_step is not None:
+                await self._project_step(session_id, plan, followup_step)
+            for other in affected:
+                await self._project_step(session_id, plan, other)
+
+            # 'ask' and 'await_reply' build a WAIT node (hitl.make_ask_user_node /
+            # make_await_reply_node), not an LlmAgent: one shot, no LLM loop, and
+            # it must run HERE so it actually parks and registers its interrupt
+            # within this turn — that interrupt is what a chat answer or an
+            # incoming mail reply later resumes. Leaving it merely PENDING would
+            # strand the wait with nothing to resume, silently breaking the whole
+            # reply path. Having no LLM loop, it is immune to the nested-run
+            # amnesia described below.
+            if kind in ("ask", "await_reply"):
+                blocked_reason = "waiting on a follow-up task"
+                if caller is not None:
+                    caller.status = Status.BLOCKED
+                    caller.blocked_reason = blocked_reason
+                await self._project(self._rm and self._rm.set_step_status(
+                    session_id, caller_step_id, "blocked", blocked_reason=blocked_reason))
+                try:
+                    sub_wf = graph.to_workflow(
+                        Plan(steps=[sub_step.model_copy(update={"depends_on": []})]),
+                        factory_holder[0], name=f"task_{sub_step.id}")
+                    await tool_context.run_node(
+                        sub_wf, use_as_output=False, use_sub_branch=True,
+                        override_isolation_scope=tool_context.function_call_id)
+                except Exception as e:
+                    logger.exception("[worky] create_task failed session=%s step=%s",
+                                     session_id, sub_step.id)
+                    return f"Error running task: {e}"
+                finally:
+                    if caller is not None:
+                        caller.status = Status.RUNNING
+                        caller.blocked_reason = None
+                    await self._project(self._rm and self._rm.set_step_status(
+                        session_id, caller_step_id, "running"))
+                if kind == "await_reply":
+                    # Deliberately not the reply's content — it isn't in yet, and
+                    # won't be before this call returns. A separate follow-up
+                    # step (already created above) reads it once it arrives.
+                    return ("Await-reply step created. A separate follow-up step will "
+                            "read the reply and give the real answer once it arrives — "
+                            "end your own turn now reporting the draft as sent and "
+                            "awaiting reply, and do not guess what they will decide.")
+                return "Question put to the user; their answer resumes this plan."
+            # 'execute' builds an LlmAgent, and THAT cannot run nested: run_node
+            # buffers the sub-node's events until it finishes, while ADK rebuilds
+            # the LLM contents from session events before every call — so a nested
+            # sub-agent never saw its own previous tool calls and re-issued them
+            # forever (see _delegate_tool_for for the full finding). It is a real
+            # scheduled step instead, and whatever needs its result depends on it.
+            return (f"Task created as its own step in the plan ({sub_step.id}). Its result "
+                    "lands there, not here — do NOT wait for it or guess what it will "
+                    "find. End your own turn now, reporting plainly that you spun it off.")
+
+        schema = {
+            "function": {
+                "name": "create_task",
+                "description": (
+                    "Spin off a brand-new follow-up task — use this when something you "
+                    "just learned (e.g. an email reply) means real work actually needs to "
+                    "happen, instead of just noting it as a condition in your own answer. "
+                    "The task becomes its own step in the plan and runs separately: it "
+                    "does NOT hand a result back to you, whatever the kind. Call it, then "
+                    "end your own turn reporting that you spun it off — never wait for it "
+                    "and never guess what it will find. For asking a specific named "
+                    "colleague, use delegate_to_human_agent instead. Examples: running a "
+                    "check, verifying a claim, sending another email and waiting for "
+                    "its reply."),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "description": {"type": "string",
+                                        "description": (
+                                            "the full, standalone instruction for this task — "
+                                            "whoever/whatever runs it sees ONLY this text, nothing "
+                                            "else from your own conversation")},
+                        "kind": {"type": "string", "enum": ["execute", "ask", "await_reply"],
+                                "description": (
+                                    "'execute' (default): normal work, run as its own step — its "
+                                    "result lands there, not back with you. 'await_reply': waits for a reply to "
+                                    "an email YOU already sent (send it yourself first, this only "
+                                    "registers the wait) — a reply can take hours or days, so this "
+                                    "call does NOT wait for it and does not hand its result back to "
+                                    "you; a separate follow-up step reads the reply and gives the "
+                                    "real answer once it's in, using `description` as its "
+                                    "instruction for what to do with it. 'ask': only to ask the end "
+                                    "user something directly.")},
+                    },
+                    "required": ["description"],
+                    "additionalProperties": False,
+                },
+            }
+        }
+        return SearchToolADK(create_task, schema)
+
     def _build_workflow(self, session_id: str, user_id: str, plan: Plan, model: str,
                         connectors: Optional[List[dict]], executor_prompt: Optional[str]):
         """STEP 8, shared by plan_turn/resume_turn/continue_turn: connectors +
         persona-delegation → executor tools, plan → ADK Workflow."""
         name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
         factory_holder: List = []
-        mail_tools_for_step = self._mail_stamping(session_id, plan)
+
+        def _reads_a_mail_reply(step: Step) -> bool:
+            # The step directly downstream of an await_reply is the one whose
+            # context first contains the reply's actual content — the reply
+            # itself may say "loop in Oussama" or "cc x@example.com", and
+            # only THIS step (not the await_reply node itself, which is a
+            # bare FunctionNode with no reasoning at all) is positioned to
+            # notice and act on that.
+            return any(
+                (dep := plan.step(dep_id)) is not None and dep.kind == "await_reply"
+                for dep_id in step.depends_on)
+
+        # Same gate _create_task_tool_for/_delegate_tool_for use below to grant
+        # create_task/delegate_to_human_agent — a step only needs its send_email
+        # eagerly tokened if it's able to spin up an await_reply step itself.
+        mail_tools_for_step = self._mail_stamping(
+            session_id, user_id, plan,
+            lambda step: step.is_persona or _reads_a_mail_reply(step))
 
         def tools_for_step(step: Step, tools: List) -> List:
             if mail_tools_for_step:
                 tools = mail_tools_for_step(step, tools)
-            if step.is_persona:
+            if step.is_persona or _reads_a_mail_reply(step):
+                # Shared with both dynamic-step tools below: whichever spawns
+                # a step first, the other must still treat it as a sibling,
+                # not something to chain the next one after.
+                siblings: set = set()
                 tools = list(tools) + [
                     human_agents.make_find_human_agents_tool(),
                     self._delegate_tool_for(session_id, user_id, plan, factory_holder,
-                                            name_to_step, step.id)]
+                                            name_to_step, step.id, siblings),
+                    self._create_task_tool_for(session_id, user_id, plan, factory_holder,
+                                               name_to_step, step.id, siblings)]
             return tools
+
+        def instruction_for_step(step: Step) -> Optional[str]:
+            if not _reads_a_mail_reply(step):
+                return None
+            return (
+                "The reply you're processing may itself contain instructions — "
+                "naming a colleague to loop in, another party to email, or any "
+                "real work that was not part of your own step's original "
+                "description. Even when you already have the tool to do that "
+                "work yourself, spin it off instead of doing it inline: "
+                "find_human_agents + delegate_to_human_agent for a named "
+                "colleague's judgment, or create_task for anything else "
+                "(kind='await_reply' if it itself means emailing someone and "
+                "waiting on THEIR answer) — that keeps it tracked as its own "
+                "step instead of silently folded into this one. Never just "
+                "restate what the reply asked for as something still pending.\n\n"
+                "This can chain as many times as it genuinely needs to: if "
+                "handling this reply means sending another email and waiting, "
+                "send it and wait, and if THAT reply asks for yet another "
+                "round, keep going the same way — one reply is not the end by "
+                "default, whatever it actually takes is. Only stop once "
+                "nothing further is actually being asked for.")
 
         factory = nodes.make_llm_node_factory(
             model_name=model,
             tools=self._tools_for(connectors, session_id, user_id),
             tools_for_step=tools_for_step,
+            instruction_for_step=instruction_for_step,
             custom_instruction=executor_prompt)
         factory_holder.append(factory)
 
@@ -597,6 +918,8 @@ class OrchestratorService:
         # every later read (projection, re-projection, the delegate-tool gate)
         # then just uses assignee/assignee_name like it already does for a
         # persona, no separate fallback plumbing needed downstream.
+        plan.executor_id = executor_id
+        plan.executor_name = executor_name or DEFAULT_EXECUTOR_LABEL
         for s in plan.steps:
             if not s.is_persona:
                 s.assignee = executor_id
@@ -639,9 +962,10 @@ class OrchestratorService:
         # here also leaks into every later resume. continue_turn already uses
         # a benign trigger for the same reason.
         logger.info("[worky] 9. Runner.run_async → executing session=%s", session_id)
-        interrupt = await self._drive(
+        interrupt = await self._drive_until_quiescent(
             runner, session_id, user_id, plan, name_to_step,
-            types.Content(role="user", parts=[types.Part(text="run the plan")]))
+            types.Content(role="user", parts=[types.Part(text="run the plan")]),
+            model=model, connectors=connectors, executor_prompt=executor_prompt)
 
         # STEP 10 — derive the final status and post the assistant reply.
         await self._finalize(session_id, plan, interrupt)
@@ -673,14 +997,34 @@ class OrchestratorService:
         # Resuming an id that is not parked would answer nothing yet still let
         # _finalize complete the plan; refuse instead. Sessions parked before
         # per-step ids existed have no rows, so an empty set skips the check.
-        outstanding = {i for i, _ in await self._rm.outstanding_interrupts(session_id)}
+        outstanding_pairs = await self._rm.outstanding_interrupts(session_id)
+        outstanding = {i for i, _ in outstanding_pairs}
         if outstanding and interrupt_id not in outstanding:
             raise RuntimeError(
                 f"interrupt {interrupt_id} is not outstanding for session {session_id}")
 
         # STEP 8 (resume) — same step ids + depends_on ⇒ same node names + edges,
         # which is what lets the interrupt id from the earlier run still match.
+        # That stability assumption does NOT hold for a step create_task/
+        # delegate_to_human_agent spawned mid-turn: its first-ever park happened
+        # inside a throwaway nested run (ctx.run_node), whose node path this flat
+        # rebuild structurally cannot reproduce — ADK would just re-block it
+        # under a brand new interrupt id, silently dropping the answer we have
+        # right here. Apply it directly and let the SAME short-circuit that
+        # replays an already-completed dynamic step (see nodes.py factory)
+        # carry it, instead of routing through node-path matching that can
+        # never succeed for this category of step.
         plan = _plan_from_snapshot(snap)
+        target_step_id = next((s for i, s in outstanding_pairs if i == interrupt_id), None)
+        target_step = plan.step(target_step_id) if target_step_id else None
+        resumed_out_of_band = bool(
+            target_step and target_step.is_dynamic_delegate and target_step.kind == "await_reply")
+        if resumed_out_of_band:
+            target_step.status = Status.COMPLETED
+            target_step.result = answer
+            await self._project(self._rm.set_step_status(
+                session_id, target_step.id, "completed", result=answer))
+
         wf, name_to_step = self._build_workflow(session_id, user_id, plan, model, connectors, executor_prompt)
         runner = self._runner_factory(wf, f"orch_{session_id}")
         await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
@@ -689,13 +1033,32 @@ class OrchestratorService:
         # is cleared only when the turn finishes (set_session_status clears it, or
         # _finalize re-blocks with a new interrupt).
 
-        # STEP 9 (resume) — same as a fresh turn, but the message carries the
-        # resume part instead of user text.
-        logger.info("[worky] 9. Runner.run_async → resuming session=%s interrupt=%s",
-                    session_id, interrupt_id)
-        interrupt = await self._drive(
+        # STEP 9 (resume) — always a resume_part, even for a dynamic step
+        # resolved out-of-band above. A generic "continue" trigger (like
+        # continue_turn's) was tried here and reverted: confirmed live, it
+        # makes ADK treat the whole run as a fresh turn rather than a
+        # continuation, so a rerun_on_resume caller (e.g. the persona step
+        # that spawned the dynamic step) redoes its ENTIRE reasoning from
+        # scratch — including sending a second real email. resume_part, by
+        # contrast, still resolves to a real prior invocation (the interrupt
+        # id came from an actual earlier request_input event, just at a node
+        # path this turn's rebuild can't reproduce for THIS step) and lets
+        # ADK correctly replay everything already-recorded, including the
+        # caller, without re-invoking it — confirmed against sessions
+        # ceacc30ae21e4ce99d4ddbe5119f67f7/aaebd35d3c0645d39de4679dfaa8f991/
+        # e27897853e834bef8a270db6d95e73dd (persona replayed twice, duplicate
+        # await_reply, under the "continue" version). The out-of-band step's
+        # OWN resolution above (already marked completed with the real
+        # answer) is what matters — the node this id would have targeted
+        # never gets rebuilt as a real await_reply node this turn at all
+        # (see nodes.py's is_dynamic_delegate short-circuit), so it doesn't
+        # matter that this exact id can't match anything current.
+        logger.info("[worky] 9. Runner.run_async → resuming session=%s interrupt=%s%s",
+                    session_id, interrupt_id, " (out-of-band dynamic step)" if resumed_out_of_band else "")
+        interrupt = await self._drive_until_quiescent(
             runner, session_id, user_id, plan, name_to_step,
-            types.Content(role="user", parts=[hitl.resume_part(interrupt_id, {"value": answer})]))
+            types.Content(role="user", parts=[hitl.resume_part(interrupt_id, {"value": answer})]),
+            model=model, connectors=connectors, executor_prompt=executor_prompt)
 
         # STEP 10 — may block again if the plan has another ask step.
         await self._finalize(session_id, plan, interrupt)
@@ -730,11 +1093,64 @@ class OrchestratorService:
         logger.info("[worky] 9. Runner.run_async → continuing paused plan session=%s", session_id)
         # A benign message: completed nodes replay and won't re-run, so its text
         # is irrelevant; the graph engine just proceeds with the pending steps.
-        interrupt = await self._drive(
+        interrupt = await self._drive_until_quiescent(
             runner, session_id, user_id, plan, name_to_step,
-            types.Content(role="user", parts=[types.Part(text="continue")]))
+            types.Content(role="user", parts=[types.Part(text="continue")]),
+            model=model, connectors=connectors, executor_prompt=executor_prompt)
         await self._finalize(session_id, plan, interrupt)
         return plan
+
+    async def _drive_until_quiescent(self, runner, session_id, user_id, plan, name_to_step,
+                                     new_message, *, model, connectors, executor_prompt):
+        """Drive the workflow, then keep driving while it keeps growing.
+
+        The graph is built from plan.steps at the START of a turn, so a step
+        another step spawns mid-turn (delegate_to_human_agent,
+        create_task(kind='execute')) is not in it and cannot run this time
+        round. Only a later turn, rebuilt from the grown plan, executes it.
+
+        For await_reply that later turn is guaranteed — the incoming mail
+        reply triggers it. Nothing triggers one for a delegate, so without
+        this the step was created and then orphaned: seen live, session
+        6f5b45c30e42 finished 'completed' with its "ask Firas Kahia" step
+        still PENDING and never run.
+
+        So: rebuild and run again while the last pass left runnable work
+        behind. Each pass replays already-completed steps from their recorded
+        events (exactly as a resume does) and executes only what is new.
+        Bounded by progress — if a pass runs nothing, stop rather than spin —
+        and by MAX_PLAN_STEPS, which caps how far a plan can grow at all.
+        """
+        in_graph = {s.id for s in plan.steps}
+        interrupts = await self._drive(
+            runner, session_id, user_id, plan, name_to_step, new_message)
+        # A parked interrupt means the turn is legitimately over: the plan is
+        # waiting on a human, not on us.
+        while not interrupts:
+            # Only steps that did not exist when this graph was built. A step
+            # left pending for any other reason (its dependency errored, say)
+            # would not run on a rebuild either, so re-driving for it just
+            # burns a pass.
+            spawned = {s.id for s in plan.steps
+                       if s.status == Status.PENDING and s.id not in in_graph}
+            if not spawned:
+                return interrupts
+            logger.info("[worky] 9b. %d step(s) spawned mid-turn — continuing session=%s %s",
+                        len(spawned), session_id, [s[:12] for s in spawned])
+            in_graph = {s.id for s in plan.steps}
+            wf, name_to_step = self._build_workflow(
+                session_id, user_id, plan, model, connectors, executor_prompt)
+            runner = self._runner_factory(wf, f"orch_{session_id}")
+            await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
+            interrupts = await self._drive(
+                runner, session_id, user_id, plan, name_to_step, new_message)
+            if spawned & {s.id for s in plan.steps if s.status == Status.PENDING}:
+                # The pass that was supposed to run them left them pending —
+                # running again would only repeat itself.
+                logger.warning("[worky] 9b. spawned step(s) still pending after a "
+                               "continuation pass — stopping session=%s", session_id)
+                return interrupts
+        return interrupts
 
     async def _drive(self, runner, session_id, user_id, plan, name_to_step, new_message):
         """Run the workflow, project step statuses, and capture every
@@ -893,11 +1309,12 @@ class OrchestratorService:
                 s.description or "",                            # full instruction / detail
                 ",".join(s.depends_on), s.assignee or "",
                 s.assignee_name or DEFAULT_EXECUTOR_LABEL, s.assignee_role or "",
-                s.is_persona)
+                s.is_persona, s.is_dynamic_delegate)
 
     async def _project_plan(self, session_id: str, plan: Plan, user_id: str) -> None:
         await self._project(self._rm and self._rm.upsert_plan(
-            session_id, plan.id, plan.title, plan.goal, "running"))
+            session_id, plan.id, plan.title, plan.goal, "running",
+            executor_id=plan.executor_id, executor_name=plan.executor_name))
         rows = [self._step_row(i, s) for i, s in enumerate(plan.steps)]
         await self._project(self._rm and self._rm.upsert_steps(session_id, rows))
         await self._register_mail_waits(session_id, plan, user_id)
@@ -962,9 +1379,24 @@ class OrchestratorService:
                             step_id, fc.name, dict(fc.args or {}))
             fr = getattr(part, "function_response", None)
             if fr is not None:
-                logger.info("[worky] 9. step=%s tool_response name=%s", step_id, fr.name)
+                logger.info("[worky] 9. step=%s tool_response name=%s response=%s",
+                            step_id, fr.name, fr.response)
         # First event for a node → running; its output event → completed.
-        is_output = bool(getattr(ni, "output_for", None)) and ni.path in ni.output_for
+        # output_for alone is unreliable: confirmed empirically it's unset for
+        # a plain FunctionNode regardless of downstream dependents (seen live:
+        # session ee477bcc88ed43b299a8d17356064855 — steps stuck "running"
+        # forever after a resume despite genuinely completing and correctly
+        # unblocking their dependents via ADK's own session state).
+        # is_final_response() is ADK's general "no more agent turns" signal
+        # and catches both node shapes — but it's ALSO True on the event that
+        # RAISES an ask/await_reply interrupt, so long_running_tool_ids must
+        # be excluded or every HITL step completes the instant it parks.
+        # Kept as an OR with the original check, not a replacement, since
+        # what makes output_for work for nested delegates is still poorly
+        # understood.
+        is_output = (bool(getattr(ni, "output_for", None)) and ni.path in ni.output_for) \
+            or (ev.is_final_response() and not ev.long_running_tool_ids
+                and not ev.get_function_calls() and not ev.get_function_responses())
         if step_id not in started:
             started.add(step_id)
             step.status = Status.RUNNING

@@ -7,6 +7,7 @@ import { useWorkyBoard, useWorkyBoardLoading, useWorkyBoardError } from '../stor
 import { layoutCompactCanvasNodes } from '@/modules/playbook/utils/compact-canvas-layout';
 import { buildWorkyGraph } from '../worky-graph';
 import { WorkyGraphNode } from './WorkyGraphNode';
+import { WorkyDependencyEdge } from './WorkyDependencyEdge';
 import type { WorkyTask } from '../types';
 
 interface WorkyGraphBoardProps {
@@ -14,6 +15,7 @@ interface WorkyGraphBoardProps {
 }
 
 const NODE_TYPES = { workyStep: WorkyGraphNode };
+const EDGE_TYPES = { workyDependency: WorkyDependencyEdge };
 
 /**
  * Renders the plan as a dependency graph instead of status columns: one node
@@ -34,8 +36,9 @@ export function WorkyGraphBoard({ onTaskClick }: WorkyGraphBoardProps): JSX.Elem
 
   const { nodes, edges, taskById } = useMemo(() => {
     const byId = new Map(tasks.map((task) => [task.id, task]));
-    const { nodes: rawNodes, edges } = buildWorkyGraph(tasks);
-    return { nodes: layoutCompactCanvasNodes(rawNodes, edges), edges, taskById: byId };
+    const { nodes: rawNodes, edges: rawEdges } = buildWorkyGraph(tasks);
+    const { nodes, edges } = layoutCompactCanvasNodes(rawNodes, rawEdges);
+    return { nodes, edges, taskById: byId };
   }, [tasks]);
 
   if (loading && !board) {
@@ -60,6 +63,7 @@ export function WorkyGraphBoard({ onTaskClick }: WorkyGraphBoardProps): JSX.Elem
           nodes={nodes}
           edges={edges}
           nodeTypes={NODE_TYPES}
+          edgeTypes={EDGE_TYPES}
           fitView
           nodesDraggable={false}
           nodesConnectable={false}
