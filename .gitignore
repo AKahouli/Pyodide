@@ -58,4 +58,6 @@ __pycache__/
 qa-screenshots/
 qa_screenshots/
 qa-artifacts/
-$/
+$/.scannerwork/
+.scannerwork/
+.scannerwork/
