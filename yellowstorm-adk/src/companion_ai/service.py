@@ -329,8 +329,27 @@ class OrchestratorService:
 
     def _tools_for(self, connectors: Optional[List[dict]], session_id: str, user_id: str) -> List:
         """Materialize connectors into executor tools: the synchronous MCP action
-        tools plus, per connector, a fire-and-forget `schedule_*_task` tool for
-        long-running actions (records the handle in mcp_tasks for the poller).
+        tools.
+
+        The per-connector fire-and-forget `schedule_<connector>_task` tool is
+        deliberately NOT granted. It was broken and dangerous:
+
+        - long_running.start_task (and poller._poll_task) hardcode
+          streamablehttp_client and never read the connector's
+          mcp_transport_type, so on an SSE connector — which Microsoft365 is —
+          it POSTs to the /sse endpoint and dies with 405. Seen live.
+        - Worse if that were merely fixed: models were choosing it to SEND
+          MAIL, reading "their reply can take hours or days" next to the
+          prompt's "for a LONG-RUNNING action call schedule_*_task". Mail sent
+          that way bypasses send_email, which is where the routing token is
+          stamped (see _mail_stamping) — so the reply could never match its
+          wait and the step would hang forever, silently. The 405 was the
+          safer failure.
+
+        Sending mail is instant; the WAITING is create_task(kind='await_reply')'s
+        job, not a scheduled MCP task. Re-granting this needs both a transport
+        column on mcp_tasks (the poller reconnects in another process, so it
+        cannot infer it) and prompt wording that keeps it away from email.
 
         Uses the app's proven `create_connector_tools` (per-action function tools
         that open a one-shot MCP connection via call_mcp_tool) — NOT ADK's
@@ -339,17 +358,8 @@ class OrchestratorService:
         connectors = connectors or []
         from src.smart_rag.tools.utilities.connector_tools import (
             create_connector_tools, ConnectorToolContext)
-        from . import long_running, mcp_tasks
-        tools = create_connector_tools(connectors, ConnectorToolContext(session_id=session_id))
-        for c in connectors:
-            async def _record(task_id, action, args, _c=c):
-                if self._pool is not None:
-                    await mcp_tasks.enqueue(
-                        self._pool, session_id=session_id, user_id=user_id, task_id=task_id,
-                        server_name=_c.get("connector_name", ""), server_url=_c.get("mcp_server_url", ""),
-                        auth_headers=_c.get("auth_headers") or {}, mode="record", schema=self._schema)
-            tools.append(long_running.make_schedule_tool(c, on_started=_record))
-        return tools
+        return create_connector_tools(
+            connectors, ConnectorToolContext(session_id=session_id))
 
     def _mail_stamping(self, session_id: str, user_id: str, plan: Plan,
                        dynamic_eligible: Callable[[Step], bool]):
@@ -946,9 +956,10 @@ class OrchestratorService:
         # here also leaks into every later resume. continue_turn already uses
         # a benign trigger for the same reason.
         logger.info("[worky] 9. Runner.run_async → executing session=%s", session_id)
-        interrupt = await self._drive(
+        interrupt = await self._drive_until_quiescent(
             runner, session_id, user_id, plan, name_to_step,
-            types.Content(role="user", parts=[types.Part(text="run the plan")]))
+            types.Content(role="user", parts=[types.Part(text="run the plan")]),
+            model=model, connectors=connectors, executor_prompt=executor_prompt)
 
         # STEP 10 — derive the final status and post the assistant reply.
         await self._finalize(session_id, plan, interrupt)
@@ -1038,9 +1049,10 @@ class OrchestratorService:
         # matter that this exact id can't match anything current.
         logger.info("[worky] 9. Runner.run_async → resuming session=%s interrupt=%s%s",
                     session_id, interrupt_id, " (out-of-band dynamic step)" if resumed_out_of_band else "")
-        interrupt = await self._drive(
+        interrupt = await self._drive_until_quiescent(
             runner, session_id, user_id, plan, name_to_step,
-            types.Content(role="user", parts=[hitl.resume_part(interrupt_id, {"value": answer})]))
+            types.Content(role="user", parts=[hitl.resume_part(interrupt_id, {"value": answer})]),
+            model=model, connectors=connectors, executor_prompt=executor_prompt)
 
         # STEP 10 — may block again if the plan has another ask step.
         await self._finalize(session_id, plan, interrupt)
@@ -1075,11 +1087,64 @@ class OrchestratorService:
         logger.info("[worky] 9. Runner.run_async → continuing paused plan session=%s", session_id)
         # A benign message: completed nodes replay and won't re-run, so its text
         # is irrelevant; the graph engine just proceeds with the pending steps.
-        interrupt = await self._drive(
+        interrupt = await self._drive_until_quiescent(
             runner, session_id, user_id, plan, name_to_step,
-            types.Content(role="user", parts=[types.Part(text="continue")]))
+            types.Content(role="user", parts=[types.Part(text="continue")]),
+            model=model, connectors=connectors, executor_prompt=executor_prompt)
         await self._finalize(session_id, plan, interrupt)
         return plan
+
+    async def _drive_until_quiescent(self, runner, session_id, user_id, plan, name_to_step,
+                                     new_message, *, model, connectors, executor_prompt):
+        """Drive the workflow, then keep driving while it keeps growing.
+
+        The graph is built from plan.steps at the START of a turn, so a step
+        another step spawns mid-turn (delegate_to_human_agent,
+        create_task(kind='execute')) is not in it and cannot run this time
+        round. Only a later turn, rebuilt from the grown plan, executes it.
+
+        For await_reply that later turn is guaranteed — the incoming mail
+        reply triggers it. Nothing triggers one for a delegate, so without
+        this the step was created and then orphaned: seen live, session
+        6f5b45c30e42 finished 'completed' with its "ask Firas Kahia" step
+        still PENDING and never run.
+
+        So: rebuild and run again while the last pass left runnable work
+        behind. Each pass replays already-completed steps from their recorded
+        events (exactly as a resume does) and executes only what is new.
+        Bounded by progress — if a pass runs nothing, stop rather than spin —
+        and by MAX_PLAN_STEPS, which caps how far a plan can grow at all.
+        """
+        in_graph = {s.id for s in plan.steps}
+        interrupts = await self._drive(
+            runner, session_id, user_id, plan, name_to_step, new_message)
+        # A parked interrupt means the turn is legitimately over: the plan is
+        # waiting on a human, not on us.
+        while not interrupts:
+            # Only steps that did not exist when this graph was built. A step
+            # left pending for any other reason (its dependency errored, say)
+            # would not run on a rebuild either, so re-driving for it just
+            # burns a pass.
+            spawned = {s.id for s in plan.steps
+                       if s.status == Status.PENDING and s.id not in in_graph}
+            if not spawned:
+                return interrupts
+            logger.info("[worky] 9b. %d step(s) spawned mid-turn — continuing session=%s %s",
+                        len(spawned), session_id, [s[:12] for s in spawned])
+            in_graph = {s.id for s in plan.steps}
+            wf, name_to_step = self._build_workflow(
+                session_id, user_id, plan, model, connectors, executor_prompt)
+            runner = self._runner_factory(wf, f"orch_{session_id}")
+            await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
+            interrupts = await self._drive(
+                runner, session_id, user_id, plan, name_to_step, new_message)
+            if spawned & {s.id for s in plan.steps if s.status == Status.PENDING}:
+                # The pass that was supposed to run them left them pending —
+                # running again would only repeat itself.
+                logger.warning("[worky] 9b. spawned step(s) still pending after a "
+                               "continuation pass — stopping session=%s", session_id)
+                return interrupts
+        return interrupts
 
     async def _drive(self, runner, session_id, user_id, plan, name_to_step, new_message):
         """Run the workflow, project step statuses, and capture every
