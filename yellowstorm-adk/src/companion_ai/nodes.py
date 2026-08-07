@@ -408,17 +408,37 @@ def make_llm_node_factory(
             )
         else:
             persona_preamble = None
-        # A client prompt may carry a literal "{description}" token (see
-        # PROMPTS.txt); ADK's instruction templating treats any unresolved
-        # "{...}" as a session-variable lookup and raises KeyError, so this
-        # must be substituted here too. .replace(), not .format(): the
-        # client's text may contain other, incidental braces.
-        custom_instruction_resolved = (
-            custom_instruction.replace("{description}", step.description)
-            if custom_instruction else None)
+        # A client prompt carrying "{description}" IS the executor instruction,
+        # so it REPLACES the built-in one instead of being stacked on top of
+        # it. Seen live: the configured prompt was a copy of
+        # EXECUTOR_INSTRUCTION, so the step's task and the whole "you are not
+        # told the plan's wider goal..." block were sent TWICE, with
+        # contradictory framing between the copies — the client's hardcoded
+        # "You are an execution agent" / "Do exactly this and nothing else"
+        # against the persona-aware "You are working on ONE step" / "using
+        # whatever consultation your role above requires". A prompt with no
+        # "{description}" cannot carry the task, so it stays an extra preamble
+        # ahead of the built-in one, as before.
+        #
+        # {identity} and {do_this_line} are offered to the client template too,
+        # so a custom prompt can opt into the persona-aware wording rather than
+        # hardcoding the plain-step one. ADK's instruction templating treats
+        # any unresolved "{...}" as a session-variable lookup and raises
+        # KeyError, so every token must be substituted here. .replace(), not
+        # .format(): the client's text may contain other, incidental braces.
+        def _resolve(text: str) -> str:
+            return (text.replace("{identity}", identity)
+                        .replace("{do_this_line}", do_this_line)
+                        .replace("{description}", step.description))
+
+        custom_is_full_instruction = bool(
+            custom_instruction and "{description}" in custom_instruction)
+        body = _resolve(custom_instruction) if custom_is_full_instruction else base_instruction
         mail_reply_instruction = instruction_for_step(step) if instruction_for_step else None
-        preambles = [p for p in (custom_instruction_resolved, persona_preamble, mail_reply_instruction) if p]
-        instruction = "\n\n".join(preambles + [base_instruction]) if preambles else base_instruction
+        extra_preamble = None if custom_is_full_instruction or not custom_instruction \
+            else _resolve(custom_instruction)
+        preambles = [p for p in (extra_preamble, persona_preamble, mail_reply_instruction) if p]
+        instruction = "\n\n".join(preambles + [body]) if preambles else body
         step_tools = tools_for_step(step, shared_tools) if tools_for_step else shared_tools
         tool_names = [getattr(getattr(t, "func", None), "__name__", "?") for t in step_tools]
         logger.info("[worky] 8. step=%s executor context:\n--- instruction ---\n%s\n"

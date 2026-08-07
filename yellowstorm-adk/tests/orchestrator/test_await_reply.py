@@ -181,6 +181,46 @@ def test_a_persona_step_never_gets_a_competing_execution_agent_identity():
     assert "You are an execution agent" in factory(plain_step, "b").instruction
 
 
+def test_a_client_prompt_carrying_the_description_replaces_the_builtin_one():
+    """Live bug: the configured executor prompt was a copy of
+    EXECUTOR_INSTRUCTION, so it got stacked ON TOP of the built-in one and
+    the step's task -- plus the whole "you are not told the plan's wider
+    goal..." block -- was sent to the model TWICE, with contradictory framing
+    between the two copies ("You are an execution agent" / "Do exactly this
+    and nothing else" against the persona-aware "You are working on ONE
+    step" / "using whatever consultation your role above requires").
+
+    A prompt carrying {description} IS the executor instruction, so it must
+    replace the built-in one, not duplicate it."""
+    factory = nodes.make_llm_node_factory(
+        model_name="x", tools=[],
+        custom_instruction=nodes.EXECUTOR_INSTRUCTION.replace(
+            "{identity}", "You are an execution agent working on ONE step of a larger plan.")
+        .replace("{do_this_line}", "Do exactly this and nothing else:"))
+
+    step = Step(id="a", kind="execute", description="Should we migrate to Databricks?",
+                is_persona=True, assignee_name="Hamdi Imed", assignee_role="data lead")
+    instruction = factory(step, "a").instruction
+
+    assert instruction.count("Should we migrate to Databricks?") == 1, instruction
+    assert instruction.count("You are not told the plan's wider goal") == 1
+    assert "{description}" not in instruction
+
+
+def test_a_client_prompt_without_the_description_still_prepends():
+    """A prompt that cannot carry the task (no {description}) must stay an
+    extra preamble ahead of the built-in instruction -- dropping the built-in
+    one there would lose the task entirely."""
+    factory = nodes.make_llm_node_factory(
+        model_name="x", tools=[], custom_instruction="Always answer in French.")
+    step = Step(id="a", kind="execute", description="Search the web for Tesla news.")
+    instruction = factory(step, "a").instruction
+
+    assert "Always answer in French." in instruction
+    assert instruction.count("Search the web for Tesla news.") == 1
+    assert "You are not told the plan's wider goal" in instruction
+
+
 def test_a_delegate_step_is_told_to_relay_not_represent():
     """Regression: a delegate_to_human_agent-spawned step (is_persona AND
     is_dynamic_delegate) got the SAME "you represent {assignee_name} ...
