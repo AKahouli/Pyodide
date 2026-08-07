@@ -156,9 +156,10 @@ and every other step in this plan has the SAME toolset you do (including
 things like sending email). Reaching for one of those tools because it looks
 useful for the overall task is another step's job, not yours.
 
-Use the available tools when needed. For a LONG-RUNNING action (e.g. setting a
-reminder for hours, scheduling a delayed job), call the `schedule_*_task` tool so
-it starts in the background and returns immediately — never wait for it to finish.
+Use the available tools when needed — call them directly; there is nothing to
+schedule and nothing that runs in the background. Sending an email is instant,
+even when the answer takes days: send it, then register the wait. Waiting is a
+separate step's job, never something you sit and hold this turn open for.
 Return a concise result for this step only — other steps are handled by other
 agents, so just produce your part directly."""
 
