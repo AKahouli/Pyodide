@@ -1,21 +1,12 @@
 import { AUTH_STORAGE_KEYS, API_CONFIG } from '@/lib/api/config';
-import type { AgentEvent } from './types';
-
-/**
- * A raw event off the persistent pipe. `data` is the parsed JSON of the SSE
- * frame — it carries `sessionId` plus the flattened agent-event payload
- * (`event_id`, `timestamp`, `sequence`, and type-specific fields).
- */
-export interface PipeEvent {
-  type: AgentEvent['type'];
-  data: Record<string, unknown>;
-}
+import type { AgentEvent, PipeEvent } from './interfaces';
 
 type Listener = (event: PipeEvent) => void;
 type ConnectionListener = () => void;
 
 const EVENT_TYPES: AgentEvent['type'][] = [
-  'message', 'tool', 'step', 'plan', 'title', 'done', 'wait', 'error', 'application_component',
+  'message', 'tool', 'step', 'plan', 'title', 'done', 'wait', 'error',
+  'application_component', 'app_build_progress',
 ];
 
 /**

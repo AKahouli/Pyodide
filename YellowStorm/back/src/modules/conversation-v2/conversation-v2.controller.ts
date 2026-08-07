@@ -33,6 +33,7 @@ import type { ConversationV2SessionPermission } from './constants/conversation-v
 import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { GetFileSignedUrlDto } from './dto/get-file-signed-url.dto';
+import { GetAppSourceUrlsDto } from './dto/get-app-source-urls.dto';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
@@ -46,6 +47,7 @@ import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2EventStoreService, PersistedEventRow } from './services/conversation-v2-event-store.service';
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
+import { normalizeAppSourceCephPrefix } from './utils/normalize-app-source-ceph-prefix';
 
 interface AuthUser { id: string; }
 
@@ -532,6 +534,50 @@ export class ConversationV2Controller {
   ): Promise<{ url: string }> {
     const url = await this.workspaceDocuments.generateReadUrl(body.path);
     return { url };
+  }
+
+  /**
+   * Batch-presign read URLs for generated app sources under a Ceph prefix.
+   * Used by the frontend to hydrate Nodepod's virtual filesystem.
+   */
+  @Post('sessions/:id/app-source/urls')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_READ)
+  async getAppSourceUrls(
+    @Param('id') _id: string,
+    @Body() body: GetAppSourceUrlsDto,
+  ): Promise<{ items: Array<{ path: string; url: string }> }> {
+    // Manus/Sandbox Manager may prefix ceph_path with the bucket name; strip it
+    // so signed URLs are `{public}/{bucket}/{userId}/appbuilder/...` not
+    // `{public}/{bucket}/{bucket}/{userId}/...`.
+    const bucket = this.config.get<string>('storage.s3.bucket') || '';
+    const prefix = normalizeAppSourceCephPrefix(body.cephPath, bucket);
+    if (!prefix) {
+      throw new BadRequestException('Invalid cephPath');
+    }
+    const items: Array<{ path: string; url: string }> = [];
+
+    for (const relative of body.paths) {
+      const normalized = relative.replace(/^\/+/, '').replace(/\\/g, '/');
+      if (
+        !normalized ||
+        normalized.includes('..') ||
+        normalized.startsWith('/') ||
+        normalized.includes('\0')
+      ) {
+        throw new BadRequestException(`Invalid source path: ${relative}`);
+      }
+      const objectKey = `${prefix}/${normalized}`;
+      // App trees include extensionless files (Dockerfile, LICENSE, …) under a
+      // Ceph prefix that itself has no dots — bypass the workspace "folder" guard.
+      const url = await this.workspaceDocuments.generateReadUrl(objectKey, {
+        allowExtensionless: true,
+      });
+      items.push({ path: normalized, url });
+    }
+
+    return { items };
   }
 
   @Get('sessions/:id/vnc/signed-url')

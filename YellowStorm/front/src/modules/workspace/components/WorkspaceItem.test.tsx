@@ -4,29 +4,49 @@ import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceItem } from './WorkspaceItem';
 
-const selectWorkspaceMock = vi.fn();
-const renameWorkspaceMock = vi.fn(async () => undefined);
-const deleteWorkspaceMock = vi.fn(async () => undefined);
-const deleteAllDocumentsMock = vi.fn(async () => undefined);
-const openSettingsModalMock = vi.fn();
+const {
+  selectWorkspaceMock,
+  renameWorkspaceMock,
+  deleteWorkspaceMock,
+  deleteAllDocumentsMock,
+  openSettingsModalMock,
+  storeState,
+  useWorkspaceStoreMock,
+} = vi.hoisted(() => {
+  const selectWorkspaceMock = vi.fn();
+  const renameWorkspaceMock = vi.fn(async () => undefined);
+  const deleteWorkspaceMock = vi.fn(async () => undefined);
+  const deleteAllDocumentsMock = vi.fn(async () => undefined);
+  const openSettingsModalMock = vi.fn();
+
+  const storeState = {
+    selectWorkspace: selectWorkspaceMock,
+    renameWorkspace: renameWorkspaceMock,
+    deleteWorkspace: deleteWorkspaceMock,
+    deleteAllDocuments: deleteAllDocumentsMock,
+    openSettingsModal: openSettingsModalMock,
+    isDeleting: false,
+    totalDocuments: 2,
+  };
+
+  const useWorkspaceStoreMock = Object.assign(
+    (selector: (s: typeof storeState) => unknown) => selector(storeState),
+    { getState: () => storeState },
+  );
+
+  return {
+    selectWorkspaceMock,
+    renameWorkspaceMock,
+    deleteWorkspaceMock,
+    deleteAllDocumentsMock,
+    openSettingsModalMock,
+    storeState,
+    useWorkspaceStoreMock,
+  };
+});
 
 vi.mock('../store', () => ({
-  useWorkspaceStore: (selector: (s: {
-    selectWorkspace: typeof selectWorkspaceMock;
-    renameWorkspace: typeof renameWorkspaceMock;
-    deleteWorkspace: typeof deleteWorkspaceMock;
-    deleteAllDocuments: typeof deleteAllDocumentsMock;
-    openSettingsModal: typeof openSettingsModalMock;
-    isDeleting: boolean;
-  }) => unknown) =>
-    selector({
-      selectWorkspace: selectWorkspaceMock,
-      renameWorkspace: renameWorkspaceMock,
-      deleteWorkspace: deleteWorkspaceMock,
-      deleteAllDocuments: deleteAllDocumentsMock,
-      openSettingsModal: openSettingsModalMock,
-      isDeleting: false,
-    }),
+  useWorkspaceStore: useWorkspaceStoreMock,
 }));
 
 vi.mock('../hooks', () => ({ useModalCloseEffect: vi.fn() }));
@@ -50,6 +70,7 @@ describe('WorkspaceItem', () => {
     selectWorkspaceMock.mockReset();
     renameWorkspaceMock.mockReset();
     openSettingsModalMock.mockReset();
+    storeState.totalDocuments = 2;
   });
 
   it('selects workspace on row click and allows rename action', async () => {
@@ -64,14 +85,14 @@ describe('WorkspaceItem', () => {
           usedStorage: 256,
           allocatedStorage: 1024,
           isSystem: false,
-          isPersonal: true,
+          isPersonal: false,
           shareCount: 0,
           isPublic: false,
           createdAt: '',
           updatedAt: '',
         }}
         isSelected={false}
-      />, 
+      />,
     );
 
     await userEvent.click(screen.getByText('Workspace A'));

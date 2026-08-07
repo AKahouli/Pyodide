@@ -118,7 +118,7 @@ export function ManageSkillsDialog({ open, onOpenChange, skills, loading, select
             <SelectContent>
               <SelectItem value={ALL_CATEGORIES}>{t('skills.allCategories') || 'All categories'}</SelectItem>
               {categories.map((name) => (
-                <SelectItem key={name} value={name}>{name}</SelectItem>
+                <SelectItem key={`category-${name}`} value={name}>{name}</SelectItem>
               ))}
               {hasUncategorized && (
                 <SelectItem value={UNCATEGORIZED}>{t('skills.uncategorized') || 'Uncategorized'}</SelectItem>

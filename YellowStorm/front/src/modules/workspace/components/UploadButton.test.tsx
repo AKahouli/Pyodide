@@ -50,7 +50,7 @@ describe('UploadButton', () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [file] } });
 
-    expect(addFilesToQueueMock).toHaveBeenCalledWith([file], 'w-1');
+    expect(addFilesToQueueMock).toHaveBeenCalledWith([file], 'w-1', undefined);
     expect(startUploadMock).toHaveBeenCalledTimes(1);
   });
 

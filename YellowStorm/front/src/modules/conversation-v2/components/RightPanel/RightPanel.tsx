@@ -7,6 +7,7 @@ import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
 import { ToolDetailDispatch } from './tool-views/ToolDetailDispatch';
 import { ApplicationComponentView } from './ApplicationComponentView';
+import { AppBuildProgressPanel } from './AppBuildProgressPanel';
 import { DeployControls } from './DeployControls';
 
 const RIGHT_PANEL_STORAGE_KEY = 'conversation-v2-right-panel-width';
@@ -24,7 +25,7 @@ export function RightPanel() {
     jumpToLive,
     streaming,
     applicationComponent,
-    lastDeployedAt,
+    appBuildProgress,
     setRightPanelView,
   } = useConversationV2Store(
     useShallow((s) => ({
@@ -35,7 +36,7 @@ export function RightPanel() {
       jumpToLive: s.jumpToLive,
       streaming: s.streaming,
       applicationComponent: s.applicationComponent,
-      lastDeployedAt: s.lastDeployedAt,
+      appBuildProgress: s.appBuildProgress,
       setRightPanelView: s.setRightPanelView,
     })),
   );
@@ -43,12 +44,15 @@ export function RightPanel() {
   if (mode === 'closed') return null;
 
   const hasCode = !!selectedToolCallId;
-  const hasPreview = !!applicationComponent;
+  const hasPreview = !!applicationComponent || !!appBuildProgress;
   if (!hasCode && !hasPreview) return null;
+
+  const showBuildProgress = !!appBuildProgress && !applicationComponent;
+  const showNodepod = !!applicationComponent;
 
   // Which tab is active, clamped to what's actually available: prefer the
   // preview when we're in 'app' mode (or when there's no code to show).
-  const showPreview = hasPreview && (mode === 'app' || !hasCode);
+  const showPreview = (showNodepod || showBuildProgress) && (mode === 'app' || !hasCode);
   // The Code/Preview toggle only makes sense once BOTH exist.
   const canToggle = hasCode && hasPreview;
 
@@ -74,8 +78,8 @@ export function RightPanel() {
       resizeHandleLabel={t('rightPanel.resizeHandle')}
       className='border-l bg-card/40'
     >
-      <aside className='flex h-full min-w-0 flex-col'>
-        <header className='flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3'>
+      <aside className='flex h-full min-w-0 flex-col overflow-hidden'>
+        <header className='flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3'>
           {canToggle ? (
             <div className='inline-flex items-center rounded-lg border bg-muted/40 p-0.5'>
               <button type='button' onClick={() => setRightPanelView('code')} className={tabClass(!showPreview)}>
@@ -89,25 +93,37 @@ export function RightPanel() {
             </div>
           ) : (
             <span className='truncate text-sm font-semibold'>
-              {showPreview ? applicationComponent!.title || t('rightPanel.title') : t('rightPanel.title')}
+              {showPreview
+                ? applicationComponent?.title ||
+                  (showBuildProgress ? t('nodepod.previewTitle') : t('rightPanel.title'))
+                : t('rightPanel.title')}
             </span>
           )}
           <div className='flex shrink-0 items-center gap-1'>
-            {hasPreview && <DeployControls />}
+            {hasPreview && showNodepod && <DeployControls />}
             <Button variant='ghost' size='icon-sm' aria-label={t('rightPanel.close')} onClick={close}>
               <XIcon className='size-4' />
             </Button>
           </div>
         </header>
-        <div className='relative flex min-h-0 flex-1 flex-col'>
+        <div className='relative flex min-h-0 flex-1 flex-col overflow-hidden'>
           {showPreview ? (
-            // Key on the URL so a newly-pushed preview remounts the iframe on the
-            // new address (WebPreview reads defaultUrl only on mount).
-            <ApplicationComponentView
-              key={`${applicationComponent!.url}:${lastDeployedAt ?? ''}`}
-              url={applicationComponent!.url}
-              title={applicationComponent!.title}
-            />
+            showNodepod ? (
+              <ApplicationComponentView
+                key={applicationComponent!.revision}
+                title={applicationComponent!.title}
+                cephPath={applicationComponent!.cephPath}
+                filesTree={applicationComponent!.filesTree}
+                fileCount={applicationComponent!.fileCount}
+                revision={applicationComponent!.revision}
+                buildProgress={appBuildProgress}
+              />
+            ) : (
+              <AppBuildProgressPanel
+                key={appBuildProgress!.revision}
+                progress={appBuildProgress!}
+              />
+            )
           ) : (
             <div className='relative flex min-h-0 flex-1 flex-col p-3'>
               <ToolDetailDispatch />

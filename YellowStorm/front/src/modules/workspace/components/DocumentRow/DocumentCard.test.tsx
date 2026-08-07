@@ -19,6 +19,13 @@ const actions = {
 
 vi.mock('../../hooks', () => ({
   useDocumentActions: () => actions,
+  useSelectedWorkspace: () => ({ id: 'w-1', isPersonal: true }),
+  useWorkspaceStore: (selector: (s: { isUploading: boolean }) => unknown) =>
+    selector({ isUploading: false }),
+}));
+
+vi.mock('../CreateFolderDialog', () => ({
+  CreateFolderDialog: () => null,
 }));
 
 vi.mock('@/components/ui/checkbox', () => ({
@@ -45,14 +52,18 @@ vi.mock('./IndexingStatusBadge', () => ({
   IndexingStatusBadge: () => <span>status-badge</span>,
 }));
 
-vi.mock('lucide-react', () => ({
-  FileText: () => <span>FileText</span>,
-  Download: () => <span>Download</span>,
-  RefreshCw: () => <span>RefreshCw</span>,
-  Search: () => <span>Search</span>,
-  Trash2: () => <span>Trash2</span>,
-  Loader2: () => <span>Loader2</span>,
-}));
+vi.mock('lucide-react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('lucide-react')>();
+  return {
+    ...actual,
+    FileText: () => <span>FileText</span>,
+    Download: () => <span>Download</span>,
+    RefreshCw: () => <span>RefreshCw</span>,
+    Search: () => <span>Search</span>,
+    Trash2: () => <span>Trash2</span>,
+    Loader2: () => <span>Loader2</span>,
+  };
+});
 
 describe('DocumentCard', () => {
   it('calls download and reindex handlers from action buttons', async () => {
