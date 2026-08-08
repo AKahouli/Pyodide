@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildIntentEdgeOptions, buildOverviewResultNodeIds, hydrateAssistantOperationHandoff, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyHomeAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldUsePlaybookAgentAssistant } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, buildOverviewResultNodeIds, hydrateAssistantOperationHandoff, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyHomeAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldEnableCanvasNodeDragging, shouldUsePlaybookAgentAssistant } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
@@ -11,6 +11,15 @@ describe('shouldBlockCanvasMutationShortcut', () => {
     }
     expect(shouldBlockCanvasMutationShortcut({ key: 'c', ctrlKey: true, metaKey: false }, true)).toBe(false);
     expect(shouldBlockCanvasMutationShortcut({ key: 'z', ctrlKey: true, metaKey: false }, false)).toBe(false);
+  });
+});
+
+describe('shouldEnableCanvasNodeDragging', () => {
+  it('keeps full-canvas task dragging enabled while runtime projections are visible', () => {
+    expect(shouldEnableCanvasNodeDragging(false, false, 'full')).toBe(true);
+    expect(shouldEnableCanvasNodeDragging(true, false, 'full')).toBe(false);
+    expect(shouldEnableCanvasNodeDragging(false, true, 'full')).toBe(false);
+    expect(shouldEnableCanvasNodeDragging(false, false, 'focus')).toBe(false);
   });
 });
 

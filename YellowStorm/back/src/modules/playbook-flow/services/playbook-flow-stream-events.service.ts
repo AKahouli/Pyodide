@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Model } from 'mongoose';
@@ -11,6 +11,8 @@ import type {
   FlowExecutionJudgeHistoryEntry,
   FlowExecutionJudgeResult,
 } from '../interfaces/playbook-flow-execution-advisor.interface';
+import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow-task-result.schema';
+import { FlowDynamicReasoningAttempt, FlowDynamicReasoningAttemptDocument } from '../schemas/playbook-flow-dynamic-reasoning-attempt.schema';
 
 @Injectable()
 export class PlaybookFlowStreamEventsService {
@@ -23,6 +25,12 @@ export class PlaybookFlowStreamEventsService {
     @InjectModel(FlowExecution.name)
     private readonly executionModel: Model<FlowExecutionDocument>,
     private readonly configService: ConfigService,
+    @Optional()
+    @InjectModel(FlowTaskResult.name)
+    private readonly taskResultModel?: Model<FlowTaskResultDocument>,
+    @Optional()
+    @InjectModel(FlowDynamicReasoningAttempt.name)
+    private readonly dynamicReasoningAttemptModel?: Model<FlowDynamicReasoningAttemptDocument>,
   ) {}
 
   cacheOwner(executionId: string, ownerId: string): void {
@@ -143,6 +151,28 @@ export class PlaybookFlowStreamEventsService {
         ...(observability?.totalTokens !== undefined ? { totalTokens: observability.totalTokens } : {}),
         ...(observability?.modelName !== undefined ? { modelName: observability.modelName } : {}),
       },
+    });
+  }
+
+  emitDynamicReasoningUpdate(
+    executionId: string,
+    phase: string,
+    parentTaskId: string,
+    parentIteration: number,
+    payload: Record<string, unknown>,
+  ): void {
+    const ownerId = this.executionOwnerCache.get(executionId);
+    if (!ownerId) return;
+    const topologyEvent = phase === 'RuntimeSubgraphCreated'
+      ? 'playbook_runtime_subgraph_created'
+      : phase === 'RuntimeSubgraphCompleted'
+        ? 'playbook_runtime_subgraph_completed'
+        : phase === 'RuntimeSubgraphFailed'
+          ? 'playbook_runtime_subgraph_failed'
+          : 'playbook_dynamic_reasoning_update';
+    this.streamGateway.sendToUser(ownerId, {
+      type: topologyEvent,
+      data: { executionId, parentTaskId, parentIteration, phase, ...payload },
     });
   }
 
@@ -400,6 +430,15 @@ export class PlaybookFlowStreamEventsService {
       },
       'flowId status startedAt createdAt updatedAt threadId singleStepTaskId pendingApproval advisorAutopilotEnabled advisorAutopilotTargetScore advisorAutopilotMaxTurns reflectionEnabled advisorScoringMode executionMode stepExecutionModes replayPlanningByTask',
     ).lean().exec();
+    const activeExecutionIds = activeExecutions.map((execution) => execution._id.toString());
+    const [activeTaskResults, activeDynamicAttempts] = await Promise.all([
+      this.taskResultModel
+        ? this.taskResultModel.find({ executionId: { $in: activeExecutionIds } }).lean().exec()
+        : Promise.resolve([]),
+      this.dynamicReasoningAttemptModel
+        ? this.dynamicReasoningAttemptModel.find({ executionId: { $in: activeExecutionIds } }).lean().exec()
+        : Promise.resolve([]),
+    ]);
 
     this.streamGateway.sendToUser(userId, {
       type: 'playbook_connected',
@@ -427,7 +466,22 @@ export class PlaybookFlowStreamEventsService {
           judgeSummary: null,
           replaySourceByTask: null,
           replayPlanningByTask: (execution as Record<string, unknown>).replayPlanningByTask ?? null,
-          taskResults: [],
+          taskResults: activeTaskResults
+            .filter((result) => result.executionId === execution._id.toString())
+            .map((result) => ({
+              taskId: result.taskId,
+              iteration: result.iteration,
+              status: result.status,
+              output: result.output ?? null,
+              error: result.error ?? null,
+              parentTaskId: result.parentTaskId,
+              runtimeSubgraphId: result.runtimeSubgraphId,
+              generatedLocalNodeId: result.generatedLocalNodeId,
+              generatedNodeTitle: result.generatedNodeTitle,
+            })),
+          dynamicReasoningAttempts: activeDynamicAttempts.filter(
+            (attempt) => attempt.executionId === execution._id.toString(),
+          ),
           threadId: execution.threadId ?? null,
           interruptPayload: execution.pendingApproval
             ? {

@@ -82,6 +82,19 @@ export class PlaybookFlowRuntimeClientService {
     );
   }
 
+  validateAndRepairPlan(request: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return new Promise((resolve, reject) => {
+      this.client.ValidateAndRepairPlan(
+        request,
+        createGrpcMetadata(this.configService),
+        (error: Error | null, response: Record<string, unknown>) => {
+          if (error) reject(error);
+          else resolve(response);
+        },
+      );
+    });
+  }
+
   private resolveProtoPath(): string {
     const candidates = [
       path.join(__dirname, '..', '..', 'proto', 'playbook-flow.proto'),

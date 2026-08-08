@@ -16,7 +16,8 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, Optional
 
 import grpc
-from google.protobuf.json_format import MessageToDict
+from google.protobuf.json_format import MessageToDict, ParseDict
+from google.protobuf.struct_pb2 import Struct
 from langgraph.checkpoint.base import copy_checkpoint
 from langgraph.types import Command
 from structlog import get_logger
@@ -119,14 +120,19 @@ def _snapshot_hitl_blockers(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     return list(by_id.values())
 
 
-_MESSAGE_TO_DICT_OPTIONS: dict[str, Any] = {
-    "preserving_proto_field_name": True,
-    "always_print_fields_with_no_presence": True,
-}
-
-
-def _request_to_log_payload(request: Any) -> dict[str, Any]:
-    return MessageToDict(request, **_MESSAGE_TO_DICT_OPTIONS)
+def _run_request_log_context(request: Any, snapshot: dict[str, Any], input_context: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "execution_id": request.execution_id,
+        "flow_id": request.flow_id,
+        "owner_id": str(getattr(request, "owner_id", "") or ""),
+        "node_count": len(snapshot.get("nodes", [])),
+        "control_edge_count": len(snapshot.get("control_edges", [])),
+        "data_binding_count": len(snapshot.get("data_bindings", [])),
+        "input_context_keys": sorted(input_context.keys()),
+        "seeded_task_output_count": len(getattr(request, "seeded_task_outputs", []) or []),
+        "requested_recursion_limit": int(getattr(request.settings, "recursion_limit", 0) or 0),
+        "requested_max_parallelism": int(getattr(request.settings, "max_parallelism", 0) or 0),
+    }
 
 
 def _log_temporary_child_summary(execution_id: str, label: str) -> None:
@@ -165,17 +171,7 @@ class PlaybookFlowRuntimeServicer:
         input_context = struct_to_dict(request.input_context)
         logger.info(
             "[gRPC IN] Playbook Run request received",
-            execution_id=execution_id,
-            flow_id=flow_id,
-            owner_id=str(getattr(request, "owner_id", "") or ""),
-            node_count=len(snapshot.get("nodes", [])),
-            control_edge_count=len(snapshot.get("control_edges", [])),
-            data_binding_count=len(snapshot.get("data_bindings", [])),
-            input_context_keys=sorted(input_context.keys()),
-            seeded_task_output_count=len(getattr(request, "seeded_task_outputs", []) or []),
-            requested_recursion_limit=int(getattr(request.settings, "recursion_limit", 0) or 0),
-            requested_max_parallelism=int(getattr(request.settings, "max_parallelism", 0) or 0),
-            request_payload=_request_to_log_payload(request),
+            **_run_request_log_context(request, snapshot, input_context),
         )
         initial_resume_input = _pop_initial_resume_input(input_context)
         hitl_memory = _pop_runtime_hitl_memory(input_context)
@@ -235,6 +231,14 @@ class PlaybookFlowRuntimeServicer:
                 "hitl_policy": _snapshot_hitl_policy(snapshot),
                 "hitl_blockers": _snapshot_hitl_blockers(snapshot),
                 "hitl_memory": hitl_memory,
+                "dynamic_reasoning_policy": MessageToDict(
+                    request.settings.dynamic_reasoning_policy,
+                    preserving_proto_field_name=True,
+                ) if request.settings.HasField("dynamic_reasoning_policy") else {},
+                "playbook_planner": MessageToDict(
+                    request.settings.playbook_planner,
+                    preserving_proto_field_name=True,
+                ) if request.settings.HasField("playbook_planner") else {},
             }
 
             config = {"configurable": {"thread_id": execution_id}}
@@ -303,6 +307,46 @@ class PlaybookFlowRuntimeServicer:
         finally:
             self._active_executions.pop(execution_id, None)
 
+    async def ValidateAndRepairPlan(self, request: Any, context: grpc.aio.ServicerContext) -> Any:
+        from src.flow_engine.dynamic_reasoning.models import DynamicReasoningPolicy, GeneratedExecutionPlan
+        from src.flow_engine.dynamic_reasoning.validator import validate_plan
+
+        plan_value = struct_to_dict(request.plan)
+        catalog = struct_to_dict(request.resolved_port_catalog)
+        available_ports = {
+            str(item.get("id") or item.get("portId"))
+            for item in catalog.get("ports", [])
+            if isinstance(item, dict) and (item.get("id") or item.get("portId"))
+        }
+        try:
+            plan = GeneratedExecutionPlan.model_validate(plan_value)
+            policy = DynamicReasoningPolicy.model_validate(MessageToDict(request.policy, preserving_proto_field_name=True))
+            issues = validate_plan(plan, policy, available_ports)
+        except Exception as exc:
+            plan = None
+            issues = [{"code": "SCHEMA_INVALID", "severity": "error", "path": "plan", "message": str(exc)}]
+
+        accepted = Struct()
+        if plan is not None and not issues:
+            ParseDict(plan.model_dump(by_alias=True), accepted)
+        issue_messages = []
+        for issue in issues:
+            value = issue.model_dump(by_alias=True) if hasattr(issue, "model_dump") else issue
+            issue_messages.append(pb.ValidationIssue(
+                code=str(value.get("code") or "SCHEMA_INVALID"),
+                severity=str(value.get("severity") or "error"),
+                path=str(value.get("path") or "plan"),
+                message=str(value.get("message") or "Invalid plan"),
+                related_node_ids=[str(item) for item in value.get("relatedNodeIds", [])],
+                repair_hint=str(value.get("repairHint") or ""),
+            ))
+        return pb.ValidateAndRepairPlanResponse(
+            valid=not issue_messages,
+            accepted_plan=accepted,
+            validation_issues=issue_messages,
+            repaired=False,
+        )
+
     async def Cancel(self, request: Any, context: grpc.aio.ServicerContext) -> Any:
         execution_id = request.execution_id
         logger.info("[grpc] Cancel request received", execution_id=execution_id)
@@ -342,7 +386,6 @@ class PlaybookFlowRuntimeServicer:
             interrupt_id=interrupt_id,
             action=str(getattr(request, "action", "") or ""),
             payload_keys=sorted(payload.keys()),
-            request_payload=_request_to_log_payload(request),
         )
         active = self._active_executions.get(execution_id)
         if active is None:

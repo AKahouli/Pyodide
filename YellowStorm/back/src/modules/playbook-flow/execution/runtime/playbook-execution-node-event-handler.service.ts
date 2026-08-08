@@ -29,7 +29,7 @@ export class PlaybookExecutionNodeEventHandlerService {
     @Optional() private readonly tokenBufferService?: PlaybookFlowTokenBufferService,
   ) {}
 
-  async handleStarted(executionId: string, taskNodeId: string, iteration: number): Promise<void> {
+  async handleStarted(executionId: string, taskNodeId: string, iteration: number, payload: Record<string, unknown> = {}): Promise<void> {
     if (this.replayRuntime.hasTrackedTask(executionId, taskNodeId)) {
       try {
         await this.replayRuntime.ensureIterationReportMaterialized(executionId, taskNodeId, iteration);
@@ -101,6 +101,12 @@ export class PlaybookExecutionNodeEventHandlerService {
           taskId: taskNodeId,
           iteration,
           startedAt: new Date(),
+          ...(payload.parent_node_id ? {
+            parentTaskId: String(payload.parent_node_id),
+            runtimeSubgraphId: String(payload.runtime_subgraph_id || ''),
+            generatedLocalNodeId: String(payload.generated_local_node_id || ''),
+            generatedNodeTitle: String(payload.generated_title || ''),
+          } : {}),
         },
       },
       { upsert: true },
@@ -143,6 +149,12 @@ export class PlaybookExecutionNodeEventHandlerService {
           traceMetadata: resultPayload.traceMetadata,
           error: null,
           endedAt: new Date(),
+          ...(payload.parent_node_id ? {
+            parentTaskId: String(payload.parent_node_id),
+            runtimeSubgraphId: String(payload.runtime_subgraph_id || ''),
+            generatedLocalNodeId: String(payload.generated_local_node_id || ''),
+            generatedNodeTitle: String(payload.generated_title || ''),
+          } : {}),
         },
         $setOnInsert: {
           executionId,
@@ -166,7 +178,7 @@ export class PlaybookExecutionNodeEventHandlerService {
     );
 
     const execDoc = await this.executionModel.findById(executionId, 'ownerId advisorAutopilotEnabled reflectionEnabled advisorScoringMode').lean().exec();
-    if (execDoc?.ownerId && (execDoc.advisorAutopilotEnabled || execDoc.reflectionEnabled)) {
+    if (!taskNodeId.includes('::dynamic-reasoning::') && execDoc?.ownerId && (execDoc.advisorAutopilotEnabled || execDoc.reflectionEnabled)) {
       this.advisorService.runTaskEvaluation(executionId, taskNodeId, String(execDoc.ownerId), {
         iteration,
         advisorScoringMode: execDoc.advisorScoringMode,

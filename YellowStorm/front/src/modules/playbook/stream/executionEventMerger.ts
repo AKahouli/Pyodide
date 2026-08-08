@@ -1,6 +1,8 @@
 import { normalizeTaskArtifacts } from '@/modules/playbook/api';
 import type {
   PlaybookAdvisorAutopilotUpdatedEvent,
+  DynamicReasoningAttempt,
+  DynamicReasoningStreamUpdate,
   PlaybookExecution,
   PlaybookExecutionCompleteEvent,
   PlaybookExecutionStartEvent,
@@ -249,4 +251,43 @@ export function mergeStepCompleted(previous: PlaybookExecution | undefined, data
     }),
     updatedAt: now(),
   };
+}
+
+export function mergeDynamicReasoningUpdate(
+  execution: PlaybookExecution | undefined,
+  update: DynamicReasoningStreamUpdate,
+): PlaybookExecution | undefined {
+  if (!execution) return undefined;
+  const attempts = [...(execution.dynamicReasoningAttempts ?? [])];
+  const index = attempts.findIndex((attempt) =>
+    attempt.parentTaskId === update.parentTaskId
+    && attempt.parentIteration === update.parentIteration
+    && attempt.attempt === 0,
+  );
+  const previous = index >= 0 ? attempts[index] : undefined;
+  const nextStatus: DynamicReasoningAttempt['status'] = update.phase === 'RuntimeSubgraphCompleted'
+    ? 'completed'
+    : update.phase === 'RuntimeSubgraphFailed' || update.phase === 'DynamicPlanningFailed'
+      ? 'failed'
+      : update.phase === 'RuntimeSubgraphCreated'
+        ? 'running'
+        : update.phase === 'DynamicReasoningDecided' && update.mode === 'direct'
+          ? 'direct'
+          : previous?.status ?? 'planning';
+  const next: DynamicReasoningAttempt = {
+    executionId: update.executionId,
+    parentTaskId: update.parentTaskId,
+    parentIteration: update.parentIteration,
+    attempt: 0,
+    revisions: previous?.revisions ?? [],
+    ...previous,
+    status: nextStatus,
+    ...(update.subgraphId ? { subgraphId: update.subgraphId } : {}),
+    ...(typeof update.acceptedRevision === 'number' ? { acceptedRevision: update.acceptedRevision } : {}),
+    ...(update.plan ? { acceptedPlan: update.plan } : {}),
+    ...(update.phase === 'DynamicReasoningDecided' ? { decision: update } : {}),
+  };
+  if (index >= 0) attempts[index] = next;
+  else attempts.push(next);
+  return { ...execution, dynamicReasoningAttempts: attempts, updatedAt: now() };
 }

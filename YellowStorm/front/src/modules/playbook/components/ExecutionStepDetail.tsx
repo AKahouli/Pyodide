@@ -12,6 +12,7 @@ import { ReplayReportPanel } from './ReplayReportPanel';
 import { ReplayContextMappingCard } from './ReplayContextMappingCard';
 import { ReplayExecutionPlanCard } from './ReplayExecutionPlanCard';
 import { getStepNumberTone } from './ExecutionStepList';
+import { DynamicReasoningTracePanel } from './execution/DynamicReasoningTracePanel';
 
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -318,6 +319,22 @@ function getExecutionModeLabelKey(mode?: string): string {
   return 'execution.modeLabel.liveRun';
 }
 
+function getGeneratedStepTitle(step: TaskResult, execution: PlaybookExecution | null | undefined): string | null {
+  if (step.generatedNodeTitle?.trim()) return step.generatedNodeTitle;
+
+  for (const attempt of execution?.dynamicReasoningAttempts ?? []) {
+    if (!attempt.acceptedPlan || !attempt.subgraphId) continue;
+    const prefix = `${attempt.parentTaskId}::dynamic-reasoning::${attempt.subgraphId}::`;
+    if (!step.taskId.startsWith(prefix)) continue;
+    const localNodeId = step.generatedLocalNodeId ?? step.taskId.slice(prefix.length);
+    const generatedNode = [...attempt.acceptedPlan.nodes, attempt.acceptedPlan.synthesis]
+      .find((node) => node.id === localNodeId);
+    if (generatedNode?.title) return generatedNode.title;
+  }
+
+  return null;
+}
+
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '-';
   const scaled = value <= 1 ? value * 100 : value;
@@ -518,6 +535,9 @@ export function ExecutionStepDetail({
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const replaySource = step ? execution?.replaySourceByTask?.[step.taskId] : null;
   const replayPlanning = step ? execution?.replayPlanningByTask?.[step.taskId] ?? null : null;
+  const dynamicReasoningAttempt = step
+    ? execution?.dynamicReasoningAttempts?.filter((attempt) => attempt.parentTaskId === step.taskId).at(-1)
+    : undefined;
   const fetchAdvisorRemediations = usePlaybookStore((s) => s.fetchAdvisorRemediations);
   const previewAdvisorScriptReplacement = usePlaybookStore((s) => s.previewAdvisorScriptReplacement);
   const applyAdvisorScriptReplacement = usePlaybookStore((s) => s.applyAdvisorScriptReplacement);
@@ -564,6 +584,11 @@ export function ExecutionStepDetail({
   }, [execution?.playbookSnapshot, step?.taskId]);
   const playbookTask = currentPlaybook?.tasks.find((task) => task.id === step?.taskId) || null;
   const currentTask = (playbookTask || executionSnapshotTask || null) as any;
+  const generatedStepTitle = step ? getGeneratedStepTitle(step, execution) : null;
+  const stepTitle = generatedStepTitle
+    || currentTask?.title
+    || (step?.taskId.includes('::dynamic-reasoning::') ? '' : step?.nodeTitle)
+    || '';
   const iterationCount = useMemo(() => {
     if (!step || !execution) return 1;
     return execution.taskResults.filter((r) => r.taskId === step.taskId).length;
@@ -1236,7 +1261,7 @@ export function ExecutionStepDetail({
             <span className={cn('flex h-6 min-w-6 shrink-0 items-center justify-center rounded border px-1 text-[11px] font-bold shadow-sm', getStepNumberTone(step.status, true))}>
               {(currentTask?.executionOrder ?? (step.order - 1)) + 1}
             </span>
-            <h2 className="text-lg font-semibold">{currentTask?.title || step.nodeTitle}</h2>
+            <h2 className="text-lg font-semibold">{stepTitle}</h2>
             {showReplayBadge && (
               <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
                 {isReplayBadgeBusy && <Loader2 className="h-3 w-3 animate-spin" />}
@@ -2363,6 +2388,7 @@ export function ExecutionStepDetail({
                 <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-3 space-y-3 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                <DynamicReasoningTracePanel attempt={dynamicReasoningAttempt} />
                 {step.reasoningChain && step.reasoningChain.length > 0 ? (
                   <div className="space-y-3">
                     {step.reasoningChain.map((item, index) => (

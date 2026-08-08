@@ -21,6 +21,7 @@ export interface IFlowExecutionResponse {
   error?: string;
   recursionLimit: number;
   maxParallelism: number;
+  playbookExecutionSettings?: Record<string, unknown>;
   inputContext?: Record<string, unknown>;
   idempotencyKey?: string;
   pendingApproval: PendingApproval | null;
@@ -79,11 +80,16 @@ export interface IFlowTaskResultResponse {
   judgeError?: string | null;
   judgeHistory?: FlowExecutionJudgeHistoryEntry[];
   hitlHistory?: HitlEventLog[];
+  parentTaskId?: string;
+  runtimeSubgraphId?: string;
+  generatedLocalNodeId?: string;
+  generatedNodeTitle?: string;
 }
 
 export interface IFlowExecutionDetailResponse extends IFlowExecutionResponse {
   taskResults: IFlowTaskResultResponse[];
   routerDecisions: IFlowRouterDecisionResponse[];
+  dynamicReasoningAttempts: Array<Record<string, unknown>>;
 }
 
 export interface IFlowRouterDecisionResponse {

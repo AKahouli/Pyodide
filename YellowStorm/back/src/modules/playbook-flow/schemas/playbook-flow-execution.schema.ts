@@ -217,6 +217,12 @@ export class FlowExecution {
   maxParallelism!: number;
 
   @Prop({ required: false, type: Object })
+  playbookExecutionSettings?: Record<string, unknown>;
+
+  @Prop({ required: false, type: Object, select: false })
+  playbookPlannerSnapshot?: Record<string, unknown>;
+
+  @Prop({ required: false, type: Object })
   inputContext?: Record<string, unknown>;
 
   @Prop({ required: false, type: Object, select: false })

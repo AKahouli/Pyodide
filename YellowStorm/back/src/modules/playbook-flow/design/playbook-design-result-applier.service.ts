@@ -12,10 +12,16 @@ export class PlaybookDesignResultApplierService {
     snapshotBefore: { dataBindings: DataBinding[] },
   ): { nodes: FlowNode[]; controlEdges: ControlEdge[]; dataBindings: DataBinding[] } {
     const { nodes, controlEdges, dataBindings } = mapGrpcResponseToFlow(response as Parameters<typeof mapGrpcResponseToFlow>[0]);
+    const generatedTargets = new Set(
+      dataBindings.map((binding) => JSON.stringify([binding.targetNode, binding.targetPort])),
+    );
+    const preservedBindings = snapshotBefore.dataBindings.filter(
+      (binding) => !generatedTargets.has(JSON.stringify([binding.targetNode, binding.targetPort])),
+    );
     return {
       nodes: nodes as FlowNode[],
       controlEdges: controlEdges as ControlEdge[],
-      dataBindings: dataBindings.length > 0 ? dataBindings : snapshotBefore.dataBindings,
+      dataBindings: [...preservedBindings, ...dataBindings] as DataBinding[],
     };
   }
 }

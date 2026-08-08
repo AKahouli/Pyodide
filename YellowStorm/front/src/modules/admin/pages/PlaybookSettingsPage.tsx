@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, Save, Sparkles } from 'lucide-react';
+import { Loader2, Save, Sparkles, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -12,10 +12,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
-import { getAdminPlaybookSettings, getAllModels, updateAdminPlaybookSettings } from '../api';
-import type { AdminModelResponse, AdminPlaybookSettings } from '../types';
+import { getAdminPlaybookSettings, getAllModels, getPlaybookPlannerAgents, getPlaybookSuggestorAgents, updateAdminPlaybookSettings } from '../api';
+import type { AdminModelResponse, AdminPlaybookSettings, PlaybookPlannerAgentOption, PlaybookSuggestorAgentOption } from '../types';
 
 const GLOBAL_DEFAULT_MODEL = '__global_default__';
 
@@ -26,6 +27,33 @@ const DEFAULT_INTENT_NORMALIZATION_LIMITS = {
   maxIteratorBodySteps: 12,
   maxIteratorBodyEdges: 24,
 };
+
+const DEFAULT_PLAYBOOK_EXECUTION_SETTINGS = {
+  availableCapacity: 50,
+  maxConcurrentPerUser: 10,
+  maxConcurrentPerFlow: 5,
+  maxConcurrentPerProvider: 25,
+  maxConcurrentPerModel: 10,
+  executionQueueMaxDepth: 50,
+  maxParallelismPerExecution: 5,
+  recursionLimitDefault: 25,
+  recursionLimitMax: 50,
+  dynamicReasoning: { plannerAgentId: null, maxWorkNodes: 6, maxParallelism: 3, maxDepth: 1, maxRepairAttempts: 1 },
+};
+
+const EXECUTION_FIELD_KEYS = [
+  'availableCapacity',
+  'maxConcurrentPerUser',
+  'maxConcurrentPerFlow',
+  'maxConcurrentPerProvider',
+  'maxConcurrentPerModel',
+  'executionQueueMaxDepth',
+  'maxParallelismPerExecution',
+  'recursionLimitDefault',
+  'recursionLimitMax',
+] as const;
+
+const DYNAMIC_REASONING_FIELD_KEYS = ['maxWorkNodes', 'maxParallelism', 'maxDepth', 'maxRepairAttempts'] as const;
 
 const LIMIT_FIELD_CONFIG = [
   { key: 'maxWorkflowPlanChanges', min: 1, max: 500 },
@@ -55,8 +83,12 @@ export function PlaybookSettingsPage() {
   const { t } = useModuleTranslation('admin');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [models, setModels] = useState<AdminModelResponse[]>([]);
+  const [plannerAgents, setPlannerAgents] = useState<PlaybookPlannerAgentOption[]>([]);
+  const [suggestorAgents, setSuggestorAgents] = useState<PlaybookSuggestorAgentOption[]>([]);
   const [settings, setSettings] = useState<AdminPlaybookSettings>({
+    playbookSuggestorAgentId: null,
     inferenceModelId: null,
     advisorEvaluationModelId: null,
     replayEvaluationModelId: null,
@@ -65,6 +97,7 @@ export function PlaybookSettingsPage() {
     intentNormalizationLimits: DEFAULT_INTENT_NORMALIZATION_LIMITS,
     replayEligibilityConfidenceThreshold: 70,
     useDeterministicBlueprintBuilder: true,
+    playbookExecution: DEFAULT_PLAYBOOK_EXECUTION_SETTINGS,
   });
 
   useEffect(() => {
@@ -72,15 +105,29 @@ export function PlaybookSettingsPage() {
     const load = async () => {
       setLoading(true);
       try {
-        const [settingsResult, modelsResult] = await Promise.all([
+        const [settingsResult, modelsResult, plannerAgentsResult, suggestorAgentsResult] = await Promise.all([
           getAdminPlaybookSettings(),
           getAllModels(),
+          getPlaybookPlannerAgents(),
+          getPlaybookSuggestorAgents(),
         ]);
 
         if (cancelled) return;
 
-        setSettings(settingsResult);
+        setSettings({
+          ...settingsResult,
+          playbookExecution: {
+            ...DEFAULT_PLAYBOOK_EXECUTION_SETTINGS,
+            ...(settingsResult.playbookExecution ?? {}),
+            dynamicReasoning: {
+              ...DEFAULT_PLAYBOOK_EXECUTION_SETTINGS.dynamicReasoning,
+              ...(settingsResult.playbookExecution?.dynamicReasoning ?? {}),
+            },
+          },
+        });
         setModels(modelsResult.models);
+        setPlannerAgents(plannerAgentsResult);
+        setSuggestorAgents(suggestorAgentsResult);
       } catch (error) {
         if (!cancelled) {
           showError(t('playbookSettings.toasts.loadError.title'), {
@@ -125,9 +172,18 @@ export function PlaybookSettingsPage() {
     () => models.find((model) => model.id === settings.replayEvaluationModelId) || null,
     [models, settings.replayEvaluationModelId],
   );
+  const selectedPlannerAgent = useMemo(
+    () => plannerAgents.find((agent) => agent.id === settings.playbookExecution.dynamicReasoning.plannerAgentId) || null,
+    [plannerAgents, settings.playbookExecution.dynamicReasoning.plannerAgentId],
+  );
+  const selectedSuggestorAgent = useMemo(
+    () => suggestorAgents.find((agent) => agent.id === settings.playbookSuggestorAgentId) || null,
+    [settings.playbookSuggestorAgentId, suggestorAgents],
+  );
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       const result = await updateAdminPlaybookSettings(settings);
       setSettings(result);
@@ -135,8 +191,10 @@ export function PlaybookSettingsPage() {
         description: t('playbookSettings.toasts.saved.description'),
       });
     } catch (error) {
+      const message = parseApiError(error).message;
+      setSaveError(message);
       showError(t('playbookSettings.toasts.saveError.title'), {
-        description: error instanceof Error ? error.message : t('playbookSettings.toasts.saveError.description'),
+        description: message,
       });
     } finally {
       setSaving(false);
@@ -164,12 +222,201 @@ export function PlaybookSettingsPage() {
     }));
   };
 
+  const executionSettingsValid = settings.playbookExecution.maxConcurrentPerUser <= settings.playbookExecution.availableCapacity
+    && settings.playbookExecution.maxConcurrentPerFlow <= settings.playbookExecution.availableCapacity
+    && settings.playbookExecution.maxConcurrentPerProvider <= settings.playbookExecution.availableCapacity
+    && settings.playbookExecution.maxConcurrentPerModel <= settings.playbookExecution.availableCapacity
+    && settings.playbookExecution.recursionLimitDefault <= settings.playbookExecution.recursionLimitMax
+    && settings.playbookExecution.dynamicReasoning.maxParallelism <= settings.playbookExecution.dynamicReasoning.maxWorkNodes
+    && settings.playbookExecution.dynamicReasoning.maxParallelism <= settings.playbookExecution.maxParallelismPerExecution
+    && settings.playbookExecution.dynamicReasoning.maxDepth === 1
+    && selectedPlannerAgent !== null;
+  const settingsValid = executionSettingsValid && selectedSuggestorAgent !== null;
+
+  const updateExecutionField = (key: (typeof EXECUTION_FIELD_KEYS)[number], value: string) => {
+    const parsed = Number.parseInt(value, 10);
+    setSettings((previous) => ({
+      ...previous,
+      playbookExecution: {
+        ...previous.playbookExecution,
+        [key]: Number.isFinite(parsed) ? Math.max(key === 'executionQueueMaxDepth' ? 0 : 1, parsed) : 1,
+      },
+    }));
+  };
+
+  const updateDynamicReasoningField = (key: (typeof DYNAMIC_REASONING_FIELD_KEYS)[number], value: string) => {
+    const parsed = Number.parseInt(value, 10);
+    setSettings((previous) => ({
+      ...previous,
+      playbookExecution: {
+        ...previous.playbookExecution,
+        dynamicReasoning: {
+          ...previous.playbookExecution.dynamicReasoning,
+          [key]: Number.isFinite(parsed) ? Math.max(key === 'maxRepairAttempts' ? 0 : 1, parsed) : 1,
+        },
+      },
+    }));
+  };
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">{t('playbookSettings.title')}</h1>
         <p className="text-sm text-muted-foreground">{t('playbookSettings.description')}</p>
       </div>
+
+      {saveError && (
+        <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <p className="font-medium">{t('playbookSettings.toasts.saveError.title')}</p>
+          <p>{saveError}</p>
+        </div>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Wand2 className="h-4 w-4" />
+            {t('playbookSettings.suggestor.title')}
+          </CardTitle>
+          <CardDescription>{t('playbookSettings.suggestor.description')}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="playbook-suggestor-agent">{t('playbookSettings.suggestor.agent.label')}</Label>
+            <Select
+              value={settings.playbookSuggestorAgentId ?? ''}
+              onValueChange={(playbookSuggestorAgentId) => setSettings((previous) => ({
+                ...previous,
+                playbookSuggestorAgentId,
+              }))}
+              disabled={loading || suggestorAgents.length === 0}
+            >
+              <SelectTrigger id="playbook-suggestor-agent">
+                <SelectValue placeholder={t('playbookSettings.suggestor.agent.placeholder')} />
+              </SelectTrigger>
+              <SelectContent>
+                {settings.playbookSuggestorAgentId && !selectedSuggestorAgent && (
+                  <SelectItem value={settings.playbookSuggestorAgentId} disabled>
+                    {t('playbookSettings.suggestor.agent.unavailable')}
+                  </SelectItem>
+                )}
+                {suggestorAgents.map((agent) => (
+                  <SelectItem key={agent.id} value={agent.id}>{agent.name} · {agent.model}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className={selectedSuggestorAgent ? 'text-xs text-muted-foreground' : 'text-xs text-destructive'}>
+              {selectedSuggestorAgent
+                ? t('playbookSettings.suggestor.agent.selectedHelp', {
+                  agent: selectedSuggestorAgent.name,
+                  model: selectedSuggestorAgent.model,
+                })
+                : suggestorAgents.length === 0
+                  ? t('playbookSettings.suggestor.agent.noOptions')
+                  : t('playbookSettings.suggestor.agent.required')}
+            </p>
+          </div>
+          <div className="flex justify-end">
+            <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
+              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+              {t('playbookSettings.actions.save')}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('playbookSettings.execution.title')}</CardTitle>
+          <CardDescription>{t('playbookSettings.execution.description')}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-2">
+            {EXECUTION_FIELD_KEYS.map((key) => (
+              <div key={key} className="space-y-2">
+                <Label htmlFor={`execution-${key}`}>{t(`playbookSettings.execution.fields.${key}.label`)}</Label>
+                <Input
+                  id={`execution-${key}`}
+                  type="number"
+                  min={key === 'executionQueueMaxDepth' ? 0 : 1}
+                  value={settings.playbookExecution[key]}
+                  onChange={(event) => updateExecutionField(key, event.target.value)}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="space-y-3 rounded-md border border-border/60 p-4">
+            <div>
+              <h3 className="text-sm font-semibold">{t('playbookSettings.execution.dynamicReasoning.title')}</h3>
+              <p className="text-xs text-muted-foreground">{t('playbookSettings.execution.dynamicReasoning.description')}</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="dynamic-planner-agent">{t('playbookSettings.execution.dynamicReasoning.planner.label')}</Label>
+              <Select
+                value={settings.playbookExecution.dynamicReasoning.plannerAgentId ?? ''}
+                onValueChange={(plannerAgentId) => setSettings((previous) => ({
+                  ...previous,
+                  playbookExecution: {
+                    ...previous.playbookExecution,
+                    dynamicReasoning: {
+                      ...previous.playbookExecution.dynamicReasoning,
+                      plannerAgentId,
+                    },
+                  },
+                }))}
+                disabled={loading || plannerAgents.length === 0}
+              >
+                <SelectTrigger id="dynamic-planner-agent">
+                  <SelectValue placeholder={t('playbookSettings.execution.dynamicReasoning.planner.placeholder')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {settings.playbookExecution.dynamicReasoning.plannerAgentId && !selectedPlannerAgent && (
+                    <SelectItem value={settings.playbookExecution.dynamicReasoning.plannerAgentId} disabled>
+                      {t('playbookSettings.execution.dynamicReasoning.planner.unavailable')}
+                    </SelectItem>
+                  )}
+                  {plannerAgents.map((agent) => (
+                    <SelectItem key={agent.id} value={agent.id}>{agent.name} · {agent.model}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className={selectedPlannerAgent ? 'text-xs text-muted-foreground' : 'text-xs text-destructive'}>
+                {selectedPlannerAgent
+                  ? t('playbookSettings.execution.dynamicReasoning.planner.selectedHelp', {
+                    agent: selectedPlannerAgent.name,
+                    model: selectedPlannerAgent.model,
+                  })
+                  : plannerAgents.length === 0
+                    ? t('playbookSettings.execution.dynamicReasoning.planner.noOptions')
+                    : t('playbookSettings.execution.dynamicReasoning.planner.required')}
+              </p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              {DYNAMIC_REASONING_FIELD_KEYS.map((key) => (
+                <div key={key} className="space-y-2">
+                  <Label htmlFor={`dynamic-${key}`}>{t(`playbookSettings.execution.dynamicReasoning.fields.${key}`)}</Label>
+                  <Input
+                    id={`dynamic-${key}`}
+                    type="number"
+                    min={key === 'maxRepairAttempts' ? 0 : 1}
+                    max={key === 'maxDepth' ? 1 : undefined}
+                    value={settings.playbookExecution.dynamicReasoning[key]}
+                    onChange={(event) => updateDynamicReasoningField(key, event.target.value)}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+          {!executionSettingsValid && <p className="text-sm text-destructive">{t('playbookSettings.execution.validationError')}</p>}
+          <p className="text-xs text-muted-foreground">{t('playbookSettings.execution.newExecutionsOnly')}</p>
+          <div className="flex justify-end">
+            <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
+              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+              {t('playbookSettings.actions.save')}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -313,7 +560,7 @@ export function PlaybookSettingsPage() {
               </div>
 
               <div className="flex justify-end">
-                <Button type="button" onClick={() => void handleSave()} disabled={saving}>
+                <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
                   {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   {t('playbookSettings.actions.save')}
                 </Button>
@@ -356,7 +603,7 @@ export function PlaybookSettingsPage() {
               </div>
 
               <div className="flex justify-end">
-                <Button type="button" onClick={() => void handleSave()} disabled={saving}>
+                <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
                   {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   {t('playbookSettings.actions.save')}
                 </Button>
@@ -401,7 +648,7 @@ export function PlaybookSettingsPage() {
               </div>
 
               <div className="flex justify-end">
-                <Button type="button" onClick={() => void handleSave()} disabled={saving}>
+                <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
                   {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   {t('playbookSettings.actions.save')}
                 </Button>
@@ -443,7 +690,7 @@ export function PlaybookSettingsPage() {
               </div>
 
               <div className="flex justify-end">
-                <Button type="button" onClick={() => void handleSave()} disabled={saving}>
+                <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
                   {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   {t('playbookSettings.actions.save')}
                 </Button>

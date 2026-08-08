@@ -92,6 +92,8 @@ export const API_ENDPOINTS = {
   },
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
+    plannerAgents: '/admin/playbook-settings/planner-agents',
+    suggestorAgents: '/admin/playbook-settings/suggestor-agents',
   },
   adminGuardrails: {
     base: '/admin/guardrails',
@@ -586,6 +588,7 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/playbooks/${id}`,
     delta: (id: string) => `/playbooks/${id}/delta`,
     generate: '/playbooks/generate',
+    fromConversation: '/playbooks/from-conversation',
     rewritePrompt: '/playbooks/rewrite-prompt',
     design: (id: string) => `/playbooks/${id}/design`,
     designOperations: (id: string) => `/playbooks/${id}/design-operations`,

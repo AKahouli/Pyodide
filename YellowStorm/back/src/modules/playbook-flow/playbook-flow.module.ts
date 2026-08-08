@@ -13,6 +13,8 @@ import { UsageModule } from '@modules/usage/usage.module';
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
 import { ConnectedAppModule } from '@modules/connected-app/connected-app.module';
 import { UserModule } from '@modules/user';
+import { ConversationModule } from '@modules/conversation/conversation.module';
+import { ChatCompletionModule } from '@modules/chat-completion/chat-completion.module';
 import { WorkspaceSchema, Workspace } from '@modules/workspace/schemas/workspace.schema';
 import {
   WorkspaceSetting,
@@ -41,6 +43,7 @@ import { FlowExecutionLease, FlowExecutionLeaseSchema } from './schemas/playbook
 import { FlowHitlMemory, FlowHitlMemorySchema } from './schemas/playbook-flow-hitl-memory.schema';
 import { PlaybookAssistantOperation, PlaybookAssistantOperationSchema } from './schemas/playbook-assistant-operation.schema';
 import { PlaybookAssistantRevision, PlaybookAssistantRevisionSchema } from './schemas/playbook-assistant-revision.schema';
+import { FlowDynamicReasoningAttempt, FlowDynamicReasoningAttemptSchema } from './schemas/playbook-flow-dynamic-reasoning-attempt.schema';
 
 import { PlaybookFlowController } from './controllers/playbook-flow.controller';
 import { PlaybookFlowExecutionController } from './controllers/playbook-flow-execution.controller';
@@ -75,6 +78,7 @@ import { PlaybookFlowNodeTemplateService } from './services/playbook-flow-node-t
 import { PlaybookFlowPromptTemplateService } from './services/playbook-flow-prompt-template.service';
 import { PlaybookFlowPromptRendererService } from './services/playbook-flow-prompt-renderer.service';
 import { PlaybookFlowSettingsService } from './services/playbook-flow-settings.service';
+import { PlaybookExecutionSettingsResolverService } from './services/playbook-execution-settings-resolver.service';
 import { PlaybookFlowContextService } from './services/playbook-flow-context.service';
 import { PlaybookFlowOutputFormatService } from './services/playbook-flow-output-format.service';
 import { PlaybookFlowDesignService } from './services/playbook-flow-design.service';
@@ -142,12 +146,15 @@ import { PlaybookExecutionReplayRuntimeService } from './execution/runtime/playb
 import { PlaybookExecutionStreamFinalizerService } from './execution/runtime/playbook-execution-stream-finalizer.service';
 import { PlaybookExecutionHitlResumeService } from './execution/runtime/playbook-execution-hitl-resume.service';
 import { PlaybookExecutionSingleStepPrepService } from './execution/runtime/playbook-execution-single-step-prep.service';
+import { PlaybookDynamicReasoningEventHandlerService } from './execution/runtime/playbook-dynamic-reasoning-event-handler.service';
 import { PlaybookDesignRequestBuilderService } from './design/playbook-design-request-builder.service';
 import { PlaybookDesignResultApplierService } from './design/playbook-design-result-applier.service';
 import { PlaybookDesignSummaryService } from './design/playbook-design-summary.service';
 import { PlaybookAssistantContextService } from './assistant/playbook-assistant-context.service';
 import { PlaybookAssistantService } from './assistant/playbook-assistant.service';
 import { PlaybookAssistantOperationService } from './assistant/playbook-assistant-operation.service';
+import { PlaybookPlanValidationClientService } from './assistant/playbook-plan-validation-client.service';
+import { ConversationPlaybookBuilderService } from './services/conversation-playbook-builder.service';
 
 @Module({
   imports: [
@@ -173,6 +180,7 @@ import { PlaybookAssistantOperationService } from './assistant/playbook-assistan
       { name: FlowHitlMemory.name, schema: FlowHitlMemorySchema },
       { name: PlaybookAssistantOperation.name, schema: PlaybookAssistantOperationSchema },
       { name: PlaybookAssistantRevision.name, schema: PlaybookAssistantRevisionSchema },
+      { name: FlowDynamicReasoningAttempt.name, schema: FlowDynamicReasoningAttemptSchema },
       { name: Workspace.name, schema: WorkspaceSchema },
       { name: WorkspaceSetting.name, schema: WorkspaceSettingSchema },
     ]),
@@ -188,6 +196,8 @@ import { PlaybookAssistantOperationService } from './assistant/playbook-assistan
     WorkspaceModule,
     ConnectedAppModule,
     UserModule,
+    ConversationModule,
+    ChatCompletionModule,
   ],
   controllers: [
     PlaybookFlowMailWebhookController,
@@ -223,6 +233,7 @@ import { PlaybookAssistantOperationService } from './assistant/playbook-assistan
     PlaybookExecutionStreamFinalizerService,
     PlaybookExecutionHitlResumeService,
     PlaybookExecutionSingleStepPrepService,
+    PlaybookDynamicReasoningEventHandlerService,
     PlaybookDesignRequestBuilderService,
     PlaybookDesignResultApplierService,
     PlaybookDesignSummaryService,
@@ -236,6 +247,7 @@ import { PlaybookAssistantOperationService } from './assistant/playbook-assistan
     PlaybookFlowPromptTemplateService,
     PlaybookFlowPromptRendererService,
     PlaybookFlowSettingsService,
+    PlaybookExecutionSettingsResolverService,
     PlaybookFlowContextService,
     PlaybookFlowOutputFormatService,
     PlaybookFlowDesignService,
@@ -297,6 +309,8 @@ import { PlaybookAssistantOperationService } from './assistant/playbook-assistan
     PlaybookAssistantContextService,
     PlaybookAssistantService,
     PlaybookAssistantOperationService,
+    PlaybookPlanValidationClientService,
+    ConversationPlaybookBuilderService,
   ],
   exports: [
     PlaybookFlowService,
@@ -314,12 +328,14 @@ import { PlaybookAssistantOperationService } from './assistant/playbook-assistan
     PlaybookFlowPromptTemplateService,
     PlaybookFlowPromptRendererService,
     PlaybookFlowSettingsService,
+    PlaybookExecutionSettingsResolverService,
     PlaybookFlowDesignService,
     PlaybookFlowAdvisorService,
     PlaybookFlowReplayService,
     PlaybookFlowEvaluationService,
     PlaybookFlowRepeatabilityService,
     PlaybookFlowObservabilityService,
+    PlaybookPlanValidationClientService,
   ],
 })
 export class PlaybookFlowModule {}

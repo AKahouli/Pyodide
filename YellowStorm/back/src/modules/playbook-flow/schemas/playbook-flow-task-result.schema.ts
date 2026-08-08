@@ -321,6 +321,11 @@ export class FlowTaskResult {
   @Prop({ required: true, type: String })
   taskId!: string;
 
+  @Prop({ required: false, type: String }) parentTaskId?: string;
+  @Prop({ required: false, type: String }) runtimeSubgraphId?: string;
+  @Prop({ required: false, type: String }) generatedLocalNodeId?: string;
+  @Prop({ required: false, type: String }) generatedNodeTitle?: string;
+
   @Prop({ required: true, type: Number, default: 0 })
   iteration!: number;
 
@@ -392,6 +397,7 @@ export const FlowTaskResultSchema = SchemaFactory.createForClass(FlowTaskResult)
 
 FlowTaskResultSchema.index({ executionId: 1, taskId: 1, iteration: 1 }, { unique: true });
 FlowTaskResultSchema.index({ executionId: 1, taskId: 1 });
+FlowTaskResultSchema.index({ executionId: 1, runtimeSubgraphId: 1 });
 
 FlowTaskResultSchema.set('toJSON', {
   virtuals: true,

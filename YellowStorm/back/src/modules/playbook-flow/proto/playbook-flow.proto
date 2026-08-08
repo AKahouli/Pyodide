@@ -11,6 +11,7 @@ service PlaybookFlowRuntime {
   rpc ResumeApproval(ResumeApprovalRequest) returns (ResumeApprovalResponse);
   rpc ResumeFromStep(ResumeFromStepRequest) returns (ResumeFromStepResponse);
   rpc RunFromCheckpoint(RunFromCheckpointRequest) returns (stream RunEvent);
+  rpc ValidateAndRepairPlan(ValidateAndRepairPlanRequest) returns (ValidateAndRepairPlanResponse);
 }
 
 message RunRequest {
@@ -32,6 +33,30 @@ message SeededTaskOutput {
 message RunSettings {
   int32 recursion_limit = 1;
   int32 max_parallelism = 2;
+  DynamicReasoningPolicy dynamic_reasoning_policy = 3;
+  PlannerAgentSnapshot playbook_planner = 4;
+}
+
+message DynamicReasoningPolicy {
+  int32 max_work_nodes = 1;
+  int32 max_parallelism = 2;
+  int32 max_depth = 3;
+  int32 max_repair_attempts = 4;
+}
+
+message PlannerAgentSnapshot {
+  string agent_id = 1;
+  string agent_type_slug = 2;
+  string model = 3;
+  string system_prompt = 4;
+  double temperature = 5;
+  bool omit_temperature = 6;
+  string prompt_hash = 7;
+  string agent_revision = 8;
+}
+
+message DynamicReasoningNodeConfig {
+  bool enabled = 1;
 }
 
 message FlowSnapshot {
@@ -61,6 +86,35 @@ message FlowNode {
   RetryPolicy retry_policy = 12;
   string model_id = 13;
   google.protobuf.Struct metadata = 14;
+  DynamicReasoningNodeConfig dynamic_reasoning = 15;
+}
+
+message ValidationIssue {
+  string code = 1;
+  string severity = 2;
+  string path = 3;
+  string message = 4;
+  repeated string related_node_ids = 5;
+  google.protobuf.Value expected = 6;
+  google.protobuf.Value actual = 7;
+  string repair_hint = 8;
+}
+
+message ValidateAndRepairPlanRequest {
+  string use_case = 1;
+  google.protobuf.Struct parent_task = 2;
+  google.protobuf.Struct resolved_port_catalog = 3;
+  google.protobuf.Struct plan = 4;
+  DynamicReasoningPolicy policy = 5;
+  bool allow_repair = 6;
+  PlannerAgentSnapshot planner = 7;
+}
+
+message ValidateAndRepairPlanResponse {
+  bool valid = 1;
+  google.protobuf.Struct accepted_plan = 2;
+  repeated ValidationIssue validation_issues = 3;
+  bool repaired = 4;
 }
 
 message FlowNodePort {

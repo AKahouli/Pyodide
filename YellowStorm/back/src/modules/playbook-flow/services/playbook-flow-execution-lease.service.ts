@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Model } from 'mongoose';
@@ -6,6 +6,7 @@ import {
   FlowExecutionLease,
   FlowExecutionLeaseDocument,
 } from '../schemas/playbook-flow-execution-lease.schema';
+import { PlaybookExecutionSettingsResolverService } from './playbook-execution-settings-resolver.service';
 
 interface LeaseAcquireResult {
   acquired: boolean;
@@ -37,6 +38,7 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
     @InjectModel(FlowExecutionLease.name)
     private readonly leaseModel: Model<FlowExecutionLeaseDocument>,
     private readonly configService: ConfigService,
+    @Optional() private readonly settingsResolver?: PlaybookExecutionSettingsResolverService,
   ) {}
 
   isEnabled(): boolean {
@@ -60,7 +62,7 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
     await this.cleanupExpiredLeases();
     await this.release(executionId);
 
-    for (const scope of this.buildScopes(ownerId, flowId, options)) {
+    for (const scope of await this.buildScopes(ownerId, flowId, options)) {
       const claimed = await this.claimScopeSlot(executionId, ownerId, flowId, scope);
       if (claimed) {
         continue;
@@ -127,23 +129,24 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
     }
   }
 
-  private buildScopes(ownerId: string, flowId: string, options: LeaseAcquireOptions): LeaseScope[] {
+  private async buildScopes(ownerId: string, flowId: string, options: LeaseAcquireOptions): Promise<LeaseScope[]> {
+    const effective = this.settingsResolver ? await this.settingsResolver.resolve() : null;
     const scopes: LeaseScope[] = [
       {
         key: 'execution:global',
-        limit: this.configService.get<number>('playbook-flow.maxConcurrentGlobalExecutions', 50),
+        limit: effective?.availableCapacity ?? this.configService.get<number>('playbook-flow.maxConcurrentGlobalExecutions', 50),
         reason: 'global_limit',
         type: 'global',
       },
       {
         key: `execution:owner:${ownerId}`,
-        limit: this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10),
+        limit: effective?.maxConcurrentPerUser ?? this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10),
         reason: 'owner_limit',
         type: 'owner',
       },
       {
         key: `execution:flow:${flowId}`,
-        limit: this.configService.get<number>('playbook-flow.maxConcurrentPerFlow', 5),
+        limit: effective?.maxConcurrentPerFlow ?? this.configService.get<number>('playbook-flow.maxConcurrentPerFlow', 5),
         reason: 'flow_limit',
         type: 'flow',
       },
@@ -152,7 +155,7 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
     if (options.providerKey) {
       scopes.push({
         key: `execution:provider:${options.providerKey}`,
-        limit: this.configService.get<number>('playbook-flow.maxConcurrentPerProvider', 25),
+        limit: effective?.maxConcurrentPerProvider ?? this.configService.get<number>('playbook-flow.maxConcurrentPerProvider', 25),
         reason: 'provider_limit',
         type: 'provider' as FlowExecutionLease['scopeType'],
       });
@@ -161,7 +164,7 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
     if (options.modelKey) {
       scopes.push({
         key: `execution:model:${options.modelKey}`,
-        limit: this.configService.get<number>('playbook-flow.maxConcurrentPerModel', 10),
+        limit: effective?.maxConcurrentPerModel ?? this.configService.get<number>('playbook-flow.maxConcurrentPerModel', 10),
         reason: 'model_limit',
         type: 'model' as FlowExecutionLease['scopeType'],
       });

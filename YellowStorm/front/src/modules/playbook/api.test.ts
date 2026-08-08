@@ -24,6 +24,7 @@ import {
   getPlaybookUpdateTelemetry,
   updatePlaybook,
   validateTaskReplay,
+  buildPlaybookFromConversation,
 } from './api';
 import { makeTask } from './test-utils';
 
@@ -1923,5 +1924,71 @@ describe('getExecution', () => {
         judgeHistory: [expect.objectContaining({ id: 'judge-2' })],
       }),
     });
+  });
+
+  it('preserves Dynamic Reasoning topology and generated task titles from execution details', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-dynamic',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'completed',
+          taskResults: [{
+            taskId: 'parent::dynamic-reasoning::subgraph-1::risk-metrics',
+            nodeTitle: 'parent::dynamic-reasoning::subgraph-1::risk-metrics',
+            status: 'completed',
+            parent_task_id: 'parent',
+            runtime_subgraph_id: 'subgraph-1',
+            generated_local_node_id: 'risk-metrics',
+            generated_node_title: 'Calculate Risk Metrics',
+          }],
+          dynamic_reasoning_attempts: [{
+            execution_id: 'exec-dynamic',
+            parent_task_id: 'parent',
+            parent_iteration: 0,
+            attempt: 0,
+            subgraph_id: 'subgraph-1',
+            status: 'completed',
+            revisions: [],
+            accepted_plan: {
+              schemaVersion: '1',
+              nodes: [{ id: 'risk-metrics', title: 'Calculate Risk Metrics', instruction: 'Calculate', dependsOn: [] }],
+              synthesis: { id: 'synthesis', title: 'Synthesize', instruction: 'Synthesize', dependsOn: ['risk-metrics'], kind: 'synthesis' },
+            },
+          }],
+          createdAt: '2026-08-07T00:00:00.000Z',
+          updatedAt: '2026-08-07T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-dynamic');
+
+    expect(execution.taskResults[0]).toMatchObject({
+      generatedNodeTitle: 'Calculate Risk Metrics',
+      parentTaskId: 'parent',
+      runtimeSubgraphId: 'subgraph-1',
+    });
+    expect(execution.dynamicReasoningAttempts?.[0]?.acceptedPlan?.nodes[0].title).toBe('Calculate Risk Metrics');
+  });
+
+  it('builds a playbook from a persisted conversation response', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.post.mockResolvedValueOnce({ data: { data: { id: 'playbook-1' } } });
+    const payload = {
+      conversationId: 'conversation-1',
+      assistantMessageId: 'message-1',
+      answerVersion: 'original',
+      name: 'Incident response',
+    };
+
+    await expect(buildPlaybookFromConversation(payload)).resolves.toEqual({ id: 'playbook-1' });
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      '/playbooks/from-conversation',
+      payload,
+      { timeout: 0 },
+    );
   });
 });

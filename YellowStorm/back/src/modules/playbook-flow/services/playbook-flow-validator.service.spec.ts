@@ -153,6 +153,32 @@ describe('PlaybookFlowValidatorService', () => {
     }).toThrow('Target port target-node.prompt has multiple data bindings');
   });
 
+  it('keeps colon-containing binding target tuples distinct', () => {
+    expect(() => {
+      service.validate([
+        {
+          id: 'target:a', kind: 'step',
+          input: { ports: [{ id: 'input', type: 'text', required: true }] },
+          output: { ports: [] },
+        },
+        {
+          id: 'target', kind: 'step',
+          input: { ports: [{ id: 'a:input', type: 'text', required: true }] },
+          output: { ports: [] },
+        },
+      ] as any, [], [
+        {
+          id: 'binding-1', targetNode: 'target:a', targetPort: 'input',
+          sourceKind: 'constant', constantValue: 'first',
+        },
+        {
+          id: 'binding-2', targetNode: 'target', targetPort: 'a:input',
+          sourceKind: 'constant', constantValue: 'second',
+        },
+      ] as any);
+    }).not.toThrow();
+  });
+
   it('rejects duplicate control edges for the same logical route', () => {
     expect(() => {
       service.validate(buildNodes(), [

@@ -97,6 +97,30 @@ def _count_message_images(messages: list[dict[str, Any]]) -> int:
     return image_count
 
 
+def _text_only_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    text_only: list[dict[str, Any]] = []
+    for message in messages:
+        copied = dict(message)
+        content = copied.get("content")
+        if isinstance(content, list):
+            copied["content"] = [
+                {"type": "text", "text": str(block.get("text") or "")}
+                for block in content
+                if isinstance(block, dict) and block.get("text") is not None
+            ]
+        text_only.append(copied)
+    return text_only
+
+
+def _requires_text_only_content(exc: Exception) -> bool:
+    error = str(exc).lower()
+    return (
+        "messages.content.type" in error
+        and "allowed values" in error
+        and "text" in error
+    )
+
+
 def _build_mcp_vision_message(
     tool_name: str,
     tool_content: str,
@@ -216,25 +240,38 @@ async def run_step_with_tools(
     ]
     tool_map = {tool.name: tool for tool in tools}
     tool_definitions = [_tool_to_openai_definition(tool) for tool in tools]
+    use_text_only_content = False
 
     for _ in range(MAX_TOOL_ITERATIONS):
+        request_messages = _text_only_messages(messages) if use_text_only_content else messages
         if trace_collector is not None:
             trace_collector.record_prompt(
                 stage=f"tool_iteration_{len(messages)}",
                 model=model_id,
-                prompt=_messages_to_trace_prompt(messages),
+                prompt=_messages_to_trace_prompt(request_messages),
             )
             if on_trace_update is not None:
                 on_trace_update()
-        response = await litellm.acompletion(
-            model=model_id,
-            messages=messages,
-            temperature=normalize_temperature_for_model(model_id, 0),
-            max_tokens=32000,
-            tools=tool_definitions,
-            tool_choice="auto",
-            parallel_tool_calls=False,
-        )
+        completion_kwargs = {
+            "model": model_id,
+            "temperature": normalize_temperature_for_model(model_id, 0),
+            "max_tokens": 32000,
+            "tools": tool_definitions,
+            "tool_choice": "auto",
+            "parallel_tool_calls": False,
+        }
+        try:
+            response = await litellm.acompletion(messages=request_messages, **completion_kwargs)
+        except Exception as exc:
+            if use_text_only_content or not _requires_text_only_content(exc):
+                raise
+            use_text_only_content = True
+            request_messages = _text_only_messages(messages)
+            logger.warning(
+                "Provider rejected non-text message content; retrying text-only",
+                model=model_id,
+            )
+            response = await litellm.acompletion(messages=request_messages, **completion_kwargs)
         if trace_collector is not None:
             from src.flow_engine.observability.usage_extractor import extract_usage
 

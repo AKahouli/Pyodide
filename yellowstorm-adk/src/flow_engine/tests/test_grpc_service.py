@@ -3,7 +3,7 @@ import asyncio
 import pytest
 from google.protobuf.json_format import ParseDict
 
-from src.flow_engine.grpc_service import _snapshot_hitl_blockers, _snapshot_hitl_policy
+from src.flow_engine.grpc_service import _run_request_log_context, _snapshot_hitl_blockers, _snapshot_hitl_policy
 from src.flow_engine.grpc_contract import (
     snapshot_to_dict,
     should_emit_fallback_completion,
@@ -13,6 +13,27 @@ from src.flow_engine.grpc_contract import (
 )
 
 struct_pb2 = pytest.importorskip("google.protobuf.struct_pb2", reason="protobuf not available")
+
+
+def test_run_request_log_context_excludes_prompts_and_input_values():
+    pb = pytest.importorskip("src.grpc_generated.playbook_flow_pb2", reason="playbook proto not available")
+    input_context = struct_pb2.Struct()
+    ParseDict({"privateInput": "customer-secret-value"}, input_context)
+    request = pb.RunRequest(
+        execution_id="exec-1",
+        flow_id="flow-1",
+        input_context=input_context,
+        settings=pb.RunSettings(
+            playbook_planner=pb.PlannerAgentSnapshot(system_prompt="private-planner-prompt"),
+        ),
+    )
+
+    context = _run_request_log_context(request, {"nodes": []}, {"privateInput": "customer-secret-value"})
+    serialized = str(context)
+
+    assert context["input_context_keys"] == ["privateInput"]
+    assert "customer-secret-value" not in serialized
+    assert "private-planner-prompt" not in serialized
 
 
 def test_snapshot_hitl_policy_reads_node_metadata_fallback():

@@ -269,6 +269,7 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_MAX_CONCURRENT_PER_FLOW: Joi.number().min(1).max(100).default(5),
   PLAYBOOK_MAX_CONCURRENT_PER_PROVIDER: Joi.number().min(1).max(500).default(25),
   PLAYBOOK_MAX_CONCURRENT_PER_MODEL: Joi.number().min(1).max(500).default(10),
+  PLAYBOOK_DYNAMIC_REASONING_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_ASYNC_DESIGN_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_MCP_ASSISTANT_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),

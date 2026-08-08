@@ -12,6 +12,7 @@ import {
   mergeStepStarted,
   mergeStepUpdated,
   mergeStepCompleted,
+  mergeDynamicReasoningUpdate,
 } from './executionEventMerger';
 import {
   mergeAdvisorAutopilotUpdated,
@@ -62,6 +63,12 @@ export function dispatchPlaybookStreamEvent(event: PlaybookStreamEvent, options:
       return;
     case 'playbook_step_complete':
       updateExecution(queryClient, event.data.executionId, (previous) => mergeStepCompleted(previous, event.data));
+      return;
+    case 'playbook_dynamic_reasoning_update':
+    case 'playbook_runtime_subgraph_created':
+    case 'playbook_runtime_subgraph_completed':
+    case 'playbook_runtime_subgraph_failed':
+      updateExecution(queryClient, event.data.executionId, (previous) => mergeDynamicReasoningUpdate(previous, event.data));
       return;
     case 'playbook_iterator_child_step_start':
       updateExecution(queryClient, event.data.executionId, (previous) => mergeIteratorChildStarted(previous, event.data));

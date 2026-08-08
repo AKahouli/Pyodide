@@ -404,6 +404,9 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const migratedTask = useMemo(() => migrateTask(data), [data]);
   const inputPorts = migratedTask.inputPorts ?? [];
   const outputPorts = migratedTask.outputPorts ?? [];
+  const runtimeSourceHandleId = typeof data.dynamicReasoningRuntimeSourceHandleId === 'string'
+    ? data.dynamicReasoningRuntimeSourceHandleId
+    : null;
   const hasMultiplePorts = inputPorts.length > 1 || outputPorts.length > 1;
 
   const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
@@ -419,7 +422,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
 
   useEffect(() => {
     updateNodeInternals(id);
-  }, [id, inputPorts.length, outputPorts.length, updateNodeInternals]);
+  }, [id, inputPorts.length, outputPorts.length, runtimeSourceHandleId, updateNodeInternals]);
 
   const inputFiles = currentTask?.inputFiles ?? data.inputFiles ?? [];
   const portFileMap = useMemo(() => {
@@ -848,6 +851,17 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
           })}
           </div>
 
+          {runtimeSourceHandleId ? (
+            <Handle
+              id={runtimeSourceHandleId}
+              type="source"
+              position={Position.Bottom}
+              isConnectable={false}
+              className="!h-3 !w-3 !border-2 !border-background !bg-primary"
+              aria-hidden="true"
+            />
+          ) : null}
+
           <NodeHeader className={cn('transition-colors duration-300', headerBgClass)}>
             <div className="flex items-center justify-between w-full gap-2">
               <div className="flex items-center gap-2 min-w-0">
@@ -956,8 +970,14 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               <p className="text-xs text-muted-foreground/60 italic">{t('node.noDescription')}</p>
             )}
 
-            {(showReplayBadge || canSaveReference || showOptimizationBadge) && (
+            {(showReplayBadge || canSaveReference || showOptimizationBadge || effectiveTask.dynamicReasoning?.enabled) && (
               <div className="flex flex-wrap items-center gap-1.5">
+                {effectiveTask.dynamicReasoning?.enabled && (
+                  <NodeMetaBadge
+                    label={t('node.badges.dynamicReasoning')}
+                    toneClassName="border-indigo-500/30 bg-indigo-100 text-indigo-700"
+                  />
+                )}
                 {showOptimizationBadge && (
                   <NodeMetaBadge
                     label={t('node.badges.optimized')}

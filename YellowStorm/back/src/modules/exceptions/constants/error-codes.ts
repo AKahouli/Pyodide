@@ -233,6 +233,9 @@ export enum ErrorCode {
   PLAYBOOK_FLOW_EXECUTION_TIMEOUT = 'ERR_2531',
   PLAYBOOK_FLOW_APPROVAL_NOT_FOUND = 'ERR_2532',
   PLAYBOOK_FLOW_DUPLICATE_NAME = 'ERR_2533',
+  PLAYBOOK_PLANNER_UNAVAILABLE = 'ERR_2534',
+  PLAYBOOK_SUGGESTOR_UNAVAILABLE = 'ERR_2535',
+  PLAYBOOK_SUGGESTION_INVALID = 'ERR_2536',
 
   // Project errors (2700-2799)
   PROJECT_NOT_FOUND = 'ERR_2700',
@@ -633,6 +636,9 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.PLAYBOOK_FLOW_EXECUTION_TIMEOUT]: 'Playbook flow execution timed out.',
   [ErrorCode.PLAYBOOK_FLOW_APPROVAL_NOT_FOUND]: 'No pending approval found for this execution.',
   [ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME]: 'A playbook with this name already exists.',
+  [ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE]: 'The Playbook Planner default agent is unavailable or ambiguous.',
+  [ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE]: 'The Playbook Suggestor default agent is unavailable or not configured.',
+  [ErrorCode.PLAYBOOK_SUGGESTION_INVALID]: 'The Playbook Suggestor returned an invalid suggestion.',
 
   [ErrorCode.PROJECT_NOT_FOUND]: 'Project not found.',
   [ErrorCode.PROJECT_ALREADY_EXISTS]: 'A project with this name already exists.',

@@ -36,6 +36,27 @@ import { normalizeWidgetSettings } from './constants/widget-default-settings';
 const MANAGER_SLUG = 'manager';
 /** Agent-type slug of the single default agent sent when no agent is tagged. */
 const MONO_AGENT_SLUG = 'mono-agent';
+export const PLAYBOOK_PLANNER_AGENT_TYPE_SLUG = 'playbook_planner';
+
+export interface PlaybookPlannerAgentConfig {
+  agentTypeId: string;
+  agentTypeSlug: string;
+  agentId: string;
+  agentRevision: string;
+  model: string;
+  temperature: number;
+  instruction: string;
+}
+
+export interface PlaybookPlannerAgentOption {
+  id: string;
+  name: string;
+  description?: string;
+  model: string;
+}
+
+export type PlaybookSuggestorAgentConfig = PlaybookPlannerAgentConfig;
+export type PlaybookSuggestorAgentOption = PlaybookPlannerAgentOption;
 
 @Injectable()
 export class AgentService {
@@ -1546,6 +1567,106 @@ export class AgentService {
       .lean()
       .exec();
     return agent?._id.toString() ?? null;
+  }
+
+  async listPlaybookPlannerAgentOptions(): Promise<PlaybookPlannerAgentOption[]> {
+    const agents = await this.agentModel
+      .find({ isDefault: true, isActive: true })
+      .select('_id name description llmModel')
+      .populate('agentType', 'slug isActive')
+      .sort({ name: 1 })
+      .lean()
+      .exec();
+    return agents.flatMap((agent) => {
+      const agentType = agent.agentType as unknown as { slug?: string; isActive?: boolean } | undefined;
+      const model = agent.llmModel?.trim();
+      return agentType?.slug === PLAYBOOK_PLANNER_AGENT_TYPE_SLUG && agentType.isActive && model ? [{
+        id: agent._id.toString(),
+        name: agent.name,
+        description: agent.description || undefined,
+        model,
+      }] : [];
+    });
+  }
+
+  async findPlaybookPlannerById(agentId: string): Promise<PlaybookPlannerAgentConfig> {
+    if (!Types.ObjectId.isValid(agentId)) {
+      throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is invalid');
+    }
+    const agent = await this.agentModel
+      .findOne({ _id: new Types.ObjectId(agentId), isDefault: true, isActive: true })
+      .select('_id agentType llmModel temperature instruction updatedAt')
+      .populate('agentType', 'slug isActive')
+      .lean()
+      .exec();
+    const agentType = agent?.agentType as unknown as {
+      _id?: { toString(): string };
+      slug?: string;
+      isActive?: boolean;
+    } | undefined;
+    const model = agent?.llmModel?.trim();
+    if (
+      !agent
+      || agentType?.slug !== PLAYBOOK_PLANNER_AGENT_TYPE_SLUG
+      || !agentType.isActive
+      || !model
+    ) {
+      throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is unavailable or has no model configured');
+    }
+    return {
+      agentTypeId: agentType?._id?.toString() ?? '',
+      agentTypeSlug: agentType.slug,
+      agentId: agent._id.toString(),
+      agentRevision: agent.updatedAt?.toISOString() ?? agent._id.toString(),
+      model,
+      temperature: agent.temperature,
+      instruction: agent.instruction,
+    };
+  }
+
+  async listPlaybookSuggestorAgentOptions(): Promise<PlaybookSuggestorAgentOption[]> {
+    const agents = await this.listActiveDefaultAgentOptions();
+    return agents.flatMap((agent) => {
+      const model = agent.model?.trim();
+      return model ? [{
+        id: agent.id,
+        name: agent.name,
+        description: agent.description,
+        model,
+      }] : [];
+    });
+  }
+
+  async findPlaybookSuggestorById(agentId: string): Promise<PlaybookSuggestorAgentConfig> {
+    if (!Types.ObjectId.isValid(agentId)) {
+      throw new BadRequestException(ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE, 'The selected Playbook Suggestor agent is invalid');
+    }
+    const agent = await this.agentModel
+      .findOne({ _id: new Types.ObjectId(agentId), isDefault: true, isActive: true })
+      .select('_id agentType llmModel temperature instruction updatedAt')
+      .populate('agentType', 'slug isActive')
+      .lean()
+      .exec();
+    const agentType = agent?.agentType as unknown as {
+      _id?: { toString(): string };
+      slug?: string;
+    } | undefined;
+    const model = agent?.llmModel?.trim();
+    if (
+      !agent
+      || !model
+    ) {
+      throw new BadRequestException(ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE, 'The selected Playbook Suggestor agent is unavailable or has no model configured');
+    }
+    return {
+      agentTypeId: agentType?._id?.toString() ?? '',
+      agentTypeSlug: agentType?.slug ?? '',
+      agentId: agent._id.toString(),
+      agentRevision: agent.updatedAt?.toISOString() ?? agent._id.toString(),
+      model,
+      temperature: agent.temperature,
+      instruction: agent.instruction,
+    };
   }
 
   private toResponse(

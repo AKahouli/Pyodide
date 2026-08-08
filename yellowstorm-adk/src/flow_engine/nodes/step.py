@@ -50,6 +50,8 @@ from src.flow_engine.nodes.step_tools import (
 )
 from src.flow_engine.nodes.deterministic_script import run_deterministic_script
 from src.flow_engine.state import ExecutionState
+from src.flow_engine.dynamic_reasoning import run_dynamic_reasoning
+from src.flow_engine.dynamic_reasoning.models import DynamicReasoningPolicy, PlannerSnapshot
 from src.smart_rag.infrastructure.model_parameters import normalize_temperature_for_model
 from src.temporary_child_summary import (
     record_temporary_child_result,
@@ -58,6 +60,22 @@ from src.temporary_child_summary import (
 from src.skills.runtime import inject_skill_catalog
 
 logger = get_logger(__name__)
+
+
+def _generated_child_output_contract(
+    child_kind: str,
+    child_inputs: dict[str, Any],
+    parent_output_contract: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if child_kind == "synthesis":
+        return parent_output_contract
+    ports = child_inputs.get("generatedOutputPorts")
+    if not isinstance(ports, list):
+        return None
+    declared_ports = [port for port in ports if isinstance(port, dict)]
+    return {"ports": declared_ports} if declared_ports else None
+
+
 settings = get_settings()
 
 DEFAULT_MODEL = "gpt-4o-mini"
@@ -661,7 +679,92 @@ async def run_step(
     if should_execute:
         try:
             deterministic_payload: dict[str, Any] | None = None
-            if metadata.get("executionStrategy") == "deterministic_script":
+            dynamic_config = node_config.get("dynamic_reasoning") or node_config.get("dynamicReasoning") or {}
+            dynamic_enabled = isinstance(dynamic_config, dict) and dynamic_config.get("enabled") is True
+            policy_value = state.get("dynamic_reasoning_policy") or {}
+            planner_value = state.get("playbook_planner") or {}
+            if dynamic_enabled and policy_value and planner_value and metadata.get("executionStrategy") != "deterministic_script":
+                async def execute_generated_child(
+                    runtime_id: str,
+                    child_title: str,
+                    child_instruction: str,
+                    child_inputs: dict[str, Any],
+                ) -> dict[str, Any]:
+                    child_kind = str(child_inputs.get("generatedKind") or "task")
+                    child_output_contract = _generated_child_output_contract(
+                        child_kind,
+                        child_inputs,
+                        output_contract if isinstance(output_contract, dict) else None,
+                    )
+                    runtime_payload = {
+                        "runtime_subgraph_id": child_inputs.get("runtimeSubgraphId"),
+                        "parent_node_id": node_id,
+                        "generated_local_node_id": child_inputs.get("generatedLocalNodeId"),
+                        "generated_title": child_title,
+                    }
+                    writer({"type": "NodeStarted", "node_id": runtime_id, "iteration": 0, "payload": runtime_payload})
+                    try:
+                        output, child_components, child_trace = await _execute_step(
+                            runtime_id,
+                            {"id": runtime_id, "label": child_title, "description": child_instruction},
+                            state,
+                            metadata,
+                            child_inputs,
+                            child_instruction,
+                            child_output_contract,
+                            model_id,
+                            system_prompt,
+                            requires_structured_response(child_output_contract),
+                            agent_config,
+                            connector_bindings,
+                            0,
+                            child_title,
+                            writer,
+                            hitl_policy,
+                            hitl_blockers,
+                            _merge_human_context(state, new_human_context),
+                            deep_search=deep_search,
+                        )
+                        payload = _build_result_payload(
+                            child_output_contract,
+                            output,
+                            child_components,
+                            runtime_id,
+                            0,
+                            child_trace,
+                        )
+                        payload.update(runtime_payload)
+                        writer({"type": "NodeCompleted", "node_id": runtime_id, "iteration": 0, "payload": payload})
+                        return payload
+                    except Exception as exc:
+                        writer({"type": "NodeFailed", "node_id": runtime_id, "iteration": 0, "payload": {**runtime_payload, "error": str(exc)}})
+                        raise
+
+                dynamic_outcome = await run_dynamic_reasoning(
+                    node_id=node_id,
+                    node_config=node_config,
+                    resolved_inputs=input_context if isinstance(input_context, dict) else {},
+                    policy=DynamicReasoningPolicy.model_validate(policy_value),
+                    planner=PlannerSnapshot.model_validate(planner_value),
+                    iteration=iteration,
+                    writer=writer,
+                    child_executor=execute_generated_child,
+                )
+                if dynamic_outcome.mode == "subgraph" and dynamic_outcome.result_payload is not None:
+                    deterministic_payload = dynamic_outcome.result_payload
+                    full_output = str(deterministic_payload.get("output") or "")
+                    components = deterministic_payload.get("components", [])
+                    trace_collector = None
+                else:
+                    full_output, components, trace_collector = await _execute_step(
+                        node_id, node_config, state, metadata, input_context,
+                        node_description, output_contract, model_id, system_prompt,
+                        structured_output, agent_config, connector_bindings,
+                        iteration, label, writer, hitl_policy, hitl_blockers,
+                        _merge_human_context(state, new_human_context),
+                        deep_search=deep_search,
+                    )
+            elif metadata.get("executionStrategy") == "deterministic_script":
                 deterministic_payload = _execute_deterministic_step(
                     metadata,
                     input_context if isinstance(input_context, dict) else {},

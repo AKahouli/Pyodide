@@ -52,7 +52,58 @@ export function mapGrpcResponseToFlow(response: any): {
     targetInputPortId: edge.target_input_port_id || undefined,
   }));
 
-  const dataBindings: any[] = [];
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const dataBindings = nodes.flatMap((targetNode) =>
+    (targetNode.input?.ports || [])
+      .filter((targetPort: any) => targetPort.required)
+      .flatMap((targetPort: any) => {
+        const candidates = controlEdges.flatMap((edge) => {
+          if (
+            edge.kind !== 'sequential'
+            || edge.target !== targetNode.id
+            || (edge.targetInputPortId && edge.targetInputPortId !== targetPort.id)
+          ) {
+            return [];
+          }
+
+          const sourceNode = nodeById.get(edge.source);
+          const sourcePorts = sourceNode?.output?.ports || [];
+          let sourcePort = edge.sourceOutputPortId
+            ? sourcePorts.find((port: any) => port.id === edge.sourceOutputPortId)
+            : undefined;
+
+          if (!edge.sourceOutputPortId) {
+            const exact = sourcePorts.filter((port: any) => port.type === targetPort.type);
+            if (exact.length === 1) {
+              [sourcePort] = exact;
+            }
+          }
+
+          if (!sourcePort || sourcePort.type !== targetPort.type) return [];
+          return [{ sourceNode: edge.source, sourcePort: sourcePort.id }];
+        });
+
+        const uniqueCandidates = new Map(
+          candidates.map((candidate) => [tupleKey(candidate.sourceNode, candidate.sourcePort), candidate]),
+        );
+        if (uniqueCandidates.size !== 1) return [];
+
+        const candidate = [...uniqueCandidates.values()][0];
+        return [{
+          id: `binding-${tupleKey(candidate.sourceNode, candidate.sourcePort, targetNode.id, targetPort.id)}`,
+          targetNode: targetNode.id,
+          targetPort: targetPort.id,
+          sourceKind: 'node-output',
+          sourceNode: candidate.sourceNode,
+          sourcePort: candidate.sourcePort,
+          iteration: 'current',
+        }];
+      }),
+  );
 
   return { nodes, controlEdges, dataBindings };
+}
+
+function tupleKey(...parts: string[]): string {
+  return JSON.stringify(parts);
 }

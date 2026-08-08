@@ -12,6 +12,7 @@ import { PlaybookFlowTokenBufferService } from '../../services/playbook-flow-tok
 import { fromGrpcValue } from '../grpc/grpc-struct.mapper';
 import { PlaybookExecutionNodeEventHandlerService } from './playbook-execution-node-event-handler.service';
 import { PlaybookExecutionReplayRuntimeService } from './playbook-execution-replay-runtime.service';
+import { PlaybookDynamicReasoningEventHandlerService } from './playbook-dynamic-reasoning-event-handler.service';
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
 
@@ -40,6 +41,7 @@ export class PlaybookExecutionEventHandlerService {
     private readonly replayRuntime: PlaybookExecutionReplayRuntimeService,
     @Optional() private readonly nodeEventHandler?: PlaybookExecutionNodeEventHandlerService,
     @Optional() private readonly tokenBufferService?: PlaybookFlowTokenBufferService,
+    @Optional() private readonly dynamicReasoningHandler?: PlaybookDynamicReasoningEventHandlerService,
   ) {}
 
   async handleRunEvent(context: PlaybookRunEventContext): Promise<void> {
@@ -52,8 +54,10 @@ export class PlaybookExecutionEventHandlerService {
 
     this.logger.debug(`Received playbook flow event ${eventType} for execution ${executionId}`);
 
-    if (eventType === 'NodeStarted') {
-      await this.getNodeHandler().handleStarted(executionId, taskNodeId, iteration);
+    if (this.dynamicReasoningHandler?.supports(eventType)) {
+      await this.dynamicReasoningHandler.handle(executionId, eventType, taskNodeId, iteration, payload);
+    } else if (eventType === 'NodeStarted') {
+      await this.getNodeHandler().handleStarted(executionId, taskNodeId, iteration, payload);
     } else if (eventType === 'NodeToken') {
       await this.getNodeHandler().handleToken(executionId, taskNodeId, iteration, payload);
     } else if (eventType === 'NodeTraceUpdate') {
