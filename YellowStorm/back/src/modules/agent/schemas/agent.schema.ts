@@ -7,22 +7,19 @@ export type AgentDocument = HydratedDocument<Agent>;
 @Schema({ _id: false })
 export class AgentPromptInjectionGuardrails {
   @Prop({ type: Boolean, default: false })
-  inputGuardrailEnabled!: boolean;
+  inputEnabled!: boolean;
 
   @Prop({ type: Boolean, default: false })
-  outputGuardrailEnabled!: boolean;
+  outputEnabled!: boolean;
 
-  @Prop({ type: Boolean, default: false })
-  toolCallGuardrailEnabled!: boolean;
+  @Prop({ type: String, enum: ['monitor', 'balanced', 'strict'], default: 'balanced' })
+  mode!: 'monitor' | 'balanced' | 'strict';
 
   @Prop({ type: String, default: '' })
   inputClassifierPrompt!: string;
 
   @Prop({ type: String, default: '' })
   outputClassifierPrompt!: string;
-
-  @Prop({ type: String, default: '' })
-  toolCallClassifierPrompt!: string;
 
   @Prop({ type: String, default: 'I cannot follow this instruction.' })
   blockMessage!: string;
@@ -31,10 +28,29 @@ export class AgentPromptInjectionGuardrails {
 const AgentPromptInjectionGuardrailsSchema = SchemaFactory.createForClass(AgentPromptInjectionGuardrails);
 
 @Schema({ _id: false })
+export class AgentToolActionReview {
+  @Prop({ type: Boolean, default: false })
+  enabled!: boolean;
+
+  @Prop({ type: String, enum: ['monitor', 'balanced', 'strict'], default: 'balanced' })
+  mode!: 'monitor' | 'balanced' | 'strict';
+
+  @Prop({ type: String, default: '' })
+  classifierPrompt!: string;
+
+  @Prop({ type: String, default: 'I cannot perform this action.' })
+  blockMessage!: string;
+}
+
+const AgentToolActionReviewSchema = SchemaFactory.createForClass(AgentToolActionReview);
+
+@Schema({ _id: false })
 export class AgentGuardrails {
   @Prop({ type: AgentPromptInjectionGuardrailsSchema, default: () => ({}) })
   promptInjection!: AgentPromptInjectionGuardrails;
 
+  @Prop({ type: AgentToolActionReviewSchema, default: () => ({}) })
+  toolActionReview!: AgentToolActionReview;
 }
 
 const AgentGuardrailsSchema = SchemaFactory.createForClass(AgentGuardrails);

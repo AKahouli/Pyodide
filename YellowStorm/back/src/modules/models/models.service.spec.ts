@@ -206,6 +206,10 @@ describe('ModelsService', () => {
 
       await svc.updateModel('multi', { types: ['chat', 'guardrails_classifier'] });
 
+      expect(updateMany).toHaveBeenCalledWith(
+        { modelId: { $ne: 'multi' }, isActive: true },
+        { $pull: { types: 'guardrails_classifier' } },
+      );
       expect(findOneAndUpdate).toHaveBeenCalledWith(
         { modelId: 'multi' },
         { $set: { types: ['chat', 'guardrails_classifier'], type: 'chat' } },

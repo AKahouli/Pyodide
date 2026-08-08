@@ -1457,7 +1457,9 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
       resumeFromStep: jest.fn((_request, callback) => callback(null, { resumed: false })),
     };
     const { service, streamEvents } = createExecutionServiceForTests({ executionModel, runtimeClient });
-    const durableRun = jest.spyOn(service as any, 'callGrpcRun').mockResolvedValue(undefined);
+    const scheduleDurableResume = jest
+      .spyOn(service as any, 'scheduleQueueDrain')
+      .mockImplementation(() => undefined);
 
     await service.resumeFromStep('exec-1', 'owner-1', {
       taskId: 'task-1',
@@ -1467,20 +1469,23 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
       scope: 'downstream_run',
     });
 
-    expect(durableRun).toHaveBeenCalledWith(
-      'exec-1',
-      'flow-1',
-      'owner-1',
-      null,
+    expect(scheduleDurableResume).toHaveBeenCalledWith('owner-1');
+    expect(executionModel.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: 'exec-1' }),
       expect.objectContaining({
-        customer: 'acme',
-        __playbook_resume: expect.objectContaining({
-          action: 'reply',
-          message: 'Use the signed contract.',
-          scope: 'downstream_run',
+        $set: expect.objectContaining({
+          status: 'queued',
+          inputContext: expect.objectContaining({
+            customer: 'acme',
+            __playbook_resume: expect.objectContaining({
+              action: 'reply',
+              message: 'Use the signed contract.',
+              scope: 'downstream_run',
+            }),
+          }),
         }),
       }),
-      snapshot,
+      expect.any(Object),
     );
     expect(streamEvents.emitHitlInterruptResolved).toHaveBeenCalledWith(
       'exec-1',
@@ -1515,7 +1520,9 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
       resumeApproval: jest.fn((_request, callback) => callback(null, { resumed: false })),
     };
     const { service, streamEvents } = createExecutionServiceForTests({ executionModel, runtimeClient });
-    const durableRun = jest.spyOn(service as any, 'callGrpcRun').mockResolvedValue(undefined);
+    const scheduleDurableResume = jest
+      .spyOn(service as any, 'scheduleQueueDrain')
+      .mockImplementation(() => undefined);
 
     await service.resumeApproval('exec-1', 'owner-1', {
       decision: 'approved',
@@ -1526,22 +1533,25 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
       },
     });
 
-    expect(durableRun).toHaveBeenCalledWith(
-      'exec-1',
-      'flow-1',
-      'owner-1',
-      null,
+    expect(scheduleDurableResume).toHaveBeenCalledWith('owner-1');
+    expect(executionModel.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: 'exec-1' }),
       expect.objectContaining({
-        recipient: 'customer@example.com',
-        __playbook_resume: expect.objectContaining({
-          decision: 'approved',
-          payload: expect.objectContaining({
-            feedback: 'Approved for this signed contract only.',
-            scope: 'step_only',
+        $set: expect.objectContaining({
+          status: 'queued',
+          inputContext: expect.objectContaining({
+            recipient: 'customer@example.com',
+            __playbook_resume: expect.objectContaining({
+              decision: 'approved',
+              payload: expect.objectContaining({
+                feedback: 'Approved for this signed contract only.',
+                scope: 'step_only',
+              }),
+            }),
           }),
         }),
       }),
-      snapshot,
+      expect.any(Object),
     );
     expect(streamEvents.emitHitlInterruptResolved).toHaveBeenCalledWith(
       'exec-1',

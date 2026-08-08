@@ -184,8 +184,8 @@ export class GovernanceScopeOverviewService {
   }
 
   private hasAnyGuardrailEnabled(agent: Record<string, unknown>): boolean {
-    const promptInjection = (agent.guardrails as { promptInjection?: Record<string, unknown> } | undefined)?.promptInjection;
-    return Boolean(promptInjection?.inputGuardrailEnabled || promptInjection?.outputGuardrailEnabled || promptInjection?.toolCallGuardrailEnabled);
+    const guardrails = agent.guardrails as { promptInjection?: Record<string, unknown>; toolActionReview?: Record<string, unknown> } | undefined;
+    return Boolean(guardrails?.promptInjection?.inputEnabled || guardrails?.promptInjection?.outputEnabled || guardrails?.toolActionReview?.enabled);
   }
 
   private check(key: string, label: string, passed: boolean, severity: CheckSeverity, targetType: string): GovernanceScopeOverviewCheck {

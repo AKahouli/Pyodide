@@ -31,13 +31,18 @@ describe('AgentService connector skill inheritance', () => {
 
   const defaultGuardrails = {
     promptInjection: {
-      inputGuardrailEnabled: false,
-      outputGuardrailEnabled: false,
-      toolCallGuardrailEnabled: false,
+      inputEnabled: false,
+      outputEnabled: false,
+      mode: 'balanced' as const,
       inputClassifierPrompt: 'input policy',
       outputClassifierPrompt: 'output policy',
-      toolCallClassifierPrompt: 'tool policy',
       blockMessage: 'I cannot follow this instruction.',
+    },
+    toolActionReview: {
+      enabled: false,
+      mode: 'balanced' as const,
+      classifierPrompt: 'tool policy',
+      blockMessage: 'I cannot perform this action.',
     },
   };
 
@@ -101,13 +106,18 @@ describe('AgentService connector skill inheritance', () => {
       getSettings: jest.fn().mockResolvedValue({
         forceActivation: false,
         promptInjection: {
-          inputGuardrailEnabled: false,
-          outputGuardrailEnabled: false,
-          toolCallGuardrailEnabled: false,
+          inputEnabled: false,
+          outputEnabled: false,
+          mode: 'balanced',
           inputClassifierPrompt: 'input policy',
           outputClassifierPrompt: 'output policy',
-          toolCallClassifierPrompt: 'tool policy',
           blockMessage: 'I cannot follow this instruction.',
+        },
+        toolActionReview: {
+          enabled: false,
+          mode: 'balanced',
+          classifierPrompt: 'tool policy',
+          blockMessage: 'I cannot perform this action.',
         },
       }),
     };

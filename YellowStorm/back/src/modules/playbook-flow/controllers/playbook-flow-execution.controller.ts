@@ -9,6 +9,7 @@ import { RequirePermissions } from '@modules/authorization/decorators/require-pe
 import { PermissionsGuard } from '@modules/authorization/guards/permissions.guard';
 import { Permissions } from '@modules/authorization/constants/permissions';
 import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execution.dto';
+import { ResumePlaybookFlowApprovalDto } from '../dto/resume-playbook-flow-approval.dto';
 import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 
 @ApiTags('Playbook Flow Executions')
@@ -94,7 +95,7 @@ export class PlaybookFlowExecutionController {
   async resumeApproval(
     @CurrentUser('_id') userId: string,
     @Param('executionId') executionId: string,
-    @Body() body: { decision: string; payload?: Record<string, unknown> },
+    @Body() body: ResumePlaybookFlowApprovalDto,
   ) {
     return this.executionService.resumeApproval(executionId, userId, body);
   }

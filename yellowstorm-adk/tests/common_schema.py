@@ -19,6 +19,10 @@ class MockSettings(BaseModel):
     AZURE_DATALAKE_CONNECTION_STRING: str = "DefaultEndpointsProtocol=https;AccountName=mock_account;AccountKey=mock_key;EndpointSuffix=core.windows.net"
     AZURE_DATALAKE_FILE_SYSTEM_NAME: str = "mock_file_system"
     DATABASE_URL: str = "sqlite:///./test.db"
+    LANGGRAPH_CHECKPOINT_SCHEMA: str = "langgraph_checkpoints"
+    LANGGRAPH_CHECKPOINT_POOL_MIN_SIZE: int = 1
+    LANGGRAPH_CHECKPOINT_POOL_MAX_SIZE: int = 2
+    LANGGRAPH_CHECKPOINT_POOL_TIMEOUT_SECONDS: float = 5.0
     lINKUP_API_KEY: str = "mock_lookup_api_key"
     WEB_SEARCH_PROMPT: str = "mock_web_search_prompt"
     API_URL: str = "https://mock_api_url"

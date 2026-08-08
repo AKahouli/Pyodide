@@ -286,23 +286,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       isRuntimeAvailable: () => this.isRuntimeAvailable(),
       resumeApprovalRuntime: (request, callback) => this.resumeApprovalRuntime(request, callback),
       resumeFromStepRuntime: (request, callback) => this.resumeFromStepRuntime(request, callback),
-      startDurableResumeStream: (execution, resumePayload) => {
-        this.callGrpcRun(
-          String(execution._id),
-          String(execution.flowId),
-          String(execution.ownerId),
-          null,
-          {
-            ...(execution.inputContext ?? {}),
-            __playbook_resume: resumePayload,
-          },
-          execution.snapshot,
-        ).catch((err) => {
-          this.logger.error(
-            `Durable HITL resume stream failed for execution ${String(execution._id)}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
-      },
+      scheduleDurableResume: (ownerId) => this.scheduleQueueDrain(ownerId),
     });
   }
 
@@ -968,7 +952,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     } else {
       snapshot = executableSnapshot;
     }
-    const hasDynamicReasoningNode = (snapshot.nodes as FlowNode[]).some((node) => node.dynamicReasoning?.enabled === true);
+    const hasDynamicReasoningNode = ((snapshot.nodes ?? []) as FlowNode[])
+      .some((node) => node.dynamicReasoning?.enabled === true);
     const planner = effectiveExecutionSettings?.dynamicReasoningEnabled && hasDynamicReasoningNode
       ? await this.agentService.findPlaybookPlannerById(
         effectiveExecutionSettings.dynamicReasoning.plannerAgentId || '',
@@ -1908,8 +1893,14 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       this.logger.log(`Drain: starting queued execution ${next.id} for owner ${ownerId}`);
 
       const replaySource = executionRecord.replaySource as { executionId: string; taskId: string; iteration?: number } | undefined;
+      const dispatchInputContext =
+        (executionRecord.inputContext as Record<string, unknown> | undefined) || next.inputContext || {};
+      const isDurableResume = Object.prototype.hasOwnProperty.call(
+        dispatchInputContext,
+        '__playbook_resume',
+      );
 
-      if (replaySource) {
+      if (replaySource && !isDurableResume) {
         this.logger.log(
           `Drain: dispatching replay execution ${next.id} from source ${replaySource.executionId} task ${replaySource.taskId} iteration ${replaySource.iteration ?? 0} via RunFromCheckpoint`,
         );
@@ -1917,7 +1908,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           next.id, next.flowId, ownerId,
           replaySource.executionId,
           snapshot || {},
-          (executionRecord.inputContext as Record<string, unknown> | undefined) || next.inputContext || {},
+          dispatchInputContext,
           replaySource.taskId,
           replaySource.iteration ?? 0,
         ).catch((err) => {
@@ -1930,7 +1921,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           next.flowId,
           ownerId,
           flow,
-          (executionRecord.inputContext as Record<string, unknown> | undefined) || next.inputContext,
+          dispatchInputContext,
           snapshot,
         ).catch((err) => {
           this.logger.error(`Drain: execution ${next.id} failed to start`, err instanceof Error ? err.stack : undefined);
@@ -2098,12 +2089,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
 
-    const latestFlow = await this.prepareExecutionStartFlow(String(sourceExecution.flowId), ownerId);
-    const executableSnapshot = this.buildExecutableSnapshot(
-      this.builderService.buildSnapshot(latestFlow as any),
-      String(sourceExecution.flowId),
+    const snapshot = structuredClone(
+      sourceExecution.snapshot as Record<string, unknown>,
     );
-    const snapshot = executableSnapshot as unknown as Record<string, unknown>;
     const nodes = (snapshot.nodes || []) as Array<Record<string, unknown>>;
     const targetNode = nodes.find((n) => n.id === payload.taskId);
     if (!targetNode || targetNode.kind !== 'step') {
@@ -2120,13 +2108,17 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const recursionLimit = Number(snapshotSettings.recursionLimit) || 25;
     const maxParallelism = Number(snapshotSettings.maxParallelism) || 5;
 
+    const sourceInputContext = structuredClone(sourceExecution.inputContext ?? {});
+    delete sourceInputContext.__playbook_resume;
+    delete sourceInputContext.__playbook_hitl_memory;
+
     const newExecution = new this.executionModel({
       flowId: sourceExecution.flowId,
       ownerId,
       status: 'queued',
       recursionLimit,
       maxParallelism,
-      inputContext: sourceExecution.inputContext,
+      inputContext: sourceInputContext,
       snapshot,
       replaySource: {
         executionId: sourceExecution.id,

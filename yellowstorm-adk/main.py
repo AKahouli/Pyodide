@@ -90,6 +90,7 @@ async def lifespan(app: FastAPI):
         for package in (
             "langgraph",
             "langgraph-checkpoint",
+            "langgraph-checkpoint-postgres",
             "langgraph-checkpoint-sqlite",
             "langchain",
             "langchain-core",
@@ -153,7 +154,7 @@ async def lifespan(app: FastAPI):
                     pass  # Task was cancelled during shutdown, this is expected
                 except Exception as e:
                     logger.error(
-                        f"[gRPC] Background task failed: {str(e)}", exc_info=True
+                        f"[gRPC] Background task failed: {str(e)}"
                     )
 
             grpc_server_task.add_done_callback(_grpc_task_error_callback)
@@ -172,7 +173,7 @@ async def lifespan(app: FastAPI):
 
             logger.info("✅ gRPC server task started (running in background)")
         except Exception as e:
-            logger.error(f"Failed to start gRPC server: {str(e)}", exc_info=True)
+            logger.error(f"Failed to start gRPC server: {str(e)}")
             logger.warning(
                 "Continuing without gRPC support. Only REST/SSE endpoints will be available."
             )
@@ -252,4 +253,5 @@ if __name__ == "__main__":
         port=app_settings.PORT,
         timeout_keep_alive=app_settings.TIMEOUT_KEEP_ALIVE,
         reload=False,
+        loop="src.asyncio_loop:selector_loop_factory" if os.name == "nt" else "auto",
     )

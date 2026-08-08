@@ -57,18 +57,32 @@ import { mergeWidgetSettings } from '../constants/widget-default-settings';
 
 type LegacyPromptInjectionGuardrails = Partial<UserAgentFormValues['guardrails']['promptInjection']> & {
   classifierPrompt?: string;
+  inputGuardrailEnabled?: boolean;
+  outputGuardrailEnabled?: boolean;
+  toolCallGuardrailEnabled?: boolean;
+  toolCallClassifierPrompt?: string;
 };
 
-function normalizeGuardrails(value?: { promptInjection?: LegacyPromptInjectionGuardrails }): UserAgentFormValues['guardrails'] {
+function normalizeGuardrails(value?: {
+  promptInjection?: LegacyPromptInjectionGuardrails;
+  toolActionReview?: Partial<UserAgentFormValues['guardrails']['toolActionReview']>;
+}): UserAgentFormValues['guardrails'] {
   const promptInjection = value?.promptInjection || {};
   const legacyPrompt = promptInjection.classifierPrompt;
   return {
     promptInjection: {
       ...defaultFormValues.guardrails.promptInjection,
       ...promptInjection,
+      inputEnabled: promptInjection.inputEnabled ?? promptInjection.inputGuardrailEnabled ?? false,
+      outputEnabled: promptInjection.outputEnabled ?? promptInjection.outputGuardrailEnabled ?? false,
       inputClassifierPrompt: promptInjection.inputClassifierPrompt || legacyPrompt || defaultFormValues.guardrails.promptInjection.inputClassifierPrompt,
       outputClassifierPrompt: promptInjection.outputClassifierPrompt || legacyPrompt || defaultFormValues.guardrails.promptInjection.outputClassifierPrompt,
-      toolCallClassifierPrompt: promptInjection.toolCallClassifierPrompt || legacyPrompt || defaultFormValues.guardrails.promptInjection.toolCallClassifierPrompt,
+    },
+    toolActionReview: {
+      ...defaultFormValues.guardrails.toolActionReview,
+      ...value?.toolActionReview,
+      enabled: value?.toolActionReview?.enabled ?? promptInjection.toolCallGuardrailEnabled ?? false,
+      classifierPrompt: value?.toolActionReview?.classifierPrompt || promptInjection.toolCallClassifierPrompt || legacyPrompt || defaultFormValues.guardrails.toolActionReview.classifierPrompt,
     },
   };
 }
@@ -223,7 +237,7 @@ export function CreateEditAgentDialog({
   const watchedDisabledSkills = watch('disabledSkills');
   const watchedConnectors = watch('connectors');
   const watchedConnectorActionSelections = watch('connectorActionSelections');
-  const watchedGuardrails = watch('guardrails.promptInjection');
+  const watchedGuardrails = watch('guardrails');
   const watchedDeploymentSettings = watch('deploymentSettings');
   const forceGuardrails = adminGuardrails?.forceActivation === true;
   const inheritedSkillIds = agentTypes.find((at) => at.id === selectedAgentTypeId)?.skills || [];
@@ -603,7 +617,7 @@ export function CreateEditAgentDialog({
                     value={watchedGuardrails}
                     disabled={forceGuardrails}
                     forceActivation={forceGuardrails}
-                    onChange={(next) => setValue('guardrails.promptInjection', next, { shouldDirty: true, shouldValidate: true })}
+                    onChange={(next) => setValue('guardrails', next, { shouldDirty: true, shouldValidate: true })}
                   />
                 </TabsContent>
 

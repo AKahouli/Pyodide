@@ -27,18 +27,6 @@ fake_structlog_types.Processor = object
 sys.modules.setdefault("structlog", fake_structlog)
 sys.modules.setdefault("structlog.types", fake_structlog_types)
 
-fake_langgraph = types.ModuleType("langgraph")
-fake_langgraph_config = types.ModuleType("langgraph.config")
-fake_langgraph_types = types.ModuleType("langgraph.types")
-fake_langgraph_errors = types.ModuleType("langgraph.errors")
-fake_langgraph_config.get_stream_writer = lambda: (lambda event: None)
-fake_langgraph_types.interrupt = lambda *args, **kwargs: None
-fake_langgraph_errors.GraphInterrupt = type("GraphInterrupt", (Exception,), {})
-sys.modules.setdefault("langgraph", fake_langgraph)
-sys.modules.setdefault("langgraph.config", fake_langgraph_config)
-sys.modules.setdefault("langgraph.types", fake_langgraph_types)
-sys.modules.setdefault("langgraph.errors", fake_langgraph_errors)
-
 fake_settings = types.ModuleType("src.config.settings")
 fake_settings.get_settings = lambda: SimpleNamespace(
     LITELLM_API_BASE_URL="http://localhost",
@@ -687,7 +675,7 @@ async def test_run_step_executes_bound_tools(monkeypatch):
 
     monkeypatch.setattr("src.flow_engine.nodes.step.get_stream_writer", lambda: _writer)
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
     fake_factory_module = types.ModuleType("src.flow_engine.tools")
     fake_factory_module.create_langchain_tools = lambda **kwargs: ([_FakeTool()], None)
     monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
@@ -732,7 +720,7 @@ async def test_run_step_attaches_temporary_child_tool_when_enabled(monkeypatch):
         return _ToolCallResponse("Parent answer.")
 
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
     fake_factory_module = types.ModuleType("src.flow_engine.tools")
     fake_factory_module.create_langchain_tools = lambda **kwargs: ([_FakeTool()], None)
     monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
@@ -779,7 +767,7 @@ async def test_temporary_child_tool_runs_parallel_tasks_with_hard_total_limit(mo
     active = 0
     max_active = 0
 
-    async def _fake_run_step_with_tools(**kwargs):
+    async def _fake_run_step_agent(**kwargs):
         nonlocal active, max_active
         active += 1
         max_active = max(max_active, active)
@@ -787,7 +775,7 @@ async def test_temporary_child_tool_runs_parallel_tasks_with_hard_total_limit(mo
         active -= 1
         return kwargs["user_msg"].splitlines()[1]
 
-    monkeypatch.setattr("src.flow_engine.nodes.step.run_step_with_tools", _fake_run_step_with_tools)
+    monkeypatch.setattr("src.flow_engine.nodes.step.run_step_agent", _fake_run_step_agent)
     tool = _TemporaryChildAgentTool(
         model_id="gpt-test",
         system_prompt="system",
@@ -816,7 +804,7 @@ async def test_temporary_child_tool_runs_parallel_tasks_with_hard_total_limit(mo
 
 @pytest.mark.anyio
 async def test_run_step_with_tools_preserves_tool_base64_images(monkeypatch):
-    from src.flow_engine.nodes.step_tools import run_step_with_tools
+    from src.flow_engine.tests.step_agent_test_helper import run_step_with_tools
 
     calls = []
 
@@ -836,7 +824,7 @@ async def test_run_step_with_tools_preserves_tool_base64_images(monkeypatch):
             )
         return _ToolCallResponse("I used the attached images.")
 
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
 
     output = await run_step_with_tools(
         model_id="gpt-test",
@@ -860,7 +848,7 @@ async def test_run_step_with_tools_preserves_tool_base64_images(monkeypatch):
 
 @pytest.mark.anyio
 async def test_run_step_with_tools_forwards_mcp_image_parts(monkeypatch):
-    from src.flow_engine.nodes.step_tools import run_step_with_tools
+    from src.flow_engine.tests.step_agent_test_helper import run_step_with_tools
 
     calls = []
 
@@ -880,7 +868,7 @@ async def test_run_step_with_tools_forwards_mcp_image_parts(monkeypatch):
             )
         return _ToolCallResponse("The answer is in image p1_b8.")
 
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
 
     output = await run_step_with_tools(
         model_id="gpt-test",
@@ -912,7 +900,7 @@ async def test_run_step_with_tools_forwards_mcp_image_parts(monkeypatch):
 
 @pytest.mark.anyio
 async def test_run_step_with_tools_retries_text_only_after_mcp_image_rejection(monkeypatch):
-    from src.flow_engine.nodes.step_tools import run_step_with_tools
+    from src.flow_engine.tests.step_agent_test_helper import run_step_with_tools
 
     calls = []
     tool_invocations = []
@@ -944,7 +932,7 @@ async def test_run_step_with_tools_retries_text_only_after_mcp_image_rejection(m
         return _ToolCallResponse("Text-only fallback succeeded.")
 
     monkeypatch.setattr(tool, "ainvoke", _tracked_ainvoke)
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
 
     output = await run_step_with_tools(
         model_id="test-model",
@@ -974,7 +962,7 @@ async def test_run_step_with_tools_retries_text_only_after_mcp_image_rejection(m
 
 @pytest.mark.anyio
 async def test_run_step_with_tools_does_not_retry_unrelated_mcp_image_error(monkeypatch):
-    from src.flow_engine.nodes.step_tools import run_step_with_tools
+    from src.flow_engine.tests.step_agent_test_helper import run_step_with_tools
 
     calls = []
     tool = _ReadContentMcpImageTool()
@@ -995,7 +983,7 @@ async def test_run_step_with_tools_does_not_retry_unrelated_mcp_image_error(monk
             )
         raise ValueError("provider request timed out")
 
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
 
     with pytest.raises(ValueError, match="provider request timed out"):
         await run_step_with_tools(
@@ -1010,7 +998,7 @@ async def test_run_step_with_tools_does_not_retry_unrelated_mcp_image_error(monk
 
 @pytest.mark.anyio
 async def test_run_step_with_tools_limits_total_mcp_images_across_iterations(monkeypatch):
-    from src.flow_engine.nodes.step_tools import run_step_with_tools
+    from src.flow_engine.tests.step_agent_test_helper import run_step_with_tools
 
     class _ManyMcpImagesTool:
         name = "read_content"
@@ -1050,7 +1038,7 @@ async def test_run_step_with_tools_limits_total_mcp_images_across_iterations(mon
         return _ToolCallResponse("Done.")
 
     monkeypatch.setattr(
-        "src.flow_engine.nodes.step_tools.litellm.acompletion",
+        "src.flow_engine.agent_runtime.model.litellm.acompletion",
         _fake_acompletion,
     )
 
@@ -1075,7 +1063,7 @@ async def test_run_step_with_tools_limits_total_mcp_images_across_iterations(mon
 
 @pytest.mark.anyio
 async def test_run_step_with_tools_keeps_parallel_tool_responses_adjacent(monkeypatch):
-    from src.flow_engine.nodes.step_tools import run_step_with_tools
+    from src.flow_engine.tests.step_agent_test_helper import run_step_with_tools
 
     calls = []
 
@@ -1105,7 +1093,7 @@ async def test_run_step_with_tools_keeps_parallel_tool_responses_adjacent(monkey
             )
         return _ToolCallResponse("Done.")
 
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
 
     output = await run_step_with_tools(
         model_id="gpt-test",
@@ -1931,7 +1919,7 @@ async def test_run_step_suppresses_tool_stream_for_visualizer(monkeypatch):
 
     monkeypatch.setattr("src.flow_engine.nodes.step.get_stream_writer", lambda: _writer)
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
     fake_factory_module = types.ModuleType("src.flow_engine.tools")
     fake_factory_module.create_langchain_tools = lambda **kwargs: ([_FakeTool()], None)
     monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)

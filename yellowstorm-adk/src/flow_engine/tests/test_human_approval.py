@@ -4,9 +4,14 @@ import json
 from pathlib import Path
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 
 from src.flow_engine.builder import compose
-from src.flow_engine.nodes.human_approval import run_human_approval
+from src.flow_engine.nodes.human_approval import (
+    normalize_approval_resume,
+    run_human_approval,
+)
 
 
 def load_fixture(name: str) -> dict:
@@ -25,6 +30,7 @@ class TestHumanApproval:
         snapshot = load_fixture("human_approval.json")
         graph = compose(snapshot)
         assert graph is not None
+        assert graph.interrupt_after_nodes == []
 
     def test_human_approval_sets_pending_state(self, monkeypatch):
         import asyncio
@@ -57,4 +63,67 @@ class TestHumanApproval:
 
         assert captured["pending"]["node_id"] == ha_node["id"]
         assert captured["pending"]["prompt"] == "Approve the result?"
-        assert result["task_outputs"][(ha_node["id"], 0)] == {"decision": "approved"}
+        assert result["task_outputs"][(ha_node["id"], 0)] == {
+            "decision": "approved",
+            "payload": {},
+        }
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("approved", {"decision": "approved", "payload": {}}),
+            ({"decision": "reject"}, {"decision": "rejected", "payload": {}}),
+            (
+                {"decision": "approved", "payload": {"reason": "safe"}},
+                {"decision": "approved", "payload": {"reason": "safe"}},
+            ),
+        ],
+    )
+    def test_normalize_approval_resume(self, value, expected):
+        assert normalize_approval_resume(value) == expected
+
+    def test_normalize_approval_resume_rejects_unknown_decision(self):
+        with pytest.raises(ValueError, match="approved or rejected"):
+            normalize_approval_resume({"decision": "skip"})
+
+    @pytest.mark.asyncio
+    async def test_one_resume_runs_downstream_without_second_continuation(self, monkeypatch):
+        from src.flow_engine import builder as builder_module
+
+        calls: list[str] = []
+
+        async def fake_step(node_id, node_config, state, node_inputs=None):
+            del node_config, node_inputs
+            iteration = state["iterations"].get(node_id, 0)
+            calls.append(node_id)
+            return {
+                "task_outputs": {(node_id, iteration): {"output": node_id}},
+                "iterations": {node_id: iteration + 1},
+            }
+
+        monkeypatch.setitem(builder_module.NODE_KIND_DISPATCH, "step", fake_step)
+        graph = compose(load_fixture("human_approval.json"), InMemorySaver())
+        config = {"configurable": {"thread_id": "single-approval-resume"}}
+        initial_state = {
+            "execution_id": "single-approval-resume",
+            "flow_id": "flow-approval",
+            "inputs": {},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+        }
+
+        suspended = await graph.ainvoke(initial_state, config)
+        assert len(suspended["__interrupt__"]) == 1
+        assert calls == ["node-1"]
+
+        completed = await graph.ainvoke(
+            Command(resume={"decision": "approved", "payload": {}}),
+            config,
+        )
+        assert calls == ["node-1", "node-3"]
+        assert completed["task_outputs"][("node-2", 0)]["decision"] == "approved"
+        assert (await graph.aget_state(config)).next == ()

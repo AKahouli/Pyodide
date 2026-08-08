@@ -35,10 +35,7 @@ export interface PlaybookExecutionHitlResumeHost {
   isRuntimeAvailable(): boolean;
   resumeApprovalRuntime: ResumeRuntimeCallback;
   resumeFromStepRuntime: ResumeRuntimeCallback;
-  startDurableResumeStream(
-    execution: FlowExecutionDocument,
-    resumePayload: Record<string, unknown>,
-  ): void;
+  scheduleDurableResume(ownerId: string): void;
 }
 
 /**
@@ -96,22 +93,56 @@ export class PlaybookExecutionHitlResumeService {
       );
     }
 
-    const resumed = await new Promise<boolean>((resolve, reject) => {
-      host.resumeApprovalRuntime(
-        {
-          execution_id: executionId,
-          decision: payload.decision,
-          payload: toGrpcStruct(payload.payload || {}),
-        },
-        (err: Error | null, response?: { resumed?: boolean }) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          resolve(Boolean(response?.resumed));
-        },
-      );
-    });
+    const pendingApproval = execution.pendingApproval;
+    const interruptId = pendingApproval?.interruptId ?? '';
+    const claimFilter: Record<string, unknown> = {
+      _id: executionId,
+      status: 'pending_approval',
+      'pendingApproval.nodeId': pendingApproval?.nodeId,
+      'pendingApproval.iteration': pendingApproval?.iteration ?? 0,
+    };
+    if (interruptId) claimFilter['pendingApproval.interruptId'] = interruptId;
+
+    const claim = await this.executionModel.updateOne(
+      claimFilter,
+      { $set: { status: 'running' } },
+    ).exec();
+    if (!(claim as { modifiedCount?: number }).modifiedCount) {
+      const latestExecution = await this.executionModel.findById(executionId);
+      if (!latestExecution) {
+        throw new NotFoundException(
+          ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
+          'Execution not found',
+        );
+      }
+      return latestExecution.toJSON() as unknown as IFlowExecutionResponse;
+    }
+
+    let resumed: boolean;
+    try {
+      resumed = await new Promise<boolean>((resolve, reject) => {
+        host.resumeApprovalRuntime(
+          {
+            execution_id: executionId,
+            decision: payload.decision,
+            payload: toGrpcStruct(payload.payload || {}),
+          },
+          (err: Error | null, response?: { resumed?: boolean }) => {
+            if (err) {
+              reject(err);
+              return;
+            }
+            resolve(Boolean(response?.resumed));
+          },
+        );
+      });
+    } catch (error) {
+      await this.executionModel.updateOne(
+        { ...claimFilter, status: 'running' },
+        { $set: { status: 'pending_approval' } },
+      ).exec();
+      throw error;
+    }
 
     if (!resumed) {
       const restarted = await this.restartDurableApprovalResume({
@@ -127,6 +158,10 @@ export class PlaybookExecutionHitlResumeService {
       if (restarted) {
         return restarted;
       }
+      await this.executionModel.updateOne(
+        { ...claimFilter, status: 'running' },
+        { $set: { status: 'pending_approval' } },
+      ).exec();
       throw new ConflictException(
         ErrorCode.CONFLICT,
         'Execution could not be resumed because the runtime no longer has the pending approval state.',
@@ -134,7 +169,7 @@ export class PlaybookExecutionHitlResumeService {
     }
 
     const resumeUpdate = await this.executionModel.updateOne(
-      { _id: executionId, status: 'pending_approval' },
+      { ...claimFilter, status: 'running' },
       {
         $set: {
           status: 'running',
@@ -147,7 +182,7 @@ export class PlaybookExecutionHitlResumeService {
           'hitlEvents.$[event].respondedAt': new Date(),
         },
       },
-      { arrayFilters: [{ 'event.interruptId': execution.pendingApproval?.interruptId ?? '' }] },
+      { arrayFilters: [{ 'event.interruptId': interruptId }] },
     ).exec();
 
     if (!(resumeUpdate as { modifiedCount?: number }).modifiedCount) {
@@ -161,7 +196,7 @@ export class PlaybookExecutionHitlResumeService {
       return latestExecution.toJSON() as unknown as IFlowExecutionResponse;
     }
 
-    const resolvedApproval = execution.pendingApproval;
+    const resolvedApproval = pendingApproval;
     await this.createFutureHitlMemoryIfRequested({
       executionId,
       ownerId,
@@ -388,7 +423,13 @@ export class PlaybookExecutionHitlResumeService {
     if (!params.execution.snapshot || !pendingApproval) {
       return null;
     }
-    const resumed = await this.persistDurableResume(params.executionId, pendingApproval.interruptId ?? '', params.response);
+    const resumed = await this.persistDurableResume(
+      params.execution,
+      params.executionId,
+      pendingApproval.interruptId ?? '',
+      params.resumePayload,
+      params.response,
+    );
     if (!resumed) return null;
 
     await this.createFutureHitlMemoryIfRequested({
@@ -409,7 +450,7 @@ export class PlaybookExecutionHitlResumeService {
       },
       riskLevel: pendingApproval.riskLevel,
     });
-    this.requireHost().startDurableResumeStream(params.execution, params.resumePayload);
+    this.requireHost().scheduleDurableResume(String(params.execution.ownerId));
     this.streamEvents.emitHitlInterruptResolved(params.executionId, pendingApproval.interruptId ?? '', {
       action: String(params.response.action ?? ''),
       taskId: pendingApproval.nodeId,
@@ -417,7 +458,7 @@ export class PlaybookExecutionHitlResumeService {
       remember: params.response.remember === true ? true : undefined,
     });
     params.execution.pendingApproval = null;
-    params.execution.status = 'running';
+    params.execution.status = 'queued';
     return params.execution.toJSON() as unknown as IFlowExecutionResponse;
   }
 
@@ -434,7 +475,13 @@ export class PlaybookExecutionHitlResumeService {
     if (!params.execution.snapshot || !pendingApproval) {
       return null;
     }
-    const resumed = await this.persistDurableResume(params.executionId, params.interruptId, params.response);
+    const resumed = await this.persistDurableResume(
+      params.execution,
+      params.executionId,
+      params.interruptId,
+      params.resumePayload,
+      params.response,
+    );
     if (!resumed) return null;
 
     await this.createFutureHitlMemoryIfRequested({
@@ -455,7 +502,7 @@ export class PlaybookExecutionHitlResumeService {
       },
       riskLevel: pendingApproval.riskLevel,
     });
-    this.requireHost().startDurableResumeStream(params.execution, params.resumePayload);
+    this.requireHost().scheduleDurableResume(String(params.execution.ownerId));
     this.streamEvents.emitHitlInterruptResolved(params.executionId, params.interruptId, {
       action: String(params.response.action ?? 'reply'),
       taskId: params.taskId,
@@ -463,21 +510,28 @@ export class PlaybookExecutionHitlResumeService {
       remember: params.response.remember === true ? true : undefined,
     });
     params.execution.pendingApproval = null;
-    params.execution.status = 'running';
+    params.execution.status = 'queued';
     return params.execution.toJSON() as unknown as IFlowExecutionResponse;
   }
 
   private async persistDurableResume(
+    execution: FlowExecutionDocument,
     executionId: string,
     interruptId: string,
+    resumePayload: Record<string, unknown>,
     response: Record<string, unknown>,
   ): Promise<boolean> {
     const resumeUpdate = await this.executionModel.updateOne(
-      { _id: executionId, status: 'pending_approval' },
+      { _id: executionId, status: { $in: ['running', 'pending_approval'] } },
       {
         $set: {
-          status: 'running',
+          status: 'queued',
+          queuePosition: 0,
           pendingApproval: null,
+          inputContext: {
+            ...(execution.inputContext ?? {}),
+            __playbook_resume: resumePayload,
+          },
           'hitlEvents.$[event].status': 'answered',
           'hitlEvents.$[event].response': response,
           'hitlEvents.$[event].respondedAt': new Date(),

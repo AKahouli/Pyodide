@@ -1,7 +1,7 @@
 import { createExecutionServiceForTests, createNoopGraphSanitizer } from './playbook-flow-execution.test-support';
 
 describe('runFromStep', () => {
-  it('queues replay execution with the latest playbook snapshot', async () => {
+  it('queues replay execution with the immutable source snapshot', async () => {
     const savedExecution = {
       id: 'exec-replay-latest',
       queuePosition: 0,
@@ -16,7 +16,11 @@ describe('runFromStep', () => {
       flowId: 'flow-1',
       ownerId: 'owner-1',
       status: 'completed',
-      inputContext: { ticketId: '42' },
+      inputContext: {
+        ticketId: '42',
+        __playbook_resume: { decision: 'approved' },
+        __playbook_hitl_memory: [{ id: 'runtime-only' }],
+      },
       snapshot: {
         settings: { recursionLimit: 10, maxParallelism: 2 },
         nodes: [
@@ -82,12 +86,12 @@ describe('runFromStep', () => {
     expect(ExecutionModel).toHaveBeenCalledWith(expect.objectContaining({
       flowId: 'flow-1',
       inputContext: { ticketId: '42' },
-      recursionLimit: 25,
-      maxParallelism: 5,
+      recursionLimit: 10,
+      maxParallelism: 2,
       snapshot: expect.objectContaining({
         nodes: expect.arrayContaining([
-          expect.objectContaining({ id: 'task-2', input: { raw: 'new task 2' } }),
-          expect.objectContaining({ id: 'task-3', input: { raw: 'new task 3' } }),
+          expect.objectContaining({ id: 'task-2', input: { raw: 'old task 2' } }),
+          expect.objectContaining({ id: 'task-3', input: { raw: 'old task 3' } }),
         ]),
       }),
       replaySource: {
@@ -99,7 +103,7 @@ describe('runFromStep', () => {
     expect((queueService as any).admit).toHaveBeenCalledWith('owner-1', 'exec-replay-latest', 10, 50);
   });
 
-  it('rejects when the target step no longer exists in the latest snapshot', async () => {
+  it('rejects when the target step does not exist in the source snapshot', async () => {
     const sourceExecution = {
       id: 'exec-source',
       flowId: 'flow-1',
@@ -109,7 +113,7 @@ describe('runFromStep', () => {
       snapshot: {
         settings: { recursionLimit: 10, maxParallelism: 2 },
         nodes: [
-          { id: 'task-2', kind: 'step', input: { raw: 'old task 2' }, metadata: {} },
+          { id: 'task-1', kind: 'step', input: { raw: 'old task 1' }, metadata: {} },
         ],
         controlEdges: [],
         dataBindings: [],

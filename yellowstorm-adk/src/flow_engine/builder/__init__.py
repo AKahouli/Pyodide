@@ -16,7 +16,6 @@ from src.flow_engine.builder.conditional import add_conditional_edges
 from src.flow_engine.builder.iterator import add_iterator_edges, compute_iterator_children
 from src.flow_engine.builder.guards import build_nearest_router_map, build_cycle_node_set, wrap_node_for_iteration, wrap_node_for_error_routing
 from src.flow_engine.bindings.resolver import resolve_node_inputs
-from src.flow_engine.builder.human_approval import configure_human_approval
 from src.flow_engine.nodes.step import run_step
 from src.flow_engine.nodes.router import run_router
 from src.flow_engine.nodes.human_approval import run_human_approval
@@ -94,13 +93,7 @@ def compose(
         router_configs=router_configs,
         exit_targets=iterator_exit_targets,
     )
-    graph = configure_human_approval(graph, raw_nodes)
-
-    compiled = graph.compile(
-        checkpointer=checkpointer,
-        interrupt_before=[],
-        interrupt_after=_collect_interrupt_after(raw_nodes),
-    )
+    compiled = graph.compile(checkpointer=checkpointer)
     return compiled
 
 
@@ -158,11 +151,3 @@ def _add_start_edges(
         graph.add_edge(START, ep)
     if entrypoints:
         logger.info("[builder] Added START edges to entrypoints", count=len(entrypoints))
-
-
-def _collect_interrupt_after(raw_nodes: list[dict[str, Any]]) -> list[str]:
-    return [
-        str(node["id"])
-        for node in raw_nodes
-        if node.get("kind") == "human_approval" and node.get("id")
-    ]

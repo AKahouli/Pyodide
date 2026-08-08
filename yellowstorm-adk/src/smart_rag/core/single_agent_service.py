@@ -26,6 +26,7 @@ from src.smart_rag.tools.native_tool_registry import resolve_native_tools
 from src.smart_rag.engines.helpers import coerce_to_dict
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from google.adk import Agent
+from src.guardrails.adapters.google_adk import apply_guardrail_callbacks
 from src.logger.logging import get_logger
 from src.skills.runtime import inject_skill_catalog, make_activate_skill_tool
 
@@ -437,6 +438,12 @@ class SingleAgentService:
             if preview_tool_config:
                 agent_kwargs["before_tool_callback"] = add_diagram_context_before_tool
                 agent_kwargs["after_tool_callback"] = prepare_web_preview_after_tool
+            apply_guardrail_callbacks(agent_kwargs, {
+                "id": str(getattr(agent_config, "id", "") or ""),
+                "name": str(getattr(agent_config, "name", "") or ""),
+                "user_id": str(getattr(request, "user_id", "") or ""),
+                "agent_params": getattr(agent_config, "agent_params", None) or {},
+            })
             agent = Agent(**agent_kwargs)
 
             logger.info(f"Created agent {agent_config.name} with {len(tools)} tools: {[t.schema.get('name') if hasattr(t, 'schema') else str(t) for t in tools]}")

@@ -9,9 +9,14 @@ To make collection deterministic, seed ``os.environ`` from ``MockSettings``
 ahead of test-module collection, so the env vars are in place in time.
 """
 
+import asyncio
 import os
+import sys
 
 from tests.common_schema import MockSettings
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # Populate os.environ from MockSettings so import-time get_settings() succeeds.
 _mock_settings = MockSettings()

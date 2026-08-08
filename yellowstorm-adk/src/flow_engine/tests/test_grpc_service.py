@@ -516,7 +516,6 @@ def test_resume_approval_unblocks_run(monkeypatch):
         assert response.resumed is True
         assert collected == [
             "ApprovalRequested",
-            "ApprovalRequested",
             "ApprovalResolved",
             "NodeStarted",
             "NodeCompleted",
@@ -615,7 +614,6 @@ def test_resume_from_step_unblocks_run(monkeypatch):
 
         assert response.resumed is True
         assert collected == [
-            "NodeSuspended",
             "NodeSuspended",
             "NodeStarted",
             "NodeCompleted",
@@ -1325,6 +1323,7 @@ def test_run_from_checkpoint_emits_failure_when_seed_fails(monkeypatch):
             target_node_id="step-1",
             target_iteration=0,
         )
+        request.snapshot.nodes.add(id="step-1", kind="step")
 
         async def fake_ensure_checkpointer():
             return object()
@@ -1365,6 +1364,7 @@ def test_run_from_checkpoint_streams_from_seeded_config(monkeypatch):
             target_node_id="step-2",
             target_iteration=0,
         )
+        request.snapshot.nodes.add(id="step-2", kind="step")
 
         async def fake_ensure_checkpointer():
             return object()
@@ -1409,13 +1409,19 @@ def test_run_from_checkpoint_streams_from_seeded_config(monkeypatch):
             yield _build_event("NodeStarted", execution_id, "step-2", {}, 0)
             yield _build_event("NodeCompleted", execution_id, "step-2", {"output": "replayed"}, 0)
 
-        async def fake_seed_replay_state(*args, **kwargs):
-            return {"configurable": {"thread_id": "exec-replay", "checkpoint_id": "seeded"}}
+        async def fake_fork(*args, **kwargs):
+            from src.flow_engine.runtime.checkpoint_fork import ForkResult
+
+            return ForkResult(
+                config={"configurable": {"thread_id": "exec-replay", "checkpoint_id": "seeded"}},
+                source_checkpoint_id="source-checkpoint",
+                target_checkpoint_id="seeded",
+            )
 
         monkeypatch.setattr("src.flow_engine.grpc_service.get_checkpointer", lambda: None)
         monkeypatch.setattr("src.flow_engine.grpc_service.ensure_checkpointer", fake_ensure_checkpointer)
         monkeypatch.setattr("src.flow_engine.grpc_service.compose", lambda snapshot, checkpointer: FakeGraph())
-        monkeypatch.setattr("src.flow_engine.grpc_service._seed_replay_state", fake_seed_replay_state)
+        monkeypatch.setattr(servicer._checkpoint_forks, "prepare", fake_fork)
         monkeypatch.setattr("src.flow_engine.grpc_service.stream_graph", fake_stream_graph)
         monkeypatch.setattr("src.flow_engine.grpc_service.emit_events", fake_emit_events)
 
@@ -1443,6 +1449,7 @@ def test_run_from_checkpoint_resumes_after_approval(monkeypatch):
             target_node_id="step-2",
             target_iteration=0,
         )
+        request.snapshot.nodes.add(id="step-2", kind="step")
 
         async def fake_ensure_checkpointer():
             return object()
@@ -1489,13 +1496,19 @@ def test_run_from_checkpoint_resumes_after_approval(monkeypatch):
             yield _build_event("ApprovalResolved", execution_id, "step-2", {"decision": "approved"}, 0)
             yield _build_event("NodeCompleted", execution_id, "step-2", {"output": "replayed"}, 0)
 
-        async def fake_seed_replay_state(*args, **kwargs):
-            return {"configurable": {"thread_id": "exec-replay", "checkpoint_id": "seeded"}}
+        async def fake_fork(*args, **kwargs):
+            from src.flow_engine.runtime.checkpoint_fork import ForkResult
+
+            return ForkResult(
+                config={"configurable": {"thread_id": "exec-replay", "checkpoint_id": "seeded"}},
+                source_checkpoint_id="source-checkpoint",
+                target_checkpoint_id="seeded",
+            )
 
         monkeypatch.setattr("src.flow_engine.grpc_service.get_checkpointer", lambda: None)
         monkeypatch.setattr("src.flow_engine.grpc_service.ensure_checkpointer", fake_ensure_checkpointer)
         monkeypatch.setattr("src.flow_engine.grpc_service.compose", lambda snapshot, checkpointer: FakeGraph())
-        monkeypatch.setattr("src.flow_engine.grpc_service._seed_replay_state", fake_seed_replay_state)
+        monkeypatch.setattr(servicer._checkpoint_forks, "prepare", fake_fork)
         monkeypatch.setattr("src.flow_engine.grpc_service.stream_graph", fake_stream_graph)
         monkeypatch.setattr("src.flow_engine.grpc_service.emit_events", fake_emit_events)
 

@@ -27,3 +27,10 @@ class Content:
 class FunctionResponse:
     name: Optional[str] = None
     response: Any = None
+
+
+@dataclass
+class FunctionDeclaration:
+    name: Optional[str] = None
+    description: Optional[str] = None
+    parameters: Any = None

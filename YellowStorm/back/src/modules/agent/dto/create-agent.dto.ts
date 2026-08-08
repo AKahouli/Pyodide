@@ -2,6 +2,7 @@ import {
   IsString,
   IsOptional,
   IsBoolean,
+  IsIn,
   IsNumber,
   IsArray,
   IsMongoId,
@@ -21,17 +22,17 @@ export class PromptInjectionGuardrailsDto {
   @ApiPropertyOptional({ description: 'Enable input prompt injection guardrail', default: false })
   @IsOptional()
   @IsBoolean()
-  inputGuardrailEnabled?: boolean;
+  inputEnabled?: boolean;
 
   @ApiPropertyOptional({ description: 'Enable output prompt injection guardrail', default: false })
   @IsOptional()
   @IsBoolean()
-  outputGuardrailEnabled?: boolean;
+  outputEnabled?: boolean;
 
-  @ApiPropertyOptional({ description: 'Enable tool-call prompt injection guardrail', default: false })
+  @ApiPropertyOptional({ enum: ['monitor', 'balanced', 'strict'], default: 'balanced' })
   @IsOptional()
-  @IsBoolean()
-  toolCallGuardrailEnabled?: boolean;
+  @IsIn(['monitor', 'balanced', 'strict'])
+  mode?: 'monitor' | 'balanced' | 'strict';
 
   @ApiPropertyOptional({ description: 'Input classifier policy prompt', maxLength: 20000 })
   @IsOptional()
@@ -45,13 +46,31 @@ export class PromptInjectionGuardrailsDto {
   @MaxLength(20000)
   outputClassifierPrompt?: string;
 
-  @ApiPropertyOptional({ description: 'Tool-call classifier policy prompt', maxLength: 20000 })
+  @ApiPropertyOptional({ description: 'Message returned when a request is blocked', maxLength: 1000 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  blockMessage?: string;
+}
+
+export class ToolActionReviewDto {
+  @ApiPropertyOptional({ description: 'Review model-requested tool actions before execution', default: false })
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @ApiPropertyOptional({ enum: ['monitor', 'balanced', 'strict'], default: 'balanced' })
+  @IsOptional()
+  @IsIn(['monitor', 'balanced', 'strict'])
+  mode?: 'monitor' | 'balanced' | 'strict';
+
+  @ApiPropertyOptional({ description: 'Tool action classifier policy prompt', maxLength: 20000 })
   @IsOptional()
   @IsString()
   @MaxLength(20000)
-  toolCallClassifierPrompt?: string;
+  classifierPrompt?: string;
 
-  @ApiPropertyOptional({ description: 'Message returned when a request is blocked', maxLength: 1000 })
+  @ApiPropertyOptional({ description: 'Message returned when a tool action is blocked', maxLength: 1000 })
   @IsOptional()
   @IsString()
   @MaxLength(1000)
@@ -65,6 +84,11 @@ export class AgentGuardrailsDto {
   @Type(() => PromptInjectionGuardrailsDto)
   promptInjection?: PromptInjectionGuardrailsDto;
 
+  @ApiPropertyOptional({ type: ToolActionReviewDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ToolActionReviewDto)
+  toolActionReview?: ToolActionReviewDto;
 }
 
 export class AgentDeploymentSettingsDto {

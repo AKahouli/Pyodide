@@ -46,7 +46,7 @@ def test_trace_collector_redacts_and_accumulates_usage() -> None:
 
 @pytest.mark.asyncio
 async def test_run_step_with_tools_records_failed_tool_call(monkeypatch) -> None:
-    from src.flow_engine.nodes.step_tools import run_step_with_tools
+    from src.flow_engine.tests.step_agent_test_helper import run_step_with_tools
 
     class _Response:
         def __init__(self) -> None:
@@ -67,7 +67,7 @@ async def test_run_step_with_tools_records_failed_tool_call(monkeypatch) -> None
     async def fake_acompletion(**_kwargs):
         return _Response()
 
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.tests.step_agent_test_helper.litellm.acompletion", fake_acompletion)
 
     with pytest.raises(RuntimeError, match="tool failed"):
         await run_step_with_tools(
@@ -112,7 +112,7 @@ def test_trace_collector_omits_observed_intent_key_when_set_to_none() -> None:
 
 @pytest.mark.asyncio
 async def test_run_step_with_tools_records_child_tool_calls_by_child_name(monkeypatch) -> None:
-    from src.flow_engine.nodes.step_tools import run_step_with_tools
+    from src.flow_engine.tests.step_agent_test_helper import run_step_with_tools
     from src.temporary_child_summary import (
         pop_temporary_child_summary,
         record_temporary_child_start,
@@ -158,7 +158,7 @@ async def test_run_step_with_tools_records_child_tool_calls_by_child_name(monkey
     async def fake_acompletion(**_kwargs):
         return responses.pop(0)
 
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.tests.step_agent_test_helper.litellm.acompletion", fake_acompletion)
     collector = TraceCollector()
     trace_update_count = 0
 

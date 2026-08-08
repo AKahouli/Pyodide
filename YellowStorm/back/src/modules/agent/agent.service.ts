@@ -27,8 +27,8 @@ import { ConnectedAppTokenService } from '../connected-app/services/connected-ap
 import { TeamService } from '../team/team.service';
 import {
   GuardrailsSettingsService,
+  normalizeAgentGuardrails,
   normalizeAdminGuardrailsSettings,
-  normalizePromptInjectionGuardrails,
 } from '../guardrails/services/guardrails-settings.service';
 import { normalizeWidgetSettings } from './constants/widget-default-settings';
 
@@ -955,7 +955,7 @@ export class AgentService {
             enable_temporary_child_agents: String(agent.enable_temporary_child_agents),
             max_temporary_child_agents: String(agent.max_temporary_child_agents),
             guardrails_json: JSON.stringify({
-              agent: { promptInjection: normalizePromptInjectionGuardrails(agent.guardrails?.promptInjection) },
+              agent: normalizeAgentGuardrails(agent.guardrails),
               admin: normalizeAdminGuardrailsSettings(adminGuardrailsSettings),
             }),
             guardrails_classifier_model: guardrailsClassifierModelId,
@@ -1145,7 +1145,7 @@ export class AgentService {
               max_temporary_child_agents: String(agent.max_temporary_child_agents),
               connector_bindings_json: JSON.stringify(connectorBindings),
               guardrails_json: JSON.stringify({
-                agent: { promptInjection: normalizePromptInjectionGuardrails(agent.guardrails?.promptInjection) },
+                agent: normalizeAgentGuardrails(agent.guardrails),
                 admin: normalizeAdminGuardrailsSettings(adminGuardrailsSettings),
               }),
               guardrails_classifier_model: guardrailsClassifierModelId,
@@ -1716,11 +1716,7 @@ export class AgentService {
         id.toString(),
       ),
       connectorActionSelections: this.toConnectorActionSelectionResponses(d.connectorActionSelections),
-      guardrails: {
-        promptInjection: normalizePromptInjectionGuardrails(
-          (d.guardrails as { promptInjection?: unknown } | undefined)?.promptInjection as Parameters<typeof normalizePromptInjectionGuardrails>[0],
-        ),
-      },
+      guardrails: normalizeAgentGuardrails(d.guardrails as Parameters<typeof normalizeAgentGuardrails>[0]),
       deploymentSettings: {
         embedEnabled: ((d.deploymentSettings as { embedEnabled?: boolean } | undefined)?.embedEnabled) ?? false,
         restEnabled: ((d.deploymentSettings as { restEnabled?: boolean } | undefined)?.restEnabled) ?? false,
@@ -1788,11 +1784,7 @@ export class AgentService {
         id.toString(),
       ),
       connectorActionSelections: this.toConnectorActionSelectionResponses(d.connectorActionSelections),
-      guardrails: {
-        promptInjection: normalizePromptInjectionGuardrails(
-          (d.guardrails as { promptInjection?: unknown } | undefined)?.promptInjection as Parameters<typeof normalizePromptInjectionGuardrails>[0],
-        ),
-      },
+      guardrails: normalizeAgentGuardrails(d.guardrails as Parameters<typeof normalizeAgentGuardrails>[0]),
       agentTypeSkillIds,
       enable_temporary_child_agents: (d.enable_temporary_child_agents as boolean) ?? false,
       max_temporary_child_agents: (d.max_temporary_child_agents as number) ?? 4,

@@ -40,17 +40,26 @@ export interface Agent {
 }
 
 export interface PromptInjectionGuardrailsConfig {
-  inputGuardrailEnabled: boolean;
-  outputGuardrailEnabled: boolean;
-  toolCallGuardrailEnabled: boolean;
+  inputEnabled: boolean;
+  outputEnabled: boolean;
+  mode: GuardrailMode;
   inputClassifierPrompt: string;
   outputClassifierPrompt: string;
-  toolCallClassifierPrompt: string;
+  blockMessage: string;
+}
+
+export type GuardrailMode = 'monitor' | 'balanced' | 'strict';
+
+export interface ToolActionReviewConfig {
+  enabled: boolean;
+  mode: GuardrailMode;
+  classifierPrompt: string;
   blockMessage: string;
 }
 
 export interface AgentGuardrails {
   promptInjection: PromptInjectionGuardrailsConfig;
+  toolActionReview: ToolActionReviewConfig;
 }
 
 export interface AgentDeploymentSettings {

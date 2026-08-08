@@ -180,7 +180,12 @@ class Settings(BaseSettings):
     A2A_PUBLIC_BASE_URL: Optional[str] = None       # e.g. https://host (else derived from request)
     PLAYBOOK_STREAM_QUEUE_MAXSIZE: int = 128
     STEP_STREAM_QUEUE_MAXSIZE: int = 64
-    LANGGRAPH_CHECKPOINT_PATH: Optional[str] = None
+    LANGGRAPH_CHECKPOINT_SCHEMA: str = "langgraph_checkpoints"
+    LANGGRAPH_CHECKPOINT_POOL_MIN_SIZE: int = Field(default=1, ge=1, le=50)
+    LANGGRAPH_CHECKPOINT_POOL_MAX_SIZE: int = Field(default=5, ge=1, le=50)
+    LANGGRAPH_CHECKPOINT_POOL_TIMEOUT_SECONDS: float = Field(
+        default=30.0, gt=0, le=300
+    )
 
     PLAYBOOK_MAX_CONCURRENT_PER_USER: int = 10
     PLAYBOOK_EXECUTION_QUEUE_MAX_DEPTH: int = 50
@@ -253,6 +258,17 @@ class Settings(BaseSettings):
                 "DATABASE_URL must be a valid database URL with supported protocol"
             )
 
+        return v
+
+    @field_validator("LANGGRAPH_CHECKPOINT_SCHEMA")
+    @classmethod
+    def validate_langgraph_checkpoint_schema(cls, v: str) -> str:
+        import re
+
+        if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", v):
+            raise ValueError(
+                "LANGGRAPH_CHECKPOINT_SCHEMA must be a lowercase PostgreSQL identifier"
+            )
         return v
 
     @field_validator("lINKUP_API_KEY", mode="before")

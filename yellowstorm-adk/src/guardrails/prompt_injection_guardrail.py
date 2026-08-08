@@ -40,16 +40,6 @@ class PromptInjectionGuardrail:
     async def check_output(self, text: str, agent_config: dict[str, Any], channel: str = "web") -> GuardrailResult:
         return await self._check("output", text, agent_config, channel)
 
-    async def check_tool_call(
-        self,
-        tool_name: str,
-        tool_args: dict[str, Any],
-        agent_config: dict[str, Any],
-        channel: str = "web",
-    ) -> GuardrailResult:
-        text = f"Tool: {tool_name}\nArguments: {tool_args}"
-        return await self._check("tool_call", text, agent_config, channel)
-
     async def _check(
         self,
         phase: str,
@@ -60,9 +50,8 @@ class PromptInjectionGuardrail:
         effective = resolve_effective_guardrails(agent_config)
         config = effective.prompt_injection
         enabled = {
-            "input": config.input_guardrail_enabled,
-            "output": config.output_guardrail_enabled,
-            "tool_call": config.tool_call_guardrail_enabled,
+            "input": config.input_enabled,
+            "output": config.output_enabled,
         }.get(phase, False)
         if not enabled:
             return GuardrailResult(decision="allow", text=text, phase=phase, source=config.source)
@@ -81,6 +70,9 @@ class PromptInjectionGuardrail:
             attack_type=classifier.attack_type,
             target=classifier.target,
         )
+
+        if config.mode == "monitor":
+            return GuardrailResult(decision="allow", text=text, reason=classifier.reason, phase=phase, source=config.source)
 
         if classifier.decision == "block":
             return GuardrailResult(

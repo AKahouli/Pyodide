@@ -26,7 +26,6 @@ from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_d
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from src.flow_engine.runtime.artifact_routing import infer_artifact_kind
 from src.logger.logging import get_logger
-from src.guardrails.prompt_injection_guardrail import PromptInjectionGuardrail
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
 APP_NAME = "manager_app"
@@ -1225,16 +1224,7 @@ class AgentRunner:
                 ui_reference,
             )
 
-        guarded = await PromptInjectionGuardrail().check_output(
-            text=event_text,
-            agent_config=agent_config or {},
-        )
-
-        should_emit_final = bool(guarded.text) and (
-            guarded.blocked
-            or guarded.sanitized
-            or guarded.text != streamed_text
-        )
+        should_emit_final = bool(event_text) and event_text != streamed_text
         if q and should_emit_final:
             if self.streaming_formatter.component_tracker:
                 self.streaming_formatter.component_tracker.finish_component(agent_id)
@@ -1242,13 +1232,12 @@ class AgentRunner:
                 agent_id=agent_id,
                 agent_name=agent_name,
                 agent_type="agent",
-                chunk=guarded.text,
+                chunk=event_text,
                 message_id=session_id,
                 content_type="final_response",
-                guardrail_decision=guarded.decision_metadata(),
             ))
 
-        return guarded.text
+        return event_text
 
     async def _replace_diagram_references_during_streaming(
         self, text: str, session_id: str

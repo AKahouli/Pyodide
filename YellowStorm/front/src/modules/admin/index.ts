@@ -103,7 +103,6 @@ export type {
   ConversationSettingsAgentOption,
   AdminGuardrailsSettings,
   AdminEvaluationSettings,
-  PromptInjectionGuardrailsConfig,
   PlaybookPromptResponse,
   PlaybookPromptListResponse,
   UpsertPlaybookPromptRequest,

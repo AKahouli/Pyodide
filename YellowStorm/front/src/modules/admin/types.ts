@@ -21,19 +21,8 @@ export interface AdminMenuItem {
   descriptionKey: ModuleTranslationKey<'admin'>;
 }
 
-export interface PromptInjectionGuardrailsConfig {
-  inputGuardrailEnabled: boolean;
-  outputGuardrailEnabled: boolean;
-  toolCallGuardrailEnabled: boolean;
-  inputClassifierPrompt: string;
-  outputClassifierPrompt: string;
-  toolCallClassifierPrompt: string;
-  blockMessage: string;
-}
-
-export interface AdminGuardrailsSettings {
+export interface AdminGuardrailsSettings extends AgentGuardrails {
   forceActivation: boolean;
-  promptInjection: PromptInjectionGuardrailsConfig;
 }
 
 export interface AdminEvaluationSettings {

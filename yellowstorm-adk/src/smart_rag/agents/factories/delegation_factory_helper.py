@@ -749,6 +749,15 @@ def create_standard_agent_with_tools(
     _attach_mcp_search_state(agent, config, agent_config)
     _attach_mcp_toolset(agent, config, agent_config)
 
+    from src.guardrails.adapters.google_adk import apply_guardrails_to_agent
+
+    callback_config = {
+        **agent_config,
+        "user_id": config.user_id,
+        "agent_params": agent_config.get("agent_params") or {},
+    }
+    apply_guardrails_to_agent(agent, callback_config)
+
     return agent, None
 
 

@@ -1,22 +1,22 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 
 export class UpdatePromptInjectionGuardrailsDto {
   @ApiPropertyOptional({ default: false })
   @IsOptional()
   @IsBoolean()
-  inputGuardrailEnabled?: boolean;
+  inputEnabled?: boolean;
 
   @ApiPropertyOptional({ default: false })
   @IsOptional()
   @IsBoolean()
-  outputGuardrailEnabled?: boolean;
+  outputEnabled?: boolean;
 
-  @ApiPropertyOptional({ default: false })
+  @ApiPropertyOptional({ enum: ['monitor', 'balanced', 'strict'], default: 'balanced' })
   @IsOptional()
-  @IsBoolean()
-  toolCallGuardrailEnabled?: boolean;
+  @IsIn(['monitor', 'balanced', 'strict'])
+  mode?: 'monitor' | 'balanced' | 'strict';
 
   @ApiPropertyOptional({ maxLength: 20000 })
   @IsOptional()
@@ -30,11 +30,29 @@ export class UpdatePromptInjectionGuardrailsDto {
   @MaxLength(20000)
   outputClassifierPrompt?: string;
 
+  @ApiPropertyOptional({ maxLength: 1000 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  blockMessage?: string;
+}
+
+export class UpdateToolActionReviewDto {
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @ApiPropertyOptional({ enum: ['monitor', 'balanced', 'strict'], default: 'balanced' })
+  @IsOptional()
+  @IsIn(['monitor', 'balanced', 'strict'])
+  mode?: 'monitor' | 'balanced' | 'strict';
+
   @ApiPropertyOptional({ maxLength: 20000 })
   @IsOptional()
   @IsString()
   @MaxLength(20000)
-  toolCallClassifierPrompt?: string;
+  classifierPrompt?: string;
 
   @ApiPropertyOptional({ maxLength: 1000 })
   @IsOptional()
@@ -54,4 +72,10 @@ export class UpdateGuardrailsSettingsDto {
   @ValidateNested()
   @Type(() => UpdatePromptInjectionGuardrailsDto)
   promptInjection?: UpdatePromptInjectionGuardrailsDto;
+
+  @ApiPropertyOptional({ type: UpdateToolActionReviewDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdateToolActionReviewDto)
+  toolActionReview?: UpdateToolActionReviewDto;
 }
