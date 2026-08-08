@@ -5,7 +5,7 @@ Contains core utility functions for tree building, schema generation, and data s
 """
 import copy
 from typing import Dict, Any, List, Tuple, Optional
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 from src.logger.logging import get_logger
 

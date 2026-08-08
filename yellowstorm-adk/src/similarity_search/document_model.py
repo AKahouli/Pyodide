@@ -2,7 +2,7 @@
 
 from typing import List, Tuple
 
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 from src.logger.logging import get_logger
 from src.schema.document_model_schema import DocumentModel

@@ -3,6 +3,7 @@
 import asyncio
 import os
 from contextlib import asynccontextmanager
+from importlib.metadata import version
 from os import getenv
 
 from fastapi.exceptions import RequestValidationError
@@ -83,6 +84,20 @@ async def lifespan(app: FastAPI):
         setup_logging(
             json_logs=LOG_JSON_FORMAT, log_level=LOG_LEVEL, color_logs=COLOR_LOGS
         )
+
+    runtime_versions = {
+        package: version(package)
+        for package in (
+            "langgraph",
+            "langgraph-checkpoint",
+            "langgraph-checkpoint-sqlite",
+            "langchain",
+            "langchain-core",
+            "langchain-openai",
+            "langchain-community",
+        )
+    }
+    logger.info("AI runtime versions: %s", runtime_versions)
 
     # Apply global LLM patches (mapping, timeouts, and logging)
     try:

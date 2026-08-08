@@ -10,7 +10,7 @@ from typing import (
 )
 
 from langchain_core.documents import Document
-from langchain_community.vectorstores import Qdrant
+from langchain_qdrant import Qdrant
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,

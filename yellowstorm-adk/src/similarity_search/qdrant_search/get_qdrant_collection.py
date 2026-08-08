@@ -3,7 +3,7 @@
 from typing import Any, Optional
 from threading import Lock
 
-from langchain_community.vectorstores import Qdrant
+from langchain_qdrant import Qdrant
 from qdrant_client import QdrantClient
 
 # Try to import payload index models (available in newer qdrant-client versions)

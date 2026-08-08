@@ -4,7 +4,7 @@ from asyncio import to_thread
 from functools import wraps
 from typing import Callable, List, Optional, Tuple
 
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 from src.logger.logging import get_logger
 
