@@ -957,6 +957,7 @@ export class AgentService {
             guardrails_json: JSON.stringify({
               agent: normalizeAgentGuardrails(agent.guardrails),
               admin: normalizeAdminGuardrailsSettings(adminGuardrailsSettings),
+              classifier: { omitTemperature: guardrailsClassifierModel?.omitTemperature === true },
             }),
             guardrails_classifier_model: guardrailsClassifierModelId,
             platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
@@ -1147,6 +1148,7 @@ export class AgentService {
               guardrails_json: JSON.stringify({
                 agent: normalizeAgentGuardrails(agent.guardrails),
                 admin: normalizeAdminGuardrailsSettings(adminGuardrailsSettings),
+                classifier: { omitTemperature: guardrailsClassifierModel?.omitTemperature === true },
               }),
               guardrails_classifier_model: guardrailsClassifierModelId,
               ...(sessionId ? { session_id: sessionId } : {}),

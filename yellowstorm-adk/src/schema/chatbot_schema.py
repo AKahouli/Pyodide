@@ -64,6 +64,7 @@ class ChatWithADKRequest(BaseModel):
     brain_relations: Optional[Dict] = None
     languages: Optional[List[str]] = None
     search_web: Optional[bool] = False
+    agent_params: Optional[Dict] = None
 
     def __init__(self, **data: Any) -> None:
         super().__init__(**_sync_workspace_aliases(data))

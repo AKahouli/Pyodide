@@ -276,6 +276,9 @@ export class PlaybookExecutionHitlResumeService {
       ...(payload.feedback ? { feedback: payload.feedback } : {}),
       ...(payload.scope ? { scope: payload.scope } : {}),
       ...(payload.remember !== undefined ? { remember: payload.remember } : {}),
+      ...(execution.pendingApproval.interruptPayload?.request_fingerprint
+        ? { request_fingerprint: String(execution.pendingApproval.interruptPayload.request_fingerprint) }
+        : {}),
     };
 
     const resumed = await new Promise<boolean>((resolve, reject) => {

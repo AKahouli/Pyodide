@@ -11,7 +11,7 @@ from src.smart_rag.agents.factories.delegation_factory_helper import (
     _get_team_skills,
 )
 from src.skills.runtime import inject_skill_catalog, make_activate_skill_tool
-from src.guardrails.adapters.google_adk import apply_guardrail_callbacks
+from src.guardrails.adapters.google_adk import build_guarded_adk_agent
 from src.smart_rag.agents.core import DocumentHelpers
 from src.smart_rag.infrastructure.processing import add_additional_context, add_timestamp_to_agent
 
@@ -135,7 +135,7 @@ class ManagerAgentFactory:
             return None
 
         manager_config = self.agent_repository.get_agent_by_name("manager_agent") or self.agent_repository.get_agent_by_name("manager") or {}
-        manager_kwargs = apply_guardrail_callbacks({
+        manager_kwargs = {
             "name": "manager_agent",
             "model": model,
             "instruction": manager_instruction+ "\n\n the current timestamp is {time}. \n",
@@ -143,8 +143,12 @@ class ManagerAgentFactory:
             "before_tool_callback": add_additional_context,
             "before_agent_callback": [check_if_agent_with_search_in_team,add_timestamp_to_agent],
             "after_agent_callback": add_task_order_to_state,
-        }, {**manager_config, "user_id": getattr(self.config, "user_id", "")})
-        manager_agent = Agent(**manager_kwargs)
+        }
+        manager_agent = build_guarded_adk_agent(
+            Agent,
+            manager_kwargs,
+            {**manager_config, "user_id": getattr(self.config, "user_id", "")},
+        )
 
         manager_agent._team_instance = delegation_factory
         return manager_agent

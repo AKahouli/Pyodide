@@ -10,6 +10,7 @@ Output is stored into task_outputs[(node_id, iteration)].
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import time
 from typing import Any
@@ -217,7 +218,7 @@ class _TemporaryChildAgentTool:
         self._session_id = session_id
         self._parent_name = parent_name
         self._inherited_context = inherited_context
-        self._agent_config = agent_config or {}
+        self._agent_config = copy.deepcopy(agent_config or {})
         self._user_id = user_id
         self._flow_id = flow_id
         self._node_id = node_id

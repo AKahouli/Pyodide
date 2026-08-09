@@ -1,7 +1,7 @@
 import { AgentConnectorRuntimeService } from './agent-connector-runtime.service';
 
 describe('AgentConnectorRuntimeService', () => {
-  it('propagates connector action safety and defaults missing safety to read', async () => {
+  it('propagates connector action safety and defaults missing safety to unknown', async () => {
     const service = new AgentConnectorRuntimeService(
       { setContext: jest.fn(), warn: jest.fn() } as never,
       {} as never,
@@ -20,7 +20,7 @@ describe('AgentConnectorRuntimeService', () => {
 
     expect(bindings[0].actions).toEqual(expect.arrayContaining([
       expect.objectContaining({ action_key: 'update', safety: 'write' }),
-      expect.objectContaining({ action_key: 'read', safety: 'read' }),
+      expect.objectContaining({ action_key: 'read', safety: 'unknown' }),
     ]));
   });
 });

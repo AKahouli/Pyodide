@@ -26,7 +26,7 @@ from src.smart_rag.tools.native_tool_registry import resolve_native_tools
 from src.smart_rag.engines.helpers import coerce_to_dict
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from google.adk import Agent
-from src.guardrails.adapters.google_adk import apply_guardrail_callbacks
+from src.guardrails.adapters.google_adk import build_guarded_adk_agent, output_guardrail_enabled
 from src.logger.logging import get_logger
 from src.skills.runtime import inject_skill_catalog, make_activate_skill_tool
 
@@ -126,6 +126,9 @@ class SingleAgentService:
             logger.info(f"Starting agent execution for session {session_id}")
             first_response_time = None
             response_count = 0
+            guarded_output = output_guardrail_enabled({
+                "agent_params": getattr(request.agent, "agent_params", None) or {},
+            })
 
             async for event in session_helper.runner.run_async(
                 user_id=request.user_id,
@@ -144,16 +147,16 @@ class SingleAgentService:
 
                         response_count += 1
 
-                        # Stream text chunks to client
-                        output = self.streaming_formatter.format_streaming_event(
-                            agent_id=request.agent.id,
-                            agent_name=request.agent.name,
-                            agent_type="agent",
-                            chunk=text_chunk,
-                            message_id=session_id,
-                            content_type="chunk"
-                        )
-                        await queue.put(output)
+                        if not guarded_output:
+                            output = self.streaming_formatter.format_streaming_event(
+                                agent_id=request.agent.id,
+                                agent_name=request.agent.name,
+                                agent_type="agent",
+                                chunk=text_chunk,
+                                message_id=session_id,
+                                content_type="chunk"
+                            )
+                            await queue.put(output)
 
                     # Handle function calls
                     if part.function_call:
@@ -211,11 +214,14 @@ class SingleAgentService:
                 # Handle final response
                 if event.is_final_response():
                     if event.content and event.content.parts:
-                        final_text = event.content.parts[0].text if event.content.parts[0].text else ""
-                        if final_text and final_text not in accumulated_response:
+                        final_text = "".join(str(getattr(part, "text", "") or "") for part in event.content.parts)
+                        should_emit_final = bool(final_text) and (guarded_output or final_text not in accumulated_response)
+                        if guarded_output:
+                            accumulated_response = final_text
+                        elif final_text and final_text not in accumulated_response:
                             accumulated_response += final_text
 
-                            # Stream final text
+                        if should_emit_final:
                             final_output = self.streaming_formatter.format_streaming_event(
                                 agent_id=request.agent.id,
                                 agent_name=request.agent.name,
@@ -438,13 +444,12 @@ class SingleAgentService:
             if preview_tool_config:
                 agent_kwargs["before_tool_callback"] = add_diagram_context_before_tool
                 agent_kwargs["after_tool_callback"] = prepare_web_preview_after_tool
-            apply_guardrail_callbacks(agent_kwargs, {
+            agent = build_guarded_adk_agent(Agent, agent_kwargs, {
                 "id": str(getattr(agent_config, "id", "") or ""),
                 "name": str(getattr(agent_config, "name", "") or ""),
                 "user_id": str(getattr(request, "user_id", "") or ""),
                 "agent_params": getattr(agent_config, "agent_params", None) or {},
             })
-            agent = Agent(**agent_kwargs)
 
             logger.info(f"Created agent {agent_config.name} with {len(tools)} tools: {[t.schema.get('name') if hasattr(t, 'schema') else str(t) for t in tools]}")
 

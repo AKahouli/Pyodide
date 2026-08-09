@@ -8,6 +8,8 @@ from typing import Any
 
 from litellm import acompletion
 
+from src.config.settings import get_settings
+
 logger = logging.getLogger(__name__)
 
 SYSTEM_CLASSIFIER_WRAPPER = """
@@ -38,6 +40,7 @@ Schema:
   "reason": string
 }}
 """
+CLASSIFIER_TIMEOUT_SECONDS = 10
 
 
 @dataclass
@@ -52,33 +55,54 @@ class ClassifierDecision:
     error: str = ""
 
 
+def _is_jailbreak_content_filter_error(error: Exception) -> bool:
+    message = str(error).lower()
+    return "content_filter" in message and "jailbreak" in message
+
+
 async def classify_prompt_injection(
     text: str,
     classifier_model: str,
     classifier_prompt: str,
     phase: str,
+    omit_temperature: bool = False,
 ) -> ClassifierDecision:
     if not classifier_model:
         logger.warning("[GUARDRAIL] No guardrails classifier model configured; failing open.")
         return ClassifierDecision(reason="missing_classifier_model")
 
+    settings = get_settings()
+    completion_kwargs: dict[str, Any] = {
+        "model": classifier_model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_CLASSIFIER_WRAPPER.format(admin_prompt=classifier_prompt)},
+            {"role": "user", "content": f"Phase: {phase}\n\nText:\n{text}"},
+        ],
+        "response_format": {"type": "json_object"},
+        "api_base": settings.LITELLM_API_BASE_URL,
+        "api_key": settings.LITELLM_API_SECRET_KEY,
+    }
+    if not omit_temperature:
+        completion_kwargs["temperature"] = 0
+
     try:
         response = await asyncio.wait_for(
-            acompletion(
-                model=classifier_model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_CLASSIFIER_WRAPPER.format(admin_prompt=classifier_prompt)},
-                    {"role": "user", "content": f"Phase: {phase}\n\nText:\n{text}"},
-                ],
-                temperature=0,
-                response_format={"type": "json_object"},
-            ),
-            timeout=3,
+            acompletion(**completion_kwargs),
+            timeout=CLASSIFIER_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
         logger.warning("[GUARDRAIL] Classifier timed out; failing open")
         return ClassifierDecision(reason="classifier_timeout", error="classifier_timeout")
     except Exception as exc:
+        if _is_jailbreak_content_filter_error(exc):
+            logger.warning("[GUARDRAIL] Provider content filter detected a jailbreak attempt")
+            return ClassifierDecision(
+                decision="block",
+                confidence=1.0,
+                attack_type="instruction_override",
+                target="system_prompt",
+                reason="provider_jailbreak_filter",
+            )
         logger.warning("[GUARDRAIL] Classifier failed open: %s", exc)
         return ClassifierDecision(reason="classifier_provider_error", error="classifier_provider_error")
 

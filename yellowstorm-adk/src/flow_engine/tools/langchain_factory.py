@@ -1959,6 +1959,7 @@ def _create_connector_mcp_tools(
                     args_schema=arg_schema,
                     metadata={
                         "tool_kind": "connector_action",
+                        "source": "connector",
                         "connector_id": cid,
                         "connector_name": cn,
                         "action_key": ak,

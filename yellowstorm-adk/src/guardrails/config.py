@@ -42,6 +42,7 @@ class EffectiveGuardrailsConfig:
     prompt_injection: PromptInjectionConfig
     tool_action_review: ToolActionReviewConfig
     classifier_model: str = ""
+    classifier_omit_temperature: bool = False
 
 
 def _normalize_mode(value: Any) -> str:
@@ -93,9 +94,13 @@ def resolve_effective_guardrails(agent_config: dict[str, Any]) -> EffectiveGuard
     except (TypeError, ValueError) as exc:
         logger.warning("[GUARDRAIL] Invalid guardrails_json; failing open: %s", exc)
         payload = {}
+    if not isinstance(payload, dict):
+        logger.warning("[GUARDRAIL] guardrails_json must be an object; failing open")
+        payload = {}
 
-    admin = payload.get("admin") or {}
-    agent = payload.get("agent") or {}
+    admin = payload.get("admin") if isinstance(payload.get("admin"), dict) else {}
+    agent = payload.get("agent") if isinstance(payload.get("agent"), dict) else {}
+    classifier = payload.get("classifier") if isinstance(payload.get("classifier"), dict) else {}
 
     if admin.get("forceActivation") is True:
         selected = admin
@@ -114,4 +119,5 @@ def resolve_effective_guardrails(agent_config: dict[str, Any]) -> EffectiveGuard
         prompt_injection=prompt_injection,
         tool_action_review=tool_action_review,
         classifier_model=classifier_model,
+        classifier_omit_temperature=classifier.get("omitTemperature") is True,
     )

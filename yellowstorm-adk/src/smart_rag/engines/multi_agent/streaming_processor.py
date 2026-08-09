@@ -28,6 +28,7 @@ from src.smart_rag.engines.helpers import (
 )
 from src.smart_rag.messaging.component_tracker import ComponentTracker
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
+from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
 
 logger = get_logger("api.routers.agentic_rag.StreamingEventProcessor")
 
@@ -60,6 +61,9 @@ class StreamingEventProcessor:
         # Initialize call_id registry in config if not exists
         if not hasattr(self.config, "call_id_registry"):
             self.config.call_id_registry = {}
+        self._manager_pending_tools_by_call_id: Dict[str, List[str]] = {}
+        self._manager_pending_tools_by_name: Dict[str, List[str]] = {}
+        self._manager_seen_tool_ids: set[str] = set()
 
     def _get_manager_info(self, manager_agent: Any = None) -> tuple:
         """Resolve manager agent ID and name from repository or agent object.
@@ -140,6 +144,8 @@ class StreamingEventProcessor:
         self._manager_seen_tool_ids: set[str] = set()
 
         event_count = 0
+        guarded_output = agent_tree_has_output_guardrail(manager_agent)
+        validated_final_received = False
         stream = agent_runner.run_async(
             user_id=self.config.user_id,
             session_id=session_id,
@@ -151,6 +157,8 @@ class StreamingEventProcessor:
             async for event in stream:
                 if not event.content or not event.content.parts:
                     continue
+                if guarded_output and event.is_final_response():
+                    validated_final_received = True
                 event_count += 1
 
                 # Track manager as current agent at the start (first event)
@@ -212,6 +220,7 @@ class StreamingEventProcessor:
                     accumulated_manager_text,
                     current_agent,
                     component_tracker,
+                    guarded_output,
                 )
         except (asyncio.CancelledError, GeneratorExit):
             should_close_stream = False
@@ -223,6 +232,8 @@ class StreamingEventProcessor:
                     await aclose()
 
         # Complete final generation span
+        if guarded_output and not validated_final_received:
+            accumulated_manager_text = ""
         if team_execution_span:
             team_execution_span.update(output=accumulated_manager_text)
 
@@ -248,6 +259,7 @@ class StreamingEventProcessor:
         accumulated_manager_text: str = "",
         current_agent: str = None,
         component_tracker: ComponentTracker = None,
+        guarded_output: bool = False,
     ) -> tuple:
         """Handle individual event parts and update message_id if needed.
 
@@ -285,9 +297,10 @@ class StreamingEventProcessor:
             if part.text and not event.is_final_response() and not has_multiple_parts:
                 event_text = part.text
                 accumulated_manager_text += event_text
-                current_agent = await self._handle_text_event(
-                    event_text, current_message_id, q, manager_agent, current_agent
-                )
+                if not guarded_output:
+                    current_agent = await self._handle_text_event(
+                        event_text, current_message_id, q, manager_agent, current_agent
+                    )
 
             # Track function calls to agents
             elif part.function_call:
@@ -516,6 +529,13 @@ class StreamingEventProcessor:
                     await self._handle_ui_tool_response(part.function_response, current_message_id, q)
 
             elif event.is_final_response() and event.content and event.content.parts:
+                if guarded_output:
+                    final_text = "".join(str(getattr(item, "text", "") or "") for item in event.content.parts)
+                    accumulated_manager_text = final_text
+                    if final_text:
+                        current_agent = await self._handle_text_event(
+                            final_text, current_message_id, q, manager_agent, current_agent
+                        )
                 await self._handle_final_response(current_message_id, q)
 
         return (

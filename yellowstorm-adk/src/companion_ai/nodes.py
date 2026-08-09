@@ -151,12 +151,14 @@ def make_llm_node_factory(
         tool_names = [getattr(getattr(t, "func", None), "__name__", "?") for t in step_tools]
         logger.info("[worky] 8. step=%s executor context:\n--- instruction ---\n%s\n"
                     "--- tools (%d) ---\n%s", step.id, instruction, len(tool_names), tool_names)
-        return LlmAgent(
-            name=name,
-            model=build_llm(model_name, with_tools=bool(step_tools), temperature=temperature),
-            instruction=instruction,
-            tools=step_tools,
-            output_key=name,  # step result lands in session state under this key
-        )
+        from src.guardrails.adapters.google_adk import build_guarded_adk_agent
+
+        return build_guarded_adk_agent(LlmAgent, {
+            "name": name,
+            "model": build_llm(model_name, with_tools=bool(step_tools), temperature=temperature),
+            "instruction": instruction,
+            "tools": step_tools,
+            "output_key": name,
+        }, {})
 
     return factory

@@ -184,7 +184,7 @@ describe('AgentService connector skill inheritance', () => {
   });
 
   it('injects connector skills into stream agent runtime', async () => {
-    const { service, skillService, connectorService, agentTypeService } = createService();
+    const { service, skillService, connectorService, agentTypeService, modelsService } = createService();
     const streamAgent: IAgentForStream = {
       id: 'agent-1',
       name: 'Agent 1',
@@ -229,6 +229,7 @@ describe('AgentService connector skill inheritance', () => {
     skillService.findByIds.mockImplementation(async (ids: string[]) =>
       ids.map((id) => createSkill(id)),
     );
+    modelsService.getGuardrailsClassifierModel.mockResolvedValue({ id: 'guardrails-classifier', omitTemperature: true });
 
     const result = await service.buildAgentsForStream(userId, undefined, undefined, undefined, undefined, undefined);
 
@@ -253,6 +254,8 @@ describe('AgentService connector skill inheritance', () => {
       enable_temporary_child_agents: 'true',
       max_temporary_child_agents: '6',
     }));
+    expect(JSON.parse(result[0].agent_params?.params.guardrails_json as string).classifier)
+      .toEqual({ omitTemperature: true });
     expect(result[0].agent_params?.params.temperature).toBe('0');
   });
 
@@ -457,7 +460,7 @@ describe('AgentService connector skill inheritance', () => {
   });
 
   it('injects connector skills into playbook agent runtime', async () => {
-    const { service, agentModel, skillService, connectorService } = createService();
+    const { service, agentModel, skillService, connectorService, modelsService } = createService();
     const objectId = new Types.ObjectId();
     agentModel.find.mockReturnValue({
       populate: jest.fn().mockReturnValue({
@@ -508,6 +511,7 @@ describe('AgentService connector skill inheritance', () => {
     skillService.findByIds.mockImplementation(async (ids: string[]) =>
       ids.map((id) => createSkill(id)),
     );
+    modelsService.getGuardrailsClassifierModel.mockResolvedValue({ id: 'guardrails-classifier', omitTemperature: true });
 
     const result = await service.buildGrpcAgentsForPlaybook(userId, [objectId.toString()]);
 
@@ -531,11 +535,14 @@ describe('AgentService connector skill inheritance', () => {
       enable_temporary_child_agents: 'true',
       max_temporary_child_agents: '5',
     }));
+    expect(JSON.parse(result[0].agent_params?.params.guardrails_json as string).classifier)
+      .toEqual({ omitTemperature: true });
   });
 
   it('falls back to the admin default model when the agent has no model set', async () => {
     const { service, agentModel, modelsService } = createService();
     modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
+    modelsService.getGuardrailsClassifierModel.mockResolvedValue({ id: 'guardrails-classifier', omitTemperature: false });
     modelsService.findById.mockResolvedValue({ id: 'admin-default-id', omitTemperature: false } as any);
 
     const objectId = new Types.ObjectId();
@@ -576,6 +583,8 @@ describe('AgentService connector skill inheritance', () => {
     expect(result).toHaveLength(1);
     expect(result[0].chatbot.model).toBe('admin-default-id');
     expect(result[0].agent_params?.params.temperature).toBe('0');
+    expect(JSON.parse(result[0].agent_params?.params.guardrails_json as string).classifier)
+      .toEqual({ omitTemperature: false });
   });
 
   it('prefers fallbackModelId over the admin default when the agent has no model set', async () => {

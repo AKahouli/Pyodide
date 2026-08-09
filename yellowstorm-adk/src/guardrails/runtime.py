@@ -36,6 +36,7 @@ class GuardrailRuntime:
             classifier_model=effective.classifier_model,
             classifier_prompt=f"{config.classifier_prompt_for_phase(phase)}\n\nMode: {config.mode}. {mode_instruction}",
             phase=f"{phase}:{context.runtime_surface}:{context.source or context.channel}",
+            omit_temperature=effective.classifier_omit_temperature,
         )
         decision = classifier.decision
         if config.mode == "monitor":
@@ -82,6 +83,7 @@ class GuardrailRuntime:
             classifier_model=effective.classifier_model,
             classifier_prompt=config.classifier_prompt,
             phase=f"tool_action:{context.runtime_surface}",
+            omit_temperature=effective.classifier_omit_temperature,
         )
         blocked = classifier.decision == "block" and config.mode != "monitor"
         result = GuardrailDecision(

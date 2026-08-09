@@ -700,6 +700,12 @@ def create_standard_agent_with_tools(
         except Exception as e:
             logger.exception("Failed to parse connector_bindings_json: %s", e)
 
+    callback_config = {
+        **agent_config,
+        "user_id": config.user_id,
+        "agent_params": agent_config.get("agent_params") or {},
+    }
+    agent_factory.set_guardrail_config(callback_config)
     agent = agent_factory.create_agent(
         name=agent_name,
         agent_id=agent_config.get("id"),
@@ -751,11 +757,6 @@ def create_standard_agent_with_tools(
 
     from src.guardrails.adapters.google_adk import apply_guardrails_to_agent
 
-    callback_config = {
-        **agent_config,
-        "user_id": config.user_id,
-        "agent_params": agent_config.get("agent_params") or {},
-    }
     apply_guardrails_to_agent(agent, callback_config)
 
     return agent, None

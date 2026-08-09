@@ -758,7 +758,10 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
       _id: 'exec-step-1',
       ownerId: 'owner-1',
       status: 'pending_approval',
-      pendingApproval: { nodeId: 'task-1', iteration: 2, prompt: 'Approve?' },
+      pendingApproval: {
+        nodeId: 'task-1', iteration: 2, prompt: 'Approve?',
+        interruptPayload: { request_fingerprint: 'trusted-fingerprint' },
+      },
       save: jest.fn().mockResolvedValue(undefined),
       toJSON: jest.fn().mockReturnValue({ id: 'exec-step-1', status: 'running' }),
     };
@@ -771,7 +774,9 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
     const ctx = await createE2EService(undefined, { executionModel });
     (ctx.service as any).playbookFlowClient.ResumeFromStep = mockResumeFromStep;
 
-    const result = await ctx.service.resumeFromStep('exec-step-1', 'owner-1', { taskId: 'task-1', action: 'approve' });
+    const result = await ctx.service.resumeFromStep('exec-step-1', 'owner-1', {
+      taskId: 'task-1', action: 'approve', payload: { request_fingerprint: 'untrusted-fingerprint' },
+    });
 
     expect(executionModel.updateOne).toHaveBeenCalledWith(
       { _id: 'exec-step-1', status: 'pending_approval' },
@@ -789,6 +794,7 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
       interrupt_id: '',
       action: 'approve',
     });
+    expect(grpcArgs[0].payload.fields.request_fingerprint.stringValue).toBe('trusted-fingerprint');
     expect(result.status).toBe('running');
   });
 

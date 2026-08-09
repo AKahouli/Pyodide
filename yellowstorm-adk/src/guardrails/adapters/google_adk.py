@@ -1,9 +1,13 @@
+import copy
+import hashlib
 import json
+from dataclasses import asdict
 from typing import Any, Callable
 
 from google.genai import types
 
 from src.guardrails.models import GuardrailContext
+from src.guardrails.config import resolve_effective_guardrails
 from src.guardrails.runtime import GuardrailRuntime
 from src.guardrails.tool_registry import tool_policy
 from src.connector_tool_name import build_connector_tool_name
@@ -70,6 +74,7 @@ def _configured_tool_metadata(config: dict[str, Any], tool_name: str) -> dict[st
             if build_connector_tool_name(connector_slug, action_key) == tool_name:
                 return {
                     "tool_kind": "connector_action",
+                    "source": "connector",
                     "connector_id": str(binding.get("connector_id") or ""),
                     "connector_name": str(binding.get("connector_name") or ""),
                     "action_key": action_key,
@@ -78,8 +83,50 @@ def _configured_tool_metadata(config: dict[str, Any], tool_name: str) -> dict[st
     return {}
 
 
+def guardrail_config_fingerprint(agent_config: dict[str, Any] | None) -> str:
+    effective = resolve_effective_guardrails(agent_config or {})
+    canonical = json.dumps(asdict(effective), sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def output_guardrail_enabled(agent_config: dict[str, Any] | None) -> bool:
+    return resolve_effective_guardrails(agent_config or {}).prompt_injection.output_enabled
+
+
+def _stored_children(agent: Any) -> list[Any]:
+    values = getattr(agent, "__dict__", {})
+    children = list(values.get("sub_agents") or []) if isinstance(values, dict) else []
+    tools = values.get("tools") if isinstance(values, dict) else None
+    if tools is None:
+        tools = getattr(agent, "tools", None)
+    for tool in tools or []:
+        tool_values = getattr(tool, "__dict__", {})
+        if not isinstance(tool_values, dict):
+            continue
+        child = tool_values.get("agent") or tool_values.get("sub_agent")
+        if child is not None:
+            children.append(child)
+    return children
+
+
+def _applied_fingerprints(agent: Any) -> set[str]:
+    value = getattr(agent, "_guardrails_config_fingerprints", set())
+    return set(value) if isinstance(value, (set, frozenset, list, tuple)) else set()
+
+
+def agent_tree_has_output_guardrail(agent: Any, _visited: set[int] | None = None) -> bool:
+    visited = _visited or set()
+    identity = id(agent)
+    if identity in visited:
+        return False
+    visited.add(identity)
+    if getattr(agent, "_guardrails_output_enabled", False) is True:
+        return True
+    return any(agent_tree_has_output_guardrail(child, visited) for child in _stored_children(agent))
+
+
 def apply_guardrail_callbacks(agent_kwargs: dict[str, Any], agent_config: dict[str, Any] | None) -> dict[str, Any]:
-    config = agent_config or {}
+    config = copy.deepcopy(agent_config or {})
     runtime = GuardrailRuntime()
 
     async def before_model(callback_context: Any, llm_request: Any) -> Any:
@@ -154,19 +201,53 @@ def apply_guardrail_callbacks(agent_kwargs: dict[str, Any], agent_config: dict[s
     return agent_kwargs
 
 
-def apply_guardrails_to_agent(agent: Any, agent_config: dict[str, Any] | None) -> Any:
-    if getattr(agent, "_guardrails_callbacks_applied", False):
-        return agent
-    callbacks = apply_guardrail_callbacks({
-        "before_model_callback": getattr(agent, "before_model_callback", None),
-        "after_model_callback": getattr(agent, "after_model_callback", None),
-        "before_tool_callback": getattr(agent, "before_tool_callback", None),
-    }, agent_config)
-    for field, value in callbacks.items():
-        setattr(agent, field, value)
+def _mark_guardrail_config(agent: Any, agent_config: dict[str, Any] | None) -> None:
+    fingerprint = guardrail_config_fingerprint(agent_config)
+    applied = _applied_fingerprints(agent)
+    applied.add(fingerprint)
+    object.__setattr__(agent, "_guardrails_config_fingerprints", applied)
     object.__setattr__(agent, "_guardrails_callbacks_applied", True)
-    for tool in getattr(agent, "tools", None) or []:
-        child = getattr(tool, "agent", None) or getattr(tool, "sub_agent", None)
-        if child is not None:
-            apply_guardrails_to_agent(child, agent_config)
+    object.__setattr__(
+        agent,
+        "_guardrails_output_enabled",
+        getattr(agent, "_guardrails_output_enabled", False) is True or output_guardrail_enabled(agent_config),
+    )
+
+
+def apply_guardrails_to_agent(
+    agent: Any,
+    agent_config: dict[str, Any] | None,
+    _visited: set[tuple[int, str]] | None = None,
+) -> Any:
+    fingerprint = guardrail_config_fingerprint(agent_config)
+    visited = _visited or set()
+    visit_key = (id(agent), fingerprint)
+    if visit_key in visited:
+        return agent
+    visited.add(visit_key)
+    applied = _applied_fingerprints(agent)
+    if fingerprint not in applied:
+        callbacks = apply_guardrail_callbacks({
+            "before_model_callback": getattr(agent, "before_model_callback", None),
+            "after_model_callback": getattr(agent, "after_model_callback", None),
+            "before_tool_callback": getattr(agent, "before_tool_callback", None),
+        }, agent_config)
+        for field, value in callbacks.items():
+            setattr(agent, field, value)
+        _mark_guardrail_config(agent, agent_config)
+    for child in _stored_children(agent):
+        apply_guardrails_to_agent(child, agent_config, visited)
+    return agent
+
+
+def build_guarded_adk_agent(
+    agent_cls: Any,
+    agent_kwargs: dict[str, Any],
+    agent_config: dict[str, Any] | None = None,
+) -> Any:
+    config_snapshot = copy.deepcopy(agent_config or {})
+    agent = agent_cls(**apply_guardrail_callbacks(dict(agent_kwargs), config_snapshot))
+    _mark_guardrail_config(agent, config_snapshot)
+    for child in _stored_children(agent):
+        apply_guardrails_to_agent(child, config_snapshot)
     return agent

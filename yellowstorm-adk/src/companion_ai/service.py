@@ -557,12 +557,14 @@ class OrchestratorService:
     async def _make_plan(self, session_id: str, user_id: str, message: str, *,
                          planner_model: Optional[str] = None,
                          planner_prompt: Optional[str] = None) -> Plan:
-        planner = LlmAgent(
-            name="planner",
-            model=self._build_planner_model(planner_model),
-            instruction=(f"{planner_prompt}\n\n{PLANNER_INSTRUCTION}"
-                         if planner_prompt else PLANNER_INSTRUCTION),
-        )
+        from src.guardrails.adapters.google_adk import build_guarded_adk_agent
+
+        planner = build_guarded_adk_agent(LlmAgent, {
+            "name": "planner",
+            "model": self._build_planner_model(planner_model),
+            "instruction": (f"{planner_prompt}\n\n{PLANNER_INSTRUCTION}"
+                            if planner_prompt else PLANNER_INSTRUCTION),
+        }, {})
         runner = self._runner_factory(planner, f"planner_{session_id}")
         await _ensure_session(runner, f"planner_{session_id}", user_id, session_id + "_plan")
         text = ""

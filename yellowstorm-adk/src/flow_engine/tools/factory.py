@@ -44,6 +44,14 @@ async def create_tools_for_node(
                 "name": tool_name,
                 "description": f"Call {action_key} on {connector_name}",
                 "coroutine": _call_tool,
+                "metadata": {
+                    "tool_kind": "connector_action",
+                    "source": "connector",
+                    "connector_id": str(binding.get("connector_id") or ""),
+                    "connector_name": str(connector_name),
+                    "action_key": str(action_key),
+                    "safety": "unknown" if isinstance(action, str) else str(action.get("safety") or "unknown").lower(),
+                },
             })
 
     return tools, tool_context

@@ -30,6 +30,10 @@ class TraceCollector:
     def set_observed_intent_key(self, key: str | None) -> None:
         self._observed_intent_key = key
 
+    @property
+    def has_prompt_trace(self) -> bool:
+        return bool(self._llm_prompt_trace)
+
     def record_prompt(self, stage: str, model: str, prompt: str) -> None:
         self._llm_prompt_trace.append(
             LLMPromptTraceItem(

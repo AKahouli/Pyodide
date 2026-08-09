@@ -129,7 +129,8 @@ def build_model_node(tools: list[Any]):
         messages = _ordered_tool_results(messages)
         request_messages = _limit_images([_message_payload(message) for message in messages])
         if context.trace_collector is not None:
-            context.trace_collector.record_prompt(f"model_iteration_{next_iteration}", context.model_id, messages_to_trace_prompt(messages))
+            if not context.trace_collector.has_prompt_trace or next_iteration > 0:
+                context.trace_collector.record_prompt(f"model_iteration_{next_iteration}", context.model_id, messages_to_trace_prompt(messages))
             notify_trace(context)
         kwargs: dict[str, Any] = {
             "model": context.model_id, "messages": request_messages,

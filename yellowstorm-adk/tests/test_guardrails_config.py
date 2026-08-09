@@ -26,6 +26,7 @@ def test_resolve_effective_guardrails_uses_flat_agent_params() -> None:
                 "blockMessage": "admin blocked",
             },
         },
+        "classifier": {"omitTemperature": True},
     }
 
     config = resolve_effective_guardrails({
@@ -36,6 +37,7 @@ def test_resolve_effective_guardrails_uses_flat_agent_params() -> None:
     })
 
     assert config.classifier_model == "azure/gpt-4o-mini"
+    assert config.classifier_omit_temperature is True
     assert config.prompt_injection.source == "agent"
     assert config.prompt_injection.input_guardrail_enabled is True
     assert config.prompt_injection.output_guardrail_enabled is False
@@ -80,3 +82,10 @@ def test_resolve_effective_guardrails_supports_legacy_single_prompt() -> None:
     assert config.prompt_injection.classifier_prompt_for_phase("input") == "legacy policy"
     assert config.prompt_injection.classifier_prompt_for_phase("output") == "legacy policy"
     assert config.tool_action_review.classifier_prompt == "legacy policy"
+
+
+def test_resolve_effective_guardrails_fails_open_for_non_object_json() -> None:
+    config = resolve_effective_guardrails({"agent_params": {"guardrails_json": "[]"}})
+    assert config.prompt_injection.input_enabled is False
+    assert config.prompt_injection.output_enabled is False
+    assert config.tool_action_review.enabled is False

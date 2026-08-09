@@ -17,6 +17,7 @@ from google.adk import Agent, Runner
 from google.adk.agents.run_config import StreamingMode, RunConfig
 from google.adk.sessions import InMemorySessionService
 from src.temporary_child_summary import record_temporary_child_tool_call
+from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
 from google.genai import types
 
 from src.smart_rag.infrastructure.monitoring import TraceRecorder
@@ -370,6 +371,7 @@ class AgentRunner:
         seen_tool_component_ids: set[str] = set()
 
         runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
+        guarded_output = agent_tree_has_output_guardrail(agent)
 
         stream = runner.run_async(
             user_id=user_id,
@@ -399,6 +401,7 @@ class AgentRunner:
                         and getattr(part, "thought", False) is not True
                         and not event.is_final_response()
                         and not has_multiple_parts
+                        and not guarded_output
                     ):
                         event_text = part.text or ""
 
@@ -1009,6 +1012,7 @@ class AgentRunner:
         """
         recorder = TraceRecorder(agent_name=agent.name, agent_type="html")
         accumulated_text = ""
+        guarded_output = agent_tree_has_output_guardrail(agent)
         runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
 
         stream = runner.run_async(
@@ -1022,8 +1026,14 @@ class AgentRunner:
             async for event in stream:
                 if not event.content or not event.content.parts:
                     continue
+                if guarded_output and event.is_final_response():
+                    accumulated_text = ""
                 for part in event.content.parts:
-                    if part.text and getattr(part, "thought", False) is not True:
+                    if (
+                        part.text
+                        and getattr(part, "thought", False) is not True
+                        and (not guarded_output or event.is_final_response())
+                    ):
                         accumulated_text += part.text
 
                 if event.is_final_response():
