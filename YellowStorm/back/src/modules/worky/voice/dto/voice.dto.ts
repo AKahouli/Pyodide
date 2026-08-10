@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsNotEmpty, MaxLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsNotEmpty, MaxLength } from 'class-validator';
 
 export class CreateVoiceSessionDto {
   @IsOptional() @IsString() @MaxLength(512) resumptionHandle?: string;
@@ -11,4 +11,10 @@ export class VoiceDispatchDto {
 
 export class VoiceStatusDto {
   @IsString() @IsNotEmpty() @MaxLength(256) streamId!: string;
+}
+
+export class VoiceTranscriptDto {
+  @IsString() @IsNotEmpty() @MaxLength(256) streamId!: string;
+  @IsIn(['owner', 'manager']) role!: 'owner' | 'manager';
+  @IsString() @IsNotEmpty() @MaxLength(50000) text!: string;
 }

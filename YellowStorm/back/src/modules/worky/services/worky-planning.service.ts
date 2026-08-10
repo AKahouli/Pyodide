@@ -130,6 +130,34 @@ export class WorkyPlanningService {
     };
   }
 
+  /**
+   * Persist a realtime voice-concierge turn into the unified message history.
+   * Unlike `appendOwnerMessage`, this has no phase gate — voice transcripts are
+   * recorded regardless of stream phase — and it tags the message `origin: 'voice'`.
+   */
+  async appendVoiceMessage(
+    userId: string,
+    streamId: string,
+    role: 'owner' | 'manager',
+    content: string,
+  ): Promise<{ id: string }> {
+    const message = await this.messages.create({
+      streamId: new Types.ObjectId(streamId),
+      role,
+      content,
+      planDeltaRef: null,
+      origin: 'voice',
+      emittedAt: new Date(),
+    });
+    const id = (message._id as Types.ObjectId).toString();
+    this.events.emit(userId, streamId, {
+      type: 'message.appended',
+      emittedAt: Date.now(),
+      payload: { id, role, content },
+    });
+    return { id };
+  }
+
   async listMessages(
     userId: string,
     streamId: string,

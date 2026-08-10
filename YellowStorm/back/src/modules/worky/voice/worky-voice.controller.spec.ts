@@ -3,7 +3,8 @@ import { WorkyVoiceController } from './worky-voice.controller';
 describe('WorkyVoiceController', () => {
   const tokens = { mintSessionToken: jest.fn() };
   const tools = { dispatchTask: jest.fn(), queryStatus: jest.fn() };
-  const ctrl = new WorkyVoiceController(tokens as any, tools as any);
+  const planning = { appendVoiceMessage: jest.fn() };
+  const ctrl = new WorkyVoiceController(tokens as any, tools as any, planning as any);
   const user = { _id: { toString: () => 'u1' } } as any;
 
   beforeEach(() => jest.clearAllMocks());
@@ -27,5 +28,12 @@ describe('WorkyVoiceController', () => {
     const res = await ctrl.status(user, { streamId: 's1' });
     expect(tools.queryStatus).toHaveBeenCalledWith('u1', 's1');
     expect(res.status).toBe('running');
+  });
+
+  it('POST tool/transcript persists a voice turn', async () => {
+    planning.appendVoiceMessage.mockResolvedValue({ id: 'm1' });
+    const res = await ctrl.transcript(user, { streamId: 's1', role: 'manager', text: 'hi there' });
+    expect(planning.appendVoiceMessage).toHaveBeenCalledWith('u1', 's1', 'manager', 'hi there');
+    expect(res.id).toBe('m1');
   });
 });
