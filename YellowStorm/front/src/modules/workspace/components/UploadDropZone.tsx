@@ -9,6 +9,8 @@ import { toast } from 'sonner';
 import { useModuleTranslation } from '@/modules/localization';
 import { useWorkspaceStore, useSelectedWorkspace } from '../store';
 import { validateFiles } from '../utils';
+import { readAutoIndexationValue } from '../hooks/useAutoIndexation';
+import { readDeepSearchIndexationValue } from '../hooks/useDeepSearchIndexation';
 
 interface UploadDropZoneProps {
   children: React.ReactNode;
@@ -54,9 +56,9 @@ export function UploadDropZone({ children, onDrop }: UploadDropZoneProps) {
       if (validFiles.length === 0) return;
 
       addFilesToQueue(validFiles, selectedWorkspace.id);
-      startUpload();
+      void startUpload(readDeepSearchIndexationValue(), readAutoIndexationValue());
     },
-    [selectedWorkspace, addFilesToQueue, startUpload, onDrop],
+    [selectedWorkspace, addFilesToQueue, startUpload, onDrop, t],
   );
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
