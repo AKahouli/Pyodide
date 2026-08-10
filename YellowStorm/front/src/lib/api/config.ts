@@ -659,6 +659,10 @@ export const API_ENDPOINTS = {
     governancePolicy: '/worky/admin/governance-policy',
     sttTranscribe: '/worky/stt/transcribe',
     ttsSpeak: '/worky/tts/speak',
+    voiceSession: '/worky/voice/session',
+    voiceDispatch: '/worky/voice/tool/dispatch',
+    voiceStatus: '/worky/voice/tool/status',
+    voiceTranscript: '/worky/voice/tool/transcript',
     whatsappIntegration: (id: string) => `/worky/streams/${id}/whatsapp-integration`,
     whatsappConnect: (id: string) => `/worky/streams/${id}/whatsapp-integration/connect`,
     whatsappPairing: (id: string, sessionId: string) =>
