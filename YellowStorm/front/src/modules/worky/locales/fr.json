@@ -277,6 +277,8 @@
   "voiceSettings.maxTake": "Durée maximale du tour",
   "voiceSettings.replyTimeout": "Délai de réponse",
   "voiceSettings.replyTimeoutHint": "Temps d'attente de la réponse du manager avant de rouvrir le micro.",
+  "voiceSettings.realtime": "Voix en temps réel",
+  "voiceSettings.realtimeHint": "Concierge vocal naturel (voix à voix). Désactivé, retour au mode classique enregistrer-puis-répondre.",
   "voiceSettings.bargeIn": "Interrompre en parlant",
   "voiceSettings.bargeInHint": "Parler par-dessus l'agent l'arrête et démarre un nouveau tour.",
   "voiceSettings.bargeInBlocked": "Nécessite l'annulation d'écho, sinon l'agent s'interrompt lui-même.",

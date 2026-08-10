@@ -277,6 +277,8 @@
   "voiceSettings.maxTake": "Maximum turn length",
   "voiceSettings.replyTimeout": "Reply timeout",
   "voiceSettings.replyTimeoutHint": "How long to wait for the manager before re-opening the mic.",
+  "voiceSettings.realtime": "Realtime voice",
+  "voiceSettings.realtimeHint": "Natural speech-to-speech concierge. Off falls back to the classic record-then-reply mode.",
   "voiceSettings.bargeIn": "Interrupt by speaking",
   "voiceSettings.bargeInHint": "Talking over the agent stops it and starts a new turn.",
   "voiceSettings.bargeInBlocked": "Needs echo cancellation on, or the agent interrupts itself.",
