@@ -300,20 +300,29 @@ class ReadModel:
                 f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
                 session_id, step_id, interrupt_id)
 
-    async def rebind_mail_wait(self, session_id: str, old_step_id: str, new_step_id: str) -> None:
-        """Move a pending wait onto the real step it belongs to.
+    async def rebind_mail_wait(self, session_id: str, old_step_id: str, new_step_id: str) -> int:
+        """Move a pending wait onto the real step it belongs to, returning how
+        many rows moved (0 or 1).
 
         A step with create_task access mints its wait eagerly, the moment it
         sends mail — under a placeholder id, since the await_reply step that
         will actually wait on the reply (via create_task) doesn't exist yet at
         send time. Once/if that step is created, this retargets the token onto
-        it. A no-op if nothing is pending under the placeholder (the step
-        never followed its mail with create_task(kind='await_reply'))."""
+        it.
+
+        0 means nothing was pending under the placeholder, i.e. the caller never
+        actually sent mail. The caller MUST treat that as an error rather than
+        proceeding: a wait with no token can never be claimed by an arriving
+        reply, so the step would park on an interrupt nothing can ever resume.
+        Seen live (session 681a01cfcd014e80a851f2b33e2b823e), back when this
+        returned None and the miss was silent."""
         async with self._pool.acquire() as con:
-            await con.execute(
+            res = await con.execute(
                 f"UPDATE {_q(self._schema,'mail_waits')} SET step_id=$3 "
                 f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
                 session_id, old_step_id, new_step_id)
+        # asyncpg returns the command tag, e.g. "UPDATE 1".
+        return int(res.rsplit(" ", 1)[-1]) if res else 0
 
     async def mail_token_for(self, session_id: str, step_id: str) -> Optional[str]:
         """The token to stamp into the mail this step is waiting on a reply to."""

@@ -727,3 +727,34 @@ def test_every_step_is_told_to_register_a_wait_after_sending_mail():
         assert "create_task(kind='await_reply')" in instruction, \
             f"step {step.id} was never told to register a wait:\n{instruction[:300]}"
         assert "REPLY matters" in instruction or "reply matters" in instruction.lower()
+
+
+def test_a_delivered_reply_is_attributed_to_its_sender_not_the_plan():
+    """ADK renders injected content as "[<author>] said: ...", and the author is
+    the workflow -- named plan_<session_id> -- so an unlabelled reply reaches the
+    next step looking like an instruction from the PLAN itself. Seen live in
+    session 2e7fa392c64e4a35b9f77e70d49d275d: Firas replied "do me a search about
+    new mcps ... then i can tell what we can implement", and the step read
+    "[plan_2e7fa392...] said:" as the plan's own wording, concluded the searches
+    "are already part of the plan's other steps", and did nothing at all."""
+    from src.grpc_server import companion_ai_servicer as srv
+
+    svc_mock = MagicMock(resume_turn=AsyncMock())
+    rm = MagicMock(claim_mail_wait=AsyncMock(return_value={
+        "session_id": "sess1", "step_id": "s2", "user_id": "u1",
+        "interrupt_id": "mail:task_s2@1/s2@1"}))
+    servicer = srv.CompanionAiServicer(svc_mock, rm)
+
+    request = MagicMock(
+        token="YW-abcdefghijklmnop12",
+        reply_body="do me a search about new mcps in the market",
+        reply_from="firasworky@gmail.com",
+        agents=[], connectors=[])
+    asyncio.run(servicer._resume_with_reply(
+        request, {"session_id": "sess1", "step_id": "s2", "user_id": "u1",
+                  "interrupt_id": "mail:task_s2@1/s2@1"}, "m"))
+
+    answer = svc_mock.resume_turn.await_args.kwargs["answer"]
+    assert answer.startswith("Email reply from firasworky@gmail.com")
+    # The reply's own words survive intact after the attribution line.
+    assert answer.rstrip().endswith("do me a search about new mcps in the market")

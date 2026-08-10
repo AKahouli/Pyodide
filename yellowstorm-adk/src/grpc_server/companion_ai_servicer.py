@@ -363,9 +363,28 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
             # without this the executor sees a token it is never supposed to
             # know about, and echoes it into the next mail's subject. See
             # mail_token.scrub.
+            # Attribute the reply to the human who wrote it, in the text itself.
+            # ADK renders injected content as "[<author>] said: ...", and the
+            # author is the workflow — named plan_<session_id> (service.py) — so
+            # an unlabelled reply reaches the next step looking like an
+            # instruction from the PLAN. Seen live in session
+            # 2e7fa392c64e4a35b9f77e70d49d275d: Firas replied "do me a search
+            # about new mcps ... then i can tell what we can implement", the step
+            # read "[plan_2e7fa392...] said:" as the plan's own wording, decided
+            # the searches "are already part of the plan's other steps — not this
+            # step's job", and did nothing at all. Naming the sender here beats
+            # renaming the workflow: this is the only place a reply enters, and
+            # the label lands inside the content where no author rendering can
+            # override it.
+            sender = (request.reply_from or "").strip()
+            answer = mail_token.scrub(request.reply_body)
+            answer = (f"Email reply from {sender}, answering the message this step was "
+                      f"waiting on:\n\n{answer}" if sender else
+                      f"Email reply answering the message this step was waiting on:"
+                      f"\n\n{answer}")
             await self._svc.resume_turn(
                 session_id=session_id, user_id=wait["user_id"],
-                answer=mail_token.scrub(request.reply_body), model=model,
+                answer=answer, model=model,
                 connectors=_connectors_to_dicts(request.connectors),
                 interrupt_id=wait["interrupt_id"],
                 executor_prompt=executor.prompt if executor else None)
