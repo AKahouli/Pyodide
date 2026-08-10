@@ -11,6 +11,9 @@ const workspaceApiMock = vi.hoisted(() => ({
   getPersonalWorkspace: vi.fn().mockResolvedValue(null),
   getAllFolders: vi.fn().mockResolvedValue([]),
   addLinks: vi.fn(),
+  initiateBulkUpload: vi.fn(),
+  uploadToAzure: vi.fn(),
+  completeBulkUpload: vi.fn(),
 }));
 
 const pageApiMock = vi.hoisted(() => ({
@@ -215,5 +218,132 @@ describe('workspace store', () => {
     useWorkspaceStore.setState({ selectedWorkspaceId: 'w1', pageCurrentFolderId: null });
     await useWorkspaceStore.getState().addPageLinks('w1', ['https://a.com/x'], {});
     expect(pageApiMock.assignFileToFolder).not.toHaveBeenCalled();
+  });
+
+  it('updateDocumentIndexingStatus updates pageFiles as well as documents cache', () => {
+    useWorkspaceStore.setState({
+      pageFiles: [
+        {
+          id: 'doc-1',
+          workspaceId: 'w1',
+          name: 'a.pdf',
+          mimeType: 'application/pdf',
+          size: 10,
+          folderId: null,
+          status: 'completed',
+          indexingStatus: 'none',
+          type: 'doc',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        } as never,
+      ],
+      documents: new Map([
+        [
+          1,
+          [
+            {
+              id: 'doc-1',
+              originalName: 'a.pdf',
+              indexingStatus: 'none',
+            } as never,
+          ],
+        ],
+      ]),
+    });
+
+    useWorkspaceStore.getState().updateDocumentIndexingStatus('doc-1', 'processing', undefined, undefined);
+
+    const state = useWorkspaceStore.getState();
+    expect(state.pageFiles[0].indexingStatus).toBe('processing');
+    expect(state.documents.get(1)?.[0].indexingStatus).toBe('processing');
+  });
+
+  it('startUpload bulk waits for complete and passes autoIndex=true', async () => {
+    const fileA = new File(['a'], 'a.pdf', { type: 'application/pdf' });
+    const fileB = new File(['b'], 'b.pdf', { type: 'application/pdf' });
+
+    workspaceApiMock.initiateBulkUpload.mockResolvedValue({
+      sessionId: 'session-1',
+      files: [
+        { index: 0, filename: 'a.pdf', uploadUrl: 'https://upload/a', documentId: 'd1' },
+        { index: 1, filename: 'b.pdf', uploadUrl: 'https://upload/b', documentId: 'd2' },
+      ],
+      expiresAt: '2099-01-01T00:00:00.000Z',
+    });
+    workspaceApiMock.uploadToAzure.mockResolvedValue(undefined);
+    workspaceApiMock.completeBulkUpload.mockResolvedValue({
+      sessionId: 'session-1',
+      status: 'success',
+      totalFiles: 2,
+      successful: { count: 2, documents: [] },
+      failed: { count: 0, files: [] },
+      duration: 5,
+    });
+    workspaceApiMock.getWorkspace.mockResolvedValue(makeWorkspace('w1', 'W1'));
+    workspaceApiMock.getDocuments.mockResolvedValue({
+      documents: [],
+      pagination: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
+    });
+
+    useWorkspaceStore.setState({
+      selectedWorkspaceId: 'w1',
+      uploadQueue: [
+        {
+          id: 'q1',
+          file: fileA,
+          workspaceId: 'w1',
+          status: 'pending',
+          progress: 0,
+        },
+        {
+          id: 'q2',
+          file: fileB,
+          workspaceId: 'w1',
+          status: 'pending',
+          progress: 0,
+        },
+      ],
+    });
+
+    await act(async () => {
+      await useWorkspaceStore.getState().startUpload(false, true);
+    });
+
+    expect(workspaceApiMock.completeBulkUpload).toHaveBeenCalledWith('w1', 'session-1', false, true);
+    expect(workspaceApiMock.uploadToAzure).toHaveBeenCalledTimes(2);
+    expect(toastMock.success).toHaveBeenCalled();
+  });
+
+  it('startUpload bulk marks queue failed and rethrows when complete fails', async () => {
+    const fileA = new File(['a'], 'a.pdf', { type: 'application/pdf' });
+    const fileB = new File(['b'], 'b.pdf', { type: 'application/pdf' });
+
+    workspaceApiMock.initiateBulkUpload.mockResolvedValue({
+      sessionId: 'session-1',
+      files: [
+        { index: 0, filename: 'a.pdf', uploadUrl: 'https://upload/a', documentId: 'd1' },
+        { index: 1, filename: 'b.pdf', uploadUrl: 'https://upload/b', documentId: 'd2' },
+      ],
+      expiresAt: '2099-01-01T00:00:00.000Z',
+    });
+    workspaceApiMock.uploadToAzure.mockResolvedValue(undefined);
+    workspaceApiMock.completeBulkUpload.mockRejectedValue(new Error('complete failed'));
+
+    useWorkspaceStore.setState({
+      selectedWorkspaceId: 'w1',
+      uploadQueue: [
+        { id: 'q1', file: fileA, workspaceId: 'w1', status: 'pending', progress: 0 },
+        { id: 'q2', file: fileB, workspaceId: 'w1', status: 'pending', progress: 0 },
+      ],
+    });
+
+    await act(async () => {
+      await expect(useWorkspaceStore.getState().startUpload(false, true)).rejects.toThrow(
+        'complete failed',
+      );
+    });
+
+    expect(toastMock.error).toHaveBeenCalled();
+    expect(toastMock.success).not.toHaveBeenCalled();
   });
 });

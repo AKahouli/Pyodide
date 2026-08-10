@@ -489,6 +489,54 @@ describe('DocumentService', () => {
       await expect(service.exists(testObjectKey)).rejects.toThrow('Forbidden');
     });
 
+    it('should retry transient Unknown 403 then succeed', async () => {
+      jest.useFakeTimers();
+      try {
+        let calls = 0;
+        setSendImpl({
+          HeadObjectCommand: () => {
+            calls += 1;
+            if (calls < 2) {
+              throw Object.assign(new Error('UnknownError'), {
+                name: 'Unknown',
+                $metadata: { httpStatusCode: 403 },
+              });
+            }
+            return { ContentLength: 10 };
+          },
+        });
+
+        const pending = service.exists(testObjectKey);
+        await jest.runAllTimersAsync();
+        await expect(pending).resolves.toBe(true);
+        expect(calls).toBe(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('should rethrow after exhausting Unknown 403 retries', async () => {
+      jest.useFakeTimers();
+      try {
+        setSendImpl({
+          HeadObjectCommand: () => {
+            throw Object.assign(new Error('UnknownError'), {
+              name: 'Unknown',
+              $metadata: { httpStatusCode: 403 },
+            });
+          },
+        });
+
+        const pending = service.exists(testObjectKey);
+        const expectation = expect(pending).rejects.toThrow('UnknownError');
+        await jest.runAllTimersAsync();
+        await expectation;
+        expect(mockSend).toHaveBeenCalledTimes(3);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('should throw InternalServerException when service is not available', async () => {
       connectionService.isConnectedNow.mockReturnValue(false);
 

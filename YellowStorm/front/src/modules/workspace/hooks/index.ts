@@ -4,6 +4,7 @@ export { useDebouncedSearch } from './useDebouncedSearch';
 export { useDocumentActions } from './useDocumentActions';
 export { useDocumentDragDrop } from './useDocumentDragDrop';
 export { useDocumentSelection } from './useDocumentSelection';
+export { useIndexingNotifications } from './useIndexingNotifications';
 export { useModalCloseEffect } from './useModalCloseEffect';
 export { useShareNotifications } from './useShareNotifications';
 export { useWorkspaceStore, useSelectedWorkspace } from '../store';

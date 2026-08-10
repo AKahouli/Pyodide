@@ -353,6 +353,7 @@
   "store.toast.template.createSuccessTitle": "Modèle créé",
   "store.toast.upload.bulkErrorDescription": "Les {{count}} fichiers ont échoué.",
   "store.toast.upload.bulkSuccessDescription": "{{count}} fichier(s) téléversé(s) avec succès.",
+  "store.toast.upload.completeFailedDescription": "Les fichiers ont atteint le stockage, mais la finalisation/indexation a échoué.",
   "store.toast.upload.partialDescription": "{{success}} réussi(s), {{failed}} échoué(s).",
   "store.toast.upload.partialTitle": "Téléversement partiel",
   "store.toast.upload.singleSuccessDescription": "\"{{name}}\" a été téléversé.",

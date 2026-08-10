@@ -488,23 +488,36 @@ export class DocumentService {
   }
 
   private async headObjectWithRetry(objectKey: string): Promise<void> {
-    try {
-      await this.getS3Client().send(
-        new HeadObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
-      );
-    } catch (error) {
-      if (!this.isTransientS3Error(error)) throw error;
+    const maxAttempts = 3;
+    let lastError: unknown;
 
-      this.logger.warn('S3 HeadObject transient error, retrying once', {
-        objectKey,
-        bucket: this.getBucket(),
-        httpStatusCode: (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode,
-      });
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.getS3Client().send(
+          new HeadObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!this.isTransientS3Error(error) || attempt === maxAttempts) {
+          throw error;
+        }
 
-      await this.getS3Client().send(
-        new HeadObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
-      );
+        const delayMs = 200 * attempt;
+        this.logger.warn('S3 HeadObject transient error, retrying', {
+          objectKey,
+          bucket: this.getBucket(),
+          attempt,
+          maxAttempts,
+          delayMs,
+          httpStatusCode: (error as { $metadata?: { httpStatusCode?: number } }).$metadata
+            ?.httpStatusCode,
+        });
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
     }
+
+    throw lastError;
   }
 
   private isTransientS3Error(error: unknown): boolean {

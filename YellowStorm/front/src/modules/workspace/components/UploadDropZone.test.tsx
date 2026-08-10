@@ -20,6 +20,14 @@ vi.mock('../utils', () => ({
   validateFiles: (files: File[]) => validateFilesMock(files),
 }));
 
+vi.mock('../hooks/useAutoIndexation', () => ({
+  readAutoIndexationValue: () => true,
+}));
+
+vi.mock('../hooks/useDeepSearchIndexation', () => ({
+  readDeepSearchIndexationValue: () => false,
+}));
+
 describe('UploadDropZone', () => {
   beforeEach(() => {
     addFilesToQueueMock.mockReset();
@@ -45,6 +53,6 @@ describe('UploadDropZone', () => {
     fireEvent.drop(zone, { dataTransfer: { files: [file] } });
 
     expect(addFilesToQueueMock).toHaveBeenCalledWith([file], 'w-1');
-    expect(startUploadMock).toHaveBeenCalledTimes(1);
+    expect(startUploadMock).toHaveBeenCalledWith(false, true);
   });
 });
