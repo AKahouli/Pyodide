@@ -798,22 +798,20 @@ def test_apply_event_does_not_complete_an_await_reply_step_on_the_interrupt_it_r
     assert not any(c.args[2] == "completed" for c in rm.set_step_status.call_args_list)
 
 
-def test_a_plain_step_reading_a_mail_reply_gets_delegation_tools_too():
-    """Only the step directly downstream of an await_reply is positioned to
-    notice the reply itself says e.g. "loop in Oussama" or "email x" -- it
-    needs the tools to act on that even though it's a plain executor step,
-    not a persona (seen live: session 7752a273b2054d4d921d9514eb933d85 --
-    the final memo step correctly caught a data discrepancy in a reply but
-    had no way to act on it, since is_persona=False steps never got
-    delegate_to_human_agent/create_task at all before this)."""
+def test_every_step_gets_the_same_toolset():
+    """EXECUTOR_INSTRUCTION promises each step that every other step has the
+    SAME tools it does, and orders any step sending a reply-critical mail to
+    register an await_reply. Gating that toolset guessed upfront which steps
+    would need to grow the plan and guessed wrong both ways: session
+    7752a273b2054d4d921d9514eb933d85 -- a memo step caught a discrepancy in a
+    reply with no way to act on it; session 6a76057bba4d75a63944128d -- a step
+    was told to call create_task and answered "there is no create_task tool in
+    my available toolset". A reply can name work no planner saw, so which step
+    needs to delegate is not knowable at build time."""
     service = svc.OrchestratorService(MagicMock(), None, planner_model="m")
     plan = Plan(id="p", steps=[
         Step(id="s3", kind="await_reply", question="Awaiting a reply"),
         Step(id="s4", kind="execute", description="write the memo", depends_on=["s3"]),
-        # A step NOT downstream of the reply must not get these tools --
-        # otherwise every step in the plan ends up able to delegate, which
-        # is a much bigger, unintended widening than "the step reading a
-        # mail reply specifically".
         Step(id="s5", kind="execute", description="unrelated step"),
     ])
     wf, _ = service._build_workflow("sess1", "u1", plan, "x", None, None)
@@ -822,8 +820,9 @@ def test_a_plain_step_reading_a_mail_reply_gets_delegation_tools_too():
     def tool_names(node):
         return {getattr(getattr(t, "func", None), "__name__", "?") for t in getattr(node, "tools", [])}
 
-    assert {"find_human_agents", "delegate_to_human_agent", "create_task"} <= tool_names(nodes_by_name["s4"])
-    assert not tool_names(nodes_by_name["s5"]) & {"delegate_to_human_agent", "create_task"}
+    expected = {"find_human_agents", "delegate_to_human_agent", "create_task"}
+    assert expected <= tool_names(nodes_by_name["s4"])
+    assert expected <= tool_names(nodes_by_name["s5"])
 
 
 def test_delegating_never_blocks_the_caller_on_the_delegate(monkeypatch):

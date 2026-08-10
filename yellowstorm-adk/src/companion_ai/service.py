@@ -25,7 +25,7 @@ import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Callable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
@@ -361,8 +361,7 @@ class OrchestratorService:
         return create_connector_tools(
             connectors, ConnectorToolContext(session_id=session_id))
 
-    def _mail_stamping(self, session_id: str, user_id: str, plan: Plan,
-                       dynamic_eligible: Callable[[Step], bool]):
+    def _mail_stamping(self, session_id: str, user_id: str, plan: Plan):
         """Give each send step the token of the step waiting on its reply.
 
         The link is the plan's own edge: an await_reply step depends_on the step
@@ -371,14 +370,15 @@ class OrchestratorService:
         to include would be omitted eventually, and that step would wait forever.
 
         That edge only exists upfront for steps the planner already wired with
-        an await_reply sibling. A step with create_task access can spin one up
-        mid-turn (create_task(kind='await_reply'), after it has already sent
-        the mail) — at that point the sibling doesn't exist yet, so there is
-        nothing to look up. For those (`dynamic_eligible`), the token is minted
-        eagerly, the moment mail goes out, under a placeholder id; create_task
-        rebinds it onto the real step if/when one is actually created (see
-        _create_task_tool_for). If that never happens the row just expires
-        unclaimed — see expire_mail_waits's interrupt_id guard.
+        an await_reply sibling. Any step can spin one up mid-turn instead
+        (create_task(kind='await_reply'), after it has already sent the mail) —
+        at that point the sibling doesn't exist yet, so there is nothing to look
+        up. So every other send is tokened eagerly, the moment mail goes out,
+        under a placeholder id; create_task rebinds it onto the real step if/when
+        one is actually created (see _create_task_tool_for). If that never
+        happens the row just expires unclaimed — see expire_mail_waits's
+        interrupt_id guard — which is why stamping every step costs nothing and
+        guessing which ones would need it cost replies.
         """
         if self._rm is None:
             return None
@@ -399,34 +399,32 @@ class OrchestratorService:
                 return [nodes.stamp_send_email_tool(t, token_provider=token_provider)
                         if nodes.is_send_email_tool(t) else t
                         for t in tools]
-            if dynamic_eligible(step):
-                pending_id = f"__pending__:{step.id}"
+            pending_id = f"__pending__:{step.id}"
 
-                # Mint only — pure, no DB. The token has to be in the mail, so
-                # it must exist before the send; the WAIT must not, or a send
-                # that raises strands the step on a reply to an email that was
-                # never sent. Persisting therefore happens in on_sent below.
-                async def eager_token_provider():
-                    return mail_token.mint()
+            # Mint only — pure, no DB. The token has to be in the mail, so
+            # it must exist before the send; the WAIT must not, or a send
+            # that raises strands the step on a reply to an email that was
+            # never sent. Persisting therefore happens in on_sent below.
+            async def eager_token_provider():
+                return mail_token.mint()
 
-                async def eager_on_sent(token, _pending_id=pending_id):
-                    expires_at = datetime.now(timezone.utc) + timedelta(
-                        hours=self._mail_wait_timeout_hours)
-                    await rm.register_mail_wait(
-                        token, session_id=session_id, step_id=_pending_id,
-                        user_id=user_id, expires_at=expires_at)
-                return [nodes.stamp_send_email_tool(
-                            t, token_provider=eager_token_provider, on_sent=eager_on_sent)
-                        if nodes.is_send_email_tool(t) else t
-                        for t in tools]
-            return tools
+            async def eager_on_sent(token, _pending_id=pending_id):
+                expires_at = datetime.now(timezone.utc) + timedelta(
+                    hours=self._mail_wait_timeout_hours)
+                await rm.register_mail_wait(
+                    token, session_id=session_id, step_id=_pending_id,
+                    user_id=user_id, expires_at=expires_at)
+            return [nodes.stamp_send_email_tool(
+                        t, token_provider=eager_token_provider, on_sent=eager_on_sent)
+                    if nodes.is_send_email_tool(t) else t
+                    for t in tools]
 
         return tools_for_step
 
     def _delegate_tool_for(self, session_id: str, user_id: str, plan: Plan,
                            factory_holder: list, name_to_step: dict, caller_step_id: str,
                            siblings: Optional[set] = None):
-        """Tool given to a persona-assigned step (see nodes.py/human_agents.py):
+        """Tool given to every step (see nodes.py/human_agents.py):
         hand a question or task to ANOTHER human agent — e.g. Rabeb decides
         investment approval is out of her scope and asks Oussama.
 
@@ -589,7 +587,7 @@ class OrchestratorService:
     def _create_task_tool_for(self, session_id: str, user_id: str, plan: Plan,
                               factory_holder: list, name_to_step: dict, caller_step_id: str,
                               siblings: Optional[set] = None):
-        """Tool given to a persona-assigned step: spin off a brand-new follow-up
+        """Tool given to every step: spin off a brand-new follow-up
         task and get its result back before continuing — for when something
         just learned (e.g. an email reply) means real work needs to happen,
         not just get written down as a condition in your own final answer.
@@ -811,28 +809,28 @@ class OrchestratorService:
                 (dep := plan.step(dep_id)) is not None and dep.kind == "await_reply"
                 for dep_id in step.depends_on)
 
-        # Same gate _create_task_tool_for/_delegate_tool_for use below to grant
-        # create_task/delegate_to_human_agent — a step only needs its send_email
-        # eagerly tokened if it's able to spin up an await_reply step itself.
-        mail_tools_for_step = self._mail_stamping(
-            session_id, user_id, plan,
-            lambda step: step.is_persona or _reads_a_mail_reply(step))
+        mail_tools_for_step = self._mail_stamping(session_id, user_id, plan)
 
         def tools_for_step(step: Step, tools: List) -> List:
+            # Every step gets the same toolset, unconditionally. EXECUTOR_INSTRUCTION
+            # tells each step that every other step has the SAME tools it does, and
+            # orders any step that sends a reply-critical mail to register an
+            # await_reply — a step that then finds create_task missing can only
+            # stall or fabricate. Gating on persona/reads-a-reply guessed upfront
+            # which steps would need to grow the plan, and guessed wrong whenever a
+            # mail reply named work the planner never saw.
             if mail_tools_for_step:
                 tools = mail_tools_for_step(step, tools)
-            if step.is_persona or _reads_a_mail_reply(step):
-                # Shared with both dynamic-step tools below: whichever spawns
-                # a step first, the other must still treat it as a sibling,
-                # not something to chain the next one after.
-                siblings: set = set()
-                tools = list(tools) + [
-                    human_agents.make_find_human_agents_tool(),
-                    self._delegate_tool_for(session_id, user_id, plan, factory_holder,
-                                            name_to_step, step.id, siblings),
-                    self._create_task_tool_for(session_id, user_id, plan, factory_holder,
-                                               name_to_step, step.id, siblings)]
-            return tools
+            # Shared with both dynamic-step tools below: whichever spawns
+            # a step first, the other must still treat it as a sibling,
+            # not something to chain the next one after.
+            siblings: set = set()
+            return list(tools) + [
+                human_agents.make_find_human_agents_tool(),
+                self._delegate_tool_for(session_id, user_id, plan, factory_holder,
+                                        name_to_step, step.id, siblings),
+                self._create_task_tool_for(session_id, user_id, plan, factory_holder,
+                                           name_to_step, step.id, siblings)]
 
         def instruction_for_step(step: Step) -> Optional[str]:
             if not _reads_a_mail_reply(step):
