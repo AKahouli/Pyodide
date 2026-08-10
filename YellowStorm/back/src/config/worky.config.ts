@@ -34,6 +34,16 @@ export default registerAs('worky', () => ({
   ttsTimeoutMs: parseInt(process.env.WORKY_TTS_TIMEOUT_MS || '30000', 10),
   ttsMaxChars: parseInt(process.env.WORKY_TTS_MAX_CHARS || '2000', 10),
 
+  // Realtime voice concierge (Gemini Live, direct browser WS via ephemeral token).
+  voiceApiKey: process.env.WORKY_VOICE_API_KEY || '',
+  voiceModel: process.env.WORKY_VOICE_MODEL || 'gemini-3.1-flash-live-preview',
+  voiceName: process.env.WORKY_VOICE_NAME || 'Kore',
+  voiceWsBaseUrl:
+    process.env.WORKY_VOICE_WS_BASE_URL ||
+    'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained',
+  voiceTokenTtlSec: parseInt(process.env.WORKY_VOICE_TOKEN_TTL_SEC || '1800', 10),
+  voiceSessionStartTtlSec: parseInt(process.env.WORKY_VOICE_SESSION_START_TTL_SEC || '60', 10),
+
   // Electric SQL sync (manager-owned Postgres → Nest consumer).
   electricUrl: process.env.WORKY_ELECTRIC_URL || 'http://electric:3000/v1/shape',
   // Shared secret appended as `&secret=<...>` to every Electric shape request.

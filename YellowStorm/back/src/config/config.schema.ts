@@ -342,4 +342,16 @@ export const configValidationSchema = Joi.object({
   WORKY_TTS_PROVIDER: Joi.string().allow('').default(''),
   WORKY_TTS_TIMEOUT_MS: Joi.number().min(1000).max(120000).default(30000),
   WORKY_TTS_MAX_CHARS: Joi.number().min(1).max(20000).default(2000),
+
+  // Worky — realtime voice concierge (Gemini Live, ephemeral-token direct WS)
+  WORKY_VOICE_API_KEY: Joi.string().allow('').default(''),
+  WORKY_VOICE_MODEL: Joi.string().default('gemini-3.1-flash-live-preview'),
+  WORKY_VOICE_NAME: Joi.string().default('Kore'),
+  WORKY_VOICE_WS_BASE_URL: Joi.string()
+    .uri({ scheme: ['wss'] })
+    .default(
+      'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained',
+    ),
+  WORKY_VOICE_TOKEN_TTL_SEC: Joi.number().min(60).max(3600).default(1800),
+  WORKY_VOICE_SESSION_START_TTL_SEC: Joi.number().min(30).max(600).default(60),
 });
