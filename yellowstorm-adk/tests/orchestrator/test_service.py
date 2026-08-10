@@ -798,22 +798,20 @@ def test_apply_event_does_not_complete_an_await_reply_step_on_the_interrupt_it_r
     assert not any(c.args[2] == "completed" for c in rm.set_step_status.call_args_list)
 
 
-def test_a_plain_step_reading_a_mail_reply_gets_delegation_tools_too():
-    """Only the step directly downstream of an await_reply is positioned to
-    notice the reply itself says e.g. "loop in Oussama" or "email x" -- it
-    needs the tools to act on that even though it's a plain executor step,
-    not a persona (seen live: session 7752a273b2054d4d921d9514eb933d85 --
-    the final memo step correctly caught a data discrepancy in a reply but
-    had no way to act on it, since is_persona=False steps never got
-    delegate_to_human_agent/create_task at all before this)."""
+def test_every_step_gets_the_same_toolset():
+    """EXECUTOR_INSTRUCTION promises each step that every other step has the
+    SAME tools it does, and orders any step sending a reply-critical mail to
+    register an await_reply. Gating that toolset guessed upfront which steps
+    would need to grow the plan and guessed wrong both ways: session
+    7752a273b2054d4d921d9514eb933d85 -- a memo step caught a discrepancy in a
+    reply with no way to act on it; session 6a76057bba4d75a63944128d -- a step
+    was told to call create_task and answered "there is no create_task tool in
+    my available toolset". A reply can name work no planner saw, so which step
+    needs to delegate is not knowable at build time."""
     service = svc.OrchestratorService(MagicMock(), None, planner_model="m")
     plan = Plan(id="p", steps=[
         Step(id="s3", kind="await_reply", question="Awaiting a reply"),
         Step(id="s4", kind="execute", description="write the memo", depends_on=["s3"]),
-        # A step NOT downstream of the reply must not get these tools --
-        # otherwise every step in the plan ends up able to delegate, which
-        # is a much bigger, unintended widening than "the step reading a
-        # mail reply specifically".
         Step(id="s5", kind="execute", description="unrelated step"),
     ])
     wf, _ = service._build_workflow("sess1", "u1", plan, "x", None, None)
@@ -822,8 +820,9 @@ def test_a_plain_step_reading_a_mail_reply_gets_delegation_tools_too():
     def tool_names(node):
         return {getattr(getattr(t, "func", None), "__name__", "?") for t in getattr(node, "tools", [])}
 
-    assert {"find_human_agents", "delegate_to_human_agent", "create_task"} <= tool_names(nodes_by_name["s4"])
-    assert not tool_names(nodes_by_name["s5"]) & {"delegate_to_human_agent", "create_task"}
+    expected = {"find_human_agents", "delegate_to_human_agent", "create_task"}
+    assert expected <= tool_names(nodes_by_name["s4"])
+    assert expected <= tool_names(nodes_by_name["s5"])
 
 
 def test_delegating_never_blocks_the_caller_on_the_delegate(monkeypatch):
@@ -1036,3 +1035,195 @@ def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
         followup_final = plan2.step(followup_step.id)
         assert followup_final.status is Status.COMPLETED
         assert followup_final.result == "REAL FINAL ANSWER — reply seen: True"
+
+
+def test_create_task_after_builds_a_join_not_just_a_fan_out():
+    """A reply can ask for two things AND for something once both are in --
+    "search new MCPs + search the new ADK version, then tell me what we can
+    implement". Without `after` every spawned step hangs off the caller alone,
+    so the third one runs in PARALLEL with the searches and reads nothing:
+    only a fan-out is expressible. `after` lets the model name the siblings to
+    wait for, which is what makes the spawned shape a real graph."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="act", kind="execute", description="act on Firas's reply"),
+    ])
+    tool = service._create_task_tool_for(
+        "sess1", "u1", plan, _fn_factory_holder(), {"act": "act"}, "act")
+    ctx = MagicMock()
+
+    async def run():
+        await tool.func("Search the market for new MCPs", tool_context=ctx)
+        await tool.func("Search for the new Google ADK agents version", tool_context=ctx)
+        a, b = plan.steps[1].id, plan.steps[2].id
+        await tool.func("Recommend what to implement from both searches",
+                        after=[a, b], tool_context=ctx)
+        return a, b
+    a, b = asyncio.run(run())
+
+    search_a, search_b, join = plan.steps[1], plan.steps[2], plan.steps[3]
+    # The two searches stay parallel -- neither waits on the other.
+    assert search_a.depends_on == ["act"] and search_b.depends_on == ["act"]
+    assert search_a.wave == search_b.wave
+    # The join waits for both, so it runs strictly after them.
+    assert set(join.depends_on) == {"act", a, b}
+    assert join.wave > search_a.wave
+    # Cycle guard: the steps it waits on must NOT be made to wait on it.
+    assert join.id not in search_a.depends_on and join.id not in search_b.depends_on
+
+
+def test_create_task_after_ignores_ids_that_are_not_real_steps():
+    """A hallucinated id must not fail the whole call -- dropping it loses only
+    the ordering, where raising would lose the step itself."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="act", kind="execute", description="act on the reply"),
+    ])
+    tool = service._create_task_tool_for(
+        "sess1", "u1", plan, _fn_factory_holder(), {"act": "act"}, "act")
+
+    result = asyncio.run(tool.func("Do the thing", after=["nope", "act"],
+                                   tool_context=MagicMock()))
+
+    assert "created" in result.lower()
+    # "nope" dropped; "act" is the caller and already there, never duplicated.
+    assert plan.steps[1].depends_on == ["act"]
+
+
+def test_create_task_await_reply_is_refused_when_no_mail_was_ever_sent():
+    """A wait whose token was never minted can never be claimed by an arriving
+    reply, so the step parks on an interrupt nothing can resume and the plan
+    blocks forever. Seen live in session 681a01cfcd014e80a851f2b33e2b823e: the
+    model created the wait ALONGSIDE the step meant to send the mail instead of
+    after it, so nothing had been sent at this moment; rebind_mail_wait missed
+    silently and the session was stuck permanently. Refusing lets the model fix
+    it inside the same turn."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock(return_value=0),
+                   mail_token_for=AsyncMock(return_value=None))
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="act", kind="execute", description="act on the reply"),
+    ])
+    tool = service._create_task_tool_for(
+        "sess1", "u1", plan, _fn_factory_holder(), {"act": "act"}, "act")
+
+    result = asyncio.run(tool.func("Wait for Firas's next answer", kind="await_reply",
+                                   tool_context=MagicMock()))
+
+    assert "no email has been sent yet" in result.lower(), result
+    assert "after=" in result, "must tell the model how to order it correctly"
+    # Nothing half-created: no orphan step left behind in the plan.
+    assert len(plan.steps) == 1
+
+
+def test_create_task_await_reply_still_works_when_the_mail_did_go_out():
+    """The guard must only catch the never-sent case -- a caller that really did
+    send its mail rebinds one row and proceeds to build the wait plus its
+    follow-up step."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock(return_value=1),
+                   mail_token_for=AsyncMock(return_value=None))
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="act", kind="execute", description="email Firas"),
+    ])
+    tool = service._create_task_tool_for(
+        "sess1", "u1", plan, _fn_factory_holder(), {"act": "act"}, "act")
+    ctx = MagicMock(); ctx.run_node = AsyncMock()
+
+    result = asyncio.run(tool.func("Wait for Firas's answer", kind="await_reply",
+                                   tool_context=ctx))
+
+    assert "await-reply step created" in result.lower(), result
+    kinds = [s.kind for s in plan.steps]
+    assert kinds == ["execute", "await_reply", "execute"]  # + the "Act on reply" follow-up
+
+
+def test_the_act_on_reply_step_is_told_the_reply_already_arrived():
+    """The follow-up must NOT inherit the wait's own wording. `description` is
+    written as the WAIT's instruction ("wait for and read X's reply"), so
+    reusing it verbatim tells the step that runs AFTER the reply to wait all
+    over again. Seen live in session a936b31bf70246349a7df1463486020a: that step
+    had Firas's reply in context, read its task as "wait for a reply", called
+    create_task(kind='await_reply') again, and on refusal sent Firas a DUPLICATE
+    of the original email."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock(return_value=1),
+                   mail_token_for=AsyncMock(return_value=None))
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="act", kind="execute", description="email Firas"),
+    ])
+    tool = service._create_task_tool_for(
+        "sess1", "u1", plan, _fn_factory_holder(), {"act": "act"}, "act")
+    ctx = MagicMock(); ctx.run_node = AsyncMock()
+    wait_wording = "Wait for and read Firas Kahia's email reply about new features"
+
+    asyncio.run(tool.func(wait_wording, kind="await_reply", tool_context=ctx))
+
+    wait_step, followup = plan.steps[1], plan.steps[2]
+    # The wait itself still carries the caller's own wording.
+    assert wait_step.description == wait_wording
+    # The follow-up states the arrival as fact BEFORE that wording...
+    assert followup.description.startswith("The reply you were waiting for HAS ALREADY ARRIVED")
+    # ...forbids the two things that produced the duplicate email...
+    low = followup.description.lower()
+    assert "do not send another email" in low and "do not register another wait" in low
+    # ...and still carries the caller's instruction for what to do with it.
+    assert wait_wording in followup.description
+
+
+def test_the_await_reply_refusal_points_at_acting_before_re_sending():
+    """The refusal must not read as "just send the mail". In session
+    a936b31bf70246349a7df1463486020a the model took exactly that advice and
+    re-sent a question Firas had already answered, so checking for a reply
+    already in hand has to come FIRST."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   rebind_mail_wait=AsyncMock(return_value=0),
+                   mail_token_for=AsyncMock(return_value=None))
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g",
+                steps=[Step(id="act", kind="execute", description="act on the reply")])
+    tool = service._create_task_tool_for(
+        "sess1", "u1", plan, _fn_factory_holder(), {"act": "act"}, "act")
+
+    msg = asyncio.run(tool.func("Wait for his answer", kind="await_reply",
+                                tool_context=MagicMock())).lower()
+
+    assert "do not email anyone again" in msg
+    # The "act on it" branch must be offered ahead of the "send it yourself" one.
+    assert msg.index("act") < msg.index("send it yourself")
+
+
+def test_a_step_result_keeps_the_answer_not_the_models_reasoning():
+    """A reasoning model emits its thinking as an earlier content part and the
+    answer as a later one, so taking parts[0] stored the deliberation as the
+    step's result -- and that result becomes the next step's context. Seen live
+    in session 3c6f49bdf4a7445c8f00f6bf57b1405c, where a completed step's result
+    read 'The user says "run the plan." My task instruction is...' instead of
+    its answer."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g",
+                steps=[Step(id="s1", kind="execute", description="answer the question")])
+
+    ev = MagicMock()
+    ev.node_info = MagicMock(path="s1", output_for=["s1"])
+    ev.content.parts = [
+        MagicMock(text="Let me think. The user says 'run the plan'. Hmm, maybe..."),
+        MagicMock(text="No new features to implement."),
+    ]
+    ev.get_function_calls.return_value = []
+    ev.get_function_responses.return_value = []
+    ev.long_running_tool_ids = None
+    ev.actions = MagicMock(state_delta={})
+
+    asyncio.run(service._apply_event("sess1", plan, ev, {"s1": "s1"}, set()))
+
+    assert plan.step("s1").result == "No new features to implement."
+    assert "Let me think" not in (plan.step("s1").result or "")

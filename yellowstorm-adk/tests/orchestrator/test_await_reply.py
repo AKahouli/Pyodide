@@ -20,7 +20,7 @@ from google.adk.runners import InMemoryRunner
 from google.adk.workflow import START, Workflow
 from google.genai import types
 
-from src.companion_ai import graph, hitl, nodes
+from src.companion_ai import graph, hitl, mail_token, nodes
 from src.companion_ai.plan import Plan, Status, Step
 from src.companion_ai.service import OrchestratorService
 
@@ -519,7 +519,11 @@ def test_a_successful_send_registers_the_wait_after_the_mail_is_away():
     assert registered == ["YW-abcdefghijklmnop12"]
 
 
-def test_only_the_send_step_feeding_a_wait_gets_a_stamped_tool():
+def test_the_send_step_feeding_a_wait_carries_that_wait_s_own_token():
+    """Every step's send is stamped, but only the one the planner already wired
+    to an await_reply carries that sibling's pre-registered token — the rest get
+    a freshly minted one to rebind later. Getting this backwards routes a reply
+    to the wrong wait."""
     svc, rm = _service()
     rm.mail_token_for = AsyncMock(return_value="YW-abcdefghijklmnop12")
     plan = Plan(id="p", title="t", goal="g", steps=[
@@ -527,27 +531,37 @@ def test_only_the_send_step_feeding_a_wait_gets_a_stamped_tool():
         Step(id="other", kind="execute", description="unrelated work"),
         Step(id="wait", kind="await_reply", question="awaiting", depends_on=["send"]),
     ])
-    tools_for_step = svc._mail_stamping("s1", "u1", plan, lambda step: False)
-    base = [_fake_send_tool([])]
+    tools_for_step = svc._mail_stamping("s1", "u1", plan)
 
-    # The step whose mail is awaited: wrapped.
-    assert tools_for_step(plan.step("send"), base)[0] is not base[0]
-    # An unrelated step keeps the connector's own tool, even though it could send.
-    assert tools_for_step(plan.step("other"), base)[0] is base[0]
+    def token_of(step_id):
+        sent = []
+        wrapped = tools_for_step(plan.step(step_id), [_fake_send_tool(sent)])[0]
+        asyncio.run(wrapped.func(to_recipients=["r@example.com"], subject="Q", body="<p>Hi</p>"))
+        return mail_token.extract(sent[0]["subject"], sent[0]["body"])
+
+    # The step whose mail is awaited carries the wait's own registered token.
+    assert token_of("send") == "YW-abcdefghijklmnop12"
+    # An unrelated step still gets stamped, but with its own eager token.
+    assert token_of("other") not in (None, "YW-abcdefghijklmnop12")
 
 
-def test_a_plan_with_no_wait_builds_ordinary_tools():
+def test_every_step_s_send_is_stamped_even_with_no_wait_in_the_plan():
+    """Any step may call create_task(kind='await_reply') after its mail is
+    already gone, so a plan with no wait today can grow one mid-turn. An
+    unstamped send would leave that wait nothing to rebind onto."""
     svc, _ = _service()
     plan = Plan(id="p", title="t", goal="g", steps=[Step(id="a", kind="execute")])
-    tools_for_step = svc._mail_stamping("s1", "u1", plan, lambda step: False)
-    base = [_fake_send_tool([])]
-    assert tools_for_step(plan.step("a"), base)[0] is base[0]
+    tools_for_step = svc._mail_stamping("s1", "u1", plan)
+    sent = []
+    wrapped = tools_for_step(plan.step("a"), [_fake_send_tool(sent)])[0]
+    asyncio.run(wrapped.func(to_recipients=["r@example.com"], subject="Q", body="<p>Hi</p>"))
+    assert mail_token.extract(sent[0]["subject"], sent[0]["body"])
 
 
-def test_a_step_with_create_task_access_eagerly_mints_a_pending_token_on_send():
-    """A step that CAN spin up create_task(kind='await_reply') might send its
-    mail before deciding to — the await_reply sibling doesn't exist yet at
-    send time (create_task creates it AFTER), so there is no sibling to look
+def test_a_step_eagerly_mints_a_pending_token_on_send():
+    """A step might send its mail before deciding to spin up
+    create_task(kind='await_reply') — the await_reply sibling doesn't exist yet
+    at send time (create_task creates it AFTER), so there is no sibling to look
     up the way the static case does. Without eager minting, that mail goes
     out with no token at all and no reply can ever be routed back to
     whatever wait gets created a moment later. See the session that
@@ -557,7 +571,7 @@ def test_a_step_with_create_task_access_eagerly_mints_a_pending_token_on_send():
     svc, rm = _service()
     plan = Plan(id="p", title="t", goal="g",
                steps=[Step(id="s3", kind="execute", description="handle the reply")])
-    tools_for_step = svc._mail_stamping("s1", "u1", plan, lambda step: True)
+    tools_for_step = svc._mail_stamping("s1", "u1", plan)
     sent = []
     wrapped = tools_for_step(plan.step("s3"), [_fake_send_tool(sent)])[0]
     asyncio.run(wrapped.func(to_recipients=["r@example.com"], subject="Q", body="<p>Hi</p>"))
@@ -568,16 +582,6 @@ def test_a_step_with_create_task_access_eagerly_mints_a_pending_token_on_send():
     token = rm.register_mail_wait.await_args.args[0]
     assert token.startswith("YW-")
     assert token in sent[0]["subject"]
-
-
-def test_a_step_without_create_task_access_gets_no_eager_stamp():
-    svc, rm = _service()
-    plan = Plan(id="p", title="t", goal="g",
-               steps=[Step(id="s3", kind="execute", description="ordinary work")])
-    tools_for_step = svc._mail_stamping("s1", "u1", plan, lambda step: False)
-    base = [_fake_send_tool([])]
-    assert tools_for_step(plan.step("s3"), base)[0] is base[0]
-    rm.register_mail_wait.assert_not_awaited()
 
 
 # --- the reply that never comes ---------------------------------------------
@@ -686,3 +690,71 @@ if __name__ == "__main__":
     test_parking_binds_the_interrupt_so_the_wait_becomes_deliverable()
     test_an_ask_step_parking_binds_no_mail_wait()
     print("ok")
+
+
+def test_every_step_is_told_to_register_a_wait_after_sending_mail():
+    """Live failure twice (sessions a198ff8e, 24a0417c): Firas replied "do me a
+    web search first", the persona spun that off with create_task(execute), and
+    the spawned step compiled the list, EMAILED it to him, then stopped —
+    registering no await_reply. His answer had nothing to match, and the session
+    reported 'completed' with the real question still open.
+
+    The model was not disobeying. "Send the mail, then call
+    create_task(kind='await_reply')" lived ONLY in the persona preamble, which
+    nodes.py attaches under `if step.is_persona` — and a create_task(execute)
+    step is born is_persona=False, so it got the bare EXECUTOR_INSTRUCTION,
+    which never mentioned waits at all.
+
+    Deliberately NOT fixed by making spun-off steps inherit the persona: the
+    preamble also says "get the actual decision from {assignee_name} by email",
+    so a step spun off to run a check would email the persona instead of doing
+    the work. The rule belongs to every step that sends mail, not to personas.
+    """
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[])
+
+    for step in (
+        # a plain spun-off task — the case that lost the reply
+        Step(id="a", kind="execute", description="Email Firas the list.",
+             is_dynamic_delegate=True, assignee_name="worky executer"),
+        # a persona step
+        Step(id="b", kind="execute", description="Ask Hamdi.", is_persona=True,
+             assignee_name="Hamdi Imed", assignee_role="data lead"),
+        # a delegate step
+        Step(id="c", kind="execute", description="Hi Firas - confirm?",
+             is_persona=True, is_dynamic_delegate=True, assignee_name="Firas Kahia"),
+    ):
+        instruction = factory(step, "n").instruction
+        assert "create_task(kind='await_reply')" in instruction, \
+            f"step {step.id} was never told to register a wait:\n{instruction[:300]}"
+        assert "REPLY matters" in instruction or "reply matters" in instruction.lower()
+
+
+def test_a_delivered_reply_is_attributed_to_its_sender_not_the_plan():
+    """ADK renders injected content as "[<author>] said: ...", and the author is
+    the workflow -- named plan_<session_id> -- so an unlabelled reply reaches the
+    next step looking like an instruction from the PLAN itself. Seen live in
+    session 2e7fa392c64e4a35b9f77e70d49d275d: Firas replied "do me a search about
+    new mcps ... then i can tell what we can implement", and the step read
+    "[plan_2e7fa392...] said:" as the plan's own wording, concluded the searches
+    "are already part of the plan's other steps", and did nothing at all."""
+    from src.grpc_server import companion_ai_servicer as srv
+
+    svc_mock = MagicMock(resume_turn=AsyncMock())
+    rm = MagicMock(claim_mail_wait=AsyncMock(return_value={
+        "session_id": "sess1", "step_id": "s2", "user_id": "u1",
+        "interrupt_id": "mail:task_s2@1/s2@1"}))
+    servicer = srv.CompanionAiServicer(svc_mock, rm)
+
+    request = MagicMock(
+        token="YW-abcdefghijklmnop12",
+        reply_body="do me a search about new mcps in the market",
+        reply_from="firasworky@gmail.com",
+        agents=[], connectors=[])
+    asyncio.run(servicer._resume_with_reply(
+        request, {"session_id": "sess1", "step_id": "s2", "user_id": "u1",
+                  "interrupt_id": "mail:task_s2@1/s2@1"}, "m"))
+
+    answer = svc_mock.resume_turn.await_args.kwargs["answer"]
+    assert answer.startswith("Email reply from firasworky@gmail.com")
+    # The reply's own words survive intact after the attribution line.
+    assert answer.rstrip().endswith("do me a search about new mcps in the market")

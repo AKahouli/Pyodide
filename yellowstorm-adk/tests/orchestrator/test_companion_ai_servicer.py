@@ -174,7 +174,10 @@ async def test_mail_reply_resumes_the_step_that_was_waiting():
     kw = service.resume_turn.await_args.kwargs
     # The reply answers THAT step, not whatever the session's chat interrupt is.
     assert kw["interrupt_id"] == "mail:plan_s1@1/m@1"
-    assert kw["answer"] == "I work at Yellow Systems."
+    # Carries the reply verbatim, now under an attribution line naming the
+    # sender -- see test_a_delivered_reply_is_attributed_to_its_sender_not_the_plan.
+    assert kw["answer"].endswith("I work at Yellow Systems.")
+    assert kw["answer"].startswith("Email reply from x@example.com")
     # Identity comes from the wait row, never from the caller.
     assert (kw["session_id"], kw["user_id"]) == ("s1", "u1")
 

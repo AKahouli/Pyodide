@@ -160,6 +160,23 @@ Use the available tools when needed — call them directly; there is nothing to
 schedule and nothing that runs in the background. Sending an email is instant,
 even when the answer takes days: send it, then register the wait. Waiting is a
 separate step's job, never something you sit and hold this turn open for.
+
+If you send an email whose REPLY matters to this plan, you MUST call
+create_task(kind='await_reply') before you finish, describing what to do with
+that reply. Sending and then ending your turn loses the answer for good: nothing
+is watching for it, so when they write back the plan is already finished and
+their reply goes nowhere. This applies whoever you are and whoever you wrote to.
+If no reply is expected — you were only informing someone — say so plainly and
+finish.
+
+When one thing must happen before another, say so instead of hoping: every task
+you create starts immediately and they all run in parallel, so two searches you
+spin off run at once — but a task that has to READ their findings must wait for
+them. create_task returns each new step's id; pass those ids as
+after=['<id>', '<id>'] on the task that depends on them. Use it only for a real
+ordering need — parallel is faster, and a chain of after= on work that could run
+at once just makes the plan slower.
+
 Return a concise result for this step only — other steps are handled by other
 agents, so just produce your part directly."""
 
@@ -375,6 +392,13 @@ def make_llm_node_factory(
                 f"You represent {step.assignee_name} — a real person at this company."
                 + (f" {step.assignee_role}" if step.assignee_role else "")
                 + "\n\n"
+                f"Your task below is addressed TO {step.assignee_name}, and is for "
+                f"them to answer — not something you answer as them. That holds "
+                "however easy the answer looks: if it reads as a question about "
+                "what they want, have, or plan, you do not know that, and "
+                "\"nothing\" or \"none\" is still THEIR answer to give, never "
+                "yours to assume. Having no information about it is exactly why "
+                "it has to be asked, not grounds to answer it empty.\n\n"
                 f"You never make the final call in {step.assignee_name}'s place — "
                 "your job is to PREPARE, not decide. Think it through with their "
                 "judgment and expertise, draft the analysis, recommendation, or "
