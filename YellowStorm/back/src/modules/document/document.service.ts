@@ -239,6 +239,20 @@ export class DocumentService {
       if (this.isNotFoundError(error)) {
         return false;
       }
+      // Ceph often returns 403 Unknown on HeadObject even when the object
+      // exists (same quirk handled in workspace bulk-complete). After retries,
+      // treat as present so checkExists callers (artifact-url, download-url)
+      // return a signed URL instead of ERR_1000.
+      if (this.isTransientS3Error(error)) {
+        this.logger.warn(
+          'S3 HeadObject still 403 Unknown after retries; assuming object present',
+          {
+            objectKey,
+            bucket: this.getBucket(),
+          },
+        );
+        return true;
+      }
       const err = error as {
         name?: string;
         message?: string;
@@ -251,7 +265,10 @@ export class DocumentService {
         message: err?.message,
         httpStatusCode: err?.$metadata?.httpStatusCode,
       });
-      throw error;
+      throw new InternalServerException(
+        error instanceof Error ? error : undefined,
+        'Failed to verify document in storage',
+      );
     }
   }
 

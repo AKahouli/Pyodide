@@ -476,7 +476,7 @@ describe('DocumentService', () => {
       expect(result).toBe(false);
     });
 
-    it('should rethrow non-404 errors', async () => {
+    it('should wrap non-404 errors in InternalServerException', async () => {
       setSendImpl({
         HeadObjectCommand: () => {
           throw Object.assign(new Error('Forbidden'), {
@@ -486,7 +486,7 @@ describe('DocumentService', () => {
         },
       });
 
-      await expect(service.exists(testObjectKey)).rejects.toThrow('Forbidden');
+      await expect(service.exists(testObjectKey)).rejects.toThrow(InternalServerException);
     });
 
     it('should retry transient Unknown 403 then succeed', async () => {
@@ -515,7 +515,7 @@ describe('DocumentService', () => {
       }
     });
 
-    it('should rethrow after exhausting Unknown 403 retries', async () => {
+    it('should assume present after exhausting Unknown 403 retries', async () => {
       jest.useFakeTimers();
       try {
         setSendImpl({
@@ -528,10 +528,13 @@ describe('DocumentService', () => {
         });
 
         const pending = service.exists(testObjectKey);
-        const expectation = expect(pending).rejects.toThrow('UnknownError');
         await jest.runAllTimersAsync();
-        await expectation;
+        await expect(pending).resolves.toBe(true);
         expect(mockSend).toHaveBeenCalledTimes(3);
+        expect(loggerService.warn).toHaveBeenCalledWith(
+          'S3 HeadObject still 403 Unknown after retries; assuming object present',
+          expect.objectContaining({ objectKey: testObjectKey }),
+        );
       } finally {
         jest.useRealTimers();
       }
