@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type JSX, type ReactNode } from 'react';
+import { useState, type JSX, type ReactNode } from 'react';
 import { Mic, MicOff, PhoneOff, Keyboard, Check, X, Settings2 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { useVoiceSession, type VoiceState } from '../../voice/useVoiceSession';
-import { useRealtimeVoiceSession } from '../../voice/useRealtimeVoiceSession';
+import { type VoiceState } from '../../voice/useVoiceSession';
+import { useWorkyVoiceSession } from '../../voice/useWorkyVoiceSession';
 import { useVoiceSettings } from '../../voice/voiceSettings';
 import { VoiceOrb } from './VoiceOrb';
 import { VoiceSettingsSheet } from './VoiceSettingsSheet';
@@ -68,41 +68,11 @@ export function VoiceSession({
   onKeyboard?: () => void;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
-  const realtimeVoice = useVoiceSettings((s) => s.realtimeVoice);
-  const [fellBack, setFellBack] = useState(false);
-  const useRealtime = realtimeVoice && !fellBack;
-
-  // Both hooks are instantiated (Rules of Hooks); only the active one is
-  // started. The inactive one is passed an empty streamId so it stays inert.
-  const realtime = useRealtimeVoiceSession(useRealtime ? streamId : '');
-  const legacy = useVoiceSession(useRealtime ? '' : streamId);
-  const session = useRealtime ? realtime : legacy;
-
-  const { state, transcript, level, muted, error, toggleMute, submitTurn, cancelTurn, beginTake } = session;
+  const { state, transcript, level, muted, error, toggleMute, submitTurn, cancelTurn, beginTake, usingRealtime } =
+    useWorkyVoiceSession(streamId, open);
   const turnMode = useVoiceSettings((s) => s.turnMode);
   const threshold = useVoiceSettings((s) => s.speechThreshold);
   const [settingsOpen, setSettingsOpen] = useState(false);
-
-  // If the realtime session errors, fall back to the legacy STT/TTS pipeline.
-  useEffect(() => {
-    if (realtimeVoice && realtime.error && !fellBack) setFellBack(true);
-  }, [realtimeVoice, realtime.error, fellBack]);
-
-  // Start/stop the ACTIVE session with the sheet. Capturing start/stop at
-  // effect-run time means an implementation switch (fallback) stops the old
-  // session in cleanup and starts the new one on re-run.
-  const startRef = useRef(session.start);
-  const stopRef = useRef(session.stop);
-  startRef.current = session.start;
-  stopRef.current = session.stop;
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const startNow = startRef.current;
-    const stopThis = stopRef.current;
-    startNow();
-    return () => stopThis();
-  }, [open, useRealtime]);
 
   const end = (): void => {
     onOpenChange(false);
@@ -182,13 +152,13 @@ export function VoiceSession({
             {/* Turn controls only apply to the legacy record-then-reply loop.
                 In realtime mode Gemini's own VAD decides when to speak, so we
                 hide the Cancel/Done/push-to-talk buttons entirely. */}
-            {!useRealtime && recording ? (
+            {!usingRealtime && recording ? (
               <ControlButton label={t('voice.cancelTurn')} onClick={cancelTurn}>
                 <X className="size-5" />
               </ControlButton>
             ) : null}
 
-            {!useRealtime &&
+            {!usingRealtime &&
               (turnMode === 'manual' && !recording ? (
                 <ControlButton
                   label={t('voice.talk')}
