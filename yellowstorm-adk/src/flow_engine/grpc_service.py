@@ -11,6 +11,7 @@ Implements the runtime RPCs from playbook-flow.proto:
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, Optional
@@ -126,19 +127,21 @@ def _snapshot_hitl_blockers(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     return list(by_id.values())
 
 
-def _run_request_log_context(request: Any, snapshot: dict[str, Any], input_context: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "execution_id": request.execution_id,
-        "flow_id": request.flow_id,
-        "owner_id": str(getattr(request, "owner_id", "") or ""),
-        "node_count": len(snapshot.get("nodes", [])),
-        "control_edge_count": len(snapshot.get("control_edges", [])),
-        "data_binding_count": len(snapshot.get("data_bindings", [])),
-        "input_context_keys": sorted(input_context.keys()),
-        "seeded_task_output_count": len(getattr(request, "seeded_task_outputs", []) or []),
-        "requested_recursion_limit": int(getattr(request.settings, "recursion_limit", 0) or 0),
-        "requested_max_parallelism": int(getattr(request.settings, "max_parallelism", 0) or 0),
-    }
+_MESSAGE_TO_DICT_OPTIONS: dict[str, Any] = {
+    "preserving_proto_field_name": True,
+    "always_print_fields_with_no_presence": True,
+}
+
+
+def _request_to_log_json(request: Any) -> str:
+    """Serialize a protobuf request as copyable, valid JSON."""
+    payload = MessageToDict(request, **_MESSAGE_TO_DICT_OPTIONS)
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def _grpc_in_log_message(label: str, request: Any) -> str:
+    """Put raw JSON in the message so it can be copied directly from console logs."""
+    return f"[gRPC IN] {label} request_json={_request_to_log_json(request)}"
 
 
 def _log_temporary_child_summary(execution_id: str, label: str) -> None:
@@ -177,8 +180,17 @@ class PlaybookFlowRuntimeServicer:
         snapshot = snapshot_to_dict(request.snapshot)
         input_context = struct_to_dict(request.input_context)
         logger.info(
-            "[gRPC IN] Playbook Run request received",
-            **_run_request_log_context(request, snapshot, input_context),
+            _grpc_in_log_message("Playbook Run request received", request),
+            execution_id=execution_id,
+            flow_id=flow_id,
+            owner_id=str(getattr(request, "owner_id", "") or ""),
+            node_count=len(snapshot.get("nodes", [])),
+            control_edge_count=len(snapshot.get("control_edges", [])),
+            data_binding_count=len(snapshot.get("data_bindings", [])),
+            input_context_keys=sorted(input_context.keys()),
+            seeded_task_output_count=len(getattr(request, "seeded_task_outputs", []) or []),
+            requested_recursion_limit=int(getattr(request.settings, "recursion_limit", 0) or 0),
+            requested_max_parallelism=int(getattr(request.settings, "max_parallelism", 0) or 0),
         )
         initial_resume_input = _pop_initial_resume_input(input_context)
         hitl_memory = _pop_runtime_hitl_memory(input_context)
@@ -401,7 +413,7 @@ class PlaybookFlowRuntimeServicer:
         payload = struct_to_dict(request.payload)
 
         logger.info(
-            "[gRPC IN] ResumeFromStep request received",
+            _grpc_in_log_message("ResumeFromStep request received", request),
             execution_id=execution_id,
             node_id=node_id,
             iteration=iteration,
