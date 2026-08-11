@@ -1,7 +1,12 @@
 import { IsIn, IsOptional, IsString, IsNotEmpty, MaxLength } from 'class-validator';
 
 export class CreateVoiceSessionDto {
+  @IsOptional() @IsString() @MaxLength(256) streamId?: string;
   @IsOptional() @IsString() @MaxLength(512) resumptionHandle?: string;
+}
+
+export class VoicePromptDto {
+  @IsString() @MaxLength(8000) prompt!: string;
 }
 
 export class VoiceDispatchDto {

@@ -36,4 +36,26 @@ describe('WorkyVoiceController', () => {
     expect(planning.appendVoiceMessage).toHaveBeenCalledWith('u1', 's1', 'manager', 'hi there');
     expect(res.id).toBe('m1');
   });
+
+  it('POST session resolves the per-stream prompt and passes it to mint', async () => {
+    (planning as any).getVoicePrompt = jest.fn().mockResolvedValue({ prompt: 'Persona Q' });
+    tokens.mintSessionToken.mockResolvedValue({ wsUrl: 'wss://x', setup: {}, expiresAt: 'z' });
+    await ctrl.createSession(user, { streamId: 's1', resumptionHandle: 'h1' });
+    expect((planning as any).getVoicePrompt).toHaveBeenCalledWith('u1', 's1');
+    expect(tokens.mintSessionToken).toHaveBeenCalledWith({ resumptionHandle: 'h1', prompt: 'Persona Q' });
+  });
+
+  it('GET prompt returns default flag when unset', async () => {
+    (planning as any).getVoicePrompt = jest.fn().mockResolvedValue({ prompt: null });
+    const res = await ctrl.getPrompt(user, 's1');
+    expect(res.isDefault).toBe(true);
+    expect(res.prompt).toContain('worky');
+  });
+
+  it('PUT prompt saves and reports non-default', async () => {
+    (planning as any).setVoicePrompt = jest.fn().mockResolvedValue({ prompt: 'Hi' });
+    const res = await ctrl.setPrompt(user, 's1', { prompt: 'Hi' });
+    expect((planning as any).setVoicePrompt).toHaveBeenCalledWith('u1', 's1', 'Hi');
+    expect(res).toEqual({ prompt: 'Hi', isDefault: false });
+  });
 });

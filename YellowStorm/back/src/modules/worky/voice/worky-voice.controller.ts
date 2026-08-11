@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Put } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { UserDocument } from '../../user/schemas/user.schema';
@@ -7,7 +7,14 @@ import { Permissions } from '../../authorization/constants/permissions';
 import { GeminiTokenService, VoiceSessionEnvelope } from './gemini-token.service';
 import { VoiceToolService } from './voice-tool.service';
 import { WorkyPlanningService } from '../services/worky-planning.service';
-import { CreateVoiceSessionDto, VoiceDispatchDto, VoiceStatusDto, VoiceTranscriptDto } from './dto/voice.dto';
+import { CONCIERGE_SYSTEM_PROMPT } from './voice-concierge.config';
+import {
+  CreateVoiceSessionDto,
+  VoiceDispatchDto,
+  VoicePromptDto,
+  VoiceStatusDto,
+  VoiceTranscriptDto,
+} from './dto/voice.dto';
 
 /**
  * BFF for the realtime voice concierge. Mints locked Gemini Live tokens and
@@ -27,12 +34,35 @@ export class WorkyVoiceController {
   @Post('session')
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
-  @ApiOperation({ summary: 'Mint a locked ephemeral Gemini Live session token' })
+  @ApiOperation({ summary: 'Mint an ephemeral Gemini Live session token (per-stream persona)' })
   async createSession(
-    @CurrentUser() _user: UserDocument,
+    @CurrentUser() user: UserDocument,
     @Body() dto: CreateVoiceSessionDto,
   ): Promise<VoiceSessionEnvelope> {
-    return this.tokens.mintSessionToken({ resumptionHandle: dto.resumptionHandle });
+    const prompt = dto.streamId
+      ? ((await this.planning.getVoicePrompt(user._id.toString(), dto.streamId)).prompt ?? undefined)
+      : undefined;
+    return this.tokens.mintSessionToken({ resumptionHandle: dto.resumptionHandle, prompt });
+  }
+
+  @Get('prompt/:streamId')
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Get the per-stream concierge prompt (or the default)' })
+  async getPrompt(@CurrentUser() user: UserDocument, @Param('streamId') streamId: string) {
+    const { prompt } = await this.planning.getVoicePrompt(user._id.toString(), streamId);
+    return { prompt: prompt ?? CONCIERGE_SYSTEM_PROMPT, isDefault: prompt == null };
+  }
+
+  @Put('prompt/:streamId')
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Set (or reset via blank) the per-stream concierge prompt' })
+  async setPrompt(
+    @CurrentUser() user: UserDocument,
+    @Param('streamId') streamId: string,
+    @Body() dto: VoicePromptDto,
+  ) {
+    const { prompt } = await this.planning.setVoicePrompt(user._id.toString(), streamId, dto.prompt);
+    return { prompt: prompt ?? CONCIERGE_SYSTEM_PROMPT, isDefault: prompt == null };
   }
 
   @Post('tool/dispatch')
