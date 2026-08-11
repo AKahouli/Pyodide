@@ -158,6 +158,23 @@ export class WorkyPlanningService {
     return { id };
   }
 
+  async getVoicePrompt(userId: string, streamId: string): Promise<{ prompt: string | null }> {
+    const stream = await this.loadStream(streamId, userId);
+    return { prompt: stream.voicePrompt ?? null };
+  }
+
+  async setVoicePrompt(
+    userId: string,
+    streamId: string,
+    prompt: string | null,
+  ): Promise<{ prompt: string | null }> {
+    const stream = await this.loadStream(streamId, userId);
+    const trimmed = typeof prompt === 'string' ? prompt.trim() : '';
+    stream.voicePrompt = trimmed.length > 0 ? trimmed : null;
+    await stream.save();
+    return { prompt: stream.voicePrompt };
+  }
+
   async listMessages(
     userId: string,
     streamId: string,
