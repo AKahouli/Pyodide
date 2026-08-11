@@ -33,10 +33,12 @@ describe('GeminiTokenService', () => {
     expect(arg.uses).toBe(1);
 
     expect(env.wsUrl).toBe('wss://host/ws/Constrained?access_token=ephemeral-abc');
-    // The backend authors the full setup: model + modalities + voice + prompt + tools.
+    // The backend authors the full setup in raw-proto shape: responseModalities
+    // and speechConfig live under generationConfig, not at the top level.
     const setup = env.setup as any;
     expect(setup.model).toBe('models/gemini-live');
-    expect(setup.responseModalities).toEqual(['AUDIO']);
+    expect(setup.generationConfig.responseModalities).toEqual(['AUDIO']);
+    expect(setup.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Kore');
     expect(setup.systemInstruction.parts[0].text).toContain('worky');
     expect(setup.tools[0].functionDeclarations).toHaveLength(2);
     expect(typeof env.expiresAt).toBe('string');

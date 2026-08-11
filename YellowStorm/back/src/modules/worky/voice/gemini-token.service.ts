@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenAI } from '@google/genai';
-import { buildLiveConstraints } from './voice-concierge.config';
+import { buildSetupMessage } from './voice-concierge.config';
 
 export interface VoiceSessionEnvelope {
   wsUrl: string;
@@ -41,8 +41,6 @@ export class GeminiTokenService implements OnModuleInit {
     const expireMs = now + this.tokenTtlSec * 1000;
     const client = new GoogleGenAI({ apiKey: this.apiKey, httpOptions: { apiVersion: 'v1alpha' } });
 
-    const constraints = buildLiveConstraints(this.model, this.voice, opts);
-
     let token: { name?: string };
     try {
       token = await client.authTokens.create({
@@ -63,10 +61,10 @@ export class GeminiTokenService implements OnModuleInit {
     return {
       wsUrl: `${this.wsBaseUrl}?access_token=${token.name}`,
       // The backend authors the full session setup (model + modalities + voice +
-      // concierge system prompt + tools) so the concierge reliably has its
-      // tools and persona. The client relays this opaque blob verbatim and
-      // authors nothing; the API key never leaves the server.
-      setup: { model: constraints.model, ...constraints.config },
+      // concierge system prompt + tools) in raw-proto shape so the concierge
+      // reliably has its tools and persona. The client relays this opaque blob
+      // verbatim and authors nothing; the API key never leaves the server.
+      setup: buildSetupMessage(this.model, this.voice, opts),
       expiresAt: new Date(expireMs).toISOString(),
     };
   }

@@ -33,6 +33,32 @@ export const VOICE_TOOLS: FunctionDeclaration[] = [
   },
 ];
 
+/**
+ * Builds the raw BidiGenerateContentSetup message sent as the first WS frame.
+ * NOTE: the raw Live proto nests responseModalities/speechConfig under
+ * `generationConfig` — unlike the SDK's flat LiveConnectConfig — so this shape
+ * differs from buildLiveConstraints on purpose.
+ */
+export function buildSetupMessage(
+  model: string,
+  voice: string,
+  opts: { resumptionHandle?: string } = {},
+): Record<string, unknown> {
+  return {
+    model: `models/${model}`,
+    generationConfig: {
+      responseModalities: ['AUDIO'],
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+    },
+    systemInstruction: { parts: [{ text: CONCIERGE_SYSTEM_PROMPT }] },
+    tools: [{ functionDeclarations: VOICE_TOOLS }],
+    inputAudioTranscription: {},
+    outputAudioTranscription: {},
+    sessionResumption: opts.resumptionHandle ? { handle: opts.resumptionHandle } : {},
+    contextWindowCompression: { slidingWindow: {} },
+  };
+}
+
 export function buildLiveConstraints(
   model: string,
   voice: string,

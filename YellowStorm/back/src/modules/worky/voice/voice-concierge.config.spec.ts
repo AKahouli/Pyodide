@@ -1,4 +1,4 @@
-import { CONCIERGE_SYSTEM_PROMPT, VOICE_TOOLS, buildLiveConstraints } from './voice-concierge.config';
+import { CONCIERGE_SYSTEM_PROMPT, VOICE_TOOLS, buildLiveConstraints, buildSetupMessage } from './voice-concierge.config';
 
 describe('voice-concierge.config', () => {
   it('declares exactly the two v1 tools', () => {
@@ -26,5 +26,26 @@ describe('voice-concierge.config', () => {
   it('passes a resumption handle through when reconnecting', () => {
     const c = buildLiveConstraints('gemini-live', 'Kore', { resumptionHandle: 'h-123' });
     expect((c.config as any).sessionResumption.handle).toBe('h-123');
+  });
+
+  describe('buildSetupMessage (raw WS proto shape)', () => {
+    it('nests responseModalities/speechConfig under generationConfig', () => {
+      const s = buildSetupMessage('gemini-live', 'Kore') as any;
+      expect(s.model).toBe('models/gemini-live');
+      // Must NOT be at the top level (Gemini rejects that with 1007).
+      expect(s.responseModalities).toBeUndefined();
+      expect(s.generationConfig.responseModalities).toEqual(['AUDIO']);
+      expect(s.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Kore');
+      expect(s.systemInstruction.parts[0].text).toContain('worky');
+      expect(s.tools[0].functionDeclarations).toHaveLength(2);
+      expect(s.inputAudioTranscription).toBeDefined();
+      expect(s.outputAudioTranscription).toBeDefined();
+      expect(s.contextWindowCompression.slidingWindow).toBeDefined();
+    });
+
+    it('threads the resumption handle', () => {
+      const s = buildSetupMessage('gemini-live', 'Kore', { resumptionHandle: 'h-1' }) as any;
+      expect(s.sessionResumption.handle).toBe('h-1');
+    });
   });
 });
