@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { VoiceSessionApi, VoiceState } from './useVoiceSession';
 import { useVoiceSettings } from './voiceSettings';
-import { createVoiceSession, voiceTranscript } from '../api';
+import { createVoiceSession } from '../api';
 import { openGeminiLive, type GeminiLiveConnection } from './geminiLiveClient';
 import { handleToolCall } from './toolCallRelay';
 import { attachMilestoneInjector } from './milestoneInjector';
@@ -100,13 +100,16 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
           connRef.current?.sendToolResponse([res]);
         }
       },
+      // Transcripts drive only the ephemeral on-screen overlay. The concierge is
+      // a relay/narration voice and must NOT write to chat history — the task
+      // request is persisted by the dispatch_task flow (owner) and the real
+      // answers by the worky manager (via the orchestrator). Persisting the
+      // concierge's speech here would impersonate the manager in the transcript.
       onInputTranscript: (t) => {
         setTranscript((p) => ({ ...p, you: t }));
-        void voiceTranscript(streamId, 'owner', t).catch(() => undefined);
       },
       onOutputTranscript: (t) => {
         setTranscript((p) => ({ ...p, manager: t }));
-        void voiceTranscript(streamId, 'manager', t).catch(() => undefined);
       },
       onResumptionHandle: (h) => {
         handleRef.current = h;
