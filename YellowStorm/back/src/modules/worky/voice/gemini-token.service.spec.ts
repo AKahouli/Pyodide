@@ -50,6 +50,12 @@ describe('GeminiTokenService', () => {
     expect((env.setup as any).sessionResumption.handle).toBe('h-9');
   });
 
+  it('threads a per-stream prompt into the setup', async () => {
+    createMock.mockResolvedValue({ name: 'ephemeral-p' });
+    const env = await svc().mintSessionToken({ prompt: 'Persona Z' });
+    expect((env.setup as any).systemInstruction.parts[0].text).toBe('Persona Z');
+  });
+
   it('throws a clear error when the API key is unset', async () => {
     await expect(svc({ 'worky.voiceApiKey': '' }).mintSessionToken()).rejects.toThrow(/not configured/i);
     expect(createMock).not.toHaveBeenCalled();

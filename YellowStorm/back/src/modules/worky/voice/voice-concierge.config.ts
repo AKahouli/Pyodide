@@ -42,15 +42,16 @@ export const VOICE_TOOLS: FunctionDeclaration[] = [
 export function buildSetupMessage(
   model: string,
   voice: string,
-  opts: { resumptionHandle?: string } = {},
+  opts: { resumptionHandle?: string; prompt?: string } = {},
 ): Record<string, unknown> {
+  const systemText = opts.prompt && opts.prompt.trim().length > 0 ? opts.prompt.trim() : CONCIERGE_SYSTEM_PROMPT;
   return {
     model: `models/${model}`,
     generationConfig: {
       responseModalities: ['AUDIO'],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
     },
-    systemInstruction: { parts: [{ text: CONCIERGE_SYSTEM_PROMPT }] },
+    systemInstruction: { parts: [{ text: systemText }] },
     tools: [{ functionDeclarations: VOICE_TOOLS }],
     inputAudioTranscription: {},
     outputAudioTranscription: {},

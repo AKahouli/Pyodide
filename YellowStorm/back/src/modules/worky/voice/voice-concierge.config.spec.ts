@@ -47,5 +47,15 @@ describe('voice-concierge.config', () => {
       const s = buildSetupMessage('gemini-live', 'Kore', { resumptionHandle: 'h-1' }) as any;
       expect(s.sessionResumption.handle).toBe('h-1');
     });
+
+    it('uses a provided prompt override', () => {
+      const s = buildSetupMessage('gemini-live', 'Kore', { prompt: 'Custom persona X' }) as any;
+      expect(s.systemInstruction.parts[0].text).toBe('Custom persona X');
+    });
+
+    it('falls back to the default prompt when override is blank', () => {
+      const s = buildSetupMessage('gemini-live', 'Kore', { prompt: '   ' }) as any;
+      expect(s.systemInstruction.parts[0].text).toContain('worky');
+    });
   });
 });
