@@ -49,3 +49,19 @@ Start backend + frontend, open a worky stream, open the voice dock, ensure **Rea
 ## Results
 
 _(fill in during the live run)_
+
+---
+
+# Inline voice dock + per-stream prompt (2026-08-11)
+
+Automated: backend Jest (planning voice-prompt, config/token prompt override, controller GET/PUT + session prompt) and frontend Vitest (voice API, shared hook, dialog, dock) all green; both typechecks clean.
+
+Manual (desktop stream, backend restarted + frontend rebuilt):
+- [ ] Clicking the dock starts voice **inline** — no full-screen sheet; the stream stays visible and scrollable.
+- [ ] The dock mic animates between idle / listening (pulses with your voice) / speaking.
+- [ ] Hang-up stops voice; the dock returns to the "tap to talk" pill.
+- [ ] The gear opens voice settings; the message icon opens the Concierge instructions dialog.
+- [ ] Editing + Save persists — reload the page, reopen the dialog → the text is retained.
+- [ ] Reset to default clears it (dialog shows the "using default" note).
+- [ ] Start voice again → the saved persona takes effect (behavior reflects the custom prompt).
+- [ ] On a phone viewport, the mobile full-screen sheet still works (and only one session runs).
