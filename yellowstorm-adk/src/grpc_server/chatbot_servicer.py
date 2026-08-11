@@ -57,6 +57,16 @@ def _message_to_dict(message: Any) -> Dict[str, Any]:
     return MessageToDict(message, **_MESSAGE_TO_DICT_OPTIONS)
 
 
+def _json_log_payload(payload: Dict[str, Any]) -> str:
+    """Serialize a protobuf-derived payload as copyable, valid JSON."""
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def _grpc_in_log_message(label: str, payload: Dict[str, Any]) -> str:
+    """Put raw JSON in the message so it can be copied directly from console logs."""
+    return f"[gRPC IN] {label} request_json={_json_log_payload(payload)}"
+
+
 def _grpc_skill_summaries(skills: Any) -> List[Dict[str, Any]]:
     summaries = []
     for skill in skills or []:
@@ -365,7 +375,7 @@ class ChatbotServicer(
         """
         request_payload = self._serialize_run_agent_team_request(request)
         logger.info(
-            "[gRPC IN] RunAgentTeam request received",
+            _grpc_in_log_message("RunAgentTeam request received", request_payload),
             user_id=request.user_context.user_id,
             username=request.user_context.username,
             conversation_id=request.conversation_id,
@@ -375,7 +385,6 @@ class ChatbotServicer(
             workspace_count=len(request.workspace_context),
             attached_file_count=len(request.attached_files),
             previous_attached_file_count=len(request.previous_attached_files),
-            request_payload=request_payload,
         )
 
         logger.info(f"[gRPC] RunAgentTeam request from user_id: {request.user_context.user_id}, username: {request.user_context.username}, conversation_id: {request.conversation_id}, agent_mode: {request.agent_mode}")
@@ -611,8 +620,16 @@ class ChatbotServicer(
         Shares the same internal service/orchestrator stack as RunAgentTeam by
         converting to an internal RunAgentTeamRequest with ``agent_mode='mono'``.
         """
+        request_payload = _message_to_dict(request)
+        replay_context = request_payload.get("correction_replay_context")
+        if isinstance(replay_context, dict):
+            request_payload["correction_replay_context"] = {
+                "present": True,
+                "attempt_number": replay_context.get("attempt_number", 0),
+                "finding_count": len(replay_context.get("findings", [])),
+            }
         logger.info(
-            "[gRPC IN] RunSingleAgent request received",
+            _grpc_in_log_message("RunSingleAgent request received", request_payload),
             user_id=request.user_context.user_id,
             username=request.user_context.username,
             conversation_id=request.conversation_id,
