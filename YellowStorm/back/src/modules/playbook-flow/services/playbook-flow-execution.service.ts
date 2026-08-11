@@ -1721,6 +1721,69 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     };
   }
 
+  async findRecentByAccessibleFlowIds(
+    flowIds: string[],
+    statuses: string[] | undefined,
+    limit: number,
+  ): Promise<Array<{
+    executionId: string;
+    flowId: string;
+    status: string;
+    startedAt?: Date;
+    updatedAt?: Date;
+    endedAt?: Date;
+    waitingForHumanInput: boolean;
+    task?: { taskId: string; iteration: number; status: string; taskName?: string };
+  }>> {
+    if (flowIds.length === 0) return [];
+    const filter: Record<string, unknown> = { flowId: { $in: flowIds } };
+    if (statuses?.length) filter.status = { $in: statuses };
+    const executions = await this.executionModel
+      .find(filter)
+      .select('_id flowId status startedAt updatedAt endedAt pendingApproval')
+      .sort({ updatedAt: -1, createdAt: -1, _id: 1 })
+      .limit(limit)
+      .lean()
+      .exec();
+    const executionIds = executions.map((execution) => String(execution._id));
+    const taskResults = executionIds.length === 0
+      ? []
+      : await this.taskResultModel
+        .find({ executionId: { $in: executionIds }, status: { $in: ['failed', 'running'] } })
+        .select('executionId taskId iteration status generatedNodeTitle startedAt')
+        .sort({ startedAt: -1, iteration: -1 })
+        .lean()
+        .exec();
+    const taskByExecution = new Map<string, (typeof taskResults)[number]>();
+    for (const task of taskResults) {
+      const current = taskByExecution.get(task.executionId);
+      if (!current || (task.status === 'failed' && current.status !== 'failed')) {
+        taskByExecution.set(task.executionId, task);
+      }
+    }
+    return executions.map((execution) => {
+      const executionId = String(execution._id);
+      const task = taskByExecution.get(executionId);
+      return {
+        executionId,
+        flowId: execution.flowId,
+        status: execution.status,
+        startedAt: execution.startedAt,
+        updatedAt: execution.updatedAt,
+        endedAt: execution.endedAt,
+        waitingForHumanInput: execution.status === 'pending_approval' || Boolean(execution.pendingApproval),
+        ...(task ? {
+          task: {
+            taskId: task.taskId,
+            iteration: task.iteration,
+            status: task.status,
+            taskName: task.generatedNodeTitle,
+          },
+        } : {}),
+      };
+    });
+  }
+
   async findOne(executionId: string, ownerId: string): Promise<IFlowExecutionDetailResponse> {
     const execution = await this.findExecutionWithSnapshot(executionId);
     if (!execution) {

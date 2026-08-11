@@ -1595,6 +1595,8 @@ export interface ConnectorResponse {
   actions: ConnectorActionResponse[];
   referencedSkillIds: string[];
   isActive: boolean;
+  isSystem?: boolean;
+  isHidden?: boolean;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -1640,6 +1642,7 @@ export interface CreateConnectorRequest {
   }>;
   referencedSkillIds?: string[];
   isActive?: boolean;
+  isHidden?: boolean;
 }
 
 export interface UpdateConnectorRequest extends Partial<CreateConnectorRequest> { }

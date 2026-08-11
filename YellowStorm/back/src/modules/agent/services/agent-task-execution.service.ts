@@ -15,14 +15,25 @@ export class AgentTaskExecutionService {
   private readonly logger = new Logger(AgentTaskExecutionService.name);
   constructor(private readonly config: ConfigService, @Inject(forwardRef(() => StreamService)) private readonly stream: StreamService, private readonly agents: AgentService, private readonly usageService: UsageService) {}
 
-  async runSingleAgentTask(input: { userId: string; username?: string; agentId: string; query: string; attachedFiles: GrpcAttachedFile[]; correlationId: string; timeoutMs?: number }): Promise<{ text: string; toolResults: AgentTaskToolResult[]; usage?: { inputTokens: number; outputTokens: number; model?: string } }> {
+  async runSingleAgentTask(input: { userId: string; username?: string; agentId: string; query: string; attachedFiles: GrpcAttachedFile[]; correlationId: string; conversationId?: string; tenantId?: string; timeoutMs?: number }): Promise<{ text: string; toolResults: AgentTaskToolResult[]; usage?: { inputTokens: number; outputTokens: number; model?: string } }> {
     await this.agents.assertActiveDefaultAgent(input.agentId);
     if (!(await this.stream.waitForGrpcReady(5_000))) throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'The AI runtime is unavailable');
     const client = this.stream.getChatbotClient();
     if (!client) throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'The AI runtime is unavailable');
-    const [agent] = await this.agents.buildGrpcAgentsForPlaybook(input.userId, [input.agentId], undefined, `workspace-artifact:${input.correlationId}`);
+    const conversationId = input.conversationId || `workspace-artifact:${input.correlationId}`;
+    const [agent] = await this.agents.buildGrpcAgentsForPlaybook(
+      input.userId,
+      [input.agentId],
+      undefined,
+      conversationId,
+      {
+        tenantId: input.tenantId,
+        conversationId,
+        correlationId: input.correlationId,
+      },
+    );
     if (!agent) throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The decision-flow agent is unavailable');
-    const request = { user_context: { user_id: input.userId, username: input.username || '' }, conversation_id: `workspace-artifact:${input.correlationId}`, query: input.query, agent, workspace_context: [], attached_files: input.attachedFiles, previous_attached_files: [], skills: [], deep_search_enabled: false };
+    const request = { user_context: { user_id: input.userId, username: input.username || '' }, conversation_id: conversationId, query: input.query, agent, workspace_context: [], attached_files: input.attachedFiles, previous_attached_files: [], skills: [], deep_search_enabled: false };
     const timeoutMs = input.timeoutMs ?? this.config.get<number>('conversation.grpcTimeoutMs', 120000);
     return new Promise((resolve, reject) => {
       const metadata = createGrpcMetadata(this.config); metadata.set('user', input.username || 'SYSTEM'); metadata.set('x-correlation-id', input.correlationId);

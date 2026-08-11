@@ -3,6 +3,8 @@ from collections.abc import AsyncIterator
 
 import httpx
 
+from auth import actor_context
+
 
 class PlaybookBackendError(RuntimeError):
     def __init__(self, code: str, message: str, status_code: int, details: Any = None) -> None:
@@ -51,6 +53,7 @@ class YellowStormPlaybookClient:
             "X-Internal-Token": self._internal_token,
             "X-YellowStorm-User-Id": user_id,
             "Last-Event-ID": str(last_event_id),
+            **self._actor_headers(),
         }
         try:
             async with self._client.stream("GET", path, headers=headers) as response:
@@ -75,6 +78,7 @@ class YellowStormPlaybookClient:
                 headers={
                     "X-Internal-Token": self._internal_token,
                     "X-YellowStorm-User-Id": user_id,
+                    **self._actor_headers(),
                     **(extra_headers or {}),
                 },
             )
@@ -97,6 +101,18 @@ class YellowStormPlaybookClient:
         if isinstance(body, dict) and body.get("success") is True and "data" in body:
             return body["data"]
         return body
+
+    @staticmethod
+    def _actor_headers() -> dict[str, str]:
+        context = actor_context.get()
+        if context is None:
+            return {}
+        return {
+            "X-YellowStorm-Tenant-Id": context.tenant_id,
+            "X-YellowStorm-Agent-Id": context.agent_id,
+            "X-YellowStorm-Conversation-Id": context.conversation_id,
+            "X-Correlation-Id": context.correlation_id,
+        }
 
     @staticmethod
     def _safe_json(response: httpx.Response) -> Any:

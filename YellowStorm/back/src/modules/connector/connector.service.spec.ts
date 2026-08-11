@@ -6,6 +6,66 @@ const createPlaybookBindingSyncServiceMock = () => ({
   syncConnectorActions: jest.fn().mockResolvedValue(undefined),
 });
 
+describe('ConnectorService Playbook MCP reconciliation', () => {
+  it('persists Google ADK-compatible string enums', async () => {
+    const connectorId = new Types.ObjectId();
+    const findOneAndUpdate = jest.fn().mockImplementation((_filter, update) => ({
+      exec: jest.fn().mockResolvedValue({
+        _id: connectorId,
+        slug: 'playbook-mcp',
+        ...update.$setOnInsert,
+        ...update.$set,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    }));
+    const service = new ConnectorService(
+      { findOneAndUpdate } as any,
+      { find: jest.fn() } as any,
+      { setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() } as any,
+      null as any,
+      null as any,
+      createPlaybookBindingSyncServiceMock() as any,
+    );
+
+    await service.reconcilePlaybookMcpSystemConnector(new Types.ObjectId().toString(), 'http://localhost:8025/mcp');
+
+    const actions = findOneAndUpdate.mock.calls[0][1].$set.actions;
+    const recent = actions.find((action: { key: string }) => action.key === 'list_recent_executions');
+    expect(recent.parameterSchema.properties.status).toEqual({
+      type: 'string',
+      enum: ['running', 'failed', 'completed', 'waiting', 'cancelled'],
+    });
+  });
+});
+
+describe('ConnectorService findAllActive', () => {
+  it('includes hidden Playbook MCP while excluding other hidden connectors', async () => {
+    const exec = jest.fn().mockResolvedValue([]);
+    const lean = jest.fn().mockReturnValue({ exec });
+    const sort = jest.fn().mockReturnValue({ lean });
+    const find = jest.fn().mockReturnValue({ sort });
+    const service = new ConnectorService(
+      { find } as any,
+      { find: jest.fn() } as any,
+      { setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() } as any,
+      null as any,
+      null as any,
+      createPlaybookBindingSyncServiceMock() as any,
+    );
+
+    await service.findAllActive();
+
+    expect(find).toHaveBeenCalledWith({
+      isActive: true,
+      $or: [
+        { isHidden: { $ne: true } },
+        { slug: 'playbook-mcp' },
+      ],
+    });
+  });
+});
+
 describe('ConnectorService importFromMcp', () => {
   it('persists normalized actions when creating a connector', async () => {
     const create = jest.fn().mockResolvedValue({

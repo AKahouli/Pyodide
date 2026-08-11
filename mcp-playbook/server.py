@@ -1,13 +1,13 @@
 import os
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 
-from auth import TrustedIdentityMiddleware, require_acting_user_id
+from auth import TrustedIdentityMiddleware, require_acting_user_id, require_actor_context
 from clients.yellowstorm_playbook_client import PlaybookBackendError, YellowStormPlaybookClient
 from config import Settings
 
@@ -35,6 +35,30 @@ async def call(operation) -> dict[str, Any]:
         return result if isinstance(result, dict) else {"result": result}
     except PlaybookBackendError as exc:
         return exc.as_result()
+
+
+async def mascot_call(operation) -> dict[str, Any]:
+    correlation_id = require_actor_context().correlation_id
+    try:
+        result = await operation
+        data = result if isinstance(result, dict) else {"result": result}
+        ui_target = data.get("uiTarget") if isinstance(data, dict) else None
+        return {
+            "ok": True,
+            "data": data,
+            **({"uiTarget": ui_target} if isinstance(ui_target, dict) else {}),
+            "correlationId": correlation_id,
+        }
+    except PlaybookBackendError as exc:
+        return {
+            "ok": False,
+            "error": {
+                "code": exc.code,
+                "message": str(exc),
+                "retryable": exc.status_code in (409, 429, 502, 503, 504),
+            },
+            "correlationId": correlation_id,
+        }
 
 
 def path_id(value: str) -> str:
@@ -67,6 +91,26 @@ async def construction_events(request: Request) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )
+
+
+@mcp.tool()
+async def search_playbooks(
+    query: str | None = None,
+    workspace_id: str | None = None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Search permission-filtered Playbooks by name and return semantic UI targets."""
+    normalized_query = query.strip()[:200] if query else None
+    bounded_limit = min(max(limit, 1), settings.search_limit_max)
+    params = urlencode({
+        **({"query": normalized_query} if normalized_query else {}),
+        **({"workspaceId": workspace_id.strip()[:200]} if workspace_id and workspace_id.strip() else {}),
+        "limit": bounded_limit,
+    })
+    return await mascot_call(backend().get(
+        f"/api/v1/internal/playbook-assistant/playbooks?{params}",
+        require_acting_user_id(),
+    ))
 
 
 @mcp.tool()
@@ -234,7 +278,7 @@ async def revert_playbook_construction(playbook_id: str, operation_id: str) -> d
 
 
 @mcp.tool()
-async def start_playbook_execution(playbook_id: str, idempotency_key: str, input_context: dict[str, Any] | None = None, single_step_task_id: str | None = None) -> dict[str, Any]:
+async def start_playbook_execution(playbook_id: str, idempotency_key: str | None = None, input_context: dict[str, Any] | None = None, single_step_task_id: str | None = None) -> dict[str, Any]:
     """Start a Playbook execution. Runtime HITL responses remain canvas-owned."""
     return await call(backend().post(
         f"/api/v1/internal/playbook-assistant/playbooks/{path_id(playbook_id)}/executions",
@@ -251,9 +295,34 @@ async def list_playbook_executions(playbook_id: str, page: int = 1, limit: int =
 
 
 @mcp.tool()
+async def list_recent_executions(
+    status: str | None = None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """List recent permission-filtered executions across accessible Playbooks."""
+    params = urlencode({
+        **({"status": status} if status else {}),
+        "limit": min(max(limit, 1), settings.search_limit_max),
+    })
+    return await mascot_call(backend().get(
+        f"/api/v1/internal/playbook-assistant/executions?{params}",
+        require_acting_user_id(),
+    ))
+
+
+@mcp.tool()
 async def get_playbook_execution(execution_id: str) -> dict[str, Any]:
     """Get execution status and results. Pending HITL is status-only."""
     return await call(backend().get(f"/api/v1/internal/playbook-assistant/executions/{path_id(execution_id)}", require_acting_user_id()))
+
+
+@mcp.tool()
+async def get_execution_diagnostics(execution_id: str) -> dict[str, Any]:
+    """Get deterministic redacted diagnostics without retrying or mutating an execution."""
+    return await mascot_call(backend().get(
+        f"/api/v1/internal/playbook-assistant/executions/{path_id(execution_id)}/diagnostics",
+        require_acting_user_id(),
+    ))
 
 
 @mcp.tool()
@@ -293,5 +362,8 @@ async def delete_playbook_execution(execution_id: str) -> dict[str, Any]:
 if __name__ == "__main__":
     settings.validate()
     os.environ.setdefault("HOST", "0.0.0.0")
-    middleware = [Middleware(TrustedIdentityMiddleware, ingress_token=settings.ingress_token)]
+    middleware = [Middleware(
+        TrustedIdentityMiddleware,
+        ingress_token=settings.ingress_token,
+    )]
     mcp.run(transport="streamable-http", host="0.0.0.0", port=settings.port, middleware=middleware)

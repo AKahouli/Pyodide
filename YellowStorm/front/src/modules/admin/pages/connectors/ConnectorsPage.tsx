@@ -145,7 +145,7 @@ export function ConnectorsPage() {
         color: data.color || undefined,
         iconColor: data.iconColor || undefined,
         categoryId: data.categoryId ? data.categoryId : null,
-        authType: data.authSourceType === 'connected_app' ? 'oauth2' : data.authSourceType === 'credential' ? 'token' : 'none',
+        authType: data.authSourceType === 'connected_app' ? 'oauth2' : data.authSourceType === 'none' ? 'none' : 'token',
         authSourceType: data.authSourceType || undefined,
         connectedAppKey: data.authSourceType === 'connected_app' ? (data.connectedAppKey || undefined) : undefined,
         runtimeAuthConfig: typeof data.runtimeAuthConfig === 'string' ? (data.runtimeAuthConfig.trim() ? JSON.parse(data.runtimeAuthConfig) : undefined) : undefined,
@@ -162,6 +162,7 @@ export function ConnectorsPage() {
         actions: parsedActions,
         referencedSkillIds: data.referencedSkillIds,
         isActive: data.isActive,
+        isHidden: data.isHidden,
       };
       if (editingConnector) {
         await updateConnector(editingConnector.id, payload);

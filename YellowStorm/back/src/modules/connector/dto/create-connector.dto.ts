@@ -192,4 +192,9 @@ export class CreateConnectorDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ description: 'Whether the connector is hidden from the catalog', default: false })
+  @IsOptional()
+  @IsBoolean()
+  isHidden?: boolean;
 }

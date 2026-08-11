@@ -78,6 +78,7 @@ export class ConnectorService {
       actions,
       referencedSkillIds: (dto.referencedSkillIds ?? []).map((id) => new Types.ObjectId(id)),
       isActive: dto.isActive ?? true,
+      isHidden: dto.isHidden ?? false,
       createdBy: new Types.ObjectId(createdBy),
     });
 
@@ -131,6 +132,7 @@ export class ConnectorService {
     const playbookId = { type: 'string', minLength: 1 };
     const optionalId = { type: ['string', 'null'] };
     const actionDefinitions = [
+      { key: 'search_playbooks', label: 'Search Playbooks', safety: ConnectorActionSafety.READ, required: [], properties: { query: { type: ['string', 'null'], maxLength: 200 }, workspace_id: optionalId, limit: { type: 'integer', minimum: 1, maximum: 25 } } },
       { key: 'open_playbook_context', label: 'Open Playbook context', safety: ConnectorActionSafety.READ, required: ['playbook_id'], properties: { playbook_id: playbookId, selected_task_id: optionalId, execution_id: optionalId } },
       { key: 'get_playbook_summary', label: 'Get Playbook summary', safety: ConnectorActionSafety.READ, required: ['playbook_id'], properties: { playbook_id: playbookId } },
       { key: 'get_task_details', label: 'Get task details', safety: ConnectorActionSafety.READ, required: ['playbook_id', 'task_id'], properties: { playbook_id: playbookId, task_id: playbookId } },
@@ -146,9 +148,11 @@ export class ConnectorService {
       { key: 'create_playbook', label: 'Create Playbook', safety: ConnectorActionSafety.WRITE, required: ['name'], properties: { name: { type: 'string', minLength: 2, maxLength: 100 }, description: optionalId, workspace_ids: { type: ['array', 'null'], items: playbookId } } },
       { key: 'clone_playbook', label: 'Clone Playbook', safety: ConnectorActionSafety.WRITE, required: ['playbook_id'], properties: { playbook_id: playbookId } },
       { key: 'revert_playbook_construction', label: 'Revert Playbook construction', safety: ConnectorActionSafety.WRITE, required: ['playbook_id', 'operation_id'], properties: { playbook_id: playbookId, operation_id: playbookId } },
-      { key: 'start_playbook_execution', label: 'Start Playbook execution', safety: ConnectorActionSafety.WRITE, required: ['playbook_id', 'idempotency_key'], properties: { playbook_id: playbookId, idempotency_key: playbookId, input_context: { type: ['object', 'null'] }, single_step_task_id: optionalId } },
+      { key: 'start_playbook_execution', label: 'Start Playbook execution', safety: ConnectorActionSafety.WRITE, required: ['playbook_id'], properties: { playbook_id: playbookId, idempotency_key: optionalId, input_context: { type: ['object', 'null'] }, single_step_task_id: optionalId } },
       { key: 'list_playbook_executions', label: 'List Playbook executions', safety: ConnectorActionSafety.READ, required: ['playbook_id'], properties: { playbook_id: playbookId, page: { type: 'integer', minimum: 1 }, limit: { type: 'integer', minimum: 1, maximum: 50 } } },
+      { key: 'list_recent_executions', label: 'List recent Playbook executions', safety: ConnectorActionSafety.READ, required: [], properties: { status: { type: 'string', enum: ['running', 'failed', 'completed', 'waiting', 'cancelled'] }, limit: { type: 'integer', minimum: 1, maximum: 25 } } },
       { key: 'get_playbook_execution', label: 'Get Playbook execution', safety: ConnectorActionSafety.READ, required: ['execution_id'], properties: { execution_id: playbookId } },
+      { key: 'get_execution_diagnostics', label: 'Get execution diagnostics', safety: ConnectorActionSafety.READ, required: ['execution_id'], properties: { execution_id: playbookId } },
       { key: 'cancel_playbook_execution', label: 'Cancel Playbook execution', safety: ConnectorActionSafety.WRITE, required: ['execution_id'], properties: { execution_id: playbookId } },
       { key: 'trace_replay_playbook_execution', label: 'Trace replay Playbook execution', safety: ConnectorActionSafety.READ, required: ['execution_id'], properties: { execution_id: playbookId } },
       { key: 'reexecute_playbook_execution', label: 'Re-execute Playbook execution', safety: ConnectorActionSafety.WRITE, required: ['execution_id'], properties: { execution_id: playbookId } },
@@ -289,7 +293,13 @@ export class ConnectorService {
 
   async findAllActive(): Promise<IConnectorResponse[]> {
     const connectors = await this.connectorModel
-      .find({ isActive: true, isHidden: { $ne: true } })
+      .find({
+        isActive: true,
+        $or: [
+          { isHidden: { $ne: true } },
+          { slug: 'playbook-mcp' },
+        ],
+      })
       .sort({ name: 1 })
       .lean()
       .exec();

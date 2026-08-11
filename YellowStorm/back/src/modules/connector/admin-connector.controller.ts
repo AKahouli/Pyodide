@@ -106,17 +106,34 @@ export class AdminConnectorController {
     const connector = body.connectorId
       ? await this.connectorService.findById(body.connectorId)
       : undefined;
+    const isTrustedPlaybookConnector = connector
+      ? this.isTrustedPlaybookConnector(connector)
+      : false;
+    const runtimeAuthConfig = isTrustedPlaybookConnector
+      ? connector!.runtimeAuthConfig
+      : body.runtimeAuthConfig;
     const resolvedAuth = connector
       ? await this.connectorAuthService.resolveRuntimeAuth(user._id.toString(), {
           authSourceType: connector.authSourceType,
           connectedAppKey: connector.connectedAppKey,
-          runtimeAuthConfig: body.runtimeAuthConfig ?? connector.runtimeAuthConfig,
+          runtimeAuthConfig: runtimeAuthConfig ?? connector.runtimeAuthConfig,
           connectorId: connector.id,
         })
       : undefined;
     const draftStaticHeaders = !connector
       ? this.resolveDraftStaticHeaders(body.runtimeAuthConfig)
       : undefined;
+    const resolvedAuthHeaders = resolvedAuth?.headers ?? draftStaticHeaders;
+    const inspectionHeaders = isTrustedPlaybookConnector
+      ? {
+          ...resolvedAuthHeaders,
+          'X-YellowStorm-Tenant-Id': 'default',
+          'X-YellowStorm-User-Id': user._id.toString(),
+          'X-YellowStorm-Agent-Id': 'admin-connector-inspector',
+          'X-YellowStorm-Conversation-Id': 'admin-connector-inspection',
+          'X-Correlation-Id': 'admin-connector-inspection',
+        }
+      : resolvedAuthHeaders;
 
     return this.connectorService.inspectMcp(
       connector?.mcpTransportType ?? body.transportType,
@@ -126,8 +143,15 @@ export class AdminConnectorController {
       undefined,
       body.runtimeAuthConfig,
       resolvedToken,
-      resolvedAuth?.headers ?? draftStaticHeaders,
+      inspectionHeaders,
     );
+  }
+
+  private isTrustedPlaybookConnector(connector: IConnectorResponse): boolean {
+    return connector.isSystem === true
+      && connector.slug === 'playbook-mcp'
+      && connector.authSourceType === 'server_config'
+      && connector.runtimeAuthConfig?.secretKey === 'playbook_mcp_ingress';
   }
 
   private resolveDraftStaticHeaders(runtimeAuthConfig?: Record<string, unknown>): Record<string, string> | undefined {

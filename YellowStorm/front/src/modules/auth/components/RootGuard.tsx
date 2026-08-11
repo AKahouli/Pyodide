@@ -18,6 +18,8 @@ import { NewConversationPage } from '@/modules/conversation';
 import { useModelsStore } from '@/modules/models';
 import { useConversationStream } from '@/modules/conversation/hooks/useConversationStream';
 import { useConversationV2StreamConnection } from '@/modules/conversation-v2/useStream';
+import { secondBrainFeatures } from '@/config/secondBrainFeatures';
+import { SecondBrainMascot } from '@/modules/second-brain';
 
 export function RootGuard() {
   const { isAuthenticated, isLoading, requiresEmailVerification, requiresProfileCompletion } = useAuth();
@@ -73,6 +75,7 @@ export function RootGuard() {
         </header>
         <div className='flex flex-1 min-h-0 flex-col items-center  overflow-hidden'>{isIndexRoute ? <NewConversationPage /> : <Outlet />}</div>
       </SidebarInset>
+      {secondBrainFeatures.enabled && <SecondBrainMascot />}
     </SidebarProvider>
   );
 }

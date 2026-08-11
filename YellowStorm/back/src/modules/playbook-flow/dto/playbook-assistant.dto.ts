@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsIn, IsInt, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsIn, IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { RequestPlaybookFlowIntentDto } from './request-playbook-flow-intent.dto';
 import { PreviewAdvisorRemediationItemDto } from './preview-advisor-remediation.dto';
 
@@ -14,6 +14,72 @@ export class OpenPlaybookAssistantContextDto {
   @IsOptional()
   @IsString()
   executionId?: string;
+}
+
+export class SearchPlaybooksDto {
+  @ApiPropertyOptional({ maxLength: 200 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  query?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  workspaceId?: string;
+
+  @ApiPropertyOptional({ default: 10, minimum: 1, maximum: 25 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(25)
+  limit?: number = 10;
+}
+
+export class ListRecentExecutionsDto {
+  @ApiPropertyOptional({ enum: ['running', 'failed', 'completed', 'waiting', 'cancelled'] })
+  @IsOptional()
+  @IsIn(['running', 'failed', 'completed', 'waiting', 'cancelled'])
+  status?: 'running' | 'failed' | 'completed' | 'waiting' | 'cancelled';
+
+  @ApiPropertyOptional({ default: 10, minimum: 1, maximum: 25 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(25)
+  limit?: number = 10;
+}
+
+export class RunSecondBrainTurnDto {
+  @ApiProperty()
+  @IsString()
+  @MaxLength(10000)
+  message!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  conversationId?: string;
+
+  @ApiPropertyOptional({ type: Object })
+  @IsOptional()
+  @IsObject()
+  pageContext?: Record<string, unknown>;
+}
+
+export class EvaluateMascotToolDto {
+  @ApiProperty()
+  @IsString()
+  @MaxLength(200)
+  toolName!: string;
+
+  @ApiProperty({ type: Object })
+  @IsObject()
+  arguments!: Record<string, unknown>;
 }
 
 export class RunPlaybookAssistantTurnDto {

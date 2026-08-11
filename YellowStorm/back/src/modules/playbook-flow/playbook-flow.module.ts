@@ -44,6 +44,7 @@ import { FlowHitlMemory, FlowHitlMemorySchema } from './schemas/playbook-flow-hi
 import { PlaybookAssistantOperation, PlaybookAssistantOperationSchema } from './schemas/playbook-assistant-operation.schema';
 import { PlaybookAssistantRevision, PlaybookAssistantRevisionSchema } from './schemas/playbook-assistant-revision.schema';
 import { FlowDynamicReasoningAttempt, FlowDynamicReasoningAttemptSchema } from './schemas/playbook-flow-dynamic-reasoning-attempt.schema';
+import { PlaybookMascotConfirmation, PlaybookMascotConfirmationSchema } from './schemas/playbook-mascot-confirmation.schema';
 
 import { PlaybookFlowController } from './controllers/playbook-flow.controller';
 import { PlaybookFlowExecutionController } from './controllers/playbook-flow-execution.controller';
@@ -61,6 +62,7 @@ import { PlaybookFlowSettingsController } from './controllers/playbook-flow-sett
 import { PlaybookFlowHitlController } from './controllers/playbook-flow-hitl.controller';
 import { PlaybookShareController } from './controllers/playbook-share.controller';
 import { PlaybookAssistantInternalController } from './controllers/playbook-assistant-internal.controller';
+import { SecondBrainController } from './controllers/second-brain.controller';
 
 import { PlaybookFlowService } from './services/playbook-flow.service';
 import { PlaybookShareService } from './services/playbook-share.service';
@@ -155,6 +157,8 @@ import { PlaybookAssistantService } from './assistant/playbook-assistant.service
 import { PlaybookAssistantOperationService } from './assistant/playbook-assistant-operation.service';
 import { PlaybookPlanValidationClientService } from './assistant/playbook-plan-validation-client.service';
 import { ConversationPlaybookBuilderService } from './services/conversation-playbook-builder.service';
+import { MascotToolExecutionPolicyService } from './assistant/mascot-tool-execution-policy.service';
+import { SecondBrainService } from './assistant/second-brain.service';
 
 @Module({
   imports: [
@@ -181,6 +185,7 @@ import { ConversationPlaybookBuilderService } from './services/conversation-play
       { name: PlaybookAssistantOperation.name, schema: PlaybookAssistantOperationSchema },
       { name: PlaybookAssistantRevision.name, schema: PlaybookAssistantRevisionSchema },
       { name: FlowDynamicReasoningAttempt.name, schema: FlowDynamicReasoningAttemptSchema },
+      { name: PlaybookMascotConfirmation.name, schema: PlaybookMascotConfirmationSchema },
       { name: Workspace.name, schema: WorkspaceSchema },
       { name: WorkspaceSetting.name, schema: WorkspaceSettingSchema },
     ]),
@@ -216,6 +221,7 @@ import { ConversationPlaybookBuilderService } from './services/conversation-play
     PlaybookFlowHitlController,
     PlaybookShareController,
     PlaybookAssistantInternalController,
+    SecondBrainController,
   ],
   providers: [
     PlaybookFlowService,
@@ -311,6 +317,8 @@ import { ConversationPlaybookBuilderService } from './services/conversation-play
     PlaybookAssistantOperationService,
     PlaybookPlanValidationClientService,
     ConversationPlaybookBuilderService,
+    MascotToolExecutionPolicyService,
+    SecondBrainService,
   ],
   exports: [
     PlaybookFlowService,

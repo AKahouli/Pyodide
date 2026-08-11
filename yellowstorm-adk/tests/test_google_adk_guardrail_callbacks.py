@@ -103,3 +103,44 @@ async def test_before_tool_block_prevents_underlying_side_effect(monkeypatch, sa
 
     assert result == {"status": "blocked_by_guardrail", "error": "blocked"}
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_second_brain_confirmation_blocks_tool_before_execution(monkeypatch) -> None:
+    calls = []
+
+    async def require_confirmation(_config, _tool_name, _args, _metadata):
+        return {
+            "decision": "confirmation_required",
+            "pendingAction": {"confirmationId": "confirmation-1"},
+        }
+
+    async def execute():
+        calls.append("executed")
+
+    monkeypatch.setattr("src.guardrails.adapters.google_adk.evaluate_second_brain_tool", require_confirmation)
+    config = {
+        **guardrail_config(),
+        "id": "agent-1",
+        "agent_type": "platform_copilot",
+        "user_id": "user-1",
+    }
+    agent = build_guarded_adk_agent(FakeAgent, {"name": "My Second Brain"}, config)
+    tool = SimpleNamespace(
+        name="playbook_mcp_start_playbook_execution",
+        metadata={"action_key": "start_playbook_execution", "safety": "write"},
+    )
+    result = None
+    for callback in agent.before_tool_callback:
+        result = await callback(tool, {"playbook_id": "playbook-1"}, SimpleNamespace(invocation_id="inv-1"))
+        if result is not None:
+            break
+    if result is None:
+        await execute()
+
+    assert result == {
+        "status": "confirmation_required",
+        "decision": "confirmation_required",
+        "pendingAction": {"confirmationId": "confirmation-1"},
+    }
+    assert calls == []

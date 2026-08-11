@@ -1009,6 +1009,7 @@ export class AgentService {
     agentIds: string[],
     fallbackModelId?: string,
     sessionId?: string,
+    runtimeContext?: { tenantId?: string; conversationId?: string; correlationId?: string },
   ): Promise<IGrpcAgent[]> {
     if (agentIds.length === 0) return [];
 
@@ -1103,6 +1104,16 @@ export class AgentService {
           userId,
           this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
         );
+        for (const binding of connectorBindings) {
+          if (String(binding.connector_slug || '').toLowerCase() !== 'playbook-mcp') continue;
+          binding.auth_headers = {
+            ...((binding.auth_headers as Record<string, string>) || {}),
+            'X-YellowStorm-Tenant-Id': runtimeContext?.tenantId || 'default',
+            'X-YellowStorm-Agent-Id': agent.id,
+            'X-YellowStorm-Conversation-Id': runtimeContext?.conversationId || sessionId || 'playbook-runtime',
+            'X-Correlation-Id': runtimeContext?.correlationId || sessionId || 'playbook-runtime',
+          };
+        }
         const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
         const effectiveModelId = agent.model || inheritedDefaultModelId;
@@ -1154,6 +1165,11 @@ export class AgentService {
               ...(sessionId ? { session_id: sessionId } : {}),
               platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
               platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
+              ...(runtimeContext ? {
+                mascot_tenant_id: runtimeContext.tenantId || 'default',
+                mascot_conversation_id: runtimeContext.conversationId || sessionId || '',
+                mascot_correlation_id: runtimeContext.correlationId || sessionId || '',
+              } : {}),
               ...(resolvedModel?.omitTemperature
                 ? { omit_temperature: 'true' }
                 : { temperature: String(agent.temperature) }),

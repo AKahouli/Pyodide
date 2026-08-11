@@ -447,6 +447,7 @@ class SingleAgentService:
             agent = build_guarded_adk_agent(Agent, agent_kwargs, {
                 "id": str(getattr(agent_config, "id", "") or ""),
                 "name": str(getattr(agent_config, "name", "") or ""),
+                "agent_type": str(getattr(agent_config, "agent_type", "") or ""),
                 "user_id": str(getattr(request, "user_id", "") or ""),
                 "agent_params": getattr(agent_config, "agent_params", None) or {},
             })

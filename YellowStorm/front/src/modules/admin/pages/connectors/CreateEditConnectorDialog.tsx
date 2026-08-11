@@ -148,6 +148,17 @@ function buildRuntimeAuthConfig(form: ConnectorFormValues): Record<string, unkno
     return undefined;
   }
 
+  if (form.authSourceType === 'server_config') {
+    try {
+      const config = JSON.parse(form.runtimeAuthConfig) as unknown;
+      return config && typeof config === 'object' && !Array.isArray(config)
+        ? config as Record<string, unknown>
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   if (form.runtimeAuthStrategy === 'custom_headers') {
     return {
       strategy: 'custom_headers',
@@ -306,6 +317,7 @@ export function CreateEditConnectorDialog({
           actionsJson: connector.actions ? JSON.stringify(connector.actions, null, 2) : '',
           referencedSkillIds: connector.referencedSkillIds || [],
           isActive: connector.isActive,
+          isHidden: connector.isHidden ?? false,
         });
 
         if (connector.connectedAppKey) {
@@ -370,7 +382,7 @@ export function CreateEditConnectorDialog({
       ...form,
       actions: actions ?? [],
       mcpServerConfig: mcpServerConfig ? JSON.stringify(mcpServerConfig) : '',
-      authType: form.authSourceType === 'connected_app' ? 'oauth2' : form.authSourceType === 'credential' ? 'token' : 'none',
+      authType: form.authSourceType === 'connected_app' ? 'oauth2' : form.authSourceType === 'none' ? 'none' : 'token',
       connectedAppKey: form.authSourceType === 'connected_app' ? form.connectedAppKey : '',
       runtimeAuthConfig: runtimeAuthConfig ? JSON.stringify(runtimeAuthConfig) : '',
     });
@@ -709,11 +721,14 @@ export function CreateEditConnectorDialog({
             <div className='grid grid-cols-2 gap-4'>
               <div>
                 <Label>{t('connectors.form.auth.sourceLabel')}</Label>
-                <Select value={form.authSourceType} onValueChange={(value) => setForm({ ...form, authSourceType: value, connectedAppKey: value === 'connected_app' ? form.connectedAppKey : '' })}>
+                <Select value={form.authSourceType} onValueChange={(value) => setForm({ ...form, authSourceType: value, connectedAppKey: value === 'connected_app' ? form.connectedAppKey : '' })} disabled={form.authSourceType === 'server_config'}>
                   <SelectTrigger>
                     <SelectValue placeholder={t('connectors.form.auth.sourcePlaceholder')} />
                   </SelectTrigger>
                   <SelectContent>
+                    {form.authSourceType === 'server_config' ? (
+                      <SelectItem value='server_config'>{t('connectors.form.auth.serverConfigOption')}</SelectItem>
+                    ) : null}
                     {AUTH_SOURCE_TYPES.map((t) => (
                       <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
                     ))}
@@ -735,6 +750,10 @@ export function CreateEditConnectorDialog({
                 </Select>
               </div>
             </div>
+
+            {form.authSourceType === 'server_config' ? (
+              <p className='text-sm text-muted-foreground'>{t('connectors.form.auth.serverConfigHelper')}</p>
+            ) : null}
 
             {form.authSourceType === 'connected_app' && form.connectedAppKey && (() => {
               const app = getCurrentConnectedApp();
@@ -775,7 +794,7 @@ export function CreateEditConnectorDialog({
               );
             })()}
 
-            {form.authSourceType !== 'none' && (
+            {form.authSourceType !== 'none' && form.authSourceType !== 'server_config' && (
               <div className='grid gap-4'>
                 <div>
                   <Label>{t('connectors.form.auth.strategyLabel')}</Label>
@@ -1053,8 +1072,13 @@ export function CreateEditConnectorDialog({
           </div>
 
           <div className='flex items-center gap-2'>
-            <Switch checked={form.isActive} onCheckedChange={(checked) => setForm({ ...form, isActive: checked })} />
-            <Label>{t('connectors.form.fields.active.label')}</Label>
+            <Switch id='connector-active' checked={form.isActive} onCheckedChange={(checked) => setForm({ ...form, isActive: checked })} />
+            <Label htmlFor='connector-active'>{t('connectors.form.fields.active.label')}</Label>
+          </div>
+
+          <div className='flex items-center gap-2'>
+            <Switch id='connector-hidden' checked={form.isHidden} onCheckedChange={(checked) => setForm({ ...form, isHidden: checked })} />
+            <Label htmlFor='connector-hidden'>{t('connectors.form.fields.hidden.label')}</Label>
           </div>
         </div>
         <DialogFooter>

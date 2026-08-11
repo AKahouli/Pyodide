@@ -33,6 +33,7 @@ export interface ConnectorFormValues {
   actionsJson: string;
   referencedSkillIds: string[];
   isActive: boolean;
+  isHidden: boolean;
 }
 
 export const defaultConnectorFormValues: ConnectorFormValues = {
@@ -61,4 +62,5 @@ export const defaultConnectorFormValues: ConnectorFormValues = {
   actionsJson: '',
   referencedSkillIds: [],
   isActive: true,
+  isHidden: false,
 };
