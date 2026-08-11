@@ -35,8 +35,12 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
   const detachMilestonesRef = useRef<null | (() => void)>(null);
   const workletRef = useRef<AudioWorkletNode | null>(null);
   const playHeadRef = useRef(0);
+  // Set when we intentionally tear the session down (hang-up / unmount) so the
+  // WS close it triggers is not mistaken for a dropped connection and reconnected.
+  const closingRef = useRef(false);
 
   const teardown = useCallback(() => {
+    closingRef.current = true;
     connRef.current?.close();
     connRef.current = null;
     detachMilestonesRef.current?.();
@@ -74,6 +78,7 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
 
   const connect = useCallback(async () => {
     if (!streamId) return;
+    closingRef.current = false;
     const envelope = await createVoiceSession(streamId, handleRef.current);
 
     // Only stream mic audio after the server acknowledges setup, so we never
@@ -119,6 +124,11 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
       },
       onClose: (ev) => {
         if (import.meta.env?.DEV) console.warn('[voice] ws closed', ev.code, ev.reason);
+        // Intentional teardown (hang-up / unmount) — do not reconnect.
+        if (closingRef.current) {
+          setState('idle');
+          return;
+        }
         if (shouldReconnect(ev.code, attemptRef.current, MAX_RECONNECTS)) {
           attemptRef.current += 1;
           void connect().catch((e) => setError(e instanceof Error ? e.message : String(e)));
