@@ -93,8 +93,10 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
       onSetupComplete: () => markReady('setupComplete'),
       onAudio: playPcm,
       onToolCall: async (calls) => {
+        if (import.meta.env?.DEV) console.log('[voice] toolCall', calls.map((c) => c.name), calls);
         for (const call of calls) {
           const res = await handleToolCall(streamId, call);
+          if (import.meta.env?.DEV) console.log('[voice] toolResponse', res);
           connRef.current?.sendToolResponse([res]);
         }
       },
