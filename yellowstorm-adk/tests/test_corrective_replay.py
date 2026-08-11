@@ -1,7 +1,13 @@
+import json
+
 from src.corrective_replay import CORRECTIVE_REPLAY_PROMPT_VERSION, build_corrective_replay_user_message
 from src.schema.chatbot_schema import CorrectionReplayContext
 from src.grpc_generated import chatbot_pb2
-from src.grpc_server.chatbot_servicer import ChatbotServicer
+from src.grpc_server.chatbot_servicer import (
+    ChatbotServicer,
+    _grpc_in_log_message,
+    _json_log_payload,
+)
 
 
 def test_builds_request_scoped_transient_user_message():
@@ -55,3 +61,24 @@ def test_team_request_log_payload_redacts_replay_content():
     }
     assert "Sensitive prior answer" not in str(payload)
     assert "Sensitive claim" not in str(payload)
+
+
+def test_grpc_request_log_payload_is_valid_json():
+    payload = ChatbotServicer._serialize_run_agent_team_request(
+        chatbot_pb2.RunAgentTeamRequest(query="Question", agent_mode="mono")
+    )
+
+    request_json = _json_log_payload(payload)
+
+    assert json.loads(request_json) == payload
+    assert "'Question'" not in request_json
+
+
+def test_grpc_request_json_is_raw_and_copyable_from_log_message():
+    payload = {"query": "Question", "enabled": True}
+
+    message = _grpc_in_log_message("RunAgentTeam request received", payload)
+    copied_json = message.split("request_json=", 1)[1]
+
+    assert copied_json == '{"query":"Question","enabled":true}'
+    assert json.loads(copied_json) == payload

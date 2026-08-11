@@ -11,6 +11,7 @@ Implements the runtime RPCs from playbook-flow.proto:
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, Optional
@@ -125,8 +126,15 @@ _MESSAGE_TO_DICT_OPTIONS: dict[str, Any] = {
 }
 
 
-def _request_to_log_payload(request: Any) -> dict[str, Any]:
-    return MessageToDict(request, **_MESSAGE_TO_DICT_OPTIONS)
+def _request_to_log_json(request: Any) -> str:
+    """Serialize a protobuf request as copyable, valid JSON."""
+    payload = MessageToDict(request, **_MESSAGE_TO_DICT_OPTIONS)
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def _grpc_in_log_message(label: str, request: Any) -> str:
+    """Put raw JSON in the message so it can be copied directly from console logs."""
+    return f"[gRPC IN] {label} request_json={_request_to_log_json(request)}"
 
 
 def _log_temporary_child_summary(execution_id: str, label: str) -> None:
@@ -164,7 +172,7 @@ class PlaybookFlowRuntimeServicer:
         snapshot = snapshot_to_dict(request.snapshot)
         input_context = struct_to_dict(request.input_context)
         logger.info(
-            "[gRPC IN] Playbook Run request received",
+            _grpc_in_log_message("Playbook Run request received", request),
             execution_id=execution_id,
             flow_id=flow_id,
             owner_id=str(getattr(request, "owner_id", "") or ""),
@@ -175,7 +183,6 @@ class PlaybookFlowRuntimeServicer:
             seeded_task_output_count=len(getattr(request, "seeded_task_outputs", []) or []),
             requested_recursion_limit=int(getattr(request.settings, "recursion_limit", 0) or 0),
             requested_max_parallelism=int(getattr(request.settings, "max_parallelism", 0) or 0),
-            request_payload=_request_to_log_payload(request),
         )
         initial_resume_input = _pop_initial_resume_input(input_context)
         hitl_memory = _pop_runtime_hitl_memory(input_context)
@@ -335,14 +342,13 @@ class PlaybookFlowRuntimeServicer:
         payload = struct_to_dict(request.payload)
 
         logger.info(
-            "[gRPC IN] ResumeFromStep request received",
+            _grpc_in_log_message("ResumeFromStep request received", request),
             execution_id=execution_id,
             node_id=node_id,
             iteration=iteration,
             interrupt_id=interrupt_id,
             action=str(getattr(request, "action", "") or ""),
             payload_keys=sorted(payload.keys()),
-            request_payload=_request_to_log_payload(request),
         )
         active = self._active_executions.get(execution_id)
         if active is None:
