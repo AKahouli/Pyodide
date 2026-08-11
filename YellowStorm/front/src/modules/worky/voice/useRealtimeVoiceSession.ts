@@ -74,7 +74,7 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
 
   const connect = useCallback(async () => {
     if (!streamId) return;
-    const envelope = await createVoiceSession(handleRef.current);
+    const envelope = await createVoiceSession(streamId, handleRef.current);
 
     // Only stream mic audio after the server acknowledges setup, so we never
     // push audio into a session Gemini hasn't configured yet. A short fallback

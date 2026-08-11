@@ -427,10 +427,28 @@ export interface VoiceSessionEnvelope {
 }
 
 /** Mint a locked, single-use Gemini Live session token via the BFF. */
-export async function createVoiceSession(resumptionHandle?: string): Promise<VoiceSessionEnvelope> {
+export async function createVoiceSession(streamId: string, resumptionHandle?: string): Promise<VoiceSessionEnvelope> {
   const res = await apiClient.post<ApiResponse<VoiceSessionEnvelope>>(API_ENDPOINTS.worky.voiceSession, {
+    streamId,
     resumptionHandle,
   });
+  return unwrap(res);
+}
+
+/** Get the per-stream concierge prompt (or the default when unset). */
+export async function getVoicePrompt(streamId: string): Promise<{ prompt: string; isDefault: boolean }> {
+  const res = await apiClient.get<ApiResponse<{ prompt: string; isDefault: boolean }>>(
+    API_ENDPOINTS.worky.voicePrompt(streamId),
+  );
+  return unwrap(res);
+}
+
+/** Save the per-stream concierge prompt; a blank prompt resets to the default. */
+export async function setVoicePrompt(streamId: string, prompt: string): Promise<{ prompt: string; isDefault: boolean }> {
+  const res = await apiClient.put<ApiResponse<{ prompt: string; isDefault: boolean }>>(
+    API_ENDPOINTS.worky.voicePrompt(streamId),
+    { prompt },
+  );
   return unwrap(res);
 }
 

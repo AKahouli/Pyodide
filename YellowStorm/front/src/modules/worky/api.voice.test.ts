@@ -1,17 +1,38 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createVoiceSession, voiceDispatch, voiceStatus, voiceTranscript } from './api';
+import {
+  createVoiceSession,
+  getVoicePrompt,
+  setVoicePrompt,
+  voiceDispatch,
+  voiceStatus,
+  voiceTranscript,
+} from './api';
 import apiClient from '@/lib/api/client';
 
-vi.mock('@/lib/api/client', () => ({ default: { post: vi.fn() } }));
+vi.mock('@/lib/api/client', () => ({ default: { post: vi.fn(), get: vi.fn(), put: vi.fn() } }));
 
 describe('voice api', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('createVoiceSession posts the resumption handle and unwraps the envelope', async () => {
+  it('createVoiceSession posts streamId + handle and unwraps the envelope', async () => {
     (apiClient.post as any).mockResolvedValue({ data: { data: { wsUrl: 'wss://x', setup: {}, expiresAt: 'z' } } });
-    const env = await createVoiceSession('h1');
-    expect(apiClient.post).toHaveBeenCalledWith('/worky/voice/session', { resumptionHandle: 'h1' });
+    const env = await createVoiceSession('s1', 'h1');
+    expect(apiClient.post).toHaveBeenCalledWith('/worky/voice/session', { streamId: 's1', resumptionHandle: 'h1' });
     expect(env.wsUrl).toBe('wss://x');
+  });
+
+  it('getVoicePrompt GETs the per-stream prompt', async () => {
+    (apiClient.get as any).mockResolvedValue({ data: { data: { prompt: 'p', isDefault: false } } });
+    const res = await getVoicePrompt('s1');
+    expect(apiClient.get).toHaveBeenCalledWith('/worky/voice/prompt/s1');
+    expect(res.prompt).toBe('p');
+  });
+
+  it('setVoicePrompt PUTs the prompt', async () => {
+    (apiClient.put as any).mockResolvedValue({ data: { data: { prompt: 'p2', isDefault: false } } });
+    const res = await setVoicePrompt('s1', 'p2');
+    expect(apiClient.put).toHaveBeenCalledWith('/worky/voice/prompt/s1', { prompt: 'p2' });
+    expect(res.prompt).toBe('p2');
   });
 
   it('voiceDispatch posts streamId + message', async () => {
