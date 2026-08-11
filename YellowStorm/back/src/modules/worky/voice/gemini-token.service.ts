@@ -41,6 +41,8 @@ export class GeminiTokenService implements OnModuleInit {
     const expireMs = now + this.tokenTtlSec * 1000;
     const client = new GoogleGenAI({ apiKey: this.apiKey, httpOptions: { apiVersion: 'v1alpha' } });
 
+    const constraints = buildLiveConstraints(this.model, this.voice, opts);
+
     let token: { name?: string };
     try {
       token = await client.authTokens.create({
@@ -48,7 +50,7 @@ export class GeminiTokenService implements OnModuleInit {
           uses: 1,
           expireTime: new Date(expireMs).toISOString(),
           newSessionExpireTime: new Date(now + this.startTtlSec * 1000).toISOString(),
-          liveConnectConstraints: buildLiveConstraints(this.model, this.voice, opts),
+          liveConnectConstraints: constraints,
           httpOptions: { apiVersion: 'v1alpha' },
         },
       });
@@ -61,8 +63,11 @@ export class GeminiTokenService implements OnModuleInit {
 
     return {
       wsUrl: `${this.wsBaseUrl}?access_token=${token.name}`,
-      // All config is bound in the token; the client sends an empty setup and relays it verbatim.
-      setup: {},
+      // The Live protocol requires the first setup message to name the model.
+      // The rest of the config (voice, prompt, tools, modalities) is locked in
+      // the token, so the client relays only the model — never re-sending locked
+      // fields and never learning the prompt.
+      setup: { model: constraints.model },
       expiresAt: new Date(expireMs).toISOString(),
     };
   }

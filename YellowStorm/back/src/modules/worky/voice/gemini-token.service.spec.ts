@@ -35,7 +35,8 @@ describe('GeminiTokenService', () => {
     expect(arg.liveConnectConstraints.config.tools[0].functionDeclarations).toHaveLength(2);
 
     expect(env.wsUrl).toBe('wss://host/ws/Constrained?access_token=ephemeral-abc');
-    expect(env.setup).toEqual({});
+    // The client relays only the model in the setup; the rest is locked in the token.
+    expect(env.setup).toEqual({ model: 'models/gemini-live' });
     expect(typeof env.expiresAt).toBe('string');
   });
 

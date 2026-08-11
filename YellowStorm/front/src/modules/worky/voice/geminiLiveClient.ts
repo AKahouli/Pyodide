@@ -4,6 +4,7 @@ import { int16ToBase64, base64ToInt16 } from './pcmAudio';
 export interface GeminiLiveHandlers {
   onAudio: (pcm: Int16Array) => void;
   onToolCall: (calls: Array<{ id: string; name: string; args: Record<string, unknown> }>) => void;
+  onSetupComplete?: () => void;
   onInputTranscript?: (text: string) => void;
   onOutputTranscript?: (text: string) => void;
   onResumptionHandle?: (handle: string) => void;
@@ -35,16 +36,30 @@ export function openGeminiLive(
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   };
 
-  ws.onopen = () => send({ setup: envelope.setup });
+  ws.onopen = () => {
+    if (import.meta.env?.DEV) console.log('[voice] ws open → sending setup', envelope.setup);
+    send({ setup: envelope.setup });
+  };
   ws.onerror = (e) => handlers.onError?.(e);
   ws.onclose = (e) => handlers.onClose?.(e as CloseEvent);
-  ws.onmessage = (event: MessageEvent) => {
+  ws.onmessage = async (event: MessageEvent) => {
+    // Server frames may arrive as text or as a Blob (binary) — normalise to text.
+    let raw: string;
+    if (typeof event.data === 'string') raw = event.data;
+    else if (event.data instanceof Blob) raw = await event.data.text();
+    else return;
+
     let msg: any;
     try {
-      msg = JSON.parse(typeof event.data === 'string' ? event.data : '');
+      msg = JSON.parse(raw);
     } catch {
       return;
     }
+
+    if (import.meta.env?.DEV && (msg.setupComplete || msg.error)) {
+      console.log('[voice] server frame:', Object.keys(msg), msg.error ?? '');
+    }
+    if (msg.setupComplete) handlers.onSetupComplete?.();
 
     if (msg.toolCall?.functionCalls) {
       handlers.onToolCall(

@@ -53,7 +53,7 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
     const ctx = ctxRef.current;
     if (!ctx) return;
     if (import.meta.env?.DEV && playHeadRef.current === 0) {
-      console.debug('[voice] first audio chunk received from Gemini');
+      console.log('[voice] first audio chunk received from Gemini');
     }
     const f32 = new Float32Array(pcm.length);
     for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 0x8000;
@@ -75,39 +75,22 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
   const connect = useCallback(async () => {
     if (!streamId) return;
     const envelope = await createVoiceSession(handleRef.current);
-    const ctx = new AudioContext();
-    ctxRef.current = ctx;
-    // The awaits above drop the user-gesture context, so the AudioContext can
-    // start suspended — resume it or the capture worklet never runs and no
-    // audio plays back (mirrors useAudioRecorder's resume).
-    await ctx.resume().catch(() => undefined);
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: settings.echoCancellation ?? true,
-        noiseSuppression: settings.noiseSuppression ?? true,
-        autoGainControl: settings.autoGainControl ?? true,
-        ...(settings.inputDeviceId ? { deviceId: { exact: settings.inputDeviceId } } : {}),
-      },
-    });
-    streamRef.current = stream;
 
-    const blobUrl = URL.createObjectURL(new Blob([PCM_CAPTURE_WORKLET], { type: 'application/javascript' }));
-    await ctx.audioWorklet.addModule(blobUrl);
-    URL.revokeObjectURL(blobUrl);
-    const source = ctx.createMediaStreamSource(stream);
-    const node = new AudioWorkletNode(ctx, 'pcm-capture');
-    workletRef.current = node;
-    source.connect(node);
-    // A worklet with no output path is not pulled by the render graph, so route
-    // it to the destination through a muted gain to keep process() running
-    // without echoing the mic to the speaker.
-    const sink = ctx.createGain();
-    sink.gain.value = 0;
-    node.connect(sink);
-    sink.connect(ctx.destination);
-    if (import.meta.env?.DEV) console.debug('[voice] AudioContext state:', ctx.state);
+    // Only stream mic audio after the server acknowledges setup, so we never
+    // push audio into a session Gemini hasn't configured yet. A short fallback
+    // flips it on anyway in case a setupComplete frame is missed.
+    let ready = false;
+    const markReady = (reason: string) => {
+      if (ready) return;
+      ready = true;
+      if (import.meta.env?.DEV) console.log(`[voice] streaming audio (${reason})`);
+      setState('listening');
+    };
 
+    // Open the WebSocket first so the short-lived token is used promptly,
+    // regardless of how long the mic-permission prompt takes.
     const conn = openGeminiLive(envelope, {
+      onSetupComplete: () => markReady('setupComplete'),
       onAudio: playPcm,
       onToolCall: async (calls) => {
         for (const call of calls) {
@@ -145,10 +128,44 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
       },
     });
     connRef.current = conn;
+    setTimeout(() => markReady('timeout fallback'), 3000);
+
+    // Audio pipeline.
+    const ctx = new AudioContext();
+    ctxRef.current = ctx;
+    // The awaits drop the user-gesture context, so the AudioContext can start
+    // suspended — resume it or the capture worklet never runs and no audio
+    // plays back (mirrors useAudioRecorder's resume).
+    await ctx.resume().catch(() => undefined);
+    if (import.meta.env?.DEV) console.log('[voice] AudioContext state:', ctx.state);
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: settings.echoCancellation ?? true,
+        noiseSuppression: settings.noiseSuppression ?? true,
+        autoGainControl: settings.autoGainControl ?? true,
+        ...(settings.inputDeviceId ? { deviceId: { exact: settings.inputDeviceId } } : {}),
+      },
+    });
+    streamRef.current = stream;
+
+    const blobUrl = URL.createObjectURL(new Blob([PCM_CAPTURE_WORKLET], { type: 'application/javascript' }));
+    await ctx.audioWorklet.addModule(blobUrl);
+    URL.revokeObjectURL(blobUrl);
+    const source = ctx.createMediaStreamSource(stream);
+    const node = new AudioWorkletNode(ctx, 'pcm-capture');
+    workletRef.current = node;
+    source.connect(node);
+    // A worklet with no output path is not pulled by the render graph, so route
+    // it to the destination through a muted gain to keep process() running
+    // without echoing the mic to the speaker.
+    const sink = ctx.createGain();
+    sink.gain.value = 0;
+    node.connect(sink);
+    sink.connect(ctx.destination);
 
     let loggedFirstChunk = false;
     node.port.onmessage = (e: MessageEvent) => {
-      if (mutedRef.current) return;
+      if (mutedRef.current || !ready) return;
       const f = e.data as Float32Array;
       let sum = 0;
       for (let i = 0; i < f.length; i++) sum += f[i] * f[i];
@@ -156,7 +173,7 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
       conn.sendAudioChunk(floatTo16BitPCM(downsampleFloat(f, ctx.sampleRate, 16000)));
       if (import.meta.env?.DEV && !loggedFirstChunk) {
         loggedFirstChunk = true;
-        console.debug('[voice] first mic chunk sent to Gemini (', f.length, 'samples )');
+        console.log('[voice] first mic chunk sent to Gemini (', f.length, 'samples )');
       }
     };
 

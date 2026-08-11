@@ -179,33 +179,35 @@ export function VoiceSession({
               {muted ? <MicOff className="size-5" /> : <Mic className="size-5" />}
             </ControlButton>
 
-            {recording ? (
+            {/* Turn controls only apply to the legacy record-then-reply loop.
+                In realtime mode Gemini's own VAD decides when to speak, so we
+                hide the Cancel/Done/push-to-talk buttons entirely. */}
+            {!useRealtime && recording ? (
               <ControlButton label={t('voice.cancelTurn')} onClick={cancelTurn}>
                 <X className="size-5" />
               </ControlButton>
             ) : null}
 
-            {/* Auto mode: Done cuts the take short. Manual mode: the same
-                button starts the take, then submits it. */}
-            {turnMode === 'manual' && !recording ? (
-              <ControlButton
-                label={t('voice.talk')}
-                onClick={beginTake}
-                variant="primary"
-                disabled={muted}
-              >
-                <Mic className="size-6" />
-              </ControlButton>
-            ) : (
-              <ControlButton
-                label={t('voice.done')}
-                onClick={submitTurn}
-                variant="primary"
-                disabled={!recording}
-              >
-                <Check className="size-6" />
-              </ControlButton>
-            )}
+            {!useRealtime &&
+              (turnMode === 'manual' && !recording ? (
+                <ControlButton
+                  label={t('voice.talk')}
+                  onClick={beginTake}
+                  variant="primary"
+                  disabled={muted}
+                >
+                  <Mic className="size-6" />
+                </ControlButton>
+              ) : (
+                <ControlButton
+                  label={t('voice.done')}
+                  onClick={submitTurn}
+                  variant="primary"
+                  disabled={!recording}
+                >
+                  <Check className="size-6" />
+                </ControlButton>
+              ))}
 
             <ControlButton label={t('voice.end')} onClick={end} variant="danger">
               <PhoneOff className="size-6" />
