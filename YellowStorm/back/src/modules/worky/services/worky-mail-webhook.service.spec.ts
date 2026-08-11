@@ -12,7 +12,11 @@ const SUBSCRIPTION = {
 function mailWith(subject: string, body: string) {
   return {
     subject,
-    body: { content: body },
+    // contentType set, matching a real Graph message -- and deliberately a
+    // DIFFERENT string than bodyPreview below, so a test asserting on the
+    // full body catches a regression back to preferring the (255-char
+    // capped) preview instead.
+    body: { contentType: 'html', content: body },
     bodyPreview: 'Yellow Systems.',
     from: { emailAddress: { address: 'x@example.com' } },
   };
@@ -45,7 +49,7 @@ function build(overrides: {
     }),
   };
   const turnContext = {
-    resolveManagerModel: jest.fn().mockResolvedValue('openai/gpt-4o-mini'),
+    resolveWorkyAgents: jest.fn().mockResolvedValue([{ id: 'planner-1' }, { id: 'executor-1' }]),
     resolveConnectors: jest.fn().mockResolvedValue([{ connector_id: 'c1' }]),
   };
   const logger = {
@@ -77,13 +81,32 @@ describe('WorkyMailWebhookService', () => {
     expect(orchestrator.deliverMailReply).toHaveBeenCalledWith(
       expect.objectContaining({
         token: TOKEN,
-        replyBody: 'Yellow Systems.',
+        // The full body ("hi"), not bodyPreview ("Yellow Systems.") --
+        // bodyPreview is silently capped at 255 chars by Graph and would
+        // truncate any real reply longer than a one-liner mid-sentence.
+        replyBody: 'hi',
         replyFrom: 'x@example.com',
       }),
     );
   });
 
-  it('resolves real connectors and a model for the subscription owner, not none', async () => {
+  it('uses the full reply body, not the 255-char-capped bodyPreview', async () => {
+    // Live bug: three real replies in a row all came through cut at EXACTLY
+    // 255 characters, mid-sentence -- Microsoft Graph's bodyPreview field is
+    // a plain-text summary hard-capped at 255 chars, and it was being
+    // preferred over the full body.content.
+    const longReply = 'A'.repeat(300) + ' END';
+    const { service, orchestrator } = build({
+      message: mailWith(`Re: Q [${TOKEN}]`, `<p>${longReply}</p>`),
+    });
+    await service.handleNotifications(notification());
+
+    expect(orchestrator.deliverMailReply).toHaveBeenCalledWith(
+      expect.objectContaining({ replyBody: longReply }),
+    );
+  });
+
+  it('resolves real connectors and agents for the subscription owner, not none', async () => {
     // The bug this pins: DeliverMailReply was called with no connectors at
     // all, so resume_turn rebuilt every not-yet-run step with ZERO tools. A
     // step needing none (writing a report) looked fine; a step that needed
@@ -92,10 +115,11 @@ describe('WorkyMailWebhookService', () => {
     const { service, turnContext, orchestrator } = build({});
     await service.handleNotifications(notification());
 
+    expect(turnContext.resolveWorkyAgents).toHaveBeenCalledWith(SUBSCRIPTION.userId);
     expect(turnContext.resolveConnectors).toHaveBeenCalledWith(SUBSCRIPTION.userId);
     expect(orchestrator.deliverMailReply).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'openai/gpt-4o-mini',
+        agents: [{ id: 'planner-1' }, { id: 'executor-1' }],
         connectors: [{ connector_id: 'c1' }],
       }),
     );

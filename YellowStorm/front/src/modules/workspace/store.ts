@@ -971,7 +971,19 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           }
         });
 
-        set({ documents: newCache });
+        set({
+          documents: newCache,
+          // WorkspacePage reads pageFiles — keep it in sync with SSE / status updates.
+          pageFiles: state.pageFiles.map((f) =>
+            f.id === documentId
+              ? {
+                  ...f,
+                  indexingStatus: indexingStatus as WorkspaceFile['indexingStatus'],
+                  indexingError,
+                }
+              : f,
+          ),
+        });
       },
 
       // ===== Template Operations =====
@@ -1238,6 +1250,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
               const fallbackUpload = tError('uploadFailed', 'Upload failed');
               const message = getApiErrorMessage(err, fallbackUpload);
               toast.error(fallbackUpload, { description: message });
+              throw err;
             }
           } else {
             // Bulk upload for multiple or large files
@@ -1258,46 +1271,88 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
             set({ uploadSessionId: session.sessionId });
 
-            // Upload each file to Azure in parallel
-            let successCount = 0;
-            let failCount = 0;
+            // PUT each file to object storage — keep status "uploading" until
+            // completeBulkUpload finishes (that call is what queues auto-index).
+            const putResults = await Promise.all(
+              session.files.map(async (fileInfo, index) => {
+                const item = pendingFiles[index];
+                try {
+                  await workspaceApi.uploadToAzure(fileInfo.uploadUrl, item.file, (progress) => {
+                    get().updateUploadProgress(item.id, progress);
+                  });
+                  // Progress 100% while still awaiting server-side finalize/index queue.
+                  get().updateUploadProgress(item.id, 100);
+                  return { ok: true as const, itemId: item.id, index: fileInfo.index };
+                } catch (err) {
+                  const message = err instanceof Error ? err.message : 'Unknown error';
+                  get().updateUploadStatus(item.id, 'failed', message);
+                  return { ok: false as const, itemId: item.id, index: fileInfo.index, error: message };
+                }
+              }),
+            );
 
-            const uploadPromises = session.files.map(async (fileInfo, index) => {
-              const item = pendingFiles[index];
-              try {
-                await workspaceApi.uploadToAzure(fileInfo.uploadUrl, item.file, (progress) => {
-                  get().updateUploadProgress(item.id, progress);
-                });
+            let completeResult: Awaited<ReturnType<typeof workspaceApi.completeBulkUpload>>;
+            try {
+              completeResult = await workspaceApi.completeBulkUpload(
+                workspaceId,
+                session.sessionId,
+                deepSearch,
+                autoIndex,
+              );
+            } catch (err) {
+              const fallbackUpload = tError('uploadFailed', 'Upload failed');
+              const message = getApiErrorMessage(err, fallbackUpload);
+              putResults.forEach((r) => {
+                if (r.ok) {
+                  get().updateUploadStatus(r.itemId, 'failed', message);
+                }
+              });
+              toast.error(fallbackUpload, {
+                description: tToast(
+                  'upload.completeFailedDescription',
+                  'Files reached storage but finalization/indexing could not be completed.',
+                ),
+              });
+              throw err;
+            }
 
-                get().updateUploadStatus(item.id, 'completed');
-                successCount++;
-              } catch (err) {
-                get().updateUploadStatus(item.id, 'failed', err instanceof Error ? err.message : 'Unknown error');
-                failCount++;
+            const failedByIndex = new Map(
+              completeResult.failed.files.map((f) => [f.index, f.error]),
+            );
+            putResults.forEach((r) => {
+              if (!r.ok) return;
+              const completeError = failedByIndex.get(r.index);
+              if (completeError) {
+                get().updateUploadStatus(r.itemId, 'failed', completeError);
+              } else {
+                get().updateUploadStatus(r.itemId, 'completed');
               }
             });
 
-            await Promise.all(uploadPromises);
+            // Prefer backend complete tallies — PUT misses are already counted there via exists().
+            const successCount = completeResult.successful.count;
+            const failCount = completeResult.failed.count;
 
-            // Always complete bulk session so backend can finalize
-            try {
-              await workspaceApi.completeBulkUpload(workspaceId, session.sessionId, deepSearch, autoIndex);
-
-              if (failCount === 0) {
-                toast.success(tToast('upload.successTitle', 'Upload complete'), {
-                  description: tToast('upload.bulkSuccessDescription', '{{count}} file(s) uploaded successfully.', { count: successCount }),
-                });
-              } else if (successCount === 0) {
-                toast.error(tToast('upload.failedTitle', 'Upload failed'), {
-                  description: tToast('upload.bulkErrorDescription', 'All {{count}} files failed to upload.', { count: failCount }),
-                });
-              } else {
-                toast.warning(tToast('upload.partialTitle', 'Upload partially complete'), {
-                  description: tToast('upload.partialDescription', '{{success}} succeeded, {{failed}} failed to upload.', { success: successCount, failed: failCount }),
-                });
-              }
-            } catch (err) {
-              console.error('Failed to complete bulk upload session', err);
+            if (failCount === 0) {
+              toast.success(tToast('upload.successTitle', 'Upload complete'), {
+                description: tToast('upload.bulkSuccessDescription', '{{count}} file(s) uploaded successfully.', {
+                  count: successCount,
+                }),
+              });
+            } else if (successCount === 0) {
+              toast.error(tToast('upload.failedTitle', 'Upload failed'), {
+                description: tToast('upload.bulkErrorDescription', 'All {{count}} files failed to upload.', {
+                  count: failCount || pendingFiles.length,
+                }),
+              });
+            } else {
+              toast.warning(tToast('upload.partialTitle', 'Upload partially complete'), {
+                description: tToast(
+                  'upload.partialDescription',
+                  '{{success}} succeeded, {{failed}} failed to upload.',
+                  { success: successCount, failed: failCount },
+                ),
+              });
             }
 
             // Refresh documents list and workspace data after upload
@@ -1313,14 +1368,21 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         } catch (err) {
           const fallbackUpload = tError('uploadFailed', 'Upload failed');
           const message = getApiErrorMessage(err, fallbackUpload);
+          // Inner paths (single-file / complete) may already have marked items failed + toasted.
+          const alreadyNotified = pendingFiles.some(
+            (item) => get().uploadQueue.find((q) => q.id === item.id)?.status === 'failed',
+          );
           set({ error: message, isUploading: false });
 
-          // Mark all pending as failed
           pendingFiles.forEach((item) => {
             if (get().uploadQueue.find((q) => q.id === item.id)?.status === 'uploading') {
               get().updateUploadStatus(item.id, 'failed', message);
             }
           });
+          if (!alreadyNotified) {
+            toast.error(fallbackUpload, { description: message });
+          }
+          throw err;
         } finally {
           set({ isUploading: false, uploadSessionId: null });
           get().clearCompletedUploads();
@@ -1962,6 +2024,26 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           );
           await Promise.all([get().refreshPageData(), get().refreshWorkspace(workspaceId)]);
 
+          // Auto-index is queued asynchronously on the backend. A second refresh
+          // shortly after gives pending/processing a chance to land so the
+          // WorkspacePage polling loop can take over.
+          if (options?.autoIndex === true) {
+            await new Promise((resolve) => setTimeout(resolve, 800));
+            await get().refreshPageData();
+            const stillNoneIds = get()
+              .pageFiles.filter((f) => !previousFileIds.has(f.id) && (f.indexingStatus === 'none' || !f.indexingStatus))
+              .map((f) => f.id);
+            if (stillNoneIds.length > 0) {
+              // Optimistic pending so the status-dot poll starts even if the
+              // backend hasn't flipped none→pending yet.
+              set((s) => ({
+                pageFiles: s.pageFiles.map((f) =>
+                  stillNoneIds.includes(f.id) ? { ...f, indexingStatus: 'pending' as const } : f,
+                ),
+              }));
+            }
+          }
+
           const newFileIds = get()
             .pageFiles.filter((f) => !previousFileIds.has(f.id))
             .map((f) => f.id);
@@ -1983,8 +2065,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             // Refresh again so pageFiles reflects new folder assignments
             await get().refreshPageData();
           }
-        } catch (err) {
-          toast.error(getApiErrorMessage(err, "Échec de l'upload"));
+        } catch {
+          // startUpload already surfaces a failure toast; skip success path.
         }
       },
 
@@ -2127,6 +2209,21 @@ export const useWorkspaces = () => {
   return workspaces?.get(currentPage) || [];
 };
 
+/**
+ * Flatten all cached pages and de-duplicate by workspace id.
+ * Used by the workspace hub/listing page to show *all* workspaces,
+ * instead of only the current pagination page.
+ */
+export const useAllWorkspaces = () => {
+  const workspaces = useWorkspaceStore((state) => state.workspaces);
+  const all = Array.from(workspaces.values()).flat();
+
+  // De-dupe: the store injects personal workspace into each fetched page.
+  const byId = new Map<string, Workspace>();
+  for (const ws of all) byId.set(ws.id, ws);
+  return Array.from(byId.values());
+};
+
 export const useDocumentPagination = () => {
   const currentPage = useWorkspaceStore((state) => state.documentsCurrentPage) ?? 1;
   const totalPages = useWorkspaceStore((state) => state.documentsTotalPages) ?? 1;
@@ -2236,6 +2333,14 @@ export const useSharedWorkspaces = () => {
   return sharedWorkspaces.get(sharedCurrentPage) ?? [];
 };
 
+export const useAllSharedWorkspaces = () => {
+  const sharedWorkspaces = useWorkspaceStore((state) => state.sharedWorkspaces);
+  const all = Array.from(sharedWorkspaces.values()).flat();
+  const byId = new Map<string, SharedWorkspaceResponse>();
+  for (const ws of all) byId.set(ws.id, ws);
+  return Array.from(byId.values());
+};
+
 export const useSharedPagination = () => {
   const currentPage = useWorkspaceStore((state) => state.sharedCurrentPage) ?? 1;
   const totalPages = useWorkspaceStore((state) => state.sharedTotalPages) ?? 1;
@@ -2246,6 +2351,14 @@ export const usePublicWorkspaces = () => {
   const publicWorkspaces = useWorkspaceStore((state) => state.publicWorkspaces);
   const publicCurrentPage = useWorkspaceStore((state) => state.publicCurrentPage);
   return publicWorkspaces.get(publicCurrentPage) ?? [];
+};
+
+export const useAllPublicWorkspaces = () => {
+  const publicWorkspaces = useWorkspaceStore((state) => state.publicWorkspaces);
+  const all = Array.from(publicWorkspaces.values()).flat();
+  const byId = new Map<string, PublicWorkspaceResponse>();
+  for (const ws of all) byId.set(ws.id, ws);
+  return Array.from(byId.values());
 };
 
 export const usePublicPagination = () => {

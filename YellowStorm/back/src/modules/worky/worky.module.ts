@@ -141,11 +141,11 @@ import {
   WorkyPlanProjectionSchema,
 } from './schemas/worky-plan-projection.schema';
 import { Workspace, WorkspaceSchema } from '../workspace/schemas/workspace.schema';
-import { Agent, AgentSchema } from '../agent/schemas/agent.schema';
 import workyConfig from '../../config/worky.config';
 import workyOrchestratorConfig from '../../config/worky-orchestrator.config';
 import workyOrchestratorSecurityConfig from '../../config/grpc-security-worky-orchestrator.config';
 import { AgentTypeModule } from '../agent-type/agent-type.module';
+import { AgentModule } from '../agent/agent.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { LoggerModule } from '../logger';
 import { EmailModule } from '../email/email.module';
@@ -177,6 +177,7 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     LoggerModule,
     AuthorizationModule,
     AgentTypeModule,
+    AgentModule,
     EmailModule,
     UserModule,
     WorkspaceModule,
@@ -212,7 +213,6 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
       // without pulling in AgentModule/WorkspaceModule's full transitive
       // dependency graph. Nest reuses the same Mongoose model instance via DI.
       { name: Workspace.name, schema: WorkspaceSchema },
-      { name: Agent.name, schema: AgentSchema },
       { name: WorkyWhatsAppIntegration.name, schema: WorkyWhatsAppIntegrationSchema },
       { name: WorkyWhatsAppSystemBot.name, schema: WorkyWhatsAppSystemBotSchema },
     ]),

@@ -1,11 +1,10 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Types } from 'mongoose';
 import playbookFlowConfig from '@config/playbook-flow.config';
 import { ConnectorService } from '@modules/connector/connector.service';
 import { AgentTypeService } from '@modules/agent-type/agent-type.service';
-import { Agent, AgentDocument } from '../schemas/agent.schema';
+import { AgentRepository } from '../repositories/agent.repository';
 
 const PLAYBOOK_MCP_ACTIONS = [
   'search_playbooks',
@@ -60,7 +59,7 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
 
   constructor(
     @Inject(playbookFlowConfig.KEY) private readonly config: ConfigType<typeof playbookFlowConfig>,
-    @InjectModel(Agent.name) private readonly agentModel: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
     private readonly agentTypeService: AgentTypeService,
     private readonly connectorService: ConnectorService,
   ) {}
@@ -78,11 +77,7 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
       this.logger.error('Playbook MCP connector reconciliation skipped: mono-agent type is missing');
       return;
     }
-    const monoAgents = await this.agentModel.find({
-      agentType: new Types.ObjectId(monoType.id),
-      isDefault: true,
-      isActive: true,
-    }).limit(2).exec();
+    const monoAgents = await this.agentRepository.findActiveDefaultsByType(monoType.id, 2);
     if (monoAgents.length !== 1) {
       this.logger.error(`Playbook MCP connector reconciliation skipped: expected one default mono-agent, found ${monoAgents.length}`);
       return;
@@ -117,7 +112,7 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
       actingUserId,
       this.config.mcpServerUrl,
     );
-    const connectorId = new Types.ObjectId(connector.id);
+    const connectorId = connector.id;
     const assistantType = await this.agentTypeService.findOrCreateBySlug('playbook_assistant', {
       name: 'Playbook Assistant',
       defaultPrompt: '',

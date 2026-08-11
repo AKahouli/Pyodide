@@ -1,7 +1,20 @@
 import { act, render, screen, fireEvent } from '@testing-library/react';
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { RightPanel } from './RightPanel';
 import { useConversationV2Store } from '../../store';
+
+vi.mock('../../hooks/useNodepodPreview', () => ({
+  useNodepodPreview: () => ({
+    status: 'ready',
+    previewUrl: 'https://nodepod.local/__virtual__/3000/',
+    error: null,
+    files: {
+      '/package.json': '{"name":"demo"}',
+      '/app/page.tsx': 'export default function Page() { return null }',
+    },
+    retry: vi.fn(),
+  }),
+}));
 
 describe('RightPanel', () => {
   beforeEach(() => {
@@ -12,6 +25,7 @@ describe('RightPanel', () => {
       applicationComponent: null,
       deployStatus: 'idle',
       deployedUrl: null,
+      appViewMode: 'nodepod',
     });
   });
 
@@ -33,19 +47,39 @@ describe('RightPanel', () => {
     expect(screen.queryByRole('button', { name: /publish/i })).not.toBeInTheDocument();
   });
 
-  it('shows application title, URL, and deploy control after an application event', () => {
+  it('shows application title and deploy control after an application event', () => {
     useConversationV2Store.setState({
       rightPanelMode: 'app',
       applicationComponent: {
         title: 'Generated app',
         url: 'https://preview.example/app',
+        cephPath: 'yellowstorm/user/app/projectSRC',
+        filesTree: {
+          name: '',
+          type: 'directory',
+          children: [
+            { name: 'package.json', type: 'file', path: 'package.json', size: 40 },
+            {
+              name: 'app',
+              type: 'directory',
+              children: [
+                { name: 'page.tsx', type: 'file', path: 'app/page.tsx', size: 100 },
+              ],
+            },
+          ],
+        },
+        fileCount: 2,
+        revision: 'app-1',
       },
     });
 
     render(<RightPanel />);
 
     expect(screen.getAllByText('Generated app').length).toBeGreaterThan(0);
-    expect(screen.getByDisplayValue('https://preview.example/app')).toBeInTheDocument();
+    expect(document.querySelector('iframe')).toHaveAttribute(
+      'src',
+      'https://nodepod.local/__virtual__/3000/',
+    );
     expect(screen.getByRole('button', { name: /publish/i })).toBeInTheDocument();
   });
 
@@ -55,6 +89,7 @@ describe('RightPanel', () => {
       applicationComponent: {
         title: 'Generated app',
         url: 'https://preview.example/app',
+        revision: 'app-1',
       },
       deployStatus: 'deploying',
     });
@@ -66,20 +101,22 @@ describe('RightPanel', () => {
     expect(deployButton).not.toHaveTextContent(/publish/i);
   });
 
-  it('replaces the iframe URL when deployment returns the live URL', () => {
+  it('switches to the deployed iframe after publish while keeping Nodepod warm', () => {
     useConversationV2Store.setState({
       rightPanelMode: 'app',
       applicationComponent: {
         title: 'Generated app',
         url: 'https://preview.example/app',
+        revision: 'app-1',
       },
+      appViewMode: 'nodepod',
     });
     render(<RightPanel />);
 
-    expect(screen.getByTitle('Preview')).toHaveAttribute(
-      'src',
-      'https://preview.example/app',
-    );
+    expect(
+      document.querySelector('iframe[src="https://nodepod.local/__virtual__/3000/"]'),
+    ).toBeInTheDocument();
+
     act(() => {
       useConversationV2Store.getState().setDeployState({
         deployStatus: 'deployed',
@@ -88,38 +125,44 @@ describe('RightPanel', () => {
       });
     });
 
-    expect(screen.getByTitle('Preview')).toHaveAttribute(
-      'src',
-      'https://apps.example/app-1',
-    );
-    expect(screen.getByDisplayValue('https://apps.example/app-1')).toBeInTheDocument();
+    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
+    expect(
+      document.querySelector('iframe[src="https://apps.example/app-1"]'),
+    ).toBeInTheDocument();
+    // Nodepod iframe stays mounted (warm) underneath.
+    expect(
+      document.querySelector('iframe[src="https://nodepod.local/__virtual__/3000/"]'),
+    ).toBeInTheDocument();
+    expect(useConversationV2Store.getState().deployedUrl).toBe('https://apps.example/app-1');
   });
 
-  it('remounts the iframe when redeploy keeps the same URL', () => {
+  it('can switch back to Nodepod preview after deploy', () => {
     useConversationV2Store.setState({
       rightPanelMode: 'app',
       applicationComponent: {
         title: 'Generated app',
-        url: 'https://apps.example/app-1',
+        url: 'https://preview.example/app',
+        revision: 'app-1',
       },
       deployStatus: 'deployed',
       deployedUrl: 'https://apps.example/app-1',
-      lastDeployedAt: '2026-07-17T10:00:00.000Z',
+      appViewMode: 'deployed',
     });
-    const { container } = render(<RightPanel />);
-    const firstIframe = container.querySelector('iframe');
+    render(<RightPanel />);
 
-    act(() => {
-      useConversationV2Store.getState().setDeployState({
-        deployStatus: 'deployed',
-        deployedUrl: 'https://apps.example/app-1',
-        lastDeployedAt: '2026-07-17T10:05:00.000Z',
-      });
-    });
+    expect(
+      document.querySelector('iframe[src="https://apps.example/app-1"]'),
+    ).toBeInTheDocument();
 
-    const secondIframe = container.querySelector('iframe');
-    expect(secondIframe).not.toBe(firstIframe);
-    expect(secondIframe).toHaveAttribute('src', 'https://apps.example/app-1');
+    fireEvent.click(screen.getByRole('button', { name: /switchToNodepod/i }));
+
+    expect(useConversationV2Store.getState().appViewMode).toBe('nodepod');
+    expect(
+      document.querySelector('iframe[src="https://apps.example/app-1"]'),
+    ).not.toBeInTheDocument();
+    expect(
+      document.querySelector('iframe[src="https://nodepod.local/__virtual__/3000/"]'),
+    ).toBeInTheDocument();
   });
 
   it('shows the jump-to-live button when streaming and viewing a past tool', () => {
@@ -157,6 +200,7 @@ describe('RightPanel', () => {
       applicationComponent: {
         title: 'Generated app',
         url: 'https://preview.example/app',
+        revision: 'app-1',
       },
     });
     const { container } = render(<RightPanel />);

@@ -34,11 +34,22 @@ export class WorkyStream extends Document {
   @Prop({ type: Types.ObjectId, ref: 'Workspace', required: true, index: true })
   workspaceId!: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'Workspace', required: true })
-  artifactWorkspaceId!: Types.ObjectId;
+  /**
+   * Legacy only. Worky streams no longer provision a dedicated artifact
+   * workspace (artifacts are unused). Kept nullable so pre-existing streams
+   * still resolve their workspace on delete; new streams store null.
+   */
+  @Prop({ type: Types.ObjectId, ref: 'Workspace', required: false, default: null })
+  artifactWorkspaceId?: Types.ObjectId | null;
 
-  @Prop({ type: Types.ObjectId, ref: 'Agent', required: true })
-  managerAgentId!: Types.ObjectId;
+  /**
+   * Legacy only. Worky streams no longer provision a per-stream Manager
+   * agent (planner/executor/ephemeral agents resolve by agent type at turn
+   * time). Kept nullable so pre-existing streams still clean up their agent
+   * on delete; new streams store null.
+   */
+  @Prop({ type: Types.ObjectId, ref: 'Agent', required: false, default: null })
+  managerAgentId?: Types.ObjectId | null;
 
   /**
    * Per-stream model selection. Both fields store the **LiteLLM
@@ -56,25 +67,6 @@ export class WorkyStream extends Document {
 
   @Prop({ type: String, default: null, trim: true, maxlength: 256 })
   workerModelId?: string | null;
-
-  /**
-   * Per-stream Planner / Executor selection sent to the orchestrator over gRPC
-   * (`planner_model` / `executor_model` / `planner_prompt` / `executor_prompt`
-   * on `RunTask`). Models store a LiteLLM identifier; prompts are system-prompt
-   * overrides. Null / empty = server default. Independent of the manager /
-   * worker fields above, which feed the HTTP planning-turn path.
-   */
-  @Prop({ type: String, default: null, trim: true, maxlength: 256 })
-  plannerModelId?: string | null;
-
-  @Prop({ type: String, default: null, trim: true, maxlength: 256 })
-  executorModelId?: string | null;
-
-  @Prop({ type: String, default: null, maxlength: 40000 })
-  plannerPrompt?: string | null;
-
-  @Prop({ type: String, default: null, maxlength: 40000 })
-  executorPrompt?: string | null;
 
   /**
    * CompanionAi session id for this stream. Created via the gRPC

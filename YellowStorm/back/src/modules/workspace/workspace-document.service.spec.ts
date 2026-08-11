@@ -1239,3 +1239,179 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
     expect(crawler.fetchTitle).not.toHaveBeenCalled();
   });
 });
+
+describe('WorkspaceDocumentService.completeBulkUpload', () => {
+  const SESSION_ID = '507f1f77bcf86cd799439099';
+  const DOC_ID = '507f1f77bcf86cd7994390aa';
+
+  let service: WorkspaceDocumentService;
+  let documentModel: { findById: jest.Mock; deleteOne: jest.Mock };
+  let uploadSessionModel: { findOne: jest.Mock };
+  let documentService: { exists: jest.Mock; delete: jest.Mock };
+  let indexingService: { queueDocument: jest.Mock };
+  let workspaceService: { updateStorageUsage: jest.Mock };
+  let notificationsService: { sendToUser: jest.Mock };
+  let logger: { setContext: jest.Mock; log: jest.Mock; warn: jest.Mock; error: jest.Mock; debug: jest.Mock };
+
+  const makeDoc = () => ({
+    _id: { toString: () => DOC_ID },
+    filename: 'file.pdf',
+    originalName: 'file.pdf',
+    mimeType: 'application/pdf',
+    size: 100,
+    path: 'owner/ws/file.pdf',
+    workspaceId: { toString: () => WS_ID },
+    createdBy: { toString: () => USER_ID },
+    status: DocumentStatus.PENDING,
+    isFolder: false,
+    metadata: {} as Record<string, string>,
+    save: jest.fn().mockResolvedValue(undefined),
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  const makeSession = (documentId = DOC_ID) => ({
+    _id: { toString: () => SESSION_ID },
+    workspaceId: new Types.ObjectId(WS_ID),
+    userId: new Types.ObjectId(USER_ID),
+    status: 'pending',
+    files: [
+      {
+        index: 0,
+        filename: 'file.pdf',
+        mimeType: 'application/pdf',
+        size: 100,
+        documentId: new Types.ObjectId(documentId),
+        status: 'completed',
+        progress: 100,
+      },
+    ],
+    totalFiles: 1,
+    totalSize: 100,
+    completedFiles: 0,
+    failedFiles: 0,
+    save: jest.fn().mockResolvedValue(undefined),
+  });
+
+  beforeEach(async () => {
+    documentModel = {
+      findById: jest.fn(),
+      deleteOne: jest.fn().mockResolvedValue({ deletedCount: 1 }),
+    };
+    uploadSessionModel = {
+      findOne: jest.fn(),
+    };
+    documentService = {
+      exists: jest.fn().mockResolvedValue(true),
+      delete: jest.fn().mockResolvedValue(undefined),
+    };
+    indexingService = {
+      queueDocument: jest.fn().mockResolvedValue(undefined),
+    };
+    workspaceService = {
+      updateStorageUsage: jest.fn().mockResolvedValue(undefined),
+    };
+    notificationsService = {
+      sendToUser: jest.fn().mockResolvedValue(undefined),
+    };
+    logger = {
+      setContext: jest.fn(),
+      log: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    };
+
+    const mod = await Test.createTestingModule({
+      providers: [
+        WorkspaceDocumentService,
+        { provide: getModelToken(WorkspaceDoc.name), useValue: documentModel },
+        { provide: getModelToken(UploadSession.name), useValue: uploadSessionModel },
+        { provide: WorkspaceService, useValue: workspaceService },
+        { provide: DocumentService, useValue: documentService },
+        { provide: NotificationsService, useValue: notificationsService },
+        { provide: IndexingService, useValue: indexingService },
+        { provide: UrlToPdfClientService, useValue: { convert: jest.fn() } },
+        { provide: WorkspaceArtifactCleanupService, useValue: {} },
+        { provide: WebsiteCrawlerService, useValue: { fetchTitle: jest.fn() } },
+        GuardedUrlDownloaderService,
+        { provide: ConfigService, useValue: { get: (_: string, dflt?: unknown) => dflt } },
+        {
+          provide: WorkspaceUploadSettingsService,
+          useValue: {
+            getAllowedExtensions: jest.fn().mockResolvedValue([...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS]),
+            getAllowedMimeTypesForExtension: jest.fn(() => ['application/pdf']),
+            ensureDefaultSettings: jest.fn(),
+            getSettings: jest.fn(),
+          },
+        },
+        { provide: LoggerService, useValue: logger },
+      ],
+    }).compile();
+
+    service = mod.get(WorkspaceDocumentService);
+  });
+
+  it('queues indexing when autoIndex is true and blob exists', async () => {
+    const doc = makeDoc();
+    documentModel.findById.mockResolvedValue(doc);
+    uploadSessionModel.findOne.mockResolvedValue(makeSession());
+
+    const result = await service.completeBulkUpload(WS_ID, USER_ID, SESSION_ID, false, true);
+
+    expect(result.status).toBe('success');
+    expect(result.successful.count).toBe(1);
+    expect(doc.metadata.autoIndexRequested).toBe('true');
+    expect(indexingService.queueDocument).toHaveBeenCalledWith(DOC_ID, false);
+  });
+
+  it('does not queue indexing when autoIndex is false', async () => {
+    const doc = makeDoc();
+    documentModel.findById.mockResolvedValue(doc);
+    uploadSessionModel.findOne.mockResolvedValue(makeSession());
+
+    await service.completeBulkUpload(WS_ID, USER_ID, SESSION_ID, false, false);
+
+    expect(indexingService.queueDocument).not.toHaveBeenCalled();
+    expect(doc.metadata.autoIndexRequested).toBe('false');
+  });
+
+  it('treats HeadObject 403 as present and still queues indexing', async () => {
+    const doc = makeDoc();
+    documentModel.findById.mockResolvedValue(doc);
+    uploadSessionModel.findOne.mockResolvedValue(makeSession());
+    documentService.exists.mockRejectedValue(
+      Object.assign(new Error('UnknownError'), {
+        name: 'Unknown',
+        $metadata: { httpStatusCode: 403 },
+      }),
+    );
+
+    const result = await service.completeBulkUpload(WS_ID, USER_ID, SESSION_ID, true, true);
+
+    expect(result.status).toBe('success');
+    expect(result.successful.count).toBe(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('HeadObject returned 403'),
+      expect.objectContaining({ path: doc.path }),
+    );
+    expect(indexingService.queueDocument).toHaveBeenCalledWith(DOC_ID, true);
+  });
+
+  it('rethrows non-403 exists failures', async () => {
+    const doc = makeDoc();
+    documentModel.findById.mockResolvedValue(doc);
+    uploadSessionModel.findOne.mockResolvedValue(makeSession());
+    documentService.exists.mockRejectedValue(
+      Object.assign(new Error('Boom'), {
+        name: 'InternalError',
+        $metadata: { httpStatusCode: 500 },
+      }),
+    );
+
+    await expect(
+      service.completeBulkUpload(WS_ID, USER_ID, SESSION_ID, false, true),
+    ).rejects.toThrow('Boom');
+    expect(indexingService.queueDocument).not.toHaveBeenCalled();
+  });
+});

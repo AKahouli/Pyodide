@@ -131,6 +131,42 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     return Types.ObjectId.isValid(streamId) ? new Types.ObjectId(streamId) : streamId;
   }
 
+  /**
+   * Mirror one manager `messages` row into Mongo and return the stored doc.
+   *
+   * The manager echoes the owner's own message back through Electric, but
+   * `appendOwnerMessage` already persisted that message locally with no
+   * `externalId`. Inserting the mirrored row as a fresh document would leave
+   * two copies of the same message in the history (and hand the UI two
+   * different ids for it), so an owner row first adopts the most recent
+   * un-mirrored local copy with the same content, stamping it with the
+   * Postgres id. Replays then match that `externalId` and update in place.
+   */
+  private async mirrorMessage(
+    streamOid: Types.ObjectId | string,
+    row: PgMessageRow,
+    set: Record<string, unknown>,
+  ): Promise<WorkyMessageDocument | null> {
+    const $set = { ...set, streamId: streamOid };
+    if (set.role === 'owner') {
+      const adopted = await this.messageModel
+        .findOneAndUpdate(
+          { streamId: streamOid, role: 'owner', content: row.content, externalId: null },
+          { $set },
+          { new: true, sort: { createdAt: -1 } },
+        )
+        .exec();
+      if (adopted) return adopted;
+    }
+    return this.messageModel
+      .findOneAndUpdate(
+        { streamId: streamOid, externalId: row.id },
+        { $set },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      )
+      .exec();
+  }
+
   async handleMessages(messages: unknown[]): Promise<void> {
     for (const m of messages as any[]) {
       if (isControlMessage(m)) {
@@ -158,14 +194,14 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
         }
         const streamOid = this.toStreamOid(target.streamId);
         const { set, event } = mapMessage(row, target.streamId);
-        await this.messageModel
-          .findOneAndUpdate(
-            { streamId: streamOid, externalId: row.id },
-            { $set: { ...set, streamId: streamOid } },
-            { upsert: true, new: true, setDefaultsOnInsert: true },
-          )
-          .exec();
-        this.events.emit(target.ownerUserId, target.streamId, event);
+        const doc = await this.mirrorMessage(streamOid, row, set);
+        // Emit the Mongo id, not the Postgres row id, so the SSE frame and the
+        // REST history agree on identity. The frontend dedupes on that id to
+        // drop the copy it already rendered from the POST response.
+        this.events.emit(target.ownerUserId, target.streamId, {
+          ...event,
+          payload: { ...event.payload, id: String(doc?._id ?? row.id) },
+        });
         if (this.debug) {
           this.logger.debug('[worky-electric] applied', {
             shape: 'messages',

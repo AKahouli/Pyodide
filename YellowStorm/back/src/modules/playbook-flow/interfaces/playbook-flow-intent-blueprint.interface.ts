@@ -1,5 +1,18 @@
 import type { PlaybookIntentDiagnostic } from './playbook-flow-intent-diagnostic.interface';
 
+/**
+ * The closed set of node kinds the build registry knows how to construct.
+ * Distinct from `PlaybookIntentPrimitiveKind`, which stays open (`| string`)
+ * because it also carries semantic metadata straight from LLM output.
+ */
+export type PlaybookIntentBlueprintNodeKind =
+  | 'agent'
+  | 'action'
+  | 'evaluation'
+  | 'iterator'
+  | 'router'
+  | 'human_approval';
+
 export interface PlaybookIntentBlueprintPort {
   id: string;
   name?: string | null;

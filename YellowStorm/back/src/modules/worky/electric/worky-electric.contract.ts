@@ -26,5 +26,5 @@ export interface PgPlanStepRow {
   question?: string;
   depends_on?: string; // comma-joined step_ids
   wave?: number;
-  agent?: string;
+  assignee?: string; // which executor sub-agent is handling this step (for display/grouping)
 }

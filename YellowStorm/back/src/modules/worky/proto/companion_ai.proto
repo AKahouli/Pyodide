@@ -1,5 +1,7 @@
 syntax = "proto3";
 
+import "chatbot.proto";
+
 // Agent Orchestrator — production multi-agent planning/execution service.
 //
 // CQRS by design:
@@ -55,17 +57,12 @@ message CreateSessionRequest  { string user_id = 1; }
 message CreateSessionResponse { string session_id = 1; }
 
 message RunRequest {
-  reserved 7;
-  reserved "idempotency_key";
   string user_id    = 1;
   string session_id = 2;
   string message    = 3;
-  string executor_model = 4;
   repeated Skill skills = 5;
   repeated ConnectorBinding connectors = 6;
-  string planner_model = 8;
-  string planner_prompt = 9;
-  string executor_prompt = 10;
+  repeated chatbot.Agent agents = 11;
 }
 
 message RunResponse {
@@ -99,14 +96,8 @@ message DeliverMailReplyRequest {
   // Who replied, for the audit line. Not used for routing: the token is, since
   // a sender may reply from an alias or forward the thread on.
   string reply_from = 3;
-  // Same executor context RunTask carries: the resumed plan runs its remaining
-  // steps and needs its model and tools. The caller resolves these for the
-  // wait's user; worky takes user_id and session_id from the wait row, never
-  // from the caller.
-  string model = 4;
   repeated ConnectorBinding connectors = 5;
-  // Same override as RunRequest.executor_prompt. Empty = server default.
-  string executor_prompt = 6;
+  repeated chatbot.Agent agents = 7;
 }
 
 message DeliverMailReplyResponse {

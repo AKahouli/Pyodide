@@ -409,6 +409,35 @@ export class AgentTypeService {
     return result;
   }
 
+  /**
+   * Batch lookup used by AgentService to hydrate agents (which live in Postgres)
+   * with their agent-type name/slug/skills (which live in Mongo).
+   */
+  async getManyForHydration(
+    ids: string[],
+  ): Promise<Map<string, { id: string; name: string; slug: string; skills: string[] }>> {
+    const map = new Map<string, { id: string; name: string; slug: string; skills: string[] }>();
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (unique.length === 0) return map;
+
+    const docs = await this.agentTypeModel
+      .find({ _id: { $in: unique.map((id) => new Types.ObjectId(id)) } })
+      .select('name slug skills')
+      .lean()
+      .exec();
+
+    for (const d of docs as Array<Record<string, unknown>>) {
+      const id = (d._id as { toString(): string }).toString();
+      map.set(id, {
+        id,
+        name: (d.name as string) ?? '',
+        slug: (d.slug as string) ?? '',
+        skills: ((d.skills as Array<{ toString(): string }>) ?? []).map((s) => s.toString()),
+      });
+    }
+    return map;
+  }
+
   // ==========================================
   // Private helpers
   // ==========================================

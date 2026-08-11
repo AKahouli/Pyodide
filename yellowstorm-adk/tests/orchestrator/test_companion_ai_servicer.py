@@ -12,7 +12,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from unittest.mock import AsyncMock, MagicMock
 
+from src.grpc_generated import chatbot_pb2 as chatbot_pb
 from src.grpc_generated import companion_ai_pb2 as pb
+from src.grpc_server import companion_ai_servicer
 from src.grpc_server.companion_ai_servicer import CompanionAiServicer
 
 
@@ -24,7 +26,15 @@ def _ctx():
 
 
 def _servicer(rm=None, service=None):
-    return CompanionAiServicer(service or MagicMock(), rm, default_model="m")
+    return CompanionAiServicer(service or MagicMock(), rm)
+
+
+# Every request carries exactly one planner + one executor agent; tests that
+# don't care about specific overrides reuse this pair to satisfy that.
+_AGENTS = [
+    chatbot_pb.Agent(agent_type=companion_ai_servicer.PLANNER_AGENT_TYPE, chatbot=chatbot_pb.Chatbot(model="m")),
+    chatbot_pb.Agent(agent_type=companion_ai_servicer.EXECUTOR_AGENT_TYPE, chatbot=chatbot_pb.Chatbot(model="m")),
+]
 
 
 async def _drain(servicer):
@@ -44,11 +54,26 @@ async def test_runtask_accepts_and_runs_plan():
     rm = MagicMock(snapshot=AsyncMock(return_value={"session": {"status": "running", "interrupt_id": None}}))
     service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock())
     s = _servicer(rm=rm, service=service)
-    resp = await s.RunTask(pb.RunRequest(user_id="u", session_id="s1", message="hi"), _ctx())
+    resp = await s.RunTask(pb.RunRequest(user_id="u", session_id="s1", message="hi", agents=_AGENTS), _ctx())
     assert resp.accepted is True and resp.run_id
     await _drain(s)
     service.plan_turn.assert_awaited_once()
     service.resume_turn.assert_not_awaited()
+
+
+async def test_runtask_falls_back_to_default_model_when_no_agents_sent():
+    """A client not yet updated to send `agents` still works — DEFAULT_MODEL
+    and the hardcoded planner/executor prompts (None override) kick in."""
+    rm = MagicMock(snapshot=AsyncMock(return_value={"session": {"status": "running", "interrupt_id": None}}))
+    service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+    await s.RunTask(pb.RunRequest(user_id="u", session_id="s1", message="hi"), _ctx())
+    await _drain(s)
+    kw = service.plan_turn.await_args.kwargs
+    assert kw["model"] == companion_ai_servicer.DEFAULT_MODEL
+    assert kw["planner_model"] is None
+    assert kw["planner_prompt"] is None
+    assert kw["executor_prompt"] is None
 
 
 async def test_runtask_forwards_planner_and_executor_overrides():
@@ -56,13 +81,20 @@ async def test_runtask_forwards_planner_and_executor_overrides():
     service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock())
     s = _servicer(rm=rm, service=service)
     await s._run_turn(pb.RunRequest(
-        user_id="u", session_id="s1", message="hi", executor_model="exec-model",
-        planner_model="plan-model", planner_prompt="custom planner",
-        executor_prompt="custom executor {description}"), "exec-model", "run1")
+        user_id="u", session_id="s1", message="hi",
+        agents=[
+            chatbot_pb.Agent(agent_type=companion_ai_servicer.PLANNER_AGENT_TYPE, prompt="custom planner",
+                             chatbot=chatbot_pb.Chatbot(model="plan-model")),
+            chatbot_pb.Agent(agent_type=companion_ai_servicer.EXECUTOR_AGENT_TYPE, id="exec-42",
+                             name="Worky executor", prompt="custom executor {description}",
+                             chatbot=chatbot_pb.Chatbot(model="exec-model")),
+        ]), "exec-model", "run1")
     kw = service.plan_turn.await_args.kwargs
     assert kw["planner_model"] == "plan-model"
     assert kw["planner_prompt"] == "custom planner"
     assert kw["executor_prompt"] == "custom executor {description}"
+    assert kw["executor_name"] == "Worky executor"
+    assert kw["executor_id"] == "exec-42"
 
 
 async def test_run_turn_routes_to_resume_when_waiting():
@@ -70,7 +102,7 @@ async def test_run_turn_routes_to_resume_when_waiting():
         return_value={"session": {"status": "waiting", "interrupt_id": "i1"}}))
     service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock())
     s = _servicer(rm=rm, service=service)
-    await s._run_turn(pb.RunRequest(user_id="u", session_id="s1", message="blue"), "m", "run1")
+    await s._run_turn(pb.RunRequest(user_id="u", session_id="s1", message="blue", agents=_AGENTS), "m", "run1")
     service.resume_turn.assert_awaited_once()
     service.plan_turn.assert_not_awaited()
 
@@ -133,7 +165,8 @@ async def test_mail_reply_resumes_the_step_that_was_waiting():
 
     resp = await s.DeliverMailReply(pb.DeliverMailReplyRequest(
         token="YW-tok", reply_body="I work at Yellow Systems.",
-        reply_from="x@example.com", model="gpt"), _ctx())
+        reply_from="x@example.com",
+        agents=[chatbot_pb.Agent(agent_type=companion_ai_servicer.EXECUTOR_AGENT_TYPE, chatbot=chatbot_pb.Chatbot(model="gpt"))]), _ctx())
     await _drain(s)
 
     assert (resp.delivered, resp.session_id, resp.step_id) == (True, "s1", "m")
@@ -141,9 +174,41 @@ async def test_mail_reply_resumes_the_step_that_was_waiting():
     kw = service.resume_turn.await_args.kwargs
     # The reply answers THAT step, not whatever the session's chat interrupt is.
     assert kw["interrupt_id"] == "mail:plan_s1@1/m@1"
-    assert kw["answer"] == "I work at Yellow Systems."
+    # Carries the reply verbatim, now under an attribution line naming the
+    # sender -- see test_a_delivered_reply_is_attributed_to_its_sender_not_the_plan.
+    assert kw["answer"].endswith("I work at Yellow Systems.")
+    assert kw["answer"].startswith("Email reply from x@example.com")
     # Identity comes from the wait row, never from the caller.
     assert (kw["session_id"], kw["user_id"]) == ("s1", "u1")
+
+
+async def test_the_routing_token_is_scrubbed_out_of_the_reply_before_the_plan_sees_it():
+    """Root cause of a live failure: a reply quotes the mail it answers, so
+    it carries our own outbound subject line -- token included. That text
+    becomes the step's result and hence the next step's context, and the
+    model then echoed the token into the NEXT mail's subject. Stamping
+    appended the new one after it, so the mail went out as
+    "... [round-1] [round-2]"; the reader takes the first token, which was
+    round 1's -- already matched -- so the real reply was dropped as
+    "already delivered" and round 2 waited forever.
+
+    The executor is never told about tokens so it can never be relied on to
+    handle one; the reply must reach it with none in sight."""
+    rm = MagicMock(claim_mail_wait=AsyncMock(return_value=dict(_WAIT)))
+    service = MagicMock(resume_turn=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+
+    spent = "YW--eztV2BQOiwekB1Up0puKpjf"
+    await s.DeliverMailReply(pb.DeliverMailReplyRequest(
+        token="YW-tok",
+        reply_body=(f"go ahead\nFrom: Rabeb\nSubject: Decision needed [{spent}]  Hi,"
+                    f'<span style="display:none">{spent}</span>')), _ctx())
+    await _drain(s)
+
+    answer = service.resume_turn.await_args.kwargs["answer"]
+    assert spent not in answer, answer
+    assert "YW-" not in answer, answer
+    assert "go ahead" in answer  # the human's actual words survive
 
 
 async def test_mail_reply_forwards_executor_prompt_override():
@@ -152,7 +217,8 @@ async def test_mail_reply_forwards_executor_prompt_override():
     s = _servicer(rm=rm, service=service)
 
     await s.DeliverMailReply(pb.DeliverMailReplyRequest(
-        token="YW-tok", reply_body="reply", executor_prompt="custom {description}"), _ctx())
+        token="YW-tok", reply_body="reply",
+        agents=[chatbot_pb.Agent(agent_type=companion_ai_servicer.EXECUTOR_AGENT_TYPE, prompt="custom {description}")]), _ctx())
     await _drain(s)
 
     kw = service.resume_turn.await_args.kwargs
@@ -197,7 +263,7 @@ async def test_mail_reply_supersedes_an_in_flight_turn():
     s._running["s1"] = prev
 
     await s.DeliverMailReply(pb.DeliverMailReplyRequest(
-        token="YW-tok", reply_body="reply"), _ctx())
+        token="YW-tok", reply_body="reply", agents=_AGENTS), _ctx())
     await _drain(s)
 
     assert prev.cancelled(), "two turns must never run on one session"

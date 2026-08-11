@@ -4,7 +4,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { Agent, AgentDocument } from '@modules/agent/schemas/agent.schema';
+import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
 import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
 import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
@@ -32,7 +32,7 @@ export class GovernanceConsumerScopeService {
     @InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>,
     @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
     @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
-    @InjectModel(Agent.name) private readonly agentModel: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
     private readonly audienceService: GovernanceScopeAudienceService,
     private readonly configService: ConfigService,
   ) {}
@@ -50,7 +50,7 @@ export class GovernanceConsumerScopeService {
     const deployments = await this.deploymentModel.find({ scopeId: { $in: authorizedScopes.map((scope) => scope._id) }, status: 'published', currentPublishedRevisionId: { $exists: true } }).lean().exec();
     const revisions = await this.revisionModel.find({ _id: { $in: deployments.map((deployment) => deployment.currentPublishedRevisionId) }, status: 'published' }).lean().exec();
     const revisionById = new Map(revisions.map((revision) => [revision._id.toString(), revision]));
-    const agents = await this.agentModel.find({ _id: { $in: revisions.map((revision) => revision.agentId) }, isActive: true }).select('name description').lean().exec();
+    const agents = await this.agentRepository.findByIds(revisions.map((revision) => String(revision.agentId)), { activeOnly: true });
     const agentById = new Map(agents.map((agent) => [agent._id.toString(), agent]));
     const scopeById = new Map(authorizedScopes.map((scope) => [scope._id.toString(), scope]));
 

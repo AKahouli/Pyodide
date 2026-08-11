@@ -1,6 +1,7 @@
 import path from 'path';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import nodepod from '@scelar/nodepod/vite';
 import { defineConfig } from 'vite';
 
 function getManualChunk(id: string): string | undefined {
@@ -69,9 +70,17 @@ function getManualChunk(id: string): string | undefined {
 }
 
 export default defineConfig(() => {
+  // Nodepod needs SharedArrayBuffer → COOP + COEP on the document origin.
+  // Prefer credentialless over require-corp so cross-origin S3/API fetches
+  // (no CORP headers) keep working.
+  const crossOriginIsolationHeaders = {
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Cross-Origin-Embedder-Policy': 'credentialless',
+  };
+
   return {
     base: '/',
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), nodepod()],
     build: {
       target: 'es2022',
       rollupOptions: {
@@ -82,6 +91,10 @@ export default defineConfig(() => {
     },
     server: {
       hmr: false,
+      headers: crossOriginIsolationHeaders,
+    },
+    preview: {
+      headers: crossOriginIsolationHeaders,
     },
     resolve: {
       alias: {

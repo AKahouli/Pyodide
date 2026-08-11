@@ -4,6 +4,7 @@ import { AgentService } from './agent.service';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
 import { IAgentForStream } from './interfaces/agent.interface';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
+import { AgentRecord } from './repositories/agent-record.mapper';
 
 describe('AgentService connector skill inheritance', () => {
   const userId = 'user-1';
@@ -46,15 +47,64 @@ describe('AgentService connector skill inheritance', () => {
     },
   };
 
+  /** Build a full Mongo-lean-doc-shaped AgentRecord (agentType is a bare id). */
+  const makeRecord = (over: Partial<AgentRecord> = {}): AgentRecord => ({
+    _id: new Types.ObjectId().toString(),
+    name: 'Agent',
+    slug: 'agent',
+    agentType: '333333333333333333333333',
+    agentTypeSlug: 'worker',
+    role: 'Role',
+    description: '',
+    temperature: 0,
+    llmModel: undefined,
+    email: undefined,
+    instruction: '',
+    ignorePrePrompt: false,
+    knowledgeBases: [],
+    tools: [],
+    skills: [],
+    disabledSkills: [],
+    connectors: [],
+    connectorActionSelections: [],
+    guardrails: {},
+    deploymentSettings: {},
+    enable_temporary_child_agents: false,
+    max_temporary_child_agents: 4,
+    isDefault: false,
+    isActive: true,
+    isDefaultForType: false,
+    createdBy: 'admin',
+    a2aPublished: false,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...over,
+  });
+
   const createService = () => {
-    const agentModel = {
-      find: jest.fn(),
-      findById: jest.fn(),
-      findOne: jest.fn().mockReturnValue({
-        populate: jest.fn().mockReturnValue({
-          lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }),
-        }),
-      }),
+    const agentRepository = {
+      create: jest.fn(),
+      findById: jest.fn().mockResolvedValue(null),
+      findByIdDefault: jest.fn().mockResolvedValue(null),
+      listUserAgents: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+      listDefaultAgents: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+      listHumainPublic: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+      findForUser: jest.fn().mockResolvedValue([]),
+      findByIds: jest.fn().mockResolvedValue([]),
+      findByIdsForUser: jest.fn().mockResolvedValue([]),
+      findDefaultByType: jest.fn().mockResolvedValue(null),
+      findDefaultByNameActive: jest.fn().mockResolvedValue(null),
+      findActiveDefaults: jest.fn().mockResolvedValue([]),
+      existsActiveDefault: jest.fn().mockResolvedValue(false),
+      findActiveDefaultIdBySlug: jest.fn().mockResolvedValue(null),
+      countByAgentType: jest.fn().mockResolvedValue(0),
+      findByNameAndOwner: jest.fn().mockResolvedValue(null),
+      findByNameDefault: jest.fn().mockResolvedValue(null),
+      findBySlug: jest.fn().mockResolvedValue(null),
+      findByOwnerAndType: jest.fn().mockResolvedValue(null),
+      updateById: jest.fn(),
+      deleteById: jest.fn().mockResolvedValue(undefined),
+      clearDefaultForType: jest.fn().mockResolvedValue(undefined),
     };
     const logger = {
       setContext: jest.fn(),
@@ -68,7 +118,7 @@ describe('AgentService connector skill inheritance', () => {
     const agentTypeService = {
       resolvePromptsInBatch: jest.fn().mockResolvedValue(new Map()),
       findAllActive: jest.fn().mockResolvedValue([]),
-      findBySlug: jest.fn(),
+      getManyForHydration: jest.fn().mockResolvedValue(new Map()),
     };
     const modelsService = {
       findById: jest.fn(),
@@ -122,8 +172,9 @@ describe('AgentService connector skill inheritance', () => {
       }),
     };
 
+    const agentRoleEmbedding = { reindexHumainRole: jest.fn() };
+
     const service = new AgentService(
-      agentModel as any,
       logger as any,
       toolService as any,
       agentTypeService as any,
@@ -136,6 +187,8 @@ describe('AgentService connector skill inheritance', () => {
       teamService as any,
       agentShareService as any,
       guardrailsSettingsService as any,
+      agentRepository as any,
+      agentRoleEmbedding as any,
       new AgentConnectorRuntimeService(
         logger as any,
         skillService as any,
@@ -149,25 +202,13 @@ describe('AgentService connector skill inheritance', () => {
 
     return {
       service,
-      agentModel,
+      agentRepository,
       skillService,
       connectorService,
       agentTypeService,
       modelsService,
       agentShareService,
     };
-  };
-
-  const mockFindById = (agentModel: { findById: jest.Mock }, doc: unknown) => {
-    agentModel.findById.mockReturnValue({
-      select: () => ({ lean: () => ({ exec: () => Promise.resolve(doc) }) }),
-    });
-  };
-
-  const mockFindOne = (agentModel: { findOne: jest.Mock }, doc: unknown) => {
-    agentModel.findOne.mockReturnValue({
-      populate: () => ({ lean: () => ({ exec: () => Promise.resolve(doc) }) }),
-    });
   };
 
   it('preserves deployment modes for widget-only updates', () => {
@@ -260,7 +301,7 @@ describe('AgentService connector skill inheritance', () => {
   });
 
   it('resolves the mono-agent directly from the DB even though it is not part of the user\'s roster', async () => {
-    const { service, agentModel, agentTypeService } = createService();
+    const { service, agentRepository, agentTypeService } = createService();
 
     const workerAgent: IAgentForStream = {
       id: 'agent-worker',
@@ -293,30 +334,20 @@ describe('AgentService connector skill inheritance', () => {
     agentTypeService.findAllActive.mockResolvedValue([
       { id: '555555555555555555555555', slug: 'mono-agent', name: 'Mono Agent' },
     ]);
-    mockFindOne(agentModel, {
-      _id: new Types.ObjectId(),
+    agentTypeService.getManyForHydration.mockResolvedValue(
+      new Map([['555555555555555555555555', { id: '555555555555555555555555', name: 'Mono Agent', slug: 'mono-agent', skills: [] }]]),
+    );
+    agentRepository.findDefaultByType.mockResolvedValue(makeRecord({
       name: 'Mono Agent Instance',
-      role: 'Role',
-      description: '',
-      temperature: 0,
       llmModel: 'model-1',
-      instruction: '',
-      ignorePrePrompt: false,
-      knowledgeBases: [],
-      tools: [],
-      skills: [],
-      disabledSkills: [],
-      connectors: [],
+      agentType: '555555555555555555555555',
+      agentTypeSlug: 'mono-agent',
       isDefault: true,
-      isDefaultForType: false,
-      agentType: { _id: new Types.ObjectId(), name: 'Mono Agent', slug: 'mono-agent', skills: [] },
-    });
+    }));
 
     const result = await service.buildAgentsForStream(userId, undefined, undefined, undefined, undefined, undefined);
 
-    expect(agentModel.findOne).toHaveBeenCalledWith(
-      expect.objectContaining({ agentType: expect.anything(), isDefault: true }),
-    );
+    expect(agentRepository.findDefaultByType).toHaveBeenCalledWith('555555555555555555555555');
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe('Mono Agent Instance');
   });
@@ -414,7 +445,7 @@ describe('AgentService connector skill inheritance', () => {
   });
 
   it('resolves an agent shared *with* the user when it is the one tagged', async () => {
-    const { service, agentModel, agentShareService } = createService();
+    const { service, agentRepository, agentShareService, agentTypeService } = createService();
 
     // The user's own roster: one owned/default agent. The shared agent is NOT
     // here — getAgentsForUser only returns owned + default agents.
@@ -433,23 +464,14 @@ describe('AgentService connector skill inheritance', () => {
     agentShareService.getShareInfoMapForUser.mockResolvedValue(
       new Map([[sharedAgentId, { shareId: 'share-1', permission: 'read', sharedBy: { id: 'owner-1', email: 'owner@x.io' } }]]),
     );
+    agentTypeService.getManyForHydration.mockResolvedValue(
+      new Map([['333333333333333333333333', { id: '333333333333333333333333', name: 'Worker', slug: 'worker', skills: [] }]]),
+    );
 
-    // The agent doc is fetched by _id from the shared-with-user grant.
-    agentModel.find.mockReturnValue({
-      populate: jest.fn().mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([
-            {
-              _id: new Types.ObjectId(sharedAgentId),
-              name: 'Shared Agent', role: 'Role', description: '', temperature: 0, llmModel: '',
-              instruction: '', ignorePrePrompt: false, knowledgeBases: [], tools: [], skills: [],
-              disabledSkills: [], connectors: [], isDefault: false, isDefaultForType: false,
-              agentType: { _id: new Types.ObjectId('333333333333333333333333'), name: 'Worker', slug: 'worker', skills: [] },
-            },
-          ]),
-        }),
-      }),
-    });
+    // The agent record is fetched by id from the shared-with-user grant.
+    agentRepository.findByIds.mockResolvedValue([
+      makeRecord({ _id: sharedAgentId, name: 'Shared Agent', agentType: '333333333333333333333333' }),
+    ]);
 
     const result = await service.buildAgentsForStream(userId, undefined, [sharedAgentId], undefined, undefined, undefined);
 
@@ -460,41 +482,24 @@ describe('AgentService connector skill inheritance', () => {
   });
 
   it('injects connector skills into playbook agent runtime', async () => {
-    const { service, agentModel, skillService, connectorService, modelsService } = createService();
+    const { service, agentRepository, skillService, connectorService, agentTypeService } = createService();
     const objectId = new Types.ObjectId();
-    agentModel.find.mockReturnValue({
-      populate: jest.fn().mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([
-            {
-              _id: objectId,
-              name: 'Agent 1',
-              role: 'Role',
-              description: '',
-              temperature: 0,
-              llmModel: 'model-1',
-              instruction: 'Follow instructions',
-              ignorePrePrompt: false,
-              knowledgeBases: [],
-              tools: [],
-              skills: [new Types.ObjectId('111111111111111111111111')],
-              disabledSkills: [],
-              connectors: [new Types.ObjectId('222222222222222222222222')],
-              enable_temporary_child_agents: true,
-              max_temporary_child_agents: 5,
-              isDefault: false,
-              isDefaultForType: false,
-              agentType: {
-                _id: new Types.ObjectId('333333333333333333333333'),
-                name: 'Worker',
-                slug: 'worker',
-                skills: [new Types.ObjectId('444444444444444444444444')],
-              },
-            },
-          ]),
-        }),
+    agentRepository.findByIds.mockResolvedValue([
+      makeRecord({
+        _id: objectId.toString(),
+        name: 'Agent 1',
+        llmModel: 'model-1',
+        instruction: 'Follow instructions',
+        skills: ['111111111111111111111111'],
+        connectors: ['222222222222222222222222'],
+        agentType: '333333333333333333333333',
+        enable_temporary_child_agents: true,
+        max_temporary_child_agents: 5,
       }),
-    });
+    ]);
+    agentTypeService.getManyForHydration.mockResolvedValue(
+      new Map([['333333333333333333333333', { id: '333333333333333333333333', name: 'Worker', slug: 'worker', skills: ['444444444444444444444444'] }]]),
+    );
 
     connectorService.findByIds.mockResolvedValue([
       {
@@ -540,42 +545,24 @@ describe('AgentService connector skill inheritance', () => {
   });
 
   it('falls back to the admin default model when the agent has no model set', async () => {
-    const { service, agentModel, modelsService } = createService();
+    const { service, agentRepository, modelsService, agentTypeService } = createService();
     modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
     modelsService.getGuardrailsClassifierModel.mockResolvedValue({ id: 'guardrails-classifier', omitTemperature: false });
     modelsService.findById.mockResolvedValue({ id: 'admin-default-id', omitTemperature: false } as any);
 
     const objectId = new Types.ObjectId();
-    agentModel.find.mockReturnValue({
-      populate: jest.fn().mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([
-            {
-              _id: objectId,
-              name: 'Agent NoModel',
-              role: 'Role',
-              description: '',
-              temperature: 0,
-              instruction: 'Follow instructions',
-              ignorePrePrompt: true,
-              knowledgeBases: [],
-              tools: [],
-              skills: [],
-              disabledSkills: [],
-              connectors: [],
-              isDefault: false,
-              isDefaultForType: false,
-              agentType: {
-                _id: new Types.ObjectId('333333333333333222222222'),
-                name: 'Worker',
-                slug: 'worker',
-                skills: [],
-              },
-            },
-          ]),
-        }),
+    agentRepository.findByIds.mockResolvedValue([
+      makeRecord({
+        _id: objectId.toString(),
+        name: 'Agent NoModel',
+        instruction: 'Follow instructions',
+        ignorePrePrompt: true,
+        agentType: '333333333333333222222222',
       }),
-    });
+    ]);
+    agentTypeService.getManyForHydration.mockResolvedValue(
+      new Map([['333333333333333222222222', { id: '333333333333333222222222', name: 'Worker', slug: 'worker', skills: [] }]]),
+    );
 
     const result = await service.buildGrpcAgentsForPlaybook(userId, [objectId.toString()]);
 
@@ -588,41 +575,23 @@ describe('AgentService connector skill inheritance', () => {
   });
 
   it('prefers fallbackModelId over the admin default when the agent has no model set', async () => {
-    const { service, agentModel, modelsService } = createService();
+    const { service, agentRepository, modelsService, agentTypeService } = createService();
     modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
     modelsService.findById.mockResolvedValue({ id: 'explicit-fallback', omitTemperature: true } as any);
 
     const objectId = new Types.ObjectId();
-    agentModel.find.mockReturnValue({
-      populate: jest.fn().mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([
-            {
-              _id: objectId,
-              name: 'Agent NoModel',
-              role: 'Role',
-              description: '',
-              temperature: 0,
-              instruction: 'Follow instructions',
-              ignorePrePrompt: true,
-              knowledgeBases: [],
-              tools: [],
-              skills: [],
-              disabledSkills: [],
-              connectors: [],
-              isDefault: false,
-              isDefaultForType: false,
-              agentType: {
-                _id: new Types.ObjectId('333333333333333222222222'),
-                name: 'Worker',
-                slug: 'worker',
-                skills: [],
-              },
-            },
-          ]),
-        }),
+    agentRepository.findByIds.mockResolvedValue([
+      makeRecord({
+        _id: objectId.toString(),
+        name: 'Agent NoModel',
+        instruction: 'Follow instructions',
+        ignorePrePrompt: true,
+        agentType: '333333333333333222222222',
       }),
-    });
+    ]);
+    agentTypeService.getManyForHydration.mockResolvedValue(
+      new Map([['333333333333333222222222', { id: '333333333333333222222222', name: 'Worker', slug: 'worker', skills: [] }]]),
+    );
 
     const result = await service.buildGrpcAgentsForPlaybook(
       userId,
@@ -639,34 +608,34 @@ describe('AgentService connector skill inheritance', () => {
 
   describe('canWriteAgent', () => {
     it('allows the owner of a custom agent', async () => {
-      const { service, agentModel } = createService();
-      mockFindById(agentModel, { createdBy: userId, isDefault: false });
+      const { service, agentRepository } = createService();
+      agentRepository.findById.mockResolvedValue(makeRecord({ createdBy: userId, isDefault: false }));
       await expect(service.canWriteAgent(userId, 'agent-1')).resolves.toBe(true);
     });
 
     it('denies a default agent', async () => {
-      const { service, agentModel } = createService();
-      mockFindById(agentModel, { createdBy: 'someone', isDefault: true });
+      const { service, agentRepository } = createService();
+      agentRepository.findById.mockResolvedValue(makeRecord({ createdBy: 'someone', isDefault: true }));
       await expect(service.canWriteAgent(userId, 'agent-1')).resolves.toBe(false);
     });
 
     it('denies a non-owner shared at read level', async () => {
-      const { service, agentModel, agentShareService } = createService();
-      mockFindById(agentModel, { createdBy: 'other-user', isDefault: false });
+      const { service, agentRepository, agentShareService } = createService();
+      agentRepository.findById.mockResolvedValue(makeRecord({ createdBy: 'other-user', isDefault: false }));
       agentShareService.getSharePermission.mockResolvedValue('read');
       await expect(service.canWriteAgent(userId, 'agent-1')).resolves.toBe(false);
     });
 
     it('allows a non-owner shared at write level', async () => {
-      const { service, agentModel, agentShareService } = createService();
-      mockFindById(agentModel, { createdBy: 'other-user', isDefault: false });
+      const { service, agentRepository, agentShareService } = createService();
+      agentRepository.findById.mockResolvedValue(makeRecord({ createdBy: 'other-user', isDefault: false }));
       agentShareService.getSharePermission.mockResolvedValue('write');
       await expect(service.canWriteAgent(userId, 'agent-1')).resolves.toBe(true);
     });
 
     it('denies when the agent does not exist', async () => {
-      const { service, agentModel } = createService();
-      mockFindById(agentModel, null);
+      const { service, agentRepository } = createService();
+      agentRepository.findById.mockResolvedValue(null);
       await expect(service.canWriteAgent(userId, 'missing')).resolves.toBe(false);
     });
   });
@@ -781,7 +750,7 @@ describe('AgentService connector skill inheritance', () => {
       connector_id: 'connector-4',
       connector_name: 'Workspace',
       connector_slug: 'workspace',
-      actions: [{ action_key: 'search\u001c' }],
+      actions: [{ action_key: 'search' }],
     }])[0].name;
 
     expect(new Set(collidingNames).size).toBe(2);

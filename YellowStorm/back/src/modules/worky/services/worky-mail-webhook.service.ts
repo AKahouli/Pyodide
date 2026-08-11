@@ -5,7 +5,7 @@ import { PlaybookFlowMailGraphClientService } from '@modules/playbook-flow/servi
 import { WorkyMailSubscriptionService } from './worky-mail-subscription.service';
 import { WorkyOrchestratorGrpcClientService } from './worky-orchestrator.grpc-client.service';
 import { WorkyTurnContextService } from './worky-turn-context.service';
-import { extractMailToken } from './worky-mail-token';
+import { extractMailToken, fullReplyText } from './worky-mail-token';
 
 interface GraphNotification {
   subscriptionId?: string;
@@ -86,16 +86,20 @@ export class WorkyMailWebhookService {
     const token = extractMailToken(subject, bodyContent);
     if (!token) return false; // Not a reply to anything worky sent — the usual case.
 
-    const replyText = ((message.bodyPreview as string) || bodyContent || '').trim();
+    const replyText = fullReplyText(
+      message.body as { contentType?: string; content?: string },
+      message.bodyPreview as string,
+    );
     const replyFrom =
       (((message.from as Record<string, any>)?.emailAddress?.address as string) ?? '').trim();
 
     // Without these the resumed plan rebuilds every not-yet-run step with NO
-    // tools at all: a step needing none (writing a report) looks fine, but a
-    // step that needed one (sending that report onward) silently fabricates a
-    // "done" result and never calls the real tool -- completed, nothing sent.
-    const [model, connectors] = await Promise.all([
-      this.turnContext.resolveManagerModel(null),
+    // agents/tools at all: a step needing none (writing a report) looks fine,
+    // but a step that needed one (sending that report onward) silently
+    // fabricates a "done" result and never calls the real tool -- completed,
+    // nothing sent.
+    const [agents, connectors] = await Promise.all([
+      this.turnContext.resolveWorkyAgents(subscription.userId),
       this.turnContext.resolveConnectors(subscription.userId),
     ]);
 
@@ -105,7 +109,7 @@ export class WorkyMailWebhookService {
       token,
       replyBody: replyText,
       replyFrom,
-      model,
+      agents,
       connectors,
     });
 

@@ -49,12 +49,11 @@ export class WorkyMessageController {
   ): Promise<{ id: string; content: string; createdAt: string; turnStarted: true }> {
     const saved = await this.planning.appendOwnerMessage(user._id.toString(), streamId, dto);
     const ctx = await this.streamService.ensureKickoffContext(streamId, user._id.toString());
-    // Persisted per-stream config is the single source of truth. Both models
-    // resolve through the same chain (stream field → admin default); prompts
-    // pass through raw (empty = server default). Shared with the resume path.
-    const [plannerModel, executorModel, connectors] = await Promise.all([
-      this.turnContext.resolveManagerModel(ctx.plannerModelId),
-      this.turnContext.resolveManagerModel(ctx.executorModelId),
+    // The two agents worky forwards (default worky-planner + worky-executer)
+    // carry their own model/prompt/tools; connectors resolve separately. Shared
+    // with the resume path.
+    const [agents, connectors] = await Promise.all([
+      this.turnContext.resolveWorkyAgents(user._id.toString()),
       this.turnContext.resolveConnectors(user._id.toString()),
     ]);
     // Fire-and-forget kickoff. The manager writes task/message rows into
@@ -63,17 +62,13 @@ export class WorkyMessageController {
     this.logger.log('[worky-orchestrator] RunTask kickoff', {
       streamId,
       aiSid: ctx.aiSessionId,
-      plannerModel,
-      executorModel,
+      agentCount: agents.length,
       contentLength: dto.content?.length,
       connectorCount: connectors.length,
     });
     void this.orchestrator
       .runTask(user._id.toString(), ctx.aiSessionId, dto.content, {
-        plannerModel,
-        executorModel,
-        plannerPrompt: ctx.plannerPrompt ?? undefined,
-        executorPrompt: ctx.executorPrompt ?? undefined,
+        agents,
         connectors,
       })
       .catch((err) =>
@@ -144,7 +139,7 @@ export class WorkyMessageController {
 
   // Resume a paused orchestrator session. Per design, continue is always a
   // RunTask — an empty message on a paused session routes to continue_turn,
-  // which re-drives the remaining steps. Connectors/model are re-sent so the
+  // which re-drives the remaining steps. Connectors/agents are re-sent so the
   // pending steps still have their tools.
   @Post(':id/resume-turn')
   @HttpCode(HttpStatus.ACCEPTED)
@@ -159,17 +154,13 @@ export class WorkyMessageController {
     const aiSessionId = stream?.aiSessionId;
     if (!aiSessionId) return { resumed: false }; // nothing to resume
 
-    const [plannerModel, executorModel, connectors] = await Promise.all([
-      this.turnContext.resolveManagerModel(stream.plannerModelId ?? null),
-      this.turnContext.resolveManagerModel(stream.executorModelId ?? null),
+    const [agents, connectors] = await Promise.all([
+      this.turnContext.resolveWorkyAgents(user._id.toString()),
       this.turnContext.resolveConnectors(user._id.toString()),
     ]);
     void this.orchestrator
       .runTask(user._id.toString(), aiSessionId, '', {
-        plannerModel,
-        executorModel,
-        plannerPrompt: stream.plannerPrompt ?? undefined,
-        executorPrompt: stream.executorPrompt ?? undefined,
+        agents,
         connectors,
       })
       .catch((err) =>

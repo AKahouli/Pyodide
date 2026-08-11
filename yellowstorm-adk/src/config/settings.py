@@ -159,6 +159,8 @@ class Settings(BaseSettings):
     # Legacy MCP endpoint retained for non-playbook callers.
     COMMUNITY_GRAPH_MCP_URL: Optional[str] = None
 
+    HUMAN_AGENTS_MCP_URL: Optional[str] = None
+
     # Image upload limits
     MAX_IMAGES: int = 10
     MAX_IMAGE_SIZE: int = 10 * 1024 * 1024  # 10MB per image

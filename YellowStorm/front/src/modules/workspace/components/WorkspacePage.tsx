@@ -25,6 +25,7 @@ import { groupBySourceRoot } from '../lib/source-groups';
 import { SourceGroupRow } from './SourceGroupRow';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
 import { useDeepSearchIndexation } from '../hooks/useDeepSearchIndexation';
+import { useIndexingNotifications } from '../hooks/useIndexingNotifications';
 import { formatFileSize } from '../utils';
 import { WorkspacePicker } from './WorkspacePicker';
 import { CreateFolderDialog } from './CreateFolderDialog';
@@ -159,6 +160,7 @@ export function WorkspacePage() {
   const [isSyncing, setIsSyncing] = useState(false);
   const { enabled: autoIndex, setEnabled: setAutoIndex } = useAutoIndexation();
   const { enabled: deepSearch, setEnabled: setDeepSearch } = useDeepSearchIndexation();
+  useIndexingNotifications();
 
   const handleSync = useCallback(async () => {
     if (!activeWorkspaceId || isSyncing) return;

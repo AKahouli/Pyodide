@@ -6,7 +6,6 @@ interface MakeOptions {
   taskAssigneeId?: Types.ObjectId | null;
   userLookupResult?: unknown;
   searchUsersResult?: unknown;
-  shareResult?: unknown;
   emailResult?: unknown;
   ledgerError?: Error | null;
   schedulerRows?: unknown[];
@@ -54,9 +53,6 @@ const makeService = (options: MakeOptions = {}) => {
   };
   const emailService = {
     send: jest.fn().mockResolvedValue(options.emailResult ?? { success: true }),
-  };
-  const shareService = {
-    share: jest.fn().mockResolvedValue(options.shareResult ?? { shared: [] }),
   };
   const userService = {
     findByEmail: jest
@@ -111,7 +107,6 @@ const makeService = (options: MakeOptions = {}) => {
     tasks as any,
     mailLedger as any,
     emailService as any,
-    shareService as any,
     userService as any,
     events as any,
     audit as any,
@@ -125,7 +120,6 @@ const makeService = (options: MakeOptions = {}) => {
     stream,
     tasks,
     userService,
-    shareService,
     emailService,
     mailLedger,
     scheduler,
@@ -138,9 +132,9 @@ const makeService = (options: MakeOptions = {}) => {
 const baseHint = () => ({ kind: 'human' as const, reference: 'john@example.com' });
 
 describe('WorkyHumanAssignmentService.assignFromHint', () => {
-  it('assigns uniquely matched user, shares workspace, sends email, schedules reminders', async () => {
+  it('assigns uniquely matched user, sends email, schedules reminders', async () => {
     const due = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    const { service, tasks, shareService, emailService, scheduler, emitted, audit } =
+    const { service, tasks, emailService, scheduler, emitted, audit } =
       makeService({});
     const result = await service.assignFromHint({
       streamId: new Types.ObjectId().toString(),
@@ -150,7 +144,6 @@ describe('WorkyHumanAssignmentService.assignFromHint', () => {
     expect(result.status).toBe('assigned');
     expect(result.assigneeId).toBeDefined();
     expect(tasks.updateOne).toHaveBeenCalled();
-    expect(shareService.share).toHaveBeenCalled();
     expect(emailService.send).toHaveBeenCalled();
     // One reminder + one deadline = 2 schedule calls
     expect(scheduler.schedule).toHaveBeenCalledTimes(2);

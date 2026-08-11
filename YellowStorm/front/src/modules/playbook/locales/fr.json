@@ -462,6 +462,7 @@
   "intentBar.actions.suggest": "Suggérer",
   "intentBar.actions.stop": "Stop",
   "intentBar.actions.apply": "Appliquer",
+  "intentBar.actions.autoApply": "Application automatique",
   "intentBar.actions.collapse": "Réduire la barre d'intention",
   "intentBar.actions.expand": "Développer la barre d'intention",
   "intentBar.construction.starting": "Démarrage de la construction temps réel...",

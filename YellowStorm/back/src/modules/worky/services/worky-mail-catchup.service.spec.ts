@@ -9,11 +9,15 @@ const SUB = {
   lastSweptAt: new Date('2026-07-17T10:00:00Z'),
 };
 
-function mail(subject: string, from = 'x@example.com') {
+function mail(subject: string, from = 'x@example.com', body = 'Yellow Systems.') {
   return {
     subject,
-    body: { content: '<p>Yellow Systems.</p>' },
-    bodyPreview: 'Yellow Systems.',
+    // contentType set, matching a real Graph message.
+    body: { contentType: 'html', content: `<p>${body}</p>` },
+    // Deliberately different from `body` above, so a test asserting on the
+    // full body catches a regression back to preferring bodyPreview (which
+    // Graph silently caps at 255 chars).
+    bodyPreview: 'Yellow Systems (preview, truncated).',
     from: { emailAddress: { address: from } },
   };
 }
@@ -33,7 +37,7 @@ function build(messages: Array<Record<string, unknown>>, delivered = true) {
       .mockResolvedValue({ delivered, sessionId: 's1', stepId: 'wait' }),
   };
   const turnContext = {
-    resolveManagerModel: jest.fn().mockResolvedValue('openai/gpt-4o-mini'),
+    resolveWorkyAgents: jest.fn().mockResolvedValue([{ id: 'planner-1' }, { id: 'executor-1' }]),
     resolveConnectors: jest.fn().mockResolvedValue([{ connector_id: 'c1' }]),
   };
   const logger = {
@@ -63,17 +67,32 @@ describe('WorkyMailCatchupService', () => {
     );
   });
 
-  it('resolves real connectors and a model for the mailbox owner, not none', async () => {
+  it('uses the full reply body, not the 255-char-capped bodyPreview', async () => {
+    // Live bug: three real replies in a row all came through cut at EXACTLY
+    // 255 characters, mid-sentence -- Microsoft Graph's bodyPreview field is
+    // a plain-text summary hard-capped at 255 chars, and it was being
+    // preferred over the full body.content.
+    const longReply = 'A'.repeat(300) + ' END';
+    const { service, orchestrator } = build([mail(`Re: Q [${TOKEN}]`, 'x@example.com', longReply)]);
+    await service.sweep();
+
+    expect(orchestrator.deliverMailReply).toHaveBeenCalledWith(
+      expect.objectContaining({ replyBody: longReply }),
+    );
+  });
+
+  it('resolves real connectors and agents for the mailbox owner, not none', async () => {
     // Same bug as the webhook path: without this, resume_turn rebuilds every
     // not-yet-run step with ZERO tools -- a step needing one silently
     // fabricates a "done" result instead of actually acting.
     const { service, turnContext, orchestrator } = build([mail(`Re: Q [${TOKEN}]`)]);
     await service.sweep();
 
+    expect(turnContext.resolveWorkyAgents).toHaveBeenCalledWith(SUB.userId);
     expect(turnContext.resolveConnectors).toHaveBeenCalledWith(SUB.userId);
     expect(orchestrator.deliverMailReply).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'openai/gpt-4o-mini',
+        agents: [{ id: 'planner-1' }, { id: 'executor-1' }],
         connectors: [{ connector_id: 'c1' }],
       }),
     );

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layers, Loader2, Plus, Trash2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Layers, Loader2, Plus, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -13,7 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useWorkspaceStore, useWorkspaceLoading, useWorkspaces } from '../store';
+import { useWorkspaceStore, useWorkspaceLoading, useAllWorkspaces } from '../store';
 import {
   useWorkspaceHubFilters,
   type WorkspaceHubItem,
@@ -32,17 +32,85 @@ export function WorkspaceHubPage() {
   const openShareModal = useWorkspaceStore((s) => s.openShareModal);
   const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
   const { isLoadingWorkspaces } = useWorkspaceLoading();
-  const ownedWorkspaces = useWorkspaces();
+  const ownedWorkspaces = useAllWorkspaces();
 
   const filters = useWorkspaceHubFilters();
+  const minePageSize = 9;
+  const [minePage, setMinePage] = useState(1);
+
+  const mineTotalPages = Math.max(1, Math.ceil(filters.filteredGroups.mine.length / minePageSize));
+
+  const showMinePagination =
+    (filters.filters.owner === 'mine' || filters.filters.owner === 'all') && mineTotalPages > 1;
+
+  useEffect(() => {
+    // Keep page index in range when search/filter changes.
+    setMinePage((p) => Math.min(Math.max(1, p), mineTotalPages));
+  }, [mineTotalPages, filters.filters.owner, filters.searchInput]);
 
   const [deletingWorkspace, setDeletingWorkspace] = useState<WorkspaceHubItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
-    fetchWorkspaces(1);
-    fetchSharedWorkspaces(1);
-    fetchPublicWorkspaces(1);
+    let cancelled = false;
+
+    const loadAllPages = async () => {
+      // Owned workspaces
+      // The store injects personal workspace into each fetched page, so we
+      // stop based on the *non-personal* (mine) count.
+      let page = 1;
+      const MAX_PAGES = 50;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (cancelled) return;
+        if (page > MAX_PAGES) return;
+
+        await fetchWorkspaces(page);
+
+        const state = useWorkspaceStore.getState();
+        const pageItems = state.workspaces.get(page) ?? [];
+        const mineCount = pageItems.filter((w) => !w.isPersonal).length;
+
+        // Once we reached an empty "mine" page beyond page 1,
+        // additional pages are guaranteed to be empty too.
+        if (page > 1 && mineCount === 0) break;
+        page += 1;
+      }
+
+      // Shared workspaces
+      page = 1;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (cancelled) return;
+        if (page > MAX_PAGES) return;
+
+        await fetchSharedWorkspaces(page);
+        const state = useWorkspaceStore.getState();
+        const pageItems = state.sharedWorkspaces.get(page) ?? [];
+        if (page > 1 && pageItems.length === 0) break;
+        page += 1;
+      }
+
+      // Public workspaces
+      page = 1;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (cancelled) return;
+        if (page > MAX_PAGES) return;
+
+        await fetchPublicWorkspaces(page);
+        const state = useWorkspaceStore.getState();
+        const pageItems = state.publicWorkspaces.get(page) ?? [];
+        if (page > 1 && pageItems.length === 0) break;
+        page += 1;
+      }
+    };
+
+    void loadAllPages();
+
+    return () => {
+      cancelled = true;
+    };
   }, [fetchWorkspaces, fetchSharedWorkspaces, fetchPublicWorkspaces]);
 
   const handleOpen = (id: string) => navigate(`/workspace/${id}`);
@@ -122,6 +190,37 @@ export function WorkspaceHubPage() {
             onClearAll={filters.clearAll}
           />
 
+          {showMinePagination && (
+            <div className="flex items-center justify-between rounded-xl border border-border/60 bg-card/40 p-2">
+              <div className="text-sm text-muted-foreground">
+                Mes workspaces - Page <span className="font-semibold text-foreground">{minePage}</span> /{' '}
+                <span className="font-semibold text-foreground">{mineTotalPages}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={minePage <= 1}
+                  onClick={() => setMinePage((p) => Math.max(1, p - 1))}
+                  className="gap-2"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Prev
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={minePage >= mineTotalPages}
+                  onClick={() => setMinePage((p) => Math.min(mineTotalPages, p + 1))}
+                  className="gap-2"
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+
           {showInitialLoader ? (
             <div className="flex items-center justify-center py-24">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -150,7 +249,13 @@ export function WorkspaceHubPage() {
             </div>
           ) : (
             <WorkspaceHubGrid
-              groups={filters.filteredGroups}
+              groups={{
+                ...filters.filteredGroups,
+                mine: filters.filteredGroups.mine.slice(
+                  (minePage - 1) * minePageSize,
+                  minePage * minePageSize,
+                ),
+              }}
               view={filters.filters.view}
               onOpen={handleOpen}
               onSettings={handleSettings}

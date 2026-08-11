@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-import { useWorkspaces, useSharedWorkspaces, usePublicWorkspaces } from '../store';
+import { useAllWorkspaces, useAllSharedWorkspaces, useAllPublicWorkspaces } from '../store';
 import type { Workspace, SharedWorkspaceResponse, PublicWorkspaceResponse } from '../types';
 
 const SEARCH_DEBOUNCE_MS = 200;
@@ -149,9 +149,9 @@ function sortItems(list: WorkspaceHubItem[], sort: SortKey): WorkspaceHubItem[] 
 }
 
 export function useWorkspaceHubFilters(): UseWorkspaceHubFiltersResult {
-  const ownedWorkspaces = useWorkspaces();
-  const sharedWorkspaces = useSharedWorkspaces();
-  const publicWorkspaces = usePublicWorkspaces();
+  const ownedWorkspaces = useAllWorkspaces();
+  const sharedWorkspaces = useAllSharedWorkspaces();
+  const publicWorkspaces = useAllPublicWorkspaces();
 
   const [searchParams, setSearchParams] = useSearchParams();
 

@@ -239,6 +239,20 @@ export class DocumentService {
       if (this.isNotFoundError(error)) {
         return false;
       }
+      // Ceph often returns 403 Unknown on HeadObject even when the object
+      // exists (same quirk handled in workspace bulk-complete). After retries,
+      // treat as present so checkExists callers (artifact-url, download-url)
+      // return a signed URL instead of ERR_1000.
+      if (this.isTransientS3Error(error)) {
+        this.logger.warn(
+          'S3 HeadObject still 403 Unknown after retries; assuming object present',
+          {
+            objectKey,
+            bucket: this.getBucket(),
+          },
+        );
+        return true;
+      }
       const err = error as {
         name?: string;
         message?: string;
@@ -251,7 +265,10 @@ export class DocumentService {
         message: err?.message,
         httpStatusCode: err?.$metadata?.httpStatusCode,
       });
-      throw error;
+      throw new InternalServerException(
+        error instanceof Error ? error : undefined,
+        'Failed to verify document in storage',
+      );
     }
   }
 
@@ -264,7 +281,9 @@ export class DocumentService {
     this.ensureAvailable();
 
     // Folders have no extension and no underlying S3 object — reject early.
-    if (!objectKey.includes('.')) {
+    // App-source keys (Dockerfile, LICENSE, …) under a Ceph prefix with no dots
+    // must opt in via allowExtensionless.
+    if (!options.allowExtensionless && !objectKey.includes('.')) {
       throw new BadRequestException('Cannot generate download URL for folders');
     }
 
@@ -486,23 +505,36 @@ export class DocumentService {
   }
 
   private async headObjectWithRetry(objectKey: string): Promise<void> {
-    try {
-      await this.getS3Client().send(
-        new HeadObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
-      );
-    } catch (error) {
-      if (!this.isTransientS3Error(error)) throw error;
+    const maxAttempts = 3;
+    let lastError: unknown;
 
-      this.logger.warn('S3 HeadObject transient error, retrying once', {
-        objectKey,
-        bucket: this.getBucket(),
-        httpStatusCode: (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode,
-      });
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.getS3Client().send(
+          new HeadObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!this.isTransientS3Error(error) || attempt === maxAttempts) {
+          throw error;
+        }
 
-      await this.getS3Client().send(
-        new HeadObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
-      );
+        const delayMs = 200 * attempt;
+        this.logger.warn('S3 HeadObject transient error, retrying', {
+          objectKey,
+          bucket: this.getBucket(),
+          attempt,
+          maxAttempts,
+          delayMs,
+          httpStatusCode: (error as { $metadata?: { httpStatusCode?: number } }).$metadata
+            ?.httpStatusCode,
+        });
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
     }
+
+    throw lastError;
   }
 
   private isTransientS3Error(error: unknown): boolean {

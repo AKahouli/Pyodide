@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { AgentController } from './controllers/agent.controller';
+import { PublicAgentController } from './controllers/public-agent.controller';
 import { AdminAgentController } from './controllers/admin-agent.controller';
 import { AgentA2AController } from './controllers/agent-a2a.controller';
 import { AgentShareController } from './controllers/agent-share.controller';
@@ -11,7 +12,6 @@ import { AgentConnectorRuntimeService } from './services/agent-connector-runtime
 import { AgentPermissionGuard } from './guards/agent-permission.guard';
 import { A2AAdminGrpcClientService } from './services/a2a-admin.grpc-client.service';
 import { A2APublishService } from './services/a2a-publish.service';
-import { Agent, AgentSchema } from './schemas/agent.schema';
 import { SharedAgent, SharedAgentSchema } from './schemas/shared-agent.schema';
 import a2aAdminConfig from '@config/a2a-admin.config';
 import { AgentTypeModule } from '../agent-type/agent-type.module';
@@ -29,6 +29,7 @@ import { AgentTaskExecutionService } from './services/agent-task-execution.servi
 import { UsageModule } from '../usage/usage.module';
 import playbookFlowConfig from '@config/playbook-flow.config';
 import { PlaybookAssistantConnectorReconcilerService } from './services/playbook-assistant-connector-reconciler.service';
+import { AgentRepositoryModule } from './repositories/agent-repository.module';
 
 @Module({
   imports: [
@@ -36,7 +37,6 @@ import { PlaybookAssistantConnectorReconcilerService } from './services/playbook
     ConfigModule.forFeature(a2aAdminConfig),
     ConfigModule.forFeature(playbookFlowConfig),
     MongooseModule.forFeature([
-      { name: Agent.name, schema: AgentSchema },
       { name: SharedAgent.name, schema: SharedAgentSchema },
     ]),
     AgentTypeModule,
@@ -51,9 +51,10 @@ import { PlaybookAssistantConnectorReconcilerService } from './services/playbook
     GuardrailsModule,
     forwardRef(() => ConversationModule),
     forwardRef(() => UsageModule),
+    AgentRepositoryModule,
   ],
-  controllers: [AgentController, AdminAgentController, AgentA2AController, AgentShareController],
-  providers: [AgentService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, PlaybookAssistantConnectorReconcilerService],
+  controllers: [AgentController, PublicAgentController, AdminAgentController, AgentA2AController, AgentShareController],
+  providers: [AgentService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, PlaybookAssistantConnectorReconcilerService,AgentConnectorRuntimeService],
   exports: [
     AgentService,
     AgentShareService,

@@ -39,6 +39,10 @@ export class WorkyOrchestratorGrpcClientService
       enums: String,
       defaults: true,
       oneofs: true,
+      // companion_ai.proto now `import "chatbot.proto"` for chatbot.Agent, which
+      // lives in the conversation module's proto dir. Both dirs must be on the
+      // include path so the import resolves in dev (src) and build (dist).
+      includeDirs: this.resolveProtoIncludeDirs(),
     });
     const proto = grpc.loadPackageDefinition(packageDef) as any;
     const url = this.config.get<string>('workyOrchestrator.grpcUrl')!;
@@ -94,6 +98,24 @@ export class WorkyOrchestratorGrpcClientService
     }
 
     return existingPath;
+  }
+
+  /**
+   * Dirs the proto loader searches to resolve `import` statements: the worky
+   * proto dir (for companion_ai.proto's own package) plus the conversation
+   * proto dir (for the imported chatbot.proto). Both src and dist variants are
+   * listed so it works in dev and after build; only existing dirs are kept.
+   */
+  private resolveProtoIncludeDirs(): string[] {
+    const candidateDirs = [
+      path.join(__dirname, '..', 'proto'),
+      path.resolve(process.cwd(), 'dist', 'modules', 'worky', 'proto'),
+      path.resolve(process.cwd(), 'src', 'modules', 'worky', 'proto'),
+      path.join(__dirname, '..', '..', 'conversation', 'proto'),
+      path.resolve(process.cwd(), 'dist', 'modules', 'conversation', 'proto'),
+      path.resolve(process.cwd(), 'src', 'modules', 'conversation', 'proto'),
+    ];
+    return candidateDirs.filter((dir) => fs.existsSync(dir));
   }
 
   getHealthStatus(): WorkyOrchestratorHealthStatus {
@@ -160,10 +182,7 @@ export class WorkyOrchestratorGrpcClientService
     sessionId: string,
     message: string,
     opts: {
-      plannerModel?: string;
-      executorModel?: string;
-      plannerPrompt?: string;
-      executorPrompt?: string;
+      agents?: unknown[];
       skills?: unknown[];
       connectors?: unknown[];
     },
@@ -173,10 +192,7 @@ export class WorkyOrchestratorGrpcClientService
       session_id: sessionId,
       message,
     };
-    if (opts.plannerModel) request.planner_model = opts.plannerModel;
-    if (opts.executorModel) request.executor_model = opts.executorModel;
-    if (opts.plannerPrompt) request.planner_prompt = opts.plannerPrompt;
-    if (opts.executorPrompt) request.executor_prompt = opts.executorPrompt;
+    if (opts.agents?.length) request.agents = opts.agents;
     if (opts.skills?.length) request.skills = opts.skills;
     if (opts.connectors?.length) request.connectors = opts.connectors;
     return new Promise((resolve, reject) => {
@@ -265,8 +281,7 @@ export class WorkyOrchestratorGrpcClientService
     token: string;
     replyBody: string;
     replyFrom?: string;
-    model?: string;
-    executorPrompt?: string;
+    agents?: unknown[];
     connectors?: unknown[];
   }): Promise<{ delivered: boolean; sessionId: string; stepId: string }> {
     return new Promise((resolve, reject) => {
@@ -275,8 +290,7 @@ export class WorkyOrchestratorGrpcClientService
           token: input.token,
           reply_body: input.replyBody,
           reply_from: input.replyFrom ?? '',
-          model: input.model ?? '',
-          executor_prompt: input.executorPrompt ?? '',
+          agents: input.agents ?? [],
           connectors: input.connectors ?? [],
         },
         createGrpcMetadata(this.config, WORKY_ORCHESTRATOR_GRPC_SECURITY_NS),

@@ -10,7 +10,8 @@ import {
   WorkyEphemeralWorkerDocument,
 } from '../schemas/worky-ephemeral-worker.schema';
 import { WorkyStream, WorkyStreamDocument } from '../schemas/worky-stream.schema';
-import { Agent, AgentDocument } from '../../agent/schemas/agent.schema';
+import { AgentRepository } from '../../agent/repositories/agent.repository';
+import { AgentTypeService } from '../../agent-type/agent-type.service';
 import { LoggerService } from '../../logger';
 import {
   BadRequestException,
@@ -65,8 +66,8 @@ export class WorkyEphemeralWorkerService {
     private readonly tasks: Model<WorkyTaskDocument>,
     @InjectModel(WorkyEphemeralWorker.name)
     private readonly workers: Model<WorkyEphemeralWorkerDocument>,
-    @InjectModel(Agent.name)
-    private readonly agents: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
+    private readonly agentTypeService: AgentTypeService,
     private readonly governance: WorkyGovernanceService,
     private readonly events: WorkyEventService,
     private readonly audit: WorkyAuditService,
@@ -117,12 +118,22 @@ export class WorkyEphemeralWorkerService {
     const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const agentName = `Worky Worker — ${input.role} (${suffix})`.slice(0, 50);
     const slug = `worky-ephemeral-${suffix}`.slice(0, 100);
-    const agent = await this.agents.create({
+    // Streams no longer carry a per-stream Manager agent; resolve the shared
+    // Manager agent *type* by slug (seeded on WorkyStreamService init). Legacy
+    // streams that still have a managerAgentId fall back to its type.
+    const managerType = await this.agentTypeService.findBySlug(WORKY_MANAGER_AGENT_TYPE_SLUG);
+    const managerAgentTypeId =
+      managerType?.id ??
+      (stream.managerAgentId
+        ? (await this.agentRepository.findById(String(stream.managerAgentId)))?.agentType
+        : undefined) ??
+      new Types.ObjectId().toString();
+    const agent = await this.agentRepository.create({
+      id: new Types.ObjectId().toString(),
       name: agentName,
       slug,
-      agentType: stream.managerAgentId
-        ? (await this.agents.findById(stream.managerAgentId).select({ agentType: 1 }).lean().exec())?.agentType
-        : new Types.ObjectId(),
+      agentType: managerAgentTypeId,
+      agentTypeSlug: '',
       role: `Ephemeral worker for task ${input.taskId}.`,
       description: `Auto-created by the Worky stream runtime for a single task.`,
       temperature: 0,
@@ -135,16 +146,20 @@ export class WorkyEphemeralWorkerService {
       disabledSkills: [],
       connectors: [],
       connectorActionSelections: [],
+      guardrails: {},
+      deploymentSettings: {},
+      enable_temporary_child_agents: false,
+      max_temporary_child_agents: 4,
       isDefault: false,
       isDefaultForType: false,
       isActive: true,
-      createdBy: stream.ownerUserId,
+      createdBy: String(stream.ownerUserId),
     });
 
     const worker = await this.workers.create({
       streamId: stream._id,
       taskId: new Types.ObjectId(input.taskId),
-      agentEntityId: agent._id as Types.ObjectId,
+      agentEntityId: new Types.ObjectId(agent._id),
       role: input.role,
       status: 'spawned',
       adkSessionId: null,
@@ -159,7 +174,7 @@ export class WorkyEphemeralWorkerService {
       targetId: input.taskId,
       details: {
         ephemeralWorkerId: (worker._id as Types.ObjectId).toString(),
-        agentEntityId: (agent._id as Types.ObjectId).toString(),
+        agentEntityId: agent._id,
         allowed,
         withheld,
         role: input.role,
@@ -172,14 +187,14 @@ export class WorkyEphemeralWorkerService {
       payload: {
         taskId: input.taskId,
         ephemeralWorkerId: (worker._id as Types.ObjectId).toString(),
-        agentEntityId: (agent._id as Types.ObjectId).toString(),
+        agentEntityId: agent._id,
         withheld,
       },
     });
 
     return {
       ephemeralWorkerId: (worker._id as Types.ObjectId).toString(),
-      agentEntityId: (agent._id as Types.ObjectId).toString(),
+      agentEntityId: agent._id,
       adkSessionId: null,
       adkInvocationId: null,
       scopedToolRefs: allowed,

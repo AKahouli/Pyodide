@@ -476,7 +476,7 @@ describe('DocumentService', () => {
       expect(result).toBe(false);
     });
 
-    it('should rethrow non-404 errors', async () => {
+    it('should wrap non-404 errors in InternalServerException', async () => {
       setSendImpl({
         HeadObjectCommand: () => {
           throw Object.assign(new Error('Forbidden'), {
@@ -486,7 +486,58 @@ describe('DocumentService', () => {
         },
       });
 
-      await expect(service.exists(testObjectKey)).rejects.toThrow('Forbidden');
+      await expect(service.exists(testObjectKey)).rejects.toThrow(InternalServerException);
+    });
+
+    it('should retry transient Unknown 403 then succeed', async () => {
+      jest.useFakeTimers();
+      try {
+        let calls = 0;
+        setSendImpl({
+          HeadObjectCommand: () => {
+            calls += 1;
+            if (calls < 2) {
+              throw Object.assign(new Error('UnknownError'), {
+                name: 'Unknown',
+                $metadata: { httpStatusCode: 403 },
+              });
+            }
+            return { ContentLength: 10 };
+          },
+        });
+
+        const pending = service.exists(testObjectKey);
+        await jest.runAllTimersAsync();
+        await expect(pending).resolves.toBe(true);
+        expect(calls).toBe(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('should assume present after exhausting Unknown 403 retries', async () => {
+      jest.useFakeTimers();
+      try {
+        setSendImpl({
+          HeadObjectCommand: () => {
+            throw Object.assign(new Error('UnknownError'), {
+              name: 'Unknown',
+              $metadata: { httpStatusCode: 403 },
+            });
+          },
+        });
+
+        const pending = service.exists(testObjectKey);
+        await jest.runAllTimersAsync();
+        await expect(pending).resolves.toBe(true);
+        expect(mockSend).toHaveBeenCalledTimes(3);
+        expect(loggerService.warn).toHaveBeenCalledWith(
+          'S3 HeadObject still 403 Unknown after retries; assuming object present',
+          expect.objectContaining({ objectKey: testObjectKey }),
+        );
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('should throw InternalServerException when service is not available', async () => {
@@ -547,6 +598,15 @@ describe('DocumentService', () => {
 
     it('should reject keys without an extension (folders)', async () => {
       await expect(service.generateSasUrl('folder/subfolder')).rejects.toThrow(BadRequestException);
+    });
+
+    it('should allow extensionless keys when allowExtensionless is set', async () => {
+      const result = await service.generateSasUrl(
+        'yellowstorm/user/app/projectSRC/Dockerfile',
+        { allowExtensionless: true },
+      );
+      expect(result).toBeDefined();
+      expect(mockGetSignedUrl).toHaveBeenCalled();
     });
 
     it('should throw InternalServerException when service is not available', async () => {

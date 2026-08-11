@@ -35,10 +35,55 @@ _ENTROPY_BYTES = 18
 # or from quoted HTML, so accept it anywhere and let the registry reject unknowns.
 _TOKEN_RE = re.compile(r"YW-[A-Za-z0-9_-]{16,}")
 
+# For scrub(): the same token in each carrier stamp_* writes, outermost first —
+# the hidden span has to go whole, or removing the token would leave a stray
+# empty <span> behind.
+_HIDDEN_SPAN_RE = re.compile(
+    r'<span style="display:none">\s*YW-[A-Za-z0-9_-]{16,}\s*</span>', re.IGNORECASE)
+# Bracketed as stamp_subject writes it, plus any leading space, so stripping
+# " Subject [YW-x]" leaves "Subject" and not "Subject ".
+_BRACKETED_TOKEN_RE = re.compile(r"\s*\[\s*YW-[A-Za-z0-9_-]{16,}\s*\]")
+
 
 def mint() -> str:
     """A fresh routing token."""
     return PREFIX + secrets.token_urlsafe(_ENTROPY_BYTES)
+
+
+def scrub(text: str) -> str:
+    """Remove every routing token from an INCOMING reply, before the plan sees it.
+
+    Tokens are deliberately not the executor's business — it is never told
+    about them, so that it can never be relied on (and fail) to carry one
+    (see nodes.stamp_send_email_tool). This function is what keeps that
+    invariant true on the way back in.
+
+    A reply quotes the mail it answers, so the text a correspondent sends
+    back carries our own outbound subject line — token and all:
+
+        Subject: Decision needed: Databricks migration [YW-<round-1>]
+
+    That text becomes the await_reply step's result, i.e. context for the
+    step that runs next. Seen live: reading it, the model composed round 2's
+    subject by carrying round 1's forward, token included, so stamping
+    appended a second token and the mail left as
+    "... [YW-<round-1>] [YW-<round-2>]". The reader takes the FIRST token it
+    finds — round 1's, already matched and spent — so the real reply
+    resolved to a dead wait, was dropped as "already delivered", and round 2
+    waited forever.
+
+    Scrubbing here fixes that at the source: the model never sees a token,
+    so it cannot echo one, and every outbound mail carries exactly the one
+    stamped on it.
+
+    Order matters: the hidden span goes whole (removing just the token would
+    leave a stray empty <span>), then bracketed, then any bare leftover.
+    """
+    if not text:
+        return text
+    text = _HIDDEN_SPAN_RE.sub("", text)
+    text = _BRACKETED_TOKEN_RE.sub("", text)
+    return _TOKEN_RE.sub("", text)
 
 
 def stamp_subject(subject: str, token: str) -> str:

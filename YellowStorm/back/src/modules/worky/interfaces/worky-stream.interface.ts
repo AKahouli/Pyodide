@@ -6,14 +6,12 @@ export interface IWorkyStreamResponse {
   id: string;
   ownerUserId: string;
   workspaceId: string;
-  artifactWorkspaceId: string;
-  managerAgentId: string;
+  /** Legacy: null for streams created after the workspace/agent removal. */
+  artifactWorkspaceId: string | null;
+  /** Legacy: null for streams created after the workspace/agent removal. */
+  managerAgentId: string | null;
   managerModelId?: string | null;
   workerModelId?: string | null;
-  plannerModelId?: string | null;
-  executorModelId?: string | null;
-  plannerPrompt?: string | null;
-  executorPrompt?: string | null;
   governancePolicyRef?: string | null;
   title: string;
   status: string;

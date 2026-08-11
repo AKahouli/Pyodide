@@ -20,7 +20,7 @@ export class WorkyTtsController {
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Synthesize speech (EN/FR) from agent answer text' })
   async speak(@Body() dto: SpeakWorkyTtsDto, @Res() res: Response): Promise<void> {
-    const { audio, contentType } = await this.tts.speak(dto.text, dto.voice);
+    const { audio, contentType } = await this.tts.speak(dto.text, dto.voice, dto.speed);
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Length', audio.length);
     res.send(audio);

@@ -4,7 +4,7 @@ import { Model, FilterQuery, Types } from 'mongoose';
 import AdmZip = require('adm-zip');
 import * as yaml from 'js-yaml';
 import { LoggerService } from '../logger';
-import { Agent, AgentDocument } from '../agent/schemas/agent.schema';
+import { AgentRepository } from '../agent/repositories/agent.repository';
 import { AgentType, AgentTypeDocument } from '../agent-type/schemas/agent-type.schema';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { escapeRegex, stripTrailingChar, MULTIPART_SKILL_IMPORT_MAX_BYTES } from '../../common/utils';
@@ -22,8 +22,7 @@ export class SkillService implements OnModuleInit {
     private readonly skillModel: Model<SkillDocument>,
     @InjectModel(SkillCategory.name)
     private readonly skillCategoryModel: Model<SkillCategoryDocument>,
-    @InjectModel(Agent.name)
-    private readonly agentModel: Model<AgentDocument>,
+    private readonly agentRepository: AgentRepository,
     @InjectModel(AgentType.name)
     private readonly agentTypeModel: Model<AgentTypeDocument>,
     private readonly logger: LoggerService,
@@ -255,8 +254,8 @@ export class SkillService implements OnModuleInit {
 
     const skillId = new Types.ObjectId(id);
     await Promise.all([
-      this.agentModel.updateMany({ skills: skillId }, { $pull: { skills: skillId } }).exec(),
-      this.agentModel.updateMany({ disabledSkills: skillId }, { $pull: { disabledSkills: skillId } }).exec(),
+      this.agentRepository.pullSkillFromAll(id),
+      this.agentRepository.pullDisabledSkillFromAll(id),
       this.agentTypeModel.updateMany({ skills: skillId }, { $pull: { skills: skillId } }).exec(),
     ]);
   }

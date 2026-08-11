@@ -56,7 +56,7 @@ describe('WorkyStreamService.create', () => {
     const agentCreate =
       overrides.agentCreate ?? jest.fn((doc) => Promise.resolve({ _id: new Types.ObjectId(), ...doc }));
     const workspaceFindOne = overrides.workspaceFindOne ?? jest.fn(() => chainableQuery(null));
-    const agentFindOne = overrides.agentFindOne ?? jest.fn(() => chainableQuery(null));
+    const agentFindOne = overrides.agentFindOne ?? jest.fn().mockResolvedValue(null);
     const agentTypeFindBySlug =
       overrides.agentTypeFindBySlug ??
       jest.fn().mockResolvedValue({ id: new Types.ObjectId().toString(), name: 'Manager' });
@@ -68,8 +68,8 @@ describe('WorkyStreamService.create', () => {
       findOne: overrides.streamFindOne ?? jest.fn(),
     };
     const workspaceModel = { create: workspaceCreate, findOne: workspaceFindOne };
-    const agentModel = { create: agentCreate, findOne: agentFindOne };
-    const agentTypeService = { findBySlug: agentTypeFindBySlug };
+    const agentRepository = { create: agentCreate, findByNameAndOwner: agentFindOne, deleteByIdAndOwner: jest.fn().mockResolvedValue(undefined) };
+    const agentTypeService = { findBySlug: agentTypeFindBySlug, getManyForHydration: jest.fn().mockResolvedValue(new Map()) };
     const connection = makeConnection();
     const workspaceService = { delete: jest.fn() };
     const workspaceDocuments = { deleteAllByWorkspace: jest.fn() };
@@ -86,7 +86,7 @@ describe('WorkyStreamService.create', () => {
     const service = new WorkyStreamService(
       streamModel as any,
       workspaceModel as any,
-      agentModel as any,
+      agentRepository as any,
       connection as any,
       agentTypeService as any,
       workspaceService as any,
@@ -98,42 +98,41 @@ describe('WorkyStreamService.create', () => {
     return { service, streamCreate, workspaceCreate, agentCreate, workspaceFindOne, agentFindOne, streamModel, grpcClient };
   };
 
-  it('provisions a dedicated artifact workspace and a per-stream Manager agent', async () => {
+  it('persists the stream without provisioning a workspace or Manager agent', async () => {
     const { service, streamCreate, workspaceCreate, agentCreate } = makeService();
 
     const result = await service.create(userId, { title: 'Benchmark analysis' });
 
-    expect(workspaceCreate).toHaveBeenCalledTimes(1);
-    const workspaceInput = workspaceCreate.mock.calls[0][0];
-    const workspaceResolved = await workspaceCreate.mock.results[0].value;
-    expect(workspaceInput.createdBy.toString()).toBe(userId);
-    expect(workspaceInput.alias.startsWith('worky-benchmark-analysis')).toBe(true);
-    expect(workspaceInput.isSystem).toBe(false);
-    expect(workspaceInput.isPersonal).toBe(false);
-    expect(workspaceInput.storagePrefix).toBe(workspaceInput.alias);
-
-    expect(agentCreate).toHaveBeenCalledTimes(1);
-    const agentInput = agentCreate.mock.calls[0][0];
-    const agentResolved = await agentCreate.mock.results[0].value;
-    expect(agentInput.createdBy.toString()).toBe(userId);
-    expect(agentInput.name.startsWith('Worky Manager')).toBe(true);
-    expect(agentInput.isDefault).toBe(false);
-    expect(agentInput.isActive).toBe(true);
+    // No per-stream artifact workspace or Manager agent is created anymore.
+    expect(workspaceCreate).not.toHaveBeenCalled();
+    expect(agentCreate).not.toHaveBeenCalled();
 
     expect(streamCreate).toHaveBeenCalledTimes(1);
     const streamInput = streamCreate.mock.calls[0][0];
     expect(streamInput.ownerUserId.toString()).toBe(userId);
     expect(streamInput.title).toBe('Benchmark analysis');
-    expect(streamInput.artifactWorkspaceId.toString()).toBe(workspaceResolved._id.toString());
-    expect(streamInput.managerAgentId.toString()).toBe(agentResolved._id.toString());
+    // workspaceId falls back to the owner id (governance scope) when no
+    // explicit parent workspace is supplied.
+    expect(streamInput.workspaceId.toString()).toBe(userId);
+    expect(streamInput.artifactWorkspaceId).toBeUndefined();
+    expect(streamInput.managerAgentId).toBeUndefined();
     expect(streamInput.status).toBe('created');
     expect(streamInput.controlState).toBe('active');
     expect(streamInput.budget.enforcement).toBe('hard_stop');
 
-    expect(result.artifactWorkspaceId).toBe(workspaceResolved._id.toString());
-    expect(result.managerAgentId).toBe(agentResolved._id.toString());
+    expect(result.artifactWorkspaceId).toBeNull();
+    expect(result.managerAgentId).toBeNull();
     expect(result.title).toBe('Benchmark analysis');
     expect(result.status).toBe('created');
+  });
+
+  it('uses an explicit parent workspaceId when provided', async () => {
+    const { service, streamCreate } = makeService();
+    const workspaceId = new Types.ObjectId().toString();
+
+    await service.create(userId, { title: 'Scoped', workspaceId } as any);
+
+    expect(streamCreate.mock.calls[0][0].workspaceId.toString()).toBe(workspaceId);
   });
 
   it('seeds per-stream model selection to null on create', async () => {
@@ -144,58 +143,6 @@ describe('WorkyStreamService.create', () => {
     expect(streamInput.workerModelId).toBeNull();
     expect(result.managerModelId).toBeNull();
     expect(result.workerModelId).toBeNull();
-  });
-
-  it('seeds planner/executor models and prompts to null on create', async () => {
-    const { service, streamCreate } = makeService();
-    const result = await service.create(userId, { title: 'with-agent-config' });
-    const streamInput = streamCreate.mock.calls[0][0];
-    expect(streamInput.plannerModelId).toBeNull();
-    expect(streamInput.executorModelId).toBeNull();
-    expect(streamInput.plannerPrompt).toBeNull();
-    expect(streamInput.executorPrompt).toBeNull();
-    expect(result.plannerModelId).toBeNull();
-    expect(result.executorModelId).toBeNull();
-    expect(result.plannerPrompt).toBeNull();
-    expect(result.executorPrompt).toBeNull();
-  });
-
-  it('rejects when the Worky Manager agent type is missing', async () => {
-    const { service } = makeService({
-      agentTypeFindBySlug: jest.fn().mockResolvedValue(null),
-    });
-
-    let caught: unknown;
-    try {
-      await service.create(userId, { title: 'No agent type' });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeDefined();
-    expect((caught as { code?: string }).code).toBe('ERR_2300');
-  });
-
-  it('disambiguates duplicate workspace aliases', async () => {
-    const workspaceCreate = jest.fn((doc) => Promise.resolve({ _id: new Types.ObjectId(), ...doc }));
-    const existingChain = (alias: string | null) => {
-      const chain: { lean: jest.Mock; exec: jest.Mock } = { lean: jest.fn(), exec: jest.fn() };
-      chain.lean.mockReturnValue(chain);
-      chain.exec.mockResolvedValue(alias ? { alias } : null);
-      return chain;
-    };
-    const findOne = jest
-      .fn()
-      .mockReturnValueOnce(existingChain('worky-dup'))
-      .mockReturnValueOnce(existingChain('worky-dup-1'))
-      .mockReturnValueOnce(existingChain(null));
-    const { service } = makeService({
-      workspaceCreate,
-      workspaceFindOne: findOne,
-    });
-
-    await service.create(userId, { title: 'dup' });
-
-    expect(workspaceCreate.mock.calls[0][0].alias).toBe('worky-dup-2');
   });
 
   it('does not eagerly create an orchestrator session on create()', async () => {
@@ -237,7 +184,7 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
       updateOne,
     };
     const workspaceModel = { create: jest.fn(), findOne: jest.fn() };
-    const agentModel = { create: jest.fn(), findOne: jest.fn() };
+    const agentRepository = { create: jest.fn(), findByNameAndOwner: jest.fn(), deleteByIdAndOwner: jest.fn() };
     const agentTypeService = { findBySlug: jest.fn() };
     const connection = makeConnection();
     const workspaceService = { delete: jest.fn() };
@@ -254,7 +201,7 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
     const service = new WorkyStreamService(
       streamModel as any,
       workspaceModel as any,
-      agentModel as any,
+      agentRepository as any,
       connection as any,
       agentTypeService as any,
       workspaceService as any,
@@ -269,21 +216,11 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
   it('returns the existing aiSessionId without creating a new session', async () => {
     const { service, grpcClient, updateOne } = makeEnsureService({
       aiSessionId: 'sess-existing',
-      plannerModelId: 'anthropic/claude-3-5-sonnet',
-      executorModelId: 'openai/gpt-4o-mini',
-      plannerPrompt: 'plan',
-      executorPrompt: 'exec',
     });
 
     const res = await service.ensureKickoffContext(streamId, userId);
 
-    expect(res).toEqual({
-      aiSessionId: 'sess-existing',
-      plannerModelId: 'anthropic/claude-3-5-sonnet',
-      executorModelId: 'openai/gpt-4o-mini',
-      plannerPrompt: 'plan',
-      executorPrompt: 'exec',
-    });
+    expect(res).toEqual({ aiSessionId: 'sess-existing' });
     expect(grpcClient.createSession).not.toHaveBeenCalled();
     expect(updateOne).not.toHaveBeenCalled();
   });
@@ -291,23 +228,13 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
   it('lazily creates and persists a session when aiSessionId is null', async () => {
     const { service, grpcClient, updateOne } = makeEnsureService({
       aiSessionId: null,
-      plannerModelId: null,
-      executorModelId: null,
-      plannerPrompt: null,
-      executorPrompt: null,
     });
 
     const res = await service.ensureKickoffContext(streamId, userId);
 
     expect(grpcClient.createSession).toHaveBeenCalledWith(userId);
     expect(updateOne).toHaveBeenCalledWith({ _id: streamId }, { $set: { aiSessionId: 'sess-new' } });
-    expect(res).toEqual({
-      aiSessionId: 'sess-new',
-      plannerModelId: null,
-      executorModelId: null,
-      plannerPrompt: null,
-      executorPrompt: null,
-    });
+    expect(res).toEqual({ aiSessionId: 'sess-new' });
   });
 
   it('throws WORKY_STREAM_NOT_FOUND when the stream does not exist', async () => {
@@ -365,7 +292,7 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
       findOne: jest.fn(() => chainableQuery(null)),
     };
     const workspaceModel = { create: jest.fn(), findOne: jest.fn() };
-    const agentModel = { create: jest.fn(), findOne: jest.fn() };
+    const agentRepository = { create: jest.fn(), findByNameAndOwner: jest.fn(), deleteByIdAndOwner: jest.fn() };
     const agentTypeService = { findBySlug: jest.fn() };
     const connection = makeConnection();
     const workspaceService = { delete: jest.fn() };
@@ -382,7 +309,7 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
     const service = new WorkyStreamService(
       streamModel as any,
       workspaceModel as any,
-      agentModel as any,
+      agentRepository as any,
       connection as any,
       agentTypeService as any,
       workspaceService as any,
@@ -432,30 +359,6 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
     expect(streamDoc.lastActivityAt).toEqual(before);
   });
 
-  it('persists planner/executor models and prompts from the PATCH DTO', async () => {
-    const streamDoc = buildStreamDoc();
-    const { service } = makePatchService(streamDoc);
-    const result = await service.patch(userId, streamObjectId.toString(), {
-      plannerModelId: 'openai/gpt-4o',
-      executorModelId: 'anthropic/claude-3-5-sonnet',
-      plannerPrompt: 'You are the planner.',
-      executorPrompt: 'You are an executor.',
-    } as any);
-    expect(result.plannerModelId).toBe('openai/gpt-4o');
-    expect(result.executorModelId).toBe('anthropic/claude-3-5-sonnet');
-    expect(result.plannerPrompt).toBe('You are the planner.');
-    expect(result.executorPrompt).toBe('You are an executor.');
-    expect(streamDoc.save).toHaveBeenCalledTimes(1);
-  });
-
-  it('clears a prompt when passed an empty string', async () => {
-    const streamDoc = buildStreamDoc({ plannerPrompt: 'old prompt' });
-    const { service } = makePatchService(streamDoc);
-    const result = await service.patch(userId, streamObjectId.toString(), {
-      plannerPrompt: '   ',
-    } as any);
-    expect(result.plannerPrompt).toBeNull();
-  });
 });
 
 describe('WorkyStreamService.delete', () => {
@@ -474,7 +377,7 @@ describe('WorkyStreamService.delete', () => {
       deleteOne: jest.fn(() => writeQuery()),
     };
     const workspaceModel = { create: jest.fn(), findOne: jest.fn() };
-    const agentModel = { create: jest.fn(), findOne: jest.fn(), deleteOne: jest.fn(() => writeQuery()) };
+    const agentRepository = { create: jest.fn(), findByNameAndOwner: jest.fn(), deleteByIdAndOwner: jest.fn().mockResolvedValue(undefined) };
     const agentTypeService = { findBySlug: jest.fn() };
     const connection = makeConnection();
     const workspaceService = { delete: jest.fn() };
@@ -491,7 +394,7 @@ describe('WorkyStreamService.delete', () => {
     const service = new WorkyStreamService(
       streamModel as any,
       workspaceModel as any,
-      agentModel as any,
+      agentRepository as any,
       connection as any,
       agentTypeService as any,
       workspaceService as any,
@@ -500,7 +403,7 @@ describe('WorkyStreamService.delete', () => {
       logger as any,
       grpcClient as any,
     );
-    return { service, streamModel, agentModel, connection, workspaceService, workspaceDocuments };
+    return { service, streamModel, agentRepository, connection, workspaceService, workspaceDocuments };
   };
 
   it('deletes the stream, manager agent, stream records, and artifact workspace', async () => {
@@ -510,13 +413,13 @@ describe('WorkyStreamService.delete', () => {
       artifactWorkspaceId,
       managerAgentId,
     };
-    const { service, streamModel, agentModel, connection, workspaceService, workspaceDocuments } = makeDeleteService(streamDoc);
+    const { service, streamModel, agentRepository, connection, workspaceService, workspaceDocuments } = makeDeleteService(streamDoc);
 
     const result = await service.delete(userId, streamObjectId.toString());
 
     expect(result).toEqual({ ok: true, deletedWorkspaceId: artifactWorkspaceId.toString() });
     expect(streamModel.deleteOne).toHaveBeenCalledWith({ _id: streamObjectId });
-    expect(agentModel.deleteOne).toHaveBeenCalledWith({ _id: managerAgentId, createdBy: userObjectId });
+    expect(agentRepository.deleteByIdAndOwner).toHaveBeenCalledWith(String(managerAgentId), String(userObjectId));
     expect(workspaceDocuments.deleteAllByWorkspace).toHaveBeenCalledWith(artifactWorkspaceId.toString());
     expect(workspaceService.delete).toHaveBeenCalledWith(artifactWorkspaceId.toString(), userId);
     expect(connection.models.has('WorkyGovernancePolicy')).toBe(false);

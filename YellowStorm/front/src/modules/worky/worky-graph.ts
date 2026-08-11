@@ -36,6 +36,7 @@ export function buildWorkyGraph(tasks: WorkyTask[]): { nodes: Node[]; edges: Edg
         id: `${sourceId}->${task.id}`,
         source: sourceId,
         target: task.id,
+        type: 'workyDependency',
         markerEnd: { type: MarkerType.ArrowClosed },
       });
     });

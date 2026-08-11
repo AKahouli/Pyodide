@@ -41,13 +41,22 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
             f'ALTER TABLE {_q(schema,"sessions")} ADD COLUMN IF NOT EXISTS interrupt_id TEXT')
         await con.execute(f"""
             CREATE TABLE IF NOT EXISTS {_q(schema,'plans')} (
-                session_id TEXT PRIMARY KEY,
-                id         TEXT NOT NULL,
-                title      TEXT,
-                goal       TEXT,
-                status     TEXT NOT NULL DEFAULT 'pending',
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                session_id    TEXT PRIMARY KEY,
+                id            TEXT NOT NULL,
+                title         TEXT,
+                goal          TEXT,
+                status        TEXT NOT NULL DEFAULT 'pending',
+                executor_id   TEXT,   -- the client's default executor for this turn
+                executor_name TEXT,   -- resolved once at plan_turn; steps born later
+                                       -- (create_task) read it here, not by scanning
+                                       -- sibling steps, which may all be personas
+                updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
             )""")
+        # Idempotent migration for an existing plans table.
+        await con.execute(
+            f'ALTER TABLE {_q(schema,"plans")} ADD COLUMN IF NOT EXISTS executor_id TEXT')
+        await con.execute(
+            f'ALTER TABLE {_q(schema,"plans")} ADD COLUMN IF NOT EXISTS executor_name TEXT')
         await con.execute(f"""
             CREATE TABLE IF NOT EXISTS {_q(schema,'plan_steps')} (
                 session_id     TEXT NOT NULL,
@@ -60,16 +69,23 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 title          TEXT,          -- short label for the UI card
                 description    TEXT,          -- full instruction / detail
                 depends_on     TEXT,          -- comma-joined step ids
-                agent          TEXT,
                 result         TEXT,
                 blocked_reason TEXT,
                 interrupt_id   TEXT,          -- set while THIS step waits on an answer
+                assignee       TEXT,          -- human_agents.py directory id, or the executor's own id
+                assignee_name  TEXT,          -- resolved display name, cached at creation
+                assignee_role  TEXT,          -- resolved role text, cached at creation
+                is_persona     BOOLEAN NOT NULL DEFAULT FALSE,  -- true only for a human-agent persona
+                is_dynamic_delegate BOOLEAN NOT NULL DEFAULT FALSE,  -- true only if created by delegate_to_human_agent
                 updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
                 PRIMARY KEY (session_id, step_id)
             )""")
         for col, typ in (("kind", "TEXT NOT NULL DEFAULT 'execute'"),
                          ("question", "TEXT"), ("title", "TEXT"),
-                         ("interrupt_id", "TEXT")):
+                         ("interrupt_id", "TEXT"), ("assignee", "TEXT"),
+                         ("assignee_name", "TEXT"), ("assignee_role", "TEXT"),
+                         ("is_persona", "BOOLEAN NOT NULL DEFAULT FALSE"),
+                         ("is_dynamic_delegate", "BOOLEAN NOT NULL DEFAULT FALSE")):
             await con.execute(
                 f'ALTER TABLE {_q(schema,"plan_steps")} ADD COLUMN IF NOT EXISTS {col} {typ}')
         await con.execute(f"""
@@ -176,34 +192,48 @@ class ReadModel:
                 session_id, status, interrupt_id)
 
     async def upsert_plan(self, session_id: str, plan_id: str, title: str,
-                          goal: str, status: str) -> None:
+                          goal: str, status: str, *,
+                          executor_id: Optional[str] = None,
+                          executor_name: Optional[str] = None) -> None:
         async with self._pool.acquire() as con:
             await con.execute(f"""
-                INSERT INTO {_q(self._schema,'plans')} (session_id,id,title,goal,status)
-                VALUES ($1,$2,$3,$4,$5)
+                INSERT INTO {_q(self._schema,'plans')}
+                    (session_id,id,title,goal,status,executor_id,executor_name)
+                VALUES ($1,$2,$3,$4,$5,$6,$7)
                 ON CONFLICT (session_id) DO UPDATE
                   SET id=EXCLUDED.id, title=EXCLUDED.title, goal=EXCLUDED.goal,
-                      status=EXCLUDED.status, updated_at=now()
-            """, session_id, plan_id, title, goal, status)
+                      status=EXCLUDED.status,
+                      -- Set once at plan_turn and never blank afterward: a
+                      -- resume/continue re-projection passes neither, and
+                      -- must not erase the value the first projection wrote.
+                      executor_id=COALESCE(EXCLUDED.executor_id, {_q(self._schema,'plans')}.executor_id),
+                      executor_name=COALESCE(EXCLUDED.executor_name, {_q(self._schema,'plans')}.executor_name),
+                      updated_at=now()
+            """, session_id, plan_id, title, goal, status, executor_id, executor_name)
 
     async def upsert_steps(self, session_id: str,
-                           steps: List[Tuple[str, int, int, str, str, str, str, str, str, str]]) -> None:
+                           steps: List[Tuple[str, int, int, str, str, str, str, str, str, str, str, str, bool, bool]]) -> None:
         """steps: (step_id, ordinal, wave, status, kind, question, title,
-        description, depends_on, agent)."""
+        description, depends_on, assignee, assignee_name, assignee_role, is_persona,
+        is_dynamic_delegate)."""
         async with self._pool.acquire() as con:
             await con.executemany(f"""
                 INSERT INTO {_q(self._schema,'plan_steps')}
-                    (session_id,step_id,ordinal,wave,status,kind,question,title,description,depends_on,agent)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                    (session_id,step_id,ordinal,wave,status,kind,question,title,description,depends_on,assignee,assignee_name,assignee_role,is_persona,is_dynamic_delegate)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
                 ON CONFLICT (session_id,step_id) DO UPDATE
                   SET ordinal=EXCLUDED.ordinal, wave=EXCLUDED.wave,
                       kind=EXCLUDED.kind, question=EXCLUDED.question,
                       title=EXCLUDED.title, description=EXCLUDED.description,
-                      depends_on=EXCLUDED.depends_on, updated_at=now()
+                      depends_on=EXCLUDED.depends_on, assignee=EXCLUDED.assignee,
+                      assignee_name=EXCLUDED.assignee_name, assignee_role=EXCLUDED.assignee_role,
+                      is_persona=EXCLUDED.is_persona,
+                      is_dynamic_delegate=EXCLUDED.is_dynamic_delegate,
+                      updated_at=now()
             """, [(session_id, *s) for s in steps])
 
     async def set_step_status(self, session_id: str, step_id: str, status: str, *,
-                              agent: Optional[str] = None, result: Optional[str] = None,
+                              result: Optional[str] = None,
                               blocked_reason: Optional[str] = None,
                               interrupt_id: Optional[str] = None) -> None:
         """`interrupt_id` is written as given, not merged: a step that moves to any
@@ -212,13 +242,12 @@ class ReadModel:
             await con.execute(f"""
                 UPDATE {_q(self._schema,'plan_steps')}
                 SET status=$3,
-                    agent=COALESCE($4, agent),
-                    result=COALESCE($5, result),
-                    blocked_reason=$6,
-                    interrupt_id=$7,
+                    result=COALESCE($4, result),
+                    blocked_reason=$5,
+                    interrupt_id=$6,
                     updated_at=now()
                 WHERE session_id=$1 AND step_id=$2
-            """, session_id, step_id, status, agent, result, blocked_reason, interrupt_id)
+            """, session_id, step_id, status, result, blocked_reason, interrupt_id)
 
     async def outstanding_interrupts(self, session_id: str) -> List[Tuple[str, str]]:
         """(interrupt_id, step_id) for every step still parked on an answer.
@@ -270,6 +299,30 @@ class ReadModel:
                 f"UPDATE {_q(self._schema,'mail_waits')} SET interrupt_id=$3 "
                 f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
                 session_id, step_id, interrupt_id)
+
+    async def rebind_mail_wait(self, session_id: str, old_step_id: str, new_step_id: str) -> int:
+        """Move a pending wait onto the real step it belongs to, returning how
+        many rows moved (0 or 1).
+
+        A step with create_task access mints its wait eagerly, the moment it
+        sends mail — under a placeholder id, since the await_reply step that
+        will actually wait on the reply (via create_task) doesn't exist yet at
+        send time. Once/if that step is created, this retargets the token onto
+        it.
+
+        0 means nothing was pending under the placeholder, i.e. the caller never
+        actually sent mail. The caller MUST treat that as an error rather than
+        proceeding: a wait with no token can never be claimed by an arriving
+        reply, so the step would park on an interrupt nothing can ever resume.
+        Seen live (session 681a01cfcd014e80a851f2b33e2b823e), back when this
+        returned None and the miss was silent."""
+        async with self._pool.acquire() as con:
+            res = await con.execute(
+                f"UPDATE {_q(self._schema,'mail_waits')} SET step_id=$3 "
+                f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
+                session_id, old_step_id, new_step_id)
+        # asyncpg returns the command tag, e.g. "UPDATE 1".
+        return int(res.rsplit(" ", 1)[-1]) if res else 0
 
     async def mail_token_for(self, session_id: str, step_id: str) -> Optional[str]:
         """The token to stamp into the mail this step is waiting on a reply to."""
