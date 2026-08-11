@@ -2209,6 +2209,21 @@ export const useWorkspaces = () => {
   return workspaces?.get(currentPage) || [];
 };
 
+/**
+ * Flatten all cached pages and de-duplicate by workspace id.
+ * Used by the workspace hub/listing page to show *all* workspaces,
+ * instead of only the current pagination page.
+ */
+export const useAllWorkspaces = () => {
+  const workspaces = useWorkspaceStore((state) => state.workspaces);
+  const all = Array.from(workspaces.values()).flat();
+
+  // De-dupe: the store injects personal workspace into each fetched page.
+  const byId = new Map<string, Workspace>();
+  for (const ws of all) byId.set(ws.id, ws);
+  return Array.from(byId.values());
+};
+
 export const useDocumentPagination = () => {
   const currentPage = useWorkspaceStore((state) => state.documentsCurrentPage) ?? 1;
   const totalPages = useWorkspaceStore((state) => state.documentsTotalPages) ?? 1;
@@ -2318,6 +2333,14 @@ export const useSharedWorkspaces = () => {
   return sharedWorkspaces.get(sharedCurrentPage) ?? [];
 };
 
+export const useAllSharedWorkspaces = () => {
+  const sharedWorkspaces = useWorkspaceStore((state) => state.sharedWorkspaces);
+  const all = Array.from(sharedWorkspaces.values()).flat();
+  const byId = new Map<string, SharedWorkspaceResponse>();
+  for (const ws of all) byId.set(ws.id, ws);
+  return Array.from(byId.values());
+};
+
 export const useSharedPagination = () => {
   const currentPage = useWorkspaceStore((state) => state.sharedCurrentPage) ?? 1;
   const totalPages = useWorkspaceStore((state) => state.sharedTotalPages) ?? 1;
@@ -2328,6 +2351,14 @@ export const usePublicWorkspaces = () => {
   const publicWorkspaces = useWorkspaceStore((state) => state.publicWorkspaces);
   const publicCurrentPage = useWorkspaceStore((state) => state.publicCurrentPage);
   return publicWorkspaces.get(publicCurrentPage) ?? [];
+};
+
+export const useAllPublicWorkspaces = () => {
+  const publicWorkspaces = useWorkspaceStore((state) => state.publicWorkspaces);
+  const all = Array.from(publicWorkspaces.values()).flat();
+  const byId = new Map<string, PublicWorkspaceResponse>();
+  for (const ws of all) byId.set(ws.id, ws);
+  return Array.from(byId.values());
 };
 
 export const usePublicPagination = () => {
