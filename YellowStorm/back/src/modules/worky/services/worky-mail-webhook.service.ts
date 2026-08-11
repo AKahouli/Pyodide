@@ -5,7 +5,7 @@ import { PlaybookFlowMailGraphClientService } from '@modules/playbook-flow/servi
 import { WorkyMailSubscriptionService } from './worky-mail-subscription.service';
 import { WorkyOrchestratorGrpcClientService } from './worky-orchestrator.grpc-client.service';
 import { WorkyTurnContextService } from './worky-turn-context.service';
-import { extractMailToken } from './worky-mail-token';
+import { extractMailToken, fullReplyText } from './worky-mail-token';
 
 interface GraphNotification {
   subscriptionId?: string;
@@ -86,7 +86,10 @@ export class WorkyMailWebhookService {
     const token = extractMailToken(subject, bodyContent);
     if (!token) return false; // Not a reply to anything worky sent — the usual case.
 
-    const replyText = ((message.bodyPreview as string) || bodyContent || '').trim();
+    const replyText = fullReplyText(
+      message.body as { contentType?: string; content?: string },
+      message.bodyPreview as string,
+    );
     const replyFrom =
       (((message.from as Record<string, any>)?.emailAddress?.address as string) ?? '').trim();
 

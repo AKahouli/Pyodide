@@ -27,6 +27,14 @@ vi.mock('../hooks/useAllowedUploadExtensions', () => ({
   useAllowedUploadExtensions: () => ({ accept: '.pdf' }),
 }));
 
+vi.mock('../hooks/useAutoIndexation', () => ({
+  readAutoIndexationValue: () => true,
+}));
+
+vi.mock('../hooks/useDeepSearchIndexation', () => ({
+  readDeepSearchIndexationValue: () => false,
+}));
+
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }));
 vi.mock('@/components/ui/button', () => ({ Button: ({ children, onClick, disabled, title }: { children: ReactNode; onClick?: () => void; disabled?: boolean; title?: string }) => <button type='button' onClick={onClick} disabled={disabled} title={title}>{children}</button> }));
 
@@ -50,8 +58,8 @@ describe('UploadButton', () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [file] } });
 
-    expect(addFilesToQueueMock).toHaveBeenCalledWith([file], 'w-1');
-    expect(startUploadMock).toHaveBeenCalledTimes(1);
+    expect(addFilesToQueueMock).toHaveBeenCalledWith([file], 'w-1', undefined);
+    expect(startUploadMock).toHaveBeenCalledWith(false, true);
   });
 
   it('shows an error toast when workspace is not selected', () => {

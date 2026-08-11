@@ -174,9 +174,41 @@ async def test_mail_reply_resumes_the_step_that_was_waiting():
     kw = service.resume_turn.await_args.kwargs
     # The reply answers THAT step, not whatever the session's chat interrupt is.
     assert kw["interrupt_id"] == "mail:plan_s1@1/m@1"
-    assert kw["answer"] == "I work at Yellow Systems."
+    # Carries the reply verbatim, now under an attribution line naming the
+    # sender -- see test_a_delivered_reply_is_attributed_to_its_sender_not_the_plan.
+    assert kw["answer"].endswith("I work at Yellow Systems.")
+    assert kw["answer"].startswith("Email reply from x@example.com")
     # Identity comes from the wait row, never from the caller.
     assert (kw["session_id"], kw["user_id"]) == ("s1", "u1")
+
+
+async def test_the_routing_token_is_scrubbed_out_of_the_reply_before_the_plan_sees_it():
+    """Root cause of a live failure: a reply quotes the mail it answers, so
+    it carries our own outbound subject line -- token included. That text
+    becomes the step's result and hence the next step's context, and the
+    model then echoed the token into the NEXT mail's subject. Stamping
+    appended the new one after it, so the mail went out as
+    "... [round-1] [round-2]"; the reader takes the first token, which was
+    round 1's -- already matched -- so the real reply was dropped as
+    "already delivered" and round 2 waited forever.
+
+    The executor is never told about tokens so it can never be relied on to
+    handle one; the reply must reach it with none in sight."""
+    rm = MagicMock(claim_mail_wait=AsyncMock(return_value=dict(_WAIT)))
+    service = MagicMock(resume_turn=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+
+    spent = "YW--eztV2BQOiwekB1Up0puKpjf"
+    await s.DeliverMailReply(pb.DeliverMailReplyRequest(
+        token="YW-tok",
+        reply_body=(f"go ahead\nFrom: Rabeb\nSubject: Decision needed [{spent}]  Hi,"
+                    f'<span style="display:none">{spent}</span>')), _ctx())
+    await _drain(s)
+
+    answer = service.resume_turn.await_args.kwargs["answer"]
+    assert spent not in answer, answer
+    assert "YW-" not in answer, answer
+    assert "go ahead" in answer  # the human's actual words survive
 
 
 async def test_mail_reply_forwards_executor_prompt_override():

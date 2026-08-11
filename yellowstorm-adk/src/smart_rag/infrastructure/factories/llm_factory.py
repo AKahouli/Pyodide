@@ -80,7 +80,7 @@ class LLMFactory:
                     api_key=app_settings.OLLAMA_API_KEY,
                     stream=True,
                     user=get_user_label(),
-                    **({"temperature": temperature} if temperature is not None else {}),
+                    **({"temperature": model_temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens
                 )
                 logger.info(f"Successfully created Ollama LLM for model: {model_name}")
@@ -92,7 +92,7 @@ class LLMFactory:
                     parallel_tool_calls=True,
                     stream=True,
                     user=get_user_label(),
-                    **({"temperature": temperature} if temperature is not None else {}),
+                    **({"temperature": model_temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens
                 )
                 logger.info(f"Successfully created LiteLLM proxy LLM for model: {model_name}")
@@ -121,7 +121,7 @@ class LLMFactory:
                     api_key=app_settings.OLLAMA_API_KEY,
                     stream=True,
                     user=get_user_label(),
-                    **({"temperature": temperature} if temperature is not None else {}),
+                    **({"temperature": model_temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens
 
                 )
@@ -134,7 +134,7 @@ class LLMFactory:
                     stream=True,
                     parallel_tool_calls=False,
                     user=get_user_label(),
-                    **({"temperature": temperature} if temperature is not None else {}),
+                    **({"temperature": model_temperature} if temperature is not None else {}),
                     tool_choice=tool_choice,
                     max_completion_tokens=max_completion_tokens
 
@@ -162,7 +162,7 @@ class LLMFactory:
                     api_key=app_settings.OLLAMA_API_KEY,
                     stream=True,
                     user=get_user_label(),
-                    **({"temperature": temperature} if temperature is not None else {}),
+                    **({"temperature": model_temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens
                 )
                 logger.info(f"Successfully created Ollama no-tool-calls LLM for model: {model_name}")
@@ -173,7 +173,7 @@ class LLMFactory:
                     api_key=app_settings.LITELLM_API_SECRET_KEY,
                     stream=True,
                     user=get_user_label(),
-                    **({"temperature": temperature} if temperature is not None else {}),
+                    **({"temperature": model_temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens
                 )
                 logger.info(f"Successfully created LiteLLM proxy no-tool-calls LLM for model: {model_name}")

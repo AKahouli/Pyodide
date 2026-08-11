@@ -6,6 +6,7 @@ describe('useConversationV2Store', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     useConversationV2Store.getState().reset();
+    useConversationV2Store.setState({ streamingStateCache: new Map() });
   });
 
   it('handleEvent("message") appends a bubble', () => {
@@ -82,6 +83,94 @@ describe('useConversationV2Store', () => {
     await vi.waitFor(() => expect(useConversationV2Store.getState().streaming).toBe(false));
 
     expect(conversationV2Api.listEvents).toHaveBeenCalledWith('background', 1, 200);
+  });
+
+  it('preserves Nodepod and deploy state when switching away from a non-streaming session', () => {
+    useConversationV2Store.getState().setSessionId('session-a');
+    useConversationV2Store.getState().handleEvent({
+      type: 'application_component',
+      event_id: 'app-a',
+      timestamp: 1,
+      title: 'App A',
+      url: 'https://preview.example/app-a',
+      ceph_path: 'yellowstorm/user/app-a/projectSRC',
+      file_count: 3,
+    });
+    useConversationV2Store.getState().setDeployState({
+      deployStatus: 'deployed',
+      deployedUrl: 'https://apps.example/app-a',
+      lastDeployedAt: '2026-08-06T10:00:00.000Z',
+    });
+    useConversationV2Store.getState().setAppViewMode('deployed');
+    useConversationV2Store.getState().setSystemWorkspaceId('ws-system-a');
+    useConversationV2Store.getState().setWorkspaceIds(['ws-a-1', 'ws-a-2']);
+    useConversationV2Store.getState().setSelectedSkillIds(['skill-a']);
+    useConversationV2Store.getState().setSelectedConnectorIds(['connector-a']);
+    useConversationV2Store.getState().setFilesSheetOpen(true);
+
+    expect(useConversationV2Store.getState().switchToSession('session-b')).toBe(false);
+    expect(useConversationV2Store.getState().switchToSession('session-a')).toBe(true);
+
+    const state = useConversationV2Store.getState();
+    expect(state.applicationComponent).toEqual({
+      title: 'App A',
+      url: 'https://preview.example/app-a',
+      cephPath: 'yellowstorm/user/app-a/projectSRC',
+      filesTree: null,
+      fileCount: 3,
+      revision: 'app-a',
+    });
+    expect(state.deployStatus).toBe('deployed');
+    expect(state.deployedUrl).toBe('https://apps.example/app-a');
+    expect(state.appViewMode).toBe('deployed');
+    expect(state.systemWorkspaceId).toBe('ws-system-a');
+    expect(state.workspaceIds).toEqual(['ws-a-1', 'ws-a-2']);
+    expect(state.selectedSkillIds).toEqual(['skill-a']);
+    expect(state.selectedConnectorIds).toEqual(['connector-a']);
+    expect(state.filesSheetOpen).toBe(true);
+  });
+
+  it('hydrates background Nodepod progress and preview state from stream cache', () => {
+    useConversationV2Store.getState().setSessionId('foreground');
+
+    useConversationV2Store.getState().handleStreamEvent('app_build_progress', {
+      sessionId: 'background',
+      event_id: 'progress-1',
+      timestamp: 1,
+      sequence: 1,
+      phase: 'creating_files',
+      message: 'Creating files',
+    });
+    useConversationV2Store.getState().handleStreamEvent('application_component', {
+      sessionId: 'background',
+      event_id: 'app-1',
+      timestamp: 2,
+      sequence: 2,
+      title: 'Background app',
+      url: 'https://preview.example/background',
+      ceph_path: 'yellowstorm/user/background/projectSRC',
+      file_count: 2,
+    });
+    useConversationV2Store.getState().handleStreamEvent('done', {
+      sessionId: 'background',
+      event_id: 'done-1',
+      timestamp: 3,
+      sequence: 3,
+    });
+
+    expect(useConversationV2Store.getState().switchToSession('background')).toBe(true);
+
+    const state = useConversationV2Store.getState();
+    expect(state.rightPanelMode).toBe('app');
+    expect(state.appBuildProgress).toBeNull();
+    expect(state.applicationComponent).toEqual({
+      title: 'Background app',
+      url: 'https://preview.example/background',
+      cephPath: 'yellowstorm/user/background/projectSRC',
+      filesTree: null,
+      fileCount: 2,
+      revision: 'app-1',
+    });
   });
 
   it('handleEvent("error") sets streamError and clears streaming', () => {
@@ -220,6 +309,36 @@ describe('useConversationV2Store', () => {
     expect(tools.map((t: any) => t.event_id)).toEqual(['t1a', 't2a']);
   });
 
+  it('app_build_progress opens the app panel and is cleared on application_component', () => {
+    const { handleEvent } = useConversationV2Store.getState();
+    handleEvent({
+      type: 'app_build_progress',
+      event_id: 'p1',
+      timestamp: 1,
+      phase: 'creating_files',
+      message: 'Creating project files',
+    });
+    expect(useConversationV2Store.getState().appBuildProgress).toEqual({
+      phase: 'creating_files',
+      message: 'Creating project files',
+      revision: 'p1',
+    });
+    expect(useConversationV2Store.getState().rightPanelMode).toBe('app');
+    expect(useConversationV2Store.getState().applicationComponent).toBeNull();
+
+    handleEvent({
+      type: 'application_component',
+      event_id: 'app-1',
+      timestamp: 2,
+      title: 'App',
+      url: 'http://localhost:5173',
+      ceph_path: 'yellowstorm/user/app/projectSRC',
+      file_count: 1,
+    });
+    expect(useConversationV2Store.getState().applicationComponent?.revision).toBe('app-1');
+    expect(useConversationV2Store.getState().appBuildProgress).toBeNull();
+  });
+
   it('replayEvents replaces events wholesale', () => {
     const { handleEvent, replayEvents } = useConversationV2Store.getState();
     handleEvent({ type: 'message', event_id: 'e1', timestamp: 1, role: 'assistant', content: 'a' });
@@ -231,13 +350,15 @@ describe('useConversationV2Store', () => {
     expect((evs[0] as any).event_id).toBe('r1');
   });
 
-  it('setDeployState replaces the active application preview URL', () => {
+  it('setDeployState stores the live URL without rewriting Nodepod sources', () => {
     useConversationV2Store.getState().handleEvent({
       type: 'application_component',
       event_id: 'app-1',
       timestamp: 1,
       title: 'Generated app',
       url: 'https://preview.example/app',
+      ceph_path: 'yellowstorm/user/app/projectSRC',
+      file_count: 2,
     });
 
     useConversationV2Store.getState().setDeployState({
@@ -247,8 +368,64 @@ describe('useConversationV2Store', () => {
 
     expect(useConversationV2Store.getState().applicationComponent).toEqual({
       title: 'Generated app',
-      url: 'https://deployed.example/app',
+      url: 'https://preview.example/app',
+      cephPath: 'yellowstorm/user/app/projectSRC',
+      filesTree: null,
+      fileCount: 2,
+      revision: 'app-1',
     });
+    expect(useConversationV2Store.getState().deployedUrl).toBe('https://deployed.example/app');
+    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
+  });
+
+  it('sendMessage does not leave deployed mode on the first user message', async () => {
+    vi.spyOn(conversationV2Api, 'sendMessage').mockResolvedValueOnce(undefined);
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      appViewMode: 'deployed',
+      deployedUrl: 'https://deployed.example/app',
+      deployStatus: 'deployed',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'https://preview.example/app',
+        revision: 'app-1',
+      },
+    });
+
+    await useConversationV2Store.getState().sendMessage('first prompt');
+
+    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
+  });
+
+  it('sendMessage switches deployed → nodepod from the second user message', async () => {
+    vi.spyOn(conversationV2Api, 'sendMessage').mockResolvedValue(undefined);
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      appViewMode: 'deployed',
+      deployedUrl: 'https://deployed.example/app',
+      deployStatus: 'deployed',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'https://preview.example/app',
+        revision: 'app-1',
+      },
+      events: [
+        {
+          type: 'message',
+          event_id: 'u1',
+          timestamp: 1,
+          role: 'user',
+          content: 'first',
+          attachments: [],
+        },
+      ],
+      rightPanelMode: 'closed',
+    });
+
+    await useConversationV2Store.getState().sendMessage('follow-up');
+
+    expect(useConversationV2Store.getState().appViewMode).toBe('nodepod');
+    expect(useConversationV2Store.getState().rightPanelMode).toBe('app');
   });
 
   it('deploy sends the application component title to the backend', async () => {
@@ -262,6 +439,7 @@ describe('useConversationV2Store', () => {
       applicationComponent: {
         title: 'Generated app',
         url: 'https://preview.example/app',
+        revision: 'app-1',
       },
     });
 
@@ -271,9 +449,10 @@ describe('useConversationV2Store', () => {
     expect(useConversationV2Store.getState().lastDeployedAt).toBe(
       '2026-07-17T10:00:00.000Z',
     );
+    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
   });
 
-  it('replayEvents restores the deployed URL over the original preview URL', () => {
+  it('replayEvents restores application sources without overwriting with deployed URL', () => {
     useConversationV2Store.setState({
       deployedUrl: 'https://deployed.example/app',
       deployStatus: 'deployed',
@@ -286,11 +465,17 @@ describe('useConversationV2Store', () => {
         timestamp: 1,
         title: 'Generated app',
         url: 'https://preview.example/app',
+        ceph_path: 'yellowstorm/user/app/projectSRC',
       },
     ]);
 
-    expect(useConversationV2Store.getState().applicationComponent?.url).toBe(
-      'https://deployed.example/app',
-    );
+    expect(useConversationV2Store.getState().applicationComponent).toEqual({
+      title: 'Generated app',
+      url: 'https://preview.example/app',
+      cephPath: 'yellowstorm/user/app/projectSRC',
+      filesTree: null,
+      fileCount: undefined,
+      revision: 'app-1',
+    });
   });
 });

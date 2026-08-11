@@ -11,6 +11,8 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useWorkspaceStore, useSelectedWorkspace } from '../store';
 import { validateFiles } from '../utils';
 import { useAllowedUploadExtensions } from '../hooks/useAllowedUploadExtensions';
+import { readAutoIndexationValue } from '../hooks/useAutoIndexation';
+import { readDeepSearchIndexationValue } from '../hooks/useDeepSearchIndexation';
 
 interface UploadButtonProps {
   folderId?: string;
@@ -43,7 +45,7 @@ export function UploadButton({ folderId }: UploadButtonProps) {
       const { validFiles } = validateFiles(files);
       if (validFiles.length > 0) {
         addFilesToQueue(validFiles, selectedWorkspace.id, folderId);
-        startUpload();
+        void startUpload(readDeepSearchIndexationValue(), readAutoIndexationValue());
       }
 
       // Reset input so the same file can be selected again
@@ -51,7 +53,7 @@ export function UploadButton({ folderId }: UploadButtonProps) {
         fileInputRef.current.value = '';
       }
     },
-    [selectedWorkspace, addFilesToQueue, startUpload, folderId],
+    [selectedWorkspace, addFilesToQueue, startUpload, folderId, t],
   );
 
   return (

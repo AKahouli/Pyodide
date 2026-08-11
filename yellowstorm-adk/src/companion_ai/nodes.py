@@ -17,7 +17,7 @@ from google.genai import types as genai_types
 
 from . import mail_token
 from .graph import NodeFactory
-from .plan import Step
+from .plan import Status, Step
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +25,38 @@ logger = logging.getLogger(__name__)
 # step in the plan) and hard-aborts the whole run on trip. This caps a
 # single step instead, and recovers gracefully.
 MAX_STEP_MODEL_CALLS = 15
+# A persona step's own job is now longer by design (find the real person's
+# email, send it, create_task(await_reply)) before it can even reach a
+# genuine parked state — the plain cap was tripping before that chain
+# finished, forcing a fabricated decision.
+MAX_PERSONA_STEP_MODEL_CALLS = 25
 
 
-def _stop_after_n_calls(limit: int, model_name: str):
+STUCK_LOOP_WINDOW = 3
+
+
+def _lookup_signature(part) -> Optional[tuple]:
+    """(tool_name, normalized target) for a function_call part that looks like
+    a directory/search lookup — keyed on the actual subject being looked up,
+    not the full arg dict, so a model that keeps re-verifying the SAME person
+    still gets caught even when it jitters incidental args between calls
+    (e.g. sometimes passing role='', sometimes not; sometimes pairing the
+    call with an unrelated tool, or alternating which of two names it
+    re-checks). Seen live: find_human_agents('Firas Kahia') called 6+ times
+    across one step with the args shape changing almost every round — a
+    strict "same 3 rounds in a row, byte-identical" check never caught it."""
+    fc = getattr(part, "function_call", None)
+    if fc is None:
+        return None
+    args = fc.args or {}
+    target = args.get("name") or args.get("agent_name") or args.get("query")
+    if not target:
+        return None
+    return (fc.name, str(target).strip().lower())
+
+
+def _stop_after_n_calls(limit: int, model_name: str, *,
+                         is_persona: bool = False, assignee_name: Optional[str] = None):
     """Forces a real answer once a step exceeds `limit` model calls, instead
     of looping forever or returning a non-answer a caller could mistake for
     a genuine one.
@@ -39,19 +68,73 @@ def _stop_after_n_calls(limit: int, model_name: str):
     Azure outright ("parallel_tool_calls is only allowed when tools are
     specified") — litellm.drop_params doesn't catch this, it's a value-level
     conflict, not an unsupported param.
+
+    A persona step gets a DIFFERENT nudge: "give your best answer" is exactly
+    the fabricated-decision behavior persona_preamble forbids (the whole point
+    of the new design is that {assignee_name}'s real decision comes from their
+    own email reply, never a guess) — and since this fallback call has no
+    tools, the step can't place its usual create_task(kind='await_reply')
+    escalation here either. So it must say plainly that it ran out of budget
+    before reaching them, not present a guess as their answer.
+
+    Separately: before that budget is anywhere near exhausted, also watch for
+    a step re-issuing the exact same tool call(s) round after round — seen
+    live, a step re-verified the same two already-confirmed find_human_agents
+    lookups 7+ times with identical, successful results each time, making no
+    other progress. That is a model reasoning stall, not a budget problem, so
+    it gets a different remedy: a pointed nudge with tools still available
+    (not the budget-exhausted fallback above, which strips them), so it can
+    actually act on being told to stop re-checking and move on.
     """
     state = {"n": 0, "forced": False}
 
     async def _cb(callback_context, llm_request):
         state["n"] += 1
+        lookup_counts = state.setdefault("lookup_counts", {})
+        nudged_keys = state.setdefault("nudged_keys", set())
+        model_rounds = [c for c in llm_request.contents if c.role == "model"]
+        if model_rounds:
+            # Only the newest round -- earlier ones were already counted on a
+            # prior _cb call, since model_rounds grows by exactly one per turn.
+            for part in (model_rounds[-1].parts or []):
+                sig = _lookup_signature(part)
+                if sig is not None:
+                    lookup_counts[sig] = lookup_counts.get(sig, 0) + 1
+        stuck = next(((sig, n) for sig, n in lookup_counts.items()
+                      if n >= STUCK_LOOP_WINDOW and sig not in nudged_keys), None)
+        if stuck is not None:
+            (tool_name, target), count = stuck
+            nudged_keys.add((tool_name, target))
+            logger.warning(
+                "[worky] step re-looked-up %r via %s %d times — nudging",
+                target, tool_name, count)
+            nudge_text = (
+                f"You've already called {tool_name} for {target!r} {count} times in "
+                "this step and gotten a successful result every time — calling it "
+                "again will not tell you anything new. You already have this "
+                "information. Stop re-checking it and move on to the next real "
+                "action — actually doing the work this step needs (e.g. "
+                "drafting/sending the email, escalating to someone genuinely "
+                "different, or giving your answer), not verifying the same fact "
+                "again.")
+            llm_request.contents = llm_request.contents + [genai_types.Content(
+                role="user", parts=[genai_types.Part(text=nudge_text)])]
         if state["n"] > limit and not state["forced"]:
             state["forced"] = True
             logger.warning("[worky] step exceeded %d model calls — forcing a final answer", limit)
             from google.adk.models.llm_request import LlmRequest
-            nudge = genai_types.Content(role="user", parts=[genai_types.Part(
-                text="Stop calling tools now. Give your best answer using only what you "
-                     "already know from this conversation so far — do not ask for more "
-                     "information and do not say you are unable to answer.")])
+            if is_persona:
+                nudge_text = (
+                    "Stop calling tools now. You have run out of budget before reaching "
+                    f"{assignee_name}'s real decision — do NOT invent one now. Say plainly "
+                    "that this could not be escalated to them within this turn and needs "
+                    "manual follow-up; never present your own guess as their answer.")
+            else:
+                nudge_text = (
+                    "Stop calling tools now. Give your best answer using only what you "
+                    "already know from this conversation so far — do not ask for more "
+                    "information and do not say you are unable to answer.")
+            nudge = genai_types.Content(role="user", parts=[genai_types.Part(text=nudge_text)])
             fallback_request = LlmRequest(model=model_name, contents=llm_request.contents + [nudge])
             # contents alone drops the task/persona instruction — a separate field.
             fallback_request.config.system_instruction = llm_request.config.system_instruction
@@ -73,9 +156,27 @@ and every other step in this plan has the SAME toolset you do (including
 things like sending email). Reaching for one of those tools because it looks
 useful for the overall task is another step's job, not yours.
 
-Use the available tools when needed. For a LONG-RUNNING action (e.g. setting a
-reminder for hours, scheduling a delayed job), call the `schedule_*_task` tool so
-it starts in the background and returns immediately — never wait for it to finish.
+Use the available tools when needed — call them directly; there is nothing to
+schedule and nothing that runs in the background. Sending an email is instant,
+even when the answer takes days: send it, then register the wait. Waiting is a
+separate step's job, never something you sit and hold this turn open for.
+
+If you send an email whose REPLY matters to this plan, you MUST call
+create_task(kind='await_reply') before you finish, describing what to do with
+that reply. Sending and then ending your turn loses the answer for good: nothing
+is watching for it, so when they write back the plan is already finished and
+their reply goes nowhere. This applies whoever you are and whoever you wrote to.
+If no reply is expected — you were only informing someone — say so plainly and
+finish.
+
+When one thing must happen before another, say so instead of hoping: every task
+you create starts immediately and they all run in parallel, so two searches you
+spin off run at once — but a task that has to READ their findings must wait for
+them. create_task returns each new step's id; pass those ids as
+after=['<id>', '<id>'] on the task that depends on them. Use it only for a real
+ordering need — parallel is faster, and a chain of after= on work that could run
+at once just makes the plan slower.
+
 Return a concise result for this step only — other steps are handled by other
 agents, so just produce your part directly."""
 
@@ -91,7 +192,9 @@ def build_llm(model_name: str, *, with_tools: bool, temperature: float = 0.0):
     litellm.drop_params = True
     from google.adk.models.lite_llm import LiteLlm
     from src.config.settings import get_settings
+    from src.smart_rag.infrastructure.model_parameters import normalize_temperature_for_model
     app_settings = get_settings()
+    temperature = normalize_temperature_for_model(model_name, temperature)
     if "ollama" in model_name.lower():
         return LiteLlm(model=model_name, api_base=app_settings.OLLAMA_API_BASE_URL,
                        api_key=app_settings.OLLAMA_API_KEY, temperature=temperature, stream=True)
@@ -106,8 +209,13 @@ def is_send_email_tool(tool) -> bool:
     return name.endswith("_send_email")
 
 
-def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Optional[str]]]):
+def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Optional[str]]],
+                          on_sent: Optional[Callable[[str], Awaitable[None]]] = None):
     """Wrap a send_email tool so the outbound mail carries its routing token.
+
+    `on_sent(token)` — optional — runs only after the underlying send returns
+    successfully, for callers that need to persist the wait (see
+    _mail_stamping's eager path). A send that raises must leave no wait behind.
 
     Deterministic on purpose. The alternative — telling the executor LLM to put a
     marker in the subject — fails open: the one time the model omits it, the
@@ -135,7 +243,17 @@ def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Option
             # that lands than a step that refuses to run.
             logger.warning("send_email: no routing token for this step — a reply "
                            "will not resume anything")
-        return await original(**kwargs)
+        result = await original(**kwargs)
+        # Only NOW does a mail exist that a reply could answer, so only now is
+        # there a wait worth recording. Registering before the send meant a send
+        # that raised (MCP transport, auth, a 4xx from Graph) still left a wait
+        # row behind: the step then parked on a reply to an email that was never
+        # sent, and nothing could ever resume it. Minting stays above — the
+        # token has to be IN the mail — but persisting waits for the send to
+        # come back.
+        if token and on_sent is not None:
+            await on_sent(token)
+        return result
 
     stamped.__name__ = original.__name__
     stamped.__signature__ = original.__signature__
@@ -150,6 +268,7 @@ def make_llm_node_factory(
     temperature: float = 0.0,
     custom_instruction: Optional[str] = None,
     tools_for_step: Optional[Callable[[Step, List], List]] = None,
+    instruction_for_step: Optional[Callable[[Step], Optional[str]]] = None,
 ) -> NodeFactory:
     """Build a NodeFactory that creates one LlmAgent per step.
 
@@ -168,13 +287,42 @@ def make_llm_node_factory(
     interpolate, so a client prompt that forgets to reference it can't produce
     a step that doesn't know its own task. `tools_for_step` may swap a step's
     tools for step-specific ones — used to stamp the routing token into a mail
-    whose reply another step is waiting on.
+    whose reply another step is waiting on. `instruction_for_step` mirrors
+    that same pattern for extra instruction text instead of tools — used to
+    tell the step directly downstream of an await_reply that the reply it is
+    reading may itself carry further instructions (see _build_workflow).
     """
     from . import hitl
 
     shared_tools = list(tools or [])
 
     def factory(step: Step, name: str):
+        # A dynamically-delegated step (delegate_to_human_agent, or create_task
+        # — including kind='await_reply') that already completed: its ORIGINAL
+        # run happened inside a throwaway nested Workflow, at a node path
+        # ADK's own session replay can't match once resume_turn rebuilds it as
+        # a plain top-level node here — so ADK can't tell it already ran.
+        # Checked BEFORE the kind-based checks below on purpose: an
+        # await_reply step resolved out-of-band (see resume_turn) is marked
+        # COMPLETED directly, without ever getting a chance to re-park — if
+        # the kind=="await_reply" check ran first it would rebuild a bare
+        # wait node regardless of status and re-block it under a fresh
+        # interrupt id, discarding the real answer that's already sitting
+        # in step.result. Short-circuit with the stored result instead.
+        if step.is_dynamic_delegate and step.status == Status.COMPLETED:
+            from google.adk.workflow import FunctionNode
+            stored_result = step.result or ""
+
+            # Must return types.Content, not a plain string: _function_node.py's
+            # _to_event() only populates ev.content (what _apply_event reads
+            # the result text from, below) for a Content return — a bare
+            # string instead becomes ev.output, which _apply_event never
+            # looks at, so the read model would silently get "" for a step
+            # that actually already has a real answer.
+            async def _replay_stored_result():
+                return genai_types.Content(role="model", parts=[genai_types.Part(text=stored_result)])
+
+            return FunctionNode(func=_replay_stored_result, name=name)
         # An "ask" step blocks deterministically asking the user (FunctionNode:
         # its interrupt id is stable across replays, so resume matches — unlike an
         # LLM tool call whose id is random each rerun).
@@ -197,36 +345,140 @@ def make_llm_node_factory(
             "Do exactly this and nothing else:")
         base_instruction = EXECUTOR_INSTRUCTION.format(
             identity=identity, do_this_line=do_this_line, description=step.description)
-        persona_preamble = (
-            f"You are {step.assignee_name} — a real person at this company."
-            + (f" {step.assignee_role}" if step.assignee_role else "")
-            + "\n\n"
-            f"Act exactly as {step.assignee_name} would in real life: do your "
-            "own job yourself, using your own judgment and expertise — you "
-            "don't need anyone's permission for what's already inside your "
-            "role, and a question that just happens to match your job title "
-            "is still your own job to answer, not a reason to go find "
-            "yourself. But you're not the only person here: if something "
-            "genuinely falls outside your role or authority, do what any "
-            "real colleague would — find the right person (find_human_agents, "
-            "there is no fixed roster) and actually ask them "
-            "(delegate_to_human_agent), then answer using what they told you. "
-            "Never invent their answer, never tell the user to go ask someone "
-            "else yourself, and never leave your turn on 'I'll check with "
-            "so-and-so' without having actually checked. You can't ask "
-            "yourself, and you don't reach out just because a question is "
-            "hard — only when the authority or expertise genuinely isn't yours."
-        ) if step.is_persona else None
-        # A client prompt may carry a literal "{description}" token (see
-        # PROMPTS.txt); ADK's instruction templating treats any unresolved
-        # "{...}" as a session-variable lookup and raises KeyError, so this
-        # must be substituted here too. .replace(), not .format(): the
-        # client's text may contain other, incidental braces.
-        custom_instruction_resolved = (
-            custom_instruction.replace("{description}", step.description)
-            if custom_instruction else None)
-        preambles = [p for p in (custom_instruction_resolved, persona_preamble) if p]
-        instruction = "\n\n".join(preambles + [base_instruction]) if preambles else base_instruction
+        # A dynamic delegate's description is ALREADY the message to relay to
+        # assignee_name (composed by the caller, typically second-person:
+        # "Hi Firas — ... Do you confirm?") — not an open question this step
+        # must draft an as-them answer to. The full persona_preamble below
+        # tells the model "you represent {assignee_name} ... get the real
+        # decision from {assignee_name} themselves" — for a delegate that is
+        # self-referential (you represent Firas, but must also email Firas
+        # and await Firas's reply), a real, confirmed trigger for the step
+        # stalling on repeated find_human_agents lookups instead of ever
+        # sending the email. Give delegates a distinct preamble: relay and
+        # wait, no "draft as if you were them" framing.
+        if step.is_persona and step.is_dynamic_delegate:
+            persona_preamble = (
+                f"{step.assignee_name} is being asked the question below "
+                "directly by a colleague — the task text below IS the "
+                "question to relay, not something for you to answer in "
+                f"their place. Your job is to get {step.assignee_name}'s "
+                "ACTUAL answer, never invent or guess it: look up their "
+                "email via find_human_agents (there is no fixed roster), "
+                "send them the question below as a real email, then call "
+                "create_task(kind='await_reply') — that hands the actual "
+                "waiting off to a separate step, since their real reply can "
+                "take hours or days, far longer than this turn can stay "
+                "open. Your OWN turn ends right there: report plainly that "
+                "you sent it and are awaiting their reply. If a reply from "
+                "them settling this has already arrived earlier in THIS "
+                "conversation (you are that separate step, now running "
+                "with their reply in hand), report their actual answer "
+                "directly — instead of emailing again or restating it as "
+                "still pending.\n\n"
+                f"Before you send anything: if the matter genuinely falls "
+                f"outside {step.assignee_name}'s own role or authority, do "
+                "what any real colleague would first — find the right "
+                "person (find_human_agents) and actually ask them "
+                "(delegate_to_human_agent). That becomes its own step and "
+                "their answer arrives there, not back here, so don't wait "
+                "for it and never invent what they said.\n\n"
+                "None of this stops after one round: if their reply itself "
+                "asks for another email and another wait, send it and wait "
+                "again, for as many rounds as the situation genuinely "
+                "takes."
+            )
+        elif step.is_persona:
+            persona_preamble = (
+                f"You represent {step.assignee_name} — a real person at this company."
+                + (f" {step.assignee_role}" if step.assignee_role else "")
+                + "\n\n"
+                f"Your task below is addressed TO {step.assignee_name}, and is for "
+                f"them to answer — not something you answer as them. That holds "
+                "however easy the answer looks: if it reads as a question about "
+                "what they want, have, or plan, you do not know that, and "
+                "\"nothing\" or \"none\" is still THEIR answer to give, never "
+                "yours to assume. Having no information about it is exactly why "
+                "it has to be asked, not grounds to answer it empty.\n\n"
+                f"You never make the final call in {step.assignee_name}'s place — "
+                "your job is to PREPARE, not decide. Think it through with their "
+                "judgment and expertise, draft the analysis, recommendation, or "
+                f"answer they would need — then get the actual decision from "
+                f"{step.assignee_name} themselves: look up their email via "
+                "find_human_agents (there is no fixed roster), send them your "
+                "draft as a real email laying out the situation and asking for "
+                "their call, then call create_task(kind='await_reply') — that "
+                "hands the actual waiting off to a separate step, since their "
+                "real reply can take hours or days, far longer than this turn "
+                "can stay open. Your OWN turn ends right there: report plainly "
+                "that you drafted it, sent it, and are awaiting their reply — "
+                "never invent or guess what they'll decide here. A separate "
+                "step reads their actual reply once it's in and gives the real, "
+                "final answer based on exactly what they said — never on your "
+                "own draft. If a reply from them settling this has already "
+                "arrived earlier in THIS conversation (you are that separate "
+                "step, now running with their reply in hand), treat it as their "
+                "real decision and act on it directly — approve, reject, or "
+                "proceed accordingly — instead of drafting or emailing again, "
+                "or restating it as still pending.\n\n"
+                f"Before you draft anything: if the matter genuinely falls "
+                f"outside {step.assignee_name}'s own role or authority, do what "
+                "any real colleague would first — find the right person "
+                "(find_human_agents) and actually ask them "
+                "(delegate_to_human_agent). They are a real person who answers "
+                "by email in their own time, so that becomes its own step and "
+                "their answer arrives THERE, not back here: do not wait for it "
+                "and never invent what they said. Say plainly that you asked "
+                "them and their answer is pending. You don't reach "
+                "out just because a question is hard — only when the authority "
+                f"or expertise genuinely isn't {step.assignee_name}'s. If other "
+                "real follow-up work turns up that isn't a specific named "
+                "colleague's judgment call — a check to run, something to "
+                "verify, another email to send and wait on — spin it off "
+                "yourself with create_task, which likewise runs as its own "
+                "step rather than handing you a result, instead of "
+                "writing it down as something still owed. Do this even when you "
+                "already have the tool to do that work yourself — spinning it "
+                "off keeps it tracked as its own step instead of silently "
+                "folded into this one.\n\n"
+                "None of this stops after one round: if a reply — theirs, or a "
+                "delegate's, or a create_task follow-up's — itself asks for "
+                "another email and another wait, send it and wait again, for as "
+                "many rounds as the situation genuinely takes. One reply is not "
+                "the end by default, whatever it actually takes is."
+            )
+        else:
+            persona_preamble = None
+        # A client prompt carrying "{description}" IS the executor instruction,
+        # so it REPLACES the built-in one instead of being stacked on top of
+        # it. Seen live: the configured prompt was a copy of
+        # EXECUTOR_INSTRUCTION, so the step's task and the whole "you are not
+        # told the plan's wider goal..." block were sent TWICE, with
+        # contradictory framing between the copies — the client's hardcoded
+        # "You are an execution agent" / "Do exactly this and nothing else"
+        # against the persona-aware "You are working on ONE step" / "using
+        # whatever consultation your role above requires". A prompt with no
+        # "{description}" cannot carry the task, so it stays an extra preamble
+        # ahead of the built-in one, as before.
+        #
+        # {identity} and {do_this_line} are offered to the client template too,
+        # so a custom prompt can opt into the persona-aware wording rather than
+        # hardcoding the plain-step one. ADK's instruction templating treats
+        # any unresolved "{...}" as a session-variable lookup and raises
+        # KeyError, so every token must be substituted here. .replace(), not
+        # .format(): the client's text may contain other, incidental braces.
+        def _resolve(text: str) -> str:
+            return (text.replace("{identity}", identity)
+                        .replace("{do_this_line}", do_this_line)
+                        .replace("{description}", step.description))
+
+        custom_is_full_instruction = bool(
+            custom_instruction and "{description}" in custom_instruction)
+        body = _resolve(custom_instruction) if custom_is_full_instruction else base_instruction
+        mail_reply_instruction = instruction_for_step(step) if instruction_for_step else None
+        extra_preamble = None if custom_is_full_instruction or not custom_instruction \
+            else _resolve(custom_instruction)
+        preambles = [p for p in (extra_preamble, persona_preamble, mail_reply_instruction) if p]
+        instruction = "\n\n".join(preambles + [body]) if preambles else body
         step_tools = tools_for_step(step, shared_tools) if tools_for_step else shared_tools
         tool_names = [getattr(getattr(t, "func", None), "__name__", "?") for t in step_tools]
         logger.info("[worky] 8. step=%s executor context:\n--- instruction ---\n%s\n"
@@ -237,7 +489,9 @@ def make_llm_node_factory(
             instruction=instruction,
             tools=step_tools,
             output_key=name,  # step result lands in session state under this key
-            before_model_callback=_stop_after_n_calls(MAX_STEP_MODEL_CALLS, model_name),
+            before_model_callback=_stop_after_n_calls(
+                MAX_PERSONA_STEP_MODEL_CALLS if step.is_persona else MAX_STEP_MODEL_CALLS,
+                model_name, is_persona=step.is_persona, assignee_name=step.assignee_name),
         )
 
     return factory

@@ -15,7 +15,7 @@ def normalize_temperature_for_model(model_name: object, temperature: float | Non
     """Return a temperature accepted by the target model family."""
     if temperature is None:
         return None
-    if _is_gpt5_model(model_name):
+    if _requires_temperature_one(model_name):
         return 1
     return temperature
 
@@ -77,7 +77,15 @@ def resolve_model_config(model_config: object) -> str:
     return model_name
 
 
-def _is_gpt5_model(model_name: object) -> bool:
+# Model families whose API rejects any temperature other than 1 (reasoning
+# models with no sampling-temperature knob). Add here, not a one-off check,
+# as more of these show up -- e.g. kimi-k3: "invalid temperature: only 1 is
+# allowed for this model".
+_FIXED_TEMPERATURE_ONE_MARKERS = ("gpt-5", "kimi")
+
+
+def _requires_temperature_one(model_name: object) -> bool:
     if isinstance(model_name, dict):
         model_name = model_name.get("provider") or model_name.get("name")
-    return "gpt-5" in str(model_name or "").lower()
+    name = str(model_name or "").lower()
+    return any(marker in name for marker in _FIXED_TEMPERATURE_ONE_MARKERS)

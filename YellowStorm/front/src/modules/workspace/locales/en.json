@@ -354,6 +354,7 @@
   "store.toast.template.createSuccessTitle": "Template created",
   "store.toast.upload.bulkErrorDescription": "All {{count}} files failed to upload.",
   "store.toast.upload.bulkSuccessDescription": "{{count}} file(s) uploaded successfully.",
+  "store.toast.upload.completeFailedDescription": "Files reached storage but finalization/indexing could not be completed.",
   "store.toast.upload.partialDescription": "{{success}} succeeded, {{failed}} failed.",
   "store.toast.upload.partialTitle": "Upload partially complete",
   "store.toast.upload.singleSuccessDescription": "\"{{name}}\" has been uploaded.",

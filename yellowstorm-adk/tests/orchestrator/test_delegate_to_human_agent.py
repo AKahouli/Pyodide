@@ -36,7 +36,7 @@ from google.genai import types
 
 from src.companion_ai import human_agents as human_agents_mod
 from src.companion_ai import nodes as nodes_mod
-from src.companion_ai.plan import Plan, Step
+from src.companion_ai.plan import Plan, Status, Step
 from src.companion_ai.service import OrchestratorService
 
 
@@ -109,6 +109,68 @@ async def _run_rabeb_delegates_to_oussama(monkeypatch) -> str:
         if ev.content and ev.content.parts and getattr(ev.content.parts[0], "text", None):
             final_text = ev.content.parts[0].text
     return final_text
+
+
+def test_a_delegate_spawned_mid_turn_is_never_left_orphaned(monkeypatch):
+    """A step spawned mid-turn must still RUN before the turn is declared done.
+
+    The graph is built from plan.steps at the START of a turn, so a step
+    delegate_to_human_agent adds is not in it and cannot run that time round.
+    await_reply gets a later turn for free (the mail reply triggers one);
+    nothing triggers one for a delegate. Seen live in session
+    6f5b45c30e42: the plan finished 'completed' with its "ask Firas Kahia"
+    step still PENDING, never run, and the user got a final answer that
+    silently skipped it. _drive_until_quiescent rebuilds and drives again
+    while the last pass left newly-spawned work behind.
+    """
+    caller = _ScriptedLlm([
+        _fc("delegate_to_human_agent",
+            {"agent_name": "oussama", "task": "Should we invest today?"}, "call_1"),
+        _text("Asked Oussama; awaiting his answer."),
+    ])
+    delegate = _ScriptedLlm([_text("Oussama says: no buy today.")])
+    order, i = [caller, delegate], {"n": 0}
+
+    def fake_build_llm(model_name, *, with_tools, temperature=0.0):
+        m = order[min(i["n"], len(order) - 1)]
+        i["n"] += 1
+        return m
+
+    monkeypatch.setattr(nodes_mod, "build_llm", fake_build_llm)
+    monkeypatch.setattr(human_agents_mod, "search_human_agents", AsyncMock(
+        return_value=[{"id": "oussama", "name": "Oussama", "role": "Investment approver"}]))
+
+    session_service = InMemorySessionService()
+
+    def runner_factory(node, app_name):
+        return Runner(node=node, app_name=app_name, session_service=session_service)
+
+    service = OrchestratorService(runner_factory, None, planner_model="fake")
+    plan = Plan(id="p1", steps=[
+        Step(id="s2", kind="execute", description="Should we invest today?",
+             is_persona=True, assignee="rabeb", assignee_name="Rabeb"),
+    ])
+
+    async def go():
+        wf, n2s = service._build_workflow("sess1", "u1", plan, "fake", None, None)
+        runner = runner_factory(wf, "orch_sess1")
+        await session_service.create_session(
+            app_name="orch_sess1", user_id="u1", session_id="sess1")
+        return await service._drive_until_quiescent(
+            runner, "sess1", "u1", plan, n2s,
+            types.Content(role="user", parts=[types.Part(text="run the plan")]),
+            model="fake", connectors=None, executor_prompt=None)
+
+    interrupts = asyncio.run(go())
+
+    assert interrupts == []
+    # The delegate was created AND executed — not left behind.
+    assert len(plan.steps) == 2, [s.id for s in plan.steps]
+    delegated = plan.steps[-1]
+    assert delegated.assignee_name == "Oussama"
+    assert delegated.status is not Status.PENDING, \
+        "the delegate step was orphaned — created but never run"
+    assert [s.status for s in plan.steps].count(Status.PENDING) == 0
 
 
 def test_delegate_survives_the_calling_steps_own_next_llm_turn(monkeypatch):

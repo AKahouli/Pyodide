@@ -106,6 +106,27 @@ describe('ConversationV2StreamService', () => {
     expect(pushed[1].data.role).toBe('assistant');
   });
 
+  it('persists and pushes app_build_progress events', async () => {
+    await service.startStream('u1', 's1', { message: 'build app' });
+
+    chat$.next({
+      type: 'app_build_progress',
+      payload: { event_id: 'p1', timestamp: 1, phase: 'creating_files', message: 'Creating files' },
+    } as ConversationV2Event);
+    await flush();
+
+    expect(eventStore.append).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ type: 'app_build_progress' }),
+    );
+    const pushed = gateway.sendToUser.mock.calls.map((c) => c[1]);
+    expect(pushed.some((e) => e.type === 'app_build_progress')).toBe(true);
+
+    chat$.next({ type: 'done', payload: { event_id: 'd1', timestamp: 2 } } as ConversationV2Event);
+    chat$.complete();
+    await flush();
+  });
+
   it('ignores heartbeat events — no persistence, no push, but still resets the idle timer', async () => {
     await service.startStream('u1', 's1', { message: 'hi' });
 

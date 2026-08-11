@@ -255,8 +255,19 @@ describe('PlaybookExecutionService', () => {
       isAvailable: true,
       runStep: jest.fn(),
       runStepStream: jest.fn(),
-      runPlaybookWorkflow: jest.fn(),
-      resumePlaybookWorkflow: jest.fn(),
+      // Default stream stub: executePlaybook fire-and-forgets runFullWorkflow. Without a
+      // cancelable stream, consumePlaybookStream used to arm an idle timer then throw on
+      // call.on, leaking a Timeout that later crashed CI with call.cancel on undefined.
+      runPlaybookWorkflow: jest.fn(() => {
+        const stream = new EventEmitter() as EventEmitter & { cancel: jest.Mock };
+        stream.cancel = jest.fn();
+        return stream;
+      }),
+      resumePlaybookWorkflow: jest.fn(() => {
+        const stream = new EventEmitter() as EventEmitter & { cancel: jest.Mock };
+        stream.cancel = jest.fn();
+        return stream;
+      }),
       resumeStep: jest.fn(),
       stopPlaybookWorkflow: jest.fn(),
       registerStream: jest.fn(),
@@ -435,7 +446,13 @@ describe('PlaybookExecutionService', () => {
     service = module.get<PlaybookExecutionService>(PlaybookExecutionService);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // executePlaybook fire-and-forgets runFullWorkflow; idle timers may be armed only after
+    // the test body returns. Drain microtasks first so clearAllTimers can catch them.
+    for (let i = 0; i < 40; i++) {
+      await Promise.resolve();
+    }
+    jest.clearAllTimers();
     jest.useRealTimers();
   });
 
@@ -3514,6 +3531,12 @@ describe('PlaybookExecutionService', () => {
       jest.useFakeTimers({ advanceTimers: true });
     });
 
+    afterEach(() => {
+      // End any open workflow streams so idle timers cannot outlive this describe.
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    });
+
     function createMockStream(): EventEmitter & { cancel: jest.Mock } {
       const stream = new EventEmitter() as EventEmitter & { cancel: jest.Mock };
       stream.cancel = jest.fn();
@@ -3547,6 +3570,9 @@ describe('PlaybookExecutionService', () => {
         'Workflow stream idle timeout',
         expect.objectContaining({ executionId: objectId('exec1').toString(), timeoutMs: 5000 }),
       );
+
+      mockStream.emit('error', new Error('Cancelled'));
+      await Promise.resolve();
     });
 
     it('should reset idle timeout on each data event', async () => {
@@ -3587,6 +3613,9 @@ describe('PlaybookExecutionService', () => {
 
       // NOW it should have cancelled
       expect(mockStream.cancel).toHaveBeenCalled();
+
+      mockStream.emit('error', new Error('Cancelled'));
+      await Promise.resolve();
     });
   });
 

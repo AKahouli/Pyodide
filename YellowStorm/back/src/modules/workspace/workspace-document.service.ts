@@ -344,11 +344,16 @@ export class WorkspaceDocumentService {
 
   /**
    * Generate a presigned read URL for a document by its path.
+   * Pass `allowExtensionless` for app-source objects like Dockerfile / LICENSE.
    */
-  async generateReadUrl(path: string): Promise<string> {
+  async generateReadUrl(
+    path: string,
+    options?: { allowExtensionless?: boolean },
+  ): Promise<string> {
     return this.documentService.generateSasUrl(path, {
       permissions: 'r',
       expiryMinutes: this.sasUrlExpiryMinutes,
+      allowExtensionless: options?.allowExtensionless,
     });
   }
 
@@ -1295,8 +1300,34 @@ export class WorkspaceDocumentService {
         continue;
       }
 
-      // Check if blob exists (skip for folders)
-      const exists = document.isFolder ? false : document.path ? await this.documentService.exists(document.path) : false;
+      // Check if blob exists (skip for folders). Ceph/S3 often returns a transient
+      // 403 Unknown on HeadObject right after a browser presigned PUT; do not fail
+      // the whole bulk complete (and skip auto-index) when that happens — the client
+      // already reported a successful upload for this session file.
+      let exists = false;
+      if (document.isFolder) {
+        exists = false;
+      } else if (document.path) {
+        try {
+          exists = await this.documentService.exists(document.path);
+        } catch (error) {
+          const httpStatus = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata
+            ?.httpStatusCode;
+          if (httpStatus === 403) {
+            this.logger.warn(
+              'HeadObject returned 403 during bulk complete; assuming object present after client PUT',
+              {
+                sessionId,
+                documentId: document._id,
+                path: document.path,
+              },
+            );
+            exists = true;
+          } else {
+            throw error;
+          }
+        }
+      }
 
       if (exists || document.isFolder) {
         // Mark as completed

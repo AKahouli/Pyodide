@@ -180,12 +180,14 @@ describe('PlaybookPromptsPage', () => {
       expect(screen.getByDisplayValue('Iterator')).toBeInTheDocument();
     });
 
+    // Null iteratorConfig is normalized to DEFAULT_ITERATOR_CONFIG in the draft.
     expect(screen.getByDisplayValue('{{items}}')).toBeInTheDocument();
 
-    const sourceInput = screen.getByDisplayValue('{{items}}');
-    fireEvent.change(sourceInput, { target: { value: '{{records}}' } });
-
     fireEvent.click(screen.getByRole('button', { name: /playbook\.templates\.actions\.saveTemplate/i }));
+
+    await waitFor(() => {
+      expect(vi.mocked(updatePlaybookNodeTemplate)).toHaveBeenCalled();
+    });
 
     const updateCall = vi.mocked(updatePlaybookNodeTemplate).mock.calls[0];
     expect(updateCall).toBeTruthy();
@@ -193,8 +195,9 @@ describe('PlaybookPromptsPage', () => {
     const payload = updateCall?.[1] as Record<string, unknown>;
     expect(payload.iteratorConfig).toEqual(
       expect.objectContaining({
-        source: '{{records}}',
+        source: '{{items}}',
         mode: 'item',
+        batchSize: 10,
         itemVariable: 'item',
         outputVariable: 'processed_items',
         errorStrategy: 'stop',

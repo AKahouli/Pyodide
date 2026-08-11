@@ -2,7 +2,9 @@
 
 import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.smart_rag.infrastructure.factories.llm_factory import LLMFactory
 
@@ -89,6 +91,31 @@ class TestLLMFactory:
 
         assert result == mock_llm
         assert mock_litellm.call_args.kwargs["temperature"] == 0.2
+
+    @pytest.mark.parametrize(
+        "factory_method",
+        [
+            "create_parallel_tool_calls_llm",
+            "create_no_parallel_tool_calls_llm",
+            "create_no_tool_calls_llm",
+        ],
+    )
+    def test_normalizes_kimi_temperature_on_every_factory_method(self, monkeypatch, factory_method):
+        """Live BadRequestError: "invalid temperature: only 1 is allowed for
+        this model ... Model Group=kimi-k3" -- kimi rejects any temperature
+        other than 1, same constraint as GPT-5. Covers all three factory
+        methods: each independently computes a normalized model_temperature
+        and must actually use it (regression: it used to be computed then
+        silently discarded in favor of the raw, unnormalized value)."""
+        mock_litellm = MagicMock()
+        _install_lite_llm_mock(monkeypatch, mock_litellm)
+        mock_llm = MagicMock()
+        mock_litellm.return_value = mock_llm
+
+        result = getattr(LLMFactory(), factory_method)("kimi-k3", temperature=0.0)
+
+        assert result == mock_llm
+        assert mock_litellm.call_args.kwargs["temperature"] == 1
 
     def test_get_supported_models(self):
         """Test getting list of supported models."""

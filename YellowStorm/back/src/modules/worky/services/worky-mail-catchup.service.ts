@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { Model } from 'mongoose';
 import { LoggerService } from '@modules/logger';
 import { PlaybookFlowMailGraphClientService } from '@modules/playbook-flow/services/playbook-flow-mail-graph-client.service';
@@ -10,12 +10,23 @@ import {
 } from '../schemas/worky-mail-subscription.schema';
 import { WorkyOrchestratorGrpcClientService } from './worky-orchestrator.grpc-client.service';
 import { WorkyTurnContextService } from './worky-turn-context.service';
-import { extractMailToken } from './worky-mail-token';
+import { extractMailToken, fullReplyText } from './worky-mail-token';
 
 /** How far back to look when a mailbox has never been swept. */
 const COLD_START_LOOKBACK_MS = 60 * 60 * 1000;
 /** Overlap each sweep slightly rather than trusting clocks to agree. */
 const OVERLAP_MS = 2 * 60 * 1000;
+/**
+ * Every 2 minutes. @nestjs/schedule has no EVERY_2_MINUTES constant, so this is
+ * spelled out in its 6-field form to match the CronExpression values.
+ *
+ * This is the floor on how late a reply can be whenever push is unavailable —
+ * no Graph subscription, or one pointing at another environment. It also closes
+ * the window on a reply that arrives before its step has parked: that
+ * notification is spent (the wait is not claimable yet, by design) and only a
+ * re-offer picks it up.
+ */
+const SWEEP_CRON = '0 */2 * * * *';
 
 /**
  * Re-offers routing tokens found in recent mail, for the replies the webhook
@@ -46,9 +57,10 @@ export class WorkyMailCatchupService {
     this.logger.setContext('WorkyMailCatchup');
   }
 
-  @Cron(CronExpression.EVERY_5_MINUTES)
+  @Cron(SWEEP_CRON)
   async sweep(): Promise<void> {
     const subscriptions = await this.subscriptionModel.find().lean().exec();
+    this.logger.log('Mail catch-up sweep tick', { mailboxes: subscriptions.length });
     for (const subscription of subscriptions) {
       try {
         await this.sweepMailbox(subscription);
@@ -110,10 +122,10 @@ export class WorkyMailCatchupService {
 
       const result = await this.orchestrator.deliverMailReply({
         token,
-        replyBody:
-          ((message.bodyPreview as string) ||
-            ((message.body as Record<string, unknown>)?.content as string) ||
-            '').trim(),
+        replyBody: fullReplyText(
+          message.body as { contentType?: string; content?: string },
+          message.bodyPreview as string,
+        ),
         replyFrom:
           ((message.from as Record<string, any>)?.emailAddress?.address as string) ?? '',
         agents: context.agents,

@@ -16,6 +16,8 @@ import { DEFAULT_PAGE_LIMIT, validateFiles } from '../utils';
 import { useDocumentSelection } from '../hooks';
 import { useAllowedUploadExtensions } from '../hooks/useAllowedUploadExtensions';
 import { useDocumentDragDrop } from '../hooks/useDocumentDragDrop';
+import { readAutoIndexationValue } from '../hooks/useAutoIndexation';
+import { readDeepSearchIndexationValue } from '../hooks/useDeepSearchIndexation';
 import { FloatingActionBar } from './FloatingActionBar';
 import DocumentRow from './DocumentRow';
 import { DocumentCard } from './DocumentRow/DocumentCard';
@@ -78,7 +80,7 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
     const { validFiles } = validateFiles(files);
     if (validFiles.length > 0) {
       addFilesToQueue(validFiles, selectedWorkspace.id, currentUploadFolderId ?? undefined);
-      startUpload();
+      void startUpload(readDeepSearchIndexationValue(), readAutoIndexationValue());
     }
 
     e.target.value = '';

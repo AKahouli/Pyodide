@@ -369,6 +369,26 @@ export interface BulkUploadSession {
   createdAt: string;
 }
 
+/** Response from POST .../bulk/:sessionId/complete */
+export interface BulkUploadCompleteResponse {
+  sessionId: string;
+  status: 'success' | 'partial' | 'failed';
+  totalFiles: number;
+  successful: {
+    count: number;
+    documents: WorkspaceDocument[];
+  };
+  failed: {
+    count: number;
+    files: Array<{
+      index: number;
+      filename: string;
+      error: string;
+    }>;
+  };
+  duration: number;
+}
+
 export interface InitiateBulkUploadRequest {
   files: UploadUrlRequest[];
 }

@@ -1,12 +1,39 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import type { AgentEvent, ConversationV2PointerSummary } from './types';
+import type { AgentEvent, ConversationV2PointerSummary, FilesTreeNode, AppBuildProgress } from './types';
 import { conversationV2Api } from './api';
 import type { DeployStatus } from './api';
 import {
   readSelectedModelForSession,
   writeSelectedModelForSession,
 } from './selectedModelStorage';
+import {
+  emptySlice,
+  reduceSession,
+  deriveTitle,
+  deriveApplicationComponent,
+  deriveAppBuildProgress,
+  dedupeReplayEvents,
+  currentTurnStartIndex,
+  findIndexFrom,
+} from './utils/session-reducer';
+
+export interface ApplicationComponentState {
+  url: string;
+  title: string;
+  cephPath?: string;
+  filesTree?: FilesTreeNode | null;
+  fileCount?: number;
+  revision: string;
+}
+
+export interface SelectedConnectorRepoState {
+  connectorId: string;
+  connectorName: string;
+  repoId: string;
+  repoName: string;
+  repoUrl?: string;
+}
 
 interface State {
   sessionId: string | null;
@@ -15,10 +42,11 @@ interface State {
   streaming: boolean;
   streamError: string | null;
   rightPanelMode: 'closed' | 'tool' | 'app';
-  /** Latest agent-pushed application component (embeddable web app / preview)
-   *  for the current session, shown in the right panel when rightPanelMode is
-   *  'app'. Null until an `application_component` event lands. */
-  applicationComponent: { url: string; title: string } | null;
+  /** Latest agent-pushed application component for the current session.
+   *  Nodepod boots from cephPath + filesTree; `url` is retained for deploy links. */
+  applicationComponent: ApplicationComponentState | null;
+  /** Latest agent-reported build phase before sources / preview are ready. */
+  appBuildProgress: AppBuildProgress | null;
   /** Files-in-this-conversation sheet open state. Independent of the right
    *  panel so the user can keep the tool detail open while browsing files. */
   filesSheetOpen: boolean;
@@ -31,6 +59,11 @@ interface State {
   deployStatus: DeployStatus;
   deployedUrl: string | null;
   lastDeployedAt: string | null;
+  /**
+   * Which surface the app panel shows: Nodepod preview vs the live deployed URL.
+   * Nodepod stays mounted/warm in the background when this is `'deployed'`.
+   */
+  appViewMode: 'nodepod' | 'deployed';
   selectedToolCallId: string | null;
   /** Latest non-message tool emitted by the agent — the "live" target the panel follows. */
   liveToolCallId: string | null;
@@ -49,13 +82,7 @@ interface State {
   /** Highest sequence number seen from live SSE events. Used to discard stale/duplicate events. */
   lastSequence: number;
   /** Selected connector repository for the current session. */
-  selectedConnectorRepo: {
-    connectorId: string;
-    connectorName: string;
-    repoId: string;
-    repoName: string;
-    repoUrl?: string;
-  } | null;
+  selectedConnectorRepo: SelectedConnectorRepoState | null;
   /** Skill IDs selected for the conversation; sent with every message. */
   selectedSkillIds: string[];
   /** Connector IDs selected for the conversation; sent with every message. */
@@ -83,6 +110,20 @@ export interface SessionSlice {
   title: string | null;
   streaming: boolean;
   streamError: string | null;
+  rightPanelMode: State['rightPanelMode'];
+  applicationComponent: State['applicationComponent'];
+  appBuildProgress: State['appBuildProgress'];
+  filesSheetOpen: boolean;
+  systemWorkspaceId: string | null;
+  workspaceIds: string[];
+  deployStatus: DeployStatus;
+  deployedUrl: string | null;
+  lastDeployedAt: string | null;
+  appViewMode: State['appViewMode'];
+  selectedToolCallId: string | null;
+  selectedConnectorRepo: State['selectedConnectorRepo'];
+  selectedSkillIds: string[];
+  selectedConnectorIds: string[];
 }
 
 interface Actions {
@@ -139,6 +180,8 @@ interface Actions {
     deployedUrl: string | null;
     lastDeployedAt?: string | null;
   }) => void;
+  /** Switch between Nodepod preview and the deployed iframe (manual toggle). */
+  setAppViewMode: (mode: 'nodepod' | 'deployed') => void;
   /** Publish/deploy the current session's app. Flips to 'deploying' immediately,
    *  then 'deployed' (+ url) or 'error' once the backend responds. */
   deploy: () => Promise<void>;
@@ -167,6 +210,7 @@ const initial: State = {
   streamError: null,
   rightPanelMode: 'closed',
   applicationComponent: null,
+  appBuildProgress: null,
   filesSheetOpen: false,
   selectedToolCallId: null,
   liveToolCallId: null,
@@ -178,133 +222,41 @@ const initial: State = {
   deployStatus: 'idle',
   deployedUrl: null,
   lastDeployedAt: null,
+  appViewMode: 'nodepod',
       typewriterSessionId: null,
       typewriterName: null,
       selectedConnectorRepo: null,
       selectedSkillIds: [],
       selectedConnectorIds: [],
-      streamingStateCache: new Map<string, SessionSlice>(),
+  streamingStateCache: new Map<string, SessionSlice>(),
 };
 
 const sessionReconciliations = new Map<string, Promise<void>>();
 
-/** Empty slice for a not-yet-seen background session. */
-function emptySlice(): SessionSlice {
-  return {
-    events: [],
-    lastSequence: 0,
-    liveToolCallId: null,
-    liveAssistantIds: new Set<string>(),
-    title: null,
-    streaming: true,
-    streamError: null,
-  };
-}
-
-/**
- * Pure reducer applying a single agent event to a session slice. Mirrors the
- * data transforms in `handleEvent` (upsert tool/step/message by id, replace
- * plan, track liveToolCallId/liveAssistantIds, terminal flags) WITHOUT the
- * current-session UI side effects (panel auto-open, typewriter). Used for
- * background sessions in `streamingStateCache`.
- */
-function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSlice {
-  const incomingSeq = (event as { sequence?: number }).sequence;
-  if (typeof incomingSeq === 'number' && incomingSeq <= slice.lastSequence) {
-    return slice; // stale or duplicate
-  }
-  const lastSequence =
-    typeof incomingSeq === 'number'
-      ? Math.max(slice.lastSequence, incomingSeq)
-      : slice.lastSequence;
-  const base: SessionSlice = { ...slice, lastSequence };
-
-  switch (event.type) {
-    case 'title':
-      return { ...base, title: event.title };
-    case 'done':
-      return { ...base, streaming: false, liveToolCallId: null };
-    case 'error':
-      return { ...base, streamError: event.error, streaming: false, liveToolCallId: null };
-    case 'tool': {
-      const turnStart = currentTurnStartIndex(slice.events);
-      const idx = findIndexFrom(
-        slice.events,
-        turnStart,
-        (e) => e.type === 'tool' && e.tool_call_id === event.tool_call_id,
-      );
-      const isMessageTool = (event.name || '').toLowerCase() === 'message';
-      const liveToolCallId = !isMessageTool ? event.tool_call_id : slice.liveToolCallId;
-      let events: AgentEvent[];
-      if (idx >= 0) {
-        events = slice.events.slice();
-        events[idx] = event;
-      } else {
-        events = [...slice.events, event];
-      }
-      return { ...base, events, liveToolCallId };
-    }
-    case 'step': {
-      const turnStart = currentTurnStartIndex(slice.events);
-      const idx = findIndexFrom(
-        slice.events,
-        turnStart,
-        (e) => e.type === 'step' && e.id === event.id,
-      );
-      let events: AgentEvent[];
-      if (idx >= 0) {
-        events = slice.events.slice();
-        events[idx] = event;
-      } else {
-        events = [...slice.events, event];
-      }
-      return { ...base, events };
-    }
-    case 'plan': {
-      const filtered = slice.events.filter((e) => e.type !== 'plan');
-      return { ...base, events: [...filtered, event] };
-    }
-    case 'wait':
-      // The agent is paused waiting for the user's reply — re-enable the input
-      // (same as 'done'), otherwise the composer stays stuck in streaming.
-      return { ...base, streaming: false, liveToolCallId: null };
-    case 'message': {
-      const liveAssistantIds =
-        event.role === 'assistant'
-          ? new Set(slice.liveAssistantIds).add(event.event_id)
-          : slice.liveAssistantIds;
-      const existingIdx = slice.events.findIndex(
-        (e) => e.type === 'message' && e.event_id === event.event_id,
-      );
-      let events: AgentEvent[];
-      if (existingIdx >= 0) {
-        events = slice.events.slice();
-        events[existingIdx] = event;
-      } else {
-        events = [...slice.events, event];
-      }
-      return { ...base, events, liveAssistantIds };
-    }
-    default:
-      return { ...base, events: [...slice.events, event] };
-  }
-}
-
-/** Snapshot the current top-level session state into a slice (for caching). */
-function sliceFromState(s: State): SessionSlice {
-  return {
-    events: s.events,
-    lastSequence: s.lastSequence,
-    liveToolCallId: s.liveToolCallId,
-    liveAssistantIds: s.liveAssistantIds,
-    title: s.title,
-    streaming: s.streaming,
-    streamError: s.streamError,
-  };
-}
-
-/** The view fields reset when entering a session with no cached slice. */
-function freshViewState(): Partial<State> {
+function createSessionViewDefaults(): Pick<
+  State,
+  | 'events'
+  | 'title'
+  | 'streaming'
+  | 'streamError'
+  | 'lastSequence'
+  | 'liveToolCallId'
+  | 'liveAssistantIds'
+  | 'selectedToolCallId'
+  | 'rightPanelMode'
+  | 'applicationComponent'
+  | 'appBuildProgress'
+  | 'filesSheetOpen'
+  | 'systemWorkspaceId'
+  | 'workspaceIds'
+  | 'deployStatus'
+  | 'deployedUrl'
+  | 'lastDeployedAt'
+  | 'appViewMode'
+  | 'selectedConnectorRepo'
+  | 'selectedSkillIds'
+  | 'selectedConnectorIds'
+> {
   return {
     events: [],
     title: null,
@@ -316,15 +268,51 @@ function freshViewState(): Partial<State> {
     selectedToolCallId: null,
     rightPanelMode: 'closed',
     applicationComponent: null,
+    appBuildProgress: null,
     filesSheetOpen: false,
     systemWorkspaceId: null,
     workspaceIds: [],
     deployStatus: 'idle',
     deployedUrl: null,
     lastDeployedAt: null,
+    appViewMode: 'nodepod',
+    selectedConnectorRepo: null,
+    selectedSkillIds: [],
+    selectedConnectorIds: [],
+  };
+}
+
+function sliceFromState(s: State): SessionSlice {
+  return {
+    events: s.events,
+    lastSequence: s.lastSequence,
+    liveToolCallId: s.liveToolCallId,
+    liveAssistantIds: s.liveAssistantIds,
+    title: s.title,
+    streaming: s.streaming,
+    streamError: s.streamError,
+    rightPanelMode: s.rightPanelMode,
+    applicationComponent: s.applicationComponent,
+    appBuildProgress: s.appBuildProgress,
+    filesSheetOpen: s.filesSheetOpen,
+    systemWorkspaceId: s.systemWorkspaceId,
+    workspaceIds: s.workspaceIds,
+    deployStatus: s.deployStatus,
+    deployedUrl: s.deployedUrl,
+    lastDeployedAt: s.lastDeployedAt,
+    appViewMode: s.appViewMode,
+    selectedToolCallId: s.selectedToolCallId,
+    selectedConnectorRepo: s.selectedConnectorRepo,
+    selectedSkillIds: s.selectedSkillIds,
+    selectedConnectorIds: s.selectedConnectorIds,
+  };
+}
+
+function freshViewState(): Partial<State> {
+  return {
+    ...createSessionViewDefaults(),
     typewriterSessionId: null,
     typewriterName: null,
-    selectedConnectorRepo: null,
   };
 }
 
@@ -344,7 +332,7 @@ export const useConversationV2Store = create<State & Actions>()(
         let cache = s.streamingStateCache;
         // Stash the outgoing session's live state if it is still streaming, so
         // returning to it is instant and nothing streamed off-screen is lost.
-        if (s.sessionId && s.sessionId !== id && s.streaming) {
+        if (s.sessionId && s.sessionId !== id) {
           cache = new Map(cache);
           cache.set(s.sessionId, sliceFromState(s));
         }
@@ -352,7 +340,6 @@ export const useConversationV2Store = create<State & Actions>()(
         if (cached) {
           const newCache = new Map(cache);
           newCache.delete(id);
-          const applicationComponent = deriveApplicationComponent(cached.events);
           set(
             {
               ...freshViewState(),
@@ -364,8 +351,20 @@ export const useConversationV2Store = create<State & Actions>()(
               title: cached.title,
               streaming: cached.streaming,
               streamError: cached.streamError,
-              applicationComponent,
-              ...(applicationComponent ? { rightPanelMode: 'app' as const } : {}),
+              rightPanelMode: cached.rightPanelMode,
+              applicationComponent: cached.applicationComponent,
+              appBuildProgress: cached.appBuildProgress,
+              filesSheetOpen: cached.filesSheetOpen,
+              systemWorkspaceId: cached.systemWorkspaceId,
+              workspaceIds: cached.workspaceIds,
+              deployStatus: cached.deployStatus,
+              deployedUrl: cached.deployedUrl,
+              lastDeployedAt: cached.lastDeployedAt,
+              appViewMode: cached.appViewMode,
+              selectedToolCallId: cached.selectedToolCallId,
+              selectedConnectorRepo: cached.selectedConnectorRepo,
+              selectedSkillIds: cached.selectedSkillIds,
+              selectedConnectorIds: cached.selectedConnectorIds,
               streamingStateCache: newCache,
             },
             false,
@@ -385,6 +384,26 @@ export const useConversationV2Store = create<State & Actions>()(
       sendMessage: async (message, model) => {
         const sessionId = get().sessionId;
         if (!sessionId) return;
+
+        // Follow-up turns (2nd user message and later): leave the deployed
+        // iframe and show Nodepod preview so the user watches the rebuild.
+        const priorUserMessages = get().events.filter(
+          (e) => e.type === 'message' && (e as { role?: string }).role === 'user',
+        ).length;
+        const isFollowUp = priorUserMessages >= 1;
+        if (isFollowUp && get().appViewMode === 'deployed') {
+          set(
+            {
+              appViewMode: 'nodepod' as const,
+              ...(get().applicationComponent || get().appBuildProgress
+                ? { rightPanelMode: 'app' as const }
+                : {}),
+            },
+            false,
+            'sendMessage/switch-to-preview',
+          );
+        }
+
         // Optimistically echo the user message under a client id; the backend
         // persists the same id and re-emits it over the pipe, where the
         // `message` upsert replaces this echo instead of duplicating it.
@@ -515,7 +534,11 @@ export const useConversationV2Store = create<State & Actions>()(
         return reconciliation;
       },
       openToolPanel: (toolCallId) =>
-        set({ rightPanelMode: 'tool', selectedToolCallId: toolCallId }, false, 'openToolPanel'),
+        set(
+          { rightPanelMode: 'tool', selectedToolCallId: toolCallId, filesSheetOpen: false },
+          false,
+          'openToolPanel',
+        ),
       setRightPanelView: (view) =>
         set(
           { rightPanelMode: view === 'preview' ? 'app' : 'tool' },
@@ -542,13 +565,19 @@ export const useConversationV2Store = create<State & Actions>()(
             deployStatus,
             deployedUrl,
             ...(lastDeployedAt !== undefined ? { lastDeployedAt } : {}),
-            ...(deployedUrl && s.applicationComponent
-              ? { applicationComponent: { ...s.applicationComponent, url: deployedUrl } }
+            // Opening a session that already has a live URL → show deployed iframe.
+            // Nodepod preview keeps booting in the background for instant switch-back.
+            ...(deployStatus === 'deployed' &&
+            deployedUrl &&
+            s.appViewMode === 'nodepod' &&
+            !s.deployedUrl
+              ? { appViewMode: 'deployed' as const }
               : {}),
           }),
           false,
           'setDeployState',
         ),
+      setAppViewMode: (mode) => set({ appViewMode: mode }, false, 'setAppViewMode'),
       deploy: async () => {
         const id = get().sessionId;
         if (!id) return;
@@ -558,11 +587,18 @@ export const useConversationV2Store = create<State & Actions>()(
             id,
             get().applicationComponent?.title,
           );
-          get().setDeployState({
-            deployStatus: r.deployStatus,
-            deployedUrl: r.deployedUrl,
-            lastDeployedAt: r.lastDeployedAt,
-          });
+          set(
+            {
+              deployStatus: r.deployStatus,
+              deployedUrl: r.deployedUrl,
+              lastDeployedAt: r.lastDeployedAt,
+              ...(r.deployStatus === 'deployed' && r.deployedUrl
+                ? { appViewMode: 'deployed' as const }
+                : {}),
+            },
+            false,
+            'deploy/done',
+          );
         } catch (err) {
           set({ deployStatus: 'error' }, false, 'deploy/error');
           throw err;
@@ -618,14 +654,20 @@ export const useConversationV2Store = create<State & Actions>()(
         await useConversationV2PointersStore.getState().remove(id);
       },
       setFilesSheetOpen: (open) =>
-        set({ filesSheetOpen: open }, false, `setFilesSheetOpen/${open}`),
+        set(
+          {
+            filesSheetOpen: open,
+            ...(open ? { rightPanelMode: get().rightPanelMode } : {}),
+          },
+          false,
+          `setFilesSheetOpen/${open}`,
+        ),
       replayEvents: (events) => {
-        const pushedApplication = deriveApplicationComponent(events);
-        const deployedUrl = get().deployedUrl;
-        const applicationComponent =
-          pushedApplication && deployedUrl
-            ? { ...pushedApplication, url: deployedUrl }
-            : pushedApplication;
+        const applicationComponent = deriveApplicationComponent(
+          events,
+          get().applicationComponent,
+        );
+        const appBuildProgress = deriveAppBuildProgress(events, get().appBuildProgress);
         set(
           {
             events: dedupeReplayEvents(events),
@@ -633,8 +675,10 @@ export const useConversationV2Store = create<State & Actions>()(
             liveToolCallId: null,
             liveAssistantIds: new Set<string>(),
             applicationComponent,
-            // Re-surface the app viewer on reload when the session has one.
-            ...(applicationComponent ? { rightPanelMode: 'app' as const } : {}),
+            appBuildProgress: applicationComponent ? null : appBuildProgress,
+            ...(applicationComponent || appBuildProgress
+              ? { rightPanelMode: 'app' as const }
+              : {}),
             lastSequence: events.reduce(
               (max, e) =>
                 typeof (e as { sequence?: number }).sequence === 'number'
@@ -792,13 +836,40 @@ export const useConversationV2Store = create<State & Actions>()(
               case 'wait':
                 // Agent paused for the user's reply — re-enable the composer.
                 return withSeq({ streaming: false, liveToolCallId: null });
-              case 'application_component':
-                // Agent pushed an embeddable app/preview: surface it in the side
-                // panel immediately. Keep selectedToolCallId so the Code tab of
-                // the Code/Preview toggle stays available alongside the preview.
+              case 'app_build_progress': {
+                const progress: AppBuildProgress = {
+                  phase: event.phase,
+                  message: event.message,
+                  revision: event.event_id,
+                };
+                console.log('[Nodepod] [sse:app_build_progress]', progress);
                 return withSeq({
                   events: [...state.events, event],
-                  applicationComponent: { url: event.url, title: event.title ?? '' },
+                  appBuildProgress: progress,
+                  rightPanelMode: 'app',
+                });
+              }
+              case 'application_component':
+                // Agent pushed an embeddable app: boot Nodepod from Ceph sources.
+                console.log('[Nodepod] [sse:application_component]', {
+                  event_id: event.event_id,
+                  url: event.url,
+                  title: event.title,
+                  ceph_path: event.ceph_path,
+                  file_count: event.file_count,
+                  hasFilesTree: !!event.files_tree,
+                });
+                return withSeq({
+                  events: [...state.events, event],
+                  applicationComponent: {
+                    url: event.url,
+                    title: event.title ?? '',
+                    cephPath: event.ceph_path,
+                    filesTree: event.files_tree ?? null,
+                    fileCount: event.file_count,
+                    revision: event.event_id,
+                  },
+                  appBuildProgress: null,
                   rightPanelMode: 'app',
                 });
               case 'message': {
@@ -834,123 +905,6 @@ export const useConversationV2Store = create<State & Actions>()(
     { name: 'conversation-v2' },
   ),
 );
-
-function deriveTitle(events: AgentEvent[]): string | undefined {
-  const last = [...events].reverse().find((e) => e.type === 'title');
-  return last?.type === 'title' ? last.title : undefined;
-}
-
-/**
- * The application component to show in the side panel is whatever the agent
- * pushed last. Used on replay/session-switch to restore the app viewer from
- * persisted history (the live path sets it directly in handleEvent).
- */
-function deriveApplicationComponent(
-  events: AgentEvent[],
-): { url: string; title: string } | null {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const ev = events[i];
-    if (ev.type === 'application_component') {
-      return { url: ev.url, title: ev.title ?? '' };
-    }
-  }
-  return null;
-}
-
-/**
- * Returns the index immediately after the last "turn boundary" — a `user`
- * message. Tool/step upserts only consider events at or after this index so
- * the next turn never collides with the previous one when ids are reused.
- */
-function currentTurnStartIndex(events: AgentEvent[]): number {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const ev = events[i];
-    if (ev.type === 'message' && ev.role === 'user') return i;
-  }
-  return 0;
-}
-
-function findIndexFrom<T>(arr: T[], start: number, pred: (t: T) => boolean): number {
-  for (let i = start; i < arr.length; i++) if (pred(arr[i])) return i;
-  return -1;
-}
-
-/**
- * Server-side history can contain multiple records per logical entity (a tool
- * call yields `calling` + `called`, a step yields `running` + `completed`, the
- * plan is re-emitted every step). The live SSE path upserts those in place;
- * replayEvents must apply the same collapse so the rendered list has one row
- * per tool_call_id / step.id and only the latest plan, otherwise React renders
- * duplicate keys and the conversation appears to repeat itself.
- */
-function dedupeReplayEvents(events: AgentEvent[]): AgentEvent[] {
-  // Indices are scoped to the current "turn". A turn ends at every user
-  // message and at every done/error marker so that the next turn can reuse
-  // step ids (which Manus does — every task starts numbering at "1") without
-  // colliding with the previous turn's bookkeeping.
-  let toolIndex = new Map<string, number>();
-  let stepIndex = new Map<string, number>();
-  let latestPlanIdx: number | null = null;
-  const result: AgentEvent[] = [];
-
-  const resetTurn = () => {
-    toolIndex = new Map();
-    stepIndex = new Map();
-    latestPlanIdx = null;
-  };
-
-  for (const ev of events) {
-    if (ev.type === 'title' || ev.type === 'wait') continue;
-
-    if (ev.type === 'done' || ev.type === 'error') {
-      result.push(ev);
-      resetTurn();
-      continue;
-    }
-
-    if (ev.type === 'message') {
-      if (ev.role === 'user') resetTurn();
-      result.push(ev);
-      continue;
-    }
-
-    if (ev.type === 'tool') {
-      const existing = toolIndex.get(ev.tool_call_id);
-      if (existing !== undefined) {
-        result[existing] = ev;
-      } else {
-        toolIndex.set(ev.tool_call_id, result.length);
-        result.push(ev);
-      }
-      continue;
-    }
-
-    if (ev.type === 'step') {
-      const existing = stepIndex.get(ev.id);
-      if (existing !== undefined) {
-        result[existing] = ev;
-      } else {
-        stepIndex.set(ev.id, result.length);
-        result.push(ev);
-      }
-      continue;
-    }
-
-    if (ev.type === 'plan') {
-      if (latestPlanIdx !== null) {
-        result[latestPlanIdx] = ev;
-      } else {
-        latestPlanIdx = result.length;
-        result.push(ev);
-      }
-      continue;
-    }
-
-    result.push(ev);
-  }
-
-  return result;
-}
 
 export const DEFAULT_V2_LIMIT = 20;
 

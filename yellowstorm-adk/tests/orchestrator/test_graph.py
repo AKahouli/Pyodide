@@ -16,6 +16,7 @@ from collections import Counter
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from google.adk.runners import InMemoryRunner
+from google.adk.workflow import BaseNode
 from google.genai import types
 
 from src.companion_ai.plan import Plan, Step
@@ -99,11 +100,112 @@ def test_node_name_sanitizes_digit_leading_ids():
     assert graph.node_name("a-b.c").isidentifier()
 
 
+def _node_names(wf):
+    names = set()
+    for a, b in wf.edges:
+        names.add(a.name)
+        names.add(b.name)
+    return names
+
+
+def test_plan_done_sink_present_even_with_a_single_terminal():
+    # Regression: plan_done used to be gated on len(terminals) > 1, so a
+    # single-terminal plan built no such node. Since to_workflow() is rebuilt
+    # fresh every turn from the CURRENT plan.steps, and create_task can append
+    # steps that shrink a prior turn's multi-terminal set down to one, that
+    # gate let "plan_done" silently vanish from a later turn's graph even
+    # though an earlier turn's session events already recorded its
+    # completion — permanently stalling ADK's replay barrier, which waits
+    # forever for a "plan_done@N" event that will never come (RuntimeError:
+    # "Replay divergence detected ..."). plan_done's own output isn't
+    # consumed anywhere, so it must always be built, regardless of terminal
+    # count.
+    plan = Plan(title="t", goal="g", steps=[Step(id="a")])
+    wf = graph.to_workflow(plan, lambda s, n: BaseNode(name=n))
+    assert "plan_done" in _node_names(wf)
+
+
+def test_plan_done_sink_stays_present_after_terminals_shrink_across_turns():
+    # Same regression, reproduced across two turns: turn 1 has two
+    # independent terminals (a, b) -> plan_done joins both. Turn 2 (as
+    # create_task/a consolidating step would do) adds c depending on BOTH a
+    # and b, shrinking the terminal set to just {c}. plan_done must still be
+    # present in turn 2's freshly rebuilt graph, under the same name, so ADK's
+    # replay barrier can find a matching completion for the "plan_done@N" key
+    # it already recorded from turn 1.
+    def factory(step, name):
+        return BaseNode(name=name)
+
+    plan_turn1 = Plan(title="t", goal="g", steps=[Step(id="a"), Step(id="b")])
+    wf1 = graph.to_workflow(plan_turn1, factory, name="p")
+    assert "plan_done" in _node_names(wf1)
+
+    plan_turn2 = Plan(title="t", goal="g", steps=[
+        Step(id="a"), Step(id="b"), Step(id="c", depends_on=["a", "b"]),
+    ])
+    wf2 = graph.to_workflow(plan_turn2, factory, name="p")
+    assert "plan_done" in _node_names(wf2)
+
+
+def test_plan_done_never_enters_the_replay_barrier():
+    """The plan_done sink must emit NO terminal event.
+
+    Root cause of a live crash: ADK's replay barrier pins every node that
+    emits a terminal event (anything with a non-None `output`, per
+    is_terminal_event) to a fixed chronological slot in the session's
+    recorded history. A stock JoinNode always yields Event(output=...), so
+    the sink got pinned to whatever slot it first fired at.
+
+    That deadlocks a growing plan: to_workflow is rebuilt each turn, and
+    create_task/delegate_to_human_agent append steps mid-session. Seen live
+    — a wave-2 step fanned out into two wave-3 children (one dead-ending
+    into the sink, one continuing into wave 4), pushing the sink
+    structurally LATER while history insisted it had already completed
+    EARLIER (recovered_sequence ['s1@1', 'plan_done@1', 'n_70cd...@1'] —
+    plan_done pinned at index 1, ahead of a node it must now follow). The
+    barrier then waited forever: RuntimeError("Replay divergence detected:
+    Timed out waiting for sequence key ... to be unblocked.").
+
+    Emitting no output keeps the sink out of the barrier, so its position
+    floats freely as the plan grows. Real steps must STILL be pinned.
+    """
+    from google.adk.workflow.utils._rehydration_utils import is_terminal_event
+
+    runs, when, t0 = Counter(), {}, [time.monotonic()]
+    # Two independent terminals, so the sink genuinely fans in.
+    plan = Plan(title="t", goal="g", steps=[Step(id="a"), Step(id="b")])
+    wf = graph.to_workflow(plan, _fn_factory(runs, when, t0, 0.0),
+                           name="test_plan", max_concurrency=8)
+
+    async def go():
+        runner = InMemoryRunner(node=wf, app_name="t")
+        await runner.session_service.create_session(app_name="t", user_id="u", session_id="s")
+        async for _ in runner.run_async(
+            user_id="u", session_id="s",
+            new_message=types.Content(role="user", parts=[types.Part(text="go")])):
+            pass
+        return await runner.session_service.get_session(
+            app_name="t", user_id="u", session_id="s")
+
+    session = asyncio.run(go())
+    pinned = [e.node_info.path for e in session.events
+              if is_terminal_event(e) and e.node_info and e.node_info.path]
+
+    assert not any("plan_done" in p for p in pinned), \
+        f"plan_done must not be pinned in the replay barrier, got {pinned}"
+    # The real steps still are — otherwise replay ordering breaks entirely.
+    assert any(p.endswith("a@1") for p in pinned), pinned
+    assert any(p.endswith("b@1") for p in pinned), pinned
+    assert dict(runs) == {"a": 1, "b": 1}, dict(runs)
+
+
 if __name__ == "__main__":
     test_node_name_sanitizes_digit_leading_ids(); print("ok  node_name sanitize")
     test_independent_steps_all_start_together(); print("ok  independent parallel")
     test_linear_chain_is_ordered(); print("ok  linear ordered")
     test_diamond_runs_each_step_once_with_parallel_and_join(); print("ok  diamond once + join")
+    test_plan_done_sink_present_even_with_a_single_terminal(); print("ok  plan_done present, single terminal")
+    test_plan_done_sink_stays_present_after_terminals_shrink_across_turns(); print("ok  plan_done stable across shrinking terminals")
     try:
         test_invalid_dag_rejected_before_build(); print("ok  invalid dag rejected")
     except ImportError:

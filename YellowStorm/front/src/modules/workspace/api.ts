@@ -24,6 +24,7 @@ import type {
   UploadUrlResponse,
   InitiateBulkUploadRequest,
   BulkUploadSession,
+  BulkUploadCompleteResponse,
   CreateFolderData,
   RenameFolderData,
   ShareWorkspaceDto,
@@ -477,9 +478,11 @@ export async function uploadSmallFile(
   if (deepSearch) {
     formData.append('deepSearch', 'true');
   }
-  // Only send the flag when explicitly disabling — absence means "index" (back-compat).
+  // Always send when the caller decided — absence still means "index" (back-compat).
   if (autoIndex === false) {
     formData.append('autoIndex', 'false');
+  } else if (autoIndex === true) {
+    formData.append('autoIndex', 'true');
   }
 
   const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
@@ -550,18 +553,18 @@ export async function completeBulkUpload(
   sessionId: string,
   deepSearch?: boolean,
   autoIndex?: boolean,
-): Promise<BulkUploadSession> {
-  const params =
-    deepSearch || autoIndex === false
-      ? {
-          ...(deepSearch ? { deepSearch: 'true' } : {}),
-          ...(autoIndex === false ? { autoIndex: 'false' } : {}),
-        }
-      : undefined;
-  const response = await apiClient.post<ApiResponse<BulkUploadSession>>(
+): Promise<BulkUploadCompleteResponse> {
+  const params: Record<string, string> = {};
+  if (deepSearch) params.deepSearch = 'true';
+  // Send the caller's decision explicitly so Network/devtools can verify the flag.
+  // Absence still means "index" on the backend (autoIndex !== 'false').
+  if (autoIndex === false) params.autoIndex = 'false';
+  else if (autoIndex === true) params.autoIndex = 'true';
+
+  const response = await apiClient.post<ApiResponse<BulkUploadCompleteResponse>>(
     API_ENDPOINTS.workspaceDocuments.bulkComplete(workspaceId, sessionId),
     undefined,
-    { params },
+    { params: Object.keys(params).length > 0 ? params : undefined },
   );
   return response.data.data;
 }
@@ -580,8 +583,8 @@ export async function getUploadSession(
 }
 
 /**
- * Upload a file directly to Azure using presigned URL
- * Returns progress updates via callback
+ * Upload a file directly to object storage using a presigned PUT URL.
+ * Returns progress updates via callback.
  */
 export function uploadToAzure(
   uploadUrl: string,
@@ -649,7 +652,8 @@ export function uploadToAzure(
     });
 
     xhr.open('PUT', uploadUrl);
-    xhr.setRequestHeader('x-ms-blob-type', 'BlockBlob');
+    // Ceph/S3 presigned PUT — do not send Azure-only headers (x-ms-blob-type);
+    // they are ignored or can confuse S3-compatible stores after migration.
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     xhr.send(file);
   });
