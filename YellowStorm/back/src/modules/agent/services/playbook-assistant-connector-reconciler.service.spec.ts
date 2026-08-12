@@ -11,8 +11,9 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
     };
     const agentRepository = {
       findActiveDefaultsByType: jest.fn().mockResolvedValue([sourceAgent]),
-      findBySlug: jest.fn().mockResolvedValue(null),
-      create: jest.fn().mockResolvedValue(undefined),
+      upsertDefaultSystemAgent: jest.fn()
+        .mockImplementationOnce(async (input) => ({ _id: input.id }))
+        .mockImplementationOnce(async (input) => ({ _id: input.id })),
       updateById: jest.fn().mockResolvedValue(undefined),
       pullConnectorFromAllExcept: jest.fn().mockResolvedValue(undefined),
       findIdsByInstructionLike: jest.fn().mockResolvedValue([]),
@@ -21,11 +22,11 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
       reconcilePlaybookMcpSystemConnector: jest.fn().mockResolvedValue({ id: connectorId }),
       inspectMcp: jest.fn().mockResolvedValue({
         tools: [
-          'open_playbook_context', 'get_playbook_summary', 'get_task_details', 'get_task_dependencies', 'validate_playbook',
+          'search_playbooks', 'open_playbook_context', 'get_playbook_summary', 'get_task_details', 'get_task_dependencies', 'validate_playbook',
           'start_playbook_construction', 'get_playbook_construction', 'cancel_playbook_construction', 'analyze_task_optimization',
           'start_advisor_remediation_construction', 'analyze_workflow_optimization', 'start_workflow_optimization', 'create_playbook',
           'clone_playbook', 'revert_playbook_construction', 'start_playbook_execution', 'list_playbook_executions',
-          'get_playbook_execution', 'cancel_playbook_execution', 'trace_replay_playbook_execution', 'reexecute_playbook_execution',
+          'list_recent_executions', 'get_playbook_execution', 'get_execution_diagnostics', 'cancel_playbook_execution', 'trace_replay_playbook_execution', 'reexecute_playbook_execution',
           'run_playbook_from_step', 'delete_playbook_execution',
         ].map((name) => ({ name })),
       }),
@@ -40,7 +41,9 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
       agentRepository as any,
       {
         findAllActive: jest.fn().mockResolvedValue([{ id: new Types.ObjectId().toString(), slug: 'mono-agent' }]),
-        findOrCreateBySlug: jest.fn().mockResolvedValue({ id: new Types.ObjectId().toString(), slug: 'playbook_assistant' }),
+        findOrCreateBySlug: jest.fn()
+          .mockResolvedValueOnce({ id: new Types.ObjectId().toString(), slug: 'playbook_assistant' })
+          .mockResolvedValueOnce({ id: new Types.ObjectId().toString(), slug: 'platform_copilot' }),
       } as any,
       connectorService as any,
     );
@@ -52,7 +55,7 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
       'http://playbook-mcp:8025/mcp',
     );
     // No existing dedicated agent -> created fresh with the system connector attached exclusively.
-    expect(agentRepository.create).toHaveBeenCalledWith(
+    expect(agentRepository.upsertDefaultSystemAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         slug: 'playbook-ai-workflow-assistant',
         isDefault: true,
@@ -62,14 +65,16 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
       }),
     );
     // The connector is pulled from every other agent (all but the dedicated one).
-    expect(agentRepository.pullConnectorFromAllExcept).toHaveBeenCalledWith(connectorId, expect.any(String));
+    expect(agentRepository.pullConnectorFromAllExcept).toHaveBeenCalledWith(
+      connectorId,
+      expect.arrayContaining([expect.any(String), expect.any(String)]),
+    );
   });
 
   it('fails closed when more than one default mono-agent exists', async () => {
     const agentRepository = {
       findActiveDefaultsByType: jest.fn().mockResolvedValue([{}, {}]),
-      findBySlug: jest.fn(),
-      create: jest.fn(),
+      upsertDefaultSystemAgent: jest.fn(),
     };
     const connectorService = { reconcilePlaybookMcpSystemConnector: jest.fn(), inspectMcp: jest.fn() };
     const service = new PlaybookAssistantConnectorReconcilerService(
@@ -82,7 +87,6 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
     await service.onModuleInit();
 
     expect(connectorService.reconcilePlaybookMcpSystemConnector).not.toHaveBeenCalled();
-    expect(agentRepository.findBySlug).not.toHaveBeenCalled();
-    expect(agentRepository.create).not.toHaveBeenCalled();
+    expect(agentRepository.upsertDefaultSystemAgent).not.toHaveBeenCalled();
   });
 });

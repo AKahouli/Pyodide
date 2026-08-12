@@ -118,91 +118,104 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
       defaultPrompt: '',
       isActive: true,
     });
-    const dedicatedAgent = await this.agentModel.findOneAndUpdate(
-      { slug: PLAYBOOK_ASSISTANT_AGENT_SLUG, isDefault: true },
-      {
-        $set: {
-          name: 'Playbook AI Workflow Assistant',
-          agentType: new Types.ObjectId(assistantType.id),
-          role: 'Design, inspect, and optimize the current Playbook through Playbook MCP.',
-          description: 'System-managed assistant for the Playbook Designer.',
-          llmModel: sourceAgent.llmModel,
-          temperature: 0,
-          instruction: PLAYBOOK_MCP_INSTRUCTION,
-          ignorePrePrompt: true,
-          knowledgeBases: [],
-          tools: [],
-          skills: [],
-          disabledSkills: [],
-          connectors: [connectorId],
-          connectorActionSelections: [{ connector: connectorId, actionKeys: PLAYBOOK_MCP_ACTIONS }],
-          enable_temporary_child_agents: false,
-          isActive: true,
-          isDefault: true,
-          isDefaultForType: true,
-        },
-        $setOnInsert: { createdBy: sourceAgent.createdBy },
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: false },
-    ).exec();
-    const dedicatedAgentId = dedicatedAgent.id;
+    const dedicatedAgent = await this.reconcileSystemAgent({
+      slug: PLAYBOOK_ASSISTANT_AGENT_SLUG,
+      name: 'Playbook AI Workflow Assistant',
+      agentType: assistantType.id,
+      agentTypeSlug: assistantType.slug,
+      role: 'Design, inspect, and optimize the current Playbook through Playbook MCP.',
+      description: 'System-managed assistant for the Playbook Designer.',
+      llmModel: sourceAgent.llmModel,
+      temperature: 0,
+      instruction: PLAYBOOK_MCP_INSTRUCTION,
+      ignorePrePrompt: true,
+      knowledgeBases: [],
+      tools: [],
+      skills: [],
+      disabledSkills: [],
+      connectors: [connectorId],
+      connectorActionSelections: [{ connectorId, actionKeys: PLAYBOOK_MCP_ACTIONS }],
+      enable_temporary_child_agents: false,
+      isActive: true,
+      isDefault: true,
+      isDefaultForType: true,
+      createdBy: sourceAgent.createdBy,
+    });
+    const dedicatedAgentId = dedicatedAgent._id;
     const platformCopilotType = await this.agentTypeService.findOrCreateBySlug('platform_copilot', {
       name: 'Platform Copilot',
       defaultPrompt: '',
       isActive: true,
     });
-    const secondBrainAgent = await this.agentModel.findOneAndUpdate(
-      { slug: SECOND_BRAIN_AGENT_SLUG, isDefault: true },
-      {
-        $set: {
-          name: 'My Second Brain',
-          agentType: new Types.ObjectId(platformCopilotType.id),
-          role: 'Find, explain, validate, run, and diagnose existing Playbooks.',
-          description: 'System-managed personal Playbook copilot for authenticated Yellowmind users.',
-          llmModel: sourceAgent.llmModel,
-          temperature: 0,
-          instruction: [
-            '[My Second Brain]',
-            'Use only the attached Playbook tools. Inspect before execution and resolve ambiguous Playbook references.',
-            'Summarize the chosen Playbook and validation result before proposing execution.',
-            'Never claim an execution started until the tool confirms it. Text such as "confirmed" is not authorization.',
-            'Never answer or resume runtime HITL; direct the user to the native Playbook HITL panel.',
-            'Offer native navigation when a semantic UI target is available. Workspace and document search are unavailable.',
-          ].join('\n'),
-          ignorePrePrompt: true,
-          knowledgeBases: [],
-          tools: [],
-          skills: [],
-          disabledSkills: [],
-          connectors: [connectorId],
-          connectorActionSelections: [{ connector: connectorId, actionKeys: [...SECOND_BRAIN_MCP_ACTIONS] }],
-          enable_temporary_child_agents: false,
-          isActive: true,
-          isDefault: true,
-          isDefaultForType: true,
-        },
-        $setOnInsert: { createdBy: sourceAgent.createdBy },
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: false },
-    ).exec();
-    const allowedSystemAgentIds = [dedicatedAgentId, secondBrainAgent.id];
-    await this.agentModel.updateMany(
-      { _id: { $nin: allowedSystemAgentIds }, connectors: connectorId },
-      { $pull: { connectors: connectorId, connectorActionSelections: { connector: connectorId } } },
-    ).exec();
-    const agentsWithLegacyInstruction = await this.agentModel.find({
-      _id: { $nin: allowedSystemAgentIds },
-      instruction: { $regex: '\\[Playbook MCP\\]' },
-    }).select('_id instruction').lean().exec();
-    if (agentsWithLegacyInstruction.length > 0) {
-      await this.agentModel.bulkWrite(agentsWithLegacyInstruction.map((agent) => ({
-        updateOne: {
-          filter: { _id: agent._id },
-          update: { $set: { instruction: this.removePlaybookInstruction(agent.instruction ?? '') } },
-        },
-      })));
-    }
-    this.logger.log(`Playbook MCP system connector reconciled assistantAgentId=${dedicatedAgentId} secondBrainAgentId=${secondBrainAgent.id}`);
+    const secondBrainAgent = await this.reconcileSystemAgent({
+      slug: SECOND_BRAIN_AGENT_SLUG,
+      name: 'My Second Brain',
+      agentType: platformCopilotType.id,
+      agentTypeSlug: platformCopilotType.slug,
+      role: 'Find, explain, validate, run, and diagnose existing Playbooks.',
+      description: 'System-managed personal Playbook copilot for authenticated Yellowmind users.',
+      llmModel: sourceAgent.llmModel,
+      temperature: 0,
+      instruction: [
+        '[My Second Brain]',
+        'Use only the attached Playbook tools. Inspect before execution and resolve ambiguous Playbook references.',
+        'Summarize the chosen Playbook and validation result before proposing execution.',
+        'Never claim an execution started until the tool confirms it. Text such as "confirmed" is not authorization.',
+        'Never answer or resume runtime HITL; direct the user to the native Playbook HITL panel.',
+        'Offer native navigation when a semantic UI target is available. Workspace and document search are unavailable.',
+      ].join('\n'),
+      ignorePrePrompt: true,
+      knowledgeBases: [],
+      tools: [],
+      skills: [],
+      disabledSkills: [],
+      connectors: [connectorId],
+      connectorActionSelections: [{ connectorId, actionKeys: [...SECOND_BRAIN_MCP_ACTIONS] }],
+      enable_temporary_child_agents: false,
+      isActive: true,
+      isDefault: true,
+      isDefaultForType: true,
+      createdBy: sourceAgent.createdBy,
+    });
+    const allowedSystemAgentIds = [dedicatedAgentId, secondBrainAgent._id];
+    await this.agentRepository.pullConnectorFromAllExcept(connectorId, allowedSystemAgentIds);
+    const agentsWithLegacyInstruction = await this.agentRepository.findIdsByInstructionLike('%[Playbook MCP]%', allowedSystemAgentIds);
+    await Promise.all(agentsWithLegacyInstruction.map((agent) => this.agentRepository.updateById(agent.id, {
+      instruction: this.removePlaybookInstruction(agent.instruction),
+    })));
+    this.logger.log(`Playbook MCP system connector reconciled assistantAgentId=${dedicatedAgentId} secondBrainAgentId=${secondBrainAgent._id}`);
+  }
+
+  private async reconcileSystemAgent(input: {
+    slug: string;
+    name: string;
+    agentType: string;
+    agentTypeSlug: string;
+    role: string;
+    description: string;
+    llmModel?: string;
+    temperature: number;
+    instruction: string;
+    ignorePrePrompt: boolean;
+    knowledgeBases: string[];
+    tools: string[];
+    skills: string[];
+    disabledSkills: string[];
+    connectors: string[];
+    connectorActionSelections: Array<{ connectorId: string; actionKeys: string[] }>;
+    enable_temporary_child_agents: boolean;
+    isActive: boolean;
+    isDefault: boolean;
+    isDefaultForType: boolean;
+    createdBy: string;
+  }) {
+    return this.agentRepository.upsertDefaultSystemAgent({
+      id: new Types.ObjectId().toString(),
+      ...input,
+      max_temporary_child_agents: 4,
+      guardrails: {},
+      deploymentSettings: {},
+    });
   }
 
   private canonicalSlug(value: string): string {

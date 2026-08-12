@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, inArray, or, desc, asc, ilike, sql, count } from 'drizzle-orm';
+import { and, eq, inArray, notInArray, or, desc, asc, ilike, sql, count } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '../../postgres/postgres.constants';
 import * as schema from '../../postgres/schema';
@@ -102,6 +102,64 @@ export class AgentRepository {
     const rec = await this.findById(input.id);
     if (!rec) throw new Error(`AgentRepository.create: row ${input.id} not found after insert`);
     return rec;
+  }
+
+  async upsertDefaultSystemAgent(input: CreateAgentInput): Promise<AgentRecord> {
+    const id = await this.db.transaction(async (tx: Tx) => {
+      await tx.insert(agents).values({
+        id: input.id,
+        name: input.name,
+        slug: input.slug,
+        role: input.role,
+        description: input.description,
+        temperature: input.temperature,
+        llmModel: input.llmModel ?? null,
+        email: input.email ?? null,
+        instruction: input.instruction,
+        ignorePrePrompt: input.ignorePrePrompt,
+        agentTypeId: input.agentType,
+        agentTypeSlug: input.agentTypeSlug,
+        enableTemporaryChildAgents: input.enable_temporary_child_agents,
+        maxTemporaryChildAgents: input.max_temporary_child_agents,
+        isDefault: true,
+        isActive: input.isActive,
+        isDefaultForType: input.isDefaultForType,
+        createdBy: input.createdBy,
+        guardrails: input.guardrails,
+        deploymentSettings: input.deploymentSettings,
+      }).onConflictDoNothing();
+
+      const matches = await tx.select({ id: agents.id }).from(agents)
+        .where(and(eq(agents.slug, input.slug), eq(agents.isDefault, true))).limit(1);
+      if (matches.length === 0) {
+        throw new Error(`AgentRepository.upsertDefaultSystemAgent: slug ${input.slug} conflicts with another agent identity`);
+      }
+      const canonicalId = trim24(matches[0].id);
+      await tx.update(agents).set({
+        name: input.name,
+        role: input.role,
+        description: input.description,
+        temperature: input.temperature,
+        llmModel: input.llmModel ?? null,
+        email: input.email ?? null,
+        instruction: input.instruction,
+        ignorePrePrompt: input.ignorePrePrompt,
+        agentTypeId: input.agentType,
+        agentTypeSlug: input.agentTypeSlug,
+        enableTemporaryChildAgents: input.enable_temporary_child_agents,
+        maxTemporaryChildAgents: input.max_temporary_child_agents,
+        isActive: input.isActive,
+        isDefaultForType: input.isDefaultForType,
+        guardrails: input.guardrails,
+        deploymentSettings: input.deploymentSettings,
+        updatedAt: new Date(),
+      }).where(eq(agents.id, canonicalId));
+      await this.replaceJunction(tx, canonicalId, input);
+      return canonicalId;
+    });
+    const record = await this.findById(id);
+    if (!record) throw new Error(`AgentRepository.upsertDefaultSystemAgent: row ${id} not found after upsert`);
+    return record;
   }
 
   async findById(id: string): Promise<AgentRecord | null> {
@@ -276,10 +334,10 @@ export class AgentRepository {
     return this.assemble(rows);
   }
 
-  async pullConnectorFromAllExcept(connectorId: string, exceptAgentId: string): Promise<void> {
+  async pullConnectorFromAllExcept(connectorId: string, exceptAgentIds: string[]): Promise<void> {
     await this.db.transaction(async (tx: Tx) => {
-      await tx.delete(agentConnectors).where(and(eq(agentConnectors.connectorId, connectorId), sql`${agentConnectors.agentId} <> ${exceptAgentId}`));
-      await tx.delete(agentConnectorActions).where(and(eq(agentConnectorActions.connectorId, connectorId), sql`${agentConnectorActions.agentId} <> ${exceptAgentId}`));
+      await tx.delete(agentConnectors).where(and(eq(agentConnectors.connectorId, connectorId), notInArray(agentConnectors.agentId, exceptAgentIds)));
+      await tx.delete(agentConnectorActions).where(and(eq(agentConnectorActions.connectorId, connectorId), notInArray(agentConnectorActions.agentId, exceptAgentIds)));
     });
   }
 
@@ -289,9 +347,9 @@ export class AgentRepository {
     await this.db.execute(sql`UPDATE agents SET role_embedding = ${literal}::halfvec WHERE id = ${id}`);
   }
 
-  async findIdsByInstructionLike(pattern: string, exceptAgentId: string): Promise<Array<{ id: string; instruction: string }>> {
+  async findIdsByInstructionLike(pattern: string, exceptAgentIds: string[]): Promise<Array<{ id: string; instruction: string }>> {
     const rows = await this.db.select({ id: agents.id, instruction: agents.instruction }).from(agents)
-      .where(and(ilike(agents.instruction, pattern), sql`${agents.id} <> ${exceptAgentId}`));
+      .where(and(ilike(agents.instruction, pattern), notInArray(agents.id, exceptAgentIds)));
     return rows.map((r) => ({ id: trim24(r.id), instruction: r.instruction }));
   }
 

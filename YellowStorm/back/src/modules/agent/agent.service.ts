@@ -1463,18 +1463,13 @@ export class AgentService {
   }
 
   async listPlaybookPlannerAgentOptions(): Promise<PlaybookPlannerAgentOption[]> {
-    const agents = await this.agentModel
-      .find({ isDefault: true, isActive: true })
-      .select('_id name description llmModel')
-      .populate('agentType', 'slug isActive')
-      .sort({ name: 1 })
-      .lean()
-      .exec();
+    const plannerType = await this.agentTypeService.findBySlug(PLAYBOOK_PLANNER_AGENT_TYPE_SLUG);
+    if (!plannerType) return [];
+    const agents = await this.agentRepository.findActiveDefaults();
     return agents.flatMap((agent) => {
-      const agentType = agent.agentType as unknown as { slug?: string; isActive?: boolean } | undefined;
       const model = agent.llmModel?.trim();
-      return agentType?.slug === PLAYBOOK_PLANNER_AGENT_TYPE_SLUG && agentType.isActive && model ? [{
-        id: agent._id.toString(),
+      return agent.agentType === plannerType.id && model ? [{
+        id: agent._id,
         name: agent.name,
         description: agent.description || undefined,
         model,
@@ -1486,34 +1481,28 @@ export class AgentService {
     if (!Types.ObjectId.isValid(agentId)) {
       throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is invalid');
     }
-    const agent = await this.agentModel
-      .findOne({ _id: new Types.ObjectId(agentId), isDefault: true, isActive: true })
-      .select('_id agentType llmModel temperature instruction updatedAt')
-      .populate('agentType', 'slug isActive')
-      .lean()
-      .exec();
-    const agentType = agent?.agentType as unknown as {
-      _id?: { toString(): string };
-      slug?: string;
-      isActive?: boolean;
-    } | undefined;
-    const model = agent?.llmModel?.trim();
+    const [record, plannerType] = await Promise.all([
+      this.agentRepository.findById(agentId),
+      this.agentTypeService.findBySlug(PLAYBOOK_PLANNER_AGENT_TYPE_SLUG),
+    ]);
+    const model = record?.llmModel?.trim();
     if (
-      !agent
-      || agentType?.slug !== PLAYBOOK_PLANNER_AGENT_TYPE_SLUG
-      || !agentType.isActive
+      !record
+      || !record.isDefault
+      || !record.isActive
+      || record.agentType !== plannerType?.id
       || !model
     ) {
       throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is unavailable or has no model configured');
     }
     return {
-      agentTypeId: agentType?._id?.toString() ?? '',
-      agentTypeSlug: agentType.slug,
-      agentId: agent._id.toString(),
-      agentRevision: agent.updatedAt?.toISOString() ?? agent._id.toString(),
+      agentTypeId: plannerType.id,
+      agentTypeSlug: plannerType.slug,
+      agentId: record._id,
+      agentRevision: record.updatedAt?.toISOString() ?? record._id,
       model,
-      temperature: agent.temperature,
-      instruction: agent.instruction,
+      temperature: record.temperature,
+      instruction: record.instruction,
     };
   }
 
@@ -1534,17 +1523,13 @@ export class AgentService {
     if (!Types.ObjectId.isValid(agentId)) {
       throw new BadRequestException(ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE, 'The selected Playbook Suggestor agent is invalid');
     }
-    const agent = await this.agentModel
-      .findOne({ _id: new Types.ObjectId(agentId), isDefault: true, isActive: true })
-      .select('_id agentType llmModel temperature instruction updatedAt')
-      .populate('agentType', 'slug isActive')
-      .lean()
-      .exec();
+    const record = await this.agentRepository.findById(agentId);
+    const agent = record?.isDefault && record.isActive ? await this.hydrateOne(record) : null;
     const agentType = agent?.agentType as unknown as {
       _id?: { toString(): string };
       slug?: string;
     } | undefined;
-    const model = agent?.llmModel?.trim();
+    const model = (agent?.llmModel as string | undefined)?.trim();
     if (
       !agent
       || !model
@@ -1554,11 +1539,11 @@ export class AgentService {
     return {
       agentTypeId: agentType?._id?.toString() ?? '',
       agentTypeSlug: agentType?.slug ?? '',
-      agentId: agent._id.toString(),
-      agentRevision: agent.updatedAt?.toISOString() ?? agent._id.toString(),
+      agentId: agent._id as string,
+      agentRevision: (agent.updatedAt as Date | undefined)?.toISOString() ?? agent._id as string,
       model,
-      temperature: agent.temperature,
-      instruction: agent.instruction,
+      temperature: agent.temperature as number,
+      instruction: agent.instruction as string,
     };
   }
 
