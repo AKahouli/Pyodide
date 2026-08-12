@@ -137,6 +137,26 @@ describe('RuntimeBindingService', () => {
     expect(result.bindingId).toBe('arb_concurrent1');
   });
 
+  it('ensureForSession creates a binding without rotating the live MCP token', async () => {
+    findOneAndUpdate.mockReturnValueOnce(
+      resolvesTo({
+        bindingId: 'arb_aabbccddeeff',
+        workspaceId: 'sess_1',
+        latestRevisionId: 'rev_5',
+      }),
+    );
+
+    const binding = await svc.ensureForSession('sess_1', 'user_1');
+
+    expect(binding.latestRevisionId).toBe('rev_5');
+
+    const [, update] = findOneAndUpdate.mock.calls[0];
+    expect(update.$set.mcpTokenHash).toBeUndefined();
+    // Placeholder hash matches no token, so the binding stays unusable over MCP
+    // until APImanus actually binds it.
+    expect(update.$setOnInsert.mcpTokenHash).toBe('');
+  });
+
   it('propagates non-duplicate persistence errors', async () => {
     findOneAndUpdate.mockReturnValueOnce(rejectsWith(new Error('mongo down')));
 

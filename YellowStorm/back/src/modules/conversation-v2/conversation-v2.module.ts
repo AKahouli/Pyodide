@@ -19,6 +19,7 @@ import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-sessi
 import { ConversationV2SessionAccessService } from './services/conversation-v2-session-access.service';
 import { SseAuthGuard } from '@modules/conversation/guards/stream-auth.guard';
 import { AuthModule } from '@modules/auth/auth.module';
+import { AppRuntimeModule } from '@modules/app-runtime/app-runtime.module';
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
 import { ChatCompletionModule } from '@modules/chat-completion';
 import { ModelsModule } from '@modules/models/models.module';
@@ -47,6 +48,7 @@ import {
     JwtModule.register({}),
     forwardRef(() => AuthModule),
     forwardRef(() => WorkspaceModule),
+    AppRuntimeModule,
     UserModule,
     NotificationsModule,
     ChatCompletionModule,

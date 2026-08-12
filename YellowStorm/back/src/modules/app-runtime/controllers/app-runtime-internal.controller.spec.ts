@@ -2,14 +2,18 @@ import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { IS_PUBLIC_KEY } from '@modules/auth/decorators/public.decorator';
 import { InternalServiceGuard } from '@modules/auth/guards/internal-service.guard';
 import { SKIP_RESPONSE_WRAP_KEY } from '@modules/response/decorators/skip-response-wrap.decorator';
+import { AppRuntimeErrorCodes } from '../constants/app-runtime-error-codes';
 import { RuntimeBindingService } from '../services/runtime-binding.service';
+import { RuntimeToolDispatcherService } from '../services/runtime-tool-dispatcher.service';
 import { AppRuntimeInternalController } from './app-runtime-internal.controller';
 
 describe('AppRuntimeInternalController', () => {
   const bind = jest.fn();
-  const controller = new AppRuntimeInternalController({
-    bind,
-  } as unknown as RuntimeBindingService);
+  const invoke = jest.fn();
+  const controller = new AppRuntimeInternalController(
+    { bind } as unknown as RuntimeBindingService,
+    { invoke } as unknown as RuntimeToolDispatcherService,
+  );
 
   beforeEach(() => jest.clearAllMocks());
 
@@ -54,5 +58,48 @@ describe('AppRuntimeInternalController', () => {
       'mcpUrl',
       'workspaceId',
     ]);
+  });
+
+  it('forwards a tool invocation to the dispatcher', async () => {
+    invoke.mockResolvedValueOnce({
+      ok: true,
+      toolCallId: 'tc_1',
+      result: { path: 'a.ts' },
+    });
+
+    const dto = {
+      workspaceId: 'sess_1',
+      toolCallId: 'tc_1',
+      tool: 'read',
+      arguments: { path: 'a.ts' },
+    };
+    await expect(controller.invokeTool(dto)).resolves.toEqual({
+      ok: true,
+      toolCallId: 'tc_1',
+      result: { path: 'a.ts' },
+    });
+    expect(invoke).toHaveBeenCalledWith(dto);
+  });
+
+  it('returns a typed offline error in the body rather than as an HTTP status', async () => {
+    invoke.mockResolvedValueOnce({
+      ok: false,
+      toolCallId: 'tc_1',
+      error: {
+        code: AppRuntimeErrorCodes.RUNTIME_OFFLINE,
+        message: 'No browser runtime is connected for this workspace',
+      },
+    });
+
+    const result = await controller.invokeTool({
+      workspaceId: 'sess_1',
+      toolCallId: 'tc_1',
+      tool: 'read',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: AppRuntimeErrorCodes.RUNTIME_OFFLINE },
+    });
   });
 });

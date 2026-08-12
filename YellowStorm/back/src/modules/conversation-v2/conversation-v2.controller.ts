@@ -48,6 +48,8 @@ import { ConversationV2EventStoreService, PersistedEventRow } from './services/c
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 import { normalizeAppSourceCephPrefix } from './utils/normalize-app-source-ceph-prefix';
+import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
+import type { RuntimeTicketResult } from '@modules/app-runtime/types/app-runtime-protocol';
 
 interface AuthUser { id: string; }
 
@@ -73,6 +75,7 @@ export class ConversationV2Controller {
     private readonly config: ConfigService,
     private readonly deployment: ConversationV2DeployService,
     private readonly appShares: ConversationV2AppShareService,
+    private readonly runtimeTickets: RuntimeTicketService,
   ) {}
 
   @Post('sessions')
@@ -264,6 +267,24 @@ export class ConversationV2Controller {
     const items = await this.eventStore.listSince(id, since, limit);
     const nextSince = items.length > 0 ? items[items.length - 1].sequence : since;
     return { items, nextSince };
+  }
+
+  /**
+   * Hands the browser a one-shot credential for the `/app-runtime` socket. The
+   * MCP token stays server-side: the browser only ever sees this ticket.
+   */
+  @Post('sessions/:id/runtime-ticket')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_WRITE)
+  issueRuntimeTicket(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+  ): Promise<RuntimeTicketResult> {
+    return this.runtimeTickets.issue({
+      conversationSessionId: id,
+      userId: user.id,
+    });
   }
 
   @Get('sessions/:id/workspace-documents')

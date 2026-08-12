@@ -9,6 +9,17 @@ export default registerAs('appRuntime', () => ({
   mcpUrl:
     process.env.APP_RUNTIME_MCP_URL ||
     'http://127.0.0.1:8000/api/v1/opencode/runtime-mcp',
-  // Consumed by the browser runtime ticket endpoint (not issued yet).
   ticketTtlMs: parseInt(process.env.APP_RUNTIME_TICKET_TTL_MS || '60000', 10),
+  /** A runtime without a heartbeat within this window is treated as offline. */
+  heartbeatTimeoutMs: parseInt(
+    process.env.APP_RUNTIME_HEARTBEAT_TIMEOUT_MS || '45000',
+    10,
+  ),
+  /** Matches the default `timeoutMs` of the APImanus `run` tool input. */
+  toolTimeoutMs: parseInt(process.env.APP_RUNTIME_TOOL_TIMEOUT_MS || '180000', 10),
+  /** How long a mutation may wait for the workspace lock before giving up. */
+  mutationWaitMs: parseInt(
+    process.env.APP_RUNTIME_MUTATION_WAIT_MS || '30000',
+    10,
+  ),
 }));

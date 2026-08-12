@@ -18,6 +18,9 @@ import { ConversationV2AppShareService } from './services/conversation-v2-app-sh
 import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-session-access.guard';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
 import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
+import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
+import { CONVERSATION_V2_SESSION_PERMISSION_KEY } from './decorators/require-conversation-session-permission.decorator';
+import { ConversationV2SessionPermissions } from './constants/conversation-v2-session-permissions';
 
 describe('ConversationV2Controller', () => {
   let controller: ConversationV2Controller;
@@ -99,6 +102,7 @@ describe('ConversationV2Controller', () => {
 
   const mockConfig = { get: jest.fn().mockReturnValue(52428800) };
   const mockDeployment = { deploy: jest.fn() };
+  const mockRuntimeTickets = { issue: jest.fn() };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -115,6 +119,7 @@ describe('ConversationV2Controller', () => {
         { provide: EmailService, useValue: mockEmail },
         { provide: ConversationV2DeployService, useValue: mockDeployment },
         { provide: ConversationV2AppShareService, useValue: mockAppShares },
+        { provide: RuntimeTicketService, useValue: mockRuntimeTickets },
       ],
     })
       .overrideGuard(ConversationV2SessionAccessGuard)
@@ -134,6 +139,7 @@ describe('ConversationV2Controller', () => {
       ...Object.values(mockEventStore),
       ...Object.values(mockDeployment),
       ...Object.values(mockAppShares),
+      ...Object.values(mockRuntimeTickets),
     ].forEach((fn) => (fn as jest.Mock).mockReset?.());
     mockConfig.get.mockReturnValue(52428800);
     mockAppShares.listSharedWithUser.mockResolvedValue([]);
@@ -493,5 +499,39 @@ describe('ConversationV2Controller', () => {
     expect(err).toBeInstanceOf(ConflictException);
     expect((err as ConflictException).getStatus()).toBe(409);
     expect((err as ConflictException).getResponse()).toMatchObject({ code: 'VM_UNAVAILABLE' });
+  });
+
+  // --- POST /sessions/:id/runtime-ticket ---
+
+  it('POST /sessions/:id/runtime-ticket returns a browser ticket and never the MCP token', async () => {
+    mockRuntimeTickets.issue.mockResolvedValueOnce({
+      runtimeSessionId: 'rts_0011223344556677',
+      ticket: 'one-shot-ticket',
+      workspaceId: 'sess_1',
+      revisionId: 'rev_0',
+      expiresAt: '2026-01-01T00:01:00.000Z',
+    });
+
+    const result = await controller.issueRuntimeTicket({ id: 'u1' }, 'sess_1');
+
+    expect(mockRuntimeTickets.issue).toHaveBeenCalledWith({
+      conversationSessionId: 'sess_1',
+      userId: 'u1',
+    });
+    expect(Object.keys(result).sort()).toEqual([
+      'expiresAt',
+      'revisionId',
+      'runtimeSessionId',
+      'ticket',
+      'workspaceId',
+    ]);
+  });
+
+  it('POST /sessions/:id/runtime-ticket requires the session write permission', () => {
+    const permission = Reflect.getMetadata(
+      CONVERSATION_V2_SESSION_PERMISSION_KEY,
+      ConversationV2Controller.prototype.issueRuntimeTicket,
+    );
+    expect(permission).toBe(ConversationV2SessionPermissions.SESSION_WRITE);
   });
 });
