@@ -283,6 +283,16 @@ export class AgentRepository {
     });
   }
 
+  /** Remove a connector (and its action selections) from every agent except the given ids. */
+  async pullConnectorFromAgentsExcept(connectorId: string, exceptAgentIds: string[]): Promise<void> {
+    await this.db.transaction(async (tx: Tx) => {
+      const connConds = [eq(agentConnectors.connectorId, connectorId), ...exceptAgentIds.map((id) => sql`${agentConnectors.agentId} <> ${id}`)];
+      const actConds = [eq(agentConnectorActions.connectorId, connectorId), ...exceptAgentIds.map((id) => sql`${agentConnectorActions.agentId} <> ${id}`)];
+      await tx.delete(agentConnectors).where(and(...connConds));
+      await tx.delete(agentConnectorActions).where(and(...actConds));
+    });
+  }
+
   /** Store the role embedding (pgvector halfvec) for an agent. */
   async setRoleEmbedding(id: string, embedding: number[]): Promise<void> {
     const literal = `[${embedding.join(',')}]`;
