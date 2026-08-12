@@ -242,6 +242,13 @@ export function VoiceSettingsSheet({
           </Section>
 
           <Section title={t('voiceSettings.section.behaviour')}>
+            <Row label={t('voiceSettings.realtime')} hint={t('voiceSettings.realtimeHint')}>
+              <Switch
+                checked={s.realtimeVoice}
+                onCheckedChange={set('realtimeVoice')}
+                data-testid="voice-realtime-toggle"
+              />
+            </Row>
             <Row
               label={t('voiceSettings.bargeIn')}
               hint={s.echoCancellation ? t('voiceSettings.bargeInHint') : t('voiceSettings.bargeInBlocked')}

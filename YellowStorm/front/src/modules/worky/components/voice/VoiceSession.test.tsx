@@ -6,14 +6,23 @@ vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (k: string) => k, language: 'en', ready: true }),
 }));
 
-const vs = vi.hoisted(() => ({ start: vi.fn(), stop: vi.fn(), state: { current: 'listening' as string } }));
-vi.mock('../../voice/useVoiceSession', () => ({
-  useVoiceSession: () => ({
-    state: vs.state.current,
+// Start/stop-on-open now lives in useWorkyVoiceSession (tested separately); the
+// sheet just renders the session state and closes on End.
+vi.mock('../../voice/useWorkyVoiceSession', () => ({
+  useWorkyVoiceSession: () => ({
+    state: 'listening',
     transcript: { you: 'hi there' },
-    start: vs.start,
-    stop: vs.stop,
-    mute: vs.stop,
+    level: 0,
+    muted: false,
+    error: null,
+    start: vi.fn(),
+    stop: vi.fn(),
+    toggleMute: vi.fn(),
+    submitTurn: vi.fn(),
+    cancelTurn: vi.fn(),
+    beginTake: vi.fn(),
+    interrupt: vi.fn(),
+    usingRealtime: true,
   }),
 }));
 
@@ -21,21 +30,18 @@ import { VoiceSession } from './VoiceSession';
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vs.state.current = 'listening';
 });
 
 describe('VoiceSession', () => {
-  it('starts on open and shows the listening state', () => {
+  it('shows the listening state', () => {
     render(<VoiceSession streamId="s1" open onOpenChange={() => {}} />);
-    expect(vs.start).toHaveBeenCalled();
     expect(screen.getByText('voice.listening')).toBeTruthy();
   });
 
-  it('End stops the session and closes', async () => {
+  it('End closes the sheet', async () => {
     const onOpenChange = vi.fn();
     render(<VoiceSession streamId="s1" open onOpenChange={onOpenChange} />);
     await userEvent.click(screen.getByLabelText('voice.end'));
-    expect(vs.stop).toHaveBeenCalled();
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });

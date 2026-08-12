@@ -42,6 +42,8 @@ export interface WorkyVoiceSettings {
 
   // --- Behaviour ---
   turnMode: WorkyTurnMode;
+  /** Use the realtime Gemini Live concierge instead of the legacy STT/TTS loop. */
+  realtimeVoice: boolean;
   /** Let speech interrupt the agent mid-reply. Requires echo cancellation. */
   bargeIn: boolean;
   /** Re-open the mic automatically once the agent finishes speaking. */
@@ -79,6 +81,7 @@ export const VOICE_DEFAULTS: WorkyVoiceSettings = {
   minSpeechMs: 300,
   maxDurationMs: 120000,
   turnMode: 'auto',
+  realtimeVoice: true,
   bargeIn: true,
   autoRearm: true,
   replyTimeoutMs: 60000,

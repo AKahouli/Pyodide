@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type JSX, type ReactNode } from 'react';
+import { useState, type JSX, type ReactNode } from 'react';
 import { Mic, MicOff, PhoneOff, Keyboard, Check, X, Settings2 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { useVoiceSession, type VoiceState } from '../../voice/useVoiceSession';
+import { type VoiceState } from '../../voice/useVoiceSession';
+import { useWorkyVoiceSession } from '../../voice/useWorkyVoiceSession';
 import { useVoiceSettings } from '../../voice/voiceSettings';
 import { VoiceOrb } from './VoiceOrb';
 import { VoiceSettingsSheet } from './VoiceSettingsSheet';
@@ -67,37 +68,13 @@ export function VoiceSession({
   onKeyboard?: () => void;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
-  const {
-    state,
-    transcript,
-    level,
-    muted,
-    error,
-    start,
-    stop,
-    toggleMute,
-    submitTurn,
-    cancelTurn,
-    beginTake,
-  } = useVoiceSession(streamId);
+  const { state, transcript, level, muted, error, toggleMute, submitTurn, cancelTurn, beginTake, usingRealtime } =
+    useWorkyVoiceSession(streamId, open);
   const turnMode = useVoiceSettings((s) => s.turnMode);
   const threshold = useVoiceSettings((s) => s.speechThreshold);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const startedRef = useRef(false);
-
-  useEffect(() => {
-    if (open && !startedRef.current) {
-      startedRef.current = true;
-      start();
-    } else if (!open && startedRef.current) {
-      startedRef.current = false;
-      stop();
-    }
-  }, [open, start, stop]);
 
   const end = (): void => {
-    stop();
-    startedRef.current = false;
     onOpenChange(false);
   };
 
@@ -172,33 +149,35 @@ export function VoiceSession({
               {muted ? <MicOff className="size-5" /> : <Mic className="size-5" />}
             </ControlButton>
 
-            {recording ? (
+            {/* Turn controls only apply to the legacy record-then-reply loop.
+                In realtime mode Gemini's own VAD decides when to speak, so we
+                hide the Cancel/Done/push-to-talk buttons entirely. */}
+            {!usingRealtime && recording ? (
               <ControlButton label={t('voice.cancelTurn')} onClick={cancelTurn}>
                 <X className="size-5" />
               </ControlButton>
             ) : null}
 
-            {/* Auto mode: Done cuts the take short. Manual mode: the same
-                button starts the take, then submits it. */}
-            {turnMode === 'manual' && !recording ? (
-              <ControlButton
-                label={t('voice.talk')}
-                onClick={beginTake}
-                variant="primary"
-                disabled={muted}
-              >
-                <Mic className="size-6" />
-              </ControlButton>
-            ) : (
-              <ControlButton
-                label={t('voice.done')}
-                onClick={submitTurn}
-                variant="primary"
-                disabled={!recording}
-              >
-                <Check className="size-6" />
-              </ControlButton>
-            )}
+            {!usingRealtime &&
+              (turnMode === 'manual' && !recording ? (
+                <ControlButton
+                  label={t('voice.talk')}
+                  onClick={beginTake}
+                  variant="primary"
+                  disabled={muted}
+                >
+                  <Mic className="size-6" />
+                </ControlButton>
+              ) : (
+                <ControlButton
+                  label={t('voice.done')}
+                  onClick={submitTurn}
+                  variant="primary"
+                  disabled={!recording}
+                >
+                  <Check className="size-6" />
+                </ControlButton>
+              ))}
 
             <ControlButton label={t('voice.end')} onClick={end} variant="danger">
               <PhoneOff className="size-6" />
