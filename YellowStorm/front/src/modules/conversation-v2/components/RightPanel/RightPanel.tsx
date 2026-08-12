@@ -110,12 +110,9 @@ export function RightPanel() {
           {showPreview ? (
             showNodepod ? (
               <ApplicationComponentView
-                key={applicationComponent!.revision}
                 title={applicationComponent!.title}
-                cephPath={applicationComponent!.cephPath}
                 filesTree={applicationComponent!.filesTree}
                 fileCount={applicationComponent!.fileCount}
-                revision={applicationComponent!.revision}
                 buildProgress={appBuildProgress}
               />
             ) : (

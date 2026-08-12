@@ -29,15 +29,18 @@ import { useNodepodPreview, type NodepodPreviewStatus } from '../../hooks/useNod
 import { AppSourceFileTree } from './AppSourceFileTree';
 import { AppSourceFileViewer } from './AppSourceFileViewer';
 
+// After Vague 3 the hook only needs sessionId — cephPath/filesTree/revision
+// are managed internally by BrowserRuntimeHost. The props below are retained
+// for UI-only display purposes (title, fileCount, buildProgress).
+
 type LayoutMode = 'preview-only' | 'split';
 type ContentPane = 'preview' | 'source';
 
 interface ApplicationComponentViewProps {
   title?: string;
-  cephPath?: string | null;
+  /** Kept for the file-tree sidebar display; no longer drives Nodepod boot. */
   filesTree?: FilesTreeNode | null;
   fileCount?: number;
-  revision: string;
   buildProgress?: import('../../types').AppBuildProgress | null;
 }
 
@@ -90,22 +93,17 @@ function statusBadgeKey(
 
 export function ApplicationComponentView({
   title,
-  cephPath,
   filesTree,
   fileCount,
-  revision,
   buildProgress,
 }: ApplicationComponentViewProps) {
   const { t } = useConversationV2Translation();
   const sessionId = useConversationV2Store((s) => s.sessionId);
   const appViewMode = useConversationV2Store((s) => s.appViewMode);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
-  // Always boot/keep Nodepod — even while the deployed iframe is shown.
+  // The host is long-lived in ConversationV2SessionPage; this hook subscribes.
   const { status, previewUrl, error, files, retry } = useNodepodPreview({
     sessionId,
-    cephPath,
-    filesTree,
-    revision,
   });
 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);

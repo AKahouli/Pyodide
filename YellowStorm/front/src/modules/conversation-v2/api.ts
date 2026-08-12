@@ -12,6 +12,7 @@ import type {
   CreateSessionResponse,
   SessionPointer,
 } from './interfaces';
+import type { RuntimeTicketResponse } from './runtime/runtime.types';
 
 export type {
   ListSessionsParams,
@@ -200,5 +201,11 @@ export const conversationV2Api = {
       console.error('[Nodepod] [api:getAppSourceUrls:error]', err);
       throw err;
     }
+  },
+  async createRuntimeTicket(sessionId: string): Promise<RuntimeTicketResponse> {
+    const res = await apiClient.post<ApiResponse<RuntimeTicketResponse>>(
+      `/conversation-v2/sessions/${sessionId}/runtime-ticket`,
+    );
+    return res.data.data;
   },
 };

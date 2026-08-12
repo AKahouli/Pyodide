@@ -20,6 +20,7 @@ import {
   hasConversationV2SessionPermission,
   type ConversationV2SessionPermission,
 } from './session-permissions';
+import { getOrCreateHost, removeHost } from './runtime/BrowserRuntimeHost';
 
 interface LocationState {
   initialMessage?: string;
@@ -227,6 +228,24 @@ export default function ConversationV2SessionPage() {
       window.history.replaceState({}, '');
     }
   }, [loading, notFound, isReadOnlyViewer, sessionId, initialMessage, initialModel, initialSkillIds, setSelectedSkillIds, initialConnectorIds, setSelectedConnectorIds, sendMessage]);
+
+  // Boot BrowserRuntimeHost at session open so Nodepod is long-lived.
+  // Read-only viewers don't get a runtime (no ticket request).
+  useEffect(() => {
+    if (!sessionId || loading || isReadOnlyViewer) return;
+    const appComp = useConversationV2Store.getState().applicationComponent;
+    const host = getOrCreateHost(sessionId);
+    if (host.state.status === 'idle') {
+      void host.start(
+        sessionId,
+        appComp?.cephPath ?? null,
+        appComp?.filesTree ?? null,
+      );
+    }
+    return () => {
+      removeHost(sessionId);
+    };
+  }, [sessionId, loading, isReadOnlyViewer]);
 
   if (loading) {
     return (
