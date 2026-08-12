@@ -101,6 +101,7 @@ export function mapFlowNodeToPlaybookTask(
     retryPolicy: node.retryPolicy ?? (meta.retryPolicy as RetryPolicy | null | undefined) ?? null,
     modelId: node.modelId || (meta.modelId as string | null | undefined) || null,
     deepSearch: node.deepSearch ?? false,
+    dynamicReasoning: node.dynamicReasoning ?? { enabled: false },
     ...(inputPorts ? { inputPorts } : {}),
     ...(outputPorts ? { outputPorts } : {}),
   };
@@ -316,6 +317,7 @@ export function taskToFlowNode(task: PlaybookTask): FlowNode {
   if (task.retryPolicy) node.retryPolicy = task.retryPolicy;
   if (task.modelId) node.modelId = task.modelId;
   if (task.deepSearch) node.deepSearch = task.deepSearch;
+  if (task.dynamicReasoning?.enabled) node.dynamicReasoning = { enabled: true };
 
   if (task.inputPorts && task.inputPorts.length > 0) {
     node.input = {

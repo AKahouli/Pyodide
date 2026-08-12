@@ -8,8 +8,7 @@ export type KnowledgeAssessmentDocument = HydratedDocument<KnowledgeAssessment>;
 export class KnowledgeAssessment {
   @Prop({ type: Types.ObjectId, ref: 'GovernanceProgram', required: true, index: true }) programId!: Types.ObjectId;
   @Prop({ type: [Types.ObjectId], ref: 'GovernanceScope', default: [], index: true }) scopeIds!: Types.ObjectId[];
-  @Prop({ type: Types.ObjectId, ref: 'GovernanceSource', required: true, index: true }) sourceId!: Types.ObjectId;
-  @Prop({ type: Types.ObjectId, ref: 'GovernanceSourceVersion', required: true, index: true }) sourceVersionId!: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'WorkspaceDoc', required: true, index: true }) documentId!: Types.ObjectId;
   @Prop({ required: true, maxlength: 64 }) assessmentVersion!: string;
   @Prop({ required: true, maxlength: 128 }) inputHash!: string;
   @Prop({ required: true, index: true }) assessedAt!: Date;
@@ -20,6 +19,6 @@ export class KnowledgeAssessment {
 }
 
 export const KnowledgeAssessmentSchema = SchemaFactory.createForClass(KnowledgeAssessment);
-KnowledgeAssessmentSchema.index({ sourceVersionId: 1, assessmentVersion: 1, inputHash: 1 }, { unique: true });
+KnowledgeAssessmentSchema.index({ programId: 1, documentId: 1, assessmentVersion: 1, inputHash: 1 }, { unique: true });
 KnowledgeAssessmentSchema.index({ programId: 1, scopeIds: 1, status: 1, assessedAt: -1 });
 KnowledgeAssessmentSchema.set('toJSON', { virtuals: true, transform: (_doc, value: KnowledgeAssessment & { _id?: Types.ObjectId; __v?: number; id?: string }) => { value.id = String(value._id); delete value._id; delete value.__v; } });

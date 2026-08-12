@@ -38,6 +38,7 @@ import {
   useConversationV2Store,
 } from '@/modules/conversation-v2/store';
 import { WorkspaceButton } from '@/modules/workspace';
+import { SemanticModelButton } from '@/modules/semantic-model/components/SemanticModelButton';
 import { AgentButton } from '@/modules/agent';
 import { TeamButton } from '@/modules/team';
 import { GroupsButton } from '@/modules/groups';
@@ -278,6 +279,7 @@ export const AppSidebar = memo(function AppSidebar() {
       <SidebarHeader className='pt-8 gap-0 duration-500 ease-linear '>
         <NavLink
           to='/'
+          aria-label={t('actions.home')}
           className='flex items-center h-12 mb-4 overflow-hidden duration-500 ease-linear group-data-[collapsible=icon]:w-0 group-data-[collapsible=icon]:opacity-0'
         >
           <AppLogo className='h-12 shrink-0' />
@@ -308,6 +310,8 @@ export const AppSidebar = memo(function AppSidebar() {
             </SidebarMenuItem>}
 
             {featureVisibility.workspace && <WorkspaceButton />}
+
+            <SemanticModelButton />
 
             {featureVisibility.agents && <AgentButton />}
 

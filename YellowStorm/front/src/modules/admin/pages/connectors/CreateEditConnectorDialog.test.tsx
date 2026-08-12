@@ -48,6 +48,60 @@ const connector: ConnectorResponse = {
 };
 
 describe('CreateEditConnectorDialog tool table', () => {
+  it('submits the hidden connector visibility setting', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={connector} onSave={onSave} />);
+
+    const hiddenSwitch = await screen.findByRole('switch', { name: 'connectors.form.fields.hidden.label' });
+    expect(hiddenSwitch).not.toBeChecked();
+    await user.click(hiddenSwitch);
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ isHidden: true }));
+  });
+
+  it('preserves server-managed Playbook MCP authentication when inspecting and saving', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    vi.mocked(inspectMcp).mockResolvedValueOnce({ serverName: 'playbook', tools: [] });
+    const systemConnector: ConnectorResponse = {
+      ...connector,
+      id: 'playbook-connector',
+      slug: 'playbook-mcp',
+      name: 'Playbook MCP',
+      authType: 'token',
+      authSourceType: 'server_config',
+      runtimeAuthConfig: { secretKey: 'playbook_mcp_ingress' },
+      mcpServerUrl: 'http://localhost:8025/mcp',
+      isSystem: true,
+      isHidden: true,
+    };
+
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={systemConnector} onSave={onSave} />);
+
+    expect(await screen.findByText('connectors.form.auth.serverConfigOption')).toBeInTheDocument();
+    expect(screen.getByText('connectors.form.auth.serverConfigHelper')).toBeInTheDocument();
+    expect(screen.queryByText('connectors.form.auth.strategyLabel')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'connectors.form.inspect.action' }));
+    await waitFor(() => expect(inspectMcp).toHaveBeenCalledWith(
+      'streamable_http',
+      'http://localhost:8025/mcp',
+      undefined,
+      undefined,
+      { secretKey: 'playbook_mcp_ingress' },
+      'playbook-connector',
+    ));
+
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      authType: 'token',
+      authSourceType: 'server_config',
+      runtimeAuthConfig: JSON.stringify({ secretKey: 'playbook_mcp_ingress' }),
+    }));
+  });
+
   it('shows tool metadata and preserves actions when saving', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();

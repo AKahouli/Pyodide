@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyChunksToComponents, useConversationStore } from './store';
 
 const fetchConversationMock = vi.hoisted(() => vi.fn());
+const fetchConversationsMock = vi.hoisted(() => vi.fn());
 const sendMessageMock = vi.hoisted(() => vi.fn());
 const fetchMessageMock = vi.hoisted(() => vi.fn());
 const fetchMessagesMock = vi.hoisted(() => vi.fn());
@@ -15,6 +16,7 @@ vi.mock('./stream', () => ({
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
   fetchConversation: fetchConversationMock,
+  fetchConversations: fetchConversationsMock,
   sendMessage: sendMessageMock,
   fetchMessage: fetchMessageMock,
   fetchMessages: fetchMessagesMock,
@@ -23,17 +25,20 @@ vi.mock('./api', async (importOriginal) => ({
 
 beforeEach(() => {
   fetchConversationMock.mockReset();
+  fetchConversationsMock.mockReset();
   sendMessageMock.mockReset();
   fetchMessageMock.mockReset();
   fetchMessagesMock.mockReset();
   fetchBranchesMock.mockReset();
   waitForConnectionMock.mockReset();
   fetchBranchesMock.mockResolvedValue([]);
+  fetchConversationsMock.mockResolvedValue({ items: [], total: 0, page: 1, limit: 12, totalPages: 0 });
   waitForConnectionMock.mockResolvedValue(true);
   useConversationStore.setState({
     currentConversation: null,
     currentConversationId: null,
     conversationLoading: false,
+    selectedModelId: null,
     selectedWorkspaceIds: [],
     messages: [],
     optimisticMessages: [],
@@ -199,6 +204,98 @@ describe('conversation workspace selection', () => {
   });
 });
 
+describe('new conversation selections', () => {
+  it('claims the submitted model and workspaces before route hydration', () => {
+    const conversation = { id: 'conv-1', title: 'New Conversation' } as never;
+
+    useConversationStore.getState().claimCurrentConversation('conv-1', conversation, {
+      modelId: 'model-1',
+      workspaceIds: ['ws-1'],
+    });
+
+    expect(useConversationStore.getState()).toMatchObject({
+      currentConversationId: 'conv-1',
+      selectedModelId: 'model-1',
+      selectedWorkspaceIds: ['ws-1'],
+    });
+  });
+
+  it('preserves a claimed model when the initial message history is empty', async () => {
+    fetchMessagesMock.mockResolvedValue({ items: [], total: 0, totalPages: 0 });
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      selectedModelId: 'model-1',
+    });
+
+    await useConversationStore.getState().fetchMessages('conv-1');
+
+    expect(useConversationStore.getState().selectedModelId).toBe('model-1');
+  });
+
+  it('ignores message hydration from the previously active conversation', async () => {
+    let resolvePreviousFetch: (value: {
+      items: Array<{ id: string; conversationType: string; modelId: string }>;
+      total: number;
+      totalPages: number;
+    }) => void = () => undefined;
+    fetchMessagesMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolvePreviousFetch = resolve; }),
+    );
+    useConversationStore.setState({ currentConversationId: 'conv-previous' });
+
+    const previousFetch = useConversationStore.getState().fetchMessages('conv-previous');
+    useConversationStore.getState().claimCurrentConversation(
+      'conv-new',
+      { id: 'conv-new', title: 'New Conversation' } as never,
+      { modelId: 'model-new', workspaceIds: ['ws-new'] },
+    );
+    resolvePreviousFetch({
+      items: [{ id: 'message-previous', conversationType: 'user', modelId: 'model-previous' }],
+      total: 1,
+      totalPages: 1,
+    });
+    await previousFetch;
+
+    expect(useConversationStore.getState()).toMatchObject({
+      currentConversationId: 'conv-new',
+      selectedModelId: 'model-new',
+      selectedWorkspaceIds: ['ws-new'],
+      messages: [],
+    });
+  });
+
+  it('hydrates the last persisted user model from message history', async () => {
+    fetchMessagesMock.mockResolvedValue({
+      items: [
+        { id: 'message-1', conversationType: 'user', modelId: 'model-2' },
+        { id: 'message-2', conversationType: 'ai' },
+      ],
+      total: 2,
+      totalPages: 1,
+    });
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      selectedModelId: 'model-1',
+    });
+
+    await useConversationStore.getState().fetchMessages('conv-1');
+
+    expect(useConversationStore.getState().selectedModelId).toBe('model-2');
+  });
+
+  it('clears the previous model when switching conversations', async () => {
+    fetchConversationMock.mockResolvedValue({ id: 'conv-2', workspaces: [] });
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      selectedModelId: 'model-1',
+    });
+
+    await useConversationStore.getState().setCurrentConversation('conv-2');
+
+    expect(useConversationStore.getState().selectedModelId).toBeNull();
+  });
+});
+
 describe('conversation streaming component updates', () => {
   it('claims a new conversation before an early stream start arrives', () => {
     const conversation = { id: 'conv-1', title: 'New Conversation', workspaces: ['ws-1'] } as never;
@@ -315,6 +412,49 @@ describe('conversation streaming component updates', () => {
     expect(useConversationStore.getState().messages[0]).toMatchObject(metadata);
   });
 
+  it('finalizes from the ordered canonical message without replacing it from REST', async () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-1',
+      pendingAssistantMessageId: 'ai-1',
+      streamingComponents: [{ id: 'live-tool', type: 'toolInfo', data: { title: 'search', status: 'running' } }],
+      messages: [{
+        id: 'ai-1',
+        conversationId: 'conv-1',
+        conversationType: 'ai',
+        components: [
+          { id: 'tool-1', type: 'toolInfo', data: { title: 'search', status: 'completed', startedAt: '2026-07-29T08:00:00.000Z' } },
+          { id: 'tool-2', type: 'toolInfo', data: { title: 'read', status: 'completed', startedAt: '2026-07-29T08:00:04.000Z' } },
+        ],
+        isComplete: true,
+        createdAt: '2026-07-29T08:00:00.000Z',
+      }],
+    });
+
+    await useConversationStore.getState().onStreamComplete({ conversationId: 'conv-1', messageId: 'ai-1' });
+
+    expect(fetchMessageMock).not.toHaveBeenCalled();
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: false,
+      streamingMessageId: null,
+      pendingAssistantMessageId: null,
+      streamingComponents: [],
+    });
+    expect(useConversationStore.getState().messages[0].components).toHaveLength(2);
+
+    useConversationStore.getState().onMessageUpdated({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      message: { reliabilityEvaluation: { status: 'failed', failureCode: 'source_check_failed' } },
+    });
+    expect(useConversationStore.getState().messages[0].reliabilityEvaluation).toEqual({
+      status: 'failed',
+      failureCode: 'source_check_failed',
+    });
+  });
+
   it('reconciles a persisted completion after the live event was missed', async () => {
     fetchMessageMock.mockResolvedValue({
       id: 'ai-1',
@@ -341,6 +481,50 @@ describe('conversation streaming component updates', () => {
       pendingAssistantMessageId: null,
       messagesTotal: 1,
     });
+  });
+
+  it('does not let fallback REST replace a newer canonical completion update', async () => {
+    let resolveFetch: (message: unknown) => void = () => undefined;
+    fetchMessageMock.mockImplementation(() => new Promise((resolve) => { resolveFetch = resolve; }));
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-1',
+      pendingAssistantMessageId: 'ai-1',
+      messages: [],
+      messagesTotal: 0,
+    });
+
+    const completion = useConversationStore.getState().onStreamComplete({ conversationId: 'conv-1', messageId: 'ai-1' });
+    useConversationStore.getState().onMessageUpdated({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      message: {
+        conversationType: 'ai',
+        components: [{ id: 'tool-1', type: 'toolInfo', data: { title: 'search', status: 'completed' } }],
+        reliabilityEvaluation: { status: 'completed', score: 100 },
+        isComplete: true,
+        createdAt: '2026-07-29T08:00:00.000Z',
+      },
+    });
+    resolveFetch({
+      id: 'ai-1',
+      conversationId: 'conv-1',
+      conversationType: 'ai',
+      components: [{ id: 'text-1', type: 'text', data: { content: 'Early snapshot' } }],
+      isComplete: true,
+      createdAt: '2026-07-29T08:00:00.000Z',
+    });
+    await completion;
+
+    expect(useConversationStore.getState().messages).toEqual([
+      expect.objectContaining({
+        components: [expect.objectContaining({ type: 'toolInfo' })],
+        reliabilityEvaluation: { status: 'completed', score: 100 },
+      }),
+    ]);
+    expect(useConversationStore.getState().messagesTotal).toBe(1);
   });
 
   it('does not restore stale background streaming state over a persisted completion', async () => {
@@ -376,7 +560,7 @@ describe('conversation streaming component updates', () => {
     expect(useConversationStore.getState().streamingStateCache.has('conv-1')).toBe(false);
   });
 
-  it('merges public tool metadata without retaining raw results', () => {
+  it('merges tool metadata while retaining bounded results', () => {
     const components = applyChunksToComponents([], [
       {
         action: 'add',
@@ -405,6 +589,7 @@ describe('conversation streaming component updates', () => {
           status: 'completed',
           params: '{"query":"contract"}',
           startedAt: '2026-07-21T10:13:42Z',
+          resultJson: '{"matches":2}',
         },
       },
     ]);
@@ -419,8 +604,7 @@ describe('conversation streaming component updates', () => {
     ] as never);
 
     expect(components).toHaveLength(2);
-    expect(components[0].data).toMatchObject({ status: 'completed', params: '{"q":"one"}' });
-    expect(components[0].data).not.toHaveProperty('resultJson');
+    expect(components[0].data).toMatchObject({ status: 'completed', params: '{"q":"one"}', resultJson: '{"matches":1}' });
     expect(components[1].data).toMatchObject({ status: 'running', params: '{"q":"two"}' });
   });
 });

@@ -4,9 +4,12 @@ from google.adk.tools import FunctionTool
 
 from src.smart_rag.tools.native_tool_registry import (
     FACTORY_MANAGED_NATIVE_TOOLS,
+    NATIVE_TOOL_REGISTRY,
+    RUNTIME_NATIVE_TOOL_FACTORIES,
     get_native_tool,
     resolve_native_tools,
 )
+from src.guardrails.tool_registry import NATIVE_TOOL_POLICIES, normalize_tool_safety, tool_policy
 
 
 def test_resolve_native_tool_uses_configured_description_without_mutating_registry():
@@ -79,3 +82,22 @@ def test_save_file_to_workspace_requires_assignment_and_runtime_credentials():
         "auth_headers",
         "source_meta",
     }
+
+
+def test_every_registered_native_tool_has_explicit_guardrail_policy():
+    registered = set(NATIVE_TOOL_REGISTRY) | set(RUNTIME_NATIVE_TOOL_FACTORIES)
+    assert registered <= set(NATIVE_TOOL_POLICIES)
+
+
+def test_native_tool_metadata_uses_authoritative_policy():
+    tool = get_native_tool("calculator")
+    assert tool.metadata == tool_policy("calculator")
+    assert tool.metadata["safety"] == "read"
+    assert tool.metadata["source"] == "native"
+
+
+def test_tool_safety_normalization_never_defaults_to_read():
+    assert normalize_tool_safety("DELETE") == "delete"
+    assert normalize_tool_safety(None) == "unknown"
+    assert normalize_tool_safety("reads") == "unknown"
+    assert tool_policy("unclassified", {"safety": "invalid"})["safety"] == "unknown"

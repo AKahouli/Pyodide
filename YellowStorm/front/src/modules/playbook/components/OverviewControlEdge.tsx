@@ -37,9 +37,9 @@ export function OverviewControlEdge(props: EdgeProps<OverviewEdge>) {
         markerEnd={markerEnd}
         style={{
           stroke: isError ? 'var(--destructive)' : isConditional ? 'var(--primary)' : 'var(--muted-foreground)',
-          strokeWidth: data?.dimmed ? 1 : 1.75,
+          strokeWidth: data?.dimmed ? 1 : 2.5,
           strokeDasharray: isConditional ? '6 4' : undefined,
-          opacity: data?.dimmed ? 0.08 : 0.7,
+          opacity: data?.dimmed ? 0.08 : 0.9,
           transition: 'opacity 180ms ease',
         }}
       />

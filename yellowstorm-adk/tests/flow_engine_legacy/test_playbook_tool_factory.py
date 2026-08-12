@@ -24,7 +24,6 @@ from src.smart_rag.tools.utilities.code_interpreter_payload import (
     build_code_interpreter_payload_context,
 )
 from src.smart_rag.tools.utilities.code_interpreter import python_interpreter
-from src.flow_engine.nodes.step_tools import _tool_to_openai_definition
 
 
 def test_collect_connector_response_components_emits_sources_and_citations() -> None:
@@ -1199,9 +1198,9 @@ def test_connector_mcp_tool_definition_exposes_params_when_schema_is_missing() -
         for tool in tools
         if tool.name == "sharepoint_searchv2_search_document_blocks"
     )
-    definition = _tool_to_openai_definition(search_tool)
+    parameters = search_tool.args_schema.model_json_schema()
 
-    assert definition["function"]["parameters"]["properties"]["params"]["type"] == "object"
+    assert parameters["properties"]["params"]["type"] == "object"
 
 
 def test_connector_mcp_tool_leaves_available_filenames_for_model_to_choose(

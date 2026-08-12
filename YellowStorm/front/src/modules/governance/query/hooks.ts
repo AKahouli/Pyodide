@@ -1,7 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { governanceApi } from '../api';
 import { governanceQueryKeys } from './queryKeys';
-import type { CreateGovernanceDeploymentPayload, CreateGovernanceDryRunPayload, CreateGovernanceMembershipPayload, CreateGovernanceProgramPayload, CreateGovernanceRevisionPayload, CreateGovernanceScopePayload, CreateGovernanceSourcePayload, GovernanceDryRun, UpdateGovernanceDeploymentPayload, UpdateGovernanceMembershipPayload, UpdateGovernanceScopePayload } from '../types';
+import type { CreateGovernanceDeploymentPayload, CreateGovernanceDryRunPayload, CreateGovernanceMembershipPayload, CreateGovernanceProgramPayload, CreateGovernanceRevisionPayload, CreateGovernanceScopePayload, GovernanceDryRun, UpdateGovernanceDeploymentPayload, UpdateGovernanceMembershipPayload, UpdateGovernanceProgramPayload, UpdateGovernanceScopePayload } from '../types';
 
 export function useGovernancePrograms() {
   return useQuery({
@@ -18,10 +18,10 @@ export function useGovernanceScopes(programId: string | null) {
   });
 }
 
-export function useGovernanceSources(programId: string | null) {
+export function useGovernanceDocuments(programId: string | null) {
   return useQuery({
-    queryKey: programId ? governanceQueryKeys.sources(programId) : governanceQueryKeys.sources('none'),
-    queryFn: () => governanceApi.listSources(programId ?? ''),
+    queryKey: programId ? governanceQueryKeys.documents(programId) : governanceQueryKeys.documents('none'),
+    queryFn: () => governanceApi.listDocuments(programId ?? ''),
     enabled: Boolean(programId),
   });
 }
@@ -31,6 +31,7 @@ export function useGovernanceScopeOverview(programId: string | null, scopeId: st
     queryKey: programId && scopeId ? governanceQueryKeys.scopeOverview(programId, scopeId) : governanceQueryKeys.scopeOverview('none', 'none'),
     queryFn: () => governanceApi.getScopeOverview(programId ?? '', scopeId ?? ''),
     enabled: Boolean(programId && scopeId),
+    staleTime: 30_000,
   });
 }
 
@@ -104,6 +105,14 @@ export function useCreateGovernanceProgram() {
   });
 }
 
+export function useUpdateGovernanceProgram(programId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: UpdateGovernanceProgramPayload) => governanceApi.updateProgram(programId ?? '', payload),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: governanceQueryKeys.programs() }),
+  });
+}
+
 export function useDeleteGovernanceProgram() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -171,30 +180,19 @@ export function useAvailableGovernedScopes(enabled = true) {
   return useQuery({ queryKey: governanceQueryKeys.availableScopes(), queryFn: governanceApi.listAvailableScopes, enabled, retry: 1 });
 }
 
-export function useGovernanceSourceVersions(programId: string | null, sourceId: string | null) {
-  return useQuery({ queryKey: governanceQueryKeys.sourceVersions(programId ?? 'none', sourceId ?? 'none'), queryFn: () => governanceApi.listSourceVersions(programId ?? '', sourceId ?? ''), enabled: Boolean(programId && sourceId) });
-}
-
-export function useGovernanceSourceEvents(programId: string | null, sourceId: string | null) {
-  return useQuery({ queryKey: governanceQueryKeys.sourceEvents(programId ?? 'none', sourceId ?? 'none'), queryFn: () => governanceApi.listSourceEvents(programId ?? '', sourceId ?? ''), enabled: Boolean(programId && sourceId) });
+export function useGovernanceDocumentEvents(programId: string | null, documentId: string | null) {
+  return useQuery({ queryKey: governanceQueryKeys.documentEvents(programId ?? 'none', documentId ?? 'none'), queryFn: () => governanceApi.listDocumentEvents(programId ?? '', documentId ?? ''), enabled: Boolean(programId && documentId) });
 }
 
 export function useGovernanceWorkspaceBindings(programId: string | null) {
   return useQuery({ queryKey: governanceQueryKeys.workspaceBindings(programId ?? 'none'), queryFn: () => governanceApi.listWorkspaceBindings(programId ?? ''), enabled: Boolean(programId) });
 }
 
-export function useCreateGovernanceSource(programId: string | null) {
+export function useCreateGovernanceDocument(programId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: CreateGovernanceSourcePayload) => governanceApi.createSource(programId ?? '', payload),
-    onSuccess: (_source, payload) => {
-      if (programId) {
-        void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.sources(programId) });
-        for (const scopeId of payload.scopeIds ?? []) {
-          void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.scopeOverview(programId, scopeId) });
-        }
-      }
-    },
+    mutationFn: (documentId: string) => governanceApi.createDocumentGovernance(programId ?? '', documentId),
+    onSuccess: () => { if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.documents(programId) }); },
   });
 }
 
@@ -234,10 +232,10 @@ export function useResumeGovernanceReconciliationRun(programId: string | null) {
   return useMutation({ mutationFn: ({ bindingId, runId }: { bindingId: string; runId: string }) => governanceApi.resumeReconciliationRun(programId ?? '', bindingId, runId), onSuccess: (run, variables) => { if (programId) queryClient.setQueryData(governanceQueryKeys.reconciliationRun(programId, variables.bindingId, variables.runId), run); } });
 }
 
-export function useDeleteGovernanceSource(programId: string | null) {
+export function useArchiveGovernanceDocument(programId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (sourceId: string) => governanceApi.deleteSource(programId ?? '', sourceId),
+    mutationFn: ({ documentId, expectedGovernanceRevision }: { documentId: string; expectedGovernanceRevision: number }) => governanceApi.archiveDocument(programId ?? '', documentId, expectedGovernanceRevision),
     onSuccess: () => {
       if (programId) void queryClient.invalidateQueries({ queryKey: governanceQueryKeys.all });
     },

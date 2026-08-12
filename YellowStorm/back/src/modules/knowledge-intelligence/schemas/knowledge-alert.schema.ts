@@ -10,8 +10,7 @@ export type KnowledgeAlertCategory = 'validity' | 'freshness' | 'availability' |
 export class KnowledgeAlert {
   @Prop({ type: Types.ObjectId, ref: 'GovernanceProgram', required: true, index: true }) programId!: Types.ObjectId;
   @Prop({ type: [Types.ObjectId], ref: 'GovernanceScope', default: [], index: true }) scopeIds!: Types.ObjectId[];
-  @Prop({ type: Types.ObjectId, ref: 'GovernanceSource', index: true }) sourceId?: Types.ObjectId;
-  @Prop({ type: Types.ObjectId, ref: 'GovernanceSourceVersion', index: true }) sourceVersionId?: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'WorkspaceDoc', index: true }) documentId?: Types.ObjectId;
   @Prop({ required: true, enum: ['validity', 'freshness', 'availability', 'integrity', 'governance', 'search_quality', 'impact'], index: true }) category!: KnowledgeAlertCategory;
   @Prop({ required: true, enum: ['critical', 'high', 'medium', 'low'], index: true }) severity!: KnowledgePriority;
   @Prop({ required: true, enum: ['open', 'acknowledged', 'resolved', 'ignored'], default: 'open', index: true }) status!: KnowledgeAlertStatus;

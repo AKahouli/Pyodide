@@ -56,6 +56,8 @@ import type {
   UpdateModelRequest,
   SyncModelsResponse,
   AdminPlaybookSettings,
+  PlaybookPlannerAgentOption,
+  PlaybookSuggestorAgentOption,
   UpdateAdminPlaybookSettingsRequest,
   PlaybookPromptListResponse,
   PlaybookPromptResponse,
@@ -107,6 +109,9 @@ import type {
   ConversationSettingsResponse,
   UpdateConversationSettingsRequest,
   ConversationSettingsAgentOption,
+  CatalogExportRequest,
+  CatalogConflictPolicy,
+  CatalogImportResult,
 } from './types';
 import type {
   WorkyWhatsAppConnectResponse,
@@ -588,6 +593,20 @@ export async function getAdminPlaybookSettings(): Promise<AdminPlaybookSettings>
   return response.data.data;
 }
 
+export async function getPlaybookPlannerAgents(): Promise<PlaybookPlannerAgentOption[]> {
+  const response = await apiClient.get<ApiResponse<PlaybookPlannerAgentOption[]>>(
+    API_ENDPOINTS.adminPlaybookSettings.plannerAgents,
+  );
+  return response.data.data;
+}
+
+export async function getPlaybookSuggestorAgents(): Promise<PlaybookSuggestorAgentOption[]> {
+  const response = await apiClient.get<ApiResponse<PlaybookSuggestorAgentOption[]>>(
+    API_ENDPOINTS.adminPlaybookSettings.suggestorAgents,
+  );
+  return response.data.data;
+}
+
 export async function updateAdminPlaybookSettings(
   data: UpdateAdminPlaybookSettingsRequest,
 ): Promise<AdminPlaybookSettings> {
@@ -925,6 +944,37 @@ export async function updateConnector(id: string, data: UpdateConnectorRequest):
 
 export async function deleteConnector(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminConnectors.byId(id));
+}
+
+export async function exportConnectorCatalog(data: CatalogExportRequest): Promise<Blob> {
+  const response = await apiClient.post<Blob>(API_ENDPOINTS.adminCatalogTransfer.exportConnectors, data, {
+    responseType: 'blob',
+  });
+  return response.data;
+}
+
+export async function exportSkillCatalog(data: CatalogExportRequest): Promise<Blob> {
+  const response = await apiClient.post<Blob>(API_ENDPOINTS.adminCatalogTransfer.exportSkills, data, {
+    responseType: 'blob',
+  });
+  return response.data;
+}
+
+export async function importCatalog(
+  file: File,
+  conflictPolicy: CatalogConflictPolicy,
+  passphrase?: string,
+): Promise<CatalogImportResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('conflictPolicy', conflictPolicy);
+  if (passphrase) formData.append('passphrase', passphrase);
+  const response = await apiClient.post<ApiResponse<CatalogImportResult>>(
+    API_ENDPOINTS.adminCatalogTransfer.import,
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
+  return response.data.data;
 }
 
 // Connector Categories API

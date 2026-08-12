@@ -94,10 +94,13 @@ def event_loop():
 
 @pytest_asyncio.fixture(autouse=True)
 async def _setup_checkpointer(tmp_path):
-    from src.flow_engine.runtime.checkpointer import close_checkpointer, init_checkpointer
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from src.flow_engine.runtime import checkpointer as checkpointer_module
+    from src.flow_engine.runtime.checkpointer import close_checkpointer
 
     await close_checkpointer()
-    await init_checkpointer(str(tmp_path / "test_checkpoints.db"))
+    checkpointer_module._checkpointer = InMemorySaver()
     yield
     await close_checkpointer()
 

@@ -240,6 +240,7 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
       expectedResult: task.expectedResult,
       disableAdvisorEvaluation: task.disableAdvisorEvaluation,
       deepSearch: task.deepSearch,
+      dynamicReasoning: task.dynamicReasoning?.enabled ? { enabled: true } : undefined,
     }));
 
   const sanitizedEdges = data.edges
@@ -1008,7 +1009,51 @@ function normalizeTaskResult(raw: any, index: number): import('./types').TaskRes
       ? raw.hitlHistory.map((entry: any) => entry?.interruptId ? entry : normalizeHitlEvent(entry as HitlEventLog))
       : [],
     iteratorIterations: normalizeIteratorIterations(raw),
+    parentTaskId: toNullableString(raw.parentTaskId ?? raw.parent_task_id) ?? undefined,
+    runtimeSubgraphId: toNullableString(raw.runtimeSubgraphId ?? raw.runtime_subgraph_id) ?? undefined,
+    generatedLocalNodeId: toNullableString(raw.generatedLocalNodeId ?? raw.generated_local_node_id) ?? undefined,
+    generatedNodeTitle: toNullableString(raw.generatedNodeTitle ?? raw.generated_node_title) ?? undefined,
   };
+}
+
+function normalizeDynamicReasoningAttempts(
+  rawAttempts: unknown,
+  executionId: string,
+): import('./types').DynamicReasoningAttempt[] {
+  if (!Array.isArray(rawAttempts)) return [];
+
+  return rawAttempts
+    .filter((attempt): attempt is Record<string, unknown> => Boolean(attempt) && typeof attempt === 'object')
+    .map((attempt) => {
+      const status = attempt.status;
+      return {
+        id: toNullableString(attempt.id ?? attempt._id) ?? undefined,
+        executionId: toNullableString(attempt.executionId ?? attempt.execution_id) ?? executionId,
+        flowId: toNullableString(attempt.flowId ?? attempt.flow_id) ?? undefined,
+        parentTaskId: toNullableString(attempt.parentTaskId ?? attempt.parent_task_id) ?? '',
+        parentIteration: toNullableNumber(attempt.parentIteration ?? attempt.parent_iteration) ?? 0,
+        attempt: toNullableNumber(attempt.attempt) ?? 0,
+        subgraphId: toNullableString(attempt.subgraphId ?? attempt.subgraph_id) ?? undefined,
+        status: status === 'direct' || status === 'running' || status === 'completed' || status === 'failed'
+          ? status
+          : 'planning',
+        decision: attempt.decision && typeof attempt.decision === 'object'
+          ? attempt.decision as Record<string, unknown>
+          : undefined,
+        revisions: Array.isArray(attempt.revisions)
+          ? attempt.revisions.filter((revision): revision is Record<string, unknown> => Boolean(revision) && typeof revision === 'object')
+          : [],
+        acceptedRevision: toNullableNumber(attempt.acceptedRevision ?? attempt.accepted_revision) ?? undefined,
+        acceptedPlan: (attempt.acceptedPlan ?? attempt.accepted_plan) as import('./types').DynamicReasoningAttempt['acceptedPlan'] | undefined,
+        inputContextSummary: attempt.inputContextSummary && typeof attempt.inputContextSummary === 'object'
+          ? attempt.inputContextSummary as Record<string, unknown>
+          : undefined,
+        fallbackReason: toNullableString(attempt.fallbackReason ?? attempt.fallback_reason) ?? undefined,
+        error: attempt.error && typeof attempt.error === 'object'
+          ? attempt.error as Record<string, unknown>
+          : undefined,
+      };
+    });
 }
 
 function normalizeHitlEvent(event: HitlEventLog): import('./types').HitlHistoryEntry {
@@ -1177,6 +1222,10 @@ function normalizeExecution(raw: any): PlaybookExecution {
       replayPlanningByTask && typeof replayPlanningByTask === 'object'
         ? replayPlanningByTask
         : null,
+    dynamicReasoningAttempts: normalizeDynamicReasoningAttempts(
+      raw.dynamicReasoningAttempts ?? raw.dynamic_reasoning_attempts,
+      summary.id,
+    ),
     error: summary.error,
   };
 }
@@ -2520,6 +2569,20 @@ export async function generateFlow(data: { name: string; prompt: string; workspa
   const response = await apiClient.post<ApiResponse<{ id: string }>>(
     API_ENDPOINTS.playbookFlows.generate,
     data,
+  );
+  return response.data.data;
+}
+
+export async function buildPlaybookFromConversation(data: {
+  conversationId: string;
+  assistantMessageId: string;
+  answerVersion: string;
+  name?: string;
+}): Promise<{ id: string }> {
+  const response = await apiClient.post<ApiResponse<{ id: string }>>(
+    API_ENDPOINTS.playbookFlows.fromConversation,
+    data,
+    { timeout: 0 },
   );
   return response.data.data;
 }

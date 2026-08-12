@@ -18,6 +18,7 @@ import { usePlaybookStore } from '../store';
 import { dispatchPlaybookStreamEvent } from '../stream/queryEventDispatcher';
 import type { PlaybookStreamEvent } from '../stream/eventTypes';
 import type {
+  DynamicReasoningStreamUpdate,
   PlaybookIteratorChildStepUpdateEvent,
   PlaybookStepUpdateEvent,
 } from '../types';
@@ -70,6 +71,10 @@ const SSE_EVENT_TYPES = [
   'playbook_step_start',
   'playbook_step_update',
   'playbook_step_complete',
+  'playbook_dynamic_reasoning_update',
+  'playbook_runtime_subgraph_created',
+  'playbook_runtime_subgraph_completed',
+  'playbook_runtime_subgraph_failed',
   'playbook_iterator_child_step_start',
   'playbook_iterator_child_step_update',
   'playbook_iterator_child_step_complete',
@@ -91,6 +96,10 @@ const SSE_EVENT_TYPES = [
   'playbook_hitl_blocker_disabled',
   'playbook_hitl_policy_updated',
   'playbook_replay_hitl_summary_updated',
+  'playbook_dynamic_reasoning_update',
+  'playbook_runtime_subgraph_created',
+  'playbook_runtime_subgraph_completed',
+  'playbook_runtime_subgraph_failed',
   'playbook_shared',
 ] as const;
 
@@ -256,6 +265,12 @@ function handleStoreEvent(eventType: string, eventData: unknown) {
         break;
       case 'playbook_step_complete':
         store.onStepComplete(eventData as Parameters<typeof store.onStepComplete>[0]);
+        break;
+      case 'playbook_dynamic_reasoning_update':
+      case 'playbook_runtime_subgraph_created':
+      case 'playbook_runtime_subgraph_completed':
+      case 'playbook_runtime_subgraph_failed':
+        store.onDynamicReasoningUpdate(eventData as DynamicReasoningStreamUpdate);
         break;
       case 'playbook_iterator_child_step_start':
         store.onIteratorChildStepStart(eventData as Parameters<typeof store.onIteratorChildStepStart>[0]);

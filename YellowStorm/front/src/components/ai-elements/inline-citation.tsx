@@ -43,14 +43,15 @@ export const InlineCitationCardTrigger = ({ sources, className, 'aria-label': ar
         aria-label={ariaLabel ?? fullLabel}
         title={fullLabel}
         className={cn(
-          badgeVariants({ variant: 'outline' }),
-          'mx-0.5 h-5 min-w-5 max-w-32 rounded-full border-primary/25 bg-primary/8 px-1.5 py-0 align-super text-[11px] font-semibold leading-none text-primary shadow-none hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
+          'mx-0.5 -my-2.5 inline-flex min-h-11 min-w-11 max-w-36 items-center justify-center rounded-full border-0 bg-transparent p-0 align-middle text-[11px] font-semibold leading-none text-foreground shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
           className,
         )}
         {...props}
       >
-        <span className='truncate'>{visibleLabel}</span>
-        {sources.length > 1 && <span className='ml-0.5 shrink-0'>+{sources.length - 1}</span>}
+        <span className={cn(badgeVariants({ variant: 'outline' }), 'inline-flex h-6 min-w-6 max-w-32 items-center justify-center rounded-full border-primary/40 bg-background px-1.5 text-foreground transition-colors hover:bg-primary/10')}>
+          <span className='truncate'>{visibleLabel}</span>
+          {sources.length > 1 && <span className='ml-0.5 shrink-0'>+{sources.length - 1}</span>}
+        </span>
       </button>
     </HoverCardTrigger>
   );

@@ -21,19 +21,8 @@ export interface AdminMenuItem {
   descriptionKey: ModuleTranslationKey<'admin'>;
 }
 
-export interface PromptInjectionGuardrailsConfig {
-  inputGuardrailEnabled: boolean;
-  outputGuardrailEnabled: boolean;
-  toolCallGuardrailEnabled: boolean;
-  inputClassifierPrompt: string;
-  outputClassifierPrompt: string;
-  toolCallClassifierPrompt: string;
-  blockMessage: string;
-}
-
-export interface AdminGuardrailsSettings {
+export interface AdminGuardrailsSettings extends AgentGuardrails {
   forceActivation: boolean;
-  promptInjection: PromptInjectionGuardrailsConfig;
 }
 
 export interface AdminEvaluationSettings {
@@ -1015,6 +1004,7 @@ export interface SyncModelsResponse {
 }
 
 export interface AdminPlaybookSettings {
+  playbookSuggestorAgentId: string | null;
   inferenceModelId: string | null;
   advisorEvaluationModelId: string | null;
   replayEvaluationModelId: string | null;
@@ -1029,9 +1019,39 @@ export interface AdminPlaybookSettings {
   };
   replayEligibilityConfidenceThreshold: number;
   useDeterministicBlueprintBuilder: boolean;
+  playbookExecution: PlaybookExecutionAdminSettings;
 }
 
+export interface PlaybookExecutionAdminSettings {
+  availableCapacity: number;
+  maxConcurrentPerUser: number;
+  maxConcurrentPerFlow: number;
+  maxConcurrentPerProvider: number;
+  maxConcurrentPerModel: number;
+  executionQueueMaxDepth: number;
+  maxParallelismPerExecution: number;
+  recursionLimitDefault: number;
+  recursionLimitMax: number;
+  dynamicReasoning: {
+    plannerAgentId: string | null;
+    maxWorkNodes: number;
+    maxParallelism: number;
+    maxDepth: number;
+    maxRepairAttempts: number;
+  };
+}
+
+export interface PlaybookPlannerAgentOption {
+  id: string;
+  name: string;
+  description?: string;
+  model: string;
+}
+
+export type PlaybookSuggestorAgentOption = PlaybookPlannerAgentOption;
+
 export interface UpdateAdminPlaybookSettingsRequest {
+  playbookSuggestorAgentId?: string | null;
   inferenceModelId?: string | null;
   advisorEvaluationModelId?: string | null;
   replayEvaluationModelId?: string | null;
@@ -1040,6 +1060,9 @@ export interface UpdateAdminPlaybookSettingsRequest {
   intentNormalizationLimits?: Partial<AdminPlaybookSettings['intentNormalizationLimits']>;
   replayEligibilityConfidenceThreshold?: number;
   useDeterministicBlueprintBuilder?: boolean;
+  playbookExecution?: Partial<Omit<PlaybookExecutionAdminSettings, 'dynamicReasoning'>> & {
+    dynamicReasoning?: Partial<PlaybookExecutionAdminSettings['dynamicReasoning']>;
+  };
 }
 
 // Playbook Prompt Types
@@ -1429,6 +1452,7 @@ export interface SkillFileResponse {
 
 export interface SkillResponse {
   id: string;
+  slug: string;
   name: string;
   description: string;
   icon: string;
@@ -1484,6 +1508,7 @@ export interface UpdateSkillCategoryRequest {
 }
 
 export interface CreateSkillRequest {
+  slug?: string;
   name: string;
   description: string;
   icon?: string;
@@ -1570,6 +1595,8 @@ export interface ConnectorResponse {
   actions: ConnectorActionResponse[];
   referencedSkillIds: string[];
   isActive: boolean;
+  isSystem?: boolean;
+  isHidden?: boolean;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -1615,6 +1642,7 @@ export interface CreateConnectorRequest {
   }>;
   referencedSkillIds?: string[];
   isActive?: boolean;
+  isHidden?: boolean;
 }
 
 export interface UpdateConnectorRequest extends Partial<CreateConnectorRequest> { }
@@ -1665,6 +1693,22 @@ export interface ConnectorOAuthStatusResponse {
   connectedAt?: string;
   disconnectedAt?: string;
   providerEmail?: string;
+}
+
+export type CatalogConflictPolicy = 'skip' | 'overwrite';
+
+export interface CatalogExportRequest {
+  selection: 'all' | 'selected';
+  ids?: string[];
+  includeSecurity?: boolean;
+  passphrase?: string;
+}
+
+export interface CatalogImportResult {
+  skills: { created: number; updated: number; skipped: number };
+  connectors: { created: number; updated: number; skipped: number };
+  categories: { created: number; reused: number };
+  security: { credentials: number; connectedApps: number; tokens: number };
 }
 
 // Workspace Upload Settings Types

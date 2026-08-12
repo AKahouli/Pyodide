@@ -109,6 +109,7 @@ async def execute_workflow(team: AutoAgentGenerationTeam,
         None
     """
     logger.info(f"Starting workflow execution - mode: {user_request.agent_mode}, session_id: {user_request.session_id}")
+    q.include_tool_results = True
     if user_request.agent_mode=="auto":
         await handle_no_agents_workflow(team, user_request, q, main_trace)
     elif user_request.agent_mode=="manual":

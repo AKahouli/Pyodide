@@ -1,5 +1,6 @@
 """Unit tests for StreamingEventProcessor."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -98,6 +99,59 @@ class TestStreamingEventProcessor:
     assert usage_puts[0]["usage"]["input_tokens"] == 10
 
   @pytest.mark.asyncio
+  async def test_guarded_output_emits_only_validated_final_text(self, processor):
+    queue = AsyncMock()
+    events = [_usage_event("unsafe partial"), _usage_event("blocked replacement", is_final=True)]
+
+    async def fake_stream():
+      for event in events:
+        yield event
+
+    agent_runner = MagicMock()
+    agent_runner.run_async.return_value = fake_stream()
+    manager = SimpleNamespace(
+      id="mgr-1", name="Team Manager", tools=[], sub_agents=[],
+      _guardrails_output_enabled=True,
+    )
+    with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
+    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"):
+      result = await processor.process_streaming_events(
+        session_id="guarded", user_prompt="Hi", manager_agent=manager,
+        agent_runner=agent_runner, q=queue,
+      )
+
+    payload_history = json.dumps([call.args[0] for call in queue.put.await_args_list], default=str)
+    assert result == "blocked replacement"
+    assert "unsafe partial" not in payload_history
+    assert "blocked replacement" in payload_history
+
+  @pytest.mark.asyncio
+  async def test_guarded_output_discards_partial_text_when_stream_ends_without_final(self, processor):
+    queue = AsyncMock()
+
+    async def fake_stream():
+      yield _usage_event("unsafe partial")
+
+    agent_runner = MagicMock()
+    agent_runner.run_async.return_value = fake_stream()
+    manager = SimpleNamespace(
+      id="mgr-1", name="Team Manager", tools=[], sub_agents=[],
+      _guardrails_output_enabled=True,
+    )
+    with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
+    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"):
+      result = await processor.process_streaming_events(
+        session_id="guarded-disconnect", user_prompt="Hi", manager_agent=manager,
+        agent_runner=agent_runner, q=queue,
+      )
+
+    payload_history = json.dumps([call.args[0] for call in queue.put.await_args_list], default=str)
+    assert result == ""
+    assert "unsafe partial" not in payload_history
+
+  @pytest.mark.asyncio
   async def test_process_streaming_events_with_image_input(self, processor):
     queue = AsyncMock()
 
@@ -165,7 +219,7 @@ class TestStreamingEventProcessor:
   @pytest.mark.asyncio
   async def test_manager_emits_each_repeated_tool_occurrence(self, processor):
     queue = AsyncMock()
-    queue.include_private_tool_results = False
+    queue.include_tool_results = True
 
     def event_for(part):
       return SimpleNamespace(
@@ -208,4 +262,6 @@ class TestStreamingEventProcessor:
       "tool-mgr-1-call-1", "tool-mgr-1-call-2", "tool-mgr-1-call-1", "tool-mgr-1-call-2",
     ]
     assert [event["action"] for event in tool_events] == ["add", "add", "update", "update"]
-    assert all("result_json" not in event["component"]["data"] for event in tool_events)
+    assert [event["component"]["data"].get("result_json") for event in tool_events] == [
+      None, None, '{"matches":1}', '{"matches":2}',
+    ]

@@ -592,7 +592,12 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
     const result = await ctx.service.resumeApproval('exec-hum-1', 'owner-1', { decision: 'approved' });
 
     expect(executionModel.updateOne).toHaveBeenCalledWith(
-      { _id: 'exec-hum-1', status: 'pending_approval' },
+      expect.objectContaining({
+        _id: 'exec-hum-1',
+        status: 'running',
+        'pendingApproval.nodeId': 'approval-1',
+        'pendingApproval.iteration': 0,
+      }),
       expect.objectContaining({
         $set: expect.objectContaining({ status: 'running', pendingApproval: null }),
       }),
@@ -668,13 +673,95 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
     expect(execDoc.save).not.toHaveBeenCalled();
   });
 
+  it('allows only one concurrent approval request to call the runtime', async () => {
+    const execDoc = {
+      id: 'exec-hum-race',
+      _id: 'exec-hum-race',
+      flowId: 'flow-1',
+      ownerId: 'owner-1',
+      status: 'pending_approval',
+      pendingApproval: {
+        nodeId: 'approval-1',
+        iteration: 0,
+        interruptId: 'approval-race-1',
+        prompt: 'Approve?',
+      },
+      toJSON: jest.fn().mockReturnValue({ id: 'exec-hum-race', status: 'running' }),
+    };
+    let claimed = false;
+    const executionModel = {
+      ...mockExecutionModel(),
+      findById: jest.fn().mockResolvedValue(execDoc),
+      updateOne: jest.fn((filter, update) => ({
+        exec: jest.fn().mockImplementation(async () => {
+          const isClaim = filter.status === 'pending_approval'
+            && update?.$set?.status === 'running'
+            && !Object.prototype.hasOwnProperty.call(update.$set, 'pendingApproval');
+          if (!isClaim) return { modifiedCount: 1 };
+          if (claimed) return { modifiedCount: 0 };
+          claimed = true;
+          return { modifiedCount: 1 };
+        }),
+      })),
+    };
+    const mockResumeApproval = jest.fn((_req, cb) => {
+      setTimeout(() => cb(null, { resumed: true }), 5);
+    });
+    const ctx = await createE2EService(undefined, { executionModel });
+    (ctx.service as any).playbookFlowClient.ResumeApproval = mockResumeApproval;
+
+    await Promise.all([
+      ctx.service.resumeApproval('exec-hum-race', 'owner-1', { decision: 'approved' }),
+      ctx.service.resumeApproval('exec-hum-race', 'owner-1', { decision: 'approved' }),
+    ]);
+
+    expect(mockResumeApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores pending approval when the runtime resume call fails', async () => {
+    const execDoc = {
+      id: 'exec-hum-error',
+      _id: 'exec-hum-error',
+      flowId: 'flow-1',
+      ownerId: 'owner-1',
+      status: 'pending_approval',
+      pendingApproval: {
+        nodeId: 'approval-1',
+        iteration: 0,
+        interruptId: 'approval-error-1',
+        prompt: 'Approve?',
+      },
+      toJSON: jest.fn().mockReturnValue({ id: 'exec-hum-error', status: 'pending_approval' }),
+    };
+    const executionModel = {
+      ...mockExecutionModel(),
+      findById: jest.fn().mockResolvedValue(execDoc),
+    };
+    const ctx = await createE2EService(undefined, { executionModel });
+    (ctx.service as any).playbookFlowClient.ResumeApproval = jest.fn((_req, cb) => {
+      cb(new Error('runtime unavailable'));
+    });
+
+    await expect(
+      ctx.service.resumeApproval('exec-hum-error', 'owner-1', { decision: 'approved' }),
+    ).rejects.toThrow('runtime unavailable');
+
+    expect(executionModel.updateOne).toHaveBeenLastCalledWith(
+      expect.objectContaining({ _id: 'exec-hum-error', status: 'running' }),
+      { $set: { status: 'pending_approval' } },
+    );
+  });
+
   it('resumeFromStep clears pendingApproval only after gRPC ResumeFromStep succeeds', async () => {
     const execDoc = {
       id: 'exec-step-1',
       _id: 'exec-step-1',
       ownerId: 'owner-1',
       status: 'pending_approval',
-      pendingApproval: { nodeId: 'task-1', iteration: 2, prompt: 'Approve?' },
+      pendingApproval: {
+        nodeId: 'task-1', iteration: 2, prompt: 'Approve?',
+        interruptPayload: { request_fingerprint: 'trusted-fingerprint' },
+      },
       save: jest.fn().mockResolvedValue(undefined),
       toJSON: jest.fn().mockReturnValue({ id: 'exec-step-1', status: 'running' }),
     };
@@ -687,7 +774,9 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
     const ctx = await createE2EService(undefined, { executionModel });
     (ctx.service as any).playbookFlowClient.ResumeFromStep = mockResumeFromStep;
 
-    const result = await ctx.service.resumeFromStep('exec-step-1', 'owner-1', { taskId: 'task-1', action: 'approve' });
+    const result = await ctx.service.resumeFromStep('exec-step-1', 'owner-1', {
+      taskId: 'task-1', action: 'approve', payload: { request_fingerprint: 'untrusted-fingerprint' },
+    });
 
     expect(executionModel.updateOne).toHaveBeenCalledWith(
       { _id: 'exec-step-1', status: 'pending_approval' },
@@ -705,6 +794,7 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
       interrupt_id: '',
       action: 'approve',
     });
+    expect(grpcArgs[0].payload.fields.request_fingerprint.stringValue).toBe('trusted-fingerprint');
     expect(result.status).toBe('running');
   });
 

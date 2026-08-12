@@ -99,7 +99,7 @@ vi.mock('../store', () => ({
 
 vi.mock('@xyflow/react', () => ({
   Handle: ({ id }: { id: string }) => <span data-testid={`handle-${id}`} />,
-  Position: { Left: 'left', Right: 'right' },
+  Position: { Left: 'left', Right: 'right', Bottom: 'bottom' },
   useUpdateNodeInternals: () => vi.fn(),
 }));
 
@@ -695,5 +695,50 @@ describe('PlaybookNode', () => {
       connectors: ['connector-1'],
       connectorActionSelections: [{ connectorId: 'connector-1', actionKeys: ['search'] }],
     }));
+  });
+
+  it('renders the ephemeral bottom runtime handle only when projection data requests it', () => {
+    const { rerender } = render(
+      <PlaybookNode
+        {...({
+          id: 'node-1',
+          selected: false,
+          data: {
+            id: 'node-1',
+            title: 'Summarize',
+            description: '',
+            executionOrder: 0,
+            positionX: 0,
+            positionY: 0,
+            inputPorts: [],
+            outputPorts: [],
+          },
+        } as any)}
+      />,
+    );
+
+    expect(screen.queryByTestId('handle-dynamic-reasoning-runtime')).not.toBeInTheDocument();
+
+    rerender(
+      <PlaybookNode
+        {...({
+          id: 'node-1',
+          selected: false,
+          data: {
+            id: 'node-1',
+            title: 'Summarize',
+            description: '',
+            executionOrder: 0,
+            positionX: 0,
+            positionY: 0,
+            inputPorts: [],
+            outputPorts: [],
+            dynamicReasoningRuntimeSourceHandleId: 'dynamic-reasoning-runtime',
+          },
+        } as any)}
+      />,
+    );
+
+    expect(screen.getByTestId('handle-dynamic-reasoning-runtime')).toBeInTheDocument();
   });
 });

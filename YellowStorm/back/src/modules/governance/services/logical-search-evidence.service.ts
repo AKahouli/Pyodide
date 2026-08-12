@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { ConnectorMcpRuntimeService } from '@modules/connector/services/connector-mcp-runtime.service';
-import type { SourceValidityEvidence } from '../domain/source-validity';
+import type { ValidityEvidence } from '../domain/document-validity';
 
 const SEARCH_TOOLS = ['search_relevant_documents', 'search'] as const;
 const MAX_RESULTS = 20;
@@ -10,10 +10,10 @@ const MAX_RESULTS = 20;
 export class LogicalSearchEvidenceService {
   constructor(private readonly runtime: ConnectorMcpRuntimeService) {}
 
-  async search(input: { connectorId: string; workspaceId: string; authorizationUserId: string; documentId: string; sourceVersionId: string; fileName: string }): Promise<SourceValidityEvidence[]> {
+  async search(input: { connectorId: string; workspaceId: string; authorizationUserId: string; documentId: string; fileName: string }): Promise<ValidityEvidence[]> {
     const { connectorId } = input;
     const queries = ['effective start date publication date', 'expiry deadline valid until review duration'];
-    const evidence: SourceValidityEvidence[] = [];
+    const evidence: ValidityEvidence[] = [];
     for (const query of queries) {
       const response = await this.callSearch(connectorId, query, input.workspaceId, input.authorizationUserId);
       for (const row of this.collectObjects(response.value).slice(0, MAX_RESULTS)) {
@@ -24,7 +24,7 @@ export class LogicalSearchEvidenceService {
         const page = this.readNumber(row, ['page', 'page_number', 'pageNumber']);
         const sectionId = this.readString(row, ['section_id', 'sectionId']);
         const blockId = this.readString(row, ['block_id', 'blockId', 'chunk_id', 'chunkId']);
-        evidence.push({ id: `${input.sourceVersionId}:${sectionId ?? blockId ?? page ?? evidence.length}`, field: 'effectiveFrom', origin: 'logical_search', documentId: input.documentId, page, sectionId, blockId, excerpt: excerpt.slice(0, 4000), confidence: Math.min(0.85, this.readNumber(row, ['score', 'similarity', 'confidence']) ?? 0.65), sourceVersionId: input.sourceVersionId, extractionMethod: 'connector-mcp-search-v1', capturedAt: new Date() });
+        evidence.push({ id: `${input.documentId}:${sectionId ?? blockId ?? page ?? evidence.length}`, field: 'effectiveFrom', origin: 'logical_search', documentId: input.documentId, page, sectionId, blockId, excerpt: excerpt.slice(0, 4000), confidence: Math.min(0.85, this.readNumber(row, ['score', 'similarity', 'confidence']) ?? 0.65), extractionMethod: 'connector-mcp-search-v1', capturedAt: new Date() });
       }
     }
     return Array.from(new Map(evidence.map((item) => [item.id, item])).values());

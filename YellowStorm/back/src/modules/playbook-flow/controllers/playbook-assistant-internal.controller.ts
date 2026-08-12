@@ -9,8 +9,11 @@ import {
   AnalyzeTaskOptimizationDto,
   AnalyzeWorkflowOptimizationDto,
   CancelPlaybookAssistantConstructionDto,
+  EvaluateMascotToolDto,
+  ListRecentExecutionsDto,
   OpenPlaybookAssistantContextDto,
   RunPlaybookFromStepDto,
+  SearchPlaybooksDto,
   StartAdvisorRemediationConstructionDto,
   StartPlaybookAssistantConstructionDto,
 } from '../dto/playbook-assistant.dto';
@@ -19,6 +22,7 @@ import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execut
 import { RateLimit } from '@modules/rate-limiter';
 import { PlaybookAssistantContextService } from '../assistant/playbook-assistant-context.service';
 import { PlaybookAssistantService } from '../assistant/playbook-assistant.service';
+import { MascotToolExecutionPolicyService } from '../assistant/mascot-tool-execution-policy.service';
 
 @Public()
 @ApiTags('Playbook Assistant Internal')
@@ -30,7 +34,54 @@ export class PlaybookAssistantInternalController {
   constructor(
     private readonly contextService: PlaybookAssistantContextService,
     private readonly assistantService: PlaybookAssistantService,
+    private readonly mascotToolPolicy: MascotToolExecutionPolicyService,
   ) {}
+
+  @Post('mascot/tool-policy/evaluate')
+  @ApiOperation({ summary: 'Evaluate a mascot tool call in the existing runtime tool pipeline' })
+  evaluateMascotTool(
+    @Headers('x-yellowstorm-tenant-id') tenantId: string | undefined,
+    @Headers('x-yellowstorm-user-id') userId: string | undefined,
+    @Headers('x-yellowstorm-agent-id') agentId: string | undefined,
+    @Headers('x-yellowstorm-conversation-id') conversationId: string | undefined,
+    @Headers('x-correlation-id') correlationId: string | undefined,
+    @Body() dto: EvaluateMascotToolDto,
+  ) {
+    return this.mascotToolPolicy.evaluate({
+      tenantId: this.requireActorValue(tenantId, 'tenant'),
+      userId: this.requireUserId(userId),
+      agentId: this.requireActorValue(agentId, 'agent'),
+      conversationId: this.requireActorValue(conversationId, 'conversation'),
+      correlationId: this.requireActorValue(correlationId, 'correlation'),
+    }, dto);
+  }
+
+  @Get('playbooks')
+  @ApiOperation({ summary: 'Search accessible Playbooks for the mascot' })
+  searchPlaybooks(
+    @Headers('x-yellowstorm-user-id') userId: string | undefined,
+    @Query() dto: SearchPlaybooksDto,
+  ) {
+    return this.assistantService.searchPlaybooks(this.requireUserId(userId), dto);
+  }
+
+  @Get('executions')
+  @ApiOperation({ summary: 'List recent accessible Playbook executions for the mascot' })
+  listRecentExecutions(
+    @Headers('x-yellowstorm-user-id') userId: string | undefined,
+    @Query() dto: ListRecentExecutionsDto,
+  ) {
+    return this.assistantService.listRecentExecutions(this.requireUserId(userId), dto);
+  }
+
+  @Get('executions/:executionId/diagnostics')
+  @ApiOperation({ summary: 'Get redacted deterministic execution diagnostics for the mascot' })
+  getExecutionDiagnostics(
+    @Headers('x-yellowstorm-user-id') userId: string | undefined,
+    @Param('executionId') executionId: string,
+  ) {
+    return this.assistantService.getExecutionDiagnostics(executionId, this.requireUserId(userId));
+  }
 
   @Post('playbooks/:id/context')
   @ApiOperation({ summary: 'Open canonical Playbook assistant context' })
@@ -248,6 +299,14 @@ export class PlaybookAssistantInternalController {
     const normalized = userId?.trim();
     if (!normalized) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Missing trusted user identity');
+    }
+    return normalized;
+  }
+
+  private requireActorValue(value: string | undefined, name: string): string {
+    const normalized = value?.trim();
+    if (!normalized || normalized.length > 200) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, `Missing or invalid trusted ${name} identity`);
     }
     return normalized;
   }

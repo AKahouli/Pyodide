@@ -1,61 +1,52 @@
 import { Types } from 'mongoose';
-import { WorkspaceGovernanceEventHandler } from './workspace-governance-event.handler';
 import { WorkspaceIntegrationEvents } from '@modules/integration-events/contracts';
-import { GovernanceSourceFromWorkspaceFactory } from '../factories/governance-source-from-workspace.factory';
+import { WorkspaceGovernanceEventHandler } from './workspace-governance-event.handler';
 
 describe('WorkspaceGovernanceEventHandler', () => {
-  const bindingId = new Types.ObjectId();
   const programId = new Types.ObjectId();
-  const sourceId = new Types.ObjectId();
-  const documentId = new Types.ObjectId();
-  const source = { _id: sourceId };
-  const binding = { _id: bindingId, programId, scopeIds: [], visibility: 'program_shared', ingestionMode: 'assisted', defaults: {}, createdBy: new Types.ObjectId() };
-  const payload = { workspaceId: new Types.ObjectId().toString(), documentId: documentId.toString(), documentType: 'url' as const, originalName: 'Example', normalizedSourceUrl: 'https://example.test', sourceUrl: 'https://example.test' };
+  const documentId = new Types.ObjectId().toString();
+  const binding = { _id: new Types.ObjectId(), programId, ingestionMode: 'assisted', createdBy: new Types.ObjectId() };
+  const payload = { workspaceId: new Types.ObjectId().toString(), documentId, documentType: 'doc' as const, originalName: 'Policy.pdf', contentHash: 'hash-1', indexingAttemptId: 'attempt-1' };
 
-  it('updates the initial URL candidate when conversion supplies its content hash', async () => {
-    const existingVersion = { canonicalUrl: payload.normalizedSourceUrl, contentHash: undefined as string | undefined, extractedMetadata: {}, save: jest.fn().mockResolvedValue(undefined) };
-    const sourceModel = { findOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(source) })), create: jest.fn() };
-    const versionModel = { findOne: jest.fn((query: Record<string, unknown>) => {
-      if ('originEventId' in query) return { exec: jest.fn().mockResolvedValue(null) };
-      return { sort: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(existingVersion) })) };
-    }) };
-    const versions = { create: jest.fn(), updateTechnicalStatus: jest.fn() };
-    const events = { append: jest.fn().mockResolvedValue(undefined) };
-    const handler = new WorkspaceGovernanceEventHandler({ register: jest.fn() } as never, { get: jest.fn().mockReturnValue(true) } as never, { enabledForWorkspace: jest.fn().mockResolvedValue([binding]) } as never, versions as never, events as never, sourceModel as never, versionModel as never, new GovernanceSourceFromWorkspaceFactory(), { enqueue: jest.fn() } as never, { getSettings: jest.fn().mockResolvedValue({ connectorId: 'connector-1' }) } as never);
-
-    await handler.handle({ eventId: 'converted', eventType: WorkspaceIntegrationEvents.DocumentRegisteredV1, occurredAt: new Date(), payload: { ...payload, contentHash: 'hash-1' } } as never);
-
-    expect(versions.create).not.toHaveBeenCalled();
-    expect(existingVersion.contentHash).toBe('hash-1');
-    expect(existingVersion.extractedMetadata).toEqual({ artifactAvailable: true });
-    expect(existingVersion.save).toHaveBeenCalledTimes(1);
-  });
-
-  it('enqueues intelligence only after the ready state was persisted', async () => {
-    const readyEvent = { eventId: 'ready-1', eventType: WorkspaceIntegrationEvents.IndexingReadyV1, occurredAt: new Date() };
-    const readyVersion = { _id: new Types.ObjectId(), sourceId, programId, documentId, technicalStatus: 'ready' as const, contentHash: 'hash-1', indexingAttemptId: 'attempt-1' };
-    const sourceModel = { findOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ ...source, currentCandidateVersionId: readyVersion._id }) })) };
-    const versionModel = { findOne: jest.fn((query: Record<string, unknown>) => 'originEventId' in query ? { exec: jest.fn().mockResolvedValue(null) } : { sort: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(readyVersion) })) }) };
-    const versions = { updateTechnicalStatus: jest.fn().mockResolvedValue(readyVersion) };
+  function createHandler(eventConsumerEnabled = true) {
+    const documents = { upsertFromWorkspace: jest.fn().mockResolvedValue({ _id: new Types.ObjectId() }), archiveFromWorkspaceDeletion: jest.fn().mockResolvedValue(undefined) };
     const intelligence = { enqueue: jest.fn().mockResolvedValue(undefined) };
-    const handler = new WorkspaceGovernanceEventHandler({ register: jest.fn() } as never, { get: jest.fn().mockReturnValue(true) } as never, { enabledForWorkspace: jest.fn().mockResolvedValue([binding]) } as never, versions as never, { append: jest.fn() } as never, sourceModel as never, versionModel as never, new GovernanceSourceFromWorkspaceFactory(), intelligence as never, { getSettings: jest.fn().mockResolvedValue({ connectorId: 'connector-1' }) } as never);
+    const handler = new WorkspaceGovernanceEventHandler(
+      { register: jest.fn() } as never,
+      { get: jest.fn().mockReturnValue(eventConsumerEnabled) } as never,
+      { enabledForWorkspace: jest.fn().mockResolvedValue([binding]) } as never,
+      documents as never,
+      intelligence as never,
+      { getSettings: jest.fn().mockResolvedValue({ connectorId: new Types.ObjectId().toString() }) } as never,
+    );
+    return { handler, documents, intelligence };
+  }
 
-    await handler.handle({ ...readyEvent, payload: { ...payload, indexingAttemptId: 'attempt-1' } } as never);
-
-    expect(versions.updateTechnicalStatus).toHaveBeenCalledWith(programId.toString(), sourceId.toString(), readyVersion._id.toString(), 'ready', readyEvent.eventId, readyEvent.occurredAt, 'attempt-1');
-    expect(intelligence.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceVersionId: readyVersion._id.toString(), jobType: 'technical_metadata', inputHash: expect.any(String) }));
+  it('upserts one governance overlay for each effective binding', async () => {
+    const { handler, documents } = createHandler();
+    const occurredAt = new Date();
+    await handler.handle({ eventId: 'registered-1', eventType: WorkspaceIntegrationEvents.DocumentRegisteredV1, occurredAt, payload } as never);
+    expect(documents.upsertFromWorkspace).toHaveBeenCalledWith(programId.toString(), documentId, binding.createdBy.toString(), { id: 'registered-1', occurredAt });
   });
 
-  it('does not enqueue for an out-of-order terminal event from another indexing attempt', async () => {
-    const persistedVersion = { _id: new Types.ObjectId(), sourceId, programId, documentId, technicalStatus: 'ready' as const, contentHash: 'hash-1', indexingAttemptId: 'accepted-attempt' };
-    const sourceModel = { findOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(source) })) };
-    const versionModel = { findOne: jest.fn((query: Record<string, unknown>) => 'originEventId' in query ? { exec: jest.fn().mockResolvedValue(null) } : { sort: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(persistedVersion) })) }) };
-    const versions = { updateTechnicalStatus: jest.fn().mockResolvedValue(persistedVersion) };
-    const intelligence = { enqueue: jest.fn() };
-    const handler = new WorkspaceGovernanceEventHandler({ register: jest.fn() } as never, { get: jest.fn().mockReturnValue(true) } as never, { enabledForWorkspace: jest.fn().mockResolvedValue([binding]) } as never, versions as never, { append: jest.fn() } as never, sourceModel as never, versionModel as never, new GovernanceSourceFromWorkspaceFactory(), intelligence as never, { getSettings: jest.fn().mockResolvedValue({ connectorId: 'connector-1' }) } as never);
+  it('enqueues document-keyed intelligence after indexing is ready', async () => {
+    const { handler, intelligence } = createHandler();
+    await handler.handle({ eventId: 'ready-1', eventType: WorkspaceIntegrationEvents.IndexingReadyV1, occurredAt: new Date(), payload } as never);
+    expect(intelligence.enqueue).toHaveBeenCalledWith(expect.objectContaining({ programId: programId.toString(), documentId, jobType: 'technical_metadata', inputHash: expect.any(String) }));
+  });
 
-    await handler.handle({ eventId: 'stale-ready', eventType: WorkspaceIntegrationEvents.IndexingReadyV1, occurredAt: new Date(), payload: { ...payload, indexingAttemptId: 'stale-attempt' } } as never);
-
+  it('archives governance without loading a deleted workspace document', async () => {
+    const { handler, documents, intelligence } = createHandler();
+    const occurredAt = new Date();
+    await handler.handle({ eventId: 'deleted-1', eventType: WorkspaceIntegrationEvents.DocumentDeletedV1, occurredAt, payload } as never);
+    expect(documents.archiveFromWorkspaceDeletion).toHaveBeenCalledWith(programId.toString(), documentId, binding.createdBy.toString(), { id: 'deleted-1', occurredAt });
+    expect(documents.upsertFromWorkspace).not.toHaveBeenCalled();
     expect(intelligence.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('does not process disabled consumers', async () => {
+    const { handler, documents } = createHandler(false);
+    await handler.handle({ eventId: 'ready-1', eventType: WorkspaceIntegrationEvents.IndexingReadyV1, occurredAt: new Date(), payload } as never);
+    expect(documents.upsertFromWorkspace).not.toHaveBeenCalled();
   });
 });

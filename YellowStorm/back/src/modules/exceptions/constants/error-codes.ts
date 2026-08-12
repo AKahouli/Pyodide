@@ -233,6 +233,9 @@ export enum ErrorCode {
   PLAYBOOK_FLOW_EXECUTION_TIMEOUT = 'ERR_2531',
   PLAYBOOK_FLOW_APPROVAL_NOT_FOUND = 'ERR_2532',
   PLAYBOOK_FLOW_DUPLICATE_NAME = 'ERR_2533',
+  PLAYBOOK_PLANNER_UNAVAILABLE = 'ERR_2534',
+  PLAYBOOK_SUGGESTOR_UNAVAILABLE = 'ERR_2535',
+  PLAYBOOK_SUGGESTION_INVALID = 'ERR_2536',
 
   // Project errors (2700-2799)
   PROJECT_NOT_FOUND = 'ERR_2700',
@@ -384,8 +387,8 @@ export enum ErrorCode {
   GOVERNANCE_SCOPE_NAME_EXISTS = 'ERR_3611',
   GOVERNANCE_SCOPE_PARENT_INVALID = 'ERR_3612',
   GOVERNANCE_SCOPE_DELETE_BLOCKED = 'ERR_3613',
-  GOVERNANCE_SOURCE_NOT_FOUND = 'ERR_3620',
-  GOVERNANCE_SOURCE_SCOPE_INVALID = 'ERR_3621',
+  GOVERNANCE_DOCUMENT_NOT_FOUND = 'ERR_3620',
+  GOVERNANCE_DOCUMENT_SCOPE_INVALID = 'ERR_3621',
   GOVERNANCE_MEMBERSHIP_NOT_FOUND = 'ERR_3630',
   GOVERNANCE_MEMBERSHIP_EXISTS = 'ERR_3631',
   GOVERNANCE_ACCESS_DENIED = 'ERR_3632',
@@ -407,6 +410,19 @@ export enum ErrorCode {
   GOVERNED_CONNECTOR_NOT_ALLOWED = 'ERR_3686',
   GOVERNED_TEAM_NOT_ALLOWED = 'ERR_3687',
   GOVERNED_CONVERSATION_RUNTIME_IMMUTABLE = 'ERR_3688',
+
+  // Semantic Model errors (3700-3799)
+  SEMANTIC_MODEL_NOT_FOUND = 'ERR_3700',
+  SEMANTIC_MODEL_NAME_EXISTS = 'ERR_3701',
+  SEMANTIC_MODEL_ACCESS_DENIED = 'ERR_3702',
+  SEMANTIC_MODEL_REVISION_CONFLICT = 'ERR_3703',
+  SEMANTIC_MODEL_VALIDATION_FAILED = 'ERR_3704',
+  SEMANTIC_MODEL_PROTECTED_RESOURCE = 'ERR_3705',
+  SEMANTIC_MODEL_WORKSPACE_INVALID = 'ERR_3706',
+  SEMANTIC_MODEL_BINDING_INVALID = 'ERR_3707',
+  SEMANTIC_MODEL_VERSION_IMMUTABLE = 'ERR_3708',
+  SEMANTIC_MODEL_NO_DRAFT = 'ERR_3709',
+  SEMANTIC_MODEL_UNAVAILABLE = 'ERR_3710',
 }
 
 export const ErrorMessages: Record<ErrorCode, string> = {
@@ -620,6 +636,9 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.PLAYBOOK_FLOW_EXECUTION_TIMEOUT]: 'Playbook flow execution timed out.',
   [ErrorCode.PLAYBOOK_FLOW_APPROVAL_NOT_FOUND]: 'No pending approval found for this execution.',
   [ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME]: 'A playbook with this name already exists.',
+  [ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE]: 'The Playbook Planner default agent is unavailable or ambiguous.',
+  [ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE]: 'The Playbook Suggestor default agent is unavailable or not configured.',
+  [ErrorCode.PLAYBOOK_SUGGESTION_INVALID]: 'The Playbook Suggestor returned an invalid suggestion.',
 
   [ErrorCode.PROJECT_NOT_FOUND]: 'Project not found.',
   [ErrorCode.PROJECT_ALREADY_EXISTS]: 'A project with this name already exists.',
@@ -704,13 +723,13 @@ export const ErrorMessages: Record<ErrorCode, string> = {
 
   [ErrorCode.GOVERNANCE_PROGRAM_NOT_FOUND]: 'Governance program not found.',
   [ErrorCode.GOVERNANCE_PROGRAM_NAME_EXISTS]: 'A governance program with this name already exists.',
-  [ErrorCode.GOVERNANCE_PROGRAM_DELETE_BLOCKED]: 'Governance program cannot be deleted while scopes or sources exist.',
+  [ErrorCode.GOVERNANCE_PROGRAM_DELETE_BLOCKED]: 'Governance program cannot be deleted while scopes, workspace bindings, or governed documents exist.',
   [ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND]: 'Governance scope not found.',
   [ErrorCode.GOVERNANCE_SCOPE_NAME_EXISTS]: 'A governance scope with this name already exists in this program.',
   [ErrorCode.GOVERNANCE_SCOPE_PARENT_INVALID]: 'Parent governance scope must belong to the same program.',
-  [ErrorCode.GOVERNANCE_SCOPE_DELETE_BLOCKED]: 'Governance scope cannot be deleted while child scopes or sources reference it.',
-  [ErrorCode.GOVERNANCE_SOURCE_NOT_FOUND]: 'Governance source not found.',
-  [ErrorCode.GOVERNANCE_SOURCE_SCOPE_INVALID]: 'Governance source scopes must belong to the same program.',
+  [ErrorCode.GOVERNANCE_SCOPE_DELETE_BLOCKED]: 'Governance scope cannot be deleted while child scopes or workspace bindings reference it.',
+  [ErrorCode.GOVERNANCE_DOCUMENT_NOT_FOUND]: 'Governance document not found.',
+  [ErrorCode.GOVERNANCE_DOCUMENT_SCOPE_INVALID]: 'The document workspace is not available through an enabled program binding.',
   [ErrorCode.GOVERNANCE_MEMBERSHIP_NOT_FOUND]: 'Governance membership not found.',
   [ErrorCode.GOVERNANCE_MEMBERSHIP_EXISTS]: 'A governance membership already exists for this user and scope.',
   [ErrorCode.GOVERNANCE_ACCESS_DENIED]: 'You do not have access to this governance scope.',
@@ -732,6 +751,18 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.GOVERNED_CONNECTOR_NOT_ALLOWED]: 'Connectors are not available in governed conversations.',
   [ErrorCode.GOVERNED_TEAM_NOT_ALLOWED]: 'Teams are not available in governed conversations.',
   [ErrorCode.GOVERNED_CONVERSATION_RUNTIME_IMMUTABLE]: 'Governed conversation runtime settings cannot be changed.',
+
+  [ErrorCode.SEMANTIC_MODEL_NOT_FOUND]: 'Semantic Model not found.',
+  [ErrorCode.SEMANTIC_MODEL_NAME_EXISTS]: 'A Semantic Model with this name already exists.',
+  [ErrorCode.SEMANTIC_MODEL_ACCESS_DENIED]: 'You do not have access to this Semantic Model.',
+  [ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT]: 'This Semantic Model was changed elsewhere. Reload it before continuing.',
+  [ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED]: 'Resolve the blocking model issues before continuing.',
+  [ErrorCode.SEMANTIC_MODEL_PROTECTED_RESOURCE]: 'This system-managed model resource cannot be changed.',
+  [ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID]: 'The workspace is not available to this Semantic Model.',
+  [ErrorCode.SEMANTIC_MODEL_BINDING_INVALID]: 'The knowledge binding is not valid for this Semantic Model.',
+  [ErrorCode.SEMANTIC_MODEL_VERSION_IMMUTABLE]: 'Published Semantic Model versions cannot be changed.',
+  [ErrorCode.SEMANTIC_MODEL_NO_DRAFT]: 'This Semantic Model has no editable draft.',
+  [ErrorCode.SEMANTIC_MODEL_UNAVAILABLE]: 'Semantic Model storage is temporarily unavailable.',
 
   [ErrorCode.CONNECTOR_NOT_FOUND]: 'Connector not found.',
   [ErrorCode.CONNECTOR_ALREADY_EXISTS]: 'A connector with this slug already exists.',

@@ -80,6 +80,7 @@ interface EditorDraft {
   disableAdvisorEvaluation: boolean;
   expectedResult: string | null;
   deepSearch: boolean;
+  dynamicReasoningEnabled: boolean;
 }
 
 const DEFAULT_ITERATOR_CONFIG: PlaybookIteratorConfig = {
@@ -200,6 +201,7 @@ function buildDraftFromTask(task: PlaybookTask, t: (key: 'nodeEditor.portDefault
     disableAdvisorEvaluation: task.disableAdvisorEvaluation ?? false,
     expectedResult: task.expectedResult ?? null,
     deepSearch: task.deepSearch ?? false,
+    dynamicReasoningEnabled: task.dynamicReasoning?.enabled ?? false,
   };
 }
 
@@ -229,6 +231,9 @@ function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
     disableAdvisorEvaluation: draft.disableAdvisorEvaluation,
     expectedResult: draft.expectedResult,
     deepSearch: draft.deepSearch,
+    dynamicReasoning: isStepLikeNodeType(draft.nodeType)
+      ? { enabled: draft.dynamicReasoningEnabled }
+      : { enabled: false },
   };
 }
 
@@ -318,6 +323,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
     disableAdvisorEvaluation: false,
     expectedResult: null,
     deepSearch: false,
+    dynamicReasoningEnabled: false,
   });
 
   const agentOptions = useMemo<SearchableSelectOption[]>(
@@ -885,6 +891,19 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                       className="resize-y"
                     />
                   </div>
+                  {isStepLikeNodeType(draft.nodeType) && (
+                    <div className="flex items-start justify-between gap-4 rounded-md border border-border/60 p-3">
+                      <div className="space-y-1">
+                        <Label htmlFor="dynamic-reasoning-enabled">{t('nodeEditor.dynamicReasoning.label')}</Label>
+                        <p className="text-xs text-muted-foreground">{t('nodeEditor.dynamicReasoning.help')}</p>
+                      </div>
+                      <Switch
+                        id="dynamic-reasoning-enabled"
+                        checked={draft.dynamicReasoningEnabled}
+                        onCheckedChange={(checked) => updateDraft({ dynamicReasoningEnabled: checked === true })}
+                      />
+                    </div>
+                  )}
                 </div>
               </EditorSection>
 

@@ -6,12 +6,25 @@ FastMCP Streamable HTTP adapter for the YellowStorm Playbook assistant. NestJS r
 
 - `YELLOWSTORM_BACKEND_URL`: NestJS origin, default `http://localhost:3000`.
 - `YELLOWSTORM_INTERNAL_SERVICE_TOKEN`: value sent as `X-Internal-Token` to NestJS.
-- `PLAYBOOK_MCP_INGRESS_TOKEN`: connector-to-MCP secret sent as `X-Playbook-MCP-Token`.
+- `PLAYBOOK_MCP_INGRESS_TOKEN`: connector-to-MCP secret sent as `Authorization: Bearer <token>`.
 - `MCP_PORT`: Streamable HTTP port, default `8025`.
 - `PLAYBOOK_MCP_TIMEOUT_SECONDS`: backend timeout, constrained to 1-300 seconds.
 - `PLAYBOOK_MCP_MAX_RESPONSE_BYTES`: maximum buffered backend response, default 2 MiB and maximum 8 MiB.
+- `PLAYBOOK_MCP_SEARCH_LIMIT_MAX`: maximum mascot search/list result count, default and maximum `25`.
 
-The system connector must inject the acting user through the dynamic `X-YellowStorm-User-Id` header. The server trusts that header only after validating `X-Playbook-MCP-Token`. Do not expose this connector to workflow task agents.
+Bearer authentication is sufficient for MCP initialization and tool inspection. User-scoped tool calls additionally require `X-YellowStorm-User-Id`; callers may provide `X-YellowStorm-Tenant-Id`, `X-YellowStorm-Agent-Id`, `X-YellowStorm-Conversation-Id`, and `X-Correlation-Id` as an optional complete actor envelope for authorization and audit correlation. Identity headers are never model tool arguments.
+
+## My Second Brain
+
+The same MCP server supports the authenticated My Second Brain Playbook-only vertical slice. It adds `search_playbooks`, `list_recent_executions`, and `get_execution_diagnostics`, returning bounded permission-filtered data and semantic `uiTarget` values. NestJS remains authoritative for object access, validation, diagnostics, and execution.
+
+My Second Brain receives only this runtime-enforced allowlist: `search_playbooks`, `open_playbook_context`, `get_playbook_summary`, `get_task_details`, `get_task_dependencies`, `validate_playbook`, `start_playbook_execution`, `list_recent_executions`, `get_playbook_execution`, and `get_execution_diagnostics`. Other tools remain available for approved existing consumers but are not attached to the mascot.
+
+`start_playbook_execution` is released only by the existing agent/runtime tool-execution pipeline after a native, fingerprint-bound confirmation. The runtime injects the server-generated idempotency key; typed user text cannot confirm an action. The MCP does not own confirmation state and never approves its own call.
+
+Semantic UI targets contain only allowlisted Yellowmind surfaces and identifiers. The frontend resolves local route templates and enforces unsaved-change guards. This server never operates the DOM, emits arbitrary URLs, or performs mouse/keyboard automation.
+
+Workspace/document search and personal memory are intentionally outside this server. They remain future separate MCP integrations.
 
 No tool responds to runtime HITL. Normal MCP-started construction returns a Playbook canvas deep link and operation ID. The authenticated canvas consumes the durable operation through its JWT construction stream and applies deltas directly with one atomic Undo checkpoint. MCP ingress credentials are never forwarded to the browser.
 

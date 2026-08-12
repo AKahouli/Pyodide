@@ -16,4 +16,5 @@ export { default as workyConfig } from './worky.config';
 export { default as litellmConfig } from './litellm.config';
 export { default as playbookFlowConfig } from './playbook-flow.config';
 export { default as dataRoomConfig } from './data-room.config';
+export { default as semanticModelConfig } from './semantic-model.config';
 export { configValidationSchema } from './config.schema';

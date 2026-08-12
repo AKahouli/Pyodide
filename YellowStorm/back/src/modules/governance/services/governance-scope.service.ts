@@ -8,7 +8,8 @@ import { UserGroupService } from '@modules/user-group';
 import { CreateGovernanceScopeDto, UpdateGovernanceScopeDto } from '../dto';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
-import { GovernanceSource, GovernanceSourceDocument } from '../schemas/governance-source.schema';
+import { GovernanceDocument, GovernanceDocumentDocument } from '../schemas/governance-document.schema';
+import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
 import { GovernanceMembership, GovernanceMembershipDocument } from '../schemas/governance-membership.schema';
 import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
 import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
@@ -35,8 +36,10 @@ export class GovernanceScopeService {
   constructor(
     @InjectModel(GovernanceScope.name)
     private readonly scopeModel: Model<GovernanceScopeDocument>,
-    @InjectModel(GovernanceSource.name)
-    private readonly sourceModel: Model<GovernanceSourceDocument>,
+    @InjectModel(GovernanceDocument.name)
+    private readonly documentModel: Model<GovernanceDocumentDocument>,
+    @InjectModel(GovernanceWorkspaceBinding.name)
+    private readonly bindingModel: Model<GovernanceWorkspaceBindingDocument>,
     @InjectModel(GovernanceMembership.name)
     private readonly membershipModel: Model<GovernanceMembershipDocument>,
     @InjectModel(GovernanceDeployment.name)
@@ -124,11 +127,11 @@ export class GovernanceScopeService {
     await Promise.all(children.map((child) => this.deleteScopeTree(programId, child._id.toString())));
     const deployments = await this.deploymentModel.find({ programId: programObjectId, scopeId: scopeObjectId }).select('_id').lean().exec();
     const deploymentIds = deployments.map((deployment) => deployment._id);
-    await this.sourceModel.deleteMany({ programId: programObjectId, visibility: 'multi_scope', scopeIds: { $size: 1, $all: [scopeObjectId] } });
+    await this.bindingModel.deleteMany({ programId: programObjectId, visibility: 'multi_scope', scopeIds: { $size: 1, $all: [scopeObjectId] } });
     await Promise.all([
-      this.sourceModel.deleteMany({ programId: programObjectId, visibility: 'scope_specific', scopeIds: scopeObjectId }),
-      this.sourceModel.updateMany({ programId: programObjectId, visibility: 'multi_scope', scopeIds: scopeObjectId }, { $pull: { scopeIds: scopeObjectId } }),
-      this.sourceModel.updateMany({ programId: programObjectId, ownerScopeId: scopeObjectId }, { $unset: { ownerScopeId: '' } }),
+      this.bindingModel.deleteMany({ programId: programObjectId, visibility: 'scope_specific', scopeIds: scopeObjectId }),
+      this.bindingModel.updateMany({ programId: programObjectId, visibility: 'multi_scope', scopeIds: scopeObjectId }, [{ $set: { scopeIds: { $filter: { input: '$scopeIds', as: 'scopeId', cond: { $ne: ['$$scopeId', scopeObjectId] } } } } }, { $set: { visibility: { $cond: [{ $eq: [{ $size: '$scopeIds' }, 1] }, 'scope_specific', 'multi_scope'] } } }]),
+      this.documentModel.updateMany({ programId: programObjectId, ownerScopeId: scopeObjectId }, { $unset: { ownerScopeId: '' }, $inc: { governanceRevision: 1 } }),
       this.membershipModel.deleteMany({ programId: programObjectId, scopeId: scopeObjectId }),
       this.metricModel.deleteMany({ programId: programObjectId, scopeId: scopeObjectId }),
       this.dryRunModel.deleteMany({ programId: programObjectId, scopeId: scopeObjectId }),

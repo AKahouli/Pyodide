@@ -1,8 +1,7 @@
 """Step node implementation.
 
-A step node executes a single task (LLM call + tool invocations).
-Uses LangGraph's ``get_stream_writer()`` for lifecycle events and
-token-level streaming via ``litellm.acompletion(stream=True)``.
+A step node executes a single task through the native StepAgentGraph and
+ToolNode runtime. It uses ``get_stream_writer()`` for lifecycle events.
 Agent config is read from ``metadata.agent`` (resolved by the backend).
 
 Output is stored into task_outputs[(node_id, iteration)].
@@ -11,11 +10,13 @@ Output is stored into task_outputs[(node_id, iteration)].
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import time
 from typing import Any
 
 import litellm
+from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from structlog import get_logger
 from langgraph.config import get_stream_writer
@@ -28,7 +29,8 @@ from src.flow_engine.nodes.step_tool_scope import (
     build_sandbox_prompt_note,
     build_step_tool_scope,
 )
-from src.flow_engine.observability import TraceCollector, extract_usage
+from src.flow_engine.agent_runtime import StepRuntimeContext, run_step_agent
+from src.flow_engine.observability import TraceCollector
 from src.flow_engine.nodes.step_hitl import StepHitlResult, needs_hitl
 from src.flow_engine.nodes.step_hitl_handlers import (
     handle_clarification_after,
@@ -42,15 +44,14 @@ from src.flow_engine.nodes.step_hitl_blockers import (
     handle_smart_hitl_blocker,
 )
 from src.flow_engine.nodes.step_result import finalize_step_result, requires_structured_response
-from src.flow_engine.nodes.step_tools import (
-    ToolHitlApprovalContext,
+from src.flow_engine.nodes.step_agent_config import (
     build_agent_config,
     parse_connector_bindings,
-    run_step_with_tools,
 )
 from src.flow_engine.nodes.deterministic_script import run_deterministic_script
 from src.flow_engine.state import ExecutionState
-from src.smart_rag.infrastructure.model_parameters import normalize_temperature_for_model
+from src.flow_engine.dynamic_reasoning import run_dynamic_reasoning
+from src.flow_engine.dynamic_reasoning.models import DynamicReasoningPolicy, PlannerSnapshot
 from src.temporary_child_summary import (
     record_temporary_child_result,
     record_temporary_child_start,
@@ -58,6 +59,22 @@ from src.temporary_child_summary import (
 from src.skills.runtime import inject_skill_catalog
 
 logger = get_logger(__name__)
+
+
+def _generated_child_output_contract(
+    child_kind: str,
+    child_inputs: dict[str, Any],
+    parent_output_contract: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if child_kind == "synthesis":
+        return parent_output_contract
+    ports = child_inputs.get("generatedOutputPorts")
+    if not isinstance(ports, list):
+        return None
+    declared_ports = [port for port in ports if isinstance(port, dict)]
+    return {"ports": declared_ports} if declared_ports else None
+
+
 settings = get_settings()
 
 DEFAULT_MODEL = "gpt-4o-mini"
@@ -186,6 +203,11 @@ class _TemporaryChildAgentTool:
         session_id: str,
         parent_name: str,
         inherited_context: str,
+        agent_config: dict[str, Any] | None = None,
+        user_id: str = "",
+        flow_id: str = "",
+        node_id: str = "",
+        iteration: int = 0,
         trace_collector: TraceCollector | None = None,
         on_trace_update: Any = None,
     ):
@@ -196,6 +218,11 @@ class _TemporaryChildAgentTool:
         self._session_id = session_id
         self._parent_name = parent_name
         self._inherited_context = inherited_context
+        self._agent_config = copy.deepcopy(agent_config or {})
+        self._user_id = user_id
+        self._flow_id = flow_id
+        self._node_id = node_id
+        self._iteration = iteration
         self._trace_collector = trace_collector
         self._on_trace_update = on_trace_update
         self._count = 0
@@ -305,16 +332,29 @@ class _TemporaryChildAgentTool:
             expected_output=expected_output,
             execution_mode=f"model_tool_call_{execution_mode}",
         )
-        result = await run_step_with_tools(
-            model_id=self._model_id,
+        result = await run_step_agent(
             system_prompt=child_system_prompt,
             user_msg=child_prompt,
             tools=self._child_tools,
-            agent_role="temporary_child",
-            agent_name=child_id,
-            summary_session_id=self._session_id,
-            trace_collector=self._trace_collector,
-            on_trace_update=self._on_trace_update,
+            context=StepRuntimeContext(
+                model_id=self._model_id,
+                execution_id=self._session_id,
+                flow_id=self._flow_id,
+                node_id=self._node_id,
+                iteration=self._iteration,
+                user_id=self._user_id,
+                agent_id=child_id,
+                agent_name=child_id,
+                task_instruction=task_description,
+                original_user_request=child_prompt,
+                agent_config=self._agent_config,
+                trace_collector=self._trace_collector,
+                on_trace_update=self._on_trace_update,
+                agent_role="temporary_child",
+                summary_session_id=self._session_id,
+                tools_enabled=bool(self._child_tools),
+                max_tool_iterations=getattr(settings, "PLAYBOOK_MAX_TOOL_ITERATIONS", 50),
+            ),
         )
         logger.info("[TEMP CHILD] Flow child completed", child_index=child_index)
         record_temporary_child_result(
@@ -661,7 +701,92 @@ async def run_step(
     if should_execute:
         try:
             deterministic_payload: dict[str, Any] | None = None
-            if metadata.get("executionStrategy") == "deterministic_script":
+            dynamic_config = node_config.get("dynamic_reasoning") or node_config.get("dynamicReasoning") or {}
+            dynamic_enabled = isinstance(dynamic_config, dict) and dynamic_config.get("enabled") is True
+            policy_value = state.get("dynamic_reasoning_policy") or {}
+            planner_value = state.get("playbook_planner") or {}
+            if dynamic_enabled and policy_value and planner_value and metadata.get("executionStrategy") != "deterministic_script":
+                async def execute_generated_child(
+                    runtime_id: str,
+                    child_title: str,
+                    child_instruction: str,
+                    child_inputs: dict[str, Any],
+                ) -> dict[str, Any]:
+                    child_kind = str(child_inputs.get("generatedKind") or "task")
+                    child_output_contract = _generated_child_output_contract(
+                        child_kind,
+                        child_inputs,
+                        output_contract if isinstance(output_contract, dict) else None,
+                    )
+                    runtime_payload = {
+                        "runtime_subgraph_id": child_inputs.get("runtimeSubgraphId"),
+                        "parent_node_id": node_id,
+                        "generated_local_node_id": child_inputs.get("generatedLocalNodeId"),
+                        "generated_title": child_title,
+                    }
+                    writer({"type": "NodeStarted", "node_id": runtime_id, "iteration": 0, "payload": runtime_payload})
+                    try:
+                        output, child_components, child_trace = await _execute_step(
+                            runtime_id,
+                            {"id": runtime_id, "label": child_title, "description": child_instruction},
+                            state,
+                            metadata,
+                            child_inputs,
+                            child_instruction,
+                            child_output_contract,
+                            model_id,
+                            system_prompt,
+                            requires_structured_response(child_output_contract),
+                            agent_config,
+                            connector_bindings,
+                            0,
+                            child_title,
+                            writer,
+                            hitl_policy,
+                            hitl_blockers,
+                            _merge_human_context(state, new_human_context),
+                            deep_search=deep_search,
+                        )
+                        payload = _build_result_payload(
+                            child_output_contract,
+                            output,
+                            child_components,
+                            runtime_id,
+                            0,
+                            child_trace,
+                        )
+                        payload.update(runtime_payload)
+                        writer({"type": "NodeCompleted", "node_id": runtime_id, "iteration": 0, "payload": payload})
+                        return payload
+                    except Exception as exc:
+                        writer({"type": "NodeFailed", "node_id": runtime_id, "iteration": 0, "payload": {**runtime_payload, "error": str(exc)}})
+                        raise
+
+                dynamic_outcome = await run_dynamic_reasoning(
+                    node_id=node_id,
+                    node_config=node_config,
+                    resolved_inputs=input_context if isinstance(input_context, dict) else {},
+                    policy=DynamicReasoningPolicy.model_validate(policy_value),
+                    planner=PlannerSnapshot.model_validate(planner_value),
+                    iteration=iteration,
+                    writer=writer,
+                    child_executor=execute_generated_child,
+                )
+                if dynamic_outcome.mode == "subgraph" and dynamic_outcome.result_payload is not None:
+                    deterministic_payload = dynamic_outcome.result_payload
+                    full_output = str(deterministic_payload.get("output") or "")
+                    components = deterministic_payload.get("components", [])
+                    trace_collector = None
+                else:
+                    full_output, components, trace_collector = await _execute_step(
+                        node_id, node_config, state, metadata, input_context,
+                        node_description, output_contract, model_id, system_prompt,
+                        structured_output, agent_config, connector_bindings,
+                        iteration, label, writer, hitl_policy, hitl_blockers,
+                        _merge_human_context(state, new_human_context),
+                        deep_search=deep_search,
+                    )
+            elif metadata.get("executionStrategy") == "deterministic_script":
                 deterministic_payload = _execute_deterministic_step(
                     metadata,
                     input_context if isinstance(input_context, dict) else {},
@@ -975,10 +1100,36 @@ async def _execute_step(
                 output_workspace_id=output_workspace_id,
                 file_names=effective_file_names,
             ),
+            agent_config=agent_config,
+            user_id=str(state.get("evaluation_user_id") or ""),
+            flow_id=str(metadata.get("flow_id") or metadata.get("playbook_id") or ""),
+            node_id=node_id,
+            iteration=iteration,
             trace_collector=trace_collector,
             on_trace_update=emit_trace_update,
         )
-        tools = [temporary_child_tool]
+
+        async def create_temporary_child_agent(
+            task_description: str = "",
+            expected_output: str = "",
+            tasks: list[dict[str, Any]] | None = None,
+            execution_mode: str = "sequential",
+        ) -> str:
+            return await temporary_child_tool.ainvoke({
+                "task_description": task_description,
+                "expected_output": expected_output,
+                "tasks": tasks,
+                "execution_mode": execution_mode,
+            })
+
+        tools = [StructuredTool(
+            name=temporary_child_tool.name,
+            description=temporary_child_tool.description,
+            coroutine=create_temporary_child_agent,
+            func=None,
+            args_schema=_TemporaryChildAgentInput,
+            metadata={"tool_kind": "orchestration", "safety": "internal"},
+        )]
         system_prompt = f"{system_prompt}\n\n{TEMP_CHILD_PARENT_INSTRUCTION}"
         logger.info(
             "[TEMP CHILD] Flow tool attached",
@@ -1013,84 +1164,42 @@ async def _execute_step(
             "token": token,
         })
 
-    if tools:
-        logger.info(
-            "[step] Running step node with tools",
-            node_id=node_id,
-            tool_count=len(tools),
-            tool_names=[tool.name for tool in tools],
-        )
-        full_output = await run_step_with_tools(
+    logger.info(
+        "[step] Running native step agent graph",
+        node_id=node_id,
+        tool_count=len(tools),
+        tool_names=[tool.name for tool in tools],
+    )
+    full_output = await run_step_agent(
+        system_prompt=system_prompt,
+        user_msg=user_msg,
+        tools=tools,
+        context=StepRuntimeContext(
             model_id=model_id,
-            system_prompt=system_prompt,
-            user_msg=user_msg,
-            tools=tools,
+            execution_id=str(state.get("execution_id") or ""),
+            flow_id=str(metadata.get("flow_id") or metadata.get("playbook_id") or ""),
+            node_id=node_id,
+            iteration=iteration,
+            user_id=str(state.get("evaluation_user_id") or ""),
+            agent_id=str(metadata.get("agent_id") or ""),
+            agent_name=agent_config.get("name") or node_id,
+            task_instruction=node_description,
+            original_user_request=user_msg,
+            agent_config=agent_config,
+            hitl_policy=hitl_policy,
+            hitl_blockers=hitl_blockers,
+            label=label,
+            writer=writer,
             on_progress=on_progress,
             on_trace_update=emit_trace_update,
             trace_collector=trace_collector,
-            hitl_approval=ToolHitlApprovalContext(
-                hitl_policy=hitl_policy,
-                hitl_blockers=hitl_blockers,
-                node_id=node_id,
-                label=label,
-                iteration=iteration,
-                writer=writer,
-            ),
-            agent_role="parent",
-            agent_name=agent_config.get("name") or node_id,
             summary_session_id=str(state.get("execution_id") or ""),
-        )
-        if full_output and should_stream_tokens:
-            writer({
-                "type": "NodeToken",
-                "node_id": node_id,
-                "iteration": iteration,
-                "token": full_output,
-            })
-        if collector is not None:
-            components = collector.get_and_clear()
-    else:
-        response = await litellm.acompletion(
-            model=model_id,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_msg},
-            ],
-            temperature=normalize_temperature_for_model(model_id, 0.7),
-            max_tokens=32000,
-            stream=True,
-        )
-
-        full_output = ""
-        async for chunk in response:
-            delta = chunk.choices[0].delta
-            token = delta.content or ""
-            if token:
-                full_output += token
-                if should_stream_tokens:
-                    writer({
-                        "type": "NodeToken",
-                        "node_id": node_id,
-                        "iteration": iteration,
-                        "token": token,
-                    })
-
-            if (
-                should_stream_tokens
-                and hasattr(delta, "model_extra")
-                and delta.model_extra
-                and "tool_calls" in (delta.model_extra or {})
-            ):
-                writer({
-                    "type": "NodeToken",
-                    "node_id": node_id,
-                    "iteration": iteration,
-                    "token": str(delta.model_extra.get("tool_calls", "")),
-                })
-
-        trace_collector.record_usage(extract_usage(response, model_id))
-        trace_collector.record_prompt_output(full_output)
-        emit_trace_update()
+            tools_enabled=bool(tools),
+            max_tool_iterations=getattr(settings, "PLAYBOOK_MAX_TOOL_ITERATIONS", 50),
+        ),
+    )
+    if collector is not None:
+        components = collector.get_and_clear()
 
     logger.info("[step] Step completed", node_id=node_id, streamed_chars=len(full_output))
     return full_output, components, trace_collector

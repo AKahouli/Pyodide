@@ -11,12 +11,12 @@ import { GovernanceAccessService } from './governance-access.service';
 import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
 import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
 import { GovernanceDryRun, GovernanceDryRunDocument } from '../schemas/governance-dry-run.schema';
-import { GovernanceSource, GovernanceSourceDocument } from '../schemas/governance-source.schema';
+import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
 import { GovernancePublicationAttempt, GovernancePublicationAttemptDocument, GovernancePublicationAttemptStatus } from '../schemas/governance-publication-attempt.schema';
 import { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
 
 export interface GovernanceDeploymentResponse { id: string; programId: string; scopeId: string; name: string; status: string; currentDraftRevisionId?: string; currentPublishedRevisionId?: string; channels: Record<string, unknown>; createdAt: string; updatedAt: string }
-export interface GovernanceRevisionResponse { id: string; deploymentId: string; revisionNumber: number; status: string; agentId: string; allowedAgentIds: string[]; workspaceIds: string[]; sourceIds: string[]; includedSourceIds: string[]; excludedSourceIds: string[]; sourceSnapshot: Record<string, unknown>; workspaceBindingSnapshot: Record<string, unknown>; configurationFingerprint?: string; scopeSnapshot: Record<string, unknown>; audienceSnapshot: Record<string, unknown>; previousAudienceSnapshot: Record<string, unknown>; createdBy: string; publishedBy?: string; publishedAt?: string; createdAt: string; updatedAt: string }
+export interface GovernanceRevisionResponse { id: string; deploymentId: string; revisionNumber: number; status: string; agentId: string; allowedAgentIds: string[]; workspaceIds: string[]; workspaceBindingSnapshot: Record<string, unknown>; configurationFingerprint?: string; scopeSnapshot: Record<string, unknown>; audienceSnapshot: Record<string, unknown>; previousAudienceSnapshot: Record<string, unknown>; createdBy: string; publishedBy?: string; publishedAt?: string; createdAt: string; updatedAt: string }
 export interface GovernanceReadiness { deploymentId: string; score: number; status: 'ready' | 'blocked' | 'warning'; blockers: GovernanceReadinessCheck[]; warnings: GovernanceReadinessCheck[]; checks: GovernanceReadinessCheck[] }
 export interface GovernanceReadinessCheck { key: string; label: string; status: 'passed' | 'warning' | 'failed'; severity: 'info' | 'warning' | 'blocking'; message?: string; targetType?: string; targetId?: string }
 
@@ -26,7 +26,7 @@ export class GovernanceDeploymentService {
     @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
     @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
     @InjectModel(GovernanceDryRun.name) private readonly dryRunModel: Model<GovernanceDryRunDocument>,
-    @InjectModel(GovernanceSource.name) private readonly sourceModel: Model<GovernanceSourceDocument>,
+    @InjectModel(GovernanceWorkspaceBinding.name) private readonly bindingModel: Model<GovernanceWorkspaceBindingDocument>,
     @InjectModel(GovernancePublicationAttempt.name) private readonly attemptModel: Model<GovernancePublicationAttemptDocument>,
     private readonly programService: GovernanceProgramService,
     private readonly scopeService: GovernanceScopeService,
@@ -83,12 +83,8 @@ export class GovernanceDeploymentService {
       agentId: new Types.ObjectId(dto.agentId),
       allowedAgentIds: this.toObjectIds(allowedAgentIds),
       workspaceIds: this.toObjectIds(dto.workspaceIds),
-      sourceIds: this.toObjectIds(dto.sourceIds),
-      includedSourceIds: this.toObjectIds(dto.includedSourceIds),
-      excludedSourceIds: this.toObjectIds(dto.excludedSourceIds),
       agentSnapshot: dto.agentSnapshot ?? {},
       channelSnapshot: deployment.channels ?? {},
-      sourceSnapshot: await this.buildSourceSnapshot(deployment.programId.toString(), dto.sourceIds ?? []),
       createdBy: new Types.ObjectId(actorId),
     });
     deployment.currentDraftRevisionId = revision._id;
@@ -124,9 +120,6 @@ export class GovernanceDeploymentService {
       await this.assertWorkspacesBelongToScope(deployment.programId.toString(), deployment.scopeId.toString(), dto.workspaceIds);
       revision.workspaceIds = this.toObjectIds(dto.workspaceIds);
     }
-    if (dto.sourceIds !== undefined) revision.sourceIds = this.toObjectIds(dto.sourceIds);
-    if (dto.includedSourceIds !== undefined) revision.includedSourceIds = this.toObjectIds(dto.includedSourceIds);
-    if (dto.excludedSourceIds !== undefined) revision.excludedSourceIds = this.toObjectIds(dto.excludedSourceIds);
     if (dto.agentSnapshot !== undefined) revision.agentSnapshot = dto.agentSnapshot;
     await revision.save();
     return this.toRevisionResponse(revision);
@@ -231,7 +224,7 @@ export class GovernanceDeploymentService {
     if (!deployment.currentPublishedRevisionId) throw new BadRequestException(ErrorCode.GOVERNANCE_NO_PUBLISHED_REVISION);
     const revision = await this.revisionModel.findById(deployment.currentPublishedRevisionId).lean().exec();
     if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
-    return { programId: deployment.programId.toString(), scopeId: deployment.scopeId.toString(), deploymentId, revisionId: revision._id.toString(), agentId: revision.agentId.toString(), workspaceIds: revision.workspaceIds.map((id) => id.toString()), sourceIds: revision.sourceIds.map((id) => id.toString()), channels: deployment.channels };
+    return { programId: deployment.programId.toString(), scopeId: deployment.scopeId.toString(), deploymentId, revisionId: revision._id.toString(), agentId: revision.agentId.toString(), workspaceIds: revision.workspaceIds.map((id) => id.toString()), channels: deployment.channels };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -299,11 +292,6 @@ export class GovernanceDeploymentService {
     return error instanceof Error ? error.message : undefined;
   }
 
-  private async buildSourceSnapshot(programId: string, sourceIds: string[]): Promise<Record<string, unknown>> {
-    const sources = await this.sourceModel.find({ programId, _id: { $in: sourceIds } }).select('title status visibility').lean().exec();
-    return { sources: sources.map((source) => ({ id: source._id.toString(), title: source.title, status: source.status, visibility: source.visibility })) };
-  }
-
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private toDeploymentResponse(doc: any): GovernanceDeploymentResponse {
     return { id: doc._id?.toString() ?? '', programId: doc.programId?.toString() ?? '', scopeId: doc.scopeId?.toString() ?? '', name: String(doc.name ?? ''), status: String(doc.status ?? ''), currentDraftRevisionId: doc.currentDraftRevisionId?.toString(), currentPublishedRevisionId: doc.currentPublishedRevisionId?.toString(), channels: (doc.channels as Record<string, unknown>) ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
@@ -312,7 +300,7 @@ export class GovernanceDeploymentService {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private toRevisionResponse(doc: any): GovernanceRevisionResponse {
     const agentId = doc.agentId?.toString() ?? '';
-    return { id: doc._id?.toString() ?? '', deploymentId: doc.deploymentId?.toString() ?? '', revisionNumber: Number(doc.revisionNumber), status: String(doc.status ?? ''), agentId, allowedAgentIds: this.toStrings(doc.allowedAgentIds).length ? this.toStrings(doc.allowedAgentIds) : [agentId].filter(Boolean), workspaceIds: this.toStrings(doc.workspaceIds), sourceIds: this.toStrings(doc.sourceIds), includedSourceIds: this.toStrings(doc.includedSourceIds), excludedSourceIds: this.toStrings(doc.excludedSourceIds), sourceSnapshot: doc.sourceSnapshot ?? {}, workspaceBindingSnapshot: doc.workspaceBindingSnapshot ?? {}, configurationFingerprint: doc.configurationFingerprint, scopeSnapshot: doc.scopeSnapshot ?? {}, audienceSnapshot: doc.audienceSnapshot ?? {}, previousAudienceSnapshot: doc.previousAudienceSnapshot ?? {}, createdBy: doc.createdBy?.toString() ?? '', publishedBy: doc.publishedBy?.toString(), publishedAt: this.toOptionalIso(doc.publishedAt), createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+    return { id: doc._id?.toString() ?? '', deploymentId: doc.deploymentId?.toString() ?? '', revisionNumber: Number(doc.revisionNumber), status: String(doc.status ?? ''), agentId, allowedAgentIds: this.toStrings(doc.allowedAgentIds).length ? this.toStrings(doc.allowedAgentIds) : [agentId].filter(Boolean), workspaceIds: this.toStrings(doc.workspaceIds), workspaceBindingSnapshot: doc.workspaceBindingSnapshot ?? {}, configurationFingerprint: doc.configurationFingerprint, scopeSnapshot: doc.scopeSnapshot ?? {}, audienceSnapshot: doc.audienceSnapshot ?? {}, previousAudienceSnapshot: doc.previousAudienceSnapshot ?? {}, createdBy: doc.createdBy?.toString() ?? '', publishedBy: doc.publishedBy?.toString(), publishedAt: this.toOptionalIso(doc.publishedAt), createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
   }
 
   private normalizeAllowedAgentIds(primaryAgentId: string, allowedAgentIds?: string[]): string[] {
@@ -330,11 +318,11 @@ export class GovernanceDeploymentService {
   private async assertWorkspacesBelongToScope(programId: string, scopeId: string, workspaceIds: string[]): Promise<void> {
     const uniqueIds = [...new Set(workspaceIds)];
     if (!uniqueIds.length) return;
-    const matched = await this.sourceModel.distinct('workspaceId', {
+    const matched = await this.bindingModel.distinct('workspaceId', {
       programId: new Types.ObjectId(programId),
       workspaceId: { $in: this.toObjectIds(uniqueIds) },
-      isArchived: false,
-      $or: [{ scopeIds: new Types.ObjectId(scopeId) }, { ownerScopeId: new Types.ObjectId(scopeId) }, { visibility: 'program_shared' }],
+      enabled: true,
+      $or: [{ scopeIds: new Types.ObjectId(scopeId) }, { visibility: 'program_shared' }],
     }).exec();
     if (new Set(matched.map(String)).size !== uniqueIds.length) throw new BadRequestException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED, 'Every workspace must be mapped to this scope before it can be published');
   }

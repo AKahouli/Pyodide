@@ -8,6 +8,7 @@ import { AppearanceSettings } from './interfaces/appearance.interface';
 import {
   AdminPlaybookSettings,
   DEFAULT_ADMIN_PLAYBOOK_SETTINGS,
+  normalizePlaybookExecutionSettings,
   DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS,
   PlaybookIntentNormalizationLimits,
 } from './interfaces/playbook-settings.interface';
@@ -388,6 +389,7 @@ export class SystemService implements OnApplicationBootstrap {
       ? Math.max(0, Math.min(100, Math.round(settings.replayEligibilityConfidenceThreshold)))
       : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.replayEligibilityConfidenceThreshold;
     const value: AdminPlaybookSettings = {
+      playbookSuggestorAgentId: settings.playbookSuggestorAgentId?.trim() || null,
       inferenceModelId: settings.inferenceModelId?.trim() || null,
       advisorEvaluationModelId: settings.advisorEvaluationModelId?.trim() || null,
       replayEvaluationModelId: settings.replayEvaluationModelId?.trim() || null,
@@ -398,6 +400,7 @@ export class SystemService implements OnApplicationBootstrap {
       useDeterministicBlueprintBuilder: typeof settings.useDeterministicBlueprintBuilder === 'boolean'
         ? settings.useDeterministicBlueprintBuilder
         : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.useDeterministicBlueprintBuilder,
+      playbookExecution: normalizePlaybookExecutionSettings(settings.playbookExecution),
     };
 
     await this.systemSettingModel.findOneAndUpdate(
@@ -593,6 +596,9 @@ export class SystemService implements OnApplicationBootstrap {
       const value = setting?.value as Partial<AdminPlaybookSettings> | undefined;
 
       this.playbookSettingsCache = {
+        playbookSuggestorAgentId: typeof value?.playbookSuggestorAgentId === 'string' && value.playbookSuggestorAgentId.trim()
+          ? value.playbookSuggestorAgentId.trim()
+          : null,
         inferenceModelId: typeof value?.inferenceModelId === 'string' && value.inferenceModelId.trim()
           ? value.inferenceModelId.trim()
           : null,
@@ -611,6 +617,7 @@ export class SystemService implements OnApplicationBootstrap {
         useDeterministicBlueprintBuilder: typeof value?.useDeterministicBlueprintBuilder === 'boolean'
           ? value.useDeterministicBlueprintBuilder
           : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.useDeterministicBlueprintBuilder,
+        playbookExecution: normalizePlaybookExecutionSettings(value?.playbookExecution),
       };
 
       this.lastPlaybookSettingsCacheUpdate = Date.now();

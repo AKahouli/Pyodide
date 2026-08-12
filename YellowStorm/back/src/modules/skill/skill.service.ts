@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, FilterQuery, Types } from 'mongoose';
 import AdmZip = require('adm-zip');
@@ -16,7 +16,7 @@ import { SkillCategory, SkillCategoryDocument } from './schemas/skill-category.s
 import { ISkillResponse, IGrpcSkill } from './interfaces/skill.interface';
 
 @Injectable()
-export class SkillService {
+export class SkillService implements OnModuleInit {
   constructor(
     @InjectModel(Skill.name)
     private readonly skillModel: Model<SkillDocument>,
@@ -30,9 +30,20 @@ export class SkillService {
     this.logger.setContext(SkillService.name);
   }
 
+  async onModuleInit(): Promise<void> {
+    await this.skillModel.updateMany(
+      { $or: [{ slug: { $exists: false } }, { slug: '' }] },
+      [{ $set: { slug: '$name' } }],
+    ).exec();
+  }
+
   async create(createdBy: string, dto: CreateSkillDto): Promise<ISkillResponse> {
+    const slug = dto.slug ?? dto.name;
     const existing = await this.skillModel
-      .findOne({ name: dto.name, createdBy: new Types.ObjectId(createdBy) })
+      .findOne({
+        createdBy: new Types.ObjectId(createdBy),
+        $or: [{ name: dto.name }, { slug }],
+      })
       .lean()
       .exec();
     if (existing) {
@@ -40,6 +51,7 @@ export class SkillService {
     }
 
     const skill = await this.skillModel.create({
+      slug,
       name: dto.name,
       description: dto.description,
       icon: dto.icon ?? '',
@@ -201,6 +213,16 @@ export class SkillService {
       }
     }
 
+    if (dto.slug && dto.slug !== existing.slug) {
+      const duplicate = await this.skillModel
+        .findOne({ _id: { $ne: new Types.ObjectId(id) }, slug: dto.slug, createdBy: existing.createdBy })
+        .lean()
+        .exec();
+      if (duplicate) {
+        throw new ConflictException(ErrorCode.SKILL_ALREADY_EXISTS);
+      }
+    }
+
     const updateData: Record<string, unknown> = { ...dto };
     if (dto.files) {
       updateData.files = dto.files.map((file) => ({
@@ -310,6 +332,7 @@ export class SkillService {
 
   private buildSkillMd(skill: ISkillResponse): string {
     const frontmatter = yaml.dump({
+      slug: skill.slug,
       name: skill.name,
       description: skill.description,
       license: skill.license || undefined,
@@ -345,6 +368,7 @@ export class SkillService {
 
     const frontmatter = (yaml.load(match[1]) as Record<string, unknown>) || {};
     const name = String(frontmatter.name || '').trim();
+    const slug = String(frontmatter.slug || name).trim();
     const description = String(frontmatter.description || '').trim();
     if (!name || !description) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'SKILL.md must contain non-empty name and description fields.');
@@ -360,6 +384,7 @@ export class SkillService {
       : [];
 
     return {
+      slug,
       name,
       description,
       license: String(frontmatter.license || '').trim(),
@@ -393,6 +418,7 @@ export class SkillService {
 
     return {
       id: (doc._id as { toString(): string }).toString(),
+      slug: (doc.slug as string) || (doc.name as string),
       name: doc.name as string,
       description: (doc.description as string) || '',
       icon: (doc.icon as string) || '',

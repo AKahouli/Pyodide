@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -19,6 +20,7 @@ import { CreateEditSkillDialog } from './skills/CreateEditSkillDialog';
 import { ManageSkillCategoriesDialog } from './skills/ManageSkillCategoriesDialog';
 import { IconDisplay } from './connectors/IconDisplay';
 import type { SkillFormValues } from './skills/skill-form-schema';
+import { CatalogTransferDialog } from '../components/CatalogTransferDialog';
 
 const CARDS_PER_CATEGORY = 6;
 const UNCATEGORIZED_KEY = '__uncategorized__';
@@ -56,6 +58,8 @@ export function SkillsPage() {
   const [showCategoriesDialog, setShowCategoriesDialog] = useState(false);
   const [editingSkill, setEditingSkill] = useState<SkillResponse | null>(null);
   const [deletingSkill, setDeletingSkill] = useState<SkillResponse | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [transferMode, setTransferMode] = useState<'export' | 'import' | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const fetchSkills = useCallback(async (searchValue?: string) => {
@@ -131,11 +135,13 @@ export function SkillsPage() {
   const visibleGroups = categoryFilter === '__all__'
     ? groupedSkills
     : groupedSkills.filter((group) => group.key === categoryFilter);
+  const visibleSkillIds = visibleGroups.flatMap((group) => group.items.map((skill) => skill.id));
 
   const handleSave = async (data: SkillFormValues) => {
     setSaving(true);
     try {
       const payload = {
+        slug: editingSkill?.slug ?? data.name,
         name: data.name,
         description: data.description,
         icon: data.icon || undefined,
@@ -251,10 +257,12 @@ export function SkillsPage() {
           <h1 className='text-2xl font-bold tracking-tight'>Skills</h1>
           <p className='text-muted-foreground'>Manage AgentSkills-compatible skill packages and imports.</p>
         </div>
-        <div className='flex gap-2'>
-          <Button onClick={() => fetchSkills()} variant='outline' size='icon'><RefreshCw className='h-4 w-4' /></Button>
+        <div className='flex flex-wrap gap-2'>
+          <Button onClick={() => fetchSkills()} variant='outline' size='icon' aria-label={t('catalogTransfer.refreshSkills')}><RefreshCw className='h-4 w-4' /></Button>
           <Button variant='outline' onClick={() => setShowCategoriesDialog(true)}><FolderTree className='mr-2 h-4 w-4' />Manage Categories</Button>
           <Button variant='outline' onClick={handleImportClick} disabled={saving}><Upload className='mr-2 h-4 w-4' />Import .md/.zip</Button>
+          <Button variant='outline' onClick={() => setTransferMode('import')}><Upload className='mr-2 h-4 w-4' />{t('catalogTransfer.importCatalog')}</Button>
+          <Button variant='outline' onClick={() => setTransferMode('export')}><Download className='mr-2 h-4 w-4' />{t('catalogTransfer.exportCatalog')}</Button>
           <Button onClick={() => { setEditingSkill(null); setShowDialog(true); }}><Plus className='mr-2 h-4 w-4' />Add Skill</Button>
         </div>
       </div>
@@ -285,6 +293,21 @@ export function SkillsPage() {
           <p className='text-sm text-muted-foreground'>{total} skills available</p>
         </div>
       </div>
+
+      {visibleSkillIds.length ? (
+        <div className='flex items-center gap-3 text-sm text-muted-foreground'>
+          <Checkbox
+            id='select-visible-skills'
+            checked={visibleSkillIds.every((id) => selectedIds.has(id))}
+            onCheckedChange={(checked) => setSelectedIds((current) => {
+              const next = new Set(current);
+              visibleSkillIds.forEach((id) => checked === true ? next.add(id) : next.delete(id));
+              return next;
+            })}
+          />
+          <label htmlFor='select-visible-skills'>{t('catalogTransfer.selectVisibleSkills', { count: selectedIds.size })}</label>
+        </div>
+      ) : null}
 
       {skills.length === 0 ? (
         <div className='flex h-40 items-center justify-center rounded-md border text-sm text-muted-foreground'>
@@ -327,6 +350,17 @@ export function SkillsPage() {
                         }}
                         className={`group relative rounded-lg border bg-card p-4 cursor-pointer transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring ${!skill.isActive ? 'opacity-60' : ''}`}
                       >
+                        <div className='absolute left-2 top-2 z-10' onClick={(event) => event.stopPropagation()}>
+                          <Checkbox
+                            aria-label={t('catalogTransfer.selectItem', { name: skill.name })}
+                            checked={selectedIds.has(skill.id)}
+                            onCheckedChange={(checked) => setSelectedIds((current) => {
+                              const next = new Set(current);
+                              checked === true ? next.add(skill.id) : next.delete(skill.id);
+                              return next;
+                            })}
+                          />
+                        </div>
                         <button
                           type='button'
                           onClick={async (e) => {
@@ -377,7 +411,7 @@ export function SkillsPage() {
                           </Button>
                         </div>
 
-                        <div className='flex items-start gap-3 pr-12'>
+                        <div className='flex items-start gap-3 pl-6 pr-12'>
                           <div
                             className='flex h-10 w-10 shrink-0 items-center justify-center rounded-md'
                             style={{ backgroundColor: skill.color || 'transparent' }}
@@ -416,6 +450,15 @@ export function SkillsPage() {
         open={showCategoriesDialog}
         onOpenChange={setShowCategoriesDialog}
         onCategoriesChanged={() => { void fetchCategories(); void fetchSkills(); }}
+      />
+
+      <CatalogTransferDialog
+        open={transferMode !== null}
+        onOpenChange={(open) => { if (!open) setTransferMode(null); }}
+        mode={transferMode ?? 'export'}
+        resource='skills'
+        selectedIds={[...selectedIds]}
+        onImported={() => { void fetchCategories(); void fetchSkills(); }}
       />
 
       <AlertDialog open={!!deletingSkill} onOpenChange={() => setDeletingSkill(null)}>

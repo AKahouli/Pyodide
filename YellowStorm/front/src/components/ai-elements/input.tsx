@@ -593,7 +593,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                   />}
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
-              {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={setSelectedWorkspaceIds} disabled={disabled || submitDisabled} workspaceOptions={workspaceOptions} />}
+              {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={setSelectedWorkspaceIds} disabled={disabled || submitDisabled} workspaceOptions={workspaceOptions} className='size-11 md:size-8' />}
               {extraTools}
                {showModelSelector && !governedMode && models.length > 0 && <ModelSelector onOpenChange={setModelSelectorOpen} open={modelSelectorOpen}>
                  <ModelSelectorTrigger asChild>

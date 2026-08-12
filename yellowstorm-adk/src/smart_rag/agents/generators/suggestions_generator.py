@@ -14,6 +14,7 @@ from src.smart_rag.infrastructure.session import SessionHelper
 from src.smart_rag.infrastructure.model_parameters import resolve_model_config
 from google.adk.sessions import DatabaseSessionService
 from src.config.settings import get_settings
+from src.guardrails.adapters.google_adk import build_guarded_adk_agent
 settings=get_settings()
 logger = get_logger("api.routers.agentic_rag.AgentSuggestionGenerator")
 
@@ -47,7 +48,14 @@ class AgentSuggestionGenerator:
                 for agent_id, agent in agent_id_mapping.items()
             ]) + "<available_agents>"
             suggestions_prompt=suggestions_prompt.format(available_agents_str=available_agents_str)
-            suggestion_agent = self._create_suggestion_agent(suggestions_prompt, user_prompt)
+            source_agent = available_agents[0] if available_agents else None
+            guardrail_config = {
+                "id": str(getattr(source_agent, "id", "") or ""),
+                "name": "AgentSuggestionGenerator",
+                "user_id": str(getattr(config, "user_id", "") or ""),
+                "agent_params": getattr(source_agent, "agent_params", None) or {},
+            }
+            suggestion_agent = self._create_suggestion_agent(suggestions_prompt, user_prompt, guardrail_config)
             response = await self._run_suggestion_agent(session_id,suggestion_agent, user_prompt, config)
 
             return response,agent_id_mapping
@@ -56,7 +64,7 @@ class AgentSuggestionGenerator:
             logger.error(f"Error generating agent suggestions: {str(e)}")
             return []
 
-    def _create_suggestion_agent(self, suggestions_prompt: str, user_prompt: str) -> Agent:
+    def _create_suggestion_agent(self, suggestions_prompt: str, user_prompt: str, guardrail_config: dict[str, Any] | None = None) -> Agent:
         """Create the agent suggestion generator."""
         model = self.llm_factory.create_no_tool_calls_llm(self.chatbot_name)
 
@@ -74,17 +82,13 @@ class AgentSuggestionGenerator:
                 available_agent_ids: List[str] = Field(default=[],
                                                        description="List of IDs of relevant available agents")
 
-            return Agent(
-                name="AgentSuggestionGenerator",
-                model=model,
-                instruction=suggestions_prompt,
-                output_schema=SuggestionsResponse,
-                disallow_transfer_to_peers=True,
-                disallow_transfer_to_parent=True,
-                output_key="suggested_agents",
-                before_agent_callback=append_suggested_agents,
-                after_agent_callback=modify_suggested_agents
-            )
+            return build_guarded_adk_agent(Agent, {
+                "name": "AgentSuggestionGenerator", "model": model,
+                "instruction": suggestions_prompt, "output_schema": SuggestionsResponse,
+                "disallow_transfer_to_peers": True, "disallow_transfer_to_parent": True,
+                "output_key": "suggested_agents", "before_agent_callback": append_suggested_agents,
+                "after_agent_callback": modify_suggested_agents,
+            }, guardrail_config)
         else:
             # For models that don't support structured output, add JSON format instructions to the prompt
             enhanced_suggestions_prompt = f"""{suggestions_prompt}
@@ -105,15 +109,12 @@ class AgentSuggestionGenerator:
     Do not include any text before or after the JSON. Return only the JSON object."""
 
 
-            return Agent(
-                name="AgentSuggestionGenerator",
-                model=model,
-                instruction=enhanced_suggestions_prompt,
-                disallow_transfer_to_peers=True,
-                disallow_transfer_to_parent=True,
-                output_key="suggested_agents",
-                before_agent_callback=append_suggested_agents
-            )
+            return build_guarded_adk_agent(Agent, {
+                "name": "AgentSuggestionGenerator", "model": model,
+                "instruction": enhanced_suggestions_prompt,
+                "disallow_transfer_to_peers": True, "disallow_transfer_to_parent": True,
+                "output_key": "suggested_agents", "before_agent_callback": append_suggested_agents,
+            }, guardrail_config)
 
     async def _run_suggestion_agent(self,session_id:str, agent: Agent, user_prompt: str, config) -> list[dict[str, Any]] | dict[
         Any, Any]:

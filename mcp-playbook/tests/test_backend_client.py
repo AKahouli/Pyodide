@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+from auth import PlatformActorContext, actor_context
 from clients.yellowstorm_playbook_client import PlaybookBackendError, YellowStormPlaybookClient
 
 
@@ -9,11 +10,17 @@ async def test_forwards_internal_and_acting_user_headers_and_unwraps_envelope():
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["X-Internal-Token"] == "internal-secret"
         assert request.headers["X-YellowStorm-User-Id"] == "user-1"
+        assert request.headers["X-YellowStorm-Agent-Id"] == "agent-1"
+        assert request.headers["X-Correlation-Id"] == "correlation-1"
         return httpx.Response(200, json={"success": True, "data": {"playbookId": "p1"}})
 
-    client = YellowStormPlaybookClient("http://backend", "internal-secret", transport=httpx.MockTransport(handler))
-    assert await client.get("/context", "user-1") == {"playbookId": "p1"}
-    await client.close()
+    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "correlation-1"))
+    try:
+        client = YellowStormPlaybookClient("http://backend", "internal-secret", transport=httpx.MockTransport(handler))
+        assert await client.get("/context", "user-1") == {"playbookId": "p1"}
+        await client.close()
+    finally:
+        actor_context.reset(token)
 
 
 @pytest.mark.asyncio

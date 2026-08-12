@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '@/lib/api';
-import { branchConversation, createConversation, deleteConversation, fetchConversations, fetchMessages, sendMessage } from './api';
+import { branchConversation, createConversation, deleteConversation, fetchConversations, fetchMessages, rerunReliabilityEvaluation, sendMessage } from './api';
 
 vi.mock('@/lib/api', () => ({
   apiClient: {
@@ -18,6 +18,7 @@ vi.mock('@/lib/api', () => ({
       messages: (id: string) => `/conversations/${id}/messages`,
       messageById: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}`,
       feedback: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/feedback`,
+      rerunReliabilityEvaluation: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/reliability-evaluation/rerun`,
       stop: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/stop`,
       regenerate: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/regenerate`,
       branches: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/branches`,
@@ -104,5 +105,16 @@ describe('conversation api', () => {
 
     expect(apiClient.post).toHaveBeenCalledWith('/conversations/source-1/branches', payload);
     expect(result.id).toBe('branch-1');
+  });
+
+  it('queues a reliability rerun without a request body', async () => {
+    vi.mocked(apiClient.post).mockResolvedValueOnce({
+      data: { data: { messageId: 'm1', reliabilityEvaluation: { status: 'pending', requestedAt: '2026-07-29T10:00:00.000Z' } } },
+    } as never);
+
+    const result = await rerunReliabilityEvaluation('c1', 'm1');
+
+    expect(apiClient.post).toHaveBeenCalledWith('/conversations/c1/messages/m1/reliability-evaluation/rerun');
+    expect(result.reliabilityEvaluation.status).toBe('pending');
   });
 });

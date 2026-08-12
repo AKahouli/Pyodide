@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, Optional
 
 import grpc
-from google.protobuf.json_format import MessageToDict
+from google.protobuf.json_format import MessageToDict, ParseDict
+from google.protobuf.struct_pb2 import Struct
 from langgraph.checkpoint.base import copy_checkpoint
 from langgraph.types import Command
 from structlog import get_logger
@@ -41,6 +42,12 @@ from src.flow_engine.runtime.events import (
     emit_events,
 )
 from src.flow_engine.runtime.invoker import stream_graph
+from src.flow_engine.runtime.checkpoint_fork import (
+    CheckpointForkService,
+    ReplayForkConflictError,
+    ReplayTarget,
+)
+from src.flow_engine.nodes.human_approval import normalize_approval_resume
 from src.flow_engine.state import ExecutionState
 from src.temporary_child_summary import pop_temporary_child_summary
 
@@ -164,6 +171,7 @@ class PlaybookFlowRuntimeServicer:
 
     def __init__(self) -> None:
         self._active_executions: dict[str, _ActiveExecution] = {}
+        self._checkpoint_forks = CheckpointForkService()
 
     async def Run(self, request: Any, context: grpc.aio.ServicerContext) -> AsyncGenerator[Any, None]:
         execution_id = request.execution_id
@@ -242,10 +250,22 @@ class PlaybookFlowRuntimeServicer:
                 "hitl_policy": _snapshot_hitl_policy(snapshot),
                 "hitl_blockers": _snapshot_hitl_blockers(snapshot),
                 "hitl_memory": hitl_memory,
+                "dynamic_reasoning_policy": MessageToDict(
+                    request.settings.dynamic_reasoning_policy,
+                    preserving_proto_field_name=True,
+                ) if request.settings.HasField("dynamic_reasoning_policy") else {},
+                "playbook_planner": MessageToDict(
+                    request.settings.playbook_planner,
+                    preserving_proto_field_name=True,
+                ) if request.settings.HasField("playbook_planner") else {},
             }
 
             config = {"configurable": {"thread_id": execution_id}}
-            active = _ActiveExecution(graph=graph, config=config)
+            active = _ActiveExecution(
+                graph=graph,
+                config=config,
+                suppress_replayed_approval_events=initial_resume_input is not None,
+            )
             self._active_executions[execution_id] = active
 
             graph_input: Any = initial_resume_input or initial_state
@@ -263,6 +283,8 @@ class PlaybookFlowRuntimeServicer:
                         config=config,
                     )
                     async for event in emit_events(execution_id, event_stream):
+                        if not active.should_emit(event):
+                            continue
                         if event.event_type in (EVENT_EXECUTION_COMPLETED, EVENT_EXECUTION_FAILED):
                             saw_terminal_event = True
                             _log_temporary_child_summary(execution_id, "PlaybookFlowRuntime.Run")
@@ -310,6 +332,46 @@ class PlaybookFlowRuntimeServicer:
         finally:
             self._active_executions.pop(execution_id, None)
 
+    async def ValidateAndRepairPlan(self, request: Any, context: grpc.aio.ServicerContext) -> Any:
+        from src.flow_engine.dynamic_reasoning.models import DynamicReasoningPolicy, GeneratedExecutionPlan
+        from src.flow_engine.dynamic_reasoning.validator import validate_plan
+
+        plan_value = struct_to_dict(request.plan)
+        catalog = struct_to_dict(request.resolved_port_catalog)
+        available_ports = {
+            str(item.get("id") or item.get("portId"))
+            for item in catalog.get("ports", [])
+            if isinstance(item, dict) and (item.get("id") or item.get("portId"))
+        }
+        try:
+            plan = GeneratedExecutionPlan.model_validate(plan_value)
+            policy = DynamicReasoningPolicy.model_validate(MessageToDict(request.policy, preserving_proto_field_name=True))
+            issues = validate_plan(plan, policy, available_ports)
+        except Exception as exc:
+            plan = None
+            issues = [{"code": "SCHEMA_INVALID", "severity": "error", "path": "plan", "message": str(exc)}]
+
+        accepted = Struct()
+        if plan is not None and not issues:
+            ParseDict(plan.model_dump(by_alias=True), accepted)
+        issue_messages = []
+        for issue in issues:
+            value = issue.model_dump(by_alias=True) if hasattr(issue, "model_dump") else issue
+            issue_messages.append(pb.ValidationIssue(
+                code=str(value.get("code") or "SCHEMA_INVALID"),
+                severity=str(value.get("severity") or "error"),
+                path=str(value.get("path") or "plan"),
+                message=str(value.get("message") or "Invalid plan"),
+                related_node_ids=[str(item) for item in value.get("relatedNodeIds", [])],
+                repair_hint=str(value.get("repairHint") or ""),
+            ))
+        return pb.ValidateAndRepairPlanResponse(
+            valid=not issue_messages,
+            accepted_plan=accepted,
+            validation_issues=issue_messages,
+            repaired=False,
+        )
+
     async def Cancel(self, request: Any, context: grpc.aio.ServicerContext) -> Any:
         execution_id = request.execution_id
         logger.info("[grpc] Cancel request received", execution_id=execution_id)
@@ -329,7 +391,16 @@ class PlaybookFlowRuntimeServicer:
                 return {"resumed": False}
             return pb.ResumeApprovalResponse(resumed=False)
 
-        resumed = active.set_resume_input(Command(resume={"decision": decision, "payload": payload}))
+        try:
+            resume_value = normalize_approval_resume(
+                {"decision": decision, "payload": payload}
+            )
+        except ValueError as exc:
+            if context is not None:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+            raise
+
+        resumed = active.set_resume_input(Command(resume=resume_value))
         if pb is None:
             return {"resumed": resumed}
         return pb.ResumeApprovalResponse(resumed=resumed)
@@ -419,20 +490,26 @@ class PlaybookFlowRuntimeServicer:
             )
             logger.info("playbook_graph_cache_size", size=compiled_graph_cache.size)
 
-            replay_config = await _seed_replay_state(
-                graph, checkpointer, execution_id, source_execution_id,
-                snapshot, input_context, target_node_id, target_iteration, hitl_memory,
-            )
+            node_ids = {
+                str(node.get("id"))
+                for node in snapshot.get("nodes", [])
+                if isinstance(node, dict) and node.get("id")
+            }
+            if target_node_id not in node_ids:
+                raise ValueError(f"Replay target node {target_node_id} is not in the snapshot")
 
-            if replay_config is None:
-                yield _build_event(
-                    EVENT_EXECUTION_FAILED,
-                    execution_id,
-                    "",
-                    {"error": f"Could not seed replay state for node {target_node_id}"},
-                    0,
-                )
-                return
+            fork_result = await self._checkpoint_forks.prepare(
+                graph,
+                checkpointer,
+                ReplayTarget(
+                    source_execution_id=source_execution_id,
+                    target_execution_id=execution_id,
+                    target_node_id=target_node_id,
+                    target_iteration=target_iteration,
+                ),
+                {"execution_id": execution_id, "hitl_memory": hitl_memory or []},
+            )
+            replay_config = fork_result.config
 
             recursion_limit = _pick_positive_setting(
                 getattr(request.settings, "recursion_limit", 0),
@@ -463,6 +540,8 @@ class PlaybookFlowRuntimeServicer:
                         config=replay_config,
                     )
                     async for event in emit_events(execution_id, event_stream):
+                        if not active.should_emit(event):
+                            continue
                         if event.event_type in (EVENT_EXECUTION_COMPLETED, EVENT_EXECUTION_FAILED):
                             saw_terminal_event = True
                             _log_temporary_child_summary(execution_id, "PlaybookFlowRuntime.RunFromCheckpoint")
@@ -502,6 +581,13 @@ class PlaybookFlowRuntimeServicer:
         except asyncio.CancelledError:  # NOSONAR: async generator cleanup, return is intentional
             logger.info("[grpc] RunFromCheckpoint cancelled while awaiting control input", execution_id=execution_id)
             return
+        except ReplayForkConflictError as exc:
+            logger.warning(
+                "[grpc] RunFromCheckpoint conflict",
+                execution_id=execution_id,
+                error=str(exc),
+            )
+            yield _build_event(EVENT_EXECUTION_FAILED, execution_id, "", {"error": str(exc)}, 0)
         except Exception as exc:
             logger.exception("[grpc] RunFromCheckpoint failed", execution_id=execution_id)
             if active is not None:
@@ -829,6 +915,33 @@ class _ActiveExecution:
     pending_resume_input: Any = None
     pending_interrupt: Optional[dict[str, Any]] = None
     resolved_step_interrupts: set[str] = field(default_factory=set)
+    emitted_event_keys: set[tuple[str, str, int]] = field(default_factory=set)
+    suppress_replayed_approval_events: bool = False
+
+    def should_emit(self, event: Any) -> bool:
+        event_type = str(getattr(event, "event_type", ""))
+        node_id = str(getattr(event, "node_id", ""))
+        iteration = int(getattr(event, "iteration", 0) or 0)
+
+        if self.suppress_replayed_approval_events:
+            if event_type == EVENT_APPROVAL_RESOLVED:
+                self.suppress_replayed_approval_events = False
+            elif event_type in {"NodeStarted", EVENT_APPROVAL_REQUESTED}:
+                return False
+
+        if event_type not in {
+            "NodeStarted",
+            "NodeCompleted",
+            EVENT_NODE_SUSPENDED,
+            EVENT_APPROVAL_REQUESTED,
+            EVENT_APPROVAL_RESOLVED,
+        }:
+            return True
+        key = (event_type, node_id, iteration)
+        if key in self.emitted_event_keys:
+            return False
+        self.emitted_event_keys.add(key)
+        return True
 
     def arm_step_resume(self, node_id: str, iteration: int, interrupt_id: str) -> None:
         """Arm a step-resume wait for a NodeSuspended event.

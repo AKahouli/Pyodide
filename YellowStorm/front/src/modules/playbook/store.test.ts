@@ -73,6 +73,32 @@ describe('playbook store', () => {
     __setDeltaAutosaveAvailableForTests(false);
   });
 
+  it('projects Dynamic Reasoning topology into the cached and current execution', () => {
+    const execution = makeExecution({ id: 'dynamic-execution', playbookId: 'playbook-1' });
+    usePlaybookStore.setState({ executionCache: { [execution.id]: execution }, currentExecution: execution });
+
+    usePlaybookStore.getState().onDynamicReasoningUpdate({
+      executionId: execution.id,
+      parentTaskId: 'task-1',
+      parentIteration: 0,
+      phase: 'RuntimeSubgraphCreated',
+      subgraphId: 'subgraph-1',
+      plan: {
+        schemaVersion: '1',
+        nodes: [{ id: 'collect-data', title: 'Collect data', instruction: 'Collect', dependsOn: [] }],
+        synthesis: { id: 'synthesis', title: 'Synthesize', instruction: 'Synthesize', dependsOn: ['collect-data'], kind: 'synthesis' },
+      },
+    });
+
+    const updated = usePlaybookStore.getState().executionCache[execution.id];
+    expect(updated.dynamicReasoningAttempts?.[0]).toMatchObject({
+      parentTaskId: 'task-1',
+      subgraphId: 'subgraph-1',
+      status: 'running',
+    });
+    expect(usePlaybookStore.getState().currentExecution?.dynamicReasoningAttempts).toEqual(updated.dynamicReasoningAttempts);
+  });
+
   it('fetches playbooks and applies default pagination query', async () => {
     apiMock.getPlaybooks.mockResolvedValueOnce({
       playbooks: [{ id: 'p1' }],

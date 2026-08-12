@@ -3,6 +3,8 @@ import {
   deletePlan,
   getAllPlans,
   getMaintenanceStatus,
+  getPlaybookPlannerAgents,
+  getPlaybookSuggestorAgents,
   getFeatureVisibility,
   getUserAnalytics,
   setMaintenanceMode,
@@ -37,6 +39,10 @@ vi.mock('@/lib/api/config', () => ({
       plansAll: '/usage/plans/all',
       planById: (id: string) => `/usage/plans/${id}`,
     },
+    adminPlaybookSettings: {
+      plannerAgents: '/admin/playbook-settings/planner-agents',
+      suggestorAgents: '/admin/playbook-settings/suggestor-agents',
+    },
   },
 }));
 
@@ -64,6 +70,22 @@ describe('admin api', () => {
     expect(postMock).toHaveBeenCalledWith('/system/maintenance', { enabled: true, message: 'maint' });
     expect(status.enabled).toBe(false);
     expect(updated.enabled).toBe(true);
+  });
+
+  it('lists eligible playbook planner agents', async () => {
+    const agents = [{ id: 'planner-1', name: 'Planner', model: 'model-1' }];
+    getMock.mockResolvedValue({ data: { data: agents } });
+
+    await expect(getPlaybookPlannerAgents()).resolves.toEqual(agents);
+    expect(getMock).toHaveBeenCalledWith('/admin/playbook-settings/planner-agents');
+  });
+
+  it('lists eligible playbook suggestor agents', async () => {
+    const agents = [{ id: 'suggestor-1', name: 'Suggestor', model: 'model-1' }];
+    getMock.mockResolvedValue({ data: { data: agents } });
+
+    await expect(getPlaybookSuggestorAgents()).resolves.toEqual(agents);
+    expect(getMock).toHaveBeenCalledWith('/admin/playbook-settings/suggestor-agents');
   });
 
   it('gets and updates feature visibility', async () => {

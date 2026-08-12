@@ -109,4 +109,16 @@ describe('ConversationContent', () => {
 
     expect(screen.getByText('reliability-card')).toBeInTheDocument();
   });
+
+  it('shows the rerun surface for a completed text answer without a tool call', () => {
+    displayMessages = [{
+      id: 'ai-text-only', conversationId: 'conv-1', conversationType: 'ai', isComplete: true, createdAt: '2026-07-28T00:00:00.000Z',
+      components: [{ type: 'text', data: { content: 'Hello' } }],
+      reliabilityEvaluation: { status: 'insufficient_evidence' },
+    }];
+
+    render(<ConversationContent />);
+
+    expect(screen.getByText('reliability-card')).toBeInTheDocument();
+  });
 });

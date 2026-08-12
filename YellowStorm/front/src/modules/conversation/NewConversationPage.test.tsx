@@ -192,7 +192,10 @@ describe('NewConversationPage', () => {
       });
       expect(clearAllMock).toHaveBeenCalled();
       expect(mockNavigate).toHaveBeenCalledWith('/conversation/conv-1');
-      expect(claimCurrentConversationMock).toHaveBeenCalledWith('conv-1', { id: 'conv-1' });
+      expect(claimCurrentConversationMock).toHaveBeenCalledWith('conv-1', { id: 'conv-1' }, {
+        modelId: 'model-1',
+        workspaceIds: ['ws-1'],
+      });
       expect(claimCurrentConversationMock.mock.invocationCallOrder[0]).toBeLessThan(mockNavigate.mock.invocationCallOrder[0]);
       expect(mockNavigate.mock.invocationCallOrder[0]).toBeLessThan(sendMessageMock.mock.invocationCallOrder[0]);
     });
@@ -208,7 +211,10 @@ describe('NewConversationPage', () => {
     await waitFor(() => {
       expect(createConversationMock).not.toHaveBeenCalled();
       expect(updateConversationMock).toHaveBeenCalledWith('conv-upload', { workspaces: [] });
-      expect(claimCurrentConversationMock).toHaveBeenCalledWith('conv-upload', undefined);
+      expect(claimCurrentConversationMock).toHaveBeenCalledWith('conv-upload', undefined, {
+        modelId: 'model-1',
+        workspaceIds: [],
+      });
       expect(sendMessageMock).toHaveBeenCalledWith('conv-upload', expect.objectContaining({ content: 'hello' }));
     });
   });

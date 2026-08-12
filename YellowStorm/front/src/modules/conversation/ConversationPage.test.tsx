@@ -1,5 +1,5 @@
 import { StrictMode } from 'react';
-import { act, render } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConversationPage } from './ConversationPage';
 
@@ -7,21 +7,32 @@ const closeViewerMock = vi.hoisted(() => vi.fn());
 const fetchMessagesMock = vi.hoisted(() => vi.fn());
 const clearMessagesMock = vi.hoisted(() => vi.fn());
 const setCurrentConversationMock = vi.hoisted(() => vi.fn());
+const paramsMock = vi.hoisted(() => ({ value: { id: 'conversation-1' } }));
+const conversationLoadingMock = vi.hoisted(() => ({ value: false }));
+const conversationStateMock = vi.hoisted(() => ({
+  value: {
+    currentConversationId: 'conversation-1' as string | null,
+    currentConversation: { id: 'conversation-1' } as { id: string } | null,
+  },
+}));
 
 vi.mock('react-router-dom', () => ({
-  useParams: () => ({ id: 'conversation-1' }),
+  useParams: () => paramsMock.value,
 }));
 
 vi.mock('./store', () => ({
-  useConversationStore: (selector: (state: Record<string, unknown>) => unknown) =>
-    selector({
-      setCurrentConversation: setCurrentConversationMock,
-      fetchMessages: fetchMessagesMock,
-      clearMessages: clearMessagesMock,
-      currentConversationId: 'conversation-1',
-    }),
-  useCurrentConversation: () => ({ id: 'conversation-1' }),
-  useConversationLoading: () => false,
+  useConversationStore: Object.assign(
+    (selector: (state: Record<string, unknown>) => unknown) =>
+      selector({
+        setCurrentConversation: setCurrentConversationMock,
+        fetchMessages: fetchMessagesMock,
+        clearMessages: clearMessagesMock,
+        currentConversationId: conversationStateMock.value.currentConversationId,
+      }),
+    { getState: () => conversationStateMock.value },
+  ),
+  useCurrentConversation: () => conversationStateMock.value.currentConversation,
+  useConversationLoading: () => conversationLoadingMock.value,
 }));
 
 vi.mock('@/modules/file-viewer', () => ({
@@ -46,6 +57,39 @@ describe('ConversationPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    conversationStateMock.value = {
+      currentConversationId: 'conversation-1',
+      currentConversation: { id: 'conversation-1' },
+    };
+    paramsMock.value = { id: 'conversation-1' };
+    conversationLoadingMock.value = false;
+  });
+
+  it('does not rehydrate a newly claimed conversation', () => {
+    render(<ConversationPage />);
+
+    expect(setCurrentConversationMock).not.toHaveBeenCalled();
+    expect(fetchMessagesMock).toHaveBeenCalledWith('conversation-1');
+  });
+
+  it('hydrates a conversation that has not been claimed', () => {
+    conversationStateMock.value = {
+      currentConversationId: null,
+      currentConversation: null,
+    };
+
+    render(<ConversationPage />);
+
+    expect(setCurrentConversationMock).toHaveBeenCalledWith('conversation-1');
+  });
+
+  it('reserves the conversation shell while conversation data loads', () => {
+    conversationLoadingMock.value = true;
+    const { container } = render(<ConversationPage />);
+
+    expect(screen.getByRole('status', { name: 'page.loading' })).toHaveAttribute('aria-busy', 'true');
+    expect(container.querySelector('[data-loading-header]')).toHaveClass('h-[68px]', 'md:h-[60px]');
+    expect(container.querySelector('[data-loading-composer]')).toHaveClass('h-28');
   });
 
   afterEach(() => {
@@ -60,6 +104,20 @@ describe('ConversationPage', () => {
     expect(closeViewerMock).not.toHaveBeenCalled();
 
     unmount();
+    act(() => vi.runOnlyPendingTimers());
+    expect(closeViewerMock).toHaveBeenCalledOnce();
+  });
+
+  it('closes the viewer when navigating to another conversation', () => {
+    const { rerender } = render(<ConversationPage />);
+
+    paramsMock.value = { id: 'conversation-2' };
+    conversationStateMock.value = {
+      currentConversationId: 'conversation-2',
+      currentConversation: { id: 'conversation-2' },
+    };
+    rerender(<ConversationPage />);
+
     expect(closeViewerMock).toHaveBeenCalledOnce();
   });
 

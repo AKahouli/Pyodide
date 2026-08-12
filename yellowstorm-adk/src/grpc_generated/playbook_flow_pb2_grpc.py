@@ -5,7 +5,7 @@ import warnings
 
 from src.grpc_generated import playbook_flow_pb2 as playbook__flow__pb2
 
-GRPC_GENERATED_VERSION = '1.71.2'
+GRPC_GENERATED_VERSION = '1.80.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in playbook_flow_pb2_grpc.py depends on'
+        + ' but the generated code in playbook_flow_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -59,6 +59,11 @@ class PlaybookFlowRuntimeStub(object):
                 request_serializer=playbook__flow__pb2.RunFromCheckpointRequest.SerializeToString,
                 response_deserializer=playbook__flow__pb2.RunEvent.FromString,
                 _registered_method=True)
+        self.ValidateAndRepairPlan = channel.unary_unary(
+                '/playbook_flow.PlaybookFlowRuntime/ValidateAndRepairPlan',
+                request_serializer=playbook__flow__pb2.ValidateAndRepairPlanRequest.SerializeToString,
+                response_deserializer=playbook__flow__pb2.ValidateAndRepairPlanResponse.FromString,
+                _registered_method=True)
 
 
 class PlaybookFlowRuntimeServicer(object):
@@ -94,6 +99,12 @@ class PlaybookFlowRuntimeServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ValidateAndRepairPlan(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_PlaybookFlowRuntimeServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -121,6 +132,11 @@ def add_PlaybookFlowRuntimeServicer_to_server(servicer, server):
                     servicer.RunFromCheckpoint,
                     request_deserializer=playbook__flow__pb2.RunFromCheckpointRequest.FromString,
                     response_serializer=playbook__flow__pb2.RunEvent.SerializeToString,
+            ),
+            'ValidateAndRepairPlan': grpc.unary_unary_rpc_method_handler(
+                    servicer.ValidateAndRepairPlan,
+                    request_deserializer=playbook__flow__pb2.ValidateAndRepairPlanRequest.FromString,
+                    response_serializer=playbook__flow__pb2.ValidateAndRepairPlanResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -258,6 +274,33 @@ class PlaybookFlowRuntime(object):
             '/playbook_flow.PlaybookFlowRuntime/RunFromCheckpoint',
             playbook__flow__pb2.RunFromCheckpointRequest.SerializeToString,
             playbook__flow__pb2.RunEvent.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ValidateAndRepairPlan(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/playbook_flow.PlaybookFlowRuntime/ValidateAndRepairPlan',
+            playbook__flow__pb2.ValidateAndRepairPlanRequest.SerializeToString,
+            playbook__flow__pb2.ValidateAndRepairPlanResponse.FromString,
             options,
             channel_credentials,
             insecure,

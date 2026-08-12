@@ -3,52 +3,70 @@ import { createHash } from 'crypto';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { KnowledgeExtractionOrchestratorService } from '@modules/knowledge-intelligence/services/knowledge-extraction-orchestrator.service';
 import { TemporalCandidateRepositoryService } from '@modules/knowledge-intelligence/services/temporal-candidate-repository.service';
-import type { TemporalCandidate } from '../domain/temporal-candidate';
-import type { SourceValidity } from '../domain/source-validity';
-import { GovernanceSourceService } from './governance-source.service';
-import { GovernanceSourceVersionService } from './governance-source-version.service';
-import { GovernanceSourceEventService } from './governance-source-event.service';
-import { TemporalCandidateValidatorService } from './temporal-candidate-validator.service';
 import { WorkspaceEvidenceSearchSettingsService } from '@modules/system/workspace-evidence-search-settings.service';
-import { InjectConnection } from '@nestjs/mongoose';
-import { Connection } from 'mongoose';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import { WorkspaceDoc, WorkspaceDocumentDoc } from '@modules/workspace/schemas/workspace-document.schema';
+import type { TemporalCandidate } from '../domain/temporal-candidate';
+import type { DocumentValidity } from '../domain/document-validity';
+import { GovernanceDocument, GovernanceDocumentDocument } from '../schemas/governance-document.schema';
+import { GovernanceDocumentService } from './governance-document.service';
+import { GovernanceDocumentEventService } from './governance-document-event.service';
+import { TemporalCandidateValidatorService } from './temporal-candidate-validator.service';
 
 @Injectable()
 export class GovernanceTemporalCandidateService {
-  constructor(private readonly sources: GovernanceSourceService, private readonly versions: GovernanceSourceVersionService, private readonly jobs: KnowledgeExtractionOrchestratorService, private readonly records: TemporalCandidateRepositoryService, private readonly validator: TemporalCandidateValidatorService, private readonly events: GovernanceSourceEventService, private readonly settings: WorkspaceEvidenceSearchSettingsService, @InjectConnection() private readonly connection: Connection) {}
+  constructor(
+    private readonly documentService: GovernanceDocumentService,
+    @InjectModel(GovernanceDocument.name) private readonly governanceDocuments: Model<GovernanceDocumentDocument>,
+    @InjectModel(WorkspaceDoc.name) private readonly workspaceDocuments: Model<WorkspaceDocumentDoc>,
+    private readonly jobs: KnowledgeExtractionOrchestratorService,
+    private readonly records: TemporalCandidateRepositoryService,
+    private readonly validator: TemporalCandidateValidatorService,
+    private readonly events: GovernanceDocumentEventService,
+    private readonly settings: WorkspaceEvidenceSearchSettingsService,
+  ) {}
 
-  async list(actorId: string, programId: string, sourceId: string, versionId: string) { await this.sources.findById(actorId, programId, sourceId); await this.versions.find(sourceId, versionId); return this.records.list(versionId); }
-  async status(actorId: string, programId: string, sourceId: string, versionId: string) { await this.sources.findById(actorId, programId, sourceId); await this.versions.find(sourceId, versionId); const job = await this.jobs.latestForVersion(versionId); return job ? { id: job._id.toString(), jobType: job.jobType, status: job.status, attempts: job.attempts, error: job.error } : null; }
+  async list(actorId: string, programId: string, documentId: string) { await this.documentService.findRecord(actorId, programId, documentId); return this.records.list(documentId); }
+  async status(actorId: string, programId: string, documentId: string) { await this.documentService.findRecord(actorId, programId, documentId); const job = await this.jobs.latestForDocument(documentId); return job ? { id: job._id.toString(), jobType: job.jobType, status: job.status, attempts: job.attempts, error: job.error } : null; }
 
-  async run(actorId: string, programId: string, sourceId: string, versionId: string) {
-    await this.sources.findById(actorId, programId, sourceId); const version = await this.versions.assertCandidateDecisionAllowed(sourceId, versionId);
-    if (version.technicalStatus !== 'ready') throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Only a ready source version can be analyzed.');
+  async run(actorId: string, programId: string, documentId: string) {
+    const governance = await this.documentService.findRecord(actorId, programId, documentId);
+    const document = await this.workspaceDocuments.findOne({ _id: governance.documentId, workspaceId: governance.workspaceId, isFolder: false }).lean().exec();
+    if (!document || document.indexingStatus !== 'ready') throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Only an indexed document can be analyzed.');
     const { connectorId } = await this.settings.getSettings();
     if (!connectorId) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Select an evidence-search connector before starting analysis.');
-    const retried = await this.jobs.retryLatestFailedForVersion(versionId, connectorId, actorId);
+    const retried = await this.jobs.retryLatestFailedForDocument(documentId, connectorId, actorId);
     if (retried) return retried;
-    const inputHash = createHash('sha256').update(JSON.stringify({ versionId, contentHash: version.contentHash ?? null, indexingAttemptId: version.indexingAttemptId ?? null, connectorId })).digest('hex');
-    return this.jobs.enqueue({ programId, sourceId, sourceVersionId: versionId, connectorId, requestedByUserId: actorId, jobType: 'technical_metadata', inputHash, engineVersion: 'technical-metadata-v1' });
+    const inputHash = createHash('sha256').update(JSON.stringify({ programId, documentId, contentHash: document.contentHash ?? null, indexingAttemptId: document.indexingAttemptId ?? null, connectorId })).digest('hex');
+    return this.jobs.enqueue({ programId, documentId, connectorId, requestedByUserId: actorId, jobType: 'technical_metadata', inputHash, engineVersion: 'technical-metadata-v2' });
   }
 
-  async decide(actorId: string, actorEmail: string, programId: string, sourceId: string, versionId: string, recordId: string, input: { action: 'confirm' | 'correct' | 'reject'; correctedValue?: string; comment?: string }) {
-    await this.sources.findById(actorId, programId, sourceId); const version = await this.versions.assertCandidateDecisionAllowed(sourceId, versionId); const record = await this.records.beginDecision(versionId, recordId);
-    if (!record) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'This candidate was already decided or does not exist.');
-    const decisionToken = record.decisionToken;
-    if (!decisionToken) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'The candidate decision could not be claimed.');
-    const session = await this.connection.startSession();
+  async decide(actorId: string, actorEmail: string, programId: string, documentId: string, recordId: string, input: { action: 'confirm' | 'correct' | 'reject'; correctedValue?: string; comment?: string }) {
+    const governance = await this.documentService.findRecord(actorId, programId, documentId);
+    if (['rejected', 'archived'].includes(governance.status)) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'This governed document cannot receive temporal decisions.');
+    const record = await this.records.beginDecision(documentId, recordId);
+    if (!record?.decisionToken) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'This candidate was already decided or does not exist.');
     try {
-      if (input.action === 'reject') { let decided = null; await session.withTransaction(async () => { if (!await this.records.ownsDecision(recordId, decisionToken, session)) throw new Error('The candidate decision lease was lost.'); await this.versions.assertCandidateDecisionAllowed(sourceId, versionId, session); await this.versions.fenceCandidateDecision(sourceId, versionId, session); decided = await this.records.markDecision(recordId, decisionToken, actorId, 'rejected', input.comment, undefined, session); if (!decided) throw new Error('The candidate decision lease was lost.'); await this.appendEvent(actorId, actorEmail, programId, sourceId, versionId, recordId, 'rejected', record.candidate, session); }); return decided; }
+      if (input.action === 'reject') return this.finishDecision(governance, recordId, record.decisionToken, actorId, actorEmail, programId, documentId, 'rejected', record.candidate, input.comment);
       const candidate: TemporalCandidate = input.action === 'correct' ? { ...record.candidate, value: record.candidate.field === 'validityMode' ? undefined : input.correctedValue, mode: record.candidate.field === 'validityMode' ? input.correctedValue as TemporalCandidate['mode'] : record.candidate.mode, confidence: 1, reasoningSummary: 'Corrected and confirmed by a reviewer.' } : record.candidate;
-    const evidence = record.evidence.map((item) => ({ ...item, value: candidate.value ?? candidate.mode, validatedBy: actorId, validatedAt: new Date(), isCritical: candidate.criticality === 'high' }));
-    const result = this.validator.validate(candidate, { evidence, reviewFrequencyDays: version.validity.reviewFrequencyDays });
-    if (result.status === 'rejected' || result.status === 'conflicting') throw new BadRequestException(ErrorCode.VALIDATION_ERROR, result.issues.map((issue) => issue.message).join(' '));
-    const patch: Partial<SourceValidity> = { evidence: [...version.validity.evidence, ...evidence], confidence: Math.max(version.validity.confidence, candidate.confidence), manuallyOverridden: input.action === 'correct' || version.validity.manuallyOverridden };
-    if (candidate.field === 'effectiveFrom') patch.effectiveFrom = new Date(`${candidate.value}T00:00:00.000Z`); if (candidate.field === 'effectiveUntil') patch.effectiveUntil = new Date(`${candidate.value}T00:00:00.000Z`); if (candidate.field === 'validityMode') patch.mode = candidate.mode;
-      const status = input.action === 'correct' ? 'corrected' : 'confirmed'; let decided = null;
-      await session.withTransaction(async () => { if (!await this.records.ownsDecision(recordId, decisionToken, session)) throw new Error('The candidate decision lease was lost.'); await this.versions.assertCandidateDecisionAllowed(sourceId, versionId, session); await this.versions.fenceCandidateDecision(sourceId, versionId, session); await this.versions.updateValidity(actorId, programId, sourceId, versionId, patch, session); decided = await this.records.markDecision(recordId, decisionToken, actorId, status, input.comment, input.action === 'correct' ? candidate : undefined, session); if (!decided) throw new Error('The candidate decision lease was lost.'); await this.appendEvent(actorId, actorEmail, programId, sourceId, versionId, recordId, status, candidate, session); }); return decided;
-    } catch (error) { await this.records.releaseDecision(recordId, decisionToken); throw error; } finally { await session.endSession(); }
+      const evidence = record.evidence.map((item) => ({ ...item, value: candidate.value ?? candidate.mode, validatedBy: actorId, validatedAt: new Date(), isCritical: candidate.criticality === 'high' }));
+      const validation = this.validator.validate(candidate, { evidence, reviewFrequencyDays: governance.validity.reviewFrequencyDays });
+      if (validation.status === 'rejected' || validation.status === 'conflicting') throw new BadRequestException(ErrorCode.VALIDATION_ERROR, validation.issues.map((issue) => issue.message).join(' '));
+      const validity: DocumentValidity = { ...governance.validity, evidence: [...governance.validity.evidence, ...evidence], confidence: Math.max(governance.validity.confidence, candidate.confidence), manuallyOverridden: input.action === 'correct' || governance.validity.manuallyOverridden };
+      if (candidate.field === 'effectiveFrom') validity.effectiveFrom = new Date(`${candidate.value}T00:00:00.000Z`);
+      if (candidate.field === 'effectiveUntil') validity.effectiveUntil = new Date(`${candidate.value}T00:00:00.000Z`);
+      if (candidate.field === 'validityMode' && candidate.mode) validity.mode = candidate.mode;
+      const updated = await this.governanceDocuments.updateOne({ _id: governance._id, temporalDecisionRevision: governance.temporalDecisionRevision }, { $set: { validity }, $inc: { temporalDecisionRevision: 1, governanceRevision: 1 } }).exec();
+      if (updated.modifiedCount !== 1) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Document validity changed concurrently.');
+      return this.finishDecision(governance, recordId, record.decisionToken, actorId, actorEmail, programId, documentId, input.action === 'correct' ? 'corrected' : 'confirmed', candidate, input.comment, input.action === 'correct' ? candidate : undefined);
+    } catch (error) { await this.records.releaseDecision(recordId, record.decisionToken); throw error; }
   }
 
-  private async appendEvent(actorId: string, actorEmail: string, programId: string, sourceId: string, versionId: string, recordId: string, status: string, candidate: TemporalCandidate, session: import('mongoose').ClientSession) { await this.events.append({ programId, sourceId, versionId, actorId, actorEmail, eventType: 'validity.candidate_decided', after: { candidateId: candidate.candidateId, field: candidate.field, value: candidate.value ?? candidate.mode, status }, deduplicationKey: `candidate-decision:${recordId}`, session }); }
+  private async finishDecision(governance: GovernanceDocumentDocument, recordId: string, token: string, actorId: string, actorEmail: string, programId: string, documentId: string, status: 'confirmed' | 'corrected' | 'rejected', candidate: TemporalCandidate, comment?: string, corrected?: TemporalCandidate) {
+    const result = await this.records.markDecision(recordId, token, actorId, status, comment, corrected);
+    if (!result) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'The candidate decision lease was lost.');
+    await this.events.append({ programId, governanceDocumentId: governance._id.toString(), documentId, actorId, actorEmail, eventType: 'validity.candidate_decided', after: { candidateId: candidate.candidateId, field: candidate.field, value: candidate.value ?? candidate.mode, status }, deduplicationKey: `candidate-decision:${recordId}` });
+    return result;
+  }
 }

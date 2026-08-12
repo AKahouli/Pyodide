@@ -41,3 +41,5 @@ class ExecutionState(TypedDict):
     hitl_policy: Annotated[dict[str, Any], last_write]
     hitl_blockers: Annotated[list[dict[str, Any]], append]
     hitl_memory: Annotated[list[dict[str, Any]], append]
+    dynamic_reasoning_policy: Annotated[dict[str, Any], last_write]
+    playbook_planner: Annotated[dict[str, Any], last_write]

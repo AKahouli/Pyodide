@@ -1,5 +1,7 @@
 import {
   Controller,
+  HttpCode,
+  HttpStatus,
   Get,
   Post,
   Patch,
@@ -30,6 +32,7 @@ import { UserDocument } from '../../user/schemas/user.schema';
 import { resolveStickyAgentRouting } from '../utils/sticky-agent-routing';
 import { ChoiceInteractionService } from '../services/choice-interaction.service';
 import { GovernedConversationRuntimeService } from '../../governance/services/governed-conversation-runtime.service';
+import { ResponseReliabilityService } from '../services/response-reliability.service';
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -45,6 +48,7 @@ export class MessageController {
     private readonly logger: LoggerService,
     private readonly choiceInteractionService: ChoiceInteractionService,
     private readonly governedRuntimeService: GovernedConversationRuntimeService,
+    private readonly responseReliabilityService: ResponseReliabilityService,
   ) {
     this.logger.setContext('MessageController');
   }
@@ -356,6 +360,21 @@ export class MessageController {
     });
 
     return { stopped: true };
+  }
+
+  @Post(':messageId/reliability-evaluation/rerun')
+  @HttpCode(HttpStatus.ACCEPTED)
+  async rerunReliabilityEvaluation(
+    @CurrentUser() user: UserDocument,
+    @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string,
+  ) {
+    return this.responseReliabilityService.rerun({
+      conversationId,
+      messageId,
+      userId: user._id.toString(),
+      requestId: this.requestContext.getRequestId(),
+    });
   }
 
   @Post(':messageId/regenerate')

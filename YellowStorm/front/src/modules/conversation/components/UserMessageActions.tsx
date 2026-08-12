@@ -44,12 +44,12 @@ export const UserMessageActions = memo(function UserMessageActions({ message, is
   };
 
   return (
-    <div className={cn('flex items-center gap-0.5 mt-1 opacity-0 group-hover/msg:opacity-100 transition-opacity', className)}>
+    <div className={cn('mt-1 flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover/msg:opacity-100 md:group-focus-within/msg:opacity-100', className)}>
       <TooltipProvider delayDuration={300}>
         {isGroup && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleReply} aria-label={t('messageActions.replyAria')}>
+              <Button variant='ghost' size='icon' className='size-11 md:size-7' onClick={handleReply} aria-label={t('messageActions.replyAria')}>
                 <Reply className='h-3.5 w-3.5' />
               </Button>
             </TooltipTrigger>
@@ -58,7 +58,7 @@ export const UserMessageActions = memo(function UserMessageActions({ message, is
         )}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleCopy} aria-label={t('userMessageActions.copyAria')}>
+            <Button variant='ghost' size='icon' className='size-11 md:size-7' onClick={handleCopy} aria-label={t('userMessageActions.copyAria')}>
               <Copy className='h-3.5 w-3.5' />
             </Button>
           </TooltipTrigger>
@@ -67,7 +67,7 @@ export const UserMessageActions = memo(function UserMessageActions({ message, is
         {canEdit && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleEdit} aria-label={t('userMessageActions.editAria')}>
+              <Button variant='ghost' size='icon' className='size-11 md:size-7' onClick={handleEdit} aria-label={t('userMessageActions.editAria')}>
                 <Pencil className='h-3.5 w-3.5' />
               </Button>
             </TooltipTrigger>

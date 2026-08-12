@@ -377,6 +377,93 @@ export class PlaybookFlowService implements OnModuleInit {
     };
   }
 
+  async searchForAssistant(
+    ownerId: string,
+    query: string | undefined,
+    workspaceId: string | undefined,
+    limit: number,
+  ): Promise<Array<{
+    playbookId: string;
+    name: string;
+    description?: string;
+    definitionRevision: number;
+    updatedAt?: Date;
+    matchReason: 'exact_name' | 'prefix_name' | 'partial_name' | 'recent';
+  }>> {
+    const sharedFlowIds = await this.playbookShareService.getSharedPlaybookIdsForUser(ownerId);
+    const accessFilter = sharedFlowIds.length > 0
+      ? { $or: [{ ownerId }, { _id: { $in: sharedFlowIds.map((id) => new Types.ObjectId(id)) } }] }
+      : { ownerId };
+    const workspaceFilter = workspaceId ? { workspaces: workspaceId } : {};
+    const normalizedQuery = query?.trim() ?? '';
+    const escapedQuery = normalizedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const candidates = new Map<string, {
+      _id: Types.ObjectId;
+      name: string;
+      description?: string;
+      definitionRevision?: number;
+      updatedAt?: Date;
+      matchReason: 'exact_name' | 'prefix_name' | 'partial_name' | 'recent';
+    }>();
+
+    const collect = async (
+      nameFilter: Record<string, unknown> | undefined,
+      matchReason: 'exact_name' | 'prefix_name' | 'partial_name' | 'recent',
+    ): Promise<void> => {
+      const items = await this.flowModel
+        .find({ ...accessFilter, ...workspaceFilter, ...(nameFilter ? { name: nameFilter } : {}) })
+        .select('_id name description definitionRevision updatedAt')
+        .sort({ updatedAt: -1, _id: 1 })
+        .limit(limit)
+        .lean()
+        .exec();
+      for (const item of items) {
+        const id = String(item._id);
+        if (!candidates.has(id)) {
+          candidates.set(id, { ...item, matchReason });
+        }
+      }
+    };
+
+    if (normalizedQuery) {
+      await collect({ $regex: `^${escapedQuery}$`, $options: 'i' }, 'exact_name');
+      if (candidates.size < limit) await collect({ $regex: `^${escapedQuery}`, $options: 'i' }, 'prefix_name');
+      if (candidates.size < limit) await collect({ $regex: escapedQuery, $options: 'i' }, 'partial_name');
+    } else {
+      await collect(undefined, 'recent');
+    }
+
+    return [...candidates.values()].slice(0, limit).map((item) => ({
+      playbookId: String(item._id),
+      name: item.name,
+      description: item.description?.slice(0, 500),
+      definitionRevision: item.definitionRevision ?? 0,
+      updatedAt: item.updatedAt,
+      matchReason: item.matchReason,
+    }));
+  }
+
+  async findAccessibleAssistantIndex(ownerId: string): Promise<Array<{
+    playbookId: string;
+    name: string;
+    tasks: Array<{ taskId: string; taskName: string }>;
+  }>> {
+    const sharedFlowIds = await this.playbookShareService.getSharedPlaybookIdsForUser(ownerId);
+    const accessFilter = sharedFlowIds.length > 0
+      ? { $or: [{ ownerId }, { _id: { $in: sharedFlowIds.map((id) => new Types.ObjectId(id)) } }] }
+      : { ownerId };
+    const flows = await this.flowModel
+      .find(accessFilter)
+      .select('_id name nodes.id nodes.label')
+      .lean()
+      .exec();
+    return flows.map((flow) => ({
+      playbookId: String(flow._id),
+      name: flow.name,
+      tasks: (flow.nodes ?? []).map((node) => ({ taskId: node.id, taskName: node.label ?? node.id })),
+    }));
+  }
+
   async findOneBase(flowId: string, ownerId: string): Promise<IFlowResponse> {
     const startedAt = Date.now();
     const flow = await this.accessService.findAccessibleFlow(flowId, ownerId, 'read');

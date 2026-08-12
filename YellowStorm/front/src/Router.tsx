@@ -111,6 +111,9 @@ const DecisionFlowEditorPage = React.lazy(() =>
 const GovernancePage = React.lazy(() =>
   import('./modules/governance').then((m) => ({ default: m.GovernancePage }))
 );
+const SemanticModelCatalogPage = React.lazy(() => import('./modules/semantic-model').then((m) => ({ default: m.SemanticModelCatalogPage })));
+const SemanticModelEditorPage = React.lazy(() => import('./modules/semantic-model').then((m) => ({ default: m.SemanticModelEditorPage })));
+const WorkspaceSemanticModelPage = React.lazy(() => import('./modules/semantic-model').then((m) => ({ default: m.WorkspaceSemanticModelPage })));
 
 const AdminDashboard = React.lazy(() =>
   import('./modules/admin/components/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
@@ -374,6 +377,18 @@ export const router = createHashRouter([
             <WorkspaceHubPage />
           </Suspense>
         ),
+      },
+      {
+        path: 'semantic-models',
+        element: <PermissionGuard permissions={['semantic_models.read','semantic_models.*','*']} fallbackPath='/'>{lazyPage(<SemanticModelCatalogPage />)}</PermissionGuard>,
+      },
+      {
+        path: 'semantic-models/:modelId',
+        element: <PermissionGuard permissions={['semantic_models.read','semantic_models.*','*']} fallbackPath='/'>{lazyPage(<SemanticModelEditorPage />)}</PermissionGuard>,
+      },
+      {
+        path: 'workspace/:id/semantic-model',
+        element: <PermissionGuard permissions={['semantic_models.read','semantic_models.*','*']} fallbackPath='/'>{lazyPage(<WorkspaceSemanticModelPage />)}</PermissionGuard>,
       },
       {
         path: 'workspace/:id/artifacts/:artifactId',

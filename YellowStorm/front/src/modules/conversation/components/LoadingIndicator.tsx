@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, Loader2, Sparkles, Wrench } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, Clipboard, Eye, Loader2, Sparkles, Wrench } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ConversationStreamActivity } from '../utils';
 import type { MessageComponent } from '../types';
@@ -8,7 +11,7 @@ import { conversationPanelClassName } from './conversation-panel-styles';
 
 type StreamDetail =
   | { type: 'thought'; label: string }
-  | { type: 'tool'; occurrenceId: string; title: string; status: 'running' | 'completed' | 'failed'; data: Record<string, unknown>; startedAt?: string; sequence: number; durationSeconds?: number };
+  | { type: 'tool'; occurrenceId: string; title: string; status: 'running' | 'completed' | 'failed'; data: Record<string, unknown>; response?: string; startedAt?: string; sequence: number; durationSeconds?: number };
 
 function formatLabel(value: string): string {
   return value.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/\b\w/g, (character) => character.toUpperCase());
@@ -19,6 +22,14 @@ function formatDebugData(data: Record<string, unknown>): string {
     return JSON.stringify(data, null, 2) || '{}';
   } catch {
     return String(data);
+  }
+}
+
+function formatToolResponse(response: string): string {
+  try {
+    return JSON.stringify(JSON.parse(response), null, 2);
+  } catch {
+    return response;
   }
 }
 
@@ -51,12 +62,14 @@ function getStreamDetails(components: readonly MessageComponent[]): StreamDetail
     if (component.type === 'toolInfo') {
       const title = typeof component.data.title === 'string' ? component.data.title : '';
       const status = component.data.status;
+      const responseValue = component.data.resultJson ?? component.data.result_json;
       return [{
         type: 'tool' as const,
         occurrenceId: component.id || `legacy-tool-${componentIndex}`,
         title: formatLabel(title),
         status: status === 'completed' || status === 'failed' ? status : 'running',
         data: Object.fromEntries(Object.entries(component.data).filter(([key]) => key !== 'resultJson' && key !== 'result_json')),
+        response: typeof responseValue === 'string' && responseValue.length > 0 ? responseValue : undefined,
         startedAt: typeof component.data.startedAt === 'string' ? component.data.startedAt : undefined,
         sequence: 0,
       }];
@@ -82,6 +95,8 @@ function getStreamDetails(components: readonly MessageComponent[]): StreamDetail
 export function LoadingIndicator({ activity = 'thinking', components = [], isComplete = false }: Readonly<{ activity?: ConversationStreamActivity; components?: readonly MessageComponent[]; isComplete?: boolean }>) {
   const { t, language } = useModuleTranslation('conversation');
   const [isOpen, setIsOpen] = useState(false);
+  const [selectedTool, setSelectedTool] = useState<Extract<StreamDetail, { type: 'tool' }> | null>(null);
+  const responseTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const details = useMemo(() => getStreamDetails(components), [components]);
   const labels: Record<ConversationStreamActivity, string> = {
@@ -101,6 +116,15 @@ export function LoadingIndicator({ activity = 'thinking', components = [], isCom
     return () => window.clearInterval(timer);
   }, [isComplete]);
 
+  const copyToolResponse = async (response: string) => {
+    try {
+      await navigator.clipboard.writeText(response);
+      showSuccess(t('toasts.message.copied'));
+    } catch {
+      showError(t('toasts.message.copyError'));
+    }
+  };
+
   if (isComplete && details.length === 0) return null;
 
   return (
@@ -111,7 +135,7 @@ export function LoadingIndicator({ activity = 'thinking', components = [], isCom
           {isComplete ? (
             <Sparkles className='size-4 text-primary' />
           ) : (
-            <Loader2 className='size-5 animate-spin text-primary [animation-duration:1.1s] motion-reduce:animate-none' />
+            <Loader2 data-thinking-spinner className='size-5 animate-spin text-running [animation-duration:1.1s]' />
           )}
         </span>
         <div className='min-w-0 flex-1'>
@@ -130,7 +154,7 @@ export function LoadingIndicator({ activity = 'thinking', components = [], isCom
           )}
         </div>
         {details.length > 0 && (
-            <CollapsibleTrigger className='inline-flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted' aria-label={t('stream.activity.detailsAria')}>
+            <CollapsibleTrigger className='inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted md:min-h-8 md:px-2'>
               {t('stream.activity.details', { count: details.length })}
               <ChevronDown className='size-3.5 transition-transform data-[state=open]:rotate-180' />
             </CollapsibleTrigger>
@@ -154,18 +178,29 @@ export function LoadingIndicator({ activity = 'thinking', components = [], isCom
               return (
                 <details key={detail.occurrenceId} className='rounded-lg bg-muted/60 p-2.5'>
                   <summary className='flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden'>
-                    <Wrench className='size-3.5 text-primary' aria-hidden='true' />
-                    <span className='min-w-0 flex-1 break-words'>{detail.sequence}. {toolTitle}</span>
-                    {detail.durationSeconds !== undefined && (
-                      <span data-duration-seconds={detail.durationSeconds} className='text-xs font-normal tabular-nums text-muted-foreground'>{t('stream.activity.toolDuration', { seconds: detail.durationSeconds })}</span>
+                     <Wrench className='size-3.5 text-primary' aria-hidden='true' />
+                     <span className='min-w-0 flex-1 break-words'>{detail.sequence}. {toolTitle}</span>
+                     {detail.response && (
+                       <span className='flex shrink-0 items-center gap-1'>
+                         <Button type='button' variant='outline' size='sm' className='h-7 gap-1.5 px-2 text-xs' onClick={(event) => { event.preventDefault(); event.stopPropagation(); responseTriggerRef.current = event.currentTarget; setSelectedTool(detail); }} aria-label={t('stream.activity.viewResponse')}>
+                           <Eye className='size-3.5' aria-hidden='true' />
+                           <span className='hidden sm:inline'>{t('stream.activity.viewResponse')}</span>
+                         </Button>
+                         <Button type='button' variant='ghost' size='icon' className='size-7' onClick={(event) => { event.preventDefault(); event.stopPropagation(); void copyToolResponse(detail.response as string); }} aria-label={t('messageActions.copyAria')}>
+                           <Clipboard className='size-3.5' aria-hidden='true' />
+                         </Button>
+                       </span>
+                     )}
+                     {detail.durationSeconds !== undefined && (
+                       <span data-duration-seconds={detail.durationSeconds} className='text-xs font-normal tabular-nums text-muted-foreground'>{t('stream.activity.toolDuration', { seconds: detail.durationSeconds })}</span>
                     )}
                     <span className='text-xs font-normal text-muted-foreground'>{toolStatusLabels[detail.status]}</span>
                   </summary>
                   <div className='mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground'>
                     <span>{t('stream.activity.debugData')}</span>
                     {toolDate && <span className='truncate' title={toolDate.tooltip}>· {toolDate.label}</span>}
-                  </div>
-                  <pre className='mt-2 max-h-40 overflow-auto rounded-md border bg-background p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words'>{formatDebugData(detail.data)}</pre>
+                   </div>
+                   <pre className='mt-2 max-h-40 overflow-auto rounded-md border bg-background p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words'>{formatDebugData(detail.data)}</pre>
                 </details>
               );
             })}
@@ -173,6 +208,23 @@ export function LoadingIndicator({ activity = 'thinking', components = [], isCom
           </div>
         </CollapsibleContent>
       )}
+      <Dialog open={selectedTool !== null} onOpenChange={(open) => { if (!open) setSelectedTool(null); }}>
+        <DialogContent className='flex max-h-[85vh] w-[calc(100%_-_2rem)] max-w-3xl flex-col overflow-hidden' onCloseAutoFocus={(event) => { event.preventDefault(); responseTriggerRef.current?.focus(); }}>
+          <DialogHeader>
+            <DialogTitle>{t('stream.activity.responseTitle', { tool: selectedTool?.title || t('stream.activity.toolFallback') })}</DialogTitle>
+            <DialogDescription>{t('stream.activity.responseDescription')}</DialogDescription>
+          </DialogHeader>
+          <div className='flex min-h-0 flex-1 flex-col gap-2'>
+            <div className='flex justify-end'>
+              <Button type='button' variant='outline' size='sm' className='gap-1.5' onClick={() => selectedTool?.response && void copyToolResponse(selectedTool.response)} aria-label={t('messageActions.copyAria')}>
+                <Clipboard className='size-3.5' aria-hidden='true' />
+                {t('messageActions.copy')}
+              </Button>
+            </div>
+            <pre className='min-h-0 flex-1 overflow-auto rounded-md border bg-muted/40 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words'>{selectedTool?.response ? formatToolResponse(selectedTool.response) : ''}</pre>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Collapsible>
   );
 }

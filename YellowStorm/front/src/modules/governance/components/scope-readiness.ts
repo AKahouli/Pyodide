@@ -1,9 +1,9 @@
 import type { GovernanceReadinessCheck, GovernanceScopeOverview } from '@/modules/governance';
 import { governedConversationFeatures } from '@/config/governedConversationFeatures';
 
-export type TabKey = 'overview' | 'agents' | 'guardrails' | 'knowledge' | 'audience' | 'ownership' | 'testPublish' | 'review' | 'monitor';
+export type TabKey = 'overview' | 'knowledge' | 'agents' | 'audience' | 'ownership' | 'guardrails' | 'testPublish' | 'review' | 'monitor';
 
-export const governanceScopeTabs: TabKey[] = ['overview', 'agents', 'guardrails', 'knowledge', ...(governedConversationFeatures.conversationsEnabled ? ['audience' as const] : []), 'ownership', 'testPublish', 'review', 'monitor'];
+export const governanceScopeTabs: TabKey[] = ['overview', 'knowledge', 'agents', ...(governedConversationFeatures.conversationsEnabled ? ['audience' as const] : []), 'ownership', 'guardrails', 'testPublish', 'review', 'monitor'];
 
 const tabCheckKeys: Partial<Record<TabKey, string[]>> = {
   overview: ['scope_active'],
@@ -16,9 +16,9 @@ const tabCheckKeys: Partial<Record<TabKey, string[]>> = {
 };
 
 export function tabForReadinessCheck(check: Pick<GovernanceReadinessCheck, 'key' | 'targetType'>): TabKey {
-  if (check.targetType === 'source' || check.targetType === 'workspace' || check.key.startsWith('source_') || check.key === 'knowledge_mapped') return 'knowledge';
+  if (check.targetType === 'document' || check.targetType === 'workspace' || check.key.startsWith('document_') || check.key === 'knowledge_mapped' || check.key === 'published_workspace_set_valid') return 'knowledge';
   if (check.key === 'guardrails_reviewed') return 'guardrails';
-  if (check.targetType === 'agent' || check.targetType === 'channel' || check.key === 'agents_mapped' || check.key.startsWith('channel_')) return 'agents';
+  if (check.targetType === 'agent' || check.targetType === 'channel' || check.key === 'agents_mapped' || check.key === 'published_agent_roster_valid' || check.key.startsWith('channel_')) return 'agents';
   if (check.key === 'audience_configured') return 'audience';
   if (check.key === 'ownership_assigned') return 'ownership';
   if (check.targetType === 'dry_run' || check.key === 'draft_revision' || check.key === 'dry_run_passed') return 'testPublish';
@@ -41,11 +41,26 @@ export function getTabReadinessState(tab: TabKey, overview: GovernanceScopeOverv
   if (tab === 'monitor') return overview.publishedRevision ? 'ready' : 'attention';
 
   const checks = tab === 'review'
-    ? overview.readiness.checks.filter((check) => !check.key.startsWith('source_'))
+    ? overview.readiness.checks.filter((check) => !check.key.startsWith('document_'))
     : overview.readiness.checks.filter((check) => {
-      if (tab === 'knowledge' && (check.targetType === 'source' || check.key.startsWith('source_'))) return true;
+      if (tab === 'knowledge' && (check.targetType === 'document' || check.key.startsWith('document_'))) return true;
       return tabCheckKeys[tab]?.includes(check.key) ?? false;
     });
 
   return checks.length > 0 && checks.every((check) => check.status === 'passed') ? 'ready' : 'attention';
+}
+
+export function isScopeKnowledgeReady(overview: GovernanceScopeOverview): boolean {
+  return overview.readiness.checks.some((check) => check.key === 'knowledge_mapped' && check.status === 'passed');
+}
+
+export function isCurrentDraftDryRunPassed(overview: GovernanceScopeOverview): boolean {
+  return Boolean(overview.draftRevision && overview.latestDryRun?.revisionId === overview.draftRevision.id && overview.latestDryRun.status === 'passed');
+}
+
+export function getLatestDryRunRevisionNumber(overview: GovernanceScopeOverview): number | undefined {
+  if (!overview.latestDryRun) return undefined;
+  if (overview.latestDryRun.revisionId === overview.draftRevision?.id) return overview.draftRevision.revisionNumber;
+  if (overview.latestDryRun.revisionId === overview.publishedRevision?.id) return overview.publishedRevision.revisionNumber;
+  return undefined;
 }

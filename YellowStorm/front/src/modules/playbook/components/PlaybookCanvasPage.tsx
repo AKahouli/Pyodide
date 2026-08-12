@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { ArrowLeft, BarChart3, Loader2, Share2, Copy, PanelRightOpen } from 'lucide-react';
 import { toast } from 'sonner';
-import { ReactFlowProvider, useReactFlow, getNodesBounds, type Edge } from '@xyflow/react';
+import { ReactFlowProvider, useReactFlow, getNodesBounds, type Edge, type Node } from '@xyflow/react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import '@xyflow/react/dist/style.css';
 
@@ -72,6 +72,9 @@ import { dataBindingsToLayerEdges, filterMirroredDataLayerEdges } from '../hooks
 import { tasksToNodes, TRIGGER_NODE_ID } from '../hooks/helpers/node-serializer';
 import { useAutosave } from '../hooks/useAutosave';
 import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, ConnectionDragContext, type NodeContextMenuActions } from './PlaybookNode';
+import { DynamicReasoningRuntimeNode } from './runtime/DynamicReasoningRuntimeNode';
+import { DynamicReasoningRuntimeContainerNode } from './runtime/DynamicReasoningRuntimeContainerNode';
+import { useExecutionFocusGraph } from '../hooks/useExecutionFocusGraph';
 import { PlaybookTriggerNode } from './PlaybookTriggerNode';
 import { PlaybookIteratorContainerNode } from './PlaybookIteratorContainerNode';
 
@@ -167,6 +170,7 @@ function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookSchedu
 
 const CHANGE_HIGHLIGHT_DURATION_MS = 10_000;
 type CanvasViewMode = 'expanded' | 'overview';
+type ExecutionViewMode = 'full' | 'focus';
 
 export function shouldAutoLayoutAfterConstruction(
   previousStatus: PlaybookIntentConstructionStatus,
@@ -185,6 +189,14 @@ export function shouldBlockCanvasMutationShortcut(
 ): boolean {
   if (!constructionActive || (!event.ctrlKey && !event.metaKey)) return false;
   return ['z', 'y', 'x', 'v'].includes(event.key.toLowerCase());
+}
+
+export function shouldEnableCanvasNodeDragging(
+  isSaving: boolean,
+  constructionActive: boolean,
+  executionViewMode: ExecutionViewMode,
+): boolean {
+  return !isSaving && !constructionActive && executionViewMode === 'full';
 }
 
 export async function hydrateAssistantOperationHandoff(
@@ -298,6 +310,7 @@ function PlaybookCanvasInner() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [canvasViewMode, setCanvasViewMode] = useState<CanvasViewMode>('expanded');
+  const [executionViewMode, setExecutionViewMode] = useState<ExecutionViewMode>('full');
   const [loadedPlaybookId, setLoadedPlaybookId] = useState<string | null>(null);
   const { t } = useModuleTranslation('playbook');
   const { setOpen: setGlobalSidebarOpen } = useSidebar();
@@ -526,6 +539,7 @@ function PlaybookCanvasInner() {
   const designerIntentRef = useRef('');
   const designerIntentImagesRef = useRef<PlaybookIntentImageInput[]>([]);
   const [designerSidebarWidth, setDesignerSidebarWidth] = useState(0);
+  const [runtimeContainerExpansion, setRuntimeContainerExpansion] = useState<Record<string, boolean>>({});
   const previousConstructionStatusRef = useRef<PlaybookIntentConstructionStatus>('idle');
   const autoIntentRef = useRef<string | null>(null);
   const constructionActive = constructionStatus === 'starting' || constructionStatus === 'streaming';
@@ -927,6 +941,8 @@ function PlaybookCanvasInner() {
     playbookIteratorContainer: PlaybookIteratorContainerNode,
     playbookRouter: RouterNode,
     playbookHumanApproval: HumanApprovalNode,
+    playbookRuntimeStep: DynamicReasoningRuntimeNode,
+    dynamicReasoningRuntimeContainer: DynamicReasoningRuntimeContainerNode,
   }), []);
   const edgeTypes = useMemo(() => ({
     animated: AiEdge.Animated,
@@ -1125,6 +1141,112 @@ function PlaybookCanvasInner() {
 
     return [...styledControlEdges, ...dataLayerEdges];
   }, [dataBindingsVisible, playbook, styledControlEdges]);
+  useEffect(() => {
+    setRuntimeContainerExpansion({});
+  }, [executionForCanvas?.id]);
+  const handleToggleRuntimeContainer = useCallback((containerId: string, expanded: boolean) => {
+    setRuntimeContainerExpansion((current) => ({ ...current, [containerId]: expanded }));
+  }, []);
+  const runtimeGraphOptions = useMemo(() => ({
+    expandedByContainerId: runtimeContainerExpansion,
+    onToggleContainer: handleToggleRuntimeContainer,
+  }), [handleToggleRuntimeContainer, runtimeContainerExpansion]);
+  const executionRuntimeGraph = useExecutionFocusGraph(executionForCanvas, canvasNodes, liveEdges, runtimeGraphOptions);
+  const renderedCanvasNodes = useMemo(
+    () => executionViewMode === 'focus'
+      ? executionRuntimeGraph.focusNodes
+      : [...executionRuntimeGraph.inlineCanvasNodes, ...executionRuntimeGraph.inlineNodes],
+    [executionRuntimeGraph.focusNodes, executionRuntimeGraph.inlineCanvasNodes, executionRuntimeGraph.inlineNodes, executionViewMode],
+  );
+  const renderedCanvasEdges = useMemo(
+    () => executionViewMode === 'focus'
+      ? executionRuntimeGraph.focusEdges
+      : [...liveEdges, ...executionRuntimeGraph.inlineEdges],
+    [executionRuntimeGraph.focusEdges, executionRuntimeGraph.inlineEdges, executionViewMode, liveEdges],
+  );
+  const runtimeViewportNodes = useMemo(() => {
+    if (executionViewMode === 'focus') return executionRuntimeGraph.focusNodes;
+    return [
+      ...executionRuntimeGraph.inlineCanvasNodes.filter((node) => (
+        typeof (node.data as Record<string, unknown>).dynamicReasoningRuntimeSourceHandleId === 'string'
+      )),
+      ...executionRuntimeGraph.inlineNodes,
+    ];
+  }, [executionRuntimeGraph.focusNodes, executionRuntimeGraph.inlineCanvasNodes, executionRuntimeGraph.inlineNodes, executionViewMode]);
+  const runtimeViewportKey = useMemo(
+    () => `${executionViewMode}:${designerSidebarWidth}:${runtimeViewportNodes.map((node) => (
+      `${node.id}:${node.position.x}:${node.position.y}:${node.width ?? ''}:${node.height ?? ''}:${node.parentId ?? ''}`
+    )).sort().join(',')}`,
+    [designerSidebarWidth, executionViewMode, runtimeViewportNodes],
+  );
+  const runtimeViewportNodesRef = useRef(runtimeViewportNodes);
+  runtimeViewportNodesRef.current = runtimeViewportNodes;
+  const fittedRuntimeTopologyRef = useRef<string | null>(null);
+
+  const fitCanvasNodes = useCallback((targetNodes: Array<{ id: string }>, duration = 300) => {
+    const desktopDesignerWidth = window.matchMedia('(min-width: 640px)').matches
+      ? designerSidebarWidth
+      : 0;
+    const canvasBounds = canvasChromeRef.current?.getBoundingClientRect();
+    if (!desktopDesignerWidth || !canvasBounds) {
+      return reactFlow.fitView({ nodes: targetNodes, padding: 0.2, duration });
+    }
+
+    const registeredNodes = targetNodes
+      .map(({ id: nodeId }) => reactFlow.getNode(nodeId))
+      .filter((node): node is Node => Boolean(node));
+    if (registeredNodes.length === 0) return Promise.resolve(false);
+
+    const graphBounds = reactFlow.getNodesBounds(registeredNodes);
+    const viewportPadding = 48;
+    const visibleWidth = Math.max(1, canvasBounds.width - desktopDesignerWidth - viewportPadding * 2);
+    const visibleHeight = Math.max(1, canvasBounds.height - viewportPadding * 2);
+    const zoom = Math.max(0.1, Math.min(
+      1.5,
+      visibleWidth / Math.max(graphBounds.width, 1),
+      visibleHeight / Math.max(graphBounds.height, 1),
+    ));
+
+    return reactFlow.setCenter(
+      graphBounds.x + graphBounds.width / 2 + desktopDesignerWidth / (2 * zoom),
+      graphBounds.y + graphBounds.height / 2,
+      { zoom, duration },
+    );
+  }, [designerSidebarWidth, reactFlow]);
+
+  useEffect(() => {
+    if (runtimeViewportNodes.length === 0) {
+      fittedRuntimeTopologyRef.current = null;
+      return;
+    }
+    if (fittedRuntimeTopologyRef.current === runtimeViewportKey) {
+      return;
+    }
+
+    let retryTimer: number | undefined;
+    let confirmationTimer: number | undefined;
+    let retries = 0;
+    const fitRuntimeGraph = () => {
+      const nodes = runtimeViewportNodesRef.current;
+      if (nodes.some((node) => !reactFlow.getNode(node.id)) && retries < 20) {
+        retries += 1;
+        retryTimer = window.setTimeout(fitRuntimeGraph, 50);
+        return;
+      }
+
+      fittedRuntimeTopologyRef.current = runtimeViewportKey;
+      const targetNodes = nodes.map(({ id }) => ({ id }));
+      void fitCanvasNodes(targetNodes);
+      confirmationTimer = window.setTimeout(() => {
+        void fitCanvasNodes(targetNodes);
+      }, 300);
+    };
+    retryTimer = window.setTimeout(fitRuntimeGraph, 100);
+    return () => {
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      if (confirmationTimer !== undefined) window.clearTimeout(confirmationTimer);
+    };
+  }, [fitCanvasNodes, reactFlow, runtimeViewportKey, runtimeViewportNodes.length]);
 
   const handleOpenOverviewNode = useCallback((nodeId: string) => {
     selectStep(nodeId);
@@ -1474,6 +1596,9 @@ function PlaybookCanvasInner() {
 
   const handleNodeDoubleClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
+      if (node.type === 'playbookRuntimeStep') {
+        return;
+      }
       if (node.id === '__trigger__') {
         setTriggersSheetOpen(true);
         return;
@@ -3396,6 +3521,9 @@ function PlaybookCanvasInner() {
 
   const handleEdgeDoubleClick = useCallback(
     (_event: React.MouseEvent, edge: Edge) => {
+      if ((edge.data as { runtime?: boolean } | undefined)?.runtime) {
+        return;
+      }
       if ((edge.data as { layer?: string } | undefined)?.layer === 'binding') {
         return;
       }
@@ -3707,6 +3835,19 @@ function PlaybookCanvasInner() {
               aria-label={t('canvas.view.groupLabel')}
             >
               {renderCanvasViewModeButtons(false)}
+              <Button
+                type="button"
+                size="sm"
+                variant={executionViewMode === 'focus' ? 'default' : 'ghost'}
+                disabled={executionRuntimeGraph.focusNodes.length === 0}
+                aria-pressed={executionViewMode === 'focus'}
+                onClick={() => {
+                  setCanvasViewMode('expanded');
+                  setExecutionViewMode((mode) => mode === 'focus' ? 'full' : 'focus');
+                }}
+              >
+                {t('executionFocus.label')}
+              </Button>
             </div>
             {canvasViewMode === 'overview' ? (
               <PlaybookOverviewCanvas
@@ -3724,8 +3865,8 @@ function PlaybookCanvasInner() {
               <NodeDataActionsContext.Provider value={{ updateNodeData, setIteratorNodeSize, resizeIteratorNode: handleResizeIteratorNode, repackIteratorChildren: handleRepackIteratorChildren, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop, onSkillDrop: handleSkillDrop }}>
                 <ConnectionDragContext.Provider value={{ hoveredTargetId: connectionDragHoveredId }}>
                 <Canvas
-                  nodes={canvasNodes}
-                  edges={liveEdges}
+                  nodes={renderedCanvasNodes}
+                  edges={renderedCanvasEdges}
                   onNodesChange={onNodesChange}
                   onNodeDragStop={onNodeDragStop}
                   onEdgesChange={onEdgesChange}
@@ -3752,14 +3893,22 @@ function PlaybookCanvasInner() {
                   fitView
                   selectionOnDrag
                   selectionKeyCode="Shift"
-                  deleteKeyCode={constructionActive ? null : ['Backspace', 'Delete']}
-                  nodesDraggable={!isSaving && !constructionActive}
-                  nodesConnectable={!isSaving && !constructionActive}
+                   deleteKeyCode={constructionActive || executionViewMode === 'focus' || executionRuntimeGraph.inlineNodes.length > 0 ? null : ['Backspace', 'Delete']}
+                   nodesDraggable={shouldEnableCanvasNodeDragging(isSaving, constructionActive, executionViewMode)}
+                   nodesConnectable={!isSaving && !constructionActive && executionViewMode === 'full' && executionRuntimeGraph.inlineNodes.length === 0}
                   elementsSelectable={!isSaving && !constructionActive}
                   onDrop={handleCanvasDrop}
                   onDragOver={(e) => { e.preventDefault(); }}
                 >
-                  <Controls position="bottom-left" />
+                  <Controls
+                    position="bottom-left"
+                    onFitView={() => {
+                      if (designerSidebarWidth <= 0) return;
+                      window.setTimeout(() => {
+                        void fitCanvasNodes(renderedCanvasNodes);
+                      }, 100);
+                    }}
+                  />
                 </Canvas>
                 {intentLoading ? <PlaybookIntentGhostNode progress={constructionProgress} /> : null}
                 <PlaybookCanvasFloatingToolbar

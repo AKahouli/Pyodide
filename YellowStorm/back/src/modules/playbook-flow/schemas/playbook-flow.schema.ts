@@ -124,6 +124,12 @@ export class RetryPolicy {
 }
 
 @Schema({ _id: false })
+export class DynamicReasoningConfig {
+  @Prop({ required: true, type: Boolean, default: false })
+  enabled!: boolean;
+}
+
+@Schema({ _id: false })
 export class FlowNode {
   @Prop({ required: true, type: String })
   id!: string;
@@ -175,6 +181,9 @@ export class FlowNode {
 
   @Prop({ required: false, type: Boolean, default: false })
   deepSearch?: boolean;
+
+  @Prop({ required: false, type: DynamicReasoningConfig })
+  dynamicReasoning?: DynamicReasoningConfig;
 }
 
 @Schema({ timestamps: true })

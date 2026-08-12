@@ -1,5 +1,3 @@
-import { Test } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { GovernanceScopeOverviewService } from './governance-scope-overview.service';
 import { GovernanceAccessService } from './governance-access.service';
@@ -15,8 +13,7 @@ import { GovernanceWorkspaceBinding } from '../schemas/governance-workspace-bind
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { User } from '@modules/user/schemas/user.schema';
 
-const execLean = (value: unknown) => ({ lean: () => ({ exec: jest.fn().mockResolvedValue(value) }) });
-const sortedLean = (value: unknown) => ({ sort: () => execLean(value) });
+const query = <T>(value: T) => ({ sort: jest.fn().mockReturnThis(), select: jest.fn().mockReturnThis(), lean: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue(value) });
 
 describe('GovernanceScopeOverviewService', () => {
   it('aggregates scope readiness around agents, knowledge, deployment, and dry-run state', async () => {
@@ -151,8 +148,11 @@ describe('GovernanceScopeOverviewService', () => {
       ],
     }).compile();
 
-    const overview = await moduleRef.get(GovernanceScopeOverviewService).getOverview(agentId.toString(), programId.toString(), scopeId.toString());
+    const result = await service.getOverview(new Types.ObjectId().toString(), programId.toString(), scopeId.toString());
 
-    expect(overview.readiness.blockers.map((blocker) => blocker.key)).not.toContain('deployment_publishable');
+    expect(result.knowledge.sharedWorkspaces).toEqual([]);
+    expect(result.knowledge.localWorkspaces).toHaveLength(1);
+    expect(result.knowledge.documents[0]).toEqual(expect.objectContaining({ documentId: documentId.toString(), document: expect.objectContaining({ indexingStatus: 'ready' }) }));
+    expect(result.readiness.checks).toContainEqual(expect.objectContaining({ key: 'knowledge_mapped', status: 'passed', targetType: 'document' }));
   });
 });

@@ -1,5 +1,5 @@
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload } from './types';
+import type { Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse } from './types';
 
 // ===== Conversation APIs =====
 
@@ -100,6 +100,11 @@ export async function fetchMessage(conversationId: string, messageId: string): P
 
 export async function updateFeedback(conversationId: string, messageId: string, feedback: 'like' | 'dislike' | null): Promise<Message> {
   const response = await apiClient.patch<ApiResponse<Message>>(API_ENDPOINTS.conversations.feedback(conversationId, messageId), { feedback });
+  return response.data.data;
+}
+
+export async function rerunReliabilityEvaluation(conversationId: string, messageId: string): Promise<ReliabilityRerunResponse> {
+  const response = await apiClient.post<ApiResponse<ReliabilityRerunResponse>>(API_ENDPOINTS.conversations.rerunReliabilityEvaluation(conversationId, messageId));
   return response.data.data;
 }
 

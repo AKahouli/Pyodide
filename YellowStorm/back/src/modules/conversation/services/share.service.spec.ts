@@ -16,8 +16,9 @@ describe('ShareService public share sanitization', () => {
 
   const components: MessageComponent[] = [
     { id: 'reasoning', type: 'reasoning', data: { content: 'Internal instructions' } },
-    { id: 'tool', type: 'toolInfo', data: { title: 'activate_skill', params: '{"secret":"value"}' } },
+    { id: 'tool', type: 'toolInfo', data: { title: 'activate_skill', params: '{"secret":"value"}', resultJson: '{"private":true}' } },
     { id: 'thought', type: 'chainOfThought', data: { steps: ['Internal step'] } },
+    { id: 'task', type: 'task', data: { title: 'Smart Agent', items: ['Raw private context'], status: 'completed' } },
     { id: 'answer', type: 'text', data: { content: 'Public answer' } },
     { id: 'choice', type: 'choice', data: { prompt: 'Continue?' } },
   ];
@@ -72,7 +73,7 @@ describe('ShareService public share sanitization', () => {
     await service.createShare(userId, { conversationId: conversationId.toString(), shareType: 'public' });
 
     const snapshot = sharedConversationModel.create.mock.calls[0][0].messages as EmbeddedMessage[];
-    expect(snapshot[0].components).toEqual([components[3], components[4]]);
+    expect(snapshot[0].components).toEqual([{ ...components[3], data: { ...components[3].data, items: [] } }, components[4], components[5]]);
     expect(snapshot[0].content).toBeUndefined();
   });
 
@@ -96,7 +97,7 @@ describe('ShareService public share sanitization', () => {
 
     const result = await service.viewPublicShare('token');
 
-    expect(result.messages[0].components).toEqual([components[3], components[4]]);
+    expect(result.messages[0].components).toEqual([{ ...components[3], data: { ...components[3].data, items: [] } }, components[4], components[5]]);
     expect(result.messages[0].content).toBeUndefined();
     expect(result.messages[1]).toEqual(legacyMessages[1]);
     expect(result.messages[2].components).toEqual([]);

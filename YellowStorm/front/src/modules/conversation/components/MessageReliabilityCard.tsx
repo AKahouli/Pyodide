@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -15,6 +15,8 @@ import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
+import { useApiAction } from '@/lib/use-api-action';
+import { rerunReliabilityEvaluation } from '../api';
 import type { DisplayedAnswerVersion, ReliabilityClaimStatus, ReliabilityEvaluation, ReliabilityFinding, ResponseCorrectionAttempt, ResponseCorrectionWorkflow } from '../types';
 import { attemptVersion } from '../utils/answer-version';
 import { conversationPanelClassName } from './conversation-panel-styles';
@@ -41,6 +43,8 @@ const groupStyles = {
 } as const;
 
 interface MessageReliabilityCardProps {
+  conversationId?: string;
+  messageId?: string;
   evaluation?: ReliabilityEvaluation;
   originalEvaluation?: ReliabilityEvaluation;
   correctionWorkflow?: ResponseCorrectionWorkflow;
@@ -48,52 +52,67 @@ interface MessageReliabilityCardProps {
   onVersionChange?: (version: DisplayedAnswerVersion) => void;
 }
 
-export function MessageReliabilityCard({ evaluation, originalEvaluation, correctionWorkflow, displayedVersion = 'original', onVersionChange }: Readonly<MessageReliabilityCardProps>) {
+export function MessageReliabilityCard({ conversationId, messageId, evaluation, originalEvaluation, correctionWorkflow, displayedVersion = 'original', onVersionChange }: Readonly<MessageReliabilityCardProps>) {
   const { t, language } = useModuleTranslation('conversation');
+  const { execute: rerun, isLoading: isRerunning } = useApiAction(rerunReliabilityEvaluation, {
+    showSuccessToast: true,
+    successMessage: t('reliability.rerunQueued'),
+  });
+  const correctionInProgress = correctionWorkflow?.status === 'queued'
+    || correctionWorkflow?.status === 'correcting'
+    || correctionWorkflow?.status === 're_evaluating';
+  const rerunDisabled = isRerunning || evaluation?.status === 'pending' || correctionInProgress;
+  const rerunAction = conversationId && messageId ? <Button
+    type='button'
+    variant='outline'
+    size='sm'
+    className='min-h-11 shrink-0 px-3 text-xs md:min-h-7 md:px-2'
+    onClick={() => void rerun(conversationId, messageId)}
+    disabled={rerunDisabled}
+    aria-label={t('reliability.rerunAria')}
+  >
+    {isRerunning && <Loader2 className='mr-1 size-3 animate-spin' aria-hidden='true' />}
+    {t('reliability.rerun')}
+  </Button> : null;
   const history = <EvaluationHistory workflow={correctionWorkflow} originalEvaluation={originalEvaluation} fallbackEvaluation={evaluation} displayedVersion={displayedVersion} onVersionChange={onVersionChange} language={language} />;
   if (!evaluation) {
-    if (!correctionWorkflow) return null;
-    return <ReliabilityPanelHeader icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.notRecorded')}>{history}</ReliabilityPanelHeader>;
+    if (!correctionWorkflow && !rerunAction) return null;
+    return <ReliabilityPanel action={rerunAction} icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.notRecorded')}>{history}</ReliabilityPanel>;
   }
 
   if (evaluation.status === 'pending') {
     return (
-      <ReliabilityPanelHeader
+      <ReliabilityPanel
         icon={<Loader2 className='size-5 animate-spin text-primary [animation-duration:1.1s]' />}
         title={t('reliability.pendingTitle')}
         description={t('reliability.pendingDescription')}
+        action={rerunAction}
       >
         {history}
-      </ReliabilityPanelHeader>
+      </ReliabilityPanel>
     );
   }
   if (evaluation.status === 'insufficient_evidence') {
-    return <ReliabilityPanelHeader title={t('reliability.notScored')} description={t('reliability.insufficientEvidence')}>{history}</ReliabilityPanelHeader>;
+    return <ReliabilityPanel action={rerunAction} title={t('reliability.notScored')} description={t('reliability.insufficientEvidence')}>{history}</ReliabilityPanel>;
   }
   if (evaluation.status === 'not_applicable') {
-    return <ReliabilityPanelHeader title={t('reliability.notApplicable')} description={t('reliability.noClaims')}>{history}</ReliabilityPanelHeader>;
+    return <ReliabilityPanel action={rerunAction} title={t('reliability.notApplicable')} description={t('reliability.noClaims')}>{history}</ReliabilityPanel>;
   }
   if (evaluation.status === 'failed') {
-    return <ReliabilityPanelHeader icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.unavailableDescription')}>{history}</ReliabilityPanelHeader>;
+    return <ReliabilityPanel action={rerunAction} icon={<AlertTriangle className='size-4 text-muted-foreground' />} title={t('reliability.unavailable')} description={t('reliability.unavailableDescription')}>{history}</ReliabilityPanel>;
   }
   if (evaluation.score === undefined || !evaluation.label || !evaluation.claimCounts) return null;
 
   const counts = evaluation.claimCounts;
   return (
-    <div className={conversationPanelClassName}>
-      <div className='flex min-w-0 items-center gap-3 px-1'>
-        <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
-          <span className='absolute inset-1 rounded-full bg-primary/20 ring-1 ring-primary/40' />
-          <ShieldCheck className='size-4 text-primary' />
-        </span>
-        <div className='min-w-0 flex-1'>
-          <p className='truncate text-sm font-medium text-foreground'>{t('reliability.title')}</p>
-          <p className='text-xs text-muted-foreground'>{t('reliability.supportedCount', { supported: counts.supported, total: counts.total })}</p>
-        </div>
-        <ScoreIndicator score={evaluation.score} size='large' />
-      </div>
+    <ReliabilityPanel
+      action={rerunAction}
+      title={t('reliability.title')}
+      description={t('reliability.supportedCount', { supported: counts.supported, total: counts.total })}
+      score={<ScoreIndicator score={evaluation.score} size='large' />}
+    >
       {history}
-    </div>
+    </ReliabilityPanel>
   );
 }
 
@@ -131,6 +150,10 @@ function ScoreIndicator({ score, size = 'small' }: Readonly<{ score: number; siz
   const dashOffset = circumference * (1 - normalizedScore / 100);
   const diameterClassName = size === 'large' ? 'size-11' : 'size-8';
   const textClassName = size === 'large' ? 'text-sm' : 'text-[10px]';
+  const scoreBand = normalizedScore > 70 ? 'positive' : 'caution';
+  const scoreColor = normalizedScore > 70
+    ? `color-mix(in oklch, var(--reliability-positive) ${100 - ((normalizedScore - 71) / 29) * 100}%, var(--reliability-excellent))`
+    : `color-mix(in oklch, var(--reliability-critical) ${100 - (normalizedScore / 70) * 100}%, var(--reliability-warning))`;
 
   return <div
     role='meter'
@@ -138,10 +161,12 @@ function ScoreIndicator({ score, size = 'small' }: Readonly<{ score: number; siz
     aria-valuemin={0}
     aria-valuemax={100}
     aria-valuenow={normalizedScore}
-    className={cn('relative shrink-0 text-primary', diameterClassName)}
+    data-score-band={scoreBand}
+    className={cn('relative shrink-0 text-[var(--reliability-score-color)]', diameterClassName)}
+    style={{ '--reliability-score-color': scoreColor } as CSSProperties}
   >
     <svg viewBox='0 0 36 36' className='size-full -rotate-90' aria-hidden='true'>
-      <circle cx='18' cy='18' r={radius} fill='none' stroke='currentColor' strokeWidth='4' className='text-primary/20' />
+      <circle cx='18' cy='18' r={radius} fill='none' stroke='currentColor' strokeWidth='4' className='opacity-25' />
       <circle cx='18' cy='18' r={radius} fill='none' stroke='currentColor' strokeWidth='4' strokeDasharray={circumference} strokeDashoffset={dashOffset} strokeLinecap='butt' />
     </svg>
     <span className={cn('absolute inset-0 flex items-center justify-center font-semibold tabular-nums', textClassName)}>{normalizedScore}</span>
@@ -379,20 +404,27 @@ function EvaluationOccurrence({ label, sequence, evaluation, fallbackStatus, sel
   </Collapsible>;
 }
 
-function ReliabilityPanelHeader({ icon, title, description, children }: Readonly<{ icon?: React.ReactNode; title: string; description?: string; children?: React.ReactNode }>) {
+function ReliabilityPanel({ action, icon, title, description, score, children }: Readonly<{ action?: React.ReactNode; icon?: React.ReactNode; title: string; description?: string; score?: React.ReactNode; children?: React.ReactNode }>) {
+  const { t } = useModuleTranslation('conversation');
+  const [open, setOpen] = useState(false);
   return (
-    <div className={conversationPanelClassName}>
-      <div className='flex min-w-0 items-center gap-3 px-1'>
-        <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
+    <Collapsible open={open} onOpenChange={setOpen} className={conversationPanelClassName}>
+      <div className='grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-1 md:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto]'>
+        <span className='relative col-start-1 row-start-1 flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
           <span className='absolute inset-1 rounded-full bg-primary/20 ring-1 ring-primary/40' />
           {icon || <ShieldCheck className='size-4 text-primary' />}
         </span>
-        <div className='min-w-0 flex-1'>
+        <div className='col-start-2 row-start-1 min-w-0'>
           <p className='text-sm font-medium text-foreground'>{title}</p>
           {description && <p className='text-xs leading-relaxed text-muted-foreground'>{description}</p>}
         </div>
+        {action ? <div className='col-start-2 row-start-2 justify-self-start md:col-start-3 md:row-start-1'>{action}</div> : null}
+        {score ? <div className='col-start-3 row-start-2 justify-self-end md:col-start-4 md:row-start-1'>{score}</div> : null}
+        {children ? <CollapsibleTrigger className='col-start-3 row-start-1 inline-flex size-11 shrink-0 items-center justify-center justify-self-end rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:col-start-5 md:size-8 [&[data-state=open]>svg]:rotate-180' aria-label={open ? t('reliability.collapseAria') : t('reliability.expandAria')}>
+          <ChevronDown className='size-4 transition-transform' aria-hidden='true' />
+        </CollapsibleTrigger> : null}
       </div>
-      {children}
-    </div>
+      {children ? <CollapsibleContent>{children}</CollapsibleContent> : null}
+    </Collapsible>
   );
 }

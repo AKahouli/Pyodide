@@ -38,6 +38,7 @@ import type {
   PlaybookOutputFormatTemplateUpdatedEvent,
   PlaybookExecutionCompleteEvent,
   PlaybookInterruptEvent,
+  DynamicReasoningStreamUpdate,
   ExecutionStatus,
   StepEvaluationHistoryEntry,
   PlaybookPageMode,
@@ -63,6 +64,7 @@ import * as api from './api';
 import { normalizePlaybook } from './api.compat';
 import { autoLayoutTasks } from './utils/auto-layout';
 import { mergeComponents } from './utils/merge-components';
+import { mergeDynamicReasoningUpdate } from './stream/executionEventMerger';
 import { handleApiError, parseApiError } from '@/lib/api-error';
 import { i18nInstance } from '@/modules/localization/i18nInstance';
 import { playbookFeatures } from './features';
@@ -3666,6 +3668,21 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         if (cachedExecution?.playbookId) {
           void get().fetchExecution(cachedExecution.playbookId, data.executionId);
         }
+      },
+
+      onDynamicReasoningUpdate: (data: DynamicReasoningStreamUpdate) => {
+        set((state) => {
+          const cached = state.executionCache[data.executionId];
+          const updatedExecution = mergeDynamicReasoningUpdate(cached, data);
+          if (!updatedExecution) return state;
+
+          return {
+            executionCache: { ...state.executionCache, [data.executionId]: updatedExecution },
+            currentExecution: state.currentExecution?.id === data.executionId
+              ? updatedExecution
+              : state.currentExecution,
+          };
+        });
       },
 
       onIteratorChildStepStart: (data: PlaybookIteratorChildStepStartEvent) => {

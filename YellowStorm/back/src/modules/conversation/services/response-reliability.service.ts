@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { HttpStatus, Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Interval } from '@nestjs/schedule';
 import axios from 'axios';
@@ -6,12 +6,14 @@ import { randomUUID } from 'node:crypto';
 import { EvaluationSettingsService, ResponseReliabilitySettings } from '@modules/evaluation/services/evaluation-settings.service';
 import { ModelsService } from '@modules/models/models.service';
 import { LoggerService } from '@modules/logger';
-import type { ReliabilityClaimImportance, ReliabilityClaimStatus } from '../interfaces/message.interface';
+import type { ReliabilityClaimImportance, ReliabilityClaimStatus, ReliabilityEvaluation } from '../interfaces/message.interface';
 import { MessageService } from './message.service';
 import { ResponseReliabilityEvidenceBuilder, ResponseReliabilityInput } from './response-reliability-evidence.builder';
 import { EvaluatedReliabilityClaim, ResponseReliabilityScoringService } from './response-reliability-scoring.service';
 import { ResponseCorrectionService } from './response-correction.service';
 import { ResponseCorrectionPolicyService } from './response-correction-policy.service';
+import { AppException } from '../../exceptions/exceptions/base.exception';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
 
 const MAX_PENDING_QUEUE_SIZE = 100;
 const STALE_PENDING_MS = 5 * 60 * 1000;
@@ -24,6 +26,7 @@ interface ReliabilityJob {
   requestId: string;
   requestedAt: string;
   settings: ResponseReliabilitySettings;
+  manual: boolean;
 }
 
 interface AdkReliabilityResponse {
@@ -68,34 +71,19 @@ export class ResponseReliabilityService implements OnModuleInit {
     const settings = (await this.settingsService.getSettings()).responseReliability;
     if (!settings.enabled) return;
 
-    const message = await this.messageService.getMessageDocument(input.messageId);
-    const components = Array.isArray(message.components) ? message.components : [];
-    const eligible = message.conversationType === 'ai'
-      && message.isComplete === true
-      && message.isStreaming === false
-      && components.some((component) => component.type === 'text'
-        && typeof component.data?.content === 'string' && component.data.content.trim())
-      && !components.some((component) => component.type === 'error')
-      && !message.reliabilityEvaluation;
-    if (!eligible) return;
-
-    if (this.scheduledMessageIds.has(input.messageId)) return;
-    const questionMessageId = input.questionMessageId || message.questionMessageId?.toString();
-    if (!questionMessageId) return;
-    const requestedAt = new Date().toISOString();
+    const message = await this.messageService.claimReliabilityEvaluation(input.conversationId, input.messageId, false);
+    if (!message || this.scheduledMessageIds.has(input.messageId)) return;
+    const questionMessageId = input.questionMessageId || message.questionMessageId;
+    const requestedAt = message.reliabilityEvaluation?.requestedAt;
+    if (!questionMessageId || !requestedAt) return;
     this.scheduledMessageIds.add(input.messageId);
-    try {
-      await this.messageService.updateReliabilityEvaluation(input.messageId, { status: 'pending', requestedAt });
-    } catch (error) {
-      this.scheduledMessageIds.delete(input.messageId);
-      throw error;
-    }
     const job: ReliabilityJob = {
       ...input,
       questionMessageId,
       requestId: input.requestId || randomUUID(),
       requestedAt,
       settings,
+      manual: false,
     };
 
     if (this.queue.length >= MAX_PENDING_QUEUE_SIZE) {
@@ -107,6 +95,38 @@ export class ResponseReliabilityService implements OnModuleInit {
     // This FIFO and its concurrency limit are intentionally per backend instance for the MVP.
     this.queue.push(job);
     this.drainQueue();
+  }
+
+  async rerun(input: { messageId: string; conversationId: string; userId: string; requestId?: string }): Promise<{ messageId: string; reliabilityEvaluation: ReliabilityEvaluation }> {
+    const settings = (await this.settingsService.getSettings()).responseReliability;
+    const message = await this.messageService.rerunReliabilityEvaluation(input.conversationId, input.messageId);
+    const questionMessageId = message.questionMessageId;
+    if (!questionMessageId || !message.reliabilityEvaluation) {
+      throw new AppException({
+        code: ErrorCode.BAD_REQUEST,
+        message: 'Reliability rerun was not initialized',
+        statusCode: HttpStatus.BAD_REQUEST,
+      });
+    }
+
+    const job: ReliabilityJob = {
+      ...input,
+      questionMessageId,
+      requestId: input.requestId || randomUUID(),
+      requestedAt: message.reliabilityEvaluation.requestedAt || new Date().toISOString(),
+      settings,
+      manual: true,
+    };
+    this.scheduledMessageIds.add(input.messageId);
+    if (this.queue.length >= MAX_PENDING_QUEUE_SIZE) {
+      this.scheduledMessageIds.delete(input.messageId);
+      await this.failJob(job, 'queue_capacity_exceeded');
+      return { messageId: input.messageId, reliabilityEvaluation: message.reliabilityEvaluation };
+    }
+
+    this.queue.push(job);
+    this.drainQueue();
+    return { messageId: input.messageId, reliabilityEvaluation: message.reliabilityEvaluation };
   }
 
   @Interval(60_000)
@@ -158,7 +178,7 @@ export class ResponseReliabilityService implements OnModuleInit {
           durationMs: 0,
         } as const;
         await this.messageService.updateReliabilityEvaluation(job.messageId, evaluation);
-        if (job.settings.mode === 'corrective_transparent') {
+        if (!job.manual && job.settings.mode === 'corrective_transparent') {
           await this.correctionService.applyInsufficientEvidence({ ...job, originalEvaluation: evaluation });
         }
         return;
@@ -200,7 +220,7 @@ export class ResponseReliabilityService implements OnModuleInit {
         durationMs: Date.now() - startedAt,
       } as const;
       await this.messageService.updateReliabilityEvaluation(job.messageId, evaluation);
-      if (this.correctionPolicy.shouldCorrect(job.settings, evaluation)) {
+      if (!job.manual && this.correctionPolicy.shouldCorrect(job.settings, evaluation)) {
         void this.correctionService.schedule({ ...job, originalEvaluation: evaluation }).catch((error) => {
           this.logger.error('Unable to schedule response correction', {
             messageId: job.messageId,

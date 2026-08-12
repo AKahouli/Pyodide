@@ -175,6 +175,7 @@ describe('AppSidebar', () => {
     );
 
     expect(storeFns.fetchConversations).toHaveBeenCalledWith({ reset: true, limit: 20 });
+    expect(screen.getByRole('link', { name: 'actions.home' })).toHaveAttribute('href', '/');
     expect(screen.getByRole('link', { name: 'actions.platformOverview.label' })).toHaveAttribute('href', '/platform');
 
     await userEvent.click(screen.getByRole('button', { name: 'actions.newChat.label' }));

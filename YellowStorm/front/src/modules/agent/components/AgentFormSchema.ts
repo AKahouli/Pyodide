@@ -14,18 +14,27 @@ function tAgent(key: string, fallback: string) {
   return fallback;
 }
 
+const guardrailModeSchema = z.enum(['monitor', 'balanced', 'strict']).default('balanced');
+
 const promptInjectionGuardrailsSchema = z.object({
-  inputGuardrailEnabled: z.boolean().default(false),
-  outputGuardrailEnabled: z.boolean().default(false),
-  toolCallGuardrailEnabled: z.boolean().default(false),
+  inputEnabled: z.boolean().default(false),
+  outputEnabled: z.boolean().default(false),
+  mode: guardrailModeSchema,
   inputClassifierPrompt: z.string().max(20000).default(defaultInputClassifierPrompt),
   outputClassifierPrompt: z.string().max(20000).default(defaultOutputClassifierPrompt),
-  toolCallClassifierPrompt: z.string().max(20000).default(defaultToolCallClassifierPrompt),
   blockMessage: z.string().max(1000).default('I cannot follow this instruction.'),
+});
+
+const toolActionReviewSchema = z.object({
+  enabled: z.boolean().default(false),
+  mode: guardrailModeSchema,
+  classifierPrompt: z.string().max(20000).default(defaultToolCallClassifierPrompt),
+  blockMessage: z.string().max(1000).default('I cannot perform this action.'),
 });
 
 const agentGuardrailsSchema = z.object({
   promptInjection: promptInjectionGuardrailsSchema,
+  toolActionReview: toolActionReviewSchema,
 });
 
 const hexColorSchema = z.string().regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
@@ -166,13 +175,18 @@ const agentDeploymentSettingsSchema = z.object({
 
 export const defaultGuardrails = {
   promptInjection: {
-    inputGuardrailEnabled: false,
-    outputGuardrailEnabled: false,
-    toolCallGuardrailEnabled: false,
+    inputEnabled: false,
+    outputEnabled: false,
+    mode: 'balanced' as const,
     inputClassifierPrompt: defaultInputClassifierPrompt,
     outputClassifierPrompt: defaultOutputClassifierPrompt,
-    toolCallClassifierPrompt: defaultToolCallClassifierPrompt,
     blockMessage: 'I cannot follow this instruction.',
+  },
+  toolActionReview: {
+    enabled: false,
+    mode: 'balanced' as const,
+    classifierPrompt: defaultToolCallClassifierPrompt,
+    blockMessage: 'I cannot perform this action.',
   },
 };
 

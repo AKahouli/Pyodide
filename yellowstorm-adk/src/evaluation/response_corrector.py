@@ -4,6 +4,7 @@ from typing import Any
 from litellm import acompletion
 from pydantic import ValidationError
 
+from src.config.settings import get_settings
 from src.schema.response_correction import ResponseCorrectionRequest, ResponseCorrectionResponse
 
 CORRECTOR_VERSION = "response-corrector-v1"
@@ -105,10 +106,13 @@ class ResponseCorrector:
         return result
 
     async def _complete(self, model: str, messages: list[dict[str, str]], omit_temperature: bool) -> str:
+        settings = get_settings()
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "response_format": {"type": "json_object"},
+            "api_base": settings.LITELLM_API_BASE_URL,
+            "api_key": settings.LITELLM_API_SECRET_KEY,
         }
         if not omit_temperature:
             kwargs["temperature"] = 0

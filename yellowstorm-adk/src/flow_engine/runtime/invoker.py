@@ -7,11 +7,6 @@ events via get_stream_writer() while state transitions still propagate.
 from __future__ import annotations
 
 from typing import Any, AsyncGenerator, Optional
-
-try:
-    from langgraph.graph.graph import CompiledGraph
-except ImportError:
-    from typing import Any as CompiledGraph  # fallback for older langgraph versions
 from structlog import get_logger
 
 from src.flow_engine.state import ExecutionState
@@ -23,7 +18,7 @@ STREAM_MODE_CUSTOM = "custom"
 
 
 async def invoke_graph(
-    graph: CompiledGraph,
+    graph: Any,
     graph_input: Any,
     recursion_limit: int = 25,
     max_parallelism: Optional[int] = None,
@@ -39,7 +34,7 @@ async def invoke_graph(
 
 
 async def stream_graph(
-    graph: CompiledGraph,
+    graph: Any,
     graph_input: Any,
     recursion_limit: int = 25,
     max_parallelism: Optional[int] = None,

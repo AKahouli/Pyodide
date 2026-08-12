@@ -162,7 +162,7 @@ export function HeadlessViewer({ tabId, isActive, pendingNavigation, registryRef
                     documentId={activeDocumentId}
                     renderPage={({ pageIndex }) => (
                       <PagePointerProvider documentId={activeDocumentId} pageIndex={pageIndex}>
-                        <RenderLayer documentId={activeDocumentId} pageIndex={pageIndex} />
+                        <RenderLayer documentId={activeDocumentId} pageIndex={pageIndex} role='img' aria-label={t('pdf.pageAria', { page: pageIndex + 1 })} />
                         <SelectionLayer documentId={activeDocumentId} pageIndex={pageIndex} />
                         <AnnotationLayer documentId={activeDocumentId} pageIndex={pageIndex} />
                         <SearchLayer documentId={activeDocumentId} pageIndex={pageIndex} />

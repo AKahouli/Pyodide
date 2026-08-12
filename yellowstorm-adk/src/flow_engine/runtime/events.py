@@ -38,6 +38,20 @@ EVENT_APPROVAL_RESOLVED = "ApprovalResolved"
 EVENT_EXECUTION_COMPLETED = "ExecutionCompleted"
 EVENT_EXECUTION_FAILED = "ExecutionFailed"
 
+DYNAMIC_REASONING_EVENTS = {
+    "DynamicPlanningStarted",
+    "DynamicReasoningDecided",
+    "DynamicPlanProposed",
+    "DynamicPlanValidationFailed",
+    "DynamicPlanRepairStarted",
+    "DynamicPlanRepaired",
+    "RuntimeSubgraphCreated",
+    "RuntimeSubgraphCompleted",
+    "RuntimeSubgraphFailed",
+    "DynamicDirectFallback",
+    "DynamicPlanningFailed",
+}
+
 
 def _make_struct(payload: dict[str, Any]) -> Struct:
     s = Struct()
@@ -112,6 +126,14 @@ async def emit_events(
                 elif event_type == EVENT_NODE_SUSPENDED:
                     yield _build_event(
                         EVENT_NODE_SUSPENDED,
+                        execution_id,
+                        str(data.get("node_id", "")),
+                        data.get("payload", {}),
+                        int(data.get("iteration", 0)),
+                    )
+                elif event_type in DYNAMIC_REASONING_EVENTS:
+                    yield _build_event(
+                        str(event_type),
                         execution_id,
                         str(data.get("node_id", "")),
                         data.get("payload", {}),

@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -44,11 +45,16 @@ VALID = {
 
 @pytest.mark.asyncio
 async def test_returns_valid_correction_without_score():
-    with patch("src.evaluation.response_corrector.acompletion", new=AsyncMock(return_value=completion_response(json.dumps(VALID)))) as completion:
+    with patch("src.evaluation.response_corrector.get_settings", return_value=SimpleNamespace(
+        LITELLM_API_BASE_URL="http://litellm-proxy",
+        LITELLM_API_SECRET_KEY="proxy-key",
+    )), patch("src.evaluation.response_corrector.acompletion", new=AsyncMock(return_value=completion_response(json.dumps(VALID)))) as completion:
         result = await ResponseCorrector().correct(request_fixture())
     assert result.correctorVersion == "response-corrector-v1"
     assert not hasattr(result, "score")
     assert completion.await_args.kwargs["temperature"] == 0
+    assert completion.await_args.kwargs["api_base"] == "http://litellm-proxy"
+    assert completion.await_args.kwargs["api_key"] == "proxy-key"
     assert '"removed | qualified | replaced | citation_repaired"' in completion.await_args.kwargs["messages"][0]["content"]
 
 

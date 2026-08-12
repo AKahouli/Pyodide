@@ -23,6 +23,7 @@ import { LoggerService } from '../../logger';
 import { NotFoundException } from '../../exceptions';
 import { AppException } from '../../exceptions/exceptions/base.exception';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { sanitizeTaskDiagnosticItems } from '../utils/task-diagnostics';
 import { StreamEvent } from '../interfaces/stream.interface';
 import { EmailService } from '../../email/email.service';
 
@@ -244,7 +245,7 @@ export class MessageService {
     const response = this.mapToResponse(message);
 
     // Broadcast update
-    this.broadcastMessage(message.conversationId.toString(), {
+    await this.broadcastMessage(message.conversationId.toString(), {
       type: 'message_updated',
       data: {
         conversationId: message.conversationId.toString(),
@@ -519,6 +520,99 @@ export class MessageService {
     return response;
   }
 
+  async claimReliabilityEvaluation(conversationId: string, messageId: string, manual: boolean): Promise<MessageResponse | null> {
+    if (!Types.ObjectId.isValid(conversationId) || !Types.ObjectId.isValid(messageId)) {
+      if (!manual) return null;
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    }
+    const messageObjectId = new Types.ObjectId(messageId);
+    const conversationObjectId = new Types.ObjectId(conversationId);
+    const message = await this.messageModel.findOne({ _id: messageObjectId, conversationId: conversationObjectId });
+    if (!message) {
+      if (!manual) return null;
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
+    }
+
+    const components = Array.isArray(message.components) ? message.components : [];
+    const hasAnswer = message.conversationType === 'ai'
+      && message.isComplete === true
+      && message.isStreaming === false
+      && components.some((component) => component.type === 'text'
+        && typeof component.data?.content === 'string' && component.data.content.trim())
+      && !components.some((component) => component.type === 'error')
+      && !!message.questionMessageId;
+    if (!hasAnswer) {
+      if (!manual) return null;
+      throw new AppException({
+        code: ErrorCode.BAD_REQUEST,
+        message: 'Message cannot be evaluated',
+        statusCode: HttpStatus.BAD_REQUEST,
+      });
+    }
+
+    const correctionInProgress = ['queued', 'correcting', 're_evaluating'];
+    if ((manual && message.reliabilityEvaluation?.status === 'pending')
+      || correctionInProgress.includes(message.correctionWorkflow?.status ?? '')) {
+      if (!manual) return null;
+      throw new AppException({
+        code: ErrorCode.CONFLICT,
+        message: 'A reliability evaluation is already in progress',
+        statusCode: HttpStatus.CONFLICT,
+      });
+    }
+
+    const requestedAt = new Date().toISOString();
+    const claimFilter = {
+        _id: messageObjectId,
+        conversationId: conversationObjectId,
+        'correctionWorkflow.status': { $nin: correctionInProgress },
+        ...(manual
+          ? { 'reliabilityEvaluation.status': { $ne: 'pending' } }
+          : { reliabilityEvaluation: { $exists: false } }),
+      };
+    const claimed = await this.messageModel.findOneAndUpdate(
+      claimFilter,
+      {
+        $set: {
+          reliabilityEvaluation: { status: 'pending', requestedAt },
+          reliabilityEvaluationHeartbeatAt: new Date(),
+        },
+      },
+      { new: true },
+    );
+    if (!claimed) {
+      if (!manual) return null;
+      throw new AppException({
+        code: ErrorCode.CONFLICT,
+        message: 'A reliability evaluation is already in progress',
+        statusCode: HttpStatus.CONFLICT,
+      });
+    }
+
+    const response = this.mapToResponse(claimed);
+    await this.broadcastMessage(conversationId, {
+      type: 'message_updated',
+      data: {
+        conversationId,
+        messageId,
+        message: { reliabilityEvaluation: response.reliabilityEvaluation } as Partial<MessageResponse>,
+      },
+    });
+    return response;
+  }
+
+  async rerunReliabilityEvaluation(conversationId: string, messageId: string): Promise<MessageResponse> {
+    const response = await this.claimReliabilityEvaluation(conversationId, messageId, true);
+    if (!response) {
+      throw new AppException({
+        code: ErrorCode.CONFLICT,
+        message: 'A reliability evaluation is already in progress',
+        statusCode: HttpStatus.CONFLICT,
+      });
+    }
+    return response;
+  }
+
   async updateCorrectionWorkflow(messageId: string, workflow: NonNullable<MessageResponse['correctionWorkflow']>, correctionRunId?: string): Promise<MessageResponse> {
     let message = await this.messageModel.findById(messageId);
     if (!message || message.conversationType !== 'ai') throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'AI message not found');
@@ -548,6 +642,7 @@ export class MessageService {
     const message = await this.messageModel.findOneAndUpdate({
       _id: messageId,
       conversationType: 'ai',
+      'reliabilityEvaluation.status': { $ne: 'pending' },
       $or: [
         { 'correctionWorkflow.correctionRunId': { $exists: false } },
         { 'correctionWorkflow.status': { $in: ['corrected', 'failed', 'abstained', 'human_review_required'] } },
@@ -818,7 +913,7 @@ export class MessageService {
       conversationId: toStr(message.conversationId),
       conversationType: message.conversationType as 'user' | 'ai',
       content: message.content,
-      components: this.publicComponents(message.components) as any,
+      components: this.publicComponents(message.components, true) as any,
       attachedFileIds: message.attachedFileIds?.map((id: any) => toStr(id)),
       modelId: message.modelId,
       webSearchEnabled: message.webSearchEnabled,
@@ -860,12 +955,22 @@ export class MessageService {
     };
   }
 
-  private publicComponents(components: unknown): MessageComponent[] | undefined {
+  private publicComponents(components: unknown, includeToolResults = false): MessageComponent[] | undefined {
     if (!Array.isArray(components)) return undefined;
     return components.map((component) => {
+      if (component?.type === 'task' && component.data) {
+        return {
+          id: component.id,
+          type: component.type,
+          data: { ...component.data, items: sanitizeTaskDiagnosticItems(component.data.items) },
+        };
+      }
       if (component?.type !== 'toolInfo' || !component.data) return component;
+      if (includeToolResults) {
+        return { id: component.id, type: component.type, data: { ...component.data } };
+      }
       const { resultJson: _resultJson, result_json: _resultJsonSnake, ...publicData } = component.data;
-      return { ...component, data: publicData };
+      return { id: component.id, type: component.type, data: publicData };
     });
   }
 

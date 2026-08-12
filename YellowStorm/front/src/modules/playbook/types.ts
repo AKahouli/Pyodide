@@ -373,6 +373,7 @@ export interface PlaybookTask {
   disableAdvisorEvaluation?: boolean;
   advisorOptimizedAt?: string | null;
   deepSearch?: boolean;
+  dynamicReasoning?: { enabled: boolean };
 }
 
 export type PlaybookSuggestionMode = 'inherit' | 'auto' | 'manual';
@@ -1441,6 +1442,43 @@ export interface TaskResult {
   iteratorIterations?: IteratorIterationResult[];
   artifacts?: TaskArtifact[];
   hitlHistory?: HitlHistoryEntry[];
+  parentTaskId?: string;
+  runtimeSubgraphId?: string;
+  generatedLocalNodeId?: string;
+  generatedNodeTitle?: string;
+}
+
+export interface DynamicReasoningAttempt {
+  id?: string;
+  executionId: string;
+  flowId?: string;
+  parentTaskId: string;
+  parentIteration: number;
+  attempt: number;
+  subgraphId?: string;
+  status: 'planning' | 'direct' | 'running' | 'completed' | 'failed';
+  decision?: Record<string, unknown>;
+  revisions: Array<Record<string, unknown>>;
+  acceptedRevision?: number;
+  acceptedPlan?: {
+    schemaVersion: '1';
+    nodes: Array<{ id: string; title: string; instruction: string; dependsOn: string[]; kind?: 'task' }>;
+    synthesis: { id: string; title: string; instruction: string; dependsOn: string[]; kind: 'synthesis' };
+  };
+  inputContextSummary?: Record<string, unknown>;
+  fallbackReason?: string;
+  error?: Record<string, unknown>;
+}
+
+export interface DynamicReasoningStreamUpdate {
+  executionId: string;
+  parentTaskId: string;
+  parentIteration: number;
+  phase: string;
+  subgraphId?: string;
+  acceptedRevision?: number;
+  plan?: DynamicReasoningAttempt['acceptedPlan'];
+  [key: string]: unknown;
 }
 
 export interface PlaybookExecution {
@@ -1515,6 +1553,8 @@ export interface PlaybookExecution {
   recursionBudgetUsed?: number | null;
   recursionBudgetMax?: number | null;
   routerDecisions?: RouterDecision[];
+  dynamicReasoningAttempts?: DynamicReasoningAttempt[];
+  playbookExecutionSettings?: Record<string, unknown>;
   deepSearch?: boolean;
   createdAt: string;
   updatedAt: string;
@@ -2592,6 +2632,7 @@ export interface PlaybookActions {
   onStepStart: (data: PlaybookStepStartEvent) => void;
   onStepUpdate: (data: PlaybookStepUpdateEvent) => void;
   onStepComplete: (data: PlaybookStepCompleteEvent) => void;
+  onDynamicReasoningUpdate: (data: DynamicReasoningStreamUpdate) => void;
   onIteratorChildStepStart: (data: PlaybookIteratorChildStepStartEvent) => void;
   onIteratorChildStepUpdate: (data: PlaybookIteratorChildStepUpdateEvent) => void;
   onIteratorChildStepComplete: (data: PlaybookIteratorChildStepCompleteEvent) => void;
@@ -2832,6 +2873,7 @@ export interface FlowNode {
   hitlPolicy?: HitlPolicy;
   modelId?: string;
   deepSearch?: boolean;
+  dynamicReasoning?: { enabled: boolean };
   metadata?: Record<string, unknown>;
 }
 

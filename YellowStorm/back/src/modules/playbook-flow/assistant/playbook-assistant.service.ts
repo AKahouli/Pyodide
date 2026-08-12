@@ -3,7 +3,7 @@ import { ConfigType } from '@nestjs/config';
 import playbookFlowConfig from '@config/playbook-flow.config';
 import { ConflictException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { AnalyzeTaskOptimizationDto, AnalyzeWorkflowOptimizationDto, RunPlaybookAssistantTurnDto, RunPlaybookFromStepDto, StartAdvisorRemediationConstructionDto, StartPlaybookAssistantConstructionDto } from '../dto/playbook-assistant.dto';
+import { AnalyzeTaskOptimizationDto, AnalyzeWorkflowOptimizationDto, ListRecentExecutionsDto, RunPlaybookAssistantTurnDto, RunPlaybookFromStepDto, SearchPlaybooksDto, StartAdvisorRemediationConstructionDto, StartPlaybookAssistantConstructionDto } from '../dto/playbook-assistant.dto';
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execution.dto';
 import type { PlaybookTaskOptimizationResult } from '../interfaces/playbook-assistant.interface';
@@ -19,6 +19,7 @@ import { AgentService } from '@modules/agent/agent.service';
 import { AgentTaskExecutionService, type AgentTaskToolResult } from '@modules/agent/services/agent-task-execution.service';
 import { PLAYBOOK_ASSISTANT_AGENT_SLUG } from '@modules/agent/services/playbook-assistant-connector-reconciler.service';
 import { randomUUID } from 'crypto';
+import type { ExecutionDiagnosticCategory, ExecutionDiagnostics, MascotExecutionStatus } from '../interfaces/playbook-mascot.interface';
 
 const DEFAULT_OPTIMIZATION_DIMENSIONS = ['clarity', 'agent', 'tools', 'inputs', 'outputs', 'bindings', 'cost', 'latency', 'determinism'];
 
@@ -223,6 +224,120 @@ export class PlaybookAssistantService {
     return { executionId: this.executionId(execution) };
   }
 
+  async searchPlaybooks(userId: string, dto: SearchPlaybooksDto) {
+    this.assertEnabled();
+    const limit = Math.min(Math.max(dto.limit ?? 10, 1), 25);
+    const items = await this.flowService.searchForAssistant(userId, dto.query, dto.workspaceId, limit);
+    return {
+      items: items.map((item) => ({
+        ...item,
+        status: 'active' as const,
+        uiTarget: {
+          surface: 'playbook.editor' as const,
+          params: { playbookId: item.playbookId },
+        },
+      })),
+      count: items.length,
+      hasMore: items.length === limit,
+    };
+  }
+
+  async listRecentExecutions(userId: string, dto: ListRecentExecutionsDto) {
+    this.assertEnabled();
+    const flowIndex = await this.flowService.findAccessibleAssistantIndex(userId);
+    const flowById = new Map(flowIndex.map((flow) => [flow.playbookId, flow]));
+    const statuses = dto.status === 'waiting'
+      ? ['queued', 'pending_approval']
+      : dto.status ? [dto.status] : undefined;
+    const executions = await this.executionService.findRecentByAccessibleFlowIds(
+      flowIndex.map((flow) => flow.playbookId),
+      statuses,
+      Math.min(Math.max(dto.limit ?? 10, 1), 25),
+    );
+    return {
+      items: executions.map((execution) => {
+        const flow = flowById.get(execution.flowId);
+        const taskName = execution.task
+          ? flow?.tasks.find((task) => task.taskId === execution.task?.taskId)?.taskName ?? execution.task.taskName ?? execution.task.taskId
+          : undefined;
+        return {
+          playbookId: execution.flowId,
+          playbookName: flow?.name ?? 'Playbook',
+          executionId: execution.executionId,
+          status: this.normalizeExecutionStatus(execution.status, execution.waitingForHumanInput),
+          startedAt: execution.startedAt,
+          updatedAt: execution.updatedAt,
+          endedAt: execution.endedAt,
+          ...(execution.task ? {
+            task: { ...execution.task, taskName },
+          } : {}),
+          uiTarget: {
+            surface: execution.task?.status === 'failed' ? 'playbook.execution.task' as const : 'playbook.execution.details' as const,
+            params: {
+              playbookId: execution.flowId,
+              executionId: execution.executionId,
+              ...(execution.task?.status === 'failed' ? { taskId: execution.task.taskId } : {}),
+            },
+            ...(execution.task?.status === 'failed' ? { effects: [{ type: 'highlightTask' as const, taskId: execution.task.taskId }] } : {}),
+          },
+        };
+      }),
+    };
+  }
+
+  async getExecutionDiagnostics(executionId: string, userId: string): Promise<ExecutionDiagnostics> {
+    this.assertEnabled();
+    const execution = await this.executionService.findOne(executionId, userId);
+    const flow = await this.flowService.findOneBase(execution.flowId, userId);
+    const failedTask = execution.taskResults.find((task) => task.status === 'failed');
+    const waitingForHuman = execution.status === 'pending_approval' || Boolean(execution.pendingApproval);
+    const rawError = failedTask?.error || execution.error || '';
+    const category = waitingForHuman ? 'human_input_required' : this.diagnosticCategory(rawError);
+    const status = this.normalizeExecutionStatus(execution.status, waitingForHuman);
+    const taskName = failedTask
+      ? flow.nodes?.find((node) => node.id === failedTask.taskId)?.label ?? failedTask.generatedNodeTitle ?? failedTask.taskId
+      : undefined;
+    const uiTarget = failedTask
+      ? {
+        surface: 'playbook.execution.task' as const,
+        params: { playbookId: execution.flowId, executionId, taskId: failedTask.taskId },
+        effects: [{ type: 'highlightTask' as const, taskId: failedTask.taskId }],
+      }
+      : {
+        surface: 'playbook.execution.details' as const,
+        params: { playbookId: execution.flowId, executionId },
+        effects: [{ type: 'focusExecutionStatus' as const }],
+      };
+    return {
+      executionId,
+      playbookId: execution.flowId,
+      status,
+      summary: this.diagnosticSummary(status, category, taskName),
+      ...(failedTask ? {
+        failedTask: {
+          taskId: failedTask.taskId,
+          taskName: taskName ?? failedTask.taskId,
+          iteration: failedTask.iteration,
+        },
+      } : {}),
+      ...(category ? {
+        cause: {
+          code: this.diagnosticCode(category),
+          category,
+          message: this.diagnosticMessage(category),
+          retryable: ['tool_error', 'model_error', 'timeout', 'unknown'].includes(category),
+        },
+      } : {}),
+      missingInputs: [],
+      recommendedNextActions: waitingForHuman
+        ? [{ type: 'wait_for_human', label: 'Open the execution to provide the required human input.' }]
+        : failedTask
+          ? [{ type: 'open_task', label: 'Open the failed task.' }]
+          : [{ type: 'open_execution', label: 'Open the execution details.' }],
+      uiTarget,
+    };
+  }
+
   listExecutions(playbookId: string, userId: string, page = 1, limit = 10) {
     this.assertEnabled();
     return this.executionService.findAll(playbookId, userId, page, Math.min(limit, 50));
@@ -268,6 +383,49 @@ export class PlaybookAssistantService {
       if (record._id != null) return String(record._id);
     }
     throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Execution identifier is unavailable');
+  }
+
+  private normalizeExecutionStatus(status: string, waitingForHuman = false): MascotExecutionStatus {
+    if (waitingForHuman || status === 'queued' || status === 'pending_approval') return 'waiting';
+    if (status === 'completed' || status === 'failed' || status === 'cancelled') return status;
+    return 'running';
+  }
+
+  private diagnosticCategory(error: string): ExecutionDiagnosticCategory {
+    const normalized = error.toLowerCase();
+    if (/missing|required input|input.*required/.test(normalized)) return 'missing_input';
+    if (/binding|mapping|source port|target port/.test(normalized)) return 'invalid_binding';
+    if (/permission|forbidden|unauthori[sz]ed|access denied/.test(normalized)) return 'permission';
+    if (/timeout|timed out|deadline/.test(normalized)) return 'timeout';
+    if (/model|llm|provider|completion/.test(normalized)) return 'model_error';
+    if (/tool|connector|mcp/.test(normalized)) return 'tool_error';
+    return 'unknown';
+  }
+
+  private diagnosticCode(category: ExecutionDiagnosticCategory): string {
+    return `PLAYBOOK_EXECUTION_${category.toUpperCase()}`;
+  }
+
+  private diagnosticMessage(category: ExecutionDiagnosticCategory): string {
+    const messages: Record<ExecutionDiagnosticCategory, string> = {
+      missing_input: 'The execution is missing a required input.',
+      invalid_binding: 'A task input binding is invalid or unavailable.',
+      tool_error: 'A Playbook tool failed while running the task.',
+      model_error: 'The model provider could not complete the task.',
+      timeout: 'The task exceeded its execution deadline.',
+      permission: 'The acting user does not have permission for a required operation.',
+      human_input_required: 'The execution is waiting for human input in the Playbook runtime.',
+      unknown: 'The execution failed for an unclassified reason. Open the execution for details.',
+    };
+    return messages[category];
+  }
+
+  private diagnosticSummary(status: MascotExecutionStatus, category: ExecutionDiagnosticCategory, taskName?: string): string {
+    if (category === 'human_input_required') return 'The execution is waiting for human input.';
+    if (status === 'completed') return 'The execution completed successfully.';
+    if (status === 'running' || status === 'waiting') return 'The execution has not reached a terminal state.';
+    if (status === 'cancelled') return 'The execution was cancelled.';
+    return taskName ? `The execution failed in task "${taskName}".` : 'The execution failed.';
   }
 
   private withHitlStatus<T>(execution: T): T & { assistantStatus?: 'runtime_hitl_required'; message?: string } {

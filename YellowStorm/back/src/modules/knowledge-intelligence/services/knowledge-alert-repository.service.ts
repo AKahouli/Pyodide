@@ -4,21 +4,21 @@ import { Model, Types } from 'mongoose';
 import type { KnowledgePriority } from '../domain/knowledge-steward';
 import { KnowledgeAlert, KnowledgeAlertDocument, type KnowledgeAlertCategory, type KnowledgeAlertStatus } from '../schemas/knowledge-alert.schema';
 
-export interface KnowledgeAlertInput { programId: string; scopeIds: string[]; sourceId: string; sourceVersionId: string; category: KnowledgeAlertCategory; severity: KnowledgePriority; title: string; description: string; deduplicationKey: string; evidenceRefs: string[]; }
+export interface KnowledgeAlertInput { programId: string; scopeIds: string[]; documentId: string; category: KnowledgeAlertCategory; severity: KnowledgePriority; title: string; description: string; deduplicationKey: string; evidenceRefs: string[]; }
 
 @Injectable()
 export class KnowledgeAlertRepositoryService {
   constructor(@InjectModel(KnowledgeAlert.name) private readonly model: Model<KnowledgeAlertDocument>) {}
 
-  async synchronize(sourceVersionId: string, alerts: KnowledgeAlertInput[], now: Date): Promise<KnowledgeAlertDocument[]> {
+  async synchronize(documentId: string, alerts: KnowledgeAlertInput[], now: Date): Promise<KnowledgeAlertDocument[]> {
     const activeKeys = alerts.map((alert) => alert.deduplicationKey);
     await Promise.all(alerts.map((alert) => this.model.findOneAndUpdate(
       { programId: new Types.ObjectId(alert.programId), deduplicationKey: alert.deduplicationKey },
-      { $set: { scopeIds: alert.scopeIds.map((id) => new Types.ObjectId(id)), sourceId: new Types.ObjectId(alert.sourceId), sourceVersionId: new Types.ObjectId(alert.sourceVersionId), category: alert.category, severity: alert.severity, title: alert.title, description: alert.description, evidenceRefs: alert.evidenceRefs }, $setOnInsert: { programId: new Types.ObjectId(alert.programId), deduplicationKey: alert.deduplicationKey, status: 'open', openedAt: now } },
+      { $set: { scopeIds: alert.scopeIds.map((id) => new Types.ObjectId(id)), documentId: new Types.ObjectId(alert.documentId), category: alert.category, severity: alert.severity, title: alert.title, description: alert.description, evidenceRefs: alert.evidenceRefs }, $setOnInsert: { programId: new Types.ObjectId(alert.programId), deduplicationKey: alert.deduplicationKey, status: 'open', openedAt: now } },
       { new: true, upsert: true, setDefaultsOnInsert: true },
     ).exec()));
-    await this.model.updateMany({ sourceVersionId: new Types.ObjectId(sourceVersionId), status: { $in: ['open', 'acknowledged'] }, deduplicationKey: { $nin: activeKeys } }, { $set: { status: 'resolved', resolvedAt: now } }).exec();
-    return this.model.find({ sourceVersionId: new Types.ObjectId(sourceVersionId), deduplicationKey: { $in: activeKeys } }).exec();
+    await this.model.updateMany({ documentId: new Types.ObjectId(documentId), status: { $in: ['open', 'acknowledged'] }, deduplicationKey: { $nin: activeKeys } }, { $set: { status: 'resolved', resolvedAt: now } }).exec();
+    return this.model.find({ documentId: new Types.ObjectId(documentId), deduplicationKey: { $in: activeKeys } }).exec();
   }
 
   async list(programId: string, filter: { scopeIds?: string[]; status?: KnowledgeAlertStatus; category?: KnowledgeAlertCategory; severity?: KnowledgePriority }): Promise<KnowledgeAlertDocument[]> {

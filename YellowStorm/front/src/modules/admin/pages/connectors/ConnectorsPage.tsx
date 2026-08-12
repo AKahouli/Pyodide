@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, Cable, FolderTree, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, Zap } from 'lucide-react';
+import { AlertCircle, Cable, Download, FolderTree, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, Upload, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -21,6 +22,8 @@ import { CreateEditConnectorDialog } from './CreateEditConnectorDialog';
 import { ManageCategoriesDialog } from './ManageCategoriesDialog';
 import { IconDisplay } from './IconDisplay';
 import type { ConnectorFormValues } from './connector-form-schema';
+import { CatalogTransferDialog } from '../../components/CatalogTransferDialog';
+import { useModuleTranslation } from '@/modules/localization';
 
 const TRANSPORT_TYPES = [
   { value: 'streamable_http', label: 'Streamable HTTP' },
@@ -32,6 +35,7 @@ const CARDS_PER_CATEGORY = 6;
 const UNCATEGORIZED_KEY = '__uncategorized__';
 
 export function ConnectorsPage() {
+  const { t } = useModuleTranslation('admin');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [connectors, setConnectors] = useState<ConnectorResponse[]>([]);
@@ -46,6 +50,8 @@ export function ConnectorsPage() {
 
   const [showMcpDialog, setShowMcpDialog] = useState(false);
   const [showCategoriesDialog, setShowCategoriesDialog] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [transferMode, setTransferMode] = useState<'export' | 'import' | null>(null);
   const [mcpTransportType, setMcpTransportType] = useState('streamable_http');
   const [mcpServerUrl, setMcpServerUrl] = useState('');
   const [mcpInspecting, setMcpInspecting] = useState(false);
@@ -121,6 +127,7 @@ export function ConnectorsPage() {
   const visibleGroups = categoryFilter === '__all__'
     ? groupedConnectors
     : groupedConnectors.filter((group) => group.key === categoryFilter);
+  const visibleConnectorIds = visibleGroups.flatMap((group) => group.items.map((connector) => connector.id));
 
   const handleSave = async (data: ConnectorFormValues) => {
     try {
@@ -138,7 +145,7 @@ export function ConnectorsPage() {
         color: data.color || undefined,
         iconColor: data.iconColor || undefined,
         categoryId: data.categoryId ? data.categoryId : null,
-        authType: data.authSourceType === 'connected_app' ? 'oauth2' : data.authSourceType === 'credential' ? 'token' : 'none',
+        authType: data.authSourceType === 'connected_app' ? 'oauth2' : data.authSourceType === 'none' ? 'none' : 'token',
         authSourceType: data.authSourceType || undefined,
         connectedAppKey: data.authSourceType === 'connected_app' ? (data.connectedAppKey || undefined) : undefined,
         runtimeAuthConfig: typeof data.runtimeAuthConfig === 'string' ? (data.runtimeAuthConfig.trim() ? JSON.parse(data.runtimeAuthConfig) : undefined) : undefined,
@@ -155,6 +162,7 @@ export function ConnectorsPage() {
         actions: parsedActions,
         referencedSkillIds: data.referencedSkillIds,
         isActive: data.isActive,
+        isHidden: data.isHidden,
       };
       if (editingConnector) {
         await updateConnector(editingConnector.id, payload);
@@ -245,9 +253,11 @@ export function ConnectorsPage() {
           <h1 className='text-2xl font-bold tracking-tight'>Connectors</h1>
           <p className='text-muted-foreground'>Manage MCP connector catalog and inspect tool definitions.</p>
         </div>
-        <div className='flex gap-2'>
-          <Button onClick={() => fetchConnectors()} variant='outline' size='icon'><RefreshCw className='h-4 w-4' /></Button>
+        <div className='flex flex-wrap gap-2'>
+          <Button onClick={() => fetchConnectors()} variant='outline' size='icon' aria-label={t('catalogTransfer.refreshConnectors')}><RefreshCw className='h-4 w-4' /></Button>
           <Button variant='outline' onClick={() => setShowCategoriesDialog(true)}><FolderTree className='mr-2 h-4 w-4' />Manage Categories</Button>
+          <Button variant='outline' onClick={() => setTransferMode('import')}><Upload className='mr-2 h-4 w-4' />{t('catalogTransfer.importCatalog')}</Button>
+          <Button variant='outline' onClick={() => setTransferMode('export')}><Download className='mr-2 h-4 w-4' />{t('catalogTransfer.exportCatalog')}</Button>
           <Button variant='outline' onClick={() => { setMcpTransportType('streamable_http'); setMcpServerUrl(''); setMcpTools([]); setMcpError(null); setShowMcpDialog(true); }}><Zap className='mr-2 h-4 w-4' />Inspect MCP</Button>
           <Button onClick={() => { setEditingConnector(null); setShowDialog(true); }}><Plus className='mr-2 h-4 w-4' />Add Connector</Button>
         </div>
@@ -279,6 +289,21 @@ export function ConnectorsPage() {
           <p className='text-sm text-muted-foreground'>{total} connectors available</p>
         </div>
       </div>
+
+      {visibleConnectorIds.length ? (
+        <div className='flex items-center gap-3 text-sm text-muted-foreground'>
+          <Checkbox
+            id='select-visible-connectors'
+            checked={visibleConnectorIds.every((id) => selectedIds.has(id))}
+            onCheckedChange={(checked) => setSelectedIds((current) => {
+              const next = new Set(current);
+              visibleConnectorIds.forEach((id) => checked === true ? next.add(id) : next.delete(id));
+              return next;
+            })}
+          />
+          <label htmlFor='select-visible-connectors'>{t('catalogTransfer.selectVisibleConnectors', { count: selectedIds.size })}</label>
+        </div>
+      ) : null}
 
       {connectors.length === 0 ? (
         <div className='flex h-40 items-center justify-center rounded-md border text-sm text-muted-foreground'>
@@ -321,6 +346,17 @@ export function ConnectorsPage() {
                         }}
                         className={`group relative rounded-lg border bg-card p-4 cursor-pointer transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring ${!conn.isActive ? 'opacity-60' : ''}`}
                       >
+                        <div className='absolute left-2 top-2 z-10' onClick={(event) => event.stopPropagation()}>
+                          <Checkbox
+                            aria-label={t('catalogTransfer.selectItem', { name: conn.name })}
+                            checked={selectedIds.has(conn.id)}
+                            onCheckedChange={(checked) => setSelectedIds((current) => {
+                              const next = new Set(current);
+                              checked === true ? next.add(conn.id) : next.delete(conn.id);
+                              return next;
+                            })}
+                          />
+                        </div>
                         <button
                           type='button'
                           onClick={async (e) => {
@@ -361,7 +397,7 @@ export function ConnectorsPage() {
                           </Button>
                         </div>
 
-                        <div className='flex items-start gap-3 pr-12'>
+                        <div className='flex items-start gap-3 pl-6 pr-12'>
                           <div
                             className='flex h-10 w-10 shrink-0 items-center justify-center rounded-md'
                             style={{ backgroundColor: conn.color || 'transparent' }}
@@ -400,6 +436,15 @@ export function ConnectorsPage() {
         open={showCategoriesDialog}
         onOpenChange={setShowCategoriesDialog}
         onCategoriesChanged={() => { void fetchCategories(); void fetchConnectors(); }}
+      />
+
+      <CatalogTransferDialog
+        open={transferMode !== null}
+        onOpenChange={(open) => { if (!open) setTransferMode(null); }}
+        mode={transferMode ?? 'export'}
+        resource='connectors'
+        selectedIds={[...selectedIds]}
+        onImported={() => { void fetchCategories(); void fetchConnectors(); }}
       />
 
       <AlertDialog open={!!deletingConnector} onOpenChange={() => setDeletingConnector(null)}>

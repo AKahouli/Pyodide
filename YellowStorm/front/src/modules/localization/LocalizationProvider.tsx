@@ -34,8 +34,7 @@ function setStoredLanguage(lang: Language) {
 
 export function LocalizationProvider({ children }: LocalizationProviderProps) {
   const [language, setLanguage] = useState<Language>(() => {
-    // Initialize with current language from i18n instance
-    return i18nInstance.language || DEFAULT_LANGUAGE;
+    return normalizeLanguage(i18nInstance.language) ?? DEFAULT_LANGUAGE;
   });
   const [isReady, setIsReady] = useState(() => i18nInstance.isInitialized);
   const [loadedNamespaces, setLoadedNamespaces] = useState<LoadedMap>(emptyLoadedMap);
@@ -66,7 +65,7 @@ export function LocalizationProvider({ children }: LocalizationProviderProps) {
 
     const handleLanguageChanged = (lng: string) => {
       if (active) {
-        setLanguage(lng as Language);
+        setLanguage(normalizeLanguage(lng) ?? DEFAULT_LANGUAGE);
       }
     };
 
@@ -92,6 +91,10 @@ export function LocalizationProvider({ children }: LocalizationProviderProps) {
       i18nInstance.off('missingKey', missingHandler);
     };
   }, [isReady]);
+
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
 
   const changeLanguage = useCallback(
     async (nextLanguage: Language) => {

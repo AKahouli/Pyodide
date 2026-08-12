@@ -8,6 +8,7 @@ import { UsageModule } from '../usage';
 import { ModelsModule } from '../models';
 import { ConversationModule } from '../conversation';
 import { ConversationV2Module } from '../conversation-v2/conversation-v2.module';
+import { SemanticModelModule } from '../semantic-model/semantic-model.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { ConversationV2Module } from '../conversation-v2/conversation-v2.module'
     forwardRef(() => ModelsModule),  // Import to use ModelsService for health checks
     forwardRef(() => ConversationModule),  // Import to use StreamService for gRPC health checks
     forwardRef(() => ConversationV2Module),  // Import to use ConversationV2GrpcClientService for V2 gRPC health
+    SemanticModelModule,
   ],
   controllers: [HealthController],
   providers: [HealthService, HealthHistoryService],

@@ -68,12 +68,14 @@ async def test_temporary_child_agent_tool_inherits_parent_runtime_config():
         "skills": [{"name": "skill"}],
         "agent_params": {
             "connector_bindings_json": "[{}]",
+            "guardrails_json": '{"admin":{"forceActivation":true,"promptInjection":{"inputEnabled":true,"outputEnabled":true,"mode":"strict"},"toolActionReview":{"enabled":true,"mode":"strict"}}}',
             "enable_temporary_child_agents": "true",
             "max_temporary_child_agents": "1",
         },
     }
     team = _Team()
     tool = make_temporary_child_agent_tool(team, parent_config, parent_span=None)
+    parent_config["agent_params"]["guardrails_json"] = "{}"
 
     result = await tool("Find the deadline", "Return cited facts")
     second_result = await tool("Find the payment schedule", "Return cited facts")
@@ -84,6 +86,7 @@ async def test_temporary_child_agent_tool_inherits_parent_runtime_config():
     assert child_config["tools"] == parent_config["tools"]
     assert child_config["skills"] == parent_config["skills"]
     assert child_config["agent_params"]["connector_bindings_json"] == "[{}]"
+    assert '"forceActivation":true' in child_config["agent_params"]["guardrails_json"]
     assert child_config["agent_params"]["enable_temporary_child_agents"] == "false"
     assert child_config["_is_temporary_child_agent"] is True
     assert child_config["save_memory"] is False

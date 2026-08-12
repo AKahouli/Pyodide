@@ -25,3 +25,4 @@ export type {
   WidgetTokenResponse,
 } from './types';
 export { createWidgetToken, createAdminWidgetToken } from './api';
+export { AgentGuardrailsTab } from './components/AgentGuardrailsTab';

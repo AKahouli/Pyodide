@@ -8,42 +8,78 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PromptInjectionConfig:
-    input_guardrail_enabled: bool = False
-    output_guardrail_enabled: bool = False
-    tool_call_guardrail_enabled: bool = False
+    input_enabled: bool = False
+    output_enabled: bool = False
+    mode: str = "balanced"
     input_classifier_prompt: str = ""
     output_classifier_prompt: str = ""
-    tool_call_classifier_prompt: str = ""
     block_message: str = "I cannot follow this instruction."
     source: str = "agent"
 
+    @property
+    def input_guardrail_enabled(self) -> bool:
+        return self.input_enabled
+
+    @property
+    def output_guardrail_enabled(self) -> bool:
+        return self.output_enabled
+
     def classifier_prompt_for_phase(self, phase: str) -> str:
-        if phase == "input":
-            return self.input_classifier_prompt
-        if phase == "output":
-            return self.output_classifier_prompt
-        if phase == "tool_call":
-            return self.tool_call_classifier_prompt
-        return ""
+        return self.input_classifier_prompt if phase == "input" else self.output_classifier_prompt if phase == "output" else ""
+
+
+@dataclass
+class ToolActionReviewConfig:
+    enabled: bool = False
+    mode: str = "balanced"
+    classifier_prompt: str = ""
+    block_message: str = "I cannot perform this action."
+    source: str = "agent"
 
 
 @dataclass
 class EffectiveGuardrailsConfig:
     prompt_injection: PromptInjectionConfig
+    tool_action_review: ToolActionReviewConfig
     classifier_model: str = ""
+    classifier_omit_temperature: bool = False
+
+
+def _normalize_mode(value: Any) -> str:
+    return value if value in {"monitor", "balanced", "strict"} else "balanced"
 
 
 def _normalize_prompt_injection(raw: dict[str, Any] | None, source: str) -> PromptInjectionConfig:
     raw = raw or {}
     legacy_prompt = str(raw.get("classifierPrompt") or "")
     return PromptInjectionConfig(
-        input_guardrail_enabled=bool(raw.get("inputGuardrailEnabled", False)),
-        output_guardrail_enabled=bool(raw.get("outputGuardrailEnabled", False)),
-        tool_call_guardrail_enabled=bool(raw.get("toolCallGuardrailEnabled", False)),
+        input_enabled=bool(raw.get("inputEnabled", raw.get("inputGuardrailEnabled", False))),
+        output_enabled=bool(raw.get("outputEnabled", raw.get("outputGuardrailEnabled", False))),
+        mode=_normalize_mode(raw.get("mode")),
         input_classifier_prompt=str(raw.get("inputClassifierPrompt") or legacy_prompt),
         output_classifier_prompt=str(raw.get("outputClassifierPrompt") or legacy_prompt),
-        tool_call_classifier_prompt=str(raw.get("toolCallClassifierPrompt") or legacy_prompt),
         block_message=str(raw.get("blockMessage") or "I cannot follow this instruction."),
+        source=source,
+    )
+
+
+def _normalize_tool_action(
+    raw: dict[str, Any] | None,
+    legacy_prompt_injection: dict[str, Any] | None,
+    source: str,
+) -> ToolActionReviewConfig:
+    raw = raw or {}
+    legacy = legacy_prompt_injection or {}
+    return ToolActionReviewConfig(
+        enabled=bool(raw.get("enabled", legacy.get("toolCallGuardrailEnabled", False))),
+        mode=_normalize_mode(raw.get("mode", legacy.get("mode"))),
+        classifier_prompt=str(
+            raw.get("classifierPrompt")
+            or legacy.get("toolCallClassifierPrompt")
+            or legacy.get("classifierPrompt")
+            or ""
+        ),
+        block_message=str(raw.get("blockMessage") or "I cannot perform this action."),
         source=source,
     )
 
@@ -58,16 +94,30 @@ def resolve_effective_guardrails(agent_config: dict[str, Any]) -> EffectiveGuard
     except (TypeError, ValueError) as exc:
         logger.warning("[GUARDRAIL] Invalid guardrails_json; failing open: %s", exc)
         payload = {}
+    if not isinstance(payload, dict):
+        logger.warning("[GUARDRAIL] guardrails_json must be an object; failing open")
+        payload = {}
 
-    admin = payload.get("admin") or {}
-    agent = payload.get("agent") or {}
+    admin = payload.get("admin") if isinstance(payload.get("admin"), dict) else {}
+    agent = payload.get("agent") if isinstance(payload.get("agent"), dict) else {}
+    classifier = payload.get("classifier") if isinstance(payload.get("classifier"), dict) else {}
 
     if admin.get("forceActivation") is True:
-        prompt_injection = _normalize_prompt_injection(admin.get("promptInjection"), "admin_forced")
+        selected = admin
+        source = "admin_forced"
     else:
-        prompt_injection = _normalize_prompt_injection(agent.get("promptInjection"), "agent")
+        selected = agent
+        source = "agent"
+
+    legacy_prompt_injection = selected.get("promptInjection")
+    prompt_injection = _normalize_prompt_injection(legacy_prompt_injection, source)
+    tool_action_review = _normalize_tool_action(
+        selected.get("toolActionReview"), legacy_prompt_injection, source
+    )
 
     return EffectiveGuardrailsConfig(
         prompt_injection=prompt_injection,
+        tool_action_review=tool_action_review,
         classifier_model=classifier_model,
+        classifier_omit_temperature=classifier.get("omitTemperature") is True,
     )

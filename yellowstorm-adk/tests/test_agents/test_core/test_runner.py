@@ -265,6 +265,51 @@ class TestAgentRunner:
         assert isinstance(result[2], dict)
 
     @pytest.mark.asyncio
+    async def test_guarded_standard_agent_never_emits_unvalidated_partial_text(self):
+        formatter = MagicMock()
+        formatter.component_tracker = None
+        formatter.format_streaming_event.side_effect = lambda **kwargs: {"chunk": kwargs.get("chunk")}
+        agent_runner = AgentRunner(MagicMock(), MagicMock(), formatter, MagicMock())
+        agent = MagicMock()
+        agent.name = "GuardedAgent"
+        agent.tools = []
+        agent.sub_agents = []
+        agent._guardrails_output_enabled = True
+        session_helper = MagicMock()
+        session_helper.state = {}
+        queue = AsyncMock()
+        content = types.Content(role="user", parts=[types.Part(text="test")])
+
+        partial = MagicMock()
+        partial.content.parts = [MagicMock(text="unsafe partial", function_call=None, function_response=None, thought=False)]
+        partial.is_final_response.return_value = False
+        final = MagicMock()
+        final.content.parts = [MagicMock(text="validated replacement", function_call=None, function_response=None, thought=False)]
+        final.is_final_response.return_value = True
+
+        async def run_async(*_args, **_kwargs):
+            yield partial
+            yield final
+
+        adk_runner = MagicMock()
+        adk_runner.run_async = run_async
+        with patch('src.smart_rag.agents.core.runner.Runner', return_value=adk_runner), \
+             patch('src.smart_rag.agents.core.runner.MessageTransformer.simple_tag_transformer', side_effect=lambda tempmsg, **_kwargs: (tempmsg, "", [])), \
+             patch.object(agent_runner, '_replace_diagram_references_during_streaming', new_callable=AsyncMock, side_effect=lambda text, _session: text), \
+             patch.object(agent_runner, '_extract_generated_files', new_callable=AsyncMock, return_value=[]):
+            result = await agent_runner._run_standard_agent(
+                agent=agent, agent_name="GuardedAgent", agent_type="agent",
+                session_helper=session_helper, user_id="user", session_id="session",
+                content=content, q=queue, task_order="1", toolkit=None,
+                mcp_tools_used=[], agent_id="agent-1",
+            )
+
+        emitted = [call.args[0] for call in queue.put.await_args_list]
+        assert result[0] == "validated replacement"
+        assert not any("unsafe partial" in str(item) for item in emitted)
+        assert any("validated replacement" in str(item) for item in emitted)
+
+    @pytest.mark.asyncio
     async def test_run_standard_agent_preserves_numeric_citation_reference(self):
         """Test that numeric citations keep their original reference values."""
         mock_event_extractor = MagicMock()
@@ -361,7 +406,7 @@ class TestAgentRunner:
         mock_queue = AsyncMock()
         mock_content = types.Content(role="user", parts=[types.Part(text="test")])
 
-        mock_queue.include_private_tool_results = True
+        mock_queue.include_tool_results = True
 
         # Mock event with function call
         mock_event = MagicMock()

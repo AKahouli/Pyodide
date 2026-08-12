@@ -9,6 +9,7 @@ import {
 import { PublicReasoningTraceItem } from './playbook-flow-reasoning.interface';
 import type { FlowExecutionJudgeHistoryEntry, FlowExecutionJudgeResult } from './playbook-flow-execution-advisor.interface';
 import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
+import type { ApprovalDecision } from '../dto/resume-playbook-flow-approval.dto';
 
 export interface IFlowExecutionResponse {
   id: string;
@@ -21,6 +22,7 @@ export interface IFlowExecutionResponse {
   error?: string;
   recursionLimit: number;
   maxParallelism: number;
+  playbookExecutionSettings?: Record<string, unknown>;
   inputContext?: Record<string, unknown>;
   idempotencyKey?: string;
   pendingApproval: PendingApproval | null;
@@ -79,11 +81,16 @@ export interface IFlowTaskResultResponse {
   judgeError?: string | null;
   judgeHistory?: FlowExecutionJudgeHistoryEntry[];
   hitlHistory?: HitlEventLog[];
+  parentTaskId?: string;
+  runtimeSubgraphId?: string;
+  generatedLocalNodeId?: string;
+  generatedNodeTitle?: string;
 }
 
 export interface IFlowExecutionDetailResponse extends IFlowExecutionResponse {
   taskResults: IFlowTaskResultResponse[];
   routerDecisions: IFlowRouterDecisionResponse[];
+  dynamicReasoningAttempts: Array<Record<string, unknown>>;
 }
 
 export interface IFlowRouterDecisionResponse {
@@ -96,7 +103,7 @@ export interface IFlowRouterDecisionResponse {
 }
 
 export interface IResumeApprovalPayload {
-  decision: string;
+  decision: ApprovalDecision;
   payload?: Record<string, unknown>;
 }
 

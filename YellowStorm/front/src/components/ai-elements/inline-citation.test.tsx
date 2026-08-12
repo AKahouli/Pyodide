@@ -11,7 +11,8 @@ describe('InlineCitationCardTrigger', () => {
     );
 
     const trigger = screen.getByRole('button', { name: '1' });
-    expect(trigger).toHaveClass('h-5', 'min-w-5', 'max-w-32', 'text-[11px]');
+    expect(trigger).toHaveClass('min-h-11', 'min-w-11', 'max-w-36', 'text-[11px]');
+    expect(trigger.firstChild).toHaveClass('h-6', 'min-w-6', 'max-w-32');
     expect(trigger).toHaveAttribute('title', '1');
   });
 
@@ -23,6 +24,6 @@ describe('InlineCitationCardTrigger', () => {
       </InlineCitationCard>,
     );
 
-    expect(screen.getByRole('button', { name: source })).toHaveClass('max-w-32');
+    expect(screen.getByRole('button', { name: source }).firstChild).toHaveClass('max-w-32');
   });
 });

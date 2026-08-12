@@ -17,6 +17,7 @@ from google.adk import Agent, Runner
 from google.adk.agents.run_config import StreamingMode, RunConfig
 from google.adk.sessions import InMemorySessionService
 from src.temporary_child_summary import record_temporary_child_tool_call
+from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
 from google.genai import types
 
 from src.smart_rag.infrastructure.monitoring import TraceRecorder
@@ -26,7 +27,6 @@ from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_d
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from src.flow_engine.runtime.artifact_routing import infer_artifact_kind
 from src.logger.logging import get_logger
-from src.guardrails.prompt_injection_guardrail import PromptInjectionGuardrail
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
 APP_NAME = "manager_app"
@@ -371,6 +371,7 @@ class AgentRunner:
         seen_tool_component_ids: set[str] = set()
 
         runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
+        guarded_output = agent_tree_has_output_guardrail(agent)
 
         stream = runner.run_async(
             user_id=user_id,
@@ -400,6 +401,7 @@ class AgentRunner:
                         and getattr(part, "thought", False) is not True
                         and not event.is_final_response()
                         and not has_multiple_parts
+                        and not guarded_output
                     ):
                         event_text = part.text or ""
 
@@ -736,7 +738,7 @@ class AgentRunner:
 
                             if tool_component_id:
                                 result_json = ""
-                                if getattr(q, "include_private_tool_results", False) and func_name != "generate_web_preview":
+                                if getattr(q, "include_tool_results", False) and func_name != "generate_web_preview":
                                     try:
                                         candidate_result_json = json.dumps(
                                             part.function_response.response,
@@ -1010,6 +1012,7 @@ class AgentRunner:
         """
         recorder = TraceRecorder(agent_name=agent.name, agent_type="html")
         accumulated_text = ""
+        guarded_output = agent_tree_has_output_guardrail(agent)
         runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
 
         stream = runner.run_async(
@@ -1023,8 +1026,14 @@ class AgentRunner:
             async for event in stream:
                 if not event.content or not event.content.parts:
                     continue
+                if guarded_output and event.is_final_response():
+                    accumulated_text = ""
                 for part in event.content.parts:
-                    if part.text and getattr(part, "thought", False) is not True:
+                    if (
+                        part.text
+                        and getattr(part, "thought", False) is not True
+                        and (not guarded_output or event.is_final_response())
+                    ):
                         accumulated_text += part.text
 
                 if event.is_final_response():
@@ -1225,16 +1234,7 @@ class AgentRunner:
                 ui_reference,
             )
 
-        guarded = await PromptInjectionGuardrail().check_output(
-            text=event_text,
-            agent_config=agent_config or {},
-        )
-
-        should_emit_final = bool(guarded.text) and (
-            guarded.blocked
-            or guarded.sanitized
-            or guarded.text != streamed_text
-        )
+        should_emit_final = bool(event_text) and event_text != streamed_text
         if q and should_emit_final:
             if self.streaming_formatter.component_tracker:
                 self.streaming_formatter.component_tracker.finish_component(agent_id)
@@ -1242,13 +1242,12 @@ class AgentRunner:
                 agent_id=agent_id,
                 agent_name=agent_name,
                 agent_type="agent",
-                chunk=guarded.text,
+                chunk=event_text,
                 message_id=session_id,
                 content_type="final_response",
-                guardrail_decision=guarded.decision_metadata(),
             ))
 
-        return guarded.text
+        return event_text
 
     async def _replace_diagram_references_during_streaming(
         self, text: str, session_id: str

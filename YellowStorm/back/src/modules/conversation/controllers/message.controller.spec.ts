@@ -27,6 +27,7 @@ describe('MessageController.sendMessage sticky routing', () => {
   let teamService: { resolveAgentIds: jest.Mock };
   let requestContext: { getRequestId: jest.Mock };
   let choiceInteractionService: { canonicalize: jest.Mock };
+  let responseReliabilityService: { rerun: jest.Mock };
   let logger: {
     setContext: jest.Mock;
     log: jest.Mock;
@@ -67,6 +68,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     teamService = { resolveAgentIds: jest.fn().mockResolvedValue([]) };
     requestContext = { getRequestId: jest.fn().mockReturnValue('req-1') };
     choiceInteractionService = { canonicalize: jest.fn() };
+    responseReliabilityService = { rerun: jest.fn().mockResolvedValue({ messageId: 'ai-1', reliabilityEvaluation: { status: 'pending' } }) };
     logger = {
       setContext: jest.fn(),
       log: jest.fn(),
@@ -84,6 +86,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       logger as any,
       choiceInteractionService as any,
       { resolveRuntime: jest.fn(), assertRuntimeRequestAllowed: jest.fn(), resolveEffectiveAgents: jest.fn() } as any,
+      responseReliabilityService as any,
     );
   });
 
@@ -225,5 +228,18 @@ describe('MessageController.sendMessage sticky routing', () => {
       'Ada Lovelace',
       undefined,
     );
+  });
+
+  it('queues a reliability rerun with the current user and request context', async () => {
+    await expect(controller.rerunReliabilityEvaluation(user, conversationId, 'ai-1')).resolves.toEqual({
+      messageId: 'ai-1', reliabilityEvaluation: { status: 'pending' },
+    });
+
+    expect(responseReliabilityService.rerun).toHaveBeenCalledWith({
+      conversationId,
+      messageId: 'ai-1',
+      userId: userId.toString(),
+      requestId: 'req-1',
+    });
   });
 });

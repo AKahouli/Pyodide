@@ -15,6 +15,7 @@ import { useWorkspaceStoreTranslator } from '../hooks/useWorkspaceStoreTranslato
 
 export const WorkspaceButton = memo(function WorkspaceButton() {
   const { t } = useModuleTranslation('workspace');
+  const { t: tCommon } = useModuleTranslation('common');
   useWorkspaceStoreTranslator();
   const navigate = useNavigate();
   const openCreateModal = useWorkspaceStore((state) => state.openCreateModal);
@@ -28,7 +29,7 @@ export const WorkspaceButton = memo(function WorkspaceButton() {
       </SidebarMenuButton>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <SidebarMenuAction showOnHover>
+          <SidebarMenuAction showOnHover aria-label={tCommon('sidebar.moreActions', { name: t('button.label') })}>
             <MoreHorizontal />
           </SidebarMenuAction>
         </DropdownMenuTrigger>

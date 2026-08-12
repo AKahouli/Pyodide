@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { GovernanceReadinessPanel } from './GovernanceReadinessPanel';
-import { GovernanceScopeWorkspace, type TabKey } from './GovernanceScopeWorkspace';
-import { useGovernanceMemberships, useGovernanceMetrics, useGovernanceScopeOverviews, useGovernanceScopes, useGovernanceUiStore } from '@/modules/governance';
+import { GovernanceScopeWorkspace } from './GovernanceScopeWorkspace';
+import type { TabKey } from './scope-readiness';
+import { useGovernanceMemberships, useGovernanceMetrics, useGovernanceScopeOverview, useGovernanceScopes, useGovernanceUiStore } from '@/modules/governance';
 
 interface Props {
   programId: string | null;
@@ -15,9 +16,7 @@ export function GovernanceScopeLifecycleShell({ programId, initialTab = 'overvie
   const { data: scopes = [] } = useGovernanceScopes(programId);
   const { data: memberships = [], isLoading: membershipsLoading } = useGovernanceMemberships(programId);
   const { data: metrics = [] } = useGovernanceMetrics(programId);
-  const scopeIds = useMemo(() => scopes.map((scope) => scope.id), [scopes]);
-  const { byScopeId } = useGovernanceScopeOverviews(programId, scopeIds);
-  const overview = selectedScopeId ? byScopeId[selectedScopeId] : undefined;
+  const { data: overview } = useGovernanceScopeOverview(programId, selectedScopeId);
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const previousScopeId = useRef(selectedScopeId);
 
@@ -40,10 +39,10 @@ export function GovernanceScopeLifecycleShell({ programId, initialTab = 'overvie
 
   return (
     <div className='grid min-w-0 items-start gap-4 lg:grid-cols-[280px_minmax(0,1fr)]'>
-      <GovernanceReadinessPanel overview={overview} onNavigateTab={handleTabChange} />
-      <div className='grid min-w-0 gap-4'>
+      <div className='grid min-w-0 gap-4 lg:col-start-2 lg:row-start-1'>
         <GovernanceScopeWorkspace programId={programId} scopeId={selectedScopeId} overview={overview} memberships={memberships} membershipsLoading={membershipsLoading} metrics={metrics} activeTab={activeTab} onTabChange={handleTabChange} />
       </div>
+      <GovernanceReadinessPanel className='lg:col-start-1 lg:row-start-1' overview={overview} onNavigateTab={handleTabChange} />
     </div>
   );
 }

@@ -13,7 +13,7 @@ import { KnowledgeDecisionDto, KnowledgeListQueryDto, MetadataCandidateDecisionD
 export class GovernanceKnowledgeController {
   constructor(private readonly service: GovernanceKnowledgeAssessmentService) {}
 
-  @Post('refresh') @RequirePermissions([Permissions.GOVERNANCE_SOURCES_REVIEW, Permissions.GOVERNANCE_ALL], 'any') @ApiOperation({ summary: 'Assess current source versions and refresh actions' })
+  @Post('refresh') @RequirePermissions([Permissions.GOVERNANCE_DOCUMENTS_REVIEW, Permissions.GOVERNANCE_ALL], 'any') @ApiOperation({ summary: 'Assess governed documents and refresh actions' })
   refresh(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Query('scopeId') scopeId?: string) { return this.service.refresh(user._id.toString(), user.email, programId, scopeId); }
 
   @Get('health-summary') @RequirePermissions([Permissions.GOVERNANCE_READ, Permissions.GOVERNANCE_ALL], 'any') @ApiOperation({ summary: 'Get current knowledge health' })
@@ -28,21 +28,21 @@ export class GovernanceKnowledgeController {
   @Get('metadata-candidates') @RequirePermissions([Permissions.GOVERNANCE_READ, Permissions.GOVERNANCE_ALL], 'any')
   metadataCandidates(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Query() query: KnowledgeListQueryDto) { return this.service.listMetadataCandidates(user._id.toString(), programId, query.scopeId, query.status as 'proposed' | 'accepted' | 'rejected' | 'superseded' | undefined); }
 
-  @Post('alerts/:alertId/acknowledge') @RequirePermissions([Permissions.GOVERNANCE_SOURCES_REVIEW, Permissions.GOVERNANCE_ALL], 'any')
+  @Post('alerts/:alertId/acknowledge') @RequirePermissions([Permissions.GOVERNANCE_DOCUMENTS_REVIEW, Permissions.GOVERNANCE_ALL], 'any')
   acknowledge(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('alertId') alertId: string) { return this.service.acknowledgeAlert(user._id.toString(), user.email, programId, alertId); }
 
-  @Post('recommendations/:id/accept') @RequirePermissions([Permissions.GOVERNANCE_SOURCES_REVIEW, Permissions.GOVERNANCE_ALL], 'any')
+  @Post('recommendations/:id/accept') @RequirePermissions([Permissions.GOVERNANCE_DOCUMENTS_REVIEW, Permissions.GOVERNANCE_ALL], 'any')
   acceptRecommendation(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('id') id: string, @Body() dto: KnowledgeDecisionDto) { return this.service.decideRecommendation(user._id.toString(), user.email, programId, id, 'accept', dto.reason); }
 
-  @Post('recommendations/:id/reject') @RequirePermissions([Permissions.GOVERNANCE_SOURCES_REVIEW, Permissions.GOVERNANCE_ALL], 'any')
+  @Post('recommendations/:id/reject') @RequirePermissions([Permissions.GOVERNANCE_DOCUMENTS_REVIEW, Permissions.GOVERNANCE_ALL], 'any')
   rejectRecommendation(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('id') id: string, @Body() dto: KnowledgeDecisionDto) { return this.service.decideRecommendation(user._id.toString(), user.email, programId, id, 'reject', dto.reason); }
 
-  @Post('recommendations/:id/apply') @RequirePermissions([Permissions.GOVERNANCE_SOURCES_REVIEW, Permissions.GOVERNANCE_ALL], 'any')
+  @Post('recommendations/:id/apply') @RequirePermissions([Permissions.GOVERNANCE_DOCUMENTS_REVIEW, Permissions.GOVERNANCE_ALL], 'any')
   applyRecommendation(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('id') id: string) { return this.service.applyRecommendation(user._id.toString(), user.email, programId, id); }
 
-  @Post('metadata-candidates/:id/accept') @RequirePermissions([Permissions.GOVERNANCE_SOURCES_REVIEW, Permissions.GOVERNANCE_ALL], 'any')
+  @Post('metadata-candidates/:id/accept') @RequirePermissions([Permissions.GOVERNANCE_DOCUMENTS_REVIEW, Permissions.GOVERNANCE_ALL], 'any')
   acceptMetadata(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('id') id: string, @Body() dto: MetadataCandidateDecisionDto) { return this.service.decideMetadataCandidate(user._id.toString(), user.email, programId, id, 'accept', dto.acceptedValue, dto.reason); }
 
-  @Post('metadata-candidates/:id/reject') @RequirePermissions([Permissions.GOVERNANCE_SOURCES_REVIEW, Permissions.GOVERNANCE_ALL], 'any')
+  @Post('metadata-candidates/:id/reject') @RequirePermissions([Permissions.GOVERNANCE_DOCUMENTS_REVIEW, Permissions.GOVERNANCE_ALL], 'any')
   rejectMetadata(@CurrentUser() user: UserDocument, @Param('programId') programId: string, @Param('id') id: string, @Body() dto: KnowledgeDecisionDto) { return this.service.decideMetadataCandidate(user._id.toString(), user.email, programId, id, 'reject', undefined, dto.reason); }
 }

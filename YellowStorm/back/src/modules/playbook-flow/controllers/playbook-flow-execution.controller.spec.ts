@@ -1,5 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 import { PlaybookFlowExecutionController } from './playbook-flow-execution.controller';
+import { normalizeApprovalDecision } from '../dto/resume-playbook-flow-approval.dto';
 
 describe('PlaybookFlowExecutionController', () => {
   const executionService = {
@@ -72,5 +73,11 @@ describe('PlaybookFlowExecutionController', () => {
 
     await expect(controller.compatDeleteExecution('user-1', 'flow-1', 'exec-1')).rejects.toBeInstanceOf(NotFoundException);
     expect(executionService.delete).not.toHaveBeenCalled();
+  });
+
+  it('normalizes approval decision aliases at the request boundary', () => {
+    expect(normalizeApprovalDecision('approve')).toBe('approved');
+    expect(normalizeApprovalDecision('REJECT')).toBe('rejected');
+    expect(normalizeApprovalDecision('skip')).toBe('skip');
   });
 });

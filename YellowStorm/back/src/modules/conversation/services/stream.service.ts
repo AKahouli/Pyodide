@@ -866,7 +866,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         const component = chunk.component;
         if (component?.id && ['add', 'update', 'delete'].includes(chunk.action)) {
           if (chunk.action === 'delete') buffer.delete(component.id);
-          else this.applyChunkToBuffer(buffer, chunk.action, component, undefined, true);
+          else this.applyChunkToBuffer(buffer, chunk.action, component);
         }
         if (chunk.usage) {
           inputTokens += chunk.usage.input_tokens || 0;
@@ -1117,10 +1117,6 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
               // Extract component type and data from oneof structure
               const { type, data } = this.extractComponentData(comp);
-              if (type === 'toolInfo') {
-                delete data.resultJson;
-                delete data.result_json;
-              }
               if (guardrailDecision) {
                 data.guardrailDecision = guardrailDecision;
               }
@@ -1549,26 +1545,16 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     action: string,
     comp: any,
     guardrailDecision?: Record<string, unknown>,
-    includePrivateToolResult = false,
   ): void {
     const componentId = comp.id;
     const { type, data } = this.extractComponentData(comp);
     if (guardrailDecision) {
       data.guardrailDecision = guardrailDecision;
     }
-    if (type === 'toolInfo' && !includePrivateToolResult) {
-      delete data.resultJson;
-      delete data.result_json;
-    }
-
     if (action === 'add') {
       const existing = buffer.get(componentId);
       if (existing && type === 'toolInfo') {
         existing.data = this.mergeComponentData(type, existing.data, data);
-        if (!includePrivateToolResult) {
-          delete existing.data.resultJson;
-          delete existing.data.result_json;
-        }
         return;
       }
       buffer.set(componentId, {
@@ -1580,19 +1566,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const existing = buffer.get(componentId);
       if (existing) {
         existing.data = this.mergeComponentData(type, existing.data, data);
-        if (type === 'toolInfo' && !includePrivateToolResult) {
-          delete existing.data.resultJson;
-          delete existing.data.result_json;
-        }
         if (guardrailDecision) {
           existing.data.guardrailDecision = guardrailDecision;
         }
       } else if (type === 'toolInfo') {
         const merged = this.mergeComponentData(type, {}, data);
-        if (!includePrivateToolResult) {
-          delete merged.resultJson;
-          delete merged.result_json;
-        }
         buffer.set(componentId, { id: componentId, type, data: merged });
       }
     }

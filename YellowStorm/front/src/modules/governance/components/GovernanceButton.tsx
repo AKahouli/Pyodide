@@ -8,6 +8,7 @@ import { useModuleTranslation } from '@/modules/localization';
 export const GovernanceButton = memo(function GovernanceButton() {
   const navigate = useNavigate();
   const { t } = useModuleTranslation('governance');
+  const { t: tCommon } = useModuleTranslation('common');
   const goToGovernance = () => navigate('/governance');
 
   return (
@@ -18,7 +19,7 @@ export const GovernanceButton = memo(function GovernanceButton() {
       </SidebarMenuButton>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <SidebarMenuAction showOnHover>
+          <SidebarMenuAction showOnHover aria-label={tCommon('sidebar.moreActions', { name: t('button.label') })}>
             <MoreHorizontal />
           </SidebarMenuAction>
         </DropdownMenuTrigger>

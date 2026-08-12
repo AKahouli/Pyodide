@@ -50,6 +50,7 @@ from src.smart_rag.tools import (
 from src.logger.logging import get_logger
 from src.smart_rag.tools.utilities import calculator, python_interpreter
 from src.skills.runtime import inject_skill_catalog, make_activate_skill_tool
+from src.guardrails.adapters.google_adk import build_guarded_adk_agent
 
 from src.smart_rag.infrastructure.processing.sandbox_callbacks import (
     create_sandbox_callbacks,
@@ -80,6 +81,13 @@ class AgentFactory:
             "instructions": "Generate a complete, self-contained HTML document for the requested preview.",
             "description": "Generate an interactive HTML preview for the user.",
         }
+        self._guardrail_config: dict[str, Any] = {}
+
+    def set_guardrail_config(self, agent_config: dict[str, Any] | None) -> None:
+        self._guardrail_config = copy.deepcopy(agent_config or {})
+
+    def _build_agent(self, agent_kwargs: dict[str, Any]) -> Agent:
+        return build_guarded_adk_agent(Agent, agent_kwargs, self._guardrail_config)
 
     def set_diagram_tool_config(self, diagram_tool_config: dict):
         """Set the configuration for the diagram tool.
@@ -406,7 +414,7 @@ class AgentFactory:
         if after_tool_callbacks:
             agent_kwargs["after_tool_callback"] = after_tool_callbacks
 
-        agent = Agent(**agent_kwargs)
+        agent = self._build_agent(agent_kwargs)
 
         # Attach code interpreter state to agent for session injection
         if hasattr(self, "_pending_code_interpreter_state"):
@@ -439,16 +447,15 @@ class AgentFactory:
         diagramming_agent = self.create_html_diagram_agent(chatbot_name=chatbot_name)
         tools = [(AgentTool(diagramming_agent, skip_summarization=False))]
 
-        return Agent(
-            name="ReportWriterAgent",
-            model=model,
-            instruction=report_writer_prompt
-            + "\n\n the current timestamp is {time}. \n",
-            tools=tools,
-            before_agent_callback=add_timestamp_to_agent,
-            before_tool_callback=add_diagram_context_before_tool,
-            after_tool_callback=catch_diagram_after_tool,
-        )
+        return self._build_agent({
+            "name": "ReportWriterAgent",
+            "model": model,
+            "instruction": report_writer_prompt + "\n\n the current timestamp is {time}. \n",
+            "tools": tools,
+            "before_agent_callback": add_timestamp_to_agent,
+            "before_tool_callback": add_diagram_context_before_tool,
+            "after_tool_callback": catch_diagram_after_tool,
+        })
 
     def create_html_agent(
         self,
@@ -479,23 +486,23 @@ class AgentFactory:
             model = self.llm_factory.create_no_tool_calls_llm(
                 chatbot_name, max_completion_tokens=max_tokens
             )
-            return Agent(
-                name=name,
-                model=model,
-                instruction=html_prompt + "\n\n the current timestamp is {time}. \n",
-                before_agent_callback=add_timestamp_to_agent,
-            )
+            return self._build_agent({
+                "name": name,
+                "model": model,
+                "instruction": html_prompt + "\n\n the current timestamp is {time}. \n",
+                "before_agent_callback": add_timestamp_to_agent,
+            })
         else:
             model = self.llm_factory.create_parallel_tool_calls_llm(
                 chatbot_name, max_completion_tokens=max_tokens
             )
-            return Agent(
-                name=name,
-                model=model,
-                instruction=html_prompt + "\n\n the current timestamp is {time}. \n",
-                tools=tools,
-                before_agent_callback=add_timestamp_to_agent,
-            )
+            return self._build_agent({
+                "name": name,
+                "model": model,
+                "instruction": html_prompt + "\n\n the current timestamp is {time}. \n",
+                "tools": tools,
+                "before_agent_callback": add_timestamp_to_agent,
+            })
 
     def create_operator_agent(
         self,
@@ -557,7 +564,7 @@ class AgentFactory:
             "before_agent_callback": add_timestamp_to_agent,
         }
 
-        agent = Agent(**agent_kwargs)
+        agent = self._build_agent(agent_kwargs)
 
         # Attach code interpreter state to agent for session injection
         if _code_interpreter_state:
@@ -765,7 +772,7 @@ class AgentFactory:
             agent_kwargs["after_tool_callback"].append(prepare_web_preview_after_tool)
 
         return (
-            Agent(**agent_kwargs),
+            self._build_agent(agent_kwargs),
             toolkit,
             instruction,
         )
@@ -791,13 +798,13 @@ class AgentFactory:
             instructions = self.diagram_tool_config["instructions"]
 
         model = self.llm_factory.create_no_tool_calls_llm(chatbot_name, temperature=temperature)
-        return Agent(
-            name=name,
-            description=description or "",
-            model=model,
-            instruction=instructions + "\n\nCurrent timestamp is {time}. \n",
-            before_agent_callback=add_timestamp_to_agent,
-        )
+        return self._build_agent({
+            "name": name,
+            "description": description or "",
+            "model": model,
+            "instruction": instructions + "\n\nCurrent timestamp is {time}. \n",
+            "before_agent_callback": add_timestamp_to_agent,
+        })
 
     def create_manager_agent(
         self, prompt: str, chatbot_name: str, tools: List
@@ -819,15 +826,14 @@ class AgentFactory:
         )
         model = self.llm_factory.create_no_parallel_tool_calls_llm(chatbot_name)
 
-        return Agent(
-            name="manager_agent",
-            model=model,
-            instruction=cleaned_manager_prompt
-            + "\n\n the current timestamp is {time}. \n",
-            tools=tools,
-            before_agent_callback=add_timestamp_to_agent,
-            before_tool_callback=add_additional_context,
-        )
+        return self._build_agent({
+            "name": "manager_agent",
+            "model": model,
+            "instruction": cleaned_manager_prompt + "\n\n the current timestamp is {time}. \n",
+            "tools": tools,
+            "before_agent_callback": add_timestamp_to_agent,
+            "before_tool_callback": add_additional_context,
+        })
 
     def create_tools_for_agent(
         self,

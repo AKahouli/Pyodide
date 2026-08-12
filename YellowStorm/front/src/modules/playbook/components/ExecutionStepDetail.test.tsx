@@ -198,6 +198,37 @@ describe('ExecutionStepDetail', () => {
     storeState.currentPlaybook = null;
   });
 
+  it('uses the planner title for generated Dynamic Reasoning steps', () => {
+    const runtimeTaskId = 'parent::dynamic-reasoning::subgraph-1::risk-metrics';
+    const execution = {
+      taskResults: [],
+      dynamicReasoningAttempts: [{
+        executionId: 'execution-1',
+        parentTaskId: 'parent',
+        parentIteration: 0,
+        attempt: 0,
+        subgraphId: 'subgraph-1',
+        status: 'completed',
+        revisions: [],
+        acceptedPlan: {
+          schemaVersion: '1',
+          nodes: [{ id: 'risk-metrics', title: 'Calculate Risk Metrics', instruction: 'Calculate', dependsOn: [] }],
+          synthesis: { id: 'synthesis', title: 'Synthesize', instruction: 'Synthesize', dependsOn: ['risk-metrics'], kind: 'synthesis' },
+        },
+      }],
+    } as unknown as PlaybookExecution;
+
+    render(
+      <ExecutionStepDetail
+        step={{ ...baseStep, taskId: runtimeTaskId, nodeTitle: runtimeTaskId }}
+        execution={execution}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Calculate Risk Metrics' })).toBeInTheDocument();
+    expect(screen.queryByText(runtimeTaskId)).not.toBeInTheDocument();
+  });
+
   it('renders replay and output-format badges immediately from task state and opens the format editor', async () => {
     const onOpenOutputFormatEditor = vi.fn();
     storeState.currentPlaybook = {

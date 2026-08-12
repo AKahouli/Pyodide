@@ -146,7 +146,7 @@ const ProjectRow = memo(function ProjectRow({ project, onRename, onDelete, insid
       </SidebarMenuButton>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <SidebarMenuAction showOnHover draggable={false}>
+          <SidebarMenuAction showOnHover draggable={false} aria-label={t('projects.actions', { name: project.name })}>
             <MoreHorizontal />
           </SidebarMenuAction>
         </DropdownMenuTrigger>

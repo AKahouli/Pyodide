@@ -647,7 +647,7 @@ export class PlaybookFlowIntentService {
     return {
       availableSkills: skills.map((skill) => ({
         id: skill.id,
-        skillSlug: skill.name,
+        skillSlug: skill.slug,
         name: skill.name,
         description: skill.description || '',
         category: skill.categoryName ?? null,

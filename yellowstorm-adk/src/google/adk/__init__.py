@@ -53,6 +53,10 @@ class BaseTool(_Stub):
     pass
 
 
+class FunctionTool(BaseTool):
+    pass
+
+
 class CallbackContext(_Stub):
     pass
 
@@ -118,6 +122,7 @@ def _register_submodules() -> None:
 
     tools_mod = _ensure_module("google.adk.tools")
     tools_mod.BaseTool = BaseTool
+    tools_mod.FunctionTool = FunctionTool
     tools_mod.ToolContext = ToolContext
     tools_mod.MCPToolset = MCPToolset
     setattr(sys.modules[__name__], "tools", tools_mod)

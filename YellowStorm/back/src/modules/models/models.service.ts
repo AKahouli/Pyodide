@@ -356,6 +356,18 @@ export class ModelsService implements OnApplicationBootstrap {
       return null;
     }
 
+    const assignedTypes = Array.isArray(model.types) ? model.types : [];
+    if (model.isActive && (assignedTypes.includes('guardrails_classifier') || model.type === 'guardrails_classifier')) {
+      await this.aiModelModel.updateMany(
+        { modelId: { $ne: id }, isActive: true },
+        { $pull: { types: 'guardrails_classifier' } },
+      );
+      await this.aiModelModel.updateMany(
+        { modelId: { $ne: id }, isActive: true, type: 'guardrails_classifier' },
+        { $set: { type: '' } },
+      );
+    }
+
     this.logger.log('Model updated', {
       context: 'ModelsService',
       modelId: id,

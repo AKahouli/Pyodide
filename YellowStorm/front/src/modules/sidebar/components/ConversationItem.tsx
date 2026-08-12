@@ -123,6 +123,7 @@ export const ConversationItem = memo(function ConversationItem({
             <SidebarMenuAction
               showOnHover
               draggable={false}
+              aria-label={t('conversations.actions', { title: displayTitle })}
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
             >

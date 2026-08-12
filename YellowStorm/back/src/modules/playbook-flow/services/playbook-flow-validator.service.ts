@@ -40,6 +40,7 @@ export class PlaybookFlowValidatorService {
   collectValidationErrors(nodes: FlowNode[], controlEdges: ControlEdge[], dataBindings: DataBinding[], options: ValidateOptions = {}): PlaybookFlowValidationError[] {
     const errors: PlaybookFlowValidationError[] = [];
     errors.push(...this.checkUniqueNodeIds(nodes));
+    errors.push(...this.checkDynamicReasoningConfiguration(nodes));
     errors.push(...this.checkDuplicateControlEdges(controlEdges));
     errors.push(...this.checkEdgeEndpoints(controlEdges, nodes));
     errors.push(...this.checkConditionalEdgeSources(controlEdges, nodes));
@@ -57,6 +58,20 @@ export class PlaybookFlowValidatorService {
     errors.push(...this.checkPreviousIterationOnCycle(nodes, controlEdges, dataBindings));
     errors.push(...this.checkBindingTypeMatch(nodes, dataBindings));
     errors.push(...this.checkErrorRoutingCoverage(nodes, controlEdges));
+    return errors;
+  }
+
+  private checkDynamicReasoningConfiguration(nodes: FlowNode[]): ValidationError[] {
+    const errors: ValidationError[] = [];
+    for (const node of nodes) {
+      if (node.dynamicReasoning?.enabled !== true) continue;
+      if (node.kind !== 'step') {
+        errors.push({ rule: 14, message: `Dynamic Reasoning is supported only on step nodes: ${node.id}` });
+      }
+      if (node.metadata?.executionStrategy === 'deterministic_script') {
+        errors.push({ rule: 14, message: `Dynamic Reasoning cannot be enabled for deterministic script node: ${node.id}` });
+      }
+    }
     return errors;
   }
 
@@ -410,7 +425,7 @@ export class PlaybookFlowValidatorService {
     const seenTargets = new Set<string>();
 
     for (const binding of bindings) {
-      const key = `${binding.targetNode}:${binding.targetPort}`;
+      const key = JSON.stringify([binding.targetNode, binding.targetPort]);
       if (seenTargets.has(key)) {
         errors.push({ rule: 11, message: `Target port ${binding.targetNode}.${binding.targetPort} has multiple data bindings` });
         continue;

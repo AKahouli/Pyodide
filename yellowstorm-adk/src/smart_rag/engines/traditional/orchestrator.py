@@ -37,6 +37,7 @@ from src.smart_rag.messaging.formatters import StreamingFormatter
 from src.smart_rag.messaging.transformers import MessageTransformer
 from src.smart_rag.tools.utilities.core_utils import build_tree, construct_json, generate_brain_tree_schema
 from google.adk.sessions import DatabaseSessionService
+from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
 
 
 
@@ -164,6 +165,10 @@ class SmartRAGOrchestrator:
                 "orchestration_type": "smart_rag_manager"
             }
         )
+        self.agent_factory.set_guardrail_config({
+            "user_id": user_id,
+            "agent_params": user_request.agent_params or {},
+        })
 
         session_helper_agents = InMemorySessionService()
         # Use the global citation manager registry to get or create a cached citation manager
@@ -214,6 +219,7 @@ class SmartRAGOrchestrator:
         delegation_count = 0
         manager_conversation = [{"role": "user", "content": message}]
         chunk_order = 0
+        guarded_output = agent_tree_has_output_guardrail(manager_agent)
 
         try:
             async for event in agent_runner.run_async(
@@ -232,16 +238,17 @@ class SmartRAGOrchestrator:
                     if part.text and not event.is_final_response() and not has_multiple_parts:
                         event_text = part.text
                         accumulated_manager_text += event_text
-                        output = self.streaming_formatter.format_streaming_event(
-                            agent_name="manager",
-                            agent_type="manager",
-                            chunk=event_text,
-                            message_id=message_id,
-                            chunk_order=chunk_order
-                        )
-                        chunk_order+=1
-                        logger.info(f"[MANUAL MODE] Sending manager chunk to backend - agent_name: manager, chunk: {event_text}, message_id: {message_id}")
-                        await q.put(output)
+                        if not guarded_output:
+                            output = self.streaming_formatter.format_streaming_event(
+                                agent_name="manager",
+                                agent_type="manager",
+                                chunk=event_text,
+                                message_id=message_id,
+                                chunk_order=chunk_order
+                            )
+                            chunk_order += 1
+                            logger.info(f"[MANUAL MODE] Sending manager chunk to backend - agent_name: manager, chunk: {event_text}, message_id: {message_id}")
+                            await q.put(output)
 
                     # Track function calls to agents
                     if part.function_call:
@@ -267,6 +274,18 @@ class SmartRAGOrchestrator:
                         message_id = str(uuid.uuid4())
 
                     elif event.is_final_response() and event.content and event.content.parts:
+                        if guarded_output:
+                            final_text = "".join(str(getattr(item, "text", "") or "") for item in event.content.parts)
+                            accumulated_manager_text = final_text
+                            if final_text:
+                                await q.put(self.streaming_formatter.format_streaming_event(
+                                    agent_name="manager",
+                                    agent_type="manager",
+                                    chunk=final_text,
+                                    message_id=message_id,
+                                    chunk_order=chunk_order,
+                                ))
+                                chunk_order += 1
                         # Complete final generation span
                         if manager_generation_span:
                             manager_generation_span.update(output=accumulated_manager_text)

@@ -1,9 +1,65 @@
+from types import SimpleNamespace
+
+import pytest
+from langchain_core.messages import ToolMessage
+
+from src.flow_engine.agent_runtime.context import StepRuntimeContext
+from src.flow_engine.agent_runtime.tool_wrapper import build_tool_wrapper
+from src.flow_engine.tools.langchain_factory import create_langchain_tools
+from src.guardrails.models import GuardrailDecision
 from src.flow_engine.nodes.step_tool_scope import (
     build_prompt_input_context,
     build_sandbox_prompt_note,
     build_step_tool_scope,
     sanitize_trigger_context_for_prompt,
 )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("configured_safety", "expected_safety"),
+    [("read", "read"), ("write", "write"), ("delete", "delete"), (None, "unknown"), ("invalid", "unknown")],
+)
+async def test_connector_safety_reaches_tool_action_guardrail(
+    monkeypatch,
+    configured_safety: str | None,
+    expected_safety: str,
+) -> None:
+    action = {"action_key": "run", "parameter_schema": {}}
+    if configured_safety is not None:
+        action["safety"] = configured_safety
+    tools, _collector = create_langchain_tools(
+        agent_config={"tools": []},
+        step_connector_bindings=[{
+            "connector_id": "connector-1",
+            "connector_name": "CRM",
+            "connector_slug": "crm",
+            "mcp_server_url": "https://example.test/mcp",
+            "actions": [action],
+        }],
+    )
+    tool = next(item for item in tools if item.name == "crm_run")
+    captured = []
+
+    async def review(_self, context, _config):
+        captured.append(context.tool_metadata)
+        return GuardrailDecision()
+
+    monkeypatch.setattr("src.flow_engine.agent_runtime.tool_wrapper.GuardrailRuntime.review_tool_action", review)
+    request = SimpleNamespace(
+        runtime=SimpleNamespace(context=StepRuntimeContext(model_id="test", tools_enabled=True)),
+        tool=tool,
+        tool_call={"id": "call-1", "name": tool.name, "args": {}},
+    )
+
+    async def execute(_request):
+        return ToolMessage(content="ok", tool_call_id="call-1", name=tool.name)
+
+    await build_tool_wrapper()(request, execute)
+
+    assert captured[0]["safety"] == expected_safety
+    assert captured[0]["source"] == "connector"
+    assert captured[0]["connector_id"] == "connector-1"
 
 
 def test_build_step_tool_scope_prefers_display_name_for_mounted_filename() -> None:

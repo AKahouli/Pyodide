@@ -150,7 +150,11 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
         logger.info(f"[gRPC] TLS enabled — server certificate presented on {host}:{port}")
 
     # Start the server
-    await server.start()
+    try:
+        await server.start()
+    except BaseException:
+        await close_checkpointer()
+        raise
     logger.info(f"✅ [gRPC] V2 Server started successfully on {host}:{port}")
     logger.info("[gRPC] Available services:")
     logger.info("  - chatbot.ChatbotService/RunAgentTeam (V2 streaming)")
@@ -169,11 +173,10 @@ async def start_grpc_server(host: str = "0.0.0.0", port: int = 50051) -> None:
     # Keep the server running until terminated
     try:
         await server.wait_for_termination()
-    except asyncio.CancelledError:
+    finally:
         logger.info("[gRPC] Server shutdown requested")
         await server.stop(grace=5)
         if orchestrator_runtime is not None:
             await orchestrator_runtime.stop()
         await close_checkpointer()
         logger.info("✅ [gRPC] Server stopped gracefully")
-        raise

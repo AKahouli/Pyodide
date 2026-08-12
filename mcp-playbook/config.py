@@ -26,6 +26,7 @@ class Settings:
     timeout_seconds: float
     port: int
     max_response_bytes: int
+    search_limit_max: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -36,6 +37,7 @@ class Settings:
             timeout_seconds=float(os.getenv("PLAYBOOK_MCP_TIMEOUT_SECONDS", "190")),
             port=int(os.getenv("MCP_PORT", "8025")),
             max_response_bytes=int(os.getenv("PLAYBOOK_MCP_MAX_RESPONSE_BYTES", str(2 * 1024 * 1024))),
+            search_limit_max=int(os.getenv("PLAYBOOK_MCP_SEARCH_LIMIT_MAX", "25")),
         )
 
     def validate(self) -> None:
@@ -51,3 +53,5 @@ class Settings:
             raise ValueError("PLAYBOOK_MCP_TIMEOUT_SECONDS must be between 1 and 300")
         if not 1024 <= self.max_response_bytes <= 8 * 1024 * 1024:
             raise ValueError("PLAYBOOK_MCP_MAX_RESPONSE_BYTES must be between 1024 and 8388608")
+        if not 1 <= self.search_limit_max <= 25:
+            raise ValueError("PLAYBOOK_MCP_SEARCH_LIMIT_MAX must be between 1 and 25")

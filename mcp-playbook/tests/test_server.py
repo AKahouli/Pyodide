@@ -11,6 +11,7 @@ async def test_registers_approved_tools_without_runtime_hitl_controls():
         tools = await client.list_tools()
     names = {tool.name for tool in tools}
     assert names == {
+        "search_playbooks",
         "open_playbook_context",
         "get_playbook_summary",
         "get_task_details",
@@ -28,7 +29,9 @@ async def test_registers_approved_tools_without_runtime_hitl_controls():
         "revert_playbook_construction",
         "start_playbook_execution",
         "list_playbook_executions",
+        "list_recent_executions",
         "get_playbook_execution",
+        "get_execution_diagnostics",
         "cancel_playbook_execution",
         "trace_replay_playbook_execution",
         "reexecute_playbook_execution",
@@ -42,6 +45,26 @@ async def test_registers_approved_tools_without_runtime_hitl_controls():
         "reject_interrupt",
         "resume_hitl",
     })
+
+
+@pytest.mark.asyncio
+async def test_tool_enums_are_google_adk_compatible_strings():
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+
+    def enums(value):
+        if isinstance(value, dict):
+            if "enum" in value:
+                yield value["enum"]
+            for nested in value.values():
+                yield from enums(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                yield from enums(nested)
+
+    for tool in tools:
+        for enum_values in enums(tool.inputSchema):
+            assert all(isinstance(value, str) for value in enum_values), tool.name
 
 
 @pytest.mark.asyncio

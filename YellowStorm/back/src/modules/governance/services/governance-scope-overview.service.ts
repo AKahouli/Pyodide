@@ -11,8 +11,10 @@ import { GovernanceDryRun, GovernanceDryRunDocument } from '../schemas/governanc
 import { GovernanceMembership, GovernanceMembershipDocument } from '../schemas/governance-membership.schema';
 import { GovernanceMetric, GovernanceMetricDocument } from '../schemas/governance-metric.schema';
 import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
-import { GovernanceSource, GovernanceSourceDocument } from '../schemas/governance-source.schema';
+import { GovernanceDocument, GovernanceDocumentDocument } from '../schemas/governance-document.schema';
 import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
+import { WorkspaceDoc, WorkspaceDocumentDoc } from '@modules/workspace/schemas/workspace-document.schema';
+import { Agent, AgentDocument } from '@modules/agent/schemas/agent.schema';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { User, UserDocument } from '@modules/user/schemas/user.schema';
 
@@ -36,7 +38,7 @@ export interface GovernanceScopeOverview {
   scope: Record<string, unknown>;
   authorization: { canApprove: boolean };
   readiness: { score: number; status: ReadinessStatus; blockers: GovernanceScopeOverviewCheck[]; warnings: GovernanceScopeOverviewCheck[]; checks: GovernanceScopeOverviewCheck[] };
-  knowledge: { sharedSources: Record<string, unknown>[]; localSources: Record<string, unknown>[]; workspaceMappings: Record<string, unknown>[]; reviewBlockers: GovernanceScopeOverviewCheck[] };
+  knowledge: { sharedWorkspaces: Record<string, unknown>[]; localWorkspaces: Record<string, unknown>[]; documents: Record<string, unknown>[]; reviewBlockers: GovernanceScopeOverviewCheck[] };
   agents: { mappedAgents: Array<{ id: string; isPrimary: boolean }>; primaryAgentId?: string; missingAgent: boolean };
   deployment?: Record<string, unknown>;
   draftRevision?: Record<string, unknown>;
@@ -50,7 +52,8 @@ export interface GovernanceScopeOverview {
 export class GovernanceScopeOverviewService {
   constructor(
     @InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>,
-    @InjectModel(GovernanceSource.name) private readonly sourceModel: Model<GovernanceSourceDocument>,
+    @InjectModel(GovernanceDocument.name) private readonly documentModel: Model<GovernanceDocumentDocument>,
+    @InjectModel(WorkspaceDoc.name) private readonly workspaceDocumentModel: Model<WorkspaceDocumentDoc>,
     @InjectModel(GovernanceWorkspaceBinding.name) private readonly workspaceBindingModel: Model<GovernanceWorkspaceBindingDocument>,
     @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
     @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
@@ -66,13 +69,13 @@ export class GovernanceScopeOverviewService {
   async getOverview(actorId: string, programId: string, scopeId: string): Promise<GovernanceScopeOverview> {
     await this.programService.assertOwnedProgram(actorId, programId);
     await this.accessService.assertScopeAccess(actorId, programId, scopeId);
-    const [scope, sources, workspaceBindings, deployment] = await Promise.all([
+    const [scope, workspaceBindings, deployment] = await Promise.all([
       this.scopeModel.findOne({ _id: new Types.ObjectId(scopeId), programId: new Types.ObjectId(programId) }).lean().exec(),
-      this.loadEffectiveSources(programId, scopeId),
       this.loadEffectiveWorkspaceBindings(programId, scopeId),
       this.deploymentModel.findOne({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(scopeId) }).sort({ updatedAt: -1 }).lean().exec(),
     ]);
     if (!scope) throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
+    const documents = await this.loadEffectiveDocuments(programId, workspaceBindings.map((binding) => String(binding.workspaceId)));
     const [draftRevision, publishedRevision, latestDryRun, scopeMemberships, metrics, mappedAgents, canApprove] = await Promise.all([
       this.findRevision(deployment?.currentDraftRevisionId),
       this.findRevision(deployment?.currentPublishedRevisionId),
@@ -82,19 +85,19 @@ export class GovernanceScopeOverviewService {
       this.findMappedAgents(scope.agentIds ?? []),
       this.accessService.canActInScopeRole(actorId, programId, scopeId, ['scope_approver']),
     ]);
-    const checks = this.buildChecks(scope, sources, workspaceBindings.length > 0, draftRevision, latestDryRun, scopeMemberships, mappedAgents);
+    const checks = this.buildChecks(scope, documents, workspaceBindings.length > 0, draftRevision, latestDryRun, scopeMemberships, mappedAgents);
     const revisionActors = await this.findRevisionActors([draftRevision, publishedRevision]);
-    const sharedSources = sources.filter((source) => source.visibility === 'program_shared');
-    const localSources = sources.filter((source) => source.visibility !== 'program_shared');
+    const sharedWorkspaces = workspaceBindings.filter((binding) => binding.visibility === 'program_shared');
+    const localWorkspaces = workspaceBindings.filter((binding) => binding.visibility !== 'program_shared');
     return {
       scope: this.scopeToResponse(scope),
       authorization: { canApprove },
       readiness: this.buildReadiness(checks),
       knowledge: {
-        sharedSources: sharedSources.map((source) => this.sourceToResponse(source)),
-        localSources: localSources.map((source) => this.sourceToResponse(source)),
-        workspaceMappings: sources.filter((source) => source.workspaceId).map((source) => this.sourceToResponse(source)),
-        reviewBlockers: checks.filter((check) => check.targetType === 'source' && check.status !== 'passed'),
+        sharedWorkspaces,
+        localWorkspaces,
+        documents,
+        reviewBlockers: checks.filter((check) => check.targetType === 'document' && check.status !== 'passed'),
       },
       agents: this.buildAgentSummary(scope.agentIds ?? []),
       deployment: deployment ? this.deploymentToResponse(deployment) : undefined,
@@ -106,11 +109,15 @@ export class GovernanceScopeOverviewService {
     };
   }
 
-  private async loadEffectiveSources(programId: string, scopeId: string): Promise<Record<string, unknown>[]> {
-    return this.sourceModel.find({
-      programId: new Types.ObjectId(programId),
-      $or: [{ visibility: 'program_shared' }, { scopeIds: new Types.ObjectId(scopeId) }],
-    }).sort({ visibility: 1, title: 1 }).lean().exec();
+  private async loadEffectiveDocuments(programId: string, workspaceIds: string[]): Promise<Record<string, unknown>[]> {
+    if (workspaceIds.length === 0) return [];
+    const governanceDocuments = await this.documentModel.find({ programId: new Types.ObjectId(programId), workspaceId: { $in: workspaceIds.map((id) => new Types.ObjectId(id)) }, status: { $ne: 'archived' } }).sort({ updatedAt: -1 }).lean().exec();
+    const artifacts = await this.workspaceDocumentModel.find({ _id: { $in: governanceDocuments.map((document) => document.documentId) }, isFolder: false }).lean().exec();
+    const byId = new Map(artifacts.map((artifact) => [artifact._id.toString(), artifact]));
+    return governanceDocuments.map((governance) => {
+      const document = byId.get(governance.documentId.toString());
+      return { id: governance._id.toString(), programId: governance.programId.toString(), documentId: governance.documentId.toString(), workspaceId: governance.workspaceId.toString(), document: document ? { originalName: document.originalName, mimeType: document.mimeType, type: document.type, sourceUrl: document.sourceUrl, contentHash: document.contentHash, status: document.status, indexingStatus: document.indexingStatus, updatedAt: document.updatedAt } : undefined, governance: { status: governance.status, validity: governance.validity, tags: governance.tags, metadata: governance.metadata, ownerUserId: governance.ownerUserId?.toString(), ownerScopeId: governance.ownerScopeId?.toString(), updatedAt: governance.updatedAt } };
+    });
   }
 
   private async loadEffectiveWorkspaceBindings(programId: string, scopeId: string): Promise<Record<string, unknown>[]> {
@@ -127,7 +134,7 @@ export class GovernanceScopeOverviewService {
     return this.dryRunModel.findOne({ deploymentId }).sort({ createdAt: -1 }).lean().exec();
   }
 
-  private buildChecks(scope: Record<string, unknown>, sources: Record<string, unknown>[], hasWorkspaceBinding: boolean, draftRevision: Record<string, unknown> | null, latestDryRun: Record<string, unknown> | null, memberships: Record<string, unknown>[], agents: Record<string, unknown>[]): GovernanceScopeOverviewCheck[] {
+  private buildChecks(scope: Record<string, unknown>, documents: Record<string, unknown>[], hasWorkspaceBinding: boolean, draftRevision: Record<string, unknown> | null, latestDryRun: Record<string, unknown> | null, memberships: Record<string, unknown>[], agents: Record<string, unknown>[]): GovernanceScopeOverviewCheck[] {
     const agentIds = Array.isArray(scope.agentIds) ? scope.agentIds : [];
     const ownershipAssigned = memberships.some((membership) => membership.status === 'active' && String(membership.role) === 'scope_approver');
     const guardrailsReviewed = agents.length > 0 && agents.every((agent) => this.hasAnyGuardrailEnabled(agent));
@@ -140,7 +147,7 @@ export class GovernanceScopeOverviewService {
     return [
       this.check('scope_active', 'Scope active', scope.status === 'active', 'blocking', 'rule'),
       this.check('agents_mapped', 'Agent mapped', agentIds.length > 0, 'blocking', 'agent'),
-      this.check('knowledge_mapped', 'Knowledge mapped', sources.length > 0 || hasWorkspaceBinding, 'blocking', 'source'),
+      this.check('knowledge_mapped', 'Knowledge mapped', hasWorkspaceBinding && documents.some((entry) => (entry.document as { status?: string; indexingStatus?: string } | undefined)?.status === 'completed' && (entry.document as { indexingStatus?: string } | undefined)?.indexingStatus === 'ready'), 'blocking', 'document'),
       this.check('ownership_assigned', 'Ownership assigned', ownershipAssigned, 'blocking', 'rule'),
       this.check('guardrails_reviewed', 'Guardrails reviewed', guardrailsReviewed, 'warning', 'agent'),
       this.check('draft_revision', 'Draft revision exists', Boolean(draftRevision), 'blocking', 'rule'),
@@ -148,7 +155,7 @@ export class GovernanceScopeOverviewService {
       this.check('audience_configured', 'Audience configured', audienceConfigured, 'warning', 'audience'),
       this.check('published_agent_roster_valid', 'Published assistant roster valid', rosterValid, 'blocking', 'agent'),
       this.check('published_workspace_set_valid', 'Published knowledge set valid', workspaceSetValid, 'blocking', 'workspace'),
-      ...sources.map((source) => this.sourceReviewCheck(source)),
+      ...documents.map((document) => this.documentReviewCheck(document)),
     ];
   }
 
@@ -178,18 +185,20 @@ export class GovernanceScopeOverviewService {
   }
 
   private hasAnyGuardrailEnabled(agent: Record<string, unknown>): boolean {
-    const promptInjection = (agent.guardrails as { promptInjection?: Record<string, unknown> } | undefined)?.promptInjection;
-    return Boolean(promptInjection?.inputGuardrailEnabled || promptInjection?.outputGuardrailEnabled || promptInjection?.toolCallGuardrailEnabled);
+    const guardrails = agent.guardrails as { promptInjection?: Record<string, unknown>; toolActionReview?: Record<string, unknown> } | undefined;
+    return Boolean(guardrails?.promptInjection?.inputEnabled || guardrails?.promptInjection?.outputEnabled || guardrails?.toolActionReview?.enabled);
   }
 
   private check(key: string, label: string, passed: boolean, severity: CheckSeverity, targetType: string): GovernanceScopeOverviewCheck {
     return { key, label, status: passed ? 'passed' : 'failed', severity, targetType };
   }
 
-  private sourceReviewCheck(source: Record<string, unknown>): GovernanceScopeOverviewCheck {
-    const isBlocked = source.status === 'expired' || source.status === 'rejected';
-    const needsReview = source.status === 'to_review';
-    return { key: `source_${String(source._id)}`, label: String(source.title), status: isBlocked ? 'failed' : needsReview ? 'warning' : 'passed', severity: isBlocked ? 'blocking' : 'warning', targetType: 'source', targetId: String(source._id) };
+  private documentReviewCheck(entry: Record<string, unknown>): GovernanceScopeOverviewCheck {
+    const governance = entry.governance as { status?: string; validity?: { businessStatus?: string } };
+    const document = entry.document as { originalName?: string } | undefined;
+    const isBlocked = governance.status === 'rejected' || ['expired', 'conflicting', 'suspended'].includes(governance.validity?.businessStatus ?? '');
+    const needsReview = governance.status === 'to_review' || governance.validity?.businessStatus === 'needs_review';
+    return { key: `document_${String(entry.documentId)}`, label: document?.originalName ?? String(entry.documentId), status: isBlocked ? 'failed' : needsReview ? 'warning' : 'passed', severity: isBlocked ? 'blocking' : 'warning', targetType: 'document', targetId: String(entry.documentId) };
   }
 
   private buildReadiness(checks: GovernanceScopeOverviewCheck[]): GovernanceScopeOverview['readiness'] {
@@ -221,10 +230,6 @@ export class GovernanceScopeOverviewService {
     return { id: String(doc._id), programId: String(doc.programId), parentScopeId: this.optionalId(doc.parentScopeId), name: doc.name, type: doc.type, status: doc.status, agentIds: this.toStrings(doc.agentIds), metadata: doc.metadata ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
   }
 
-  private sourceToResponse(doc: Record<string, unknown>): Record<string, unknown> {
-    return { id: String(doc._id), programId: String(doc.programId), scopeIds: this.toStrings(doc.scopeIds), visibility: doc.visibility, title: doc.title, sourceType: doc.sourceType, url: doc.url, workspaceId: this.optionalId(doc.workspaceId), documentId: this.optionalId(doc.documentId), status: doc.status, tags: doc.tags ?? [], metadata: doc.metadata ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
-  }
-
   private deploymentToResponse(doc: Record<string, unknown>): Record<string, unknown> {
     return { id: String(doc._id), programId: String(doc.programId), scopeId: String(doc.scopeId), name: doc.name, status: doc.status, currentDraftRevisionId: this.optionalId(doc.currentDraftRevisionId), currentPublishedRevisionId: this.optionalId(doc.currentPublishedRevisionId), channels: doc.channels ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
   }
@@ -233,7 +238,7 @@ export class GovernanceScopeOverviewService {
     const allowedAgentIds = this.toStrings(doc.allowedAgentIds);
     const createdBy = String(doc.createdBy);
     const publishedBy = this.optionalId(doc.publishedBy);
-    return { id: String(doc._id), deploymentId: String(doc.deploymentId), revisionNumber: doc.revisionNumber, status: doc.status, agentId: String(doc.agentId), allowedAgentIds: allowedAgentIds.length > 0 ? allowedAgentIds : [String(doc.agentId)], workspaceIds: this.toStrings(doc.workspaceIds), sourceIds: this.toStrings(doc.sourceIds), includedSourceIds: this.toStrings(doc.includedSourceIds), excludedSourceIds: this.toStrings(doc.excludedSourceIds), sourceSnapshot: doc.sourceSnapshot ?? {}, workspaceBindingSnapshot: doc.workspaceBindingSnapshot ?? {}, configurationFingerprint: doc.configurationFingerprint, scopeSnapshot: doc.scopeSnapshot ?? {}, audienceSnapshot: doc.audienceSnapshot ?? {}, previousAudienceSnapshot: doc.previousAudienceSnapshot ?? {}, createdBy, createdByUser: actors.get(createdBy), publishedBy, publishedByUser: publishedBy ? actors.get(publishedBy) : undefined, publishedAt: this.toOptionalIso(doc.publishedAt), createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+    return { id: String(doc._id), deploymentId: String(doc.deploymentId), revisionNumber: doc.revisionNumber, status: doc.status, agentId: String(doc.agentId), allowedAgentIds: allowedAgentIds.length > 0 ? allowedAgentIds : [String(doc.agentId)], workspaceIds: this.toStrings(doc.workspaceIds), workspaceBindingSnapshot: doc.workspaceBindingSnapshot ?? {}, configurationFingerprint: doc.configurationFingerprint, scopeSnapshot: doc.scopeSnapshot ?? {}, audienceSnapshot: doc.audienceSnapshot ?? {}, previousAudienceSnapshot: doc.previousAudienceSnapshot ?? {}, createdBy, createdByUser: actors.get(createdBy), publishedBy, publishedByUser: publishedBy ? actors.get(publishedBy) : undefined, publishedAt: this.toOptionalIso(doc.publishedAt), createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
   }
 
   private dryRunToResponse(doc: Record<string, unknown>): Record<string, unknown> {

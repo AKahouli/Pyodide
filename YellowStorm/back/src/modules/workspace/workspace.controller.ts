@@ -23,6 +23,7 @@ import {
 import { WorkspaceService } from './workspace.service';
 import { WorkspaceDocumentService } from './workspace-document.service';
 import { WorkspaceShareService } from './workspace-share.service';
+import { SemanticModelProvisioningService } from '../semantic-model/services/semantic-model-provisioning.service';
 import { UsageService } from '../usage/usage.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserDocument } from '../user/schemas/user.schema';
@@ -45,6 +46,8 @@ export class WorkspaceController {
     private readonly workspaceService: WorkspaceService,
     private readonly workspaceDocumentService: WorkspaceDocumentService,
     private readonly workspaceShareService: WorkspaceShareService,
+    @Inject(forwardRef(() => SemanticModelProvisioningService))
+    private readonly semanticModelProvisioning: SemanticModelProvisioningService,
     @Inject(forwardRef(() => UsageService))
     private readonly usageService: UsageService,
   ) {}
@@ -70,12 +73,14 @@ export class WorkspaceController {
     const allocatedStorage = plan.workspaceStorageBytes ?? DEFAULT_WORKSPACE_STORAGE;
     const maxWorkspaces = plan.maxWorkspaces ?? DEFAULT_MAX_WORKSPACES;
 
-    return this.workspaceService.create(
+    const workspace = await this.workspaceService.create(
       user._id.toString(),
       dto,
       allocatedStorage,
       maxWorkspaces,
     );
+    await this.semanticModelProvisioning.afterWorkspaceCreated(user._id.toString(),workspace.id);
+    return workspace;
   }
 
   /**
@@ -172,7 +177,9 @@ export class WorkspaceController {
     @Param('id') id: string,
     @Body() dto: UpdateWorkspaceDto,
   ) {
-    return this.workspaceService.update(id, user._id.toString(), dto);
+    const workspace = await this.workspaceService.update(id, user._id.toString(), dto);
+    await this.semanticModelProvisioning.afterWorkspaceUpdated(user._id.toString(),id,workspace.name);
+    return workspace;
   }
 
   /**
@@ -207,6 +214,7 @@ export class WorkspaceController {
 
     // Then delete the workspace itself
     await this.workspaceService.delete(id, user._id.toString());
+    await this.semanticModelProvisioning.afterWorkspaceDeleted(user._id.toString(),id);
 
     return { message: 'Workspace deleted successfully' };
   }

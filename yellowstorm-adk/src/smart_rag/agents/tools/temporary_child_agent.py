@@ -115,6 +115,7 @@ def make_temporary_child_agent_tool(
     image_input: Optional[list] = None,
 ) -> Any:
     """Build an ADK tool that lets a parent mono agent run temporary children."""
+    parent_agent_config = copy.deepcopy(parent_agent_config)
     agent_params = parent_agent_config.get("agent_params") or {}
     max_children = _parse_child_limit(agent_params.get("max_temporary_child_agents", 4))
     counter = {"count": 0}

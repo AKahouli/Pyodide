@@ -24,20 +24,8 @@ export class GovernanceDeploymentRevision extends Document {
   @Prop({ type: [Types.ObjectId], ref: 'Workspace', default: [] })
   workspaceIds!: Types.ObjectId[];
 
-  @Prop({ type: [Types.ObjectId], ref: 'GovernanceSource', default: [] })
-  sourceIds!: Types.ObjectId[];
-
-  @Prop({ type: [Types.ObjectId], ref: 'GovernanceSource', default: [] })
-  includedSourceIds!: Types.ObjectId[];
-
-  @Prop({ type: [Types.ObjectId], ref: 'GovernanceSource', default: [] })
-  excludedSourceIds!: Types.ObjectId[];
-
   @Prop({ type: Object, default: {} })
   agentSnapshot!: Record<string, unknown>;
-
-  @Prop({ type: Object, default: {} })
-  sourceSnapshot!: Record<string, unknown>;
 
   @Prop({ type: Object, default: {} })
   workspaceBindingSnapshot!: Record<string, unknown>;

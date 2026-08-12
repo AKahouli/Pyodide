@@ -11,6 +11,7 @@ describe('AgentService connector skill inheritance', () => {
 
   const createSkill = (id: string): ISkillResponse => ({
     id,
+    slug: id,
     name: id,
     description: `${id} description`,
     icon: '',
@@ -31,13 +32,18 @@ describe('AgentService connector skill inheritance', () => {
 
   const defaultGuardrails = {
     promptInjection: {
-      inputGuardrailEnabled: false,
-      outputGuardrailEnabled: false,
-      toolCallGuardrailEnabled: false,
+      inputEnabled: false,
+      outputEnabled: false,
+      mode: 'balanced' as const,
       inputClassifierPrompt: 'input policy',
       outputClassifierPrompt: 'output policy',
-      toolCallClassifierPrompt: 'tool policy',
       blockMessage: 'I cannot follow this instruction.',
+    },
+    toolActionReview: {
+      enabled: false,
+      mode: 'balanced' as const,
+      classifierPrompt: 'tool policy',
+      blockMessage: 'I cannot perform this action.',
     },
   };
 
@@ -150,13 +156,18 @@ describe('AgentService connector skill inheritance', () => {
       getSettings: jest.fn().mockResolvedValue({
         forceActivation: false,
         promptInjection: {
-          inputGuardrailEnabled: false,
-          outputGuardrailEnabled: false,
-          toolCallGuardrailEnabled: false,
+          inputEnabled: false,
+          outputEnabled: false,
+          mode: 'balanced',
           inputClassifierPrompt: 'input policy',
           outputClassifierPrompt: 'output policy',
-          toolCallClassifierPrompt: 'tool policy',
           blockMessage: 'I cannot follow this instruction.',
+        },
+        toolActionReview: {
+          enabled: false,
+          mode: 'balanced',
+          classifierPrompt: 'tool policy',
+          blockMessage: 'I cannot perform this action.',
         },
       }),
     };
@@ -214,7 +225,7 @@ describe('AgentService connector skill inheritance', () => {
   });
 
   it('injects connector skills into stream agent runtime', async () => {
-    const { service, skillService, connectorService, agentTypeService } = createService();
+    const { service, skillService, connectorService, agentTypeService, modelsService } = createService();
     const streamAgent: IAgentForStream = {
       id: 'agent-1',
       name: 'Agent 1',
@@ -259,6 +270,7 @@ describe('AgentService connector skill inheritance', () => {
     skillService.findByIds.mockImplementation(async (ids: string[]) =>
       ids.map((id) => createSkill(id)),
     );
+    modelsService.getGuardrailsClassifierModel.mockResolvedValue({ id: 'guardrails-classifier', omitTemperature: true });
 
     const result = await service.buildAgentsForStream(userId, undefined, undefined, undefined, undefined, undefined);
 
@@ -283,6 +295,8 @@ describe('AgentService connector skill inheritance', () => {
       enable_temporary_child_agents: 'true',
       max_temporary_child_agents: '6',
     }));
+    expect(JSON.parse(result[0].agent_params?.params.guardrails_json as string).classifier)
+      .toEqual({ omitTemperature: true });
     expect(result[0].agent_params?.params.temperature).toBe('0');
   });
 
@@ -502,6 +516,7 @@ describe('AgentService connector skill inheritance', () => {
     skillService.findByIds.mockImplementation(async (ids: string[]) =>
       ids.map((id) => createSkill(id)),
     );
+    modelsService.getGuardrailsClassifierModel.mockResolvedValue({ id: 'guardrails-classifier', omitTemperature: true });
 
     const result = await service.buildGrpcAgentsForPlaybook(userId, [objectId.toString()]);
 
@@ -525,11 +540,14 @@ describe('AgentService connector skill inheritance', () => {
       enable_temporary_child_agents: 'true',
       max_temporary_child_agents: '5',
     }));
+    expect(JSON.parse(result[0].agent_params?.params.guardrails_json as string).classifier)
+      .toEqual({ omitTemperature: true });
   });
 
   it('falls back to the admin default model when the agent has no model set', async () => {
     const { service, agentRepository, modelsService, agentTypeService } = createService();
     modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
+    modelsService.getGuardrailsClassifierModel.mockResolvedValue({ id: 'guardrails-classifier', omitTemperature: false });
     modelsService.findById.mockResolvedValue({ id: 'admin-default-id', omitTemperature: false } as any);
 
     const objectId = new Types.ObjectId();
@@ -552,6 +570,8 @@ describe('AgentService connector skill inheritance', () => {
     expect(result).toHaveLength(1);
     expect(result[0].chatbot.model).toBe('admin-default-id');
     expect(result[0].agent_params?.params.temperature).toBe('0');
+    expect(JSON.parse(result[0].agent_params?.params.guardrails_json as string).classifier)
+      .toEqual({ omitTemperature: false });
   });
 
   it('prefers fallbackModelId over the admin default when the agent has no model set', async () => {
@@ -735,5 +755,138 @@ describe('AgentService connector skill inheritance', () => {
 
     expect(new Set(collidingNames).size).toBe(2);
     expect(controlWhitespaceName).toBe('workspace_search__9e54e0e3d98b6a49');
+  });
+
+  it('resolves the explicitly selected active playbook planner', async () => {
+    const { service, agentModel } = createService();
+    const agentId = new Types.ObjectId();
+    const agentTypeId = new Types.ObjectId();
+    agentModel.findOne.mockReturnValue({
+      select: () => ({
+        populate: () => ({
+          lean: () => ({
+            exec: async () => ({
+              _id: agentId,
+              agentType: { _id: agentTypeId, slug: 'playbook_planner', isActive: true },
+              llmModel: 'planner-model',
+              temperature: 0.2,
+              instruction: 'Plan safely',
+              updatedAt: new Date('2026-08-06T00:00:00.000Z'),
+            }),
+          }),
+        }),
+      }),
+    });
+
+    await expect(service.findPlaybookPlannerById(agentId.toString())).resolves.toEqual({
+      agentTypeId: agentTypeId.toString(),
+      agentTypeSlug: 'playbook_planner',
+      agentId: agentId.toString(),
+      agentRevision: '2026-08-06T00:00:00.000Z',
+      model: 'planner-model',
+      temperature: 0.2,
+      instruction: 'Plan safely',
+    });
+  });
+
+  it('lists only active playbook planner agents with a configured model', async () => {
+    const { service, agentModel } = createService();
+    agentModel.find.mockReturnValue({
+      select: () => ({
+        populate: () => ({
+          sort: () => ({
+            lean: () => ({
+              exec: async () => [{
+                _id: new Types.ObjectId(),
+                name: 'Planner',
+                description: 'Plans generated tasks',
+                llmModel: ' planner-model ',
+                agentType: { slug: 'playbook_planner', isActive: true },
+              }, {
+                _id: new Types.ObjectId(),
+                name: 'Other',
+                llmModel: 'other-model',
+                agentType: { slug: 'simple', isActive: true },
+              }],
+            }),
+          }),
+        }),
+      }),
+    });
+
+    await expect(service.listPlaybookPlannerAgentOptions()).resolves.toEqual([
+      expect.objectContaining({ name: 'Planner', model: 'planner-model' }),
+    ]);
+  });
+
+  it('rejects an invalid explicit playbook planner id', async () => {
+    const { service, agentModel } = createService();
+
+    await expect(service.findPlaybookPlannerById('invalid')).rejects.toThrow('selected Playbook Planner agent is invalid');
+    expect(agentModel.findOne).not.toHaveBeenCalled();
+  });
+
+  it('resolves the explicitly selected active playbook suggestor', async () => {
+    const { service, agentModel } = createService();
+    const agentId = new Types.ObjectId();
+    const agentTypeId = new Types.ObjectId();
+    agentModel.findOne.mockReturnValue({
+      select: () => ({
+        populate: () => ({
+          lean: () => ({
+            exec: async () => ({
+              _id: agentId,
+              agentType: { _id: agentTypeId, slug: 'general_assistant', isActive: true },
+              llmModel: 'suggestor-model',
+              temperature: 0.1,
+              instruction: 'Find the workflow use case',
+              updatedAt: new Date('2026-08-06T00:00:00.000Z'),
+            }),
+          }),
+        }),
+      }),
+    });
+
+    await expect(service.findPlaybookSuggestorById(agentId.toString())).resolves.toEqual({
+      agentTypeId: agentTypeId.toString(),
+      agentTypeSlug: 'general_assistant',
+      agentId: agentId.toString(),
+      agentRevision: '2026-08-06T00:00:00.000Z',
+      model: 'suggestor-model',
+      temperature: 0.1,
+      instruction: 'Find the workflow use case',
+    });
+  });
+
+  it('lists active default agents with a configured model regardless of agent type', async () => {
+    const { service, agentModel } = createService();
+    agentModel.find.mockReturnValue({
+      populate: () => ({
+        sort: () => ({
+          lean: () => ({
+            exec: async () => [{
+              _id: new Types.ObjectId(),
+              name: 'General Assistant',
+              llmModel: ' general-model ',
+              agentType: { name: 'General' },
+            }, {
+              _id: new Types.ObjectId(),
+              name: 'Planner',
+              llmModel: 'planner-model',
+              agentType: { name: 'Planner' },
+            }, {
+              _id: new Types.ObjectId(),
+              name: 'No Model',
+              agentType: { name: 'General' },
+            }],
+          }),
+        }),
+      }),
+    });
+
+    await expect(service.listPlaybookSuggestorAgentOptions()).resolves.toEqual([
+      expect.objectContaining({ name: 'General Assistant', model: 'general-model' }),
+      expect.objectContaining({ name: 'Planner', model: 'planner-model' }),
+    ]);
   });
 });

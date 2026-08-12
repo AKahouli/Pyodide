@@ -172,6 +172,46 @@ describe('PlaybookFlowDesignService', () => {
     expect(createdNodes[0].modelId).toBeUndefined();
   });
 
+  it('passes uniquely inferred generated data bindings to flow creation', async () => {
+    const grpcService = {
+      isAvailable: true,
+      generatePlaybook: jest.fn().mockResolvedValue({
+        nodes: [
+          { id: 'search', output_ports: [{ id: 'results', artifact_kind: 'data' }] },
+          { id: 'summarize', input_ports: [{ id: 'search-results', artifact_kind: 'data', required: true }] },
+        ],
+        edges: [{ source_id: 'search', target_id: 'summarize' }],
+      }),
+    };
+    const playbookFlowService = {
+      createWithNodesAndEdges: jest.fn().mockResolvedValue({ id: 'flow-1' }),
+    };
+    const service = new PlaybookFlowDesignService(
+      { create: jest.fn() } as any,
+      playbookFlowService as any,
+      grpcService as any,
+      { buildWorkspaceContexts: jest.fn().mockResolvedValue([]), resolveAgentBrainContexts: jest.fn() } as any,
+      { getPromptOverridesPayload: jest.fn().mockResolvedValue({}) } as any,
+      { getAgentsForUser: jest.fn().mockResolvedValue([]), buildGrpcAgentsForPlaybook: jest.fn().mockResolvedValue([]) } as any,
+      { getHttpClient: jest.fn() } as any,
+      { resolveInferenceModel: jest.fn().mockResolvedValue('model-1') } as any,
+      { recordUsage: jest.fn() } as any,
+      designSummaryService as any,
+      designRequestBuilder as any,
+      designResultApplier as any,
+      { setContext: jest.fn(), warn: jest.fn() } as any,
+    );
+
+    await service.generateFlow(USER_ID, 'Flow name', 'Make a flow');
+
+    expect(playbookFlowService.createWithNodesAndEdges.mock.calls[0][5]).toEqual([
+      expect.objectContaining({
+        sourceNode: 'search', sourcePort: 'results',
+        targetNode: 'summarize', targetPort: 'search-results',
+      }),
+    ]);
+  });
+
   it('forwards saved source and target port ids when sending existing playbook edges to design gRPC', async () => {
     const grpcService = {
       isAvailable: true,
@@ -237,12 +277,23 @@ describe('PlaybookFlowDesignService', () => {
     }]);
   });
 
-  it('preserves existing data bindings when the design response does not replace them', async () => {
+  it('preserves unrelated existing data bindings when design generates a new binding', async () => {
     const grpcService = {
       isAvailable: true,
       generatePlaybook: jest.fn().mockResolvedValue({
-        nodes: [{ id: 'node-1', kind: 'step', title: 'Task', input_ports: [], output_ports: [] }],
-        edges: [],
+        nodes: [
+          {
+            id: 'node-1', kind: 'step', title: 'Task',
+            input_ports: [{ id: 'prompt', artifact_kind: 'text', required: false }],
+            output_ports: [{ id: 'output', artifact_kind: 'data' }],
+          },
+          {
+            id: 'node-2', kind: 'step', title: 'Summarize',
+            input_ports: [{ id: 'results', artifact_kind: 'data', required: true }],
+            output_ports: [],
+          },
+        ],
+        edges: [{ source_id: 'node-1', target_id: 'node-2' }],
       }),
     };
     const existingBindings = [{
@@ -297,8 +348,56 @@ describe('PlaybookFlowDesignService', () => {
     await service.designFlow('507f1f77bcf86cd799439012', '507f1f77bcf86cd799439011', 'Improve it');
 
     expect(playbookFlowService.updateNodesAndEdges).toHaveBeenCalledWith('507f1f77bcf86cd799439011', expect.objectContaining({
-      dataBindings: existingBindings,
+      dataBindings: [
+        ...existingBindings,
+        expect.objectContaining({
+          sourceNode: 'node-1', sourcePort: 'output',
+          targetNode: 'node-2', targetPort: 'results',
+        }),
+      ],
     }));
+  });
+
+  it('replaces only an existing binding that targets the generated input', () => {
+    const result = designResultApplier.applyToSnapshot({
+      nodes: [
+        { id: 'source', output_ports: [{ id: 'output', artifact_kind: 'data' }] },
+        { id: 'target', input_ports: [{ id: 'input', artifact_kind: 'data', required: true }] },
+      ],
+      edges: [{ source_id: 'source', target_id: 'target' }],
+    }, {
+      dataBindings: [
+        { id: 'old-target', targetNode: 'target', targetPort: 'input', sourceKind: 'constant', constantValue: 'old' } as any,
+        { id: 'unrelated', targetNode: 'source', targetPort: 'prompt', sourceKind: 'constant', constantValue: 'keep' } as any,
+      ],
+    });
+
+    expect(result.dataBindings).toEqual([
+      expect.objectContaining({ id: 'unrelated' }),
+      expect.objectContaining({
+        sourceKind: 'node-output', sourceNode: 'source', sourcePort: 'output',
+        targetNode: 'target', targetPort: 'input',
+      }),
+    ]);
+  });
+
+  it('preserves colon-containing target tuples that do not exactly match', () => {
+    const result = designResultApplier.applyToSnapshot({
+      nodes: [
+        { id: 'source', output_ports: [{ id: 'output', artifact_kind: 'data' }] },
+        { id: 'target:a', input_ports: [{ id: 'input', artifact_kind: 'data', required: true }] },
+      ],
+      edges: [{ source_id: 'source', target_id: 'target:a' }],
+    }, {
+      dataBindings: [
+        { id: 'unrelated', targetNode: 'target', targetPort: 'a:input', sourceKind: 'constant', constantValue: 'keep' } as any,
+      ],
+    });
+
+    expect(result.dataBindings).toEqual([
+      expect.objectContaining({ id: 'unrelated' }),
+      expect.objectContaining({ targetNode: 'target:a', targetPort: 'input' }),
+    ]);
   });
 
   it('loads only the current user design messages for the playbook', async () => {

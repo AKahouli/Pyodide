@@ -37,7 +37,16 @@ export class SkillFileDto {
 }
 
 export class CreateSkillDto {
-  @ApiProperty({ description: 'Skill slug matching the AgentSkills spec' })
+  @ApiPropertyOptional({ description: 'Stable skill slug; defaults to name for existing clients' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
+    message: 'Slug must use lowercase letters, numbers, and single hyphens only',
+  })
+  slug?: string;
+
+  @ApiProperty({ description: 'Skill display name' })
   @IsString()
   @MaxLength(64)
   @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {

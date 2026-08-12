@@ -175,6 +175,12 @@ export class RetryPolicyDto {
   delayMs?: number;
 }
 
+export class DynamicReasoningConfigDto {
+  @ApiProperty({ default: false })
+  @IsBoolean()
+  enabled!: boolean;
+}
+
 export class FlowNodeDto {
   @ApiProperty()
   @IsString()
@@ -263,4 +269,10 @@ export class FlowNodeDto {
   @IsOptional()
   @IsBoolean()
   deepSearch?: boolean;
+
+  @ApiPropertyOptional({ type: DynamicReasoningConfigDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DynamicReasoningConfigDto)
+  dynamicReasoning?: DynamicReasoningConfigDto;
 }

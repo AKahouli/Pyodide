@@ -7,6 +7,7 @@ export interface ISkillFileResponse {
 
 export interface ISkillResponse {
   id: string;
+  slug: string;
   name: string;
   description: string;
   icon: string;

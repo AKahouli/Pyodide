@@ -39,7 +39,16 @@ const Animated = ({ id, sourceX, sourceY, sourcePosition, targetX, targetY, targ
 
   return (
     <>
-      <BaseEdge id={id} markerEnd={markerEnd} path={edgePath} style={style} />
+      <BaseEdge
+        id={id}
+        markerEnd={markerEnd}
+        path={edgePath}
+        style={{
+          stroke: 'var(--muted-foreground)',
+          ...style,
+          strokeWidth: 2.5,
+        }}
+      />
       <circle fill='var(--primary)' r='4'>
         <animateMotion dur='2s' path={edgePath} repeatCount='indefinite' />
       </circle>
@@ -67,6 +76,7 @@ const AnimatedWarning = ({ id, sourceX, sourceY, sourcePosition, targetX, target
           ...style,
           strokeDasharray: '6 4',
           stroke: 'var(--color-yellow-500)',
+          strokeWidth: 2.5,
         }}
       />
     </>

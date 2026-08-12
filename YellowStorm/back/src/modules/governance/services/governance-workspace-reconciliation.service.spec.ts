@@ -1,81 +1,64 @@
 import { Types } from 'mongoose';
 import { GovernanceWorkspaceReconciliationService } from './governance-workspace-reconciliation.service';
-import { GovernanceSourceFromWorkspaceFactory } from '../factories/governance-source-from-workspace.factory';
 
 describe('GovernanceWorkspaceReconciliationService', () => {
-  const bindingId = new Types.ObjectId();
-  const programId = new Types.ObjectId();
-  const workspaceId = new Types.ObjectId();
-  const sourceId = new Types.ObjectId();
-  const documentId = new Types.ObjectId();
-  const binding = { _id: bindingId, programId, workspaceId, scopeIds: [], visibility: 'program_shared', ingestionMode: 'assisted', createdBy: new Types.ObjectId() };
+  const binding = { _id: new Types.ObjectId(), programId: new Types.ObjectId(), workspaceId: new Types.ObjectId(), ingestionMode: 'assisted', createdBy: new Types.ObjectId() };
+  const document = { _id: new Types.ObjectId(), workspaceId: binding.workspaceId };
 
-  function createService(overrides: { documents?: unknown[]; versions?: unknown[] } = {}) {
-    const documentQuery = { lean: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(overrides.documents ?? []) })), limit: jest.fn(), sort: jest.fn() };
-    documentQuery.sort.mockReturnValue(documentQuery);
-    documentQuery.limit.mockReturnValue(documentQuery);
-    const documentModel = { find: jest.fn(() => documentQuery), exists: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(null) })) };
-    const versionQuery = { exec: jest.fn().mockResolvedValue(overrides.versions ?? []), limit: jest.fn(), sort: jest.fn() };
-    versionQuery.sort.mockReturnValue(versionQuery);
-    versionQuery.limit.mockReturnValue(versionQuery);
-    const versionModel = { find: jest.fn(() => versionQuery), findOne: jest.fn() };
-    const events = { append: jest.fn().mockResolvedValue(undefined) };
+  function createService(existing: unknown = null) {
+    const documentQuery = { sort: jest.fn().mockReturnThis(), limit: jest.fn().mockReturnThis(), lean: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue([document]) };
+    const governanceQuery = { sort: jest.fn().mockReturnThis(), limit: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue([]) };
+    const governanceDocuments = { findOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(existing) })), find: jest.fn(() => governanceQuery), updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })) };
+    const documents = { upsertFromWorkspace: jest.fn().mockResolvedValue({ _id: new Types.ObjectId() }) };
     const service = new GovernanceWorkspaceReconciliationService(
       { findById: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(binding) })) } as never,
-      documentModel as never,
-      { findOne: jest.fn() } as never,
-      versionModel as never,
-      { create: jest.fn(), findById: jest.fn() } as never,
-      { create: jest.fn(), updateTechnicalStatus: jest.fn() } as never,
-      events as never,
-      new GovernanceSourceFromWorkspaceFactory(),
+      { find: jest.fn(() => documentQuery), exists: jest.fn().mockResolvedValue(true) } as never,
+      governanceDocuments as never,
+      {} as never,
+      documents as never,
     );
-    return { service, documentModel, documentQuery, versionModel, events };
+    return { service, documents, documentQuery };
   }
 
-  it('reports a missing physical artifact without writing during dry-run', async () => {
-    const version = { _id: new Types.ObjectId(), sourceId, workspaceId, documentId, extractedMetadata: {}, save: jest.fn() };
-    const { service, events } = createService({ versions: [version] });
-
-    const result = await service.reconcileBinding(bindingId.toString(), true);
-
-    expect(result.missingArtifacts).toBe(1);
-    expect(version.save).not.toHaveBeenCalled();
-    expect(events.append).not.toHaveBeenCalled();
+  it('reports missing governance documents without writing in dry-run', async () => {
+    const { service, documents } = createService();
+    const result = await service.reconcileBinding(binding._id.toString(), true);
+    expect(result.missingGovernanceDocuments).toBe(1);
+    expect(result.createdGovernanceDocuments).toBe(0);
+    expect(documents.upsertFromWorkspace).not.toHaveBeenCalled();
   });
 
-  it('marks a missing artifact once and remains idempotent on later runs', async () => {
-    const version = { _id: new Types.ObjectId(), sourceId, workspaceId, documentId, extractedMetadata: {}, save: jest.fn().mockResolvedValue(undefined) };
-    const { service, events } = createService({ versions: [version] });
-
-    await service.reconcileBinding(bindingId.toString(), false);
-    await service.reconcileBinding(bindingId.toString(), false);
-
-    expect(version.extractedMetadata).toEqual({ artifactAvailable: false });
-    expect(version.save).toHaveBeenCalledTimes(1);
-    expect(events.append).toHaveBeenCalledTimes(1);
+  it('creates missing governance documents in apply mode', async () => {
+    const { service, documents } = createService();
+    const result = await service.reconcileBinding(binding._id.toString(), false);
+    expect(result.createdGovernanceDocuments).toBe(1);
+    expect(documents.upsertFromWorkspace).toHaveBeenCalledWith(binding.programId.toString(), document._id.toString(), binding.createdBy.toString());
   });
 
-  it('uses a stable cursor and bounded query while processing persisted runs', async () => {
-    const run = { _id: new Types.ObjectId(), bindingId, dryRun: true, status: 'pending', stats: {}, save: jest.fn().mockResolvedValue(undefined), set: jest.fn() };
-    const documentQuery = { lean: jest.fn(() => ({ exec: jest.fn().mockResolvedValue([]) })), limit: jest.fn(), sort: jest.fn() };
-    documentQuery.sort.mockReturnValue(documentQuery);
-    documentQuery.limit.mockReturnValue(documentQuery);
+  it('renews its lease and checkpoints progress before completing a durable run', async () => {
+    const runId = new Types.ObjectId();
+    const run = { _id: runId, bindingId: binding._id, dryRun: true, status: 'pending', stats: {}, errors: [], cursor: undefined, set: jest.fn() };
+    const updateOne = jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) }));
+    const runs = {
+      create: jest.fn().mockResolvedValue({ _id: runId }),
+      findOneAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(run) })),
+      updateOne,
+      findById: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(run) })),
+    };
+    const documentQuery = { sort: jest.fn().mockReturnThis(), limit: jest.fn().mockReturnThis(), lean: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue([document]) };
+    const governanceQuery = { sort: jest.fn().mockReturnThis(), limit: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue([]) };
     const service = new GovernanceWorkspaceReconciliationService(
       { findById: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(binding) })) } as never,
-      { find: jest.fn(() => documentQuery) } as never,
-      { findOne: jest.fn(), exists: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(null) })) } as never,
-      { find: jest.fn(() => ({ sort: jest.fn(() => ({ limit: jest.fn(() => ({ exec: jest.fn().mockResolvedValue([]) })) })) })), findOne: jest.fn() } as never,
-      { create: jest.fn().mockResolvedValue(run), findById: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(run) })), findOneAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(run) })), updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })) } as never,
-      { create: jest.fn(), updateTechnicalStatus: jest.fn() } as never,
-      { append: jest.fn() } as never,
-      new GovernanceSourceFromWorkspaceFactory(),
+      { find: jest.fn(() => documentQuery), exists: jest.fn().mockResolvedValue(true) } as never,
+      { findOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(), workspaceId: binding.workspaceId }) })), find: jest.fn(() => governanceQuery) } as never,
+      runs as never,
+      { upsertFromWorkspace: jest.fn() } as never,
     );
 
-    await service.createRun(bindingId.toString(), true);
+    await service.createRun(binding._id.toString(), true);
 
-    expect(documentQuery.sort).toHaveBeenCalledWith({ _id: 1 });
-    expect(documentQuery.limit).toHaveBeenCalledWith(100);
-    expect(run.status).toBe('completed');
+    expect(updateOne).toHaveBeenCalledWith(expect.objectContaining({ _id: runId, leaseToken: expect.any(String), status: 'running' }), expect.objectContaining({ $set: expect.objectContaining({ leaseExpiresAt: expect.any(Date) }) }));
+    expect(updateOne).toHaveBeenCalledWith(expect.objectContaining({ _id: runId, leaseToken: expect.any(String), status: 'running' }), expect.objectContaining({ $set: expect.objectContaining({ cursor: 'archive:', stats: expect.any(Object) }) }));
+    expect(updateOne).toHaveBeenCalledWith(expect.objectContaining({ _id: runId, leaseToken: expect.any(String), status: 'running' }), expect.objectContaining({ $set: expect.objectContaining({ status: 'completed' }) }));
   });
 });

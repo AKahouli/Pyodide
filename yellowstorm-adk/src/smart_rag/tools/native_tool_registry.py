@@ -5,6 +5,7 @@ from src.smart_rag.tools.utilities.calculator import calculator
 from src.smart_rag.tools.utilities.connector_tools import create_save_file_to_workspace
 from src.smart_rag.tools.utilities.present_choices import present_choices
 from src.smart_rag.tools.utilities.render_chart import render_chart
+from src.guardrails.tool_registry import tool_policy
 
 
 NATIVE_TOOL_REGISTRY: dict[str, Any] = {
@@ -30,9 +31,13 @@ def get_native_tool(name: str, runtime_context: dict[str, Any] | None = None) ->
     normalized_name = name.strip()
     tool = NATIVE_TOOL_REGISTRY.get(normalized_name)
     if tool is not None:
+        setattr(tool, "metadata", tool_policy(normalized_name, getattr(tool, "metadata", None)))
         return tool
     factory = RUNTIME_NATIVE_TOOL_FACTORIES.get(normalized_name)
-    return factory(runtime_context or {}) if factory else None
+    tool = factory(runtime_context or {}) if factory else None
+    if tool is not None:
+        setattr(tool, "metadata", tool_policy(normalized_name, getattr(tool, "metadata", None)))
+    return tool
 
 
 def _configured_native_tool(tool: Any, description: str | None) -> Any:

@@ -2,21 +2,28 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PromptInjectionGuardrailsConfig } from '../types';
+import type { AgentGuardrails } from '../types';
 import { AgentGuardrailsTab } from './AgentGuardrailsTab';
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
 }));
 
-const guardrails: PromptInjectionGuardrailsConfig = {
-  inputGuardrailEnabled: false,
-  outputGuardrailEnabled: false,
-  toolCallGuardrailEnabled: false,
-  inputClassifierPrompt: '',
-  outputClassifierPrompt: '',
-  toolCallClassifierPrompt: '',
-  blockMessage: 'Blocked',
+const guardrails: AgentGuardrails = {
+  promptInjection: {
+    inputEnabled: false,
+    outputEnabled: false,
+    mode: 'balanced',
+    inputClassifierPrompt: '',
+    outputClassifierPrompt: '',
+    blockMessage: 'Blocked',
+  },
+  toolActionReview: {
+    enabled: false,
+    mode: 'balanced',
+    classifierPrompt: '',
+    blockMessage: 'Blocked',
+  },
 };
 
 describe('AgentGuardrailsTab', () => {
@@ -26,7 +33,7 @@ describe('AgentGuardrailsTab', () => {
 
     await userEvent.click(screen.getByRole('switch', { name: 'createEdit.guardrails.toolCallGuardrail' }));
 
-    expect(onChange).toHaveBeenCalledWith({ ...guardrails, toolCallGuardrailEnabled: true });
+    expect(onChange).toHaveBeenCalledWith({ ...guardrails, toolActionReview: { ...guardrails.toolActionReview, enabled: true } });
   });
 
   it('keeps the tool-call guardrail disabled when organization guardrails are forced', () => {

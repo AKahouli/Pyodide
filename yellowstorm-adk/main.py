@@ -3,6 +3,7 @@
 import asyncio
 import os
 from contextlib import asynccontextmanager
+from importlib.metadata import version
 from os import getenv
 
 from fastapi.exceptions import RequestValidationError
@@ -84,6 +85,21 @@ async def lifespan(app: FastAPI):
             json_logs=LOG_JSON_FORMAT, log_level=LOG_LEVEL, color_logs=COLOR_LOGS
         )
 
+    runtime_versions = {
+        package: version(package)
+        for package in (
+            "langgraph",
+            "langgraph-checkpoint",
+            "langgraph-checkpoint-postgres",
+            "langgraph-checkpoint-sqlite",
+            "langchain",
+            "langchain-core",
+            "langchain-openai",
+            "langchain-community",
+        )
+    }
+    logger.info("AI runtime versions: %s", runtime_versions)
+
     # Apply global LLM patches (mapping, timeouts, and logging)
     try:
         from src.evaluation.agent_evaluator import apply_litellm_debug_patch
@@ -138,7 +154,7 @@ async def lifespan(app: FastAPI):
                     pass  # Task was cancelled during shutdown, this is expected
                 except Exception as e:
                     logger.error(
-                        f"[gRPC] Background task failed: {str(e)}", exc_info=True
+                        f"[gRPC] Background task failed: {str(e)}"
                     )
 
             grpc_server_task.add_done_callback(_grpc_task_error_callback)
@@ -157,7 +173,7 @@ async def lifespan(app: FastAPI):
 
             logger.info("✅ gRPC server task started (running in background)")
         except Exception as e:
-            logger.error(f"Failed to start gRPC server: {str(e)}", exc_info=True)
+            logger.error(f"Failed to start gRPC server: {str(e)}")
             logger.warning(
                 "Continuing without gRPC support. Only REST/SSE endpoints will be available."
             )
@@ -237,4 +253,5 @@ if __name__ == "__main__":
         port=app_settings.PORT,
         timeout_keep_alive=app_settings.TIMEOUT_KEEP_ALIVE,
         reload=False,
+        loop="src.asyncio_loop:selector_loop_factory" if os.name == "nt" else "auto",
     )

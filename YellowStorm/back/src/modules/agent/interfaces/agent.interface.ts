@@ -5,18 +5,27 @@ export interface IAgentConnectorActionSelectionResponse {
 
 export type AgentPermissionLevel = 'read' | 'write';
 
+export type GuardrailMode = 'monitor' | 'balanced' | 'strict';
+
 export interface PromptInjectionGuardrailsConfig {
-  inputGuardrailEnabled: boolean;
-  outputGuardrailEnabled: boolean;
-  toolCallGuardrailEnabled: boolean;
+  inputEnabled: boolean;
+  outputEnabled: boolean;
+  mode: GuardrailMode;
   inputClassifierPrompt: string;
   outputClassifierPrompt: string;
-  toolCallClassifierPrompt: string;
+  blockMessage: string;
+}
+
+export interface ToolActionReviewConfig {
+  enabled: boolean;
+  mode: GuardrailMode;
+  classifierPrompt: string;
   blockMessage: string;
 }
 
 export interface AgentGuardrails {
   promptInjection: PromptInjectionGuardrailsConfig;
+  toolActionReview: ToolActionReviewConfig;
 }
 
 export interface AgentDeploymentSettings {

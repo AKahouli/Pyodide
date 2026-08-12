@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-02T05:59:36.5621128Z",
+  "title": "Design System: YellowStorm",
+  "extensions": {
+    "colorMeta": {
+      "canvas": { "role": "neutral", "displayName": "Adaptive Canvas", "canonical": "var(--background)", "tonalRamp": ["color-mix(in oklch, var(--background) 35%, black)", "color-mix(in oklch, var(--background) 50%, black)", "color-mix(in oklch, var(--background) 70%, black)", "color-mix(in oklch, var(--background) 85%, black)", "var(--background)", "color-mix(in oklch, var(--background) 85%, white)", "color-mix(in oklch, var(--background) 65%, white)", "color-mix(in oklch, var(--background) 35%, white)"] },
+      "ink": { "role": "neutral", "displayName": "Working Ink", "canonical": "var(--foreground)", "tonalRamp": ["color-mix(in oklch, var(--foreground) 35%, black)", "color-mix(in oklch, var(--foreground) 50%, black)", "color-mix(in oklch, var(--foreground) 70%, black)", "color-mix(in oklch, var(--foreground) 85%, black)", "var(--foreground)", "color-mix(in oklch, var(--foreground) 85%, white)", "color-mix(in oklch, var(--foreground) 65%, white)", "color-mix(in oklch, var(--foreground) 35%, white)"] },
+      "surface": { "role": "neutral", "displayName": "Instrument Surface", "canonical": "var(--card)", "tonalRamp": ["color-mix(in oklch, var(--card) 35%, black)", "color-mix(in oklch, var(--card) 50%, black)", "color-mix(in oklch, var(--card) 70%, black)", "color-mix(in oklch, var(--card) 85%, black)", "var(--card)", "color-mix(in oklch, var(--card) 85%, white)", "color-mix(in oklch, var(--card) 65%, white)", "color-mix(in oklch, var(--card) 35%, white)"] },
+      "surface-ink": { "role": "neutral", "displayName": "Surface Ink", "canonical": "var(--card-foreground)", "tonalRamp": ["color-mix(in oklch, var(--card-foreground) 35%, black)", "color-mix(in oklch, var(--card-foreground) 50%, black)", "color-mix(in oklch, var(--card-foreground) 70%, black)", "color-mix(in oklch, var(--card-foreground) 85%, black)", "var(--card-foreground)", "color-mix(in oklch, var(--card-foreground) 85%, white)", "color-mix(in oklch, var(--card-foreground) 65%, white)", "color-mix(in oklch, var(--card-foreground) 35%, white)"] },
+      "primary": { "role": "primary", "displayName": "Governed Signal", "canonical": "var(--primary)", "tonalRamp": ["color-mix(in oklch, var(--primary) 35%, black)", "color-mix(in oklch, var(--primary) 50%, black)", "color-mix(in oklch, var(--primary) 70%, black)", "color-mix(in oklch, var(--primary) 85%, black)", "var(--primary)", "color-mix(in oklch, var(--primary) 85%, white)", "color-mix(in oklch, var(--primary) 65%, white)", "color-mix(in oklch, var(--primary) 35%, white)"] },
+      "on-primary": { "role": "primary", "displayName": "Signal Contrast", "canonical": "var(--primary-foreground)", "tonalRamp": ["color-mix(in oklch, var(--primary-foreground) 35%, black)", "color-mix(in oklch, var(--primary-foreground) 50%, black)", "color-mix(in oklch, var(--primary-foreground) 70%, black)", "color-mix(in oklch, var(--primary-foreground) 85%, black)", "var(--primary-foreground)", "color-mix(in oklch, var(--primary-foreground) 85%, white)", "color-mix(in oklch, var(--primary-foreground) 65%, white)", "color-mix(in oklch, var(--primary-foreground) 35%, white)"] },
+      "secondary": { "role": "secondary", "displayName": "Quiet Action", "canonical": "var(--secondary)", "tonalRamp": ["color-mix(in oklch, var(--secondary) 35%, black)", "color-mix(in oklch, var(--secondary) 50%, black)", "color-mix(in oklch, var(--secondary) 70%, black)", "color-mix(in oklch, var(--secondary) 85%, black)", "var(--secondary)", "color-mix(in oklch, var(--secondary) 85%, white)", "color-mix(in oklch, var(--secondary) 65%, white)", "color-mix(in oklch, var(--secondary) 35%, white)"] },
+      "on-secondary": { "role": "secondary", "displayName": "Quiet Action Ink", "canonical": "var(--secondary-foreground)", "tonalRamp": ["color-mix(in oklch, var(--secondary-foreground) 35%, black)", "color-mix(in oklch, var(--secondary-foreground) 50%, black)", "color-mix(in oklch, var(--secondary-foreground) 70%, black)", "color-mix(in oklch, var(--secondary-foreground) 85%, black)", "var(--secondary-foreground)", "color-mix(in oklch, var(--secondary-foreground) 85%, white)", "color-mix(in oklch, var(--secondary-foreground) 65%, white)", "color-mix(in oklch, var(--secondary-foreground) 35%, white)"] },
+      "muted": { "role": "neutral", "displayName": "Quiet Field", "canonical": "var(--muted)", "tonalRamp": ["color-mix(in oklch, var(--muted) 35%, black)", "color-mix(in oklch, var(--muted) 50%, black)", "color-mix(in oklch, var(--muted) 70%, black)", "color-mix(in oklch, var(--muted) 85%, black)", "var(--muted)", "color-mix(in oklch, var(--muted) 85%, white)", "color-mix(in oklch, var(--muted) 65%, white)", "color-mix(in oklch, var(--muted) 35%, white)"] },
+      "muted-ink": { "role": "neutral", "displayName": "Quiet Ink", "canonical": "var(--muted-foreground)", "tonalRamp": ["color-mix(in oklch, var(--muted-foreground) 35%, black)", "color-mix(in oklch, var(--muted-foreground) 50%, black)", "color-mix(in oklch, var(--muted-foreground) 70%, black)", "color-mix(in oklch, var(--muted-foreground) 85%, black)", "var(--muted-foreground)", "color-mix(in oklch, var(--muted-foreground) 85%, white)", "color-mix(in oklch, var(--muted-foreground) 65%, white)", "color-mix(in oklch, var(--muted-foreground) 35%, white)"] },
+      "accent": { "role": "secondary", "displayName": "Operational Accent", "canonical": "var(--accent)", "tonalRamp": ["color-mix(in oklch, var(--accent) 35%, black)", "color-mix(in oklch, var(--accent) 50%, black)", "color-mix(in oklch, var(--accent) 70%, black)", "color-mix(in oklch, var(--accent) 85%, black)", "var(--accent)", "color-mix(in oklch, var(--accent) 85%, white)", "color-mix(in oklch, var(--accent) 65%, white)", "color-mix(in oklch, var(--accent) 35%, white)"] },
+      "on-accent": { "role": "secondary", "displayName": "Accent Ink", "canonical": "var(--accent-foreground)", "tonalRamp": ["color-mix(in oklch, var(--accent-foreground) 35%, black)", "color-mix(in oklch, var(--accent-foreground) 50%, black)", "color-mix(in oklch, var(--accent-foreground) 70%, black)", "color-mix(in oklch, var(--accent-foreground) 85%, black)", "var(--accent-foreground)", "color-mix(in oklch, var(--accent-foreground) 85%, white)", "color-mix(in oklch, var(--accent-foreground) 65%, white)", "color-mix(in oklch, var(--accent-foreground) 35%, white)"] },
+      "destructive": { "role": "tertiary", "displayName": "Intentional Alert", "canonical": "var(--destructive)", "tonalRamp": ["color-mix(in oklch, var(--destructive) 35%, black)", "color-mix(in oklch, var(--destructive) 50%, black)", "color-mix(in oklch, var(--destructive) 70%, black)", "color-mix(in oklch, var(--destructive) 85%, black)", "var(--destructive)", "color-mix(in oklch, var(--destructive) 85%, white)", "color-mix(in oklch, var(--destructive) 65%, white)", "color-mix(in oklch, var(--destructive) 35%, white)"] },
+      "on-destructive": { "role": "tertiary", "displayName": "Alert Contrast", "canonical": "var(--destructive-foreground)", "tonalRamp": ["color-mix(in oklch, var(--destructive-foreground) 35%, black)", "color-mix(in oklch, var(--destructive-foreground) 50%, black)", "color-mix(in oklch, var(--destructive-foreground) 70%, black)", "color-mix(in oklch, var(--destructive-foreground) 85%, black)", "var(--destructive-foreground)", "color-mix(in oklch, var(--destructive-foreground) 85%, white)", "color-mix(in oklch, var(--destructive-foreground) 65%, white)", "color-mix(in oklch, var(--destructive-foreground) 35%, white)"] },
+      "border": { "role": "neutral", "displayName": "Hairline Structure", "canonical": "var(--border)", "tonalRamp": ["color-mix(in oklch, var(--border) 35%, black)", "color-mix(in oklch, var(--border) 50%, black)", "color-mix(in oklch, var(--border) 70%, black)", "color-mix(in oklch, var(--border) 85%, black)", "var(--border)", "color-mix(in oklch, var(--border) 85%, white)", "color-mix(in oklch, var(--border) 65%, white)", "color-mix(in oklch, var(--border) 35%, white)"] },
+      "focus": { "role": "neutral", "displayName": "Focus Trace", "canonical": "var(--ring)", "tonalRamp": ["color-mix(in oklch, var(--ring) 35%, black)", "color-mix(in oklch, var(--ring) 50%, black)", "color-mix(in oklch, var(--ring) 70%, black)", "color-mix(in oklch, var(--ring) 85%, black)", "var(--ring)", "color-mix(in oklch, var(--ring) 85%, white)", "color-mix(in oklch, var(--ring) 65%, white)", "color-mix(in oklch, var(--ring) 35%, white)"] },
+      "running": { "role": "tertiary", "displayName": "Running Trace", "canonical": "oklch(0.62 0.19 250)", "tonalRamp": ["oklch(0.15 0.08 250)", "oklch(0.25 0.11 250)", "oklch(0.38 0.14 250)", "oklch(0.50 0.17 250)", "oklch(0.62 0.19 250)", "oklch(0.73 0.15 250)", "oklch(0.84 0.10 250)", "oklch(0.95 0.04 250)"] },
+      "sidebar": { "role": "neutral", "displayName": "Navigation Field", "canonical": "var(--sidebar)", "tonalRamp": ["color-mix(in oklch, var(--sidebar) 35%, black)", "color-mix(in oklch, var(--sidebar) 50%, black)", "color-mix(in oklch, var(--sidebar) 70%, black)", "color-mix(in oklch, var(--sidebar) 85%, black)", "var(--sidebar)", "color-mix(in oklch, var(--sidebar) 85%, white)", "color-mix(in oklch, var(--sidebar) 65%, white)", "color-mix(in oklch, var(--sidebar) 35%, white)"] },
+      "sidebar-ink": { "role": "neutral", "displayName": "Navigation Ink", "canonical": "var(--sidebar-foreground)", "tonalRamp": ["color-mix(in oklch, var(--sidebar-foreground) 35%, black)", "color-mix(in oklch, var(--sidebar-foreground) 50%, black)", "color-mix(in oklch, var(--sidebar-foreground) 70%, black)", "color-mix(in oklch, var(--sidebar-foreground) 85%, black)", "var(--sidebar-foreground)", "color-mix(in oklch, var(--sidebar-foreground) 85%, white)", "color-mix(in oklch, var(--sidebar-foreground) 65%, white)", "color-mix(in oklch, var(--sidebar-foreground) 35%, white)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Major workspace and hub introductions." },
+      "headline": { "displayName": "Headline", "purpose": "Page titles and major panels." },
+      "title": { "displayName": "Title", "purpose": "Card groups, dialogs, and substantial panel headings." },
+      "body": { "displayName": "Body", "purpose": "Default operating text across controls and content." },
+      "label": { "displayName": "Label", "purpose": "Metadata, badges, compact controls, and group labels." },
+      "mono": { "displayName": "Mono", "purpose": "Identifiers, code, logs, and machine-readable values." }
+    },
+    "shadows": [
+      { "name": "control-lift", "value": "0 1px 2px rgba(0,0,0,0.08)", "purpose": "Subtle physical edge for filled and outlined controls." },
+      { "name": "surface-lift", "value": "0 1px 3px rgba(0,0,0,0.10), 0 1px 2px -1px rgba(0,0,0,0.10)", "purpose": "Cards, floating navigation, and hovered working surfaces." },
+      { "name": "overlay-lift", "value": "0 4px 6px -1px rgba(0,0,0,0.10)", "purpose": "Dialogs, sheets, menus, and transient overlays." }
+    ],
+    "motion": [
+      { "name": "state-standard", "value": "200ms ease-out", "purpose": "Accordion, dialog, and compact state transitions." },
+      { "name": "shell-linear", "value": "200ms linear", "purpose": "Sidebar width and position transitions." },
+      { "name": "thinking-bounce", "value": "1.5s ease-in-out infinite", "purpose": "Conversation thinking activity." },
+      { "name": "running-glow", "value": "2s ease-in-out infinite", "purpose": "Active workflow-node state." },
+      { "name": "agent-scan", "value": "2.4s ease-in-out infinite", "purpose": "Active agent scan state." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The decisive action control, bound to the active theme's governed signal.",
+      "html": "<button class=\"ds-btn-primary\">Run workflow</button>",
+      "css": ".ds-btn-primary { height: 36px; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: calc(var(--radius) - 2px); background: var(--primary); color: var(--primary-foreground); font: 500 14px/1.5 ui-sans-serif, system-ui, sans-serif; box-shadow: 0 1px 2px rgba(0,0,0,.08); transition: background-color 200ms ease-out; } .ds-btn-primary:hover { background: color-mix(in oklch, var(--primary) 90%, transparent); } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--ring), 0 1px 2px rgba(0,0,0,.08); } .ds-btn-primary:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Destructive Button",
+      "kind": "button",
+      "refersTo": "button-destructive",
+      "description": "Reserved for irreversible or damaging operations.",
+      "html": "<button class=\"ds-btn-destructive\">Delete</button>",
+      "css": ".ds-btn-destructive { height: 36px; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: calc(var(--radius) - 2px); background: var(--destructive); color: var(--destructive-foreground); font: 500 14px/1.5 ui-sans-serif, system-ui, sans-serif; box-shadow: 0 1px 2px rgba(0,0,0,.08); transition: background-color 200ms ease-out; } .ds-btn-destructive:hover { background: color-mix(in oklch, var(--destructive) 90%, transparent); } .ds-btn-destructive:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--ring); } .ds-btn-destructive:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "A bounded secondary action that remains legible on the adaptive canvas.",
+      "html": "<button class=\"ds-btn-outline\">Review</button>",
+      "css": ".ds-btn-outline { height: 36px; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--input); border-radius: calc(var(--radius) - 2px); background: var(--background); color: var(--foreground); font: 500 14px/1.5 ui-sans-serif, system-ui, sans-serif; box-shadow: 0 1px 2px rgba(0,0,0,.06); transition: background-color 200ms ease-out, color 200ms ease-out; } .ds-btn-outline:hover { background: var(--accent); color: var(--accent-foreground); } .ds-btn-outline:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--ring); } .ds-btn-outline:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A quiet filled action for supporting workflows.",
+      "html": "<button class=\"ds-btn-secondary\">Compare</button>",
+      "css": ".ds-btn-secondary { height: 36px; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: calc(var(--radius) - 2px); background: var(--secondary); color: var(--secondary-foreground); font: 500 14px/1.5 ui-sans-serif, system-ui, sans-serif; box-shadow: 0 1px 2px rgba(0,0,0,.06); transition: background-color 200ms ease-out; } .ds-btn-secondary:hover { background: color-mix(in oklch, var(--secondary) 80%, transparent); } .ds-btn-secondary:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--ring); } .ds-btn-secondary:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "A low-emphasis contextual action that appears on interaction.",
+      "html": "<button class=\"ds-btn-ghost\">More actions</button>",
+      "css": ".ds-btn-ghost { height: 36px; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: calc(var(--radius) - 2px); background: transparent; color: var(--foreground); font: 500 14px/1.5 ui-sans-serif, system-ui, sans-serif; transition: background-color 200ms ease-out, color 200ms ease-out; } .ds-btn-ghost:hover { background: var(--accent); color: var(--accent-foreground); } .ds-btn-ghost:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--ring); } .ds-btn-ghost:active { background: color-mix(in oklch, var(--accent) 85%, var(--foreground)); }"
+    },
+    {
+      "name": "Link Button",
+      "kind": "button",
+      "refersTo": "button-link",
+      "description": "A text-only action for navigation or low-priority commands.",
+      "html": "<button class=\"ds-btn-link\">View execution</button>",
+      "css": ".ds-btn-link { padding: 0; border: 0; background: transparent; color: var(--primary); font: 500 14px/1.5 ui-sans-serif, system-ui, sans-serif; text-underline-offset: 4px; } .ds-btn-link:hover { text-decoration: underline; } .ds-btn-link:focus-visible { outline: none; border-radius: calc(var(--radius) - 2px); box-shadow: 0 0 0 1px var(--ring); } .ds-btn-link:active { opacity: .8; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input-default",
+      "description": "The canonical compact field for search, labels, and operational forms.",
+      "html": "<input class=\"ds-input\" placeholder=\"Search workspaces\" />",
+      "css": ".ds-input { width: 100%; height: 36px; padding: 4px 12px; border: 1px solid var(--input); border-radius: calc(var(--radius) - 2px); background: transparent; color: var(--foreground); font: 400 14px/1.5 ui-sans-serif, system-ui, sans-serif; box-shadow: 0 1px 2px rgba(0,0,0,.06); transition: border-color 200ms ease-out, box-shadow 200ms ease-out; } .ds-input::placeholder { color: var(--muted-foreground); } .ds-input:hover { border-color: color-mix(in oklch, var(--input) 65%, var(--foreground)); } .ds-input:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--ring); }"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "badge-default",
+      "description": "A compact semantic marker for state or classification.",
+      "html": "<span class=\"ds-badge\">Running</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; padding: 2px 10px; border: 1px solid transparent; border-radius: calc(var(--radius) - 2px); background: var(--primary); color: var(--primary-foreground); font: 600 12px/1.33 ui-sans-serif, system-ui, sans-serif; transition: background-color 200ms ease-out; } .ds-badge:hover { background: color-mix(in oklch, var(--primary) 80%, transparent); } .ds-badge:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ring); }"
+    },
+    {
+      "name": "Working Card",
+      "kind": "card",
+      "refersTo": "card-default",
+      "description": "The standard bordered surface for grouped operational content.",
+      "html": "<article class=\"ds-card\"><strong>Evidence workspace</strong><p>Ground agent work in governed sources.</p></article>",
+      "css": ".ds-card { display: flex; flex-direction: column; gap: 8px; padding: 24px; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); background: var(--card); color: var(--card-foreground); box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px -1px rgba(0,0,0,.08); font-family: ui-sans-serif, system-ui, sans-serif; transition: border-color 200ms ease-out, box-shadow 200ms ease-out; } .ds-card strong { font-size: 14px; line-height: 1; font-weight: 600; } .ds-card p { margin: 0; color: var(--muted-foreground); font-size: 14px; line-height: 1.5; } .ds-card:hover { border-color: color-mix(in oklch, var(--primary) 50%, var(--border)); box-shadow: 0 2px 4px rgba(0,0,0,.10); } .ds-card:focus-within { box-shadow: 0 0 0 1px var(--ring); }"
+    },
+    {
+      "name": "Sidebar Item",
+      "kind": "nav",
+      "refersTo": "sidebar-item",
+      "description": "A compact navigation row with explicit hover, active, and focus states.",
+      "html": "<button class=\"ds-sidebar-item\" aria-current=\"page\"><span class=\"ds-sidebar-icon\"></span><span>Playbooks</span></button>",
+      "css": ".ds-sidebar-item { width: 100%; height: 32px; padding: 8px; display: flex; align-items: center; gap: 8px; overflow: hidden; border: 0; border-radius: calc(var(--radius) - 2px); background: var(--sidebar-accent); color: var(--sidebar-accent-foreground); font: 500 14px/1.5 ui-sans-serif, system-ui, sans-serif; text-align: left; transition: background-color 200ms ease-out, color 200ms ease-out; } .ds-sidebar-icon { width: 16px; height: 16px; flex: 0 0 auto; border: 1.5px solid currentColor; border-radius: 3px; } .ds-sidebar-item:hover { background: color-mix(in oklch, var(--sidebar-accent) 85%, var(--sidebar-foreground)); } .ds-sidebar-item:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--sidebar-ring); } .ds-sidebar-item:active { opacity: .85; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Enterprise Agentic Workbench",
+    "overview": "YellowStorm is an enterprise agentic platform expressed as a practical, smart, modular workbench. Knowledge, tools, agents, repeatable workflows, and Governance share one operating environment. The interface should feel calm, precise, and operational: capable enough for expert work, restrained enough that live state, evidence, and decisions remain legible. The visual system is an adaptive canvas with governed signal. Semantic roles remain stable while light, dark, YellowSys, Claude, and KPMG themes can alter the chromatic identity. Compact controls, clear borders, restrained depth, and consistent state treatments make the product dependable across conversational, canvas, document, and administrative surfaces.",
+    "keyCharacteristics": [
+      "Calm, precise, operational density.",
+      "Semantic theme adaptation rather than hardcoded brand color.",
+      "Compact, dependable controls for repeated daily use.",
+      "Bordered and tonally layered surfaces with restrained shadows.",
+      "Clear live state, focus, selection, and governance signals."
+    ],
+    "rules": [
+      { "name": "The Semantic Color Rule", "body": "Use color by role, never by a hardcoded brand value. Every product surface must remain coherent in light, dark, and configured color themes.", "section": "colors" },
+      { "name": "The Governed Signal Rule", "body": "Primary color marks action, selection, and identity. It does not become a decorative wash across operational screens.", "section": "colors" },
+      { "name": "The Operational Scale Rule", "body": "Task surfaces default to body and label sizes. Display scale belongs to overview moments, not routine toolbars, tables, or editors.", "section": "typography" },
+      { "name": "The Working Density Rule", "body": "Increase whitespace only when the surface changes from operating to orienting. Do not apply marketing-page spacing to task-focused product screens.", "section": "layout" },
+      { "name": "The Shell Continuity Rule", "body": "Preserve navigation, main-region, sticky composer, resizable panel, and overflow behavior before introducing local composition changes.", "section": "layout" },
+      { "name": "The Border-Before-Shadow Rule", "body": "Use a border or tonal change to establish structure first. Add shadow only when the surface is interactive, floating, or temporarily layered.", "section": "elevation" },
+      { "name": "The Radius Hierarchy Rule", "body": "Small controls use medium corners; containers step up one or two levels. Do not give every nested surface the same large radius.", "section": "shapes" }
+    ],
+    "dos": [
+      "Do use semantic background, foreground, primary, muted, border, ring, chart, and sidebar roles so every component survives theme changes.",
+      "Do preserve compact 2rem to 2.5rem control heights and 0.5rem to 1rem local spacing on operating surfaces.",
+      "Do establish hierarchy with layout, weight, borders, and tonal layers before adding color or shadow.",
+      "Do reserve larger type and wider spacing for hub, orientation, and empty-state moments.",
+      "Do make running, selected, focused, disabled, destructive, and interrupted states explicit and accessible."
+    ],
+    "donts": [
+      "Don't hardcode a single brand palette into reusable product components or feature surfaces.",
+      "Don't turn primary color into a broad decorative background when it should communicate action or selection.",
+      "Don't apply oversized marketing typography or generous landing-page spacing to editors, tables, chats, or administration.",
+      "Don't stack borders, shadows, rings, and filled backgrounds when one or two structural cues are sufficient.",
+      "Don't promote one-off feature colors or suspect animation implementations into system-wide tokens."
+    ]
+  }
+}

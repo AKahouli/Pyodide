@@ -6,13 +6,13 @@ export type GuardrailsSettingsDocument = HydratedDocument<GuardrailsSettings>;
 @Schema({ _id: false })
 export class PromptInjectionGuardrailsSettings {
   @Prop({ type: Boolean, default: false })
-  inputGuardrailEnabled!: boolean;
+  inputEnabled!: boolean;
 
   @Prop({ type: Boolean, default: false })
-  outputGuardrailEnabled!: boolean;
+  outputEnabled!: boolean;
 
-  @Prop({ type: Boolean, default: false })
-  toolCallGuardrailEnabled!: boolean;
+  @Prop({ type: String, enum: ['monitor', 'balanced', 'strict'], default: 'balanced' })
+  mode!: 'monitor' | 'balanced' | 'strict';
 
   @Prop({ type: String, default: '' })
   inputClassifierPrompt!: string;
@@ -20,14 +20,28 @@ export class PromptInjectionGuardrailsSettings {
   @Prop({ type: String, default: '' })
   outputClassifierPrompt!: string;
 
-  @Prop({ type: String, default: '' })
-  toolCallClassifierPrompt!: string;
-
   @Prop({ type: String, default: 'I cannot follow this instruction.' })
   blockMessage!: string;
 }
 
 const PromptInjectionGuardrailsSettingsSchema = SchemaFactory.createForClass(PromptInjectionGuardrailsSettings);
+
+@Schema({ _id: false })
+export class ToolActionReviewSettings {
+  @Prop({ type: Boolean, default: false })
+  enabled!: boolean;
+
+  @Prop({ type: String, enum: ['monitor', 'balanced', 'strict'], default: 'balanced' })
+  mode!: 'monitor' | 'balanced' | 'strict';
+
+  @Prop({ type: String, default: '' })
+  classifierPrompt!: string;
+
+  @Prop({ type: String, default: 'I cannot perform this action.' })
+  blockMessage!: string;
+}
+
+const ToolActionReviewSettingsSchema = SchemaFactory.createForClass(ToolActionReviewSettings);
 
 @Schema({ timestamps: true, collection: 'guardrails_settings' })
 export class GuardrailsSettings {
@@ -36,6 +50,9 @@ export class GuardrailsSettings {
 
   @Prop({ type: PromptInjectionGuardrailsSettingsSchema, default: () => ({}) })
   promptInjection!: PromptInjectionGuardrailsSettings;
+
+  @Prop({ type: ToolActionReviewSettingsSchema, default: () => ({}) })
+  toolActionReview!: ToolActionReviewSettings;
 }
 
 export const GuardrailsSettingsSchema = SchemaFactory.createForClass(GuardrailsSettings);

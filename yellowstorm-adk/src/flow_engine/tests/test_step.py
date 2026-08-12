@@ -27,18 +27,6 @@ fake_structlog_types.Processor = object
 sys.modules.setdefault("structlog", fake_structlog)
 sys.modules.setdefault("structlog.types", fake_structlog_types)
 
-fake_langgraph = types.ModuleType("langgraph")
-fake_langgraph_config = types.ModuleType("langgraph.config")
-fake_langgraph_types = types.ModuleType("langgraph.types")
-fake_langgraph_errors = types.ModuleType("langgraph.errors")
-fake_langgraph_config.get_stream_writer = lambda: (lambda event: None)
-fake_langgraph_types.interrupt = lambda *args, **kwargs: None
-fake_langgraph_errors.GraphInterrupt = type("GraphInterrupt", (Exception,), {})
-sys.modules.setdefault("langgraph", fake_langgraph)
-sys.modules.setdefault("langgraph.config", fake_langgraph_config)
-sys.modules.setdefault("langgraph.types", fake_langgraph_types)
-sys.modules.setdefault("langgraph.errors", fake_langgraph_errors)
-
 fake_settings = types.ModuleType("src.config.settings")
 fake_settings.get_settings = lambda: SimpleNamespace(
     LITELLM_API_BASE_URL="http://localhost",
@@ -100,6 +88,7 @@ from src.flow_engine.nodes.step import (
     TEMP_CHILD_PARENT_INSTRUCTION,
     _TemporaryChildAgentTool,
     _build_available_file_context,
+    _generated_child_output_contract,
     _temporary_child_enabled,
     run_step,
 )
@@ -120,6 +109,70 @@ def test_temporary_child_enabled_uses_explicit_param_only():
     assert _temporary_child_enabled({"enable_temporary_child_agents": "true"}) is True
     assert _temporary_child_enabled({"enable_temporary_child_agents": "false"}) is False
     assert _temporary_child_enabled({"connector_bindings_json": "[{}]"}) is False
+
+
+def test_generated_child_output_contract_uses_declared_ports_for_work_nodes():
+    parent_contract = {"ports": [{"id": "final", "type": "text"}]}
+
+    assert _generated_child_output_contract(
+        "task",
+        {"generatedOutputPorts": [{"id": "summary", "type": "text"}]},
+        parent_contract,
+    ) == {"ports": [{"id": "summary", "type": "text"}]}
+    assert _generated_child_output_contract("synthesis", {}, parent_contract) == parent_contract
+
+
+@pytest.mark.anyio
+async def test_run_step_applies_generated_work_node_output_contract(monkeypatch):
+    captured_contracts = []
+
+    async def _fake_execute_step(*args, **_kwargs):
+        captured_contracts.append(args[6])
+        return "verified facts", [], None
+
+    async def _fake_dynamic_reasoning(**kwargs):
+        child_result = await kwargs["child_executor"](
+            "parent::dynamic-reasoning::graph::research",
+            "Research",
+            "Research the topic",
+            {
+                "inputs": {"input": "topic"},
+                "generatedKind": "task",
+                "generatedLocalNodeId": "research",
+                "generatedOutputPorts": [{"id": "summary", "type": "text"}],
+                "runtimeSubgraphId": "graph",
+            },
+        )
+        assert child_result["outputs"]["summary"]["content"] == "verified facts"
+        return types.SimpleNamespace(mode="subgraph", result_payload={"output": "final"})
+
+    monkeypatch.setattr("src.flow_engine.nodes.step._execute_step", _fake_execute_step)
+    monkeypatch.setattr("src.flow_engine.nodes.step.run_dynamic_reasoning", _fake_dynamic_reasoning)
+
+    result = await run_step(
+        node_id="parent",
+        node_config={
+            "label": "Parent",
+            "description": "Solve the task",
+            "dynamicReasoning": {"enabled": True},
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {"input": "topic"},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+            "dynamic_reasoning_policy": {"maxWorkNodes": 6, "maxParallelism": 3, "maxDepth": 1, "maxRepairAttempts": 1},
+            "playbook_planner": {"agentId": "planner-1", "agentTypeSlug": "playbook_planner", "model": "test-model"},
+        },
+    )
+
+    assert captured_contracts == [{"ports": [{"id": "summary", "type": "text"}]}]
+    assert result["task_outputs"][("parent", 0)]["output"] == "final"
 
 
 def test_available_file_context_leaves_filename_choice_to_model():
@@ -622,7 +675,7 @@ async def test_run_step_executes_bound_tools(monkeypatch):
 
     monkeypatch.setattr("src.flow_engine.nodes.step.get_stream_writer", lambda: _writer)
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
     fake_factory_module = types.ModuleType("src.flow_engine.tools")
     fake_factory_module.create_langchain_tools = lambda **kwargs: ([_FakeTool()], None)
     monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
@@ -667,7 +720,7 @@ async def test_run_step_attaches_temporary_child_tool_when_enabled(monkeypatch):
         return _ToolCallResponse("Parent answer.")
 
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
     fake_factory_module = types.ModuleType("src.flow_engine.tools")
     fake_factory_module.create_langchain_tools = lambda **kwargs: ([_FakeTool()], None)
     monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
@@ -714,7 +767,7 @@ async def test_temporary_child_tool_runs_parallel_tasks_with_hard_total_limit(mo
     active = 0
     max_active = 0
 
-    async def _fake_run_step_with_tools(**kwargs):
+    async def _fake_run_step_agent(**kwargs):
         nonlocal active, max_active
         active += 1
         max_active = max(max_active, active)
@@ -722,7 +775,7 @@ async def test_temporary_child_tool_runs_parallel_tasks_with_hard_total_limit(mo
         active -= 1
         return kwargs["user_msg"].splitlines()[1]
 
-    monkeypatch.setattr("src.flow_engine.nodes.step.run_step_with_tools", _fake_run_step_with_tools)
+    monkeypatch.setattr("src.flow_engine.nodes.step.run_step_agent", _fake_run_step_agent)
     tool = _TemporaryChildAgentTool(
         model_id="gpt-test",
         system_prompt="system",
@@ -751,7 +804,7 @@ async def test_temporary_child_tool_runs_parallel_tasks_with_hard_total_limit(mo
 
 @pytest.mark.anyio
 async def test_run_step_with_tools_preserves_tool_base64_images(monkeypatch):
-    from src.flow_engine.nodes.step_tools import run_step_with_tools
+    from src.flow_engine.tests.step_agent_test_helper import run_step_with_tools
 
     calls = []
 
@@ -771,7 +824,7 @@ async def test_run_step_with_tools_preserves_tool_base64_images(monkeypatch):
             )
         return _ToolCallResponse("I used the attached images.")
 
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
 
     output = await run_step_with_tools(
         model_id="gpt-test",
@@ -795,7 +848,7 @@ async def test_run_step_with_tools_preserves_tool_base64_images(monkeypatch):
 
 @pytest.mark.anyio
 async def test_run_step_with_tools_forwards_mcp_image_parts(monkeypatch):
-    from src.flow_engine.nodes.step_tools import run_step_with_tools
+    from src.flow_engine.tests.step_agent_test_helper import run_step_with_tools
 
     calls = []
 
@@ -815,7 +868,7 @@ async def test_run_step_with_tools_forwards_mcp_image_parts(monkeypatch):
             )
         return _ToolCallResponse("The answer is in image p1_b8.")
 
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
 
     output = await run_step_with_tools(
         model_id="gpt-test",
@@ -846,8 +899,106 @@ async def test_run_step_with_tools_forwards_mcp_image_parts(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_run_step_with_tools_retries_text_only_after_mcp_image_rejection(monkeypatch):
+    from src.flow_engine.tests.step_agent_test_helper import run_step_with_tools
+
+    calls = []
+    tool_invocations = []
+    tool = _ReadContentMcpImageTool()
+    original_ainvoke = tool.ainvoke
+
+    async def _tracked_ainvoke(args):
+        tool_invocations.append(args)
+        return await original_ainvoke(args)
+
+    async def _fake_acompletion(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _ToolCallResponse(
+                "",
+                [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "read_content",
+                        "arguments": '{"expression":"ignored"}',
+                    },
+                }],
+            )
+        if len(calls) == 2:
+            raise ValueError(
+                "messages.content.type is invalid, allowed values: ['text']"
+            )
+        return _ToolCallResponse("Text-only fallback succeeded.")
+
+    monkeypatch.setattr(tool, "ainvoke", _tracked_ainvoke)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
+
+    output = await run_step_with_tools(
+        model_id="test-model",
+        system_prompt="system",
+        user_msg="read the document",
+        tools=[tool],
+    )
+
+    assert output == "Text-only fallback succeeded."
+    assert len(tool_invocations) == 1
+    retry_messages = calls[2]["messages"]
+    assert not any(
+        isinstance(message.get("content"), list)
+        and any(block.get("type") != "text" for block in message["content"])
+        for message in retry_messages
+    )
+    assert any(
+        message.get("role") == "assistant"
+        and message.get("tool_calls", [{}])[0].get("id") == "call-1"
+        for message in retry_messages
+    )
+    assert any(
+        message.get("role") == "tool" and message.get("tool_call_id") == "call-1"
+        for message in retry_messages
+    )
+
+
+@pytest.mark.anyio
+async def test_run_step_with_tools_does_not_retry_unrelated_mcp_image_error(monkeypatch):
+    from src.flow_engine.tests.step_agent_test_helper import run_step_with_tools
+
+    calls = []
+    tool = _ReadContentMcpImageTool()
+
+    async def _fake_acompletion(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _ToolCallResponse(
+                "",
+                [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "read_content",
+                        "arguments": '{"expression":"ignored"}',
+                    },
+                }],
+            )
+        raise ValueError("provider request timed out")
+
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
+
+    with pytest.raises(ValueError, match="provider request timed out"):
+        await run_step_with_tools(
+            model_id="test-model",
+            system_prompt="system",
+            user_msg="read the document",
+            tools=[tool],
+        )
+
+    assert len(calls) == 2
+
+
+@pytest.mark.anyio
 async def test_run_step_with_tools_limits_total_mcp_images_across_iterations(monkeypatch):
-    from src.flow_engine.nodes.step_tools import run_step_with_tools
+    from src.flow_engine.tests.step_agent_test_helper import run_step_with_tools
 
     class _ManyMcpImagesTool:
         name = "read_content"
@@ -887,7 +1038,7 @@ async def test_run_step_with_tools_limits_total_mcp_images_across_iterations(mon
         return _ToolCallResponse("Done.")
 
     monkeypatch.setattr(
-        "src.flow_engine.nodes.step_tools.litellm.acompletion",
+        "src.flow_engine.agent_runtime.model.litellm.acompletion",
         _fake_acompletion,
     )
 
@@ -912,7 +1063,7 @@ async def test_run_step_with_tools_limits_total_mcp_images_across_iterations(mon
 
 @pytest.mark.anyio
 async def test_run_step_with_tools_keeps_parallel_tool_responses_adjacent(monkeypatch):
-    from src.flow_engine.nodes.step_tools import run_step_with_tools
+    from src.flow_engine.tests.step_agent_test_helper import run_step_with_tools
 
     calls = []
 
@@ -942,7 +1093,7 @@ async def test_run_step_with_tools_keeps_parallel_tool_responses_adjacent(monkey
             )
         return _ToolCallResponse("Done.")
 
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
 
     output = await run_step_with_tools(
         model_id="gpt-test",
@@ -1768,7 +1919,7 @@ async def test_run_step_suppresses_tool_stream_for_visualizer(monkeypatch):
 
     monkeypatch.setattr("src.flow_engine.nodes.step.get_stream_writer", lambda: _writer)
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
-    monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", _fake_acompletion)
     fake_factory_module = types.ModuleType("src.flow_engine.tools")
     fake_factory_module.create_langchain_tools = lambda **kwargs: ([_FakeTool()], None)
     monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)

@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsMongoId, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
 
 class UpdatePlaybookIntentNormalizationLimitsDto {
   @ApiPropertyOptional({ minimum: 1, maximum: 500 })
@@ -44,7 +44,77 @@ class UpdatePlaybookIntentNormalizationLimitsDto {
   maxIteratorBodyEdges?: number;
 }
 
+class UpdateDynamicReasoningAdminSettingsDto {
+  @ApiPropertyOptional({ description: 'Required planner agent for Dynamic Reasoning Workflow executions.' })
+  @IsOptional()
+  @IsMongoId()
+  plannerAgentId?: string;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 32 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(32)
+  maxWorkNodes?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 32 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(32)
+  maxParallelism?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 1 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(1)
+  maxDepth?: number;
+
+  @ApiPropertyOptional({ minimum: 0, maximum: 3 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(3)
+  maxRepairAttempts?: number;
+}
+
+class UpdatePlaybookExecutionAdminSettingsDto {
+  @ApiPropertyOptional({ minimum: 1, maximum: 500 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
+  availableCapacity?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 500 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
+  maxConcurrentPerUser?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 500 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
+  maxConcurrentPerFlow?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 500 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
+  maxConcurrentPerProvider?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 500 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
+  maxConcurrentPerModel?: number;
+
+  @ApiPropertyOptional({ minimum: 0, maximum: 5000 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(5000)
+  executionQueueMaxDepth?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 100 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100)
+  maxParallelismPerExecution?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 500 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
+  recursionLimitDefault?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 500 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
+  recursionLimitMax?: number;
+
+  @ApiPropertyOptional({ type: UpdateDynamicReasoningAdminSettingsDto })
+  @IsOptional() @ValidateNested() @Type(() => UpdateDynamicReasoningAdminSettingsDto)
+  dynamicReasoning?: UpdateDynamicReasoningAdminSettingsDto;
+}
+
 export class UpdateAdminPlaybookSettingsDto {
+  @ApiPropertyOptional({ description: 'Required default agent used to suggest a playbook from a conversation turn.' })
+  @IsOptional()
+  @IsMongoId()
+  playbookSuggestorAgentId?: string | null;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -88,4 +158,10 @@ export class UpdateAdminPlaybookSettingsDto {
   @IsOptional()
   @IsBoolean()
   useDeterministicBlueprintBuilder?: boolean;
+
+  @ApiPropertyOptional({ type: UpdatePlaybookExecutionAdminSettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdatePlaybookExecutionAdminSettingsDto)
+  playbookExecution?: UpdatePlaybookExecutionAdminSettingsDto;
 }

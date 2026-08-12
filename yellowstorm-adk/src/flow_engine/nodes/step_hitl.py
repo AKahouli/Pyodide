@@ -82,6 +82,9 @@ def _build_interrupt_payload(
     blocker_rule_id: str | None = None,
     blocker_kind: str | None = None,
     downstream_node_ids: list[str] | None = None,
+    interrupt_id: str | None = None,
+    request_fingerprint: str | None = None,
+    policy_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     return {
         "type": interrupt_type,
@@ -90,7 +93,7 @@ def _build_interrupt_payload(
         "task_description": node_description,
         "result": result_text,
         "message": message,
-        "interrupt_id": f"{node_id}:{interrupt_type}:{round_number}",
+        "interrupt_id": interrupt_id or f"{node_id}:{interrupt_type}:{round_number}",
         "round": round_number,
         "conversation_json": json.dumps(transcript or []),
         "resumable_actions": resumable_actions or ["reply"],
@@ -100,6 +103,8 @@ def _build_interrupt_payload(
         "blocker_rule_id": blocker_rule_id,
         "blocker_kind": blocker_kind,
         "downstream_node_ids": downstream_node_ids or [],
+        **({"request_fingerprint": request_fingerprint} if request_fingerprint else {}),
+        **({"policy_fingerprint": policy_fingerprint} if policy_fingerprint else {}),
     }
 
 

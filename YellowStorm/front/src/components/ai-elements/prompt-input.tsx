@@ -772,7 +772,7 @@ export type PromptInputButtonProps = ComponentProps<typeof InputGroupButton>;
 export const PromptInputButton = forwardRef<HTMLButtonElement, PromptInputButtonProps>(({ variant = 'ghost', className, size, ...props }, ref) => {
   const newSize = size ?? (Children.count(props.children) > 1 ? 'sm' : 'icon-sm');
 
-  return <InputGroupButton ref={ref} className={cn(className)} size={newSize} type='button' variant={variant} {...props} />;
+  return <InputGroupButton ref={ref} className={cn('min-h-11 min-w-11 md:min-h-8 md:min-w-8', className)} size={newSize} type='button' variant={variant} {...props} />;
 });
 PromptInputButton.displayName = 'PromptInputButton';
 
@@ -781,13 +781,14 @@ export const PromptInputActionMenu = (props: PromptInputActionMenuProps) => <Dro
 
 export type PromptInputActionMenuTriggerProps = PromptInputButtonProps;
 
-export const PromptInputActionMenuTrigger = forwardRef<HTMLButtonElement, PromptInputActionMenuTriggerProps>(({ className, children, ...props }, ref) => (
-  <DropdownMenuTrigger asChild>
-    <PromptInputButton ref={ref} className={className} {...props}>
+export const PromptInputActionMenuTrigger = forwardRef<HTMLButtonElement, PromptInputActionMenuTriggerProps>(({ className, children, ...props }, ref) => {
+  const { t } = useModuleTranslation('common');
+  return <DropdownMenuTrigger asChild>
+    <PromptInputButton ref={ref} className={className} aria-label={t('promptInput.moreActions')} {...props}>
       {children ?? <PlusIcon className='size-4' />}
     </PromptInputButton>
-  </DropdownMenuTrigger>
-));
+  </DropdownMenuTrigger>;
+});
 PromptInputActionMenuTrigger.displayName = 'PromptInputActionMenuTrigger';
 
 export type PromptInputActionMenuContentProps = ComponentProps<typeof DropdownMenuContent>;
@@ -820,6 +821,7 @@ export type PromptInputSubmitProps = ComponentProps<typeof InputGroupButton> & {
 };
 
 export const PromptInputSubmit = ({ className, variant = 'default', size = 'icon-sm', status, onStop, children, ...props }: PromptInputSubmitProps) => {
+  const { t } = useModuleTranslation('common');
   let Icon = <CornerDownLeftIcon className='size-4' />;
 
   if (status === 'submitted') {
@@ -833,7 +835,7 @@ export const PromptInputSubmit = ({ className, variant = 'default', size = 'icon
   const isStreaming = status === 'streaming';
 
   return (
-    <InputGroupButton aria-label={isStreaming ? 'Stop' : 'Submit'} className={cn(className)} size={size} type={isStreaming ? 'button' : 'submit'} variant={variant} onClick={isStreaming ? onStop : undefined} {...props} disabled={isStreaming ? false : props.disabled}>
+    <InputGroupButton aria-label={isStreaming ? t('promptInput.stop') : t('promptInput.submit')} className={cn('min-h-11 min-w-11 md:min-h-8 md:min-w-8', className)} size={size} type={isStreaming ? 'button' : 'submit'} variant={variant} onClick={isStreaming ? onStop : undefined} {...props} disabled={isStreaming ? false : props.disabled}>
       {children ?? Icon}
     </InputGroupButton>
   );

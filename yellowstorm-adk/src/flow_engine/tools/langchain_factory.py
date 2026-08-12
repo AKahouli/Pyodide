@@ -5,16 +5,12 @@ executable LangChain StructuredTool instances, reusing the same search
 infrastructure as RunAgentTeam (SearchToolkit, build_tree, etc.).
 """
 
-import contextvars
 import copy
 import json
 import re
 from typing import Dict, Any, List, Optional, Tuple, Type
 
-# Carries the actual MCP args (after Python overrides) from _execute_mcp to step_tools
-_last_mcp_actual_args: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
-    "_last_mcp_actual_args", default=None
-)
+from src.flow_engine.agent_runtime.tool_context import last_mcp_actual_args as _last_mcp_actual_args
 
 import httpx
 from langchain_core.tools import StructuredTool
@@ -27,6 +23,7 @@ from src.flow_engine.runtime.artifact_routing import (
     infer_artifact_kind,
     semantic_match_output_port,
 )
+from src.guardrails.tool_registry import tool_policy
 from src.smart_rag.tools.utilities.code_interpreter_payload import (
     _extract_workspace_name_from_filepath,
     _extract_workspace_name_hint,
@@ -778,6 +775,8 @@ def create_langchain_tools(
         tool_count=len(tools),
         tool_names=[t.name for t in tools],
     )
+    for tool in tools:
+        tool.metadata = tool_policy(tool.name, getattr(tool, "metadata", None))
     return tools, collector
 
 
@@ -1788,6 +1787,7 @@ def _create_connector_mcp_tools(
                         if a.get("parameter_schema")
                         else {}
                     ),
+                    "safety": "unknown" if isinstance(a, str) else str(a.get("safety") or "unknown").lower(),
                 }
                 for a in raw_actions
             ]
@@ -1817,6 +1817,7 @@ def _create_connector_mcp_tools(
                 action.get("description") or f"Connector action '{action_key}'"
             )
             action_parameter_schema = action.get("parameter_schema") or {}
+            action_safety = str(action.get("safety") or "unknown").lower()
             tool_name = build_connector_tool_name(connector_slug, action_key)
             args_schema = _build_args_schema_for_connector_tool(
                 tool_name,
@@ -1829,6 +1830,7 @@ def _create_connector_mcp_tools(
                 ak: str = action_key,
                 al: str = action_label,
                 ad: str = action_description,
+                safety: str = action_safety,
                 arg_schema: Any = args_schema,
                 tt: str = transport_type,
                 su: str = server_url,
@@ -1955,6 +1957,14 @@ def _create_connector_mcp_tools(
                     func=None,
                     coroutine=_execute_mcp,
                     args_schema=arg_schema,
+                    metadata={
+                        "tool_kind": "connector_action",
+                        "source": "connector",
+                        "connector_id": cid,
+                        "connector_name": cn,
+                        "action_key": ak,
+                        "safety": safety,
+                    },
                 )
 
             tools.append(_make_mcp_tool())

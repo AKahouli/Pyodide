@@ -5,16 +5,16 @@ import { ClientSession, Model, Types } from 'mongoose';
 import type { KnowledgePriority, KnowledgeRecommendationType } from '../domain/knowledge-steward';
 import { KnowledgeRecommendation, KnowledgeRecommendationDocument, type KnowledgeRecommendationStatus } from '../schemas/knowledge-recommendation.schema';
 
-export interface KnowledgeRecommendationInput { programId: string; scopeIds: string[]; sourceId: string; sourceVersionId: string; alertIds: string[]; type: KnowledgeRecommendationType; priority: KnowledgePriority; reason: string; impactSummary: string; proposedAction?: Record<string, unknown>; deduplicationKey: string; }
+export interface KnowledgeRecommendationInput { programId: string; scopeIds: string[]; documentId: string; alertIds: string[]; type: KnowledgeRecommendationType; priority: KnowledgePriority; reason: string; impactSummary: string; proposedAction?: Record<string, unknown>; deduplicationKey: string; }
 
 @Injectable()
 export class KnowledgeRecommendationRepositoryService {
   constructor(@InjectModel(KnowledgeRecommendation.name) private readonly model: Model<KnowledgeRecommendationDocument>) {}
 
-  async synchronize(sourceVersionId: string, recommendations: KnowledgeRecommendationInput[]): Promise<void> {
+  async synchronize(documentId: string, recommendations: KnowledgeRecommendationInput[]): Promise<void> {
     const keys = recommendations.map((item) => item.deduplicationKey);
     await Promise.all(recommendations.map((item) => this.synchronizeOne(item)));
-    await this.model.updateMany({ sourceVersionId: new Types.ObjectId(sourceVersionId), status: 'proposed', deduplicationKey: { $nin: keys } }, { $set: { status: 'superseded' } }).exec();
+    await this.model.updateMany({ documentId: new Types.ObjectId(documentId), status: 'proposed', deduplicationKey: { $nin: keys } }, { $set: { status: 'superseded' } }).exec();
   }
 
   async list(programId: string, filter: { scopeIds?: string[]; status?: KnowledgeRecommendationStatus; priority?: KnowledgePriority }): Promise<KnowledgeRecommendationDocument[]> {
@@ -65,7 +65,7 @@ export class KnowledgeRecommendationRepositoryService {
 
   private async synchronizeOne(item: KnowledgeRecommendationInput): Promise<void> {
     const key = { programId: new Types.ObjectId(item.programId), deduplicationKey: item.deduplicationKey };
-    const mutable = { scopeIds: item.scopeIds.map((id) => new Types.ObjectId(id)), sourceId: new Types.ObjectId(item.sourceId), sourceVersionId: new Types.ObjectId(item.sourceVersionId), alertIds: item.alertIds.map((id) => new Types.ObjectId(id)), type: item.type, priority: item.priority, reason: item.reason, impactSummary: item.impactSummary, proposedAction: item.proposedAction };
+    const mutable = { scopeIds: item.scopeIds.map((id) => new Types.ObjectId(id)), documentId: new Types.ObjectId(item.documentId), alertIds: item.alertIds.map((id) => new Types.ObjectId(id)), type: item.type, priority: item.priority, reason: item.reason, impactSummary: item.impactSummary, proposedAction: item.proposedAction };
     const existing = await this.model.findOne(key).select('_id').lean().exec();
     if (existing) {
       await this.model.updateOne({ _id: existing._id, status: 'proposed' }, { $set: mutable }).exec();

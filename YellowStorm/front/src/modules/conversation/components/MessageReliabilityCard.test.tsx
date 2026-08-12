@@ -1,6 +1,10 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { MessageReliabilityCard } from './MessageReliabilityCard';
+
+const rerunReliabilityEvaluationMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../api', () => ({ rerunReliabilityEvaluation: rerunReliabilityEvaluationMock }));
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
@@ -12,6 +16,8 @@ vi.mock('@/modules/localization', () => ({
         'reliability.notScored': 'Not enough source information',
         'reliability.insufficientEvidence': 'Not enough material.',
         'reliability.title': 'Answer reliability',
+        'reliability.expandAria': 'Expand answer reliability details',
+        'reliability.collapseAria': 'Collapse answer reliability details',
         'reliability.labels.mostly_supported': 'Mostly supported',
         'reliability.supportedCount': `${options?.supported} of ${options?.total} statements match the sources`,
         'reliability.claimsTrigger': `Claims (${options?.count})`,
@@ -35,6 +41,9 @@ vi.mock('@/modules/localization', () => ({
         'reliability.unavailable': 'Reliability check unavailable',
         'reliability.unavailableDescription': 'The answer could not be checked.',
         'reliability.notRecorded': 'No reliability evaluation was recorded.',
+        'reliability.rerun': 'Rerun evaluation',
+        'reliability.rerunAria': 'Rerun the original answer reliability evaluation',
+        'reliability.rerunQueued': 'Reliability evaluation queued.',
         'correction.attemptLabel': `Correction attempt ${options?.count}`,
         'correction.title': 'Answer correction',
         'correction.status.correcting': 'Correcting after verification',
@@ -79,6 +88,10 @@ const completedEvaluation = {
   evaluator: { modelId: 'secret-id', modelName: 'judge-name', evaluatorVersion: 'v1', promptVersion: 'p1' },
 };
 
+function expandReliability() {
+  fireEvent.click(screen.getByRole('button', { name: 'Expand answer reliability details' }));
+}
+
 describe('MessageReliabilityCard', () => {
   it('renders nothing without evaluation metadata', () => {
     const { container } = render(<MessageReliabilityCard />);
@@ -94,9 +107,72 @@ describe('MessageReliabilityCard', () => {
     expect(screen.queryByText(/0\/100/)).not.toBeInTheDocument();
   });
 
+  it('renders a dedicated rerun action and disables it while evaluation is pending', () => {
+    const { rerender } = render(<MessageReliabilityCard
+      conversationId='conversation-1'
+      messageId='message-1'
+      evaluation={{ status: 'insufficient_evidence' }}
+    />);
+    expect(screen.getByRole('button', { name: 'Rerun the original answer reliability evaluation' })).toBeEnabled();
+
+    rerender(<MessageReliabilityCard
+      conversationId='conversation-1'
+      messageId='message-1'
+      evaluation={{ status: 'pending' }}
+    />);
+    expect(screen.getByRole('button', { name: 'Rerun the original answer reliability evaluation' })).toBeDisabled();
+  });
+
+  it('places mobile actions on a second grid row without compressing the summary', () => {
+    render(<MessageReliabilityCard
+      conversationId='conversation-1'
+      messageId='message-1'
+      evaluation={completedEvaluation}
+    />);
+
+    const rerun = screen.getByRole('button', { name: 'Rerun the original answer reliability evaluation' });
+    expect(rerun.parentElement).toHaveClass('col-start-2', 'row-start-2', 'md:col-start-3', 'md:row-start-1');
+    expect(screen.getByText('Answer reliability').parentElement).toHaveClass('col-start-2', 'row-start-1');
+  });
+
+  it('queues the original answer evaluation from the dedicated action', async () => {
+    rerunReliabilityEvaluationMock.mockResolvedValueOnce({ messageId: 'message-1', reliabilityEvaluation: { status: 'pending' } });
+    render(<MessageReliabilityCard
+      conversationId='conversation-1'
+      messageId='message-1'
+      evaluation={{ status: 'failed' }}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rerun the original answer reliability evaluation' }));
+
+    await waitFor(() => expect(rerunReliabilityEvaluationMock).toHaveBeenCalledWith('conversation-1', 'message-1'));
+  });
+
+  it('disables a rerun while corrective work is active', () => {
+    render(<MessageReliabilityCard
+      conversationId='conversation-1'
+      messageId='message-1'
+      evaluation={{ status: 'failed' }}
+      correctionWorkflow={{
+        mode: 'corrective_transparent', status: 'correcting', activeVersion: 'original', threshold: 70,
+        attemptCount: 1, maxAttempts: 1, failureBehavior: 'publish_with_warning', showOriginalAnswer: true,
+        queuedAt: '2026-07-26T10:00:00.000Z',
+      }}
+    />);
+
+    expect(screen.getByRole('button', { name: 'Rerun the original answer reliability evaluation' })).toBeDisabled();
+  });
+
   it('groups every claim with statement groups collapsed by default', () => {
     const { container } = render(<MessageReliabilityCard evaluation={completedEvaluation} />);
     expect(container.firstChild).toHaveClass('mx-2', 'md:mx-4', 'rounded-xl');
+    expect(screen.getByRole('button', { name: 'Expand answer reliability details' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Evaluation history')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('meter', { name: 'Reliability score: 72 out of 100' })).toHaveLength(1);
+
+    expandReliability();
+
+    expect(screen.getByRole('button', { name: 'Collapse answer reliability details' })).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getAllByRole('meter', { name: 'Reliability score: 72 out of 100' })).toHaveLength(2);
     const evaluationTrigger = screen.getByRole('button', { name: 'Review statements for Original evaluation' });
     expect(evaluationTrigger).toHaveAttribute('aria-expanded', 'true');
@@ -112,12 +188,35 @@ describe('MessageReliabilityCard', () => {
     expect(screen.queryByText('judge-name')).not.toBeInTheDocument();
   });
 
+  it('uses caution colors through 70 and switches to green above the threshold', () => {
+    const { rerender } = render(<MessageReliabilityCard evaluation={{ ...completedEvaluation, score: 0 }} />);
+    let meter = screen.getByRole('meter', { name: 'Reliability score: 0 out of 100' });
+    expect(meter).toHaveAttribute('data-score-band', 'caution');
+    expect(meter.style.getPropertyValue('--reliability-score-color')).toContain('var(--reliability-critical) 100%');
+
+    rerender(<MessageReliabilityCard evaluation={{ ...completedEvaluation, score: 70 }} />);
+    meter = screen.getByRole('meter', { name: 'Reliability score: 70 out of 100' });
+    expect(meter).toHaveAttribute('data-score-band', 'caution');
+    expect(meter.style.getPropertyValue('--reliability-score-color')).toContain('var(--reliability-critical) 0%');
+
+    rerender(<MessageReliabilityCard evaluation={{ ...completedEvaluation, score: 71 }} />);
+    meter = screen.getByRole('meter', { name: 'Reliability score: 71 out of 100' });
+    expect(meter).toHaveAttribute('data-score-band', 'positive');
+    expect(meter.style.getPropertyValue('--reliability-score-color')).toContain('var(--reliability-positive) 100%');
+
+    rerender(<MessageReliabilityCard evaluation={{ ...completedEvaluation, score: 100 }} />);
+    meter = screen.getByRole('meter', { name: 'Reliability score: 100 out of 100' });
+    expect(meter).toHaveAttribute('data-score-band', 'positive');
+    expect(meter.style.getPropertyValue('--reliability-score-color')).toContain('var(--reliability-positive) 0%');
+  });
+
   it('keeps historical evaluations without complete claims readable', () => {
     render(<MessageReliabilityCard evaluation={{
       ...completedEvaluation,
       claims: undefined,
       claimCounts: { total: 2, supported: 1, partiallySupported: 0, unsupported: 1, contradicted: 0 },
     }} />);
+    expandReliability();
     expect(screen.getByText('Claims needing attention')).toBeInTheDocument();
     expect(screen.getByText('The source does not mention this.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Supported by sources (1)' })).not.toBeInTheDocument();
@@ -138,6 +237,8 @@ describe('MessageReliabilityCard', () => {
       onVersionChange={onVersionChange}
     />);
     expect(screen.queryByText('Answer correction')).not.toBeInTheDocument();
+    expect(screen.queryByText('Evaluation history')).not.toBeInTheDocument();
+    expandReliability();
     expect(screen.getByText('Evaluation history')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'View answer for Original evaluation' })).toBeDisabled();
   });
@@ -160,6 +261,7 @@ describe('MessageReliabilityCard', () => {
       displayedVersion='attempt:attempt-1'
       onVersionChange={onVersionChange}
     />);
+    expandReliability();
     expect(screen.getByText('Evaluation history')).toBeInTheDocument();
     expect(screen.getByText('Original evaluation')).toBeInTheDocument();
     expect(screen.getByText('Correction attempt 1')).toBeInTheDocument();
@@ -209,6 +311,7 @@ describe('MessageReliabilityCard', () => {
     />);
 
     expect(screen.getByText('Reliability check unavailable')).toBeInTheDocument();
+    expandReliability();
     expect(screen.getByText('Evaluation history')).toBeInTheDocument();
     expect(screen.getByText('Original evaluation')).toBeInTheDocument();
     expect(screen.getByText('Review each attempt.')).toBeInTheDocument();
@@ -234,6 +337,7 @@ describe('MessageReliabilityCard', () => {
       onVersionChange={vi.fn()}
     />);
 
+    expandReliability();
     expect(screen.getByRole('button', { name: 'View answer for Original evaluation' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'View answer for Correction attempt 1' })).toBeDisabled();
   });
@@ -254,6 +358,7 @@ describe('MessageReliabilityCard', () => {
       onVersionChange={onVersionChange}
     />);
 
+    expandReliability();
     fireEvent.click(screen.getByRole('button', { name: 'Review statements for Corrected after verification' }));
     expect(screen.getByText('Answer regenerated after verification')).toBeInTheDocument();
     expect(screen.getByRole('meter', { name: 'Reliability score: 88 out of 100' })).toHaveAttribute('aria-valuenow', '88');
@@ -289,6 +394,7 @@ describe('MessageReliabilityCard', () => {
       originalEvaluation={completedEvaluation}
       correctionWorkflow={{ ...workflow, status: 're_evaluating' }}
     />);
+    expandReliability();
     expect(screen.getByRole('status')).toHaveTextContent('Verifying the corrected answer');
 
     rerender(<MessageReliabilityCard

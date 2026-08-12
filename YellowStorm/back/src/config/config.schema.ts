@@ -5,13 +5,10 @@ export const configValidationSchema = Joi.object({
   GOVERNANCE_SCOPE_AUDIENCE_ENABLED: Joi.boolean().default(false),
   GOVERNED_SCOPE_CAROUSEL_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_GOVERNANCE_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_SOURCE_VERSIONING_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_WORKSPACE_EVENTS_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_GOVERNANCE_EVENT_CONSUMER_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_AUTO_SOURCE_CREATION_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_RECONCILIATION_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_OUTBOX_DISPATCH_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_PERMANENT_SOURCE_DELETION_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_VALIDITY_INTELLIGENCE_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_KNOWLEDGE_ASSESSMENT_ENABLED: Joi.boolean().default(false),
   // Application
@@ -45,6 +42,30 @@ export const configValidationSchema = Joi.object({
   POSTGRES_MAX_POOL_SIZE: Joi.number().min(1).max(100).default(10),
   POSTGRES_IDLE_TIMEOUT: Joi.number().min(0).default(30000),
   POSTGRES_CONNECT_TIMEOUT: Joi.number().min(1000).default(10000),
+
+  // Semantic Model PostgreSQL / Apache AGE
+  SEMANTIC_MODELS_ENABLED: Joi.boolean().default(false),
+  SEMANTIC_MODELS_AUTO_PROVISION: Joi.boolean().default(false),
+  SEMANTIC_PG_HOST: Joi.string().when('SEMANTIC_MODELS_ENABLED', {
+    is: true,
+    then: Joi.required(),
+    otherwise: Joi.optional().allow(''),
+  }),
+  SEMANTIC_PG_PORT: Joi.number().min(1).max(65535).default(5432),
+  SEMANTIC_PG_USER: Joi.string().when('SEMANTIC_MODELS_ENABLED', {
+    is: true,
+    then: Joi.required(),
+    otherwise: Joi.optional().allow(''),
+  }),
+  SEMANTIC_PG_PASSWORD: Joi.string().allow('').optional(),
+  SEMANTIC_PG_DATABASE: Joi.string().when('SEMANTIC_MODELS_ENABLED', {
+    is: true,
+    then: Joi.required(),
+    otherwise: Joi.optional().allow(''),
+  }),
+  SEMANTIC_PG_SSL: Joi.boolean().default(false),
+  SEMANTIC_PG_POOL_MAX: Joi.number().min(1).max(50).default(10),
+  SEMANTIC_AGE_GRAPH: Joi.string().pattern(/^[a-z][a-z0-9_]{0,62}$/).default('semantic_model_graph'),
 
   // Encryption
   ENCRYPTION_KEY: Joi.string().hex().length(64).when('NODE_ENV', {
@@ -264,6 +285,7 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_MAX_CONCURRENT_PER_FLOW: Joi.number().min(1).max(100).default(5),
   PLAYBOOK_MAX_CONCURRENT_PER_PROVIDER: Joi.number().min(1).max(500).default(25),
   PLAYBOOK_MAX_CONCURRENT_PER_MODEL: Joi.number().min(1).max(500).default(10),
+  PLAYBOOK_DYNAMIC_REASONING_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_ASYNC_DESIGN_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_MCP_ASSISTANT_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),

@@ -1,6 +1,7 @@
 import { forwardRef, Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { createHash } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { AgentService } from '@modules/agent/agent.service';
 import {
@@ -81,6 +82,8 @@ import {
 } from '../execution/runtime/playbook-execution-single-step-prep.service';
 import { FlowHitlMemory, FlowHitlMemoryDocument } from '../schemas/playbook-flow-hitl-memory.schema';
 import { FlowAccessService } from '../domain/flow-access.service';
+import { PlaybookExecutionSettingsResolverService } from './playbook-execution-settings-resolver.service';
+import { FlowDynamicReasoningAttempt, FlowDynamicReasoningAttemptDocument } from '../schemas/playbook-flow-dynamic-reasoning-attempt.schema';
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
 const RUNTIME_AGENT_METADATA_KEYS = [
@@ -99,6 +102,29 @@ const RUNTIME_AGENT_METADATA_KEYS = [
 
 export function isTerminalStatus(status: string): boolean {
   return (TERMINAL_STATUSES as readonly string[]).includes(status);
+}
+
+export function sanitizeExecutionSnapshotForResponse(
+  snapshot?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (!snapshot) return undefined;
+  const { playbookPlanner: _planner, ...safeSnapshot } = snapshot;
+  return safeSnapshot;
+}
+
+export function sanitizeExecutionForResponse(
+  execution: IFlowExecutionResponse & {
+    snapshot?: Record<string, unknown>;
+    playbookPlannerSnapshot?: Record<string, unknown>;
+  },
+): IFlowExecutionResponse {
+  const { playbookPlannerSnapshot: _plannerSnapshot, ...safeExecution } = execution;
+  return {
+    ...safeExecution,
+    ...(safeExecution.snapshot
+      ? { snapshot: sanitizeExecutionSnapshotForResponse(safeExecution.snapshot) }
+      : {}),
+  } as IFlowExecutionResponse;
 }
 
 function stripRuntimeAgentMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
@@ -251,28 +277,16 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     @Optional() private readonly accessService?: FlowAccessService,
     @Optional() private readonly hitlResumeService?: PlaybookExecutionHitlResumeService,
     @Optional() private readonly singleStepPrepService?: PlaybookExecutionSingleStepPrepService,
+    @Optional() private readonly executionSettingsResolver?: PlaybookExecutionSettingsResolverService,
+    @Optional()
+    @InjectModel(FlowDynamicReasoningAttempt.name)
+    private readonly dynamicReasoningAttemptModel?: Model<FlowDynamicReasoningAttemptDocument>,
   ) {
     this.hitlResumeService?.bindExecutionHost({
       isRuntimeAvailable: () => this.isRuntimeAvailable(),
       resumeApprovalRuntime: (request, callback) => this.resumeApprovalRuntime(request, callback),
       resumeFromStepRuntime: (request, callback) => this.resumeFromStepRuntime(request, callback),
-      startDurableResumeStream: (execution, resumePayload) => {
-        this.callGrpcRun(
-          String(execution._id),
-          String(execution.flowId),
-          String(execution.ownerId),
-          null,
-          {
-            ...(execution.inputContext ?? {}),
-            __playbook_resume: resumePayload,
-          },
-          execution.snapshot,
-        ).catch((err) => {
-          this.logger.error(
-            `Durable HITL resume stream failed for execution ${String(execution._id)}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
-      },
+      scheduleDurableResume: (ownerId) => this.scheduleQueueDrain(ownerId),
     });
   }
 
@@ -850,10 +864,18 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       this.assertSingleStepControlDependenciesSupported(flow.nodes, flow.controlEdges, singleStepTaskId);
     }
 
-    const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
-    const maxDepth = this.configService.get<number>('playbook-flow.executionQueueMaxDepth', 50);
-    const recursionLimit = flow.settings?.recursionLimit || 25;
-    const maxParallelism = flow.settings?.maxParallelism || 5;
+    const effectiveExecutionSettings = this.executionSettingsResolver
+      ? await this.executionSettingsResolver.resolve(flow.settings)
+      : null;
+    const maxConcurrent = effectiveExecutionSettings?.maxConcurrentPerUser
+      ?? this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
+    const maxDepth = effectiveExecutionSettings?.executionQueueMaxDepth
+      ?? this.configService.get<number>('playbook-flow.executionQueueMaxDepth', 50);
+    const recursionLimit = effectiveExecutionSettings
+      ? Math.min(flow.settings?.recursionLimit || effectiveExecutionSettings.recursionLimitDefault, effectiveExecutionSettings.recursionLimitMax)
+      : flow.settings?.recursionLimit || 25;
+    const maxParallelism = effectiveExecutionSettings?.effectiveExecutionParallelism
+      ?? (flow.settings?.maxParallelism || 5);
 
     if (idempotencyKey) {
       const reservation = await this.idempotencyService.reserve(ownerId, idempotencyKey, {
@@ -871,7 +893,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             'Idempotency record points to a missing execution. Retry with a new key.',
           );
         }
-        return existingExecution.toJSON() as unknown as IFlowExecutionResponse;
+        return sanitizeExecutionForResponse(
+          existingExecution.toJSON() as unknown as IFlowExecutionResponse,
+        );
       }
     }
 
@@ -928,6 +952,29 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     } else {
       snapshot = executableSnapshot;
     }
+    const hasDynamicReasoningNode = ((snapshot.nodes ?? []) as FlowNode[])
+      .some((node) => node.dynamicReasoning?.enabled === true);
+    const planner = effectiveExecutionSettings?.dynamicReasoningEnabled && hasDynamicReasoningNode
+      ? await this.agentService.findPlaybookPlannerById(
+        effectiveExecutionSettings.dynamicReasoning.plannerAgentId || '',
+      )
+      : null;
+    const playbookPlannerSnapshot = planner ? {
+      agentId: planner.agentId,
+      agentTypeSlug: planner.agentTypeSlug,
+      model: planner.model,
+      systemPrompt: planner.instruction,
+      temperature: planner.temperature,
+      omitTemperature: false,
+      promptHash: `sha256:${createHash('sha256').update(planner.instruction).digest('hex')}`,
+      agentRevision: planner.agentRevision,
+      planningContractVersion: '1',
+    } : undefined;
+    snapshot = {
+      ...snapshot,
+      ...(effectiveExecutionSettings ? { playbookExecutionSettings: effectiveExecutionSettings } : {}),
+      ...(playbookPlannerSnapshot ? { playbookPlanner: playbookPlannerSnapshot } : {}),
+    };
 
     const enabledAutopilot = advisorAutopilotEnabled ?? (flow as any).advisorAutopilotEnabled ?? false;
     const enabledReflection = reflectionEnabled ?? (flow as any).reflectionEnabled ?? false;
@@ -939,6 +986,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       status: 'queued',
       recursionLimit,
       maxParallelism,
+      playbookExecutionSettings: effectiveExecutionSettings ?? undefined,
+      playbookPlannerSnapshot,
       inputContext,
       idempotencyKey,
       snapshot,
@@ -983,7 +1032,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
     this.scheduleQueueDrain(ownerId);
 
-    return saved.toJSON() as unknown as IFlowExecutionResponse;
+    return sanitizeExecutionForResponse(saved.toJSON() as unknown as IFlowExecutionResponse);
   }
 
   private assertSingleStepSupported(
@@ -1128,6 +1177,42 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const recursionLimit = snapshot.settings?.recursionLimit || 25;
       const maxParallelism = snapshot.settings?.maxParallelism || 5;
       const normalizedOwnerId = typeof ownerId === 'string' ? ownerId : String(ownerId);
+      const effectiveExecutionSettings = snapshot.playbookExecutionSettings
+        ?? (this.executionSettingsResolver ? await this.executionSettingsResolver.resolve(snapshot.settings) : null);
+      const hasDynamicReasoningNode = (snapshot.nodes as any[]).some(
+        (node) => node.dynamicReasoning?.enabled === true,
+      );
+      const persistedPlanner = snapshot.playbookPlanner as Record<string, unknown> | undefined;
+      const planner = !persistedPlanner && effectiveExecutionSettings?.dynamicReasoningEnabled && hasDynamicReasoningNode
+        ? await this.agentService.findPlaybookPlannerById(
+          effectiveExecutionSettings.dynamicReasoning.plannerAgentId || '',
+        )
+        : null;
+      const plannerSnapshot = persistedPlanner ? {
+        agent_id: persistedPlanner.agentId,
+        agent_type_slug: persistedPlanner.agentTypeSlug,
+        model: persistedPlanner.model,
+        system_prompt: persistedPlanner.systemPrompt,
+        temperature: persistedPlanner.temperature,
+        omit_temperature: persistedPlanner.omitTemperature,
+        prompt_hash: persistedPlanner.promptHash,
+        agent_revision: persistedPlanner.agentRevision,
+      } : planner ? {
+        agent_id: planner.agentId,
+        agent_type_slug: planner.agentTypeSlug,
+        model: planner.model,
+        system_prompt: planner.instruction,
+        temperature: planner.temperature,
+        omit_temperature: false,
+        prompt_hash: `sha256:${createHash('sha256').update(planner.instruction).digest('hex')}`,
+        agent_revision: planner.agentRevision,
+      } : undefined;
+      if (effectiveExecutionSettings) {
+        await this.executionModel.updateOne(
+          { _id: executionId },
+          { $set: { playbookExecutionSettings: effectiveExecutionSettings } },
+        ).exec();
+      }
 
       // Resolve agents referenced by nodes and enrich metadata
       const agentIds = new Set<string>();
@@ -1461,6 +1546,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           } : undefined,
           model_id: n.modelId || '',
           metadata: toGrpcStruct(buildGrpcNodeMetadata(n, snapshot as Record<string, unknown>)),
+          dynamic_reasoning: n.dynamicReasoning ? { enabled: n.dynamicReasoning.enabled === true } : undefined,
         })),
         control_edges: (snapshot.controlEdges as any[]).map((e) => ({
           id: e.id,
@@ -1480,8 +1566,17 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       },
       input_context: toGrpcStruct(runtimeInputContext),
         settings: {
-          recursion_limit: recursionLimit,
-          max_parallelism: maxParallelism,
+          recursion_limit: effectiveExecutionSettings
+            ? Math.min(recursionLimit, effectiveExecutionSettings.recursionLimitMax)
+            : recursionLimit,
+          max_parallelism: effectiveExecutionSettings?.effectiveExecutionParallelism ?? maxParallelism,
+          dynamic_reasoning_policy: effectiveExecutionSettings?.dynamicReasoningEnabled ? {
+            max_work_nodes: effectiveExecutionSettings.dynamicReasoning.maxWorkNodes,
+            max_parallelism: effectiveExecutionSettings.dynamicReasoning.maxParallelism,
+            max_depth: effectiveExecutionSettings.dynamicReasoning.maxDepth,
+            max_repair_attempts: effectiveExecutionSettings.dynamicReasoning.maxRepairAttempts,
+          } : undefined,
+          playbook_planner: plannerSnapshot,
         },
         seeded_task_outputs: seededTaskOutputs.map((entry) => ({
           node_id: entry.nodeId,
@@ -1626,6 +1721,69 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     };
   }
 
+  async findRecentByAccessibleFlowIds(
+    flowIds: string[],
+    statuses: string[] | undefined,
+    limit: number,
+  ): Promise<Array<{
+    executionId: string;
+    flowId: string;
+    status: string;
+    startedAt?: Date;
+    updatedAt?: Date;
+    endedAt?: Date;
+    waitingForHumanInput: boolean;
+    task?: { taskId: string; iteration: number; status: string; taskName?: string };
+  }>> {
+    if (flowIds.length === 0) return [];
+    const filter: Record<string, unknown> = { flowId: { $in: flowIds } };
+    if (statuses?.length) filter.status = { $in: statuses };
+    const executions = await this.executionModel
+      .find(filter)
+      .select('_id flowId status startedAt updatedAt endedAt pendingApproval')
+      .sort({ updatedAt: -1, createdAt: -1, _id: 1 })
+      .limit(limit)
+      .lean()
+      .exec();
+    const executionIds = executions.map((execution) => String(execution._id));
+    const taskResults = executionIds.length === 0
+      ? []
+      : await this.taskResultModel
+        .find({ executionId: { $in: executionIds }, status: { $in: ['failed', 'running'] } })
+        .select('executionId taskId iteration status generatedNodeTitle startedAt')
+        .sort({ startedAt: -1, iteration: -1 })
+        .lean()
+        .exec();
+    const taskByExecution = new Map<string, (typeof taskResults)[number]>();
+    for (const task of taskResults) {
+      const current = taskByExecution.get(task.executionId);
+      if (!current || (task.status === 'failed' && current.status !== 'failed')) {
+        taskByExecution.set(task.executionId, task);
+      }
+    }
+    return executions.map((execution) => {
+      const executionId = String(execution._id);
+      const task = taskByExecution.get(executionId);
+      return {
+        executionId,
+        flowId: execution.flowId,
+        status: execution.status,
+        startedAt: execution.startedAt,
+        updatedAt: execution.updatedAt,
+        endedAt: execution.endedAt,
+        waitingForHumanInput: execution.status === 'pending_approval' || Boolean(execution.pendingApproval),
+        ...(task ? {
+          task: {
+            taskId: task.taskId,
+            iteration: task.iteration,
+            status: task.status,
+            taskName: task.generatedNodeTitle,
+          },
+        } : {}),
+      };
+    });
+  }
+
   async findOne(executionId: string, ownerId: string): Promise<IFlowExecutionDetailResponse> {
     const execution = await this.findExecutionWithSnapshot(executionId);
     if (!execution) {
@@ -1648,10 +1806,17 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       .sort({ decidedAt: 1 })
       .lean();
     const hitlEvents = execution.hitlEvents ?? [];
+    const dynamicReasoningAttempts = this.dynamicReasoningAttemptModel
+      ? await this.dynamicReasoningAttemptModel.find({ executionId }).sort({ createdAt: 1 }).lean().exec()
+      : [];
+    const executionJson = sanitizeExecutionForResponse(execution.toJSON() as unknown as IFlowExecutionResponse & {
+      snapshot?: Record<string, unknown>;
+      playbookPlannerSnapshot?: Record<string, unknown>;
+    });
 
       return {
-        ...(execution.toJSON() as unknown as IFlowExecutionResponse),
-        replayPlanningByTask: ((execution.toJSON() as unknown as IFlowExecutionResponse).replayPlanningByTask ?? null),
+        ...executionJson,
+        replayPlanningByTask: executionJson.replayPlanningByTask ?? null,
         taskResults: taskResults.map((r): IFlowTaskResultResponse => {
         const doc = r as unknown as Record<string, unknown>;
         return {
@@ -1682,6 +1847,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           judgeError: (r as any).judgeError ?? null,
           judgeHistory: Array.isArray((r as any).judgeHistory) ? (r as any).judgeHistory : [],
           hitlHistory: hitlEvents.filter((event) => event.nodeId === r.taskId && event.iteration === r.iteration),
+          parentTaskId: r.parentTaskId,
+          runtimeSubgraphId: r.runtimeSubgraphId,
+          generatedLocalNodeId: r.generatedLocalNodeId,
+          generatedNodeTitle: r.generatedNodeTitle,
         };
       }),
       routerDecisions: routerDecisions.map((r) => ({
@@ -1692,11 +1861,17 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         label: r.label,
         decidedAt: r.decidedAt,
       })),
+      dynamicReasoningAttempts: dynamicReasoningAttempts.map((attempt) => ({
+        ...attempt,
+        id: String((attempt as unknown as Record<string, unknown>)._id),
+      })),
     };
   }
 
   private async drainQueue(ownerId: string): Promise<void> {
-    const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
+    const maxConcurrent = this.executionSettingsResolver
+      ? (await this.executionSettingsResolver.resolve()).maxConcurrentPerUser
+      : this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
     if (!this.isRuntimeAvailable()) return;
 
     while (true) {
@@ -1781,8 +1956,14 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       this.logger.log(`Drain: starting queued execution ${next.id} for owner ${ownerId}`);
 
       const replaySource = executionRecord.replaySource as { executionId: string; taskId: string; iteration?: number } | undefined;
+      const dispatchInputContext =
+        (executionRecord.inputContext as Record<string, unknown> | undefined) || next.inputContext || {};
+      const isDurableResume = Object.prototype.hasOwnProperty.call(
+        dispatchInputContext,
+        '__playbook_resume',
+      );
 
-      if (replaySource) {
+      if (replaySource && !isDurableResume) {
         this.logger.log(
           `Drain: dispatching replay execution ${next.id} from source ${replaySource.executionId} task ${replaySource.taskId} iteration ${replaySource.iteration ?? 0} via RunFromCheckpoint`,
         );
@@ -1790,7 +1971,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           next.id, next.flowId, ownerId,
           replaySource.executionId,
           snapshot || {},
-          (executionRecord.inputContext as Record<string, unknown> | undefined) || next.inputContext || {},
+          dispatchInputContext,
           replaySource.taskId,
           replaySource.iteration ?? 0,
         ).catch((err) => {
@@ -1803,7 +1984,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           next.flowId,
           ownerId,
           flow,
-          (executionRecord.inputContext as Record<string, unknown> | undefined) || next.inputContext,
+          dispatchInputContext,
           snapshot,
         ).catch((err) => {
           this.logger.error(`Drain: execution ${next.id} failed to start`, err instanceof Error ? err.stack : undefined);
@@ -1854,7 +2035,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       });
     }
 
-    return execution.toJSON() as unknown as IFlowExecutionResponse;
+    return sanitizeExecutionForResponse(execution.toJSON() as unknown as IFlowExecutionResponse);
   }
 
   async delete(executionId: string, ownerId: string): Promise<void> {
@@ -1971,12 +2152,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
 
-    const latestFlow = await this.prepareExecutionStartFlow(String(sourceExecution.flowId), ownerId);
-    const executableSnapshot = this.buildExecutableSnapshot(
-      this.builderService.buildSnapshot(latestFlow as any),
-      String(sourceExecution.flowId),
+    const snapshot = structuredClone(
+      sourceExecution.snapshot as Record<string, unknown>,
     );
-    const snapshot = executableSnapshot as unknown as Record<string, unknown>;
     const nodes = (snapshot.nodes || []) as Array<Record<string, unknown>>;
     const targetNode = nodes.find((n) => n.id === payload.taskId);
     if (!targetNode || targetNode.kind !== 'step') {
@@ -1993,13 +2171,17 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const recursionLimit = Number(snapshotSettings.recursionLimit) || 25;
     const maxParallelism = Number(snapshotSettings.maxParallelism) || 5;
 
+    const sourceInputContext = structuredClone(sourceExecution.inputContext ?? {});
+    delete sourceInputContext.__playbook_resume;
+    delete sourceInputContext.__playbook_hitl_memory;
+
     const newExecution = new this.executionModel({
       flowId: sourceExecution.flowId,
       ownerId,
       status: 'queued',
       recursionLimit,
       maxParallelism,
-      inputContext: sourceExecution.inputContext,
+      inputContext: sourceInputContext,
       snapshot,
       replaySource: {
         executionId: sourceExecution.id,
@@ -2013,7 +2195,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       `Created replay execution ${newExecution.id} from source ${sourceExecution.id} task ${payload.taskId} iteration ${iteration}`,
     );
 
-    const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
+    const maxConcurrent = this.executionSettingsResolver
+      ? (await this.executionSettingsResolver.resolve()).maxConcurrentPerUser
+      : this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
     const maxDepth = this.configService.get<number>('playbook-flow.executionQueueMaxDepth', 50);
     await this.queueService.admit(
       ownerId,
@@ -2023,7 +2207,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     );
     this.scheduleQueueDrain(ownerId);
 
-    return newExecution.toJSON() as unknown as IFlowExecutionResponse;
+    return sanitizeExecutionForResponse(newExecution.toJSON() as unknown as IFlowExecutionResponse);
   }
 
   private async callGrpcRunFromCheckpoint(

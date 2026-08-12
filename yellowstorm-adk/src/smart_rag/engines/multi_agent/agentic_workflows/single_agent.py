@@ -13,7 +13,6 @@ from src.schema.chatbot_schema import RunAgentTeamRequest
 from src.smart_rag.agents.core.document_helpers import DocumentHelpers
 from src.smart_rag.engines.multi_agent.config import langfuse_client
 from src.smart_rag.engines.multi_agent.team_orchestrator import AutoAgentGenerationTeam
-from src.guardrails.prompt_injection_guardrail import PromptInjectionGuardrail
 from src.corrective_replay import build_corrective_replay_user_message
 
 logger = get_logger("api.routers.agentic_rag.single_agent")
@@ -86,29 +85,9 @@ async def handle_single_agent_workflow(
         )
 
         image_input = user_request.image_input if hasattr(user_request, 'image_input') else None
-        guarded = await PromptInjectionGuardrail().check_input(
-            text=user_request.message,
-            agent_config=agent_data,
-            channel=getattr(user_request, "channel", "web"),
-        )
-        if guarded.blocked:
-            single_agent_span.update(output={"execution_completed": False, "guardrail_blocked": True})
-            await q.put(team.streaming_formatter.format_streaming_event(
-                agent_id=agent_data.get("id", "no_id"),
-                agent_name=agent_data.get("name", "agent"),
-                agent_type="agent",
-                chunk=guarded.text,
-                message_id=session_id,
-                content_type="text",
-                guardrail_decision=guarded.decision_metadata(),
-            ))
-            await q.put(None)
-            return
-
-        q.include_private_tool_results = user_request.correction_replay_context is not None
         await team.run_single_agent(
             user_prompt=build_corrective_replay_user_message(
-                guarded.text,
+                user_request.message,
                 user_request.correction_replay_context,
             ),
             session_id=session_id,

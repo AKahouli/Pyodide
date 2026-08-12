@@ -108,6 +108,38 @@ describe('query-backed playbook stream dispatcher', () => {
     ]);
   });
 
+  it('keeps accepted Dynamic Reasoning topology in the query execution cache', () => {
+    queryClient.setQueryData(playbookKeys.execution('exec-1'), makeExecution());
+
+    dispatchPlaybookStreamEvent({
+      type: 'playbook_runtime_subgraph_created',
+      data: {
+        executionId: 'exec-1',
+        parentTaskId: 'task-1',
+        parentIteration: 0,
+        phase: 'RuntimeSubgraphCreated',
+        subgraphId: 'subgraph-1',
+        acceptedRevision: 0,
+        plan: {
+          schemaVersion: '1',
+          nodes: [{ id: 'collect-data', title: 'Collect data', instruction: 'Collect', dependsOn: [] }],
+          synthesis: { id: 'synthesis', title: 'Synthesize', instruction: 'Synthesize', dependsOn: ['collect-data'], kind: 'synthesis' },
+        },
+      },
+    }, { queryClient });
+
+    expect(queryClient.getQueryData<PlaybookExecution>(playbookKeys.execution('exec-1'))?.dynamicReasoningAttempts).toEqual([
+      expect.objectContaining({
+        parentTaskId: 'task-1',
+        status: 'running',
+        subgraphId: 'subgraph-1',
+        acceptedPlan: expect.objectContaining({
+          nodes: [expect.objectContaining({ title: 'Collect data' })],
+        }),
+      }),
+    ]);
+  });
+
   it('normalizes automatic judge SSE metrics in the query execution cache', () => {
     queryClient.setQueryData(playbookKeys.execution('exec-1'), makeExecution({
       taskResults: [{ taskId: 'task-1', status: 'completed', judgeStatus: 'evaluating', judgeResult: null } as PlaybookExecution['taskResults'][number]],

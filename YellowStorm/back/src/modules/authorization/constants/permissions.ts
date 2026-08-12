@@ -101,6 +101,7 @@ export const Permissions = {
   CONNECTORS_CREATE: 'connectors.create',
   CONNECTORS_UPDATE: 'connectors.update',
   CONNECTORS_DELETE: 'connectors.delete',
+  CONNECTORS_TRANSFER_SECURITY: 'connectors.transfer_security',
   CONNECTORS_ALL: 'connectors.*',
 
   // Connected App Management
@@ -136,8 +137,8 @@ export const Permissions = {
   GOVERNANCE_READ: 'governance.read',
   GOVERNANCE_PROGRAMS_MANAGE: 'governance.programs.manage',
   GOVERNANCE_SCOPES_MANAGE: 'governance.scopes.manage',
-  GOVERNANCE_SOURCES_EDIT: 'governance.sources.edit',
-  GOVERNANCE_SOURCES_REVIEW: 'governance.sources.review',
+  GOVERNANCE_DOCUMENTS_EDIT: 'governance.documents.edit',
+  GOVERNANCE_DOCUMENTS_REVIEW: 'governance.documents.review',
   GOVERNANCE_MEMBERSHIPS_MANAGE: 'governance.memberships.manage',
   GOVERNANCE_DEPLOYMENTS_MANAGE: 'governance.deployments.manage',
   GOVERNANCE_DRY_RUNS_EXECUTE: 'governance.dry_runs.execute',
@@ -145,6 +146,15 @@ export const Permissions = {
   GOVERNANCE_PUBLISH: 'governance.publish',
   GOVERNANCE_METRICS_READ: 'governance.metrics.read',
   GOVERNANCE_ALL: 'governance.*',
+
+  // Semantic Models
+  SEMANTIC_MODELS_READ: 'semantic_models.read',
+  SEMANTIC_MODELS_CREATE: 'semantic_models.create',
+  SEMANTIC_MODELS_UPDATE: 'semantic_models.update',
+  SEMANTIC_MODELS_DELETE: 'semantic_models.delete',
+  SEMANTIC_MODELS_PUBLISH: 'semantic_models.publish',
+  SEMANTIC_MODELS_MEMBERSHIPS_MANAGE: 'semantic_models.memberships.manage',
+  SEMANTIC_MODELS_ALL: 'semantic_models.*',
 
   // Super Admin
   SUPER_ADMIN: '*',
@@ -289,8 +299,8 @@ const ALL_PERMISSIONS = new Set<string>([
   'governance.read',
   'governance.programs.manage',
   'governance.scopes.manage',
-  'governance.sources.edit',
-  'governance.sources.review',
+  'governance.documents.edit',
+  'governance.documents.review',
   'governance.memberships.manage',
   'governance.deployments.manage',
   'governance.dry_runs.execute',
@@ -298,6 +308,15 @@ const ALL_PERMISSIONS = new Set<string>([
   'governance.publish',
   'governance.metrics.read',
   'governance.*',
+
+  // Semantic Models
+  'semantic_models.read',
+  'semantic_models.create',
+  'semantic_models.update',
+  'semantic_models.delete',
+  'semantic_models.publish',
+  'semantic_models.memberships.manage',
+  'semantic_models.*',
 
   // Super Admin
   '*',

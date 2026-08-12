@@ -1,5 +1,9 @@
 # ADR-002: Logical sources have immutable versions
 
+## Status
+
+Superseded by ADR-011 on 2026-07-30.
+
 ## Context
 
 A governance source needs stable identity while its captured content changes.

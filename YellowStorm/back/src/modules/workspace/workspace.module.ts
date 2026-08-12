@@ -51,6 +51,7 @@ import { IndexingModule } from '../indexing/indexing.module';
 import { UserModule } from '../user/user.module';
 import workspaceConfig from '../../config/workspace.config';
 import { IntegrationEventsModule } from '../integration-events/integration-events.module';
+import { SemanticModelModule } from '../semantic-model/semantic-model.module';
 
 @Module({
   imports: [
@@ -72,6 +73,7 @@ import { IntegrationEventsModule } from '../integration-events/integration-event
     DocumentModule,
     LoggerModule,
     IntegrationEventsModule,
+    forwardRef(() => SemanticModelModule),
   ],
   controllers: [
     WorkspaceController,

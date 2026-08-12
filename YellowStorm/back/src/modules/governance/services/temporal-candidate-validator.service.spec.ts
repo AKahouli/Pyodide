@@ -1,9 +1,9 @@
 import { TemporalCandidateValidatorService } from './temporal-candidate-validator.service';
-import type { SourceValidityEvidence } from '../domain/source-validity';
+import type { ValidityEvidence } from '../domain/document-validity';
 import type { TemporalCandidate } from '../domain/temporal-candidate';
 import type { ConfigService } from '@nestjs/config';
 
-const evidence: SourceValidityEvidence = { id: 'e1', field: 'effectiveUntil', value: '2027-12-31', origin: 'document_metadata', confidence: 0.9 };
+const evidence: ValidityEvidence = { id: 'e1', field: 'effectiveUntil', value: '2027-12-31', origin: 'document_metadata', confidence: 0.9, documentId: 'document-1' };
 const candidate = (patch: Partial<TemporalCandidate> = {}): TemporalCandidate => ({ candidateId: 'c1', field: 'effectiveUntil', value: '2027-12-31', interpretation: 'business_end', confidence: 0.9, evidenceRefs: ['e1'], reasoningSummary: 'Explicit end date', criticality: 'high', ...patch });
 
 describe('TemporalCandidateValidatorService', () => {

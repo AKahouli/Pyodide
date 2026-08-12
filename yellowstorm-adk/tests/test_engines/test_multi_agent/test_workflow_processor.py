@@ -37,6 +37,7 @@ class TestWorkflowProcessor:
         ) as mock_auto:
             await execute_workflow(team, request, queue, trace)
         mock_auto.assert_awaited_once_with(team, request, queue, trace)
+        assert queue.include_tool_results is True
 
     @pytest.mark.asyncio
     async def test_execute_workflow_routes_manual_mode(self):

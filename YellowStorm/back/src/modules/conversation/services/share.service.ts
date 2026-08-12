@@ -41,7 +41,11 @@ function sanitizePublicShareMessages(messages: readonly EmbeddedMessage[]): Embe
     // explicitly typed components, while user text remains shareable.
     ...(message.conversationType === 'user' && content ? { content } : {}),
     ...(components ? {
-      components: components.filter((component) => publicShareComponentTypes.has(component.type)),
+      components: components
+        .filter((component) => publicShareComponentTypes.has(component.type))
+        .map((component) => component.type === 'task'
+          ? { ...component, data: { ...component.data, items: [] } }
+          : component),
     } : {}),
   }));
 }

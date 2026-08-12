@@ -29,6 +29,7 @@ export default registerAs('playbook-flow', () => ({
   maxConcurrentPerFlow: Number.parseInt(process.env.PLAYBOOK_MAX_CONCURRENT_PER_FLOW || '5', 10),
   maxConcurrentPerProvider: Number.parseInt(process.env.PLAYBOOK_MAX_CONCURRENT_PER_PROVIDER || '25', 10),
   maxConcurrentPerModel: Number.parseInt(process.env.PLAYBOOK_MAX_CONCURRENT_PER_MODEL || '10', 10),
+  dynamicReasoningEnabled: process.env.PLAYBOOK_DYNAMIC_REASONING_ENABLED === 'true',
   asyncDesignEnabled: process.env.PLAYBOOK_ASYNC_DESIGN_ENABLED === 'true',
   mcpAssistantEnabled: process.env.PLAYBOOK_MCP_ASSISTANT_ENABLED === 'true',
   mcpServerUrl: process.env.PLAYBOOK_MCP_SERVER_URL || 'http://localhost:8025/mcp',

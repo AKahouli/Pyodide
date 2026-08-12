@@ -73,8 +73,8 @@ export function ViewerToolbar({ documentId }: ViewerToolbarProps) {
         </button>
 
         <form onSubmit={handleSubmit} className='flex items-center gap-1.5 text-[11px] uppercase tracking-wide'>
-          <span>{t('toolbar.pageLabel')}</span>
-          <input type='number' min={1} max={totalPages} value={pageInput} onChange={(event) => setPageInput(event.target.value)} className='h-7 w-14 rounded border border-border bg-background text-center text-sm font-mono' />
+          <label htmlFor={`pdf-page-${documentId}`}>{t('toolbar.pageLabel')}</label>
+          <input id={`pdf-page-${documentId}`} name='pdf-page' type='number' min={1} max={totalPages} value={pageInput} onChange={(event) => setPageInput(event.target.value)} className='h-7 w-14 rounded border border-border bg-background text-center text-sm font-mono' />
           <span>/ {totalPages}</span>
         </form>
 

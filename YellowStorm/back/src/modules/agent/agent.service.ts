@@ -26,8 +26,8 @@ import { ConnectedAppTokenService } from '../connected-app/services/connected-ap
 import { TeamService } from '../team/team.service';
 import {
   GuardrailsSettingsService,
+  normalizeAgentGuardrails,
   normalizeAdminGuardrailsSettings,
-  normalizePromptInjectionGuardrails,
 } from '../guardrails/services/guardrails-settings.service';
 import { normalizeWidgetSettings } from './constants/widget-default-settings';
 import { AgentRepository, CreateAgentInput, UpdateAgentInput } from './repositories/agent.repository';
@@ -40,6 +40,27 @@ const MANAGER_SLUG = 'manager';
 const MONO_AGENT_SLUG = 'mono-agent';
 /** Agent-type slug for human agents exposed to third-party integrations. */
 const HUMAIN_AGENT_TYPE_SLUG = 'humain';
+export const PLAYBOOK_PLANNER_AGENT_TYPE_SLUG = 'playbook_planner';
+
+export interface PlaybookPlannerAgentConfig {
+  agentTypeId: string;
+  agentTypeSlug: string;
+  agentId: string;
+  agentRevision: string;
+  model: string;
+  temperature: number;
+  instruction: string;
+}
+
+export interface PlaybookPlannerAgentOption {
+  id: string;
+  name: string;
+  description?: string;
+  model: string;
+}
+
+export type PlaybookSuggestorAgentConfig = PlaybookPlannerAgentConfig;
+export type PlaybookSuggestorAgentOption = PlaybookPlannerAgentOption;
 
 @Injectable()
 export class AgentService {
@@ -776,8 +797,9 @@ export class AgentService {
             enable_temporary_child_agents: String(agent.enable_temporary_child_agents),
             max_temporary_child_agents: String(agent.max_temporary_child_agents),
             guardrails_json: JSON.stringify({
-              agent: { promptInjection: normalizePromptInjectionGuardrails(agent.guardrails?.promptInjection) },
+              agent: normalizeAgentGuardrails(agent.guardrails),
               admin: normalizeAdminGuardrailsSettings(adminGuardrailsSettings),
+              classifier: { omitTemperature: guardrailsClassifierModel?.omitTemperature === true },
             }),
             guardrails_classifier_model: guardrailsClassifierModelId,
             platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
@@ -829,6 +851,7 @@ export class AgentService {
     agentIds: string[],
     fallbackModelId?: string,
     sessionId?: string,
+    runtimeContext?: { tenantId?: string; conversationId?: string; correlationId?: string },
   ): Promise<IGrpcAgent[]> {
     if (agentIds.length === 0) return [];
 
@@ -917,6 +940,16 @@ export class AgentService {
           userId,
           this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
         );
+        for (const binding of connectorBindings) {
+          if (String(binding.connector_slug || '').toLowerCase() !== 'playbook-mcp') continue;
+          binding.auth_headers = {
+            ...((binding.auth_headers as Record<string, string>) || {}),
+            'X-YellowStorm-Tenant-Id': runtimeContext?.tenantId || 'default',
+            'X-YellowStorm-Agent-Id': agent.id,
+            'X-YellowStorm-Conversation-Id': runtimeContext?.conversationId || sessionId || 'playbook-runtime',
+            'X-Correlation-Id': runtimeContext?.correlationId || sessionId || 'playbook-runtime',
+          };
+        }
         const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
         const effectiveModelId = agent.model || inheritedDefaultModelId;
@@ -960,13 +993,19 @@ export class AgentService {
               max_temporary_child_agents: String(agent.max_temporary_child_agents),
               connector_bindings_json: JSON.stringify(connectorBindings),
               guardrails_json: JSON.stringify({
-                agent: { promptInjection: normalizePromptInjectionGuardrails(agent.guardrails?.promptInjection) },
+                agent: normalizeAgentGuardrails(agent.guardrails),
                 admin: normalizeAdminGuardrailsSettings(adminGuardrailsSettings),
+                classifier: { omitTemperature: guardrailsClassifierModel?.omitTemperature === true },
               }),
               guardrails_classifier_model: guardrailsClassifierModelId,
               ...(sessionId ? { session_id: sessionId } : {}),
               platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
               platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
+              ...(runtimeContext ? {
+                mascot_tenant_id: runtimeContext.tenantId || 'default',
+                mascot_conversation_id: runtimeContext.conversationId || sessionId || '',
+                mascot_correlation_id: runtimeContext.correlationId || sessionId || '',
+              } : {}),
               ...(resolvedModel?.omitTemperature
                 ? { omit_temperature: 'true' }
                 : { temperature: String(agent.temperature) }),
@@ -1423,6 +1462,106 @@ export class AgentService {
     return this.agentRepository.findActiveDefaultIdBySlug(slug);
   }
 
+  async listPlaybookPlannerAgentOptions(): Promise<PlaybookPlannerAgentOption[]> {
+    const agents = await this.agentModel
+      .find({ isDefault: true, isActive: true })
+      .select('_id name description llmModel')
+      .populate('agentType', 'slug isActive')
+      .sort({ name: 1 })
+      .lean()
+      .exec();
+    return agents.flatMap((agent) => {
+      const agentType = agent.agentType as unknown as { slug?: string; isActive?: boolean } | undefined;
+      const model = agent.llmModel?.trim();
+      return agentType?.slug === PLAYBOOK_PLANNER_AGENT_TYPE_SLUG && agentType.isActive && model ? [{
+        id: agent._id.toString(),
+        name: agent.name,
+        description: agent.description || undefined,
+        model,
+      }] : [];
+    });
+  }
+
+  async findPlaybookPlannerById(agentId: string): Promise<PlaybookPlannerAgentConfig> {
+    if (!Types.ObjectId.isValid(agentId)) {
+      throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is invalid');
+    }
+    const agent = await this.agentModel
+      .findOne({ _id: new Types.ObjectId(agentId), isDefault: true, isActive: true })
+      .select('_id agentType llmModel temperature instruction updatedAt')
+      .populate('agentType', 'slug isActive')
+      .lean()
+      .exec();
+    const agentType = agent?.agentType as unknown as {
+      _id?: { toString(): string };
+      slug?: string;
+      isActive?: boolean;
+    } | undefined;
+    const model = agent?.llmModel?.trim();
+    if (
+      !agent
+      || agentType?.slug !== PLAYBOOK_PLANNER_AGENT_TYPE_SLUG
+      || !agentType.isActive
+      || !model
+    ) {
+      throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is unavailable or has no model configured');
+    }
+    return {
+      agentTypeId: agentType?._id?.toString() ?? '',
+      agentTypeSlug: agentType.slug,
+      agentId: agent._id.toString(),
+      agentRevision: agent.updatedAt?.toISOString() ?? agent._id.toString(),
+      model,
+      temperature: agent.temperature,
+      instruction: agent.instruction,
+    };
+  }
+
+  async listPlaybookSuggestorAgentOptions(): Promise<PlaybookSuggestorAgentOption[]> {
+    const agents = await this.listActiveDefaultAgentOptions();
+    return agents.flatMap((agent) => {
+      const model = agent.model?.trim();
+      return model ? [{
+        id: agent.id,
+        name: agent.name,
+        description: agent.description,
+        model,
+      }] : [];
+    });
+  }
+
+  async findPlaybookSuggestorById(agentId: string): Promise<PlaybookSuggestorAgentConfig> {
+    if (!Types.ObjectId.isValid(agentId)) {
+      throw new BadRequestException(ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE, 'The selected Playbook Suggestor agent is invalid');
+    }
+    const agent = await this.agentModel
+      .findOne({ _id: new Types.ObjectId(agentId), isDefault: true, isActive: true })
+      .select('_id agentType llmModel temperature instruction updatedAt')
+      .populate('agentType', 'slug isActive')
+      .lean()
+      .exec();
+    const agentType = agent?.agentType as unknown as {
+      _id?: { toString(): string };
+      slug?: string;
+    } | undefined;
+    const model = agent?.llmModel?.trim();
+    if (
+      !agent
+      || !model
+    ) {
+      throw new BadRequestException(ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE, 'The selected Playbook Suggestor agent is unavailable or has no model configured');
+    }
+    return {
+      agentTypeId: agentType?._id?.toString() ?? '',
+      agentTypeSlug: agentType?.slug ?? '',
+      agentId: agent._id.toString(),
+      agentRevision: agent.updatedAt?.toISOString() ?? agent._id.toString(),
+      model,
+      temperature: agent.temperature,
+      instruction: agent.instruction,
+    };
+  }
+
   private toResponse(
     doc: Record<string, unknown>,
     agentTypeDoc?: { id: string; name: string },
@@ -1470,11 +1609,7 @@ export class AgentService {
         id.toString(),
       ),
       connectorActionSelections: this.toConnectorActionSelectionResponses(d.connectorActionSelections),
-      guardrails: {
-        promptInjection: normalizePromptInjectionGuardrails(
-          (d.guardrails as { promptInjection?: unknown } | undefined)?.promptInjection as Parameters<typeof normalizePromptInjectionGuardrails>[0],
-        ),
-      },
+      guardrails: normalizeAgentGuardrails(d.guardrails as Parameters<typeof normalizeAgentGuardrails>[0]),
       deploymentSettings: {
         embedEnabled: ((d.deploymentSettings as { embedEnabled?: boolean } | undefined)?.embedEnabled) ?? false,
         restEnabled: ((d.deploymentSettings as { restEnabled?: boolean } | undefined)?.restEnabled) ?? false,
@@ -1542,11 +1677,7 @@ export class AgentService {
         id.toString(),
       ),
       connectorActionSelections: this.toConnectorActionSelectionResponses(d.connectorActionSelections),
-      guardrails: {
-        promptInjection: normalizePromptInjectionGuardrails(
-          (d.guardrails as { promptInjection?: unknown } | undefined)?.promptInjection as Parameters<typeof normalizePromptInjectionGuardrails>[0],
-        ),
-      },
+      guardrails: normalizeAgentGuardrails(d.guardrails as Parameters<typeof normalizeAgentGuardrails>[0]),
       agentTypeSkillIds,
       enable_temporary_child_agents: (d.enable_temporary_child_agents as boolean) ?? false,
       max_temporary_child_agents: (d.max_temporary_child_agents as number) ?? 4,

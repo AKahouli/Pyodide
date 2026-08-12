@@ -11,7 +11,7 @@ export class GovernanceReconciliationRun {
   @Prop({ default: true }) dryRun!: boolean;
   @Prop() cursor?: string;
   @Prop({ type: Object, default: {} }) stats!: Record<string, number>;
-  @Prop({ type: Array, default: [] }) errors!: Array<{ documentId?: string; sourceId?: string; message: string }>;
+  @Prop({ type: Array, default: [] }) errors!: Array<{ documentId?: string; message: string }>;
   @Prop() startedAt?: Date;
   @Prop() completedAt?: Date;
   @Prop({ index: true }) leaseToken?: string;

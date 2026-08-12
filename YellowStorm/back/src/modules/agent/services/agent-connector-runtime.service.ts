@@ -209,6 +209,7 @@ export class AgentConnectorRuntimeService {
             label: action.label || action.key,
             description: action.description || '',
             parameter_schema: action.parameterSchema || {},
+            safety: String(action.safety || 'unknown').toLowerCase(),
           })),
         fixed_params: fixedParamsByConnectorId?.get(connector.id) || {},
         mcp_transport_type: connector.mcpTransportType || '',

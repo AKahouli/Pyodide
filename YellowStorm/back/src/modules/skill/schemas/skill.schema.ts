@@ -31,6 +31,9 @@ export const SkillFileSchema = SchemaFactory.createForClass(SkillFile);
 })
 export class Skill extends Document {
   @Prop({ required: true, trim: true, minlength: 1, maxlength: 64, index: true })
+  slug!: string;
+
+  @Prop({ required: true, trim: true, minlength: 1, maxlength: 64, index: true })
   name!: string;
 
   @Prop({ required: true, trim: true, minlength: 1, maxlength: 1024 })
@@ -79,6 +82,10 @@ export class Skill extends Document {
 export const SkillSchema = SchemaFactory.createForClass(Skill);
 
 SkillSchema.index({ name: 1, createdBy: 1 }, { unique: true });
+SkillSchema.index(
+  { slug: 1, createdBy: 1 },
+  { unique: true, partialFilterExpression: { slug: { $type: 'string' } } },
+);
 SkillSchema.index({ isActive: 1, createdBy: 1 });
 
 SkillSchema.set('toJSON', {

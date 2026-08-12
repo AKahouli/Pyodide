@@ -39,7 +39,7 @@ vi.mock('@/components/ui/sidebar', () => ({
       {children}
     </button>
   ),
-  SidebarMenuAction: ({ children }: { children: ReactNode }) => <button type='button'>{children}</button>,
+  SidebarMenuAction: ({ children, showOnHover: _showOnHover, ...props }: { children: ReactNode; showOnHover?: boolean; 'aria-label'?: string }) => <button type='button' {...props}>{children}</button>,
 }));
 
 vi.mock('@/components/ui/dropdown-menu', () => ({
@@ -64,5 +64,6 @@ describe('WorkspaceButton', () => {
     expect(navigateMock).toHaveBeenCalledWith('/workspace');
     expect(openCreateModalMock).toHaveBeenCalledTimes(1);
     expect(openCreateTemplateModalMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'sidebar.moreActions' })).toBeInTheDocument();
   });
 });
