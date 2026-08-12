@@ -1371,8 +1371,13 @@ class OrchestratorService:
         planner = LlmAgent(
             name="planner",
             model=self._build_planner_model(planner_model),
-            instruction=(f"{planner_prompt}\n\n{PLANNER_INSTRUCTION}"
-                         if planner_prompt else PLANNER_INSTRUCTION),
+            # The DB prompt (agentstore) is the source of truth: it REPLACES the
+            # instruction rather than stacking on it. PLANNER_INSTRUCTION is only
+            # a fallback when the DB has none. Concatenating the two made the
+            # planner read the whole prompt twice -- once from the DB, once from
+            # this hardcoded copy (whose {{ }} JSON examples reached the model as
+            # invalid doubled braces). Same replace-semantics the executor uses.
+            instruction=(planner_prompt or PLANNER_INSTRUCTION),
             tools=[human_agents.make_find_human_agents_tool()],
             output_schema=_PlannerOutput,
         )
