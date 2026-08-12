@@ -239,6 +239,11 @@ export const configValidationSchema = Joi.object({
   APP_BUILDER_DEPLOY_INITIAL_STATUS_DELAY_MS: Joi.number().min(0).default(20_000),
   APP_BUILDER_DEPLOY_STATUS_POLL_INTERVAL_MS: Joi.number().min(1_000).default(15_000),
 
+  // App Builder runtime (app-runtime module). The MCP endpoint is served by
+  // APImanus; YellowStorm only hands its URL back on internal bind.
+  APP_RUNTIME_MCP_URL: Joi.string().uri().optional(),
+  APP_RUNTIME_TICKET_TTL_MS: Joi.number().min(1_000).default(60_000),
+
   // LiteLLM
   LITELLM_API_URL: Joi.string().uri().optional(),
   LITELLM_API_KEY: Joi.string().optional(),
