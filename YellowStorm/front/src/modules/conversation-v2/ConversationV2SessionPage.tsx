@@ -5,13 +5,14 @@ import { conversationV2Api } from './api';
 import { useConversationV2Store } from './store';
 import { MessageList } from './components/MessageList';
 import { Composer } from './components/Composer';
+import { QuestionChoices } from './components/QuestionChoices';
 import { ConversationV2Header } from './components/ConversationV2Header';
 import { FilesSheet } from './components/FilesSheet';
 import { PlanPanel } from './components/PlanPanel';
 import { RightPanel } from './components/RightPanel/RightPanel';
 import { useConversationV2Translation } from './translation';
 import { FileViewerSidebar, useFileViewerStore } from '@/modules/file-viewer';
-import { useModelsStore } from '@/modules/models';
+import { useModels, useDefaultModel, useModelsStore } from '@/modules/models';
 import type { AgentEvent } from './types';
 import {
   canWriteConversationV2Session,
@@ -55,6 +56,9 @@ export default function ConversationV2SessionPage() {
     events,
     hydrateSelectedModelForSession,
     sendMessage,
+    pendingQuestion,
+    streaming,
+    selectedModelId,
   } = useConversationV2Store(
     useShallow((s) => ({
       switchToSession: s.switchToSession,
@@ -69,6 +73,9 @@ export default function ConversationV2SessionPage() {
       events: s.events,
       hydrateSelectedModelForSession: s.hydrateSelectedModelForSession,
       sendMessage: s.sendMessage,
+      pendingQuestion: s.pendingQuestion,
+      streaming: s.streaming,
+      selectedModelId: s.selectedModelId,
     })),
   );
   const [loading, setLoading] = useState(true);
@@ -86,6 +93,14 @@ export default function ConversationV2SessionPage() {
     ConversationV2SessionPermissions.WORKSPACE_DOCUMENTS_READ,
   );
   const isReadOnlyViewer = !canWrite;
+  const models = useModels();
+  const defaultModel = useDefaultModel();
+  const activeModel =
+    (selectedModelId && models.find((m) => m.id === selectedModelId)) || defaultModel || null;
+
+  const handleSend = (text: string) => {
+    void sendMessage(text, activeModel?.litellmModel || undefined);
+  };
 
   const latestPlan = useMemo(() => {
     for (let i = events.length - 1; i >= 0; i--) {
@@ -246,7 +261,14 @@ export default function ConversationV2SessionPage() {
             <PlanPanel steps={latestPlan.steps} />
           </div>
         )}
-        {canWrite && <Composer onSend={sendMessage} />}
+        {pendingQuestion && canWrite && (
+          <QuestionChoices
+            pendingQuestion={pendingQuestion}
+            disabled={streaming}
+            onSelect={handleSend}
+          />
+        )}
+        {canWrite && <Composer onSend={handleSend} />}
       </div>
       {canWrite && <RightPanel />}
       <FileViewerSidebar />

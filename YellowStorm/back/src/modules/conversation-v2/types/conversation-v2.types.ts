@@ -75,7 +75,17 @@ export interface FilesTreeNode {
 }
 
 export type DoneEventPayload = ConversationV2BaseEvent;
-export type WaitEventPayload = ConversationV2BaseEvent;
+
+export interface QuestionOptionPayload {
+  label: string;
+  description?: string;
+}
+
+export interface WaitEventPayload extends ConversationV2BaseEvent {
+  question_id?: string;
+  question_text?: string;
+  options?: QuestionOptionPayload[];
+}
 // No-op liveness signal while a step is still in flight — never persisted or
 // pushed to the frontend; only resets the gRPC stream's idle timer.
 export type HeartbeatEventPayload = ConversationV2BaseEvent;

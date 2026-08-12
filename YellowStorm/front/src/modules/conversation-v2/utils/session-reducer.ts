@@ -1,4 +1,4 @@
-import type { AgentEvent, AppBuildProgress } from '../types';
+import type { AgentEvent, AppBuildProgress, PendingQuestion } from '../types';
 import type { ApplicationComponentState, SessionSlice } from '../store';
 
 export function emptySlice(): SessionSlice {
@@ -24,7 +24,26 @@ export function emptySlice(): SessionSlice {
     selectedConnectorRepo: null,
     selectedSkillIds: [],
     selectedConnectorIds: [],
+    pendingQuestion: null,
   };
+}
+
+export function pendingQuestionFromWaitEvent(event: Extract<AgentEvent, { type: 'wait' }>): PendingQuestion | null {
+  if (!event.options?.length) return null;
+  return {
+    questionId: event.question_id,
+    questionText: event.question_text,
+    options: event.options,
+  };
+}
+
+export function derivePendingQuestion(events: AgentEvent[]): PendingQuestion | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.type === 'done' || ev.type === 'error') return null;
+    if (ev.type === 'wait') return pendingQuestionFromWaitEvent(ev);
+  }
+  return null;
 }
 
 export function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSlice {
@@ -42,9 +61,15 @@ export function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSl
     case 'title':
       return { ...base, title: event.title };
     case 'done':
-      return { ...base, streaming: false, liveToolCallId: null };
+      return { ...base, streaming: false, liveToolCallId: null, pendingQuestion: null };
     case 'error':
-      return { ...base, streamError: event.error, streaming: false, liveToolCallId: null };
+      return {
+        ...base,
+        streamError: event.error,
+        streaming: false,
+        liveToolCallId: null,
+        pendingQuestion: null,
+      };
     case 'tool': {
       const turnStart = currentTurnStartIndex(slice.events);
       const idx = findIndexFrom(
@@ -84,7 +109,12 @@ export function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSl
       return { ...base, events: [...filtered, event] };
     }
     case 'wait':
-      return { ...base, streaming: false, liveToolCallId: null };
+      return {
+        ...base,
+        streaming: false,
+        liveToolCallId: null,
+        pendingQuestion: pendingQuestionFromWaitEvent(event),
+      };
     case 'app_build_progress': {
       const progress: AppBuildProgress = {
         phase: event.phase,

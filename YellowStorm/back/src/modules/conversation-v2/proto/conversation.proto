@@ -150,7 +150,16 @@ message PlanEvent {
 
 message TitleEvent { string title = 1; }
 message DoneEvent  {}
-message WaitEvent  {}
+message QuestionOption {
+  string label = 1;
+  string description = 2;
+}
+
+message WaitEvent {
+  string question_id = 1;
+  string question_text = 2;
+  repeated QuestionOption options = 3;
+}
 message HeartbeatEvent {}
 message AppBuildProgressEvent {
   string phase = 1;    // e.g. generation_started, fetching_app_code, ready

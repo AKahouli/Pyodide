@@ -20,6 +20,9 @@
       "empty": "Aucun modèle trouvé."
     }
   },
+  "questionChoices": {
+    "fallbackTitle": "Choisissez une option pour continuer"
+  },
   "conversation": {
     "emptyTitle": "Envoyez un message pour démarrer",
     "emptyDescription": "L'agent vous répondra et pourra utiliser des outils et une machine virtuelle pour accomplir votre tâche.",

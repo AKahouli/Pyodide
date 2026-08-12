@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import type { AgentEvent, ConversationV2PointerSummary, FilesTreeNode, AppBuildProgress } from './types';
+import type { AgentEvent, ConversationV2PointerSummary, FilesTreeNode, AppBuildProgress, PendingQuestion } from './types';
 import { conversationV2Api } from './api';
 import type { DeployStatus } from './api';
 import {
@@ -13,6 +13,7 @@ import {
   deriveTitle,
   deriveApplicationComponent,
   deriveAppBuildProgress,
+  derivePendingQuestion,
   dedupeReplayEvents,
   currentTurnStartIndex,
   findIndexFrom,
@@ -87,6 +88,8 @@ interface State {
   selectedSkillIds: string[];
   /** Connector IDs selected for the conversation; sent with every message. */
   selectedConnectorIds: string[];
+  /** Active clarification choices from the latest wait event (clickable A/B/C). */
+  pendingQuestion: PendingQuestion | null;
   /**
    * Live state for conversations that are streaming in the BACKGROUND (i.e. not
    * the one currently on screen). Events arriving on the per-user pipe for a
@@ -124,6 +127,7 @@ export interface SessionSlice {
   selectedConnectorRepo: State['selectedConnectorRepo'];
   selectedSkillIds: string[];
   selectedConnectorIds: string[];
+  pendingQuestion: PendingQuestion | null;
 }
 
 interface Actions {
@@ -228,6 +232,7 @@ const initial: State = {
       selectedConnectorRepo: null,
       selectedSkillIds: [],
       selectedConnectorIds: [],
+      pendingQuestion: null,
   streamingStateCache: new Map<string, SessionSlice>(),
 };
 
@@ -256,6 +261,7 @@ function createSessionViewDefaults(): Pick<
   | 'selectedConnectorRepo'
   | 'selectedSkillIds'
   | 'selectedConnectorIds'
+  | 'pendingQuestion'
 > {
   return {
     events: [],
@@ -279,6 +285,7 @@ function createSessionViewDefaults(): Pick<
     selectedConnectorRepo: null,
     selectedSkillIds: [],
     selectedConnectorIds: [],
+    pendingQuestion: null,
   };
 }
 
@@ -305,6 +312,7 @@ function sliceFromState(s: State): SessionSlice {
     selectedConnectorRepo: s.selectedConnectorRepo,
     selectedSkillIds: s.selectedSkillIds,
     selectedConnectorIds: s.selectedConnectorIds,
+    pendingQuestion: s.pendingQuestion,
   };
 }
 
@@ -416,7 +424,7 @@ export const useConversationV2Store = create<State & Actions>()(
           content: message,
           attachments: [],
         } as AgentEvent);
-        set({ streaming: true, streamError: null }, false, 'sendMessage/optimistic');
+        set({ streaming: true, streamError: null, pendingQuestion: null }, false, 'sendMessage/optimistic');
 
         const repo = get().selectedConnectorRepo;
         const skillIds = get().selectedSkillIds;
@@ -672,6 +680,7 @@ export const useConversationV2Store = create<State & Actions>()(
           {
             events: dedupeReplayEvents(events),
             title: deriveTitle(events) ?? null,
+            pendingQuestion: derivePendingQuestion(events),
             liveToolCallId: null,
             liveAssistantIds: new Set<string>(),
             applicationComponent,
@@ -765,12 +774,13 @@ export const useConversationV2Store = create<State & Actions>()(
                 });
               }
               case 'done':
-                return withSeq({ streaming: false, liveToolCallId: null });
+                return withSeq({ streaming: false, liveToolCallId: null, pendingQuestion: null });
               case 'error':
                 return withSeq({
                   streamError: event.error,
                   streaming: false,
                   liveToolCallId: null,
+                  pendingQuestion: null,
                 });
               case 'tool': {
                 const turnStart = currentTurnStartIndex(state.events);
@@ -833,9 +843,17 @@ export const useConversationV2Store = create<State & Actions>()(
                 const filtered = state.events.filter((e) => e.type !== 'plan');
                 return withSeq({ events: [...filtered, event] });
               }
-              case 'wait':
-                // Agent paused for the user's reply — re-enable the composer.
-                return withSeq({ streaming: false, liveToolCallId: null });
+              case 'wait': {
+                const pendingQuestion =
+                  event.options?.length
+                    ? {
+                        questionId: event.question_id,
+                        questionText: event.question_text,
+                        options: event.options,
+                      }
+                    : null;
+                return withSeq({ streaming: false, liveToolCallId: null, pendingQuestion });
+              }
               case 'app_build_progress': {
                 const progress: AppBuildProgress = {
                   phase: event.phase,
