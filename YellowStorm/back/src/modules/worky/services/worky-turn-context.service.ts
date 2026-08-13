@@ -10,7 +10,24 @@ import {
   WORKY_EXECUTOR_AGENT_TYPE_SLUG,
 } from '../constants/worky.constants';
 
-const WORKY_CONNECTOR_SLUGS = ['code-interpreter', 'linkup', 'microsoft365'];
+/**
+ * Split out of the single `microsoft365` connector into the three focused
+ * servers behind it: outlook (mail/calendar), sharepoint (files) and teams.
+ * Same Graph surface, but each server ships on its own — which is what lets
+ * outlook gain send_email attachments without redeploying the file tools.
+ *
+ * `outlook` must stay in this list for reasons beyond its tools: it is what
+ * arms the Graph mail subscription below, and every await_reply step in every
+ * plan is resumed by that webhook.
+ */
+const WORKY_MAIL_CONNECTOR_SLUG = 'outlook';
+const WORKY_CONNECTOR_SLUGS = [
+  'code-interpreter',
+  'linkup',
+  WORKY_MAIL_CONNECTOR_SLUG,
+  'sharepoint',
+  'teams',
+];
 
 /**
  * Resolves the model and connectors an orchestrator turn needs to actually do
@@ -102,7 +119,7 @@ export class WorkyTurnContextService {
     }
   }
 
-  /** Per-user connectors worky needs (code-interpreter, linkup, microsoft365).
+  /** Per-user connectors worky needs (see WORKY_CONNECTOR_SLUGS).
    *  Auth resolved by ConnectorService; failures are non-fatal (send none) --
    *  a turn or resume must not fail just because connector lookup did. */
   async resolveConnectors(userId: string): Promise<unknown[]> {
@@ -111,7 +128,13 @@ export class WorkyTurnContextService {
         await Promise.all(WORKY_CONNECTOR_SLUGS.map((slug) => this.connectorService.findBySlug(slug)))
       ).filter(Boolean);
       if (found.length) {
-        if (found.some((c) => c!.slug === 'microsoft365')) this.ensureMailSubscription(userId);
+        // Tied to the mail connector by name, not to "some Microsoft connector
+        // is present": sharepoint and teams are Graph too, and arming the mail
+        // webhook off either of them would subscribe a mailbox whose send_email
+        // tool the plan never had.
+        if (found.some((c) => c!.slug === WORKY_MAIL_CONNECTOR_SLUG)) {
+          this.ensureMailSubscription(userId);
+        }
         return await this.connectorService.findByIdsForGrpc(
           found.map((c) => c!.id),
           userId,

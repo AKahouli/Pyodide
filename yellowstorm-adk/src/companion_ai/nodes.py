@@ -209,6 +209,100 @@ def is_send_email_tool(tool) -> bool:
     return name.endswith("_send_email")
 
 
+def artifacts_from_tool_result(result) -> List[dict]:
+    """Every file a connector tool just produced — none, one, or several.
+
+    Keyed on the RESULT carrying a storage path, not on the tool's name. A
+    connector that uploads a file says so by returning one — code-interpreter's
+    send_file_to_user does, and any future tool that stores something will too.
+    Matching on names instead would silently miss every one of them. Same test
+    the playbook path uses (flow_engine/tools/langchain_factory.py).
+
+    Two result shapes carry files, and a single call can produce many:
+    `generated_files: [...]` (one entry per file, as the interpreter returns),
+    and a bare `ceph_path` on the result itself (a single-file send). Both are
+    read, so a step that writes a chart, a CSV and a report gets three rows
+    rather than only whichever the first branch happened to match.
+    """
+    if not isinstance(result, dict):
+        return []
+    entries = [e for e in (result.get("generated_files") or []) if isinstance(e, dict)]
+    # A single-file result IS the entry — only when it isn't already listed
+    # above, or the same file would be recorded twice under two names.
+    if not entries and (result.get("ceph_path") or "").strip():
+        entries = [result]
+    return [a for a in (_artifact_from_entry(e) for e in entries) if a]
+
+
+def _artifact_from_entry(entry: dict) -> Optional[dict]:
+    file_path = str(
+        entry.get("ceph_path") or entry.get("object_key")
+        or entry.get("azure_path") or entry.get("file_path") or ""
+    ).strip()
+    if not file_path:
+        return None
+    # `path` is the sandbox path the model asked to send; its basename is the
+    # only human-meaningful name available, since the stored key is opaque.
+    filename = str(entry.get("filename") or entry.get("name")
+                   or entry.get("path") or file_path)
+    filename = filename.rstrip("/").split("/")[-1]
+    size = entry.get("size")
+    return {
+        "file_path": file_path,
+        "filename": filename,
+        "artifact_kind": _artifact_kind_for(filename),
+        "mime_type": str(entry.get("mime_type") or entry.get("mimeType") or "") or None,
+        "size": int(size) if isinstance(size, (int, float)) else None,
+    }
+
+
+def _artifact_kind_for(filename: str) -> Optional[str]:
+    """Same buckets the playbook uses, so both surfaces classify a file alike."""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    for kind, exts in (
+        ("image", {"png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"}),
+        ("data", {"csv", "tsv", "json", "xlsx", "xls", "parquet"}),
+        ("code", {"py", "js", "ts", "sql", "sh", "yaml", "yml"}),
+        ("document", {"pdf", "doc", "docx", "md", "txt", "html", "pptx"}),
+    ):
+        if ext in exts:
+            return kind
+    return "document" if ext else None
+
+
+def capture_artifacts_tool(tool, *, on_artifact: Callable[[dict], Awaitable[None]]):
+    """Wrap a connector tool so any file it produces is recorded for the client.
+
+    Worky has no component stream: the client reads the Postgres read model over
+    Electric, so a file has to become a durable row or it is invisible. The tool
+    result still goes back to the model untouched — this only observes.
+
+    A projection failure must never fail the tool call. The file exists either
+    way, and losing a step's real work because a read-model write failed would
+    be a far worse trade than a missing download link.
+    """
+    from src.smart_rag.tools.search.tools import SearchToolADK
+
+    original = tool.func
+
+    async def capturing(**kwargs):
+        result = await original(**kwargs)
+        for artifact in artifacts_from_tool_result(result):
+            # Recorded one at a time: a step producing three files should not
+            # lose the other two because one of them failed to project.
+            try:
+                await on_artifact(artifact)
+            except Exception as e:
+                logger.warning("artifact projection failed for %s: %s",
+                               artifact.get("filename"), e)
+        return result
+
+    capturing.__name__ = original.__name__
+    capturing.__signature__ = original.__signature__
+    capturing.__annotations__ = original.__annotations__
+    return SearchToolADK(capturing, {"function": tool.custom_schema})
+
+
 def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Optional[str]]],
                           on_sent: Optional[Callable[[str], Awaitable[None]]] = None):
     """Wrap a send_email tool so the outbound mail carries its routing token.

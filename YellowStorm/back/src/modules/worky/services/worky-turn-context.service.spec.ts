@@ -59,11 +59,15 @@ describe('WorkyTurnContextService', () => {
   });
 
   describe('resolveConnectors', () => {
-    it('resolves code-interpreter & linkup connectors by slug', async () => {
+    it('resolves every connector worky needs by slug', async () => {
       const connectors = await service.resolveConnectors('user-1');
 
-      expect(connectorService.findBySlug).toHaveBeenCalledWith('code-interpreter');
-      expect(connectorService.findBySlug).toHaveBeenCalledWith('linkup');
+      // microsoft365 was split into outlook (mail/calendar), sharepoint (files)
+      // and teams; all three have to be asked for or the plan silently loses
+      // whole tool families.
+      for (const slug of ['code-interpreter', 'linkup', 'outlook', 'sharepoint', 'teams']) {
+        expect(connectorService.findBySlug).toHaveBeenCalledWith(slug);
+      }
       expect(connectorService.findByIdsForGrpc).toHaveBeenCalledWith(['c1', 'c2'], 'user-1');
       expect(connectors).toEqual([{ connector_id: 'c1' }, { connector_id: 'c2' }]);
     });
@@ -77,9 +81,9 @@ describe('WorkyTurnContextService', () => {
       expect(connectors).toEqual([]);
     });
 
-    it('keeps the mailbox subscription alive whenever microsoft365 resolves', async () => {
+    it('keeps the mailbox subscription alive whenever outlook resolves', async () => {
       connectorService.findBySlug.mockImplementation((slug: string) =>
-        slug === 'microsoft365' ? Promise.resolve({ id: 'c3', slug: 'microsoft365' }) : Promise.resolve(null),
+        slug === 'outlook' ? Promise.resolve({ id: 'c3', slug: 'outlook' }) : Promise.resolve(null),
       );
 
       await service.resolveConnectors('user-1');
@@ -87,7 +91,22 @@ describe('WorkyTurnContextService', () => {
       expect(mailSubscriptions.ensureForUser).toHaveBeenCalledWith('user-1');
     });
 
-    it('does not touch the mail subscription when microsoft365 is not bound', async () => {
+    it('does not arm the mail webhook off sharepoint or teams', async () => {
+      // Both are Graph connectors too, so "a Microsoft connector resolved" is
+      // not the condition -- arming off either would subscribe a mailbox whose
+      // send_email tool the plan never had.
+      connectorService.findBySlug.mockImplementation((slug: string) =>
+        slug === 'sharepoint' || slug === 'teams'
+          ? Promise.resolve({ id: 'c4', slug })
+          : Promise.resolve(null),
+      );
+
+      await service.resolveConnectors('user-1');
+
+      expect(mailSubscriptions.ensureForUser).not.toHaveBeenCalled();
+    });
+
+    it('does not touch the mail subscription when outlook is not bound', async () => {
       await service.resolveConnectors('user-1'); // only code-interpreter/linkup resolve, per the default mock
       expect(mailSubscriptions.ensureForUser).not.toHaveBeenCalled();
     });

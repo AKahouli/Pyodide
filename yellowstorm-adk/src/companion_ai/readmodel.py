@@ -14,6 +14,7 @@ else's step.
 """
 from __future__ import annotations
 
+import hashlib
 from typing import List, Optional, Tuple
 
 import asyncpg
@@ -105,6 +106,19 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
         # plan projection with interrupt_id NULL, and bound when the step blocks.
         # A reply that beats the parking finds an unbound row and is not
         # deliverable — see claim_mail_wait.
+        await con.execute(f"""
+            CREATE TABLE IF NOT EXISTS {_q(schema,'plan_step_artifacts')} (
+                session_id    TEXT NOT NULL,
+                step_id       TEXT NOT NULL,   -- joins plan_steps(session_id, step_id)
+                artifact_id   TEXT NOT NULL,   -- derived from (step_id, file_path); see add_step_artifact
+                file_path     TEXT NOT NULL,   -- the connector's own key, stored raw
+                filename      TEXT NOT NULL,
+                artifact_kind TEXT,            -- document | image | data | code
+                mime_type     TEXT,
+                size          BIGINT,
+                created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (session_id, artifact_id)
+            )""")
         await con.execute(f"""
             CREATE TABLE IF NOT EXISTS {_q(schema,'mail_waits')} (
                 token           TEXT PRIMARY KEY,
@@ -269,6 +283,37 @@ class ReadModel:
                 INSERT INTO {_q(self._schema,'messages')} (id,session_id,role,content)
                 VALUES ($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING
             """, message_id, session_id, role, content)
+
+    async def add_step_artifact(self, session_id: str, step_id: str, *, file_path: str,
+                                filename: str, artifact_kind: Optional[str] = None,
+                                mime_type: Optional[str] = None,
+                                size: Optional[int] = None) -> None:
+        """Record a file a step produced, for the client to list and download.
+
+        Append-only: rows are never updated or deleted, so the client can treat
+        an arriving row as a new file and nothing else.
+
+        `artifact_id` is a hash of (step_id, file_path) rather than a random id,
+        which makes the insert idempotent. A plan is re-driven across turns and
+        already-completed steps replay from their recorded events, so the same
+        file can be projected more than once; a random id would show the user
+        the same download twice, several times over a long plan.
+
+        `file_path` is stored exactly as the connector returned it — an opaque
+        object key, not a URL. Resolving it is the client's job (the same way
+        playbook artifacts resolve), because a signed URL would expire and this
+        table is read on reconnect and replay long after the run.
+        """
+        artifact_id = hashlib.sha1(f"{step_id}:{file_path}".encode()).hexdigest()[:12]
+        async with self._pool.acquire() as con:
+            await con.execute(f"""
+                INSERT INTO {_q(self._schema,'plan_step_artifacts')}
+                    (session_id,step_id,artifact_id,file_path,filename,
+                     artifact_kind,mime_type,size)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                ON CONFLICT (session_id, artifact_id) DO NOTHING""",
+                session_id, step_id, artifact_id, file_path, filename,
+                artifact_kind, mime_type, size)
 
     async def register_mail_wait(self, token: str, *, session_id: str, step_id: str,
                                  user_id: str, interrupt_id: Optional[str] = None,
