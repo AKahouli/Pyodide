@@ -19,6 +19,7 @@ import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-sessi
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
 import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
 import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
+import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import { CONVERSATION_V2_SESSION_PERMISSION_KEY } from './decorators/require-conversation-session-permission.decorator';
 import { ConversationV2SessionPermissions } from './constants/conversation-v2-session-permissions';
 
@@ -103,6 +104,11 @@ describe('ConversationV2Controller', () => {
   const mockConfig = { get: jest.fn().mockReturnValue(52428800) };
   const mockDeployment = { deploy: jest.fn() };
   const mockRuntimeTickets = { issue: jest.fn() };
+  const mockRuntimeRevisions = {
+    listFiles: jest.fn(),
+    getAuthorizedRevision: jest.fn(),
+    resolveObjectKeys: jest.fn(),
+  };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -120,6 +126,7 @@ describe('ConversationV2Controller', () => {
         { provide: ConversationV2DeployService, useValue: mockDeployment },
         { provide: ConversationV2AppShareService, useValue: mockAppShares },
         { provide: RuntimeTicketService, useValue: mockRuntimeTickets },
+        { provide: RuntimeRevisionService, useValue: mockRuntimeRevisions },
       ],
     })
       .overrideGuard(ConversationV2SessionAccessGuard)
@@ -140,6 +147,7 @@ describe('ConversationV2Controller', () => {
       ...Object.values(mockDeployment),
       ...Object.values(mockAppShares),
       ...Object.values(mockRuntimeTickets),
+      ...Object.values(mockRuntimeRevisions),
     ].forEach((fn) => (fn as jest.Mock).mockReset?.());
     mockConfig.get.mockReturnValue(52428800);
     mockAppShares.listSharedWithUser.mockResolvedValue([]);

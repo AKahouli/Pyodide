@@ -22,4 +22,13 @@ export default registerAs('appRuntime', () => ({
     process.env.APP_RUNTIME_MUTATION_WAIT_MS || '30000',
     10,
   ),
+  /**
+   * Canonical Ceph starter revision assigned on first bind when the workspace
+   * has no prior source revision. Must match the seeded Ceph manifest.
+   */
+  starterRevisionId:
+    process.env.APP_BUILDER_STARTER_REVISION_ID || 'starter_react_vite_v1',
+  starterManifestKey:
+    process.env.APP_BUILDER_STARTER_MANIFEST_KEY ||
+    'appbuilder/manifests/_system/starter_react_vite_v1.json',
 }));

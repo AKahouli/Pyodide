@@ -34,6 +34,7 @@ import type { ConversationV2ResolvedSession } from './services/conversation-v2-s
 import { CreateSessionDto } from './dto/create-session.dto';
 import { GetFileSignedUrlDto } from './dto/get-file-signed-url.dto';
 import { GetAppSourceUrlsDto } from './dto/get-app-source-urls.dto';
+import { PresignRevisionDto } from './dto/presign-revision.dto';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
@@ -49,6 +50,7 @@ import { ConversationV2DeployService } from './services/conversation-v2-deploy.s
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 import { normalizeAppSourceCephPrefix } from './utils/normalize-app-source-ceph-prefix';
 import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
+import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import type { RuntimeTicketResult } from '@modules/app-runtime/types/app-runtime-protocol';
 
 interface AuthUser { id: string; }
@@ -76,6 +78,7 @@ export class ConversationV2Controller {
     private readonly deployment: ConversationV2DeployService,
     private readonly appShares: ConversationV2AppShareService,
     private readonly runtimeTickets: RuntimeTicketService,
+    private readonly runtimeRevisions: RuntimeRevisionService,
   ) {}
 
   @Post('sessions')
@@ -558,8 +561,64 @@ export class ConversationV2Controller {
   }
 
   /**
+   * List files for an authorized source revision (starter or workspace-owned).
+   * Prefer this over legacy `app-source/urls` + client `cephPath`.
+   */
+  @Get('sessions/:id/revisions/:revisionId/files')
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_READ)
+  async getRevisionFiles(
+    @Param('id') sessionId: string,
+    @Param('revisionId') revisionId: string,
+  ): Promise<{
+    revisionId: string;
+    files: Array<{ path: string; sha256: string; size: number }>;
+  }> {
+    const { revisionId: id, files } = await this.runtimeRevisions.listFiles(
+      sessionId,
+      revisionId,
+    );
+    return {
+      revisionId: id,
+      files: files.map(({ path, sha256, size }) => ({ path, sha256, size })),
+    };
+  }
+
+  /**
+   * Batch-presign blob read URLs for paths listed in an authorized revision.
+   * Object keys are resolved from the revision manifest only.
+   */
+  @Post('sessions/:id/revisions/:revisionId/presign')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_READ)
+  async presignRevisionFiles(
+    @Param('id') sessionId: string,
+    @Param('revisionId') revisionId: string,
+    @Body() body: PresignRevisionDto,
+  ): Promise<{ items: Array<{ path: string; url: string }> }> {
+    const revision = await this.runtimeRevisions.getAuthorizedRevision(
+      sessionId,
+      revisionId,
+    );
+    const resolved = this.runtimeRevisions.resolveObjectKeys(revision, body.paths);
+    const items: Array<{ path: string; url: string }> = [];
+
+    for (const file of resolved) {
+      const url = await this.workspaceDocuments.generateReadUrl(file.objectKey, {
+        allowExtensionless: true,
+      });
+      items.push({ path: file.path, url });
+    }
+
+    return { items };
+  }
+
+  /**
    * Batch-presign read URLs for generated app sources under a Ceph prefix.
    * Used by the frontend to hydrate Nodepod's virtual filesystem.
+   *
+   * @deprecated Prefer revision-based `…/revisions/:revisionId/presign`.
    */
   @Post('sessions/:id/app-source/urls')
   @HttpCode(HttpStatus.OK)

@@ -246,6 +246,8 @@ export const configValidationSchema = Joi.object({
   APP_RUNTIME_HEARTBEAT_TIMEOUT_MS: Joi.number().min(5_000).default(45_000),
   APP_RUNTIME_TOOL_TIMEOUT_MS: Joi.number().min(1_000).max(600_000).default(180_000),
   APP_RUNTIME_MUTATION_WAIT_MS: Joi.number().min(1_000).default(30_000),
+  APP_BUILDER_STARTER_REVISION_ID: Joi.string().optional(),
+  APP_BUILDER_STARTER_MANIFEST_KEY: Joi.string().optional(),
 
   // LiteLLM
   LITELLM_API_URL: Joi.string().uri().optional(),

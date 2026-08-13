@@ -7,6 +7,7 @@ import {
   AppRuntimeBinding,
   AppRuntimeBindingDocument,
 } from '../schemas/app-runtime-binding.schema';
+import { RuntimeRevisionService } from './runtime-revision.service';
 import { RuntimeTokenService } from './runtime-token.service';
 
 export interface BindRuntimeParams {
@@ -42,6 +43,7 @@ export class RuntimeBindingService {
     @InjectModel(AppRuntimeBinding.name)
     private readonly model: Model<AppRuntimeBindingDocument>,
     private readonly tokens: RuntimeTokenService,
+    private readonly revisions: RuntimeRevisionService,
     private readonly config: ConfigService,
   ) {}
 
@@ -55,9 +57,10 @@ export class RuntimeBindingService {
     const { token, hash } = this.tokens.issue();
 
     const binding = await this.upsertWithRetry(conversationSessionId, userId, hash);
+    await this.revisions.ensureStarterRevision(binding.workspaceId);
 
     this.logger.log(
-      `App runtime bound bindingId=${binding.bindingId} workspaceId=${binding.workspaceId} userId=${userId}`,
+      `App runtime bound bindingId=${binding.bindingId} workspaceId=${binding.workspaceId} userId=${userId} revisionId=${binding.latestRevisionId}`,
     );
 
     return {
@@ -74,11 +77,13 @@ export class RuntimeBindingService {
    * before APImanus has bound the session. Unlike {@link bind} this leaves
    * `mcpTokenHash` untouched, so it can never invalidate a live MCP token.
    */
-  ensureForSession(
+  async ensureForSession(
     conversationSessionId: string,
     userId: string,
   ): Promise<AppRuntimeBinding> {
-    return this.upsertWithRetry(conversationSessionId, userId, null);
+    const binding = await this.upsertWithRetry(conversationSessionId, userId, null);
+    await this.revisions.ensureStarterRevision(binding.workspaceId);
+    return binding;
   }
 
   findByWorkspaceId(workspaceId: string): Promise<AppRuntimeBinding | null> {
@@ -143,6 +148,13 @@ export class RuntimeBindingService {
     return binding;
   }
 
+  private get starterRevisionId(): string {
+    return (
+      this.config.get<string>('appRuntime.starterRevisionId') ||
+      'starter_react_vite_v1'
+    );
+  }
+
   private async upsert(
     conversationSessionId: string,
     userId: string,
@@ -163,7 +175,8 @@ export class RuntimeBindingService {
               bindingId: `arb_${randomBytes(6).toString('hex')}`,
               workspaceId: conversationSessionId,
               status: 'created',
-              latestRevisionId: 'rev_0',
+              // New workspaces start on the Ceph-seeded React/Vite starter.
+              latestRevisionId: this.starterRevisionId,
               // Empty hash matches no token, so a binding created for a ticket
               // stays unusable over MCP until APImanus actually binds it.
               ...(mcpTokenHash === null ? { mcpTokenHash: '' } : {}),
