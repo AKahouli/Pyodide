@@ -7,6 +7,15 @@ import {
   PreviewController,
 } from './PreviewController';
 import type { VfsFiles } from './RevisionHydrator';
+import type { FileEntry } from './runtime.types';
+import { sha256 } from './hashing';
+import { toVfsPath } from './paths';
+import {
+  IGNORED_DIRS,
+  RUN_OUTPUT_MAX_BYTES,
+  RUN_TIMEOUT_DEFAULT,
+  boundOutput,
+} from './limits';
 
 const LOG = '[NodepodAdapter]';
 
@@ -38,6 +47,8 @@ interface PodCacheEntry {
   files: VfsFiles | null;
   alive: boolean;
   lastAccessed: number;
+  /** Manifest fingerprint at the time `node_modules` was last installed. */
+  installFingerprint: string | null;
 }
 
 const podCache = new Map<string, PodCacheEntry>();
@@ -111,9 +122,29 @@ export interface SpawnResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  truncated: boolean;
+}
+
+export interface SpawnOpts {
+  env?: Record<string, string>;
+  cwd?: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+  onOutput?: (chunk: string, stream: 'stdout' | 'stderr') => void;
+}
+
+/** Thrown when a spawn exceeds its deadline; maps to `TOOL_TIMEOUT`. */
+export class SpawnTimeoutError extends Error {
+  constructor(public readonly timeoutMs: number) {
+    super(`Command timed out after ${timeoutMs}ms`);
+    this.name = 'SpawnTimeoutError';
+  }
 }
 
 export type ProgressCallback = (phase: string, message: string) => void;
+
+/** Lockfiles that, together with package.json, define the dependency set. */
+const LOCKFILES = ['/package-lock.json', '/pnpm-lock.yaml', '/yarn.lock'];
 
 // ---------------------------------------------------------------------------
 // Adapter
@@ -124,6 +155,7 @@ export class NodepodRuntimeAdapter {
   private sessionId: string | null = null;
   private revision: string = 'rev_0';
   private _files: VfsFiles | null = null;
+  private lastInstallFingerprint: string | null = null;
 
   get currentPod(): NodepodInstance | null {
     return this.pod;
@@ -146,6 +178,7 @@ export class NodepodRuntimeAdapter {
       this._files = entry.files;
       this.sessionId = sessionId;
       this.revision = revision;
+      this.lastInstallFingerprint = entry.installFingerprint;
       entry.lastAccessed = Date.now();
       return true;
     }
@@ -177,7 +210,67 @@ export class NodepodRuntimeAdapter {
     this.pod = pod;
 
     const key = cacheKey(sessionId, revision);
-    podCache.set(key, { pod, previewUrl: null, files, alive: true, lastAccessed: Date.now() });
+    podCache.set(key, {
+      pod,
+      previewUrl: null,
+      files,
+      alive: true,
+      lastAccessed: Date.now(),
+      installFingerprint: null,
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dependency install policy (MVP 10.3)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fingerprint of the dependency manifest set. Any change to package.json or a
+   * lockfile invalidates the installed `node_modules`.
+   */
+  async installFingerprint(): Promise<string> {
+    const pod = this.requirePod();
+    const parts: string[] = [];
+    for (const file of ['/package.json', ...LOCKFILES]) {
+      try {
+        if (!(await pod.fs.exists(file))) continue;
+        parts.push(`${file}:${await pod.fs.readFile(file, 'utf-8')}`);
+      } catch {
+        // Unreadable manifest — treat as absent rather than failing the boot.
+      }
+    }
+    return sha256(parts.join('\n\u0000\n'));
+  }
+
+  /**
+   * Force the next `ensureDeps` to reinstall. Called when a `run` tool mutates
+   * the dependency set (npm install / pnpm add / ...).
+   */
+  markDepsDirty(): void {
+    this.lastInstallFingerprint = null;
+    this.updateCacheFingerprint(null);
+  }
+
+  /**
+   * Install dependencies only when they are actually stale: first boot, a
+   * changed manifest fingerprint, or an explicit `force`.
+   */
+  async ensureDeps(
+    opts: { force?: boolean; onProgress?: ProgressCallback } = {},
+  ): Promise<{ installed: boolean }> {
+    const pod = this.requirePod();
+    const fingerprint = await this.installFingerprint();
+    const hasModules = await pod.fs.exists('/node_modules');
+
+    if (!opts.force && hasModules && fingerprint === this.lastInstallFingerprint) {
+      log('npm-install:skip', { reason: 'fingerprint-unchanged' });
+      return { installed: false };
+    }
+
+    await this.installDeps(opts.onProgress);
+    this.lastInstallFingerprint = fingerprint;
+    this.updateCacheFingerprint(fingerprint);
+    return { installed: true };
   }
 
   async installDeps(onProgress?: ProgressCallback): Promise<void> {
@@ -348,12 +441,22 @@ export class NodepodRuntimeAdapter {
     if (entry) entry.previewUrl = url;
   }
 
+  private updateCacheFingerprint(fingerprint: string | null): void {
+    if (!this.sessionId) return;
+    const entry = podCache.get(cacheKey(this.sessionId, this.revision));
+    if (entry) entry.installFingerprint = fingerprint;
+  }
+
   // ---------------------------------------------------------------------------
   // Filesystem API — used by RuntimeToolHandlers
   // ---------------------------------------------------------------------------
 
   async readFile(path: string): Promise<string> {
     return this.requirePod().fs.readFile(path, 'utf-8');
+  }
+
+  async exists(path: string): Promise<boolean> {
+    return this.requirePod().fs.exists(path);
   }
 
   async writeFile(path: string, content: string): Promise<void> {
@@ -369,26 +472,24 @@ export class NodepodRuntimeAdapter {
     await this.requirePod().fs.unlink(path);
   }
 
+  /** Absolute VFS paths of every non-ignored file under `path`. */
   async listFiles(path = '/'): Promise<string[]> {
     const pod = this.requirePod();
     const entries: string[] = [];
     const walk = async (dir: string) => {
       const items = await pod.fs.readdir(dir);
       for (const item of items) {
-        if (typeof item === 'string') {
-          const full = dir === '/' ? `/${item}` : `${dir}/${item}`;
-          try {
-            const stat = await pod.fs.stat(full);
-            const isDirProp = (stat as unknown as Record<string, unknown>).isDirectory;
-            const isDir = typeof isDirProp === 'function' ? isDirProp() : !!isDirProp;
-            if (isDir) {
-              if (item !== 'node_modules' && item !== '.git') await walk(full);
-            } else {
-              entries.push(full);
-            }
-          } catch {
+        if (typeof item !== 'string') continue;
+        const full = dir === '/' ? `/${item}` : `${dir}/${item}`;
+        try {
+          const stat = await pod.fs.stat(full);
+          if (stat.isDirectory) {
+            if (!IGNORED_DIRS.has(item)) await walk(full);
+          } else {
             entries.push(full);
           }
+        } catch {
+          entries.push(full);
         }
       }
     };
@@ -396,37 +497,145 @@ export class NodepodRuntimeAdapter {
     return entries;
   }
 
-  async spawn(cmd: string, args: string[], opts?: { env?: Record<string, string>; timeoutMs?: number }): Promise<SpawnResult> {
+  /**
+   * Contract-shaped directory listing for the `list` tool. `name` is relative
+   * to `relativeRoot`; entries deeper than `depth` levels are omitted (their
+   * ancestor directory is still reported).
+   */
+  async listEntries(relativeRoot: string, depth: number): Promise<FileEntry[]> {
     const pod = this.requirePod();
-    const proc = await pod.spawn(cmd, args, opts?.env ? { env: opts.env } : undefined);
-    let stdout = '';
-    let stderr = '';
-    proc.on('output', (text: string) => { stdout += text; });
-    proc.on('error', (text: string) => { stderr += text; });
+    const root = toVfsPath(relativeRoot);
+    const results: FileEntry[] = [];
 
-    const completion = proc.completion;
-    const timeoutMs = opts?.timeoutMs ?? 180_000;
+    const walk = async (dir: string, prefix: string, level: number) => {
+      let items: string[];
+      try {
+        items = await pod.fs.readdir(dir);
+      } catch {
+        return;
+      }
+      for (const item of items) {
+        if (typeof item !== 'string' || IGNORED_DIRS.has(item)) continue;
+        const full = dir === '/' ? `/${item}` : `${dir}/${item}`;
+        const name = prefix ? `${prefix}/${item}` : item;
+        let stat;
+        try {
+          stat = await pod.fs.stat(full);
+        } catch {
+          continue;
+        }
+        if (stat.isDirectory) {
+          results.push({ name, type: 'dir', size: 0, sha256: null });
+          if (level < depth) await walk(full, name, level + 1);
+        } else {
+          let hash: string | null = null;
+          try {
+            hash = await sha256(await pod.fs.readFile(full, 'utf-8'));
+          } catch {
+            // Binary or unreadable file — the entry still exists, just unhashed.
+          }
+          results.push({ name, type: 'file', size: stat.size, sha256: hash });
+        }
+      }
+    };
 
-    const result = await Promise.race([
-      completion,
-      new Promise<{ exitCode: number; stdout: string }>((_, reject) =>
-        setTimeout(() => reject(new Error(`Command timed out after ${timeoutMs}ms`)), timeoutMs),
-      ),
-    ]);
-
-    return { exitCode: result.exitCode, stdout, stderr };
+    await walk(root, '', 1);
+    // Directories first, then lexicographic — matches the reference adapter.
+    results.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+      return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    });
+    return results;
   }
 
-  async teardown(): Promise<void> {
-    if (this.pod) {
-      log('teardown:start');
+  /** Path -> sha256 over the whole workspace, used to commit a revision. */
+  async shaManifest(): Promise<Map<string, string>> {
+    const manifest = new Map<string, string>();
+    for (const full of await this.listFiles('/')) {
       try {
-        await this.pod.teardown();
-      } catch (err) {
-        log('teardown:error', { error: err instanceof Error ? err.message : String(err) });
+        manifest.set(full.replace(/^\//, ''), await sha256(await this.readFile(full)));
+      } catch {
+        // Binary files are excluded from revision manifests.
       }
-      this.pod = null;
     }
+    return manifest;
+  }
+
+  /**
+   * Run a command to completion. Output is bounded (tail-kept) and the process
+   * is killed — not merely abandoned — when the deadline expires.
+   *
+   * @throws SpawnTimeoutError on deadline expiry
+   */
+  async spawn(cmd: string, args: string[], opts: SpawnOpts = {}): Promise<SpawnResult> {
+    const pod = this.requirePod();
+    const maxBytes = opts.maxOutputBytes ?? RUN_OUTPUT_MAX_BYTES;
+    const timeoutMs = opts.timeoutMs ?? RUN_TIMEOUT_DEFAULT;
+
+    const spawnOpts: { env?: Record<string, string>; cwd?: string } = {};
+    if (opts.env) spawnOpts.env = opts.env;
+    if (opts.cwd) spawnOpts.cwd = opts.cwd;
+
+    const proc = await pod.spawn(cmd, args, spawnOpts);
+
+    let stdout = '';
+    let stderr = '';
+    let truncated = false;
+    // Trim as we go so a runaway build cannot pin megabytes of string per chunk.
+    proc.on('output', (text: string) => {
+      const bounded = boundOutput(stdout + text, maxBytes);
+      stdout = bounded.text;
+      truncated ||= bounded.truncated;
+      opts.onOutput?.(text, 'stdout');
+    });
+    proc.on('error', (text: string) => {
+      const bounded = boundOutput(stderr + text, maxBytes);
+      stderr = bounded.text;
+      truncated ||= bounded.truncated;
+      opts.onOutput?.(text, 'stderr');
+    });
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        proc.completion,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            try {
+              proc.kill();
+            } catch {
+              // Already exited between the deadline and the kill.
+            }
+            reject(new SpawnTimeoutError(timeoutMs));
+          }, timeoutMs);
+        }),
+      ]);
+
+      // Fall back to the completion payload when no stream events fired.
+      const boundedOut = boundOutput(stdout || result.stdout || '', maxBytes);
+      const boundedErr = boundOutput(stderr || result.stderr || '', maxBytes);
+      return {
+        exitCode: result.exitCode,
+        stdout: boundedOut.text,
+        stderr: boundedErr.text,
+        truncated: truncated || boundedOut.truncated || boundedErr.truncated,
+      };
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
+  teardown(): void {
+    if (!this.pod) return;
+    log('teardown:start');
+    try {
+      // Nodepod.teardown() is synchronous.
+      this.pod.teardown();
+    } catch (err) {
+      log('teardown:error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    this.pod = null;
+    this.lastInstallFingerprint = null;
   }
 
   private requirePod(): NodepodInstance {

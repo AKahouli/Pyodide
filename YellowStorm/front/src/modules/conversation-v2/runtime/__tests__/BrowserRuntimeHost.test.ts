@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BrowserRuntimeHost, getOrCreateHost, removeHost } from '../BrowserRuntimeHost';
+import { ToolError } from '../ToolError';
+import { RuntimeErrorCodes } from '../runtime.types';
 
 // Mock all dependencies
 vi.mock('../../api', () => ({
@@ -8,7 +10,7 @@ vi.mock('../../api', () => ({
       runtimeSessionId: 'rts_abc',
       ticket: 'ticket_123',
       workspaceId: 'ws_1',
-      revisionId: 'rev_0',
+      revisionId: 'starter_react_vite_v1',
       expiresAt: '2026-12-31T23:59:59Z',
     }),
   },
@@ -25,6 +27,7 @@ const mockOnDisconnect = vi.fn();
 const mockOnConnect = vi.fn();
 const mockEmitToolCompleted = vi.fn();
 const mockEmitToolFailed = vi.fn();
+const mockEmitToolProgress = vi.fn();
 
 vi.mock('../BrowserRuntimeClient', () => ({
   BrowserRuntimeClient: vi.fn().mockImplementation(() => ({
@@ -39,19 +42,24 @@ vi.mock('../BrowserRuntimeClient', () => ({
     onConnect: mockOnConnect,
     emitToolCompleted: mockEmitToolCompleted,
     emitToolFailed: mockEmitToolFailed,
+    emitToolProgress: mockEmitToolProgress,
     connected: true,
   })),
 }));
 
 const mockBoot = vi.fn().mockResolvedValue(undefined);
-const mockInstallDeps = vi.fn().mockResolvedValue(undefined);
+const mockEnsureDeps = vi.fn().mockResolvedValue({ installed: true });
 const mockStartDevServer = vi.fn().mockResolvedValue('http://localhost:5173');
+const mockShaManifest = vi.fn().mockResolvedValue(new Map([['package.json', 'sha-a']]));
+const mockMarkDepsDirty = vi.fn();
 
 vi.mock('../NodepodRuntimeAdapter', () => ({
   NodepodRuntimeAdapter: vi.fn().mockImplementation(() => ({
     boot: mockBoot,
-    installDeps: mockInstallDeps,
+    ensureDeps: mockEnsureDeps,
     startDevServer: mockStartDevServer,
+    shaManifest: mockShaManifest,
+    markDepsDirty: mockMarkDepsDirty,
     files: { '/package.json': '{}' },
     teardown: vi.fn(),
     currentPod: null,
@@ -59,13 +67,26 @@ vi.mock('../NodepodRuntimeAdapter', () => ({
   invalidateSession: vi.fn(),
 }));
 
+const mockHydrateStarter = vi
+  .fn()
+  .mockReturnValue({ '/package.json': '{}', '/src/App.jsx': 'app' });
+const mockHydrateFromRevision = vi.fn().mockResolvedValue({
+  '/package.json': '{"name":"from-ceph"}',
+  '/src/App.jsx': 'app',
+});
+const mockSyncToRevision = vi.fn().mockResolvedValue(undefined);
+
 vi.mock('../RevisionHydrator', () => ({
   RevisionHydrator: vi.fn().mockImplementation(() => ({
-    hydrateStarter: vi.fn().mockReturnValue({ '/package.json': '{}', '/src/App.jsx': 'app' }),
+    hydrateStarter: mockHydrateStarter,
+    hydrateFromRevision: mockHydrateFromRevision,
     hydrateFromCeph: vi.fn().mockResolvedValue({ '/package.json': '{}' }),
-    syncToRevision: vi.fn().mockResolvedValue(undefined),
+    syncToRevision: mockSyncToRevision,
   })),
 }));
+
+const mockAttachIframe = vi.fn().mockResolvedValue(undefined);
+const mockDetachIframe = vi.fn();
 
 vi.mock('../PreviewController', () => ({
   PreviewController: vi.fn().mockImplementation(() => ({
@@ -73,21 +94,27 @@ vi.mock('../PreviewController', () => ({
     port: 5173,
     setPreview: vi.fn(),
     reset: vi.fn(),
+    attachIframe: mockAttachIframe,
+    detachIframe: mockDetachIframe,
     probeAndPromote: vi.fn().mockResolvedValue({ ok: true }),
     inspectPreview: vi.fn().mockResolvedValue({ url: 'http://localhost:5173', healthy: true }),
+    performAction: vi.fn().mockResolvedValue({ ok: true, action: 'reload' }),
   })),
 }));
 
+// Hoisted: the mock factory dereferences it eagerly at module-eval time.
+const { mockDispatchTool } = vi.hoisted(() => ({
+  mockDispatchTool: vi.fn().mockResolvedValue({ content: 'ok' }),
+}));
+
 vi.mock('../RuntimeToolHandlers', () => ({
-  dispatchTool: vi.fn().mockResolvedValue({ content: 'ok' }),
-  ToolError: class extends Error {
-    code: number;
-    data?: Record<string, unknown>;
-    constructor(code: number, message: string, data?: Record<string, unknown>) {
-      super(message);
-      this.code = code;
-      this.data = data;
-    }
+  dispatchTool: mockDispatchTool,
+  MUTATING_TOOLS: new Set(['write', 'apply_patch', 'delete']),
+}));
+
+vi.mock('../../store', () => ({
+  useConversationV2Store: {
+    getState: () => ({ applicationComponent: null }),
   },
 }));
 
@@ -103,6 +130,17 @@ vi.mock('../RuntimeCapabilities', () => ({
 describe('BrowserRuntimeHost', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockHydrateFromRevision.mockResolvedValue({
+      '/package.json': '{"name":"from-ceph"}',
+      '/src/App.jsx': 'app',
+    });
+    mockConnect.mockResolvedValue(undefined);
+    mockRegister.mockResolvedValue({ ok: true });
+    mockBoot.mockResolvedValue(undefined);
+    mockEnsureDeps.mockResolvedValue({ installed: true });
+    mockStartDevServer.mockResolvedValue('http://localhost:5173');
+    mockShaManifest.mockResolvedValue(new Map([['package.json', 'sha-a']]));
+    mockDispatchTool.mockResolvedValue({ content: 'ok' });
   });
 
   afterEach(() => {
@@ -118,13 +156,13 @@ describe('BrowserRuntimeHost', () => {
 
     expect(mockConnect).toHaveBeenCalledWith('ticket_123');
     expect(mockBoot).toHaveBeenCalled();
-    expect(mockInstallDeps).toHaveBeenCalled();
+    expect(mockEnsureDeps).toHaveBeenCalled();
     expect(mockStartDevServer).toHaveBeenCalled();
     expect(mockRegister).toHaveBeenCalledWith(
       expect.objectContaining({
         runtimeSessionId: 'rts_abc',
         workspaceId: 'ws_1',
-        revisionId: 'rev_0',
+        revisionId: 'starter_react_vite_v1',
       }),
     );
     expect(mockStartHeartbeat).toHaveBeenCalledWith('ws_1', expect.any(Function));
@@ -136,6 +174,18 @@ describe('BrowserRuntimeHost', () => {
     expect(states).toContain('starting');
     expect(states).toContain('registering');
     expect(states).toContain('ready');
+
+    // Ticket / mcpToken must never surface on HostState (isolation for preview iframe).
+    expect(Object.keys(host.state).sort()).toEqual([
+      'error',
+      'files',
+      'previewUrl',
+      'revisionId',
+      'status',
+    ]);
+    expect(JSON.stringify(host.state)).not.toContain('ticket');
+    expect(JSON.stringify(host.state)).not.toContain('mcpToken');
+    expect(host.state.previewUrl).not.toMatch(/ticket/i);
 
     host.destroy();
   });
@@ -165,6 +215,156 @@ describe('BrowserRuntimeHost', () => {
     const newHost = getOrCreateHost('sess_y');
     expect(newHost).not.toBe(host);
     removeHost('sess_y');
+  });
+
+  it('seeds the local revision store at the ticket revision', async () => {
+    const host = new BrowserRuntimeHost();
+    await host.start('sess_1');
+    expect(mockShaManifest).toHaveBeenCalled();
+    expect(host.state.revisionId).toBe('starter_react_vite_v1');
+    expect(mockHydrateFromRevision).toHaveBeenCalledWith('sess_1', 'starter_react_vite_v1');
+    expect(mockHydrateStarter).not.toHaveBeenCalled();
+    host.destroy();
+  });
+
+  it('falls back to bundled starter when revision hydration fails', async () => {
+    mockHydrateFromRevision.mockRejectedValueOnce(new Error('ceph down'));
+    const host = new BrowserRuntimeHost();
+    await host.start('sess_1');
+    expect(mockHydrateStarter).toHaveBeenCalled();
+    expect(host.state.status).toBe('ready');
+    host.destroy();
+  });
+
+  describe('tool.invoke', () => {
+    /** Run the handler the host registered with the socket client. */
+    async function invoke(payload: Record<string, unknown>) {
+      const handler = mockOnToolInvoke.mock.calls[0][0] as (p: unknown) => void;
+      handler(payload);
+      await vi.waitFor(() =>
+        expect(
+          mockEmitToolCompleted.mock.calls.length + mockEmitToolFailed.mock.calls.length,
+        ).toBeGreaterThan(0),
+      );
+    }
+
+    it('emits tool.completed with the handler result', async () => {
+      const host = new BrowserRuntimeHost();
+      await host.start('sess_1');
+
+      await invoke({
+        toolCallId: 'tc_1',
+        tool: 'read',
+        arguments: { path: 'src/App.tsx' },
+      });
+
+      expect(mockEmitToolCompleted).toHaveBeenCalledWith({
+        toolCallId: 'tc_1',
+        result: { content: 'ok' },
+      });
+      host.destroy();
+    });
+
+    it('forwards a ToolError code on tool.failed', async () => {
+      mockDispatchTool.mockRejectedValueOnce(
+        new ToolError(RuntimeErrorCodes.SECURITY_DENIED, 'nope', { path: '../x' }),
+      );
+      const host = new BrowserRuntimeHost();
+      await host.start('sess_1');
+
+      await invoke({ toolCallId: 'tc_2', tool: 'read', arguments: { path: '../x' } });
+
+      expect(mockEmitToolFailed).toHaveBeenCalledWith({
+        toolCallId: 'tc_2',
+        error: {
+          code: RuntimeErrorCodes.SECURITY_DENIED,
+          message: 'nope',
+          data: { path: '../x' },
+        },
+      });
+      host.destroy();
+    });
+
+    it('advances the reported revision after a mutation', async () => {
+      // Mirror what the real write handler does: commit through the store.
+      mockDispatchTool.mockImplementationOnce(async (_tool, _args, ctx) => {
+        const revisions = (ctx as { revisions: { commit: (m: Map<string, string>) => string } })
+          .revisions;
+        return { revisionId: revisions.commit(new Map([['a.txt', 'sha-b']])) };
+      });
+
+      const host = new BrowserRuntimeHost();
+      await host.start('sess_1');
+      expect(host.state.revisionId).toBe('starter_react_vite_v1');
+
+      await invoke({
+        toolCallId: 'tc_3',
+        tool: 'write',
+        arguments: { path: 'a.txt', content: 'x', create: true },
+      });
+
+      expect(host.state.revisionId).toBe('rev_1');
+      host.destroy();
+    });
+
+    it('relays tool.progress through the injected reporter', async () => {
+      mockDispatchTool.mockReset();
+      mockDispatchTool.mockImplementation(async (_tool, _args, ctx) => {
+        (ctx as { onProgress?: (p: unknown) => void }).onProgress?.({
+          phase: 'running',
+          message: 'building',
+        });
+        return { exitCode: 0 };
+      });
+      const host = new BrowserRuntimeHost();
+      await host.start('sess_1');
+
+      await invoke({ toolCallId: 'tc_4', tool: 'run', arguments: { command: 'ls' } });
+
+      expect(mockEmitToolProgress).toHaveBeenCalledWith({
+        toolCallId: 'tc_4',
+        phase: 'running',
+        message: 'building',
+      });
+      host.destroy();
+    });
+  });
+
+  describe('runtime.rehydrate', () => {
+    it('re-syncs the VFS and re-registers at the expected revision', async () => {
+      const host = new BrowserRuntimeHost();
+      await host.start('sess_1');
+      mockRegister.mockClear();
+
+      const handler = mockOnRehydrate.mock.calls[0][0] as (p: unknown) => void;
+      handler({
+        workspaceId: 'ws_1',
+        expectedRevisionId: 'rev_5',
+        actualRevisionId: 'rev_0',
+      });
+
+      await vi.waitFor(() => expect(mockRegister).toHaveBeenCalled());
+      expect(mockHydrateFromRevision).toHaveBeenCalledWith('sess_1', 'rev_5');
+      expect(mockMarkDepsDirty).toHaveBeenCalled();
+      expect(mockRegister).toHaveBeenCalledWith(
+        expect.objectContaining({ revisionId: 'rev_5' }),
+      );
+      expect(host.state.revisionId).toBe('rev_5');
+      host.destroy();
+    });
+  });
+
+  it('queues a preview iframe until the pod exists', async () => {
+    const host = new BrowserRuntimeHost();
+    const iframe = document.createElement('iframe');
+
+    host.attachPreviewIframe(iframe);
+    // No pod yet, so nothing is handed to the controller.
+    expect(mockAttachIframe).not.toHaveBeenCalled();
+
+    host.detachPreviewIframe();
+    expect(mockDetachIframe).toHaveBeenCalled();
+    host.destroy();
   });
 
   it('subscribe/unsubscribe works correctly', async () => {

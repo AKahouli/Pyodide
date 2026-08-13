@@ -32,10 +32,6 @@ export interface AppBuildProgress {
 
 export interface UseNodepodPreviewArgs {
   sessionId: string | null;
-  cephPath?: string | null;
-  filesTree?: RawFilesTreeNode | null;
-  /** Bump to force a full reboot (e.g. new agent generation). */
-  revision?: string;
 }
 
 export interface UseNodepodPreviewResult {
@@ -45,4 +41,5 @@ export interface UseNodepodPreviewResult {
   /** Downloaded project files (VFS paths like `/src/App.tsx`). Read-only for UI. */
   files: Record<string, string | Uint8Array> | null;
   retry: () => void;
+  previewIframeRef: (element: HTMLIFrameElement | null) => void;
 }

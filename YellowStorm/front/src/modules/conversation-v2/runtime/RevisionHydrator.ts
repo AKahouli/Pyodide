@@ -22,8 +22,8 @@ function safeHost(url: string): string {
 }
 
 /**
- * Bundled Vite/React starter for new sessions with no existing Ceph sources.
- * Matches the APImanus stub's _STUB_STARTER_FILES.
+ * Offline fallback only — prefer {@link RevisionHydrator.hydrateFromRevision}
+ * which loads the Ceph-seeded `starter_react_vite_v1` (or workspace revision).
  */
 const STARTER_PACKAGE_JSON = `{
   "name": "yellowmind-starter",
@@ -86,12 +86,46 @@ export default function App() {
   );
 }`;
 
+const STARTER_APP_CSS = `:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
+h1 {
+  color: #1a1a1a;
+}
+`;
+
 export type VfsFiles = Record<string, string | Uint8Array>;
 
 export class RevisionHydrator {
   /**
-   * Download project files from Ceph via presigned URLs.
-   * Mirrors the old `fetchProjectFiles` from useNodepodPreview.
+   * Hydrate Nodepod from an authorized revision (Ceph starter or workspace).
+   * Uses revision files + presign APIs — never a client-supplied cephPath.
+   */
+  async hydrateFromRevision(sessionId: string, revisionId: string): Promise<VfsFiles> {
+    log('hydrateFromRevision:start', { sessionId, revisionId });
+    const listed = await conversationV2Api.getRevisionFiles(sessionId, revisionId);
+    const paths = listed.files.map((f) => f.path);
+    if (paths.length === 0) {
+      throw new Error(`Revision ${revisionId} has no files`);
+    }
+
+    log('presign-revision:request', { sessionId, revisionId, pathCount: paths.length });
+    const { items } = await conversationV2Api.presignRevisionFiles(
+      sessionId,
+      revisionId,
+      paths,
+    );
+    log('presign-revision:response', {
+      itemCount: items.length,
+      sample: items.slice(0, 3).map((i) => ({ path: i.path, urlHost: safeHost(i.url) })),
+    });
+
+    return this.downloadPresignedItems(items);
+  }
+
+  /**
+   * Download project files from Ceph via legacy prefix + filesTree.
+   * Prefer {@link hydrateFromRevision} for new OpenCode sessions.
    */
   async hydrateFromCeph(
     sessionId: string,
@@ -112,6 +146,62 @@ export class RevisionHydrator {
       sample: items.slice(0, 3).map((i) => ({ path: i.path, urlHost: safeHost(i.url) })),
     });
 
+    return this.downloadPresignedItems(items);
+  }
+
+  /**
+   * Last-resort offline starter when revision APIs are unavailable.
+   * Happy path should use {@link hydrateFromRevision}.
+   */
+  hydrateStarter(): VfsFiles {
+    log('hydrateStarter:fallback');
+    return {
+      '/package.json': STARTER_PACKAGE_JSON,
+      '/index.html': STARTER_INDEX_HTML,
+      '/vite.config.js': STARTER_VITE_CONFIG,
+      '/src/main.jsx': STARTER_MAIN_JSX,
+      '/src/App.jsx': STARTER_APP_JSX,
+      '/src/App.css': STARTER_APP_CSS,
+    };
+  }
+
+  /**
+   * Write/overwrite files into a running Nodepod pod's VFS.
+   * Used after `runtime.rehydrate` to bring the pod up to date.
+   */
+  async syncToRevision(
+    pod: {
+      fs: {
+        writeFile: (path: string, content: string | Uint8Array) => Promise<void>;
+        mkdir: (path: string, opts?: { recursive?: boolean }) => Promise<void>;
+      };
+    },
+    files: VfsFiles,
+  ): Promise<void> {
+    log('syncToRevision:start', { fileCount: Object.keys(files).length });
+    const dirs = new Set<string>();
+    for (const path of Object.keys(files)) {
+      const dir = path.substring(0, path.lastIndexOf('/'));
+      if (dir && dir !== '/') dirs.add(dir);
+    }
+    for (const dir of dirs) {
+      try {
+        await pod.fs.mkdir(dir, { recursive: true });
+      } catch {
+        // already exists
+      }
+    }
+    await Promise.all(
+      Object.entries(files).map(async ([path, content]) => {
+        await pod.fs.writeFile(path, content);
+      }),
+    );
+    log('syncToRevision:done');
+  }
+
+  private async downloadPresignedItems(
+    items: Array<{ path: string; url: string }>,
+  ): Promise<VfsFiles> {
     log('download:start', { itemCount: items.length });
     const files: VfsFiles = {};
     let textCount = 0;
@@ -150,46 +240,5 @@ export class RevisionHydrator {
       hasPackageJson: typeof files['/package.json'] === 'string',
     });
     return files;
-  }
-
-  /** Return the bundled Vite/React starter for a brand-new session. */
-  hydrateStarter(): VfsFiles {
-    log('hydrateStarter');
-    return {
-      '/package.json': STARTER_PACKAGE_JSON,
-      '/index.html': STARTER_INDEX_HTML,
-      '/vite.config.js': STARTER_VITE_CONFIG,
-      '/src/main.jsx': STARTER_MAIN_JSX,
-      '/src/App.jsx': STARTER_APP_JSX,
-    };
-  }
-
-  /**
-   * Write/overwrite files into a running Nodepod pod's VFS.
-   * Used after `runtime.rehydrate` to bring the pod up to date.
-   */
-  async syncToRevision(
-    pod: { fs: { writeFile: (path: string, content: string | Uint8Array) => Promise<void>; mkdir: (path: string, opts?: { recursive?: boolean }) => Promise<void> } },
-    files: VfsFiles,
-  ): Promise<void> {
-    log('syncToRevision:start', { fileCount: Object.keys(files).length });
-    const dirs = new Set<string>();
-    for (const path of Object.keys(files)) {
-      const dir = path.substring(0, path.lastIndexOf('/'));
-      if (dir && dir !== '/') dirs.add(dir);
-    }
-    for (const dir of dirs) {
-      try {
-        await pod.fs.mkdir(dir, { recursive: true });
-      } catch {
-        // already exists
-      }
-    }
-    await Promise.all(
-      Object.entries(files).map(async ([path, content]) => {
-        await pod.fs.writeFile(path, content);
-      }),
-    );
-    log('syncToRevision:done');
   }
 }

@@ -1,286 +1,509 @@
 import type { NodepodRuntimeAdapter } from './NodepodRuntimeAdapter';
+import { SpawnTimeoutError } from './NodepodRuntimeAdapter';
 import type { PreviewController } from './PreviewController';
-import { RuntimeErrorCodes } from './runtime.types';
+import type { WorkspaceRevisionStore } from './WorkspaceRevisionStore';
+import { ToolError } from './ToolError';
+import { sha256 } from './hashing';
+import { applyUnifiedPatch, createUnifiedDiff } from './unified-diff';
+import {
+  validateToolPath,
+  validateToolPathOptional,
+  validateListPath,
+  toVfsPath,
+  toRelativePath,
+} from './paths';
+import {
+  clamp,
+  LIST_DEPTH_DEFAULT,
+  LIST_MAX_DEPTH,
+  LIST_MIN_DEPTH,
+  MAX_FILE_SIZE,
+  RUN_TIMEOUT_DEFAULT,
+  RUN_TIMEOUT_MAX,
+  RUN_TIMEOUT_MIN,
+  SEARCH_EXCERPT_CHARS,
+  SEARCH_MAX_RESULTS,
+  SEARCH_MAX_RESULTS_DEFAULT,
+} from './limits';
+import {
+  RuntimeErrorCodes,
+  type ApplyPatchResult,
+  type DeleteResult,
+  type DiffResult,
+  type FileTreeNode,
+  type FinalizeResult,
+  type ListResult,
+  type PreviewActionName,
+  type PreviewActionResult,
+  type PreviewInspectResult,
+  type ReadResult,
+  type RunResult,
+  type SearchMatch,
+  type SearchResult,
+  type ToolProgressReporter,
+  type VerificationEvidence,
+  type WriteResult,
+} from './runtime.types';
 
-type ToolResult = Record<string, unknown>;
 type ToolArgs = Record<string, unknown>;
 
-class ToolError extends Error {
-  constructor(
-    public readonly code: number,
-    message: string,
-    public readonly data?: Record<string, unknown>,
-  ) {
-    super(message);
-    this.name = 'ToolError';
+/** Every shape a tool handler may return, per `schemas.py`. */
+export type AnyToolResult =
+  | ListResult
+  | ReadResult
+  | SearchResult
+  | WriteResult
+  | ApplyPatchResult
+  | DeleteResult
+  | DiffResult
+  | RunResult
+  | PreviewInspectResult
+  | PreviewActionResult
+  | FinalizeResult;
+
+/** Everything a handler is allowed to touch. */
+export interface ToolContext {
+  adapter: NodepodRuntimeAdapter;
+  previewCtrl: PreviewController;
+  revisions: WorkspaceRevisionStore;
+  workspaceId: string;
+  onProgress?: ToolProgressReporter;
+}
+
+const PREVIEW_ACTIONS: readonly PreviewActionName[] = [
+  'reload',
+  'click',
+  'input',
+  'press_key',
+  'select',
+  'scroll',
+];
+
+/** Commands that change the dependency set and invalidate `node_modules`. */
+const DEPENDENCY_MUTATING_RE =
+  /^\s*(npm\s+(install|i|ci|add|uninstall|remove)|pnpm\s+(install|i|add|remove)|yarn\s+(install|add|remove))\b/i;
+
+export const MUTATING_TOOLS: ReadonlySet<string> = new Set([
+  'write',
+  'apply_patch',
+  'delete',
+]);
+
+/* -------------------------------------------------------------------------
+ * Argument coercion — the backend validates with Pydantic before dispatching,
+ * but the browser is a trust boundary of its own.
+ * ---------------------------------------------------------------------- */
+
+function requireString(args: ToolArgs, key: string): string {
+  const value = args[key];
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new ToolError(
+      RuntimeErrorCodes.INVALID_PARAMS,
+      `${key} is required and must be a non-empty string`,
+      { field: key },
+    );
+  }
+  return value;
+}
+
+function optionalString(args: ToolArgs, key: string): string | undefined {
+  const value = args[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function optionalInt(args: ToolArgs, key: string): number | undefined {
+  const value = args[key];
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return Math.trunc(value);
+}
+
+/* -------------------------------------------------------------------------
+ * Shared filesystem helpers
+ * ---------------------------------------------------------------------- */
+
+async function readIfExists(
+  adapter: NodepodRuntimeAdapter,
+  vfsPath: string,
+): Promise<string | null> {
+  try {
+    if (!(await adapter.exists(vfsPath))) return null;
+    return await adapter.readFile(vfsPath);
+  } catch {
+    return null;
   }
 }
 
-async function sha256(content: string): Promise<string> {
-  const buf = new TextEncoder().encode(content);
-  const hash = await crypto.subtle.digest('SHA-256', buf);
-  return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, '0')).join('');
+/** Commit the current workspace state and return the freshly minted id. */
+async function commitRevision(ctx: ToolContext): Promise<string> {
+  return ctx.revisions.commit(await ctx.adapter.shaManifest());
 }
 
-type Handler = (
-  args: ToolArgs,
-  adapter: NodepodRuntimeAdapter,
-  previewCtrl: PreviewController,
-) => Promise<ToolResult>;
+function conflict(
+  path: string,
+  expectedSha256: string,
+  actualSha256: string | null,
+): ToolError {
+  return new ToolError(
+    RuntimeErrorCodes.REVISION_CONFLICT,
+    `SHA-256 mismatch for ${path}`,
+    { path, expectedSha256, actualSha256 },
+  );
+}
+
+/* -------------------------------------------------------------------------
+ * Handlers
+ * ---------------------------------------------------------------------- */
+
+type Handler = (args: ToolArgs, ctx: ToolContext) => Promise<AnyToolResult>;
 
 const handlers: Record<string, Handler> = {
-  async list(args, adapter): Promise<ToolResult> {
-    const path = (args.path as string) || '/';
-    const entries = await adapter.listFiles(path);
-    return { path, entries, count: entries.length };
+  async list(args, ctx): Promise<ListResult> {
+    const rawPath = optionalString(args, 'path') ?? '.';
+    const path = validateListPath(rawPath);
+    const depth = clamp(
+      optionalInt(args, 'depth') ?? LIST_DEPTH_DEFAULT,
+      LIST_MIN_DEPTH,
+      LIST_MAX_DEPTH,
+    );
+    return { path, entries: await ctx.adapter.listEntries(path, depth) };
   },
 
-  async read(args, adapter): Promise<ToolResult> {
-    const path = args.path as string;
-    if (!path) throw new ToolError(RuntimeErrorCodes.INTERNAL_ERROR, 'path is required');
-    try {
-      const content = await adapter.readFile(path);
-      const hash = await sha256(content);
-      const lines = content.split('\n');
+  async read(args, ctx): Promise<ReadResult> {
+    const path = validateToolPath(requireString(args, 'path'));
+    const startLine = optionalInt(args, 'startLine');
+    const endLine = optionalInt(args, 'endLine');
+    if (startLine !== undefined && endLine !== undefined && endLine < startLine) {
+      throw new ToolError(
+        RuntimeErrorCodes.INVALID_PARAMS,
+        'endLine must be >= startLine',
+        { path, startLine, endLine },
+      );
+    }
+
+    const full = await readIfExists(ctx.adapter, toVfsPath(path));
+    // A missing file is a normal result, not an error — reference adapter parity.
+    if (full === null) {
       return {
         path,
-        content,
-        sha256: hash,
-        lineCount: lines.length,
+        content: `// File not found: ${path}\n`,
+        sha256: '',
+        lineCount: 0,
         truncated: false,
       };
-    } catch {
-      return { path, content: `File not found: ${path}`, sha256: '', lineCount: 0, truncated: false };
     }
+
+    const hash = await sha256(full);
+    const lines = full.split('\n');
+    const lineCount = lines.length;
+
+    if (startLine === undefined && endLine === undefined) {
+      return { path, content: full, sha256: hash, lineCount, truncated: false };
+    }
+
+    const from = (startLine ?? 1) - 1;
+    const to = endLine ?? lineCount;
+    return {
+      path,
+      content: lines.slice(from, to).join('\n'),
+      sha256: hash,
+      lineCount,
+      truncated: to < lineCount || from > 0,
+    };
   },
 
-  async search(args, adapter): Promise<ToolResult> {
-    const query = (args.query as string) ?? '';
-    const searchPath = (args.path as string) || '/';
-    const maxResults = (args.maxResults as number) || 20;
-    const allFiles = await adapter.listFiles(searchPath);
-    const matches: Array<{ path: string; line: number; text: string }> = [];
-    for (const filePath of allFiles) {
+  async search(args, ctx): Promise<SearchResult> {
+    const query = requireString(args, 'query');
+    const scope = validateToolPathOptional(optionalString(args, 'path'));
+    const maxResults = clamp(
+      optionalInt(args, 'maxResults') ?? SEARCH_MAX_RESULTS_DEFAULT,
+      1,
+      SEARCH_MAX_RESULTS,
+    );
+
+    const needle = query.toLowerCase();
+    const matches: SearchMatch[] = [];
+
+    for (const vfsPath of await ctx.adapter.listFiles(toVfsPath(scope ?? '.'))) {
       if (matches.length >= maxResults) break;
+      const relative = toRelativePath(vfsPath);
+      let content: string;
       try {
-        const content = await adapter.readFile(filePath);
-        const lines = content.split('\n');
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].includes(query)) {
-            matches.push({ path: filePath, line: i + 1, text: lines[i].trim() });
-            if (matches.length >= maxResults) break;
-          }
-        }
+        content = await ctx.adapter.readFile(vfsPath);
       } catch {
-        // skip unreadable files
+        continue; // Binary or unreadable file.
+      }
+      const hash = await sha256(content);
+      const lines = content.split('\n');
+      for (let i = 0; i < lines.length; i += 1) {
+        if (!lines[i].toLowerCase().includes(needle)) continue;
+        matches.push({
+          path: relative,
+          line: i + 1,
+          excerpt: lines[i].trim().slice(0, SEARCH_EXCERPT_CHARS),
+          sha256: hash,
+        });
+        if (matches.length >= maxResults) break;
       }
     }
+
     return { query, matches };
   },
 
-  async write(args, adapter): Promise<ToolResult> {
-    const path = args.path as string;
-    const content = args.content as string;
-    const create = args.create as boolean | undefined;
-    const expectedSha = args.expectedSha256 as string | undefined;
+  async write(args, ctx): Promise<WriteResult> {
+    const path = validateToolPath(requireString(args, 'path'));
+    const content = typeof args.content === 'string' ? args.content : '';
+    const create = args.create === true;
+    const expectedSha256 = optionalString(args, 'expectedSha256');
 
-    if (!path) throw new ToolError(RuntimeErrorCodes.INTERNAL_ERROR, 'path is required');
-
-    let previousSha: string | null = null;
-    try {
-      const existing = await adapter.readFile(path);
-      previousSha = await sha256(existing);
-      if (expectedSha && previousSha !== expectedSha) {
-        throw new ToolError(RuntimeErrorCodes.REVISION_CONFLICT, `SHA-256 mismatch for ${path}`, {
-          path,
-          expectedSha256: expectedSha,
-          actualSha256: previousSha,
-        });
-      }
-    } catch (err) {
-      if (err instanceof ToolError) throw err;
-      if (!create && !expectedSha) {
-        throw new ToolError(-32602, `File not found: ${path} — set create=true for new files`, { path });
-      }
+    if (content.length > MAX_FILE_SIZE) {
+      throw new ToolError(
+        RuntimeErrorCodes.INVALID_PARAMS,
+        `content exceeds the ${MAX_FILE_SIZE} byte limit`,
+        { path, size: content.length, limit: MAX_FILE_SIZE },
+      );
     }
 
-    await adapter.writeFile(path, content);
-    const newSha = await sha256(content);
+    const vfsPath = toVfsPath(path);
+    const existing = await readIfExists(ctx.adapter, vfsPath);
+    const previousSha256 = existing === null ? null : await sha256(existing);
+
+    if (existing === null) {
+      if (!create && !expectedSha256) {
+        throw new ToolError(
+          RuntimeErrorCodes.INVALID_PARAMS,
+          `File not found: ${path} — set create=true for new files`,
+          { path },
+        );
+      }
+      if (expectedSha256) throw conflict(path, expectedSha256, null);
+    } else if (expectedSha256 && previousSha256 !== expectedSha256) {
+      throw conflict(path, expectedSha256, previousSha256);
+    }
+
+    await ctx.adapter.writeFile(vfsPath, content);
+    if (path === 'package.json' || path.endsWith('lock.json') || path.endsWith('lock.yaml')) {
+      ctx.adapter.markDepsDirty();
+    }
+
     return {
+      revisionId: await commitRevision(ctx),
       path,
-      previousSha256: previousSha,
-      newSha256: newSha,
-      created: previousSha === null,
+      previousSha256,
+      newSha256: await sha256(content),
+      created: existing === null,
     };
   },
 
-  async apply_patch(args, adapter): Promise<ToolResult> {
-    const path = args.path as string;
-    const patch = args.patch as string;
-    const expectedSha = args.expectedSha256 as string;
+  async apply_patch(args, ctx): Promise<ApplyPatchResult> {
+    const path = validateToolPath(requireString(args, 'path'));
+    const patch = requireString(args, 'patch');
+    const expectedSha256 = requireString(args, 'expectedSha256');
 
-    if (!path) throw new ToolError(RuntimeErrorCodes.INTERNAL_ERROR, 'path is required');
-
-    let existing: string;
-    try {
-      existing = await adapter.readFile(path);
-    } catch {
-      throw new ToolError(-32602, `File not found: ${path}`, { path });
+    if (patch.length > MAX_FILE_SIZE) {
+      throw new ToolError(
+        RuntimeErrorCodes.INVALID_PARAMS,
+        `patch exceeds the ${MAX_FILE_SIZE} byte limit`,
+        { path, size: patch.length, limit: MAX_FILE_SIZE },
+      );
     }
 
-    const actualSha = await sha256(existing);
-    if (expectedSha && actualSha !== expectedSha) {
-      throw new ToolError(RuntimeErrorCodes.REVISION_CONFLICT, `SHA-256 mismatch for ${path}`, {
+    const vfsPath = toVfsPath(path);
+    const existing = await readIfExists(ctx.adapter, vfsPath);
+    if (existing === null) {
+      throw new ToolError(RuntimeErrorCodes.INVALID_PARAMS, `File not found: ${path}`, {
         path,
-        expectedSha256: expectedSha,
-        actualSha256: actualSha,
       });
     }
 
-    const patched = applySimplePatch(existing, patch);
-    await adapter.writeFile(path, patched);
-    const newSha = await sha256(patched);
+    const previousSha256 = await sha256(existing);
+    if (previousSha256 !== expectedSha256) {
+      throw conflict(path, expectedSha256, previousSha256);
+    }
+
+    const patched = applyUnifiedPatch(existing, patch, path);
+    await ctx.adapter.writeFile(vfsPath, patched);
+    if (path === 'package.json') ctx.adapter.markDepsDirty();
+
     return {
+      revisionId: await commitRevision(ctx),
       path,
-      previousSha256: actualSha,
-      newSha256: newSha,
+      previousSha256,
+      newSha256: await sha256(patched),
+      diff: createUnifiedDiff(path, existing, patched),
     };
   },
 
-  async delete(args, adapter): Promise<ToolResult> {
-    const path = args.path as string;
-    if (!path) throw new ToolError(RuntimeErrorCodes.INTERNAL_ERROR, 'path is required');
-    const expectedSha = args.expectedSha256 as string | undefined;
+  async delete(args, ctx): Promise<DeleteResult> {
+    const path = validateToolPath(requireString(args, 'path'));
+    const expectedSha256 = optionalString(args, 'expectedSha256');
 
-    let deletedSha: string;
-    try {
-      const content = await adapter.readFile(path);
-      deletedSha = await sha256(content);
-    } catch {
-      throw new ToolError(-32602, `File not found: ${path}`, { path });
-    }
-
-    if (expectedSha && deletedSha !== expectedSha) {
-      throw new ToolError(RuntimeErrorCodes.REVISION_CONFLICT, `SHA-256 mismatch for ${path}`, {
+    const vfsPath = toVfsPath(path);
+    const existing = await readIfExists(ctx.adapter, vfsPath);
+    if (existing === null) {
+      throw new ToolError(RuntimeErrorCodes.INVALID_PARAMS, `File not found: ${path}`, {
         path,
-        expectedSha256: expectedSha,
-        actualSha256: deletedSha,
       });
     }
 
-    await adapter.deleteFile(path);
-    return { path, deletedSha256: deletedSha };
-  },
-
-  async diff(args, adapter): Promise<ToolResult> {
-    const path = args.path as string | undefined;
-    if (path) {
-      try {
-        const content = await adapter.readFile(path);
-        return { path, content, sha256: await sha256(content) };
-      } catch {
-        return { path, content: null, sha256: null };
-      }
+    const deletedSha256 = await sha256(existing);
+    if (expectedSha256 && deletedSha256 !== expectedSha256) {
+      throw conflict(path, expectedSha256, deletedSha256);
     }
-    const allFiles = await adapter.listFiles('/');
-    return { files: allFiles, count: allFiles.length };
+
+    await ctx.adapter.deleteFile(vfsPath);
+    return { revisionId: await commitRevision(ctx), path, deletedSha256 };
   },
 
-  async run(args, adapter): Promise<ToolResult> {
-    const command = args.command as string;
-    if (!command) throw new ToolError(RuntimeErrorCodes.INTERNAL_ERROR, 'command is required');
-    const timeoutMs = (args.timeoutMs as number) || 180_000;
-    const parts = command.split(/\s+/);
-    const cmd = parts[0];
-    const cmdArgs = parts.slice(1);
+  async diff(args, ctx): Promise<DiffResult> {
+    const revisionId = optionalString(args, 'revisionId') ?? null;
+    const path = validateToolPathOptional(optionalString(args, 'path'));
+    return ctx.revisions.diffAgainst(await ctx.adapter.shaManifest(), revisionId, path);
+  },
 
+  async run(args, ctx): Promise<RunResult> {
+    const command = requireString(args, 'command');
+    const cwd = validateToolPathOptional(optionalString(args, 'cwd'));
+    const timeoutMs = clamp(
+      optionalInt(args, 'timeoutMs') ?? RUN_TIMEOUT_DEFAULT,
+      RUN_TIMEOUT_MIN,
+      RUN_TIMEOUT_MAX,
+    );
+
+    const [cmd, ...cmdArgs] = command.trim().split(/\s+/);
+    ctx.onProgress?.({ phase: 'running', message: command });
+
+    let lastProgressAt = 0;
     try {
-      const result = await adapter.spawn(cmd, cmdArgs, { timeoutMs });
+      const result = await ctx.adapter.spawn(cmd, cmdArgs, {
+        cwd: cwd ? toVfsPath(cwd) : undefined,
+        timeoutMs,
+        // Throttled so a chatty build does not flood the socket; each emission
+        // re-arms the backend's per-call deadline.
+        onOutput: (chunk) => {
+          const now = Date.now();
+          if (now - lastProgressAt < 1_000) return;
+          lastProgressAt = now;
+          ctx.onProgress?.({ phase: 'running', message: chunk.trim().slice(0, 500) });
+        },
+      });
+
+      if (DEPENDENCY_MUTATING_RE.test(command)) ctx.adapter.markDepsDirty();
+
+      // A non-zero exit code is a normal result the model must be able to read.
       return {
         exitCode: result.exitCode,
         stdout: result.stdout,
         stderr: result.stderr,
+        truncated: result.truncated,
+        command,
       };
     } catch (err) {
-      throw new ToolError(RuntimeErrorCodes.PROCESS_FAILED, err instanceof Error ? err.message : String(err));
+      if (err instanceof SpawnTimeoutError) {
+        throw new ToolError(RuntimeErrorCodes.TOOL_TIMEOUT, err.message, {
+          command,
+          timeoutMs,
+        });
+      }
+      // Reaching here means the process could not be started or the runtime
+      // itself failed — distinct from the command exiting non-zero.
+      throw new ToolError(
+        RuntimeErrorCodes.PROCESS_FAILED,
+        err instanceof Error ? err.message : String(err),
+        { command },
+      );
     }
   },
 
-  async preview_inspect(_args, _adapter, previewCtrl): Promise<ToolResult> {
-    const adapter = _adapter;
-    const pod = adapter.currentPod;
-    if (!pod) throw new ToolError(RuntimeErrorCodes.INTERNAL_ERROR, 'Nodepod not booted');
-    return previewCtrl.inspectPreview(pod);
+  async preview_inspect(_args, ctx): Promise<PreviewInspectResult> {
+    const pod = ctx.adapter.currentPod;
+    if (!pod) {
+      throw new ToolError(
+        RuntimeErrorCodes.UNSUPPORTED_CAPABILITY,
+        'Nodepod is not booted; the preview cannot be inspected.',
+        { requiredCapability: 'previewInspection' },
+      );
+    }
+    return ctx.previewCtrl.inspectPreview(pod);
   },
 
-  async preview_action(_args): Promise<ToolResult> {
-    throw new ToolError(RuntimeErrorCodes.UNSUPPORTED_CAPABILITY, 'preview_action requires nativeBinaries', {
-      capability: 'nativeBinaries',
+  async preview_action(args, ctx): Promise<PreviewActionResult> {
+    const action = requireString(args, 'action') as PreviewActionName;
+    if (!PREVIEW_ACTIONS.includes(action)) {
+      throw new ToolError(
+        RuntimeErrorCodes.INVALID_PARAMS,
+        `Unsupported preview action: ${action}`,
+        { action, supported: [...PREVIEW_ACTIONS] },
+      );
+    }
+    return ctx.previewCtrl.performAction(action, {
+      selector: optionalString(args, 'selector'),
+      value: optionalString(args, 'value'),
+      x: optionalInt(args, 'x'),
+      y: optionalInt(args, 'y'),
     });
   },
 
-  async finalize(args): Promise<ToolResult> {
+  async finalize(args, ctx): Promise<FinalizeResult> {
+    const revisionId = optionalString(args, 'revisionId') || ctx.revisions.latestRevisionId;
+    const rawVerification = (args.verification ?? {}) as Partial<VerificationEvidence>;
+
     return {
-      status: 'finalized',
-      revisionId: (args.revisionId as string) || 'rev_unknown',
-      title: (args.title as string) || 'App',
-      preview: { healthy: true },
-      cephManifestPath: 'manifests/placeholder',
+      revisionId,
+      cephManifestPath: `appbuilder/manifests/${ctx.workspaceId}/${revisionId}.json`,
+      fileTree: buildFileTree(await ctx.adapter.listFiles('/')),
+      preview: {
+        runtime: 'browser',
+        healthy: ctx.previewCtrl.previewUrl !== null,
+      },
+      verification: {
+        build: typeof rawVerification.build === 'string' ? rawVerification.build : '',
+        preview: typeof rawVerification.preview === 'string' ? rawVerification.preview : '',
+        tests: typeof rawVerification.tests === 'string' ? rawVerification.tests : '',
+      },
     };
   },
 };
 
+/** Nest a flat list of absolute VFS paths into the `finalize.fileTree` shape. */
+export function buildFileTree(vfsPaths: string[]): FileTreeNode {
+  const root: FileTreeNode = { name: '/', type: 'dir', children: [] };
+
+  for (const vfsPath of [...vfsPaths].sort()) {
+    const segments = toRelativePath(vfsPath).split('/').filter(Boolean);
+    let cursor = root;
+    segments.forEach((segment, index) => {
+      const isLeaf = index === segments.length - 1;
+      cursor.children ??= [];
+      let next = cursor.children.find((child) => child.name === segment);
+      if (!next) {
+        next = isLeaf
+          ? { name: segment, type: 'file' }
+          : { name: segment, type: 'dir', children: [] };
+        cursor.children.push(next);
+      }
+      cursor = next;
+    });
+  }
+
+  return root;
+}
+
 /**
- * Dispatch a tool invocation to the appropriate handler.
- * Throws ToolError for known failures, or wraps unknown errors.
+ * Dispatch a tool invocation. Unknown tools raise `METHOD_NOT_FOUND`; every
+ * other failure surfaces as a `ToolError` the host forwards as `tool.failed`.
  */
 export async function dispatchTool(
   tool: string,
   args: ToolArgs,
-  adapter: NodepodRuntimeAdapter,
-  previewCtrl: PreviewController,
-): Promise<ToolResult> {
+  ctx: ToolContext,
+): Promise<Record<string, unknown>> {
   const handler = handlers[tool];
   if (!handler) {
-    throw new ToolError(-32601, `Unknown tool: ${tool}`, { tool });
+    throw new ToolError(RuntimeErrorCodes.METHOD_NOT_FOUND, `Unknown tool: ${tool}`, {
+      tool,
+    });
   }
-  return handler(args, adapter, previewCtrl);
+  return (await handler(args, ctx)) as unknown as Record<string, unknown>;
 }
 
 export { ToolError };
-
-/**
- * Minimal patch application: replaces line-range or appends.
- * Production-grade would use a proper unified diff library.
- */
-function applySimplePatch(original: string, patch: string): string {
-  const lines = original.split('\n');
-  const patchLines = patch.split('\n');
-  const result: string[] = [];
-  let srcIdx = 0;
-
-  for (const pl of patchLines) {
-    if (pl.startsWith('---') || pl.startsWith('+++') || pl.startsWith('@@')) continue;
-    if (pl.startsWith('-')) {
-      srcIdx += 1;
-    } else if (pl.startsWith('+')) {
-      result.push(pl.substring(1));
-    } else {
-      while (srcIdx < lines.length) {
-        const contextLine = pl.startsWith(' ') ? pl.substring(1) : pl;
-        if (lines[srcIdx] === contextLine || lines[srcIdx]?.trim() === contextLine.trim()) {
-          result.push(lines[srcIdx]);
-          srcIdx += 1;
-          break;
-        }
-        result.push(lines[srcIdx]);
-        srcIdx += 1;
-      }
-    }
-  }
-  while (srcIdx < lines.length) {
-    result.push(lines[srcIdx]);
-    srcIdx += 1;
-  }
-  return result.join('\n');
-}

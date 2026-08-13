@@ -231,6 +231,7 @@ export default function ConversationV2SessionPage() {
 
   // Boot BrowserRuntimeHost at session open so Nodepod is long-lived.
   // Read-only viewers don't get a runtime (no ticket request).
+  // ApplicationComponentView / useNodepodPreview only subscribe — they must not call start().
   useEffect(() => {
     if (!sessionId || loading || isReadOnlyViewer) return;
     const appComp = useConversationV2Store.getState().applicationComponent;
@@ -244,6 +245,7 @@ export default function ConversationV2SessionPage() {
     }
     return () => {
       removeHost(sessionId);
+      useConversationV2Store.getState().setRuntimeStatus('idle');
     };
   }, [sessionId, loading, isReadOnlyViewer]);
 

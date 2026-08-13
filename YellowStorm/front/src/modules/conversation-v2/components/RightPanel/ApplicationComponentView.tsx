@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   ColumnsIcon,
   EyeIcon,
@@ -29,9 +29,10 @@ import { useNodepodPreview, type NodepodPreviewStatus } from '../../hooks/useNod
 import { AppSourceFileTree } from './AppSourceFileTree';
 import { AppSourceFileViewer } from './AppSourceFileViewer';
 
-// After Vague 3 the hook only needs sessionId — cephPath/filesTree/revision
-// are managed internally by BrowserRuntimeHost. The props below are retained
-// for UI-only display purposes (title, fileCount, buildProgress).
+// Vague 5 contract: this view NEVER boots Nodepod.
+// BrowserRuntimeHost is started once in ConversationV2SessionPage; useNodepodPreview
+// only subscribes. Props (filesTree, …) are display-only and must not trigger a second boot.
+// Ticket / mcpToken must never be passed into the preview iframe (URL, props, postMessage).
 
 type LayoutMode = 'preview-only' | 'split';
 type ContentPane = 'preview' | 'source';
@@ -102,14 +103,13 @@ export function ApplicationComponentView({
   const appViewMode = useConversationV2Store((s) => s.appViewMode);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
   // The host is long-lived in ConversationV2SessionPage; this hook subscribes.
-  const { status, previewUrl, error, files, retry } = useNodepodPreview({
+  const { status, previewUrl, error, files, retry, previewIframeRef } = useNodepodPreview({
     sessionId,
   });
 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('preview-only');
   const [contentPane, setContentPane] = useState<ContentPane>('preview');
-  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const showDeployedApp = appViewMode === 'deployed' && !!deployedUrl;
 
@@ -220,10 +220,12 @@ export function ApplicationComponentView({
       {status === 'ready' && previewUrl ? (
         <div className='relative h-full min-h-0 overflow-hidden bg-muted/20'>
           <iframe
-            ref={iframeRef}
+            ref={previewIframeRef}
             title={title || t('nodepod.previewTitle')}
             src={previewUrl}
             className='absolute inset-0 size-full border-0 bg-white'
+            // allow-same-origin required for preview_action + Nodepod SW (Vague 4).
+            // Ticket/mcpToken must never appear in src, props, or postMessage.
             sandbox='allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts'
           />
         </div>

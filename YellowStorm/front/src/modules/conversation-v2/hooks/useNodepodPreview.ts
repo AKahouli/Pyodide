@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getOrCreateHost, type HostState } from '../runtime/BrowserRuntimeHost';
-import type { RuntimeHostStatus } from '../runtime/runtime.types';
+import {
+  getOrCreateHost,
+  type HostState,
+} from '../runtime/BrowserRuntimeHost';
+import {
+  mapHostStatusToRuntimeUi,
+  type RuntimeHostStatus,
+} from '../runtime/runtime.types';
+import { useConversationV2Store } from '../store';
 
 // Re-export the port-resolution helpers so call-sites that import from here
 // continue to work unchanged.
@@ -28,6 +35,11 @@ export interface UseNodepodPreviewResult {
   error: string | null;
   files: Record<string, string | Uint8Array> | null;
   retry: () => void;
+  /**
+   * Callback ref for the preview `<iframe>`. Registering it lets the
+   * `preview_inspect` / `preview_action` tools reach the running app's DOM.
+   */
+  previewIframeRef: (element: HTMLIFrameElement | null) => void;
 }
 
 function hostStatusToPreviewStatus(s: RuntimeHostStatus): NodepodPreviewStatus {
@@ -54,9 +66,9 @@ function hostStatusToPreviewStatus(s: RuntimeHostStatus): NodepodPreviewStatus {
 /**
  * Thin wrapper around BrowserRuntimeHost.
  *
- * The host is long-lived at session scope (booted in ConversationV2SessionPage),
- * so this hook merely subscribes to its observable state and maps it to the
- * existing NodepodPreviewStatus shape that ApplicationComponentView expects.
+ * The host is long-lived at session scope (booted in ConversationV2SessionPage).
+ * This hook MUST NOT call `host.start()` — that would double-boot Nodepod.
+ * It only subscribes, mirrors status into the Zustand store, and wires the iframe.
  */
 export function useNodepodPreview({
   sessionId,
@@ -66,6 +78,7 @@ export function useNodepodPreview({
   const [error, setError] = useState<string | null>(null);
   const [files, setFiles] = useState<Record<string, string | Uint8Array> | null>(null);
   const hostRef = useRef<ReturnType<typeof getOrCreateHost> | null>(null);
+  const setRuntimeStatus = useConversationV2Store((s) => s.setRuntimeStatus);
 
   useEffect(() => {
     if (!sessionId) {
@@ -73,6 +86,7 @@ export function useNodepodPreview({
       setPreviewUrl(null);
       setError(null);
       setFiles(null);
+      setRuntimeStatus('idle');
       return;
     }
 
@@ -84,20 +98,28 @@ export function useNodepodPreview({
       setPreviewUrl(state.previewUrl);
       setError(state.error);
       setFiles(state.files);
+      setRuntimeStatus(mapHostStatusToRuntimeUi(state.status));
     };
 
-    // Sync current state immediately
     sync(host.state);
     const unsubscribe = host.subscribe(sync);
 
     return () => {
       unsubscribe();
+      host.detachPreviewIframe();
     };
-  }, [sessionId]);
+  }, [sessionId, setRuntimeStatus]);
 
   const retry = useCallback(() => {
     hostRef.current?.retry();
   }, []);
 
-  return { status, previewUrl, error, files, retry };
+  const previewIframeRef = useCallback((element: HTMLIFrameElement | null) => {
+    const host = hostRef.current;
+    if (!host) return;
+    if (element) host.attachPreviewIframe(element);
+    else host.detachPreviewIframe();
+  }, []);
+
+  return { status, previewUrl, error, files, retry, previewIframeRef };
 }
