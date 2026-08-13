@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, User, Volume2, VolumeX } from 'lucide-react';
 import { format } from 'date-fns';
 import { useModuleTranslation } from '@/modules/localization';
+import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
+import { MessageProvider } from '@/components/ai-elements/message-context';
+import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import { synthesizeSpeech } from '../api';
 import { useWorkyMessages, useWorkyStore } from '../store';
 import { cn } from '@/lib/utils';
@@ -101,9 +104,17 @@ function MessageBubble({ message }: { message: WorkyMessage }): JSX.Element {
             {formatMessageTime(message.createdAt)}
           </span>
         </div>
-        <p className='mt-0.5 whitespace-pre-wrap break-words text-xs leading-snug text-foreground/90'>
-          {message.content}
-        </p>
+        {message.components && message.components.length > 0 ? (
+          <div className='mt-0.5'>
+            <MessageProvider>
+              <AIMessageContent parts={mapComponentsToContentParts(message.components)} />
+            </MessageProvider>
+          </div>
+        ) : (
+          <p className='mt-0.5 whitespace-pre-wrap break-words text-xs leading-snug text-foreground/90'>
+            {message.content}
+          </p>
+        )}
       </div>
     </li>
   );
