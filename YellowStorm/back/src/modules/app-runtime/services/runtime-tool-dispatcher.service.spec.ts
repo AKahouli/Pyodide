@@ -329,6 +329,58 @@ describe('RuntimeToolDispatcherService', () => {
       expect(second.ok).toBe(true);
       expect(inFlight).toEqual(['tc_1', 'tc_2']);
     });
+
+    it('fails with TOOL_TIMEOUT when waiting for the mutation lock expires', async () => {
+      (config.get as jest.Mock).mockImplementation(
+        (key: string, fallback?: number) =>
+          key === 'appRuntime.mutationWaitMs' ? 15 : (CONFIG[key] ?? fallback),
+      );
+      connect();
+
+      // Hold the lock without answering so the waiter times out.
+      let releaseHold!: () => void;
+      const hold = new Promise<void>((resolve) => {
+        releaseHold = resolve;
+      });
+      socket.emit.mockImplementation((event: string, payload: { toolCallId: string }) => {
+        if (event !== 'tool.invoke') return;
+        if (payload.toolCallId === 'tc_hold') {
+          void hold.then(() =>
+            dispatcher.handleCompleted('sess_1', {
+              toolCallId: payload.toolCallId,
+              result: {},
+            }),
+          );
+          return;
+        }
+      });
+
+      const held = dispatcher.invoke({
+        workspaceId: 'sess_1',
+        toolCallId: 'tc_hold',
+        tool: 'write',
+        arguments: { path: 'a.ts' },
+      });
+
+      await new Promise((r) => setTimeout(r, 5));
+
+      const blocked = await dispatcher.invoke({
+        workspaceId: 'sess_1',
+        toolCallId: 'tc_wait',
+        tool: 'write',
+        arguments: { path: 'b.ts' },
+      });
+
+      expect(asFailure(blocked).code).toBe(AppRuntimeErrorCodes.TOOL_TIMEOUT);
+      expect(asFailure(blocked).message).toMatch(/mutation lock/i);
+
+      releaseHold();
+      await held;
+
+      (config.get as jest.Mock).mockImplementation(
+        (key: string, fallback?: number) => CONFIG[key] ?? fallback,
+      );
+    });
   });
 
   describe('idempotency', () => {

@@ -27,6 +27,17 @@ describe('AppRuntimeInternalController', () => {
     expect(guards).toContain(InternalServiceGuard);
   });
 
+  it('applies InternalServiceGuard to bind and tool-invoke (class-level)', () => {
+    const guards = Reflect.getMetadata(
+      GUARDS_METADATA,
+      AppRuntimeInternalController,
+    ) as unknown[];
+    expect(guards).toContain(InternalServiceGuard);
+    // Class-level guard covers every handler — including bind + invokeTool.
+    expect(typeof controller.bind).toBe('function');
+    expect(typeof controller.invokeTool).toBe('function');
+  });
+
   it('returns the raw body so the gateway can read bindingId directly', () => {
     expect(
       Reflect.getMetadata(SKIP_RESPONSE_WRAP_KEY, AppRuntimeInternalController),
