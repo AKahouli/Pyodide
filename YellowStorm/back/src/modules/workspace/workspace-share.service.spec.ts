@@ -23,6 +23,7 @@ function build(overrides: { workspaceModel?: any; shareModel?: any } = {}) {
   const shareModel: any = {
     exists: jest.fn().mockReturnValue({ exec: () => Promise.resolve(null) }),
     find: jest.fn().mockReturnValue({ select: () => ({ lean: () => ({ exec: () => Promise.resolve([]) }) }) }),
+    findOne: jest.fn().mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(null) }) }),
     ...overrides.shareModel,
   };
   const svc = new WorkspaceShareService(
@@ -70,5 +71,56 @@ describe('WorkspaceShareService — public access', () => {
     await expect(
       svc.share(WS, USER, { shares: [{ email: 'a@x.io', permission: 'read' }] }),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+describe('WorkspaceShareService write access', () => {
+  it('allows the workspace owner', async () => {
+    const { svc } = build({
+      workspaceModel: {
+        findById: () => ({
+          exec: () => Promise.resolve({ createdBy: new Types.ObjectId(USER), isPublic: false }),
+        }),
+      },
+    });
+
+    await expect(svc.assertUserHasWriteAccess(USER, WS)).resolves.toBeUndefined();
+  });
+
+  it('allows a readwrite recipient', async () => {
+    const { svc } = build({
+      workspaceModel: {
+        findById: () => ({
+          exec: () => Promise.resolve({ createdBy: new Types.ObjectId(), isPublic: false }),
+        }),
+      },
+      shareModel: {
+        findOne: () => ({
+          lean: () => ({ exec: () => Promise.resolve({ permission: 'readwrite' }) }),
+        }),
+      },
+    });
+
+    await expect(svc.assertUserHasWriteAccess(USER, WS)).resolves.toBeUndefined();
+  });
+
+  it.each([
+    { isPublic: true, share: null },
+    { isPublic: false, share: { permission: 'read' } },
+  ])('rejects read-only access', async ({ isPublic, share }) => {
+    const { svc } = build({
+      workspaceModel: {
+        findById: () => ({
+          exec: () => Promise.resolve({ createdBy: new Types.ObjectId(), isPublic }),
+        }),
+      },
+      shareModel: {
+        findOne: () => ({ lean: () => ({ exec: () => Promise.resolve(share) }) }),
+      },
+    });
+
+    await expect(svc.assertUserHasWriteAccess(USER, WS)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
   });
 });

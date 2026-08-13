@@ -1,13 +1,10 @@
 import inspect
 import json
 import re
-import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-import jwt
 import requests
 from google.adk.tools.tool_context import ToolContext
 
@@ -18,8 +15,6 @@ from src.smart_rag.tools.search.tools import SearchToolADK
 from src.smart_rag.tools.utilities.code_interpreter import _STATE_KEY_BRAIN_DOCS
 
 logger = get_logger("api.smart_rag.tools.connector_tools")
-_platform_access_token: Optional[str] = None
-_platform_access_token_expires_at = 0.0
 _STATE_KEY_CONNECTOR_TEXT_SOURCES = "_connector_text_sources"
 _STATE_KEY_CONNECTOR_IMAGE_SOURCES = "_connector_image_sources"
 _STATE_KEY_CONNECTOR_SOURCE_SIGNATURES = "_connector_source_signatures"
@@ -35,6 +30,8 @@ class ConnectorToolContext:
     brain_documents: Optional[List[Dict[str, Any]]] = None
     session_id: Optional[str] = None
     agent_id: Optional[str] = None
+    user_id: Optional[str] = None
+    platform_api_token: Optional[str] = None
 
 
 def _log_payload(value: Any) -> str:
@@ -310,35 +307,10 @@ def _register_connector_response_sources(
 def _build_connector_import_url(backend_url: str) -> str:
     normalized = backend_url.rstrip("/")
     if normalized.endswith("/api/v1"):
-        return f"{normalized}/connectors/transfer/import"
+        return f"{normalized}/connectors/internal/transfer/import"
     if normalized.endswith("/api"):
-        return f"{normalized}/v1/connectors/transfer/import"
-    return f"{normalized}/api/v1/connectors/transfer/import"
-
-
-def _get_platform_access_token() -> str:
-    global _platform_access_token, _platform_access_token_expires_at
-
-    now = time.time()
-    if _platform_access_token and now < _platform_access_token_expires_at - 60:
-        return _platform_access_token
-
-    settings = get_settings()
-    expire_minutes = settings.ACCESS_TOKEN_EXPIRE_MINUTES
-    jwt_secret = getattr(settings, "NESTJS_JWT_SECRET", None) or settings.SECRET_KEY
-    _platform_access_token = jwt.encode(
-        {
-            "sub": settings.AUTH_USERNAME,
-            "type": "access",
-            "iss": "yellostorm",
-            "aud": "yellostorm-api",
-            "exp": datetime.now(timezone.utc) + timedelta(minutes=expire_minutes),
-        },
-        jwt_secret,
-        algorithm=settings.ALGORITHM,
-    )
-    _platform_access_token_expires_at = now + (expire_minutes * 60)
-    return _platform_access_token
+        return f"{normalized}/v1/connectors/internal/transfer/import"
+    return f"{normalized}/api/v1/connectors/internal/transfer/import"
 
 
 def import_connector_items_to_workspace_request(
@@ -348,6 +320,8 @@ def import_connector_items_to_workspace_request(
     connector_name: str,
     workspace_id: str,
     auth_headers: Dict[str, str],
+    user_id: str,
+    platform_api_token: str,
     mode: str,
     item_ref: Optional[Dict[str, Any]] = None,
     item_refs: Optional[List[Dict[str, Any]]] = None,
@@ -361,21 +335,10 @@ def import_connector_items_to_workspace_request(
                 return {}
         if not isinstance(value, dict):
             return {}
-        if value.get("driveId") and (value.get("itemId") or value.get("path")):
-            return {
-                key: value[key]
-                for key in (
-                    "driveId",
-                    "itemId",
-                    "path",
-                    "siteId",
-                    "webUrl",
-                    "listItemUniqueId",
-                    "listId",
-                    "siteUrl",
-                )
-                if key in value and value[key]
-            }
+        if (
+            value.get("driveId") and (value.get("itemId") or value.get("path"))
+        ) or value.get("fileId"):
+            return dict(value)
         for nested_key in ("item", "data", "result"):
             nested = value.get(nested_key)
             if isinstance(nested, dict):
@@ -420,6 +383,10 @@ def import_connector_items_to_workspace_request(
         return "Error: backend API URL is not configured"
     if not workspace_id:
         return "Error: no workspace_id is available for connector import"
+    if not user_id:
+        return "Error: no user_id is available for connector import"
+    if not platform_api_token:
+        return "Error: internal service authentication is not configured"
 
     normalized_item_ref = _coerce_item_ref(item_ref)
     normalized_item_refs = [_coerce_item_ref(item) for item in (item_refs or [])]
@@ -429,14 +396,15 @@ def import_connector_items_to_workspace_request(
         ref_preview = str(item_ref)[:200] if item_ref else "None"
         refs_preview = str(item_refs)[:200] if item_refs else "None"
         return (
-            f"Error: could not extract driveId/itemId from the provided item reference. "
+            f"Error: could not extract a supported connector item reference. "
             f"item_ref={ref_preview}, item_refs={refs_preview}. "
-            f"Expected an object with driveId and itemId fields."
+            f"Expected a provider item reference such as driveId/itemId or fileId."
         )
 
     payload: Dict[str, Any] = {
         "connectorId": connector_id,
         "workspaceId": workspace_id,
+        "userId": user_id,
         "mode": normalized_mode,
         "recursive": recursive,
         "flatten": True,
@@ -456,7 +424,7 @@ def import_connector_items_to_workspace_request(
             _build_connector_import_url(backend_url),
             json=payload,
             headers={
-                "Authorization": f"Bearer {_get_platform_access_token()}",
+                "X-Internal-Token": platform_api_token,
                 "Content-Type": "application/json",
             },
             timeout=120,
@@ -1018,6 +986,8 @@ def create_connector_tools(
                     connector_name=_connector_name,
                     workspace_id=_workspace_id,
                     auth_headers=_auth_headers,
+                    user_id=context.user_id or "",
+                    platform_api_token=context.platform_api_token or "",
                     mode=mode or "",
                     item_ref=direct_item_ref,
                     item_refs=normalized_item_refs,

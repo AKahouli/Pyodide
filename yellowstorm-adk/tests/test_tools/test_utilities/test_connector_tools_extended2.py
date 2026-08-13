@@ -153,9 +153,9 @@ class TestConnectorMcpAndImport:
 
     def test_build_connector_import_url_variants(self):
         assert _build_connector_import_url("https://api.example.com/api/v1").endswith(
-            "/connectors/transfer/import"
+            "/connectors/internal/transfer/import"
         )
-        assert "/api/v1/connectors/transfer/import" in _build_connector_import_url(
+        assert "/api/v1/connectors/internal/transfer/import" in _build_connector_import_url(
             "https://api.example.com"
         )
 
@@ -166,22 +166,24 @@ class TestConnectorMcpAndImport:
             connector_name="SharePoint",
             workspace_id="w1",
             auth_headers={},
+            user_id="u1",
+            platform_api_token="internal-token",
             mode="invalid",
         )
-        assert "could not extract driveId" in import_connector_items_to_workspace_request(
+        assert "could not extract a supported" in import_connector_items_to_workspace_request(
             backend_url="http://localhost",
             connector_id="c1",
             connector_name="SharePoint",
             workspace_id="w1",
             auth_headers={},
+            user_id="u1",
+            platform_api_token="internal-token",
             mode="file",
             item_ref={"bad": "shape"},
         )
 
     @patch("src.smart_rag.tools.utilities.connector_tools.requests.post")
-    @patch("src.smart_rag.tools.utilities.connector_tools._get_platform_access_token")
-    def test_import_connector_items_success(self, mock_token, mock_post):
-        mock_token.return_value = "token"
+    def test_import_connector_items_success(self, mock_post):
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "data": {
@@ -199,11 +201,43 @@ class TestConnectorMcpAndImport:
             connector_name="SharePoint",
             workspace_id="w1",
             auth_headers={},
+            user_id="u1",
+            platform_api_token="internal-token",
             mode="file",
             item_ref={"driveId": "d", "itemId": "i"},
         )
         assert "Imported connector items" in result
         assert "doc.pdf" in result
+        _, kwargs = mock_post.call_args
+        assert kwargs["headers"] == {
+            "X-Internal-Token": "internal-token",
+            "Content-Type": "application/json",
+        }
+        assert kwargs["json"]["userId"] == "u1"
+
+    @patch("src.smart_rag.tools.utilities.connector_tools.requests.post")
+    def test_import_accepts_provider_neutral_file_reference(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "data": {"summary": {}, "imported": [], "errors": []}
+        }
+        mock_post.return_value = mock_response
+
+        import_connector_items_to_workspace_request(
+            backend_url="http://localhost/api/v1",
+            connector_id="gdrive",
+            connector_name="Google Drive",
+            workspace_id="w1",
+            auth_headers={"Authorization": "Bearer provider-token"},
+            user_id="u1",
+            platform_api_token="internal-token",
+            mode="file",
+            item_ref={"fileId": "google-file-1"},
+        )
+
+        _, kwargs = mock_post.call_args
+        assert kwargs["json"]["itemRef"] == {"fileId": "google-file-1"}
+        assert "Authorization" not in kwargs["headers"]
 
 
 class TestSaveFileToWorkspace:

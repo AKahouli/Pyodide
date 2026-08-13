@@ -560,6 +560,12 @@ def create_search_agent_with_tools(
                         brain_documents=agent_config.get("brain_documents", []),
                         session_id=config.session_id,
                         agent_id=agent_config.get("id"),
+                        user_id=config.user_id,
+                        platform_api_token=str(
+                            (agent_config.get("agent_params") or {}).get(
+                                "platform_api_token", ""
+                            )
+                        ),
                     ),
                 )
             )
@@ -740,6 +746,7 @@ def create_standard_agent_with_tools(
             connector_bindings,
             _get_connector_repo(config),
         ),
+        platform_api_token=str(_agent_params_std.get("platform_api_token", "")),
     )
 
     # Catalogue assignment controls native UI tools; metadata alone never makes a

@@ -667,6 +667,7 @@ def create_langchain_tools(
             file_names=effective_file_names,
             file_paths=connector_file_paths,
             user_id=user_id,
+            platform_api_token=str(agent_params.get("platform_api_token") or ""),
             external_ids=input_files,
             session_id=session_id,
             workspace_paths=workspace_paths,
@@ -1726,6 +1727,7 @@ def _create_connector_mcp_tools(
     file_names: Optional[List[str]] = None,
     file_paths: Optional[List[str]] = None,
     user_id: Optional[str] = None,
+    platform_api_token: str = "",
     brain_ids: Optional[List[str]] = None,
     external_ids: Optional[List[str]] = None,
     session_id: str = "",
@@ -1770,6 +1772,8 @@ def _create_connector_mcp_tools(
                     connector_name=connector_name,
                     auth_headers=binding_auth_headers,
                     workspace_id=output_workspace_id,
+                    user_id=user_id or "",
+                    platform_api_token=platform_api_token,
                 )
             )
         actions = (
@@ -1986,6 +1990,8 @@ def _create_connector_import_tool(
     connector_name: str,
     auth_headers: Dict[str, str],
     workspace_id: str,
+    user_id: str,
+    platform_api_token: str,
 ) -> StructuredTool:
     settings = get_settings()
     backend_url = getattr(settings, "API_URL", None)
@@ -2012,6 +2018,8 @@ def _create_connector_import_tool(
             connector_name=connector_name,
             workspace_id=workspace_id,
             auth_headers=auth_headers,
+            user_id=user_id,
+            platform_api_token=platform_api_token,
             mode=mode,
             item_ref=direct_item_ref,
             item_refs=item_refs,
