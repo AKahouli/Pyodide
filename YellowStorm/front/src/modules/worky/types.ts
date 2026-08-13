@@ -7,6 +7,9 @@
  * the live planning surface.
  */
 
+import type { MessageComponent } from '@/modules/conversation/types';
+export type { MessageComponent };
+
 export type WorkyStreamStatus =
   | 'created'
   | 'planning'
@@ -151,6 +154,8 @@ export interface WorkyMessage {
   content: string;
   planDeltaRef: string | null;
   createdAt: string;
+  /** Manager-message components (Electric message_components). Absent/empty → render plain `content`. */
+  components?: MessageComponent[];
 }
 
 export interface WorkyTask {
@@ -197,6 +202,22 @@ export interface WorkyTaskResult {
   createdByWorkerId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface WorkyArtifact {
+  id: string;
+  filePath: string;
+  filename: string;
+  artifactKind: string | null;
+  mimeType: string | null;
+  size: number | null;
+  createdAt: string;
+}
+
+/** Lazy step-result payload from GET /worky/tasks/:id/result-content. */
+export interface WorkyTaskResultContent {
+  components: MessageComponent[];
+  artifacts: WorkyArtifact[];
 }
 
 export interface WorkyBoardResponse {
@@ -261,6 +282,9 @@ export type WorkyEventType =
   | 'plan.version.created'
   | 'task.updated'
   | 'message.appended'
+  | 'message.component.appended'
+  | 'task.component.appended'
+  | 'task.artifact.appended'
   | 'assistant_token'
   | 'interaction.requested'
   | 'interaction.responded'
