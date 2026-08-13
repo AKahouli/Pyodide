@@ -13,6 +13,9 @@ _None_ - The frontend can run with default configuration.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `VITE_API_URL` | Backend API base URL | `http://localhost:3000/api/v1` |
+| `MY_APP_VITE_API_URL` | Runtime API base (prod image, via `env.sh`) | — |
+| `MY_APP_BACKEND_UPSTREAM` | Nginx `/socket.io/` proxy target (prod) | `https://poc.back.yellowmind.ai` |
+| `MY_APP_BACKEND_HOST` | `Host` header for that proxy | derived from upstream |
 
 ## Configuration
 
