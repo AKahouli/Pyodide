@@ -85,13 +85,13 @@ export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps): JSX.
           <TabsContent value='results' className='space-y-3'>
             {richParts.length > 0 ? (
               <div className='rounded-md border border-border bg-background px-3 py-2'>
-                <MessageProvider>
+                <MessageProvider fileViewerDisplayMode='floating'>
                   <AIMessageContent parts={richParts} />
                 </MessageProvider>
               </div>
             ) : task.result ? (
               <div className='rounded-md border border-border bg-background px-3 py-2'>
-                <MessageProvider>
+                <MessageProvider fileViewerDisplayMode='floating'>
                   <AIMessageContent parts={[{ type: 'text', content: task.result }]} />
                 </MessageProvider>
               </div>
@@ -119,7 +119,7 @@ function TaskResultPanel({ result }: { result: WorkyTaskResult }): JSX.Element {
       </div>
       {text ? (
         <div className='rounded-md border border-border bg-background px-3 py-2'>
-          <MessageProvider>
+          <MessageProvider fileViewerDisplayMode='floating'>
             <AIMessageContent parts={[{ type: 'text', content: text }]} />
           </MessageProvider>
         </div>

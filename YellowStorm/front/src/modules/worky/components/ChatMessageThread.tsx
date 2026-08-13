@@ -7,6 +7,7 @@ import {
   ChatScrollButton,
   type ChatMessage,
 } from '@/components/ai-elements/chat-conversation';
+import { MessageProvider } from '@/components/ai-elements/message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import { useWorkyMessages, useWorkyStore } from '../store';
 import { cn } from '@/lib/utils';
@@ -121,6 +122,7 @@ export function ChatMessageThread({
         ) : null}
       </header>
       {hasContent ? (
+        <MessageProvider fileViewerDisplayMode='floating'>
         <ChatConversation className='min-h-0 flex-1'>
           <ChatConversationContent
             className='gap-3 px-2 py-2'
@@ -145,6 +147,7 @@ export function ChatMessageThread({
           </ChatConversationContent>
           <ChatScrollButton />
         </ChatConversation>
+        </MessageProvider>
       ) : (
         <p className='m-auto text-center text-xs text-muted-foreground'>
           {t('messages.empty')}
