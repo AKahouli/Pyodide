@@ -275,18 +275,23 @@ export class ConversationV2Controller {
   /**
    * Hands the browser a one-shot credential for the `/app-runtime` socket. The
    * MCP token stays server-side: the browser only ever sees this ticket.
+   *
+   * Keyed on `aiSessionId`, not the pointer `_id`: APImanus binds the runtime
+   * with its own session id, and `workspaceId === conversationSessionId`. Using
+   * `_id` here would register the browser socket under a workspace no
+   * `tool-invoke` ever targets, so every tool call fails with RUNTIME_OFFLINE.
+   * The binding is owner-scoped so a collaborator's ticket can't reassign it.
    */
   @Post('sessions/:id/runtime-ticket')
   @HttpCode(HttpStatus.OK)
   @UseGuards(ConversationV2SessionAccessGuard)
   @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_WRITE)
   issueRuntimeTicket(
-    @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
   ): Promise<RuntimeTicketResult> {
     return this.runtimeTickets.issue({
-      conversationSessionId: id,
-      userId: user.id,
+      conversationSessionId: this.requireWorkspaceId(session),
+      userId: session.ownerId,
     });
   }
 
@@ -568,14 +573,14 @@ export class ConversationV2Controller {
   @UseGuards(ConversationV2SessionAccessGuard)
   @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_READ)
   async getRevisionFiles(
-    @Param('id') sessionId: string,
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
     @Param('revisionId') revisionId: string,
   ): Promise<{
     revisionId: string;
     files: Array<{ path: string; sha256: string; size: number }>;
   }> {
     const { revisionId: id, files } = await this.runtimeRevisions.listFiles(
-      sessionId,
+      this.requireWorkspaceId(session),
       revisionId,
     );
     return {
@@ -593,12 +598,12 @@ export class ConversationV2Controller {
   @UseGuards(ConversationV2SessionAccessGuard)
   @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_READ)
   async presignRevisionFiles(
-    @Param('id') sessionId: string,
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
     @Param('revisionId') revisionId: string,
     @Body() body: PresignRevisionDto,
   ): Promise<{ items: Array<{ path: string; url: string }> }> {
     const revision = await this.runtimeRevisions.getAuthorizedRevision(
-      sessionId,
+      this.requireWorkspaceId(session),
       revisionId,
     );
     const resolved = this.runtimeRevisions.resolveObjectKeys(revision, body.paths);
@@ -672,6 +677,19 @@ export class ConversationV2Controller {
     const r = await this.grpcClient.getVncSignedUrl(session.ownerId, pointer.aiSessionId);
     if (!r) throw new VmUnavailableException();
     return r;
+  }
+
+  /**
+   * App-runtime workspace id for a session. `workspaceId === conversationSessionId`
+   * on the binding, and APImanus binds with its own session id, so the pointer
+   * `_id` is never a valid workspace key.
+   */
+  private requireWorkspaceId(session: ConversationV2ResolvedSession): string {
+    const { aiSessionId } = session.pointer;
+    if (!aiSessionId) {
+      throw new NotFoundException('Session not found');
+    }
+    return aiSessionId;
   }
 
   private translateGrpcError(err: unknown): never {

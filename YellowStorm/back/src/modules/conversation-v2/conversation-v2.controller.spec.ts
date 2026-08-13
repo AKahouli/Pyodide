@@ -520,7 +520,9 @@ describe('ConversationV2Controller', () => {
       expiresAt: '2026-01-01T00:01:00.000Z',
     });
 
-    const result = await controller.issueRuntimeTicket({ id: 'u1' }, 'sess_1');
+    const result = await controller.issueRuntimeTicket(
+      resolvedSession('u1', { aiSessionId: 'sess_1' }),
+    );
 
     expect(mockRuntimeTickets.issue).toHaveBeenCalledWith({
       conversationSessionId: 'sess_1',
@@ -541,5 +543,53 @@ describe('ConversationV2Controller', () => {
       ConversationV2Controller.prototype.issueRuntimeTicket,
     );
     expect(permission).toBe(ConversationV2SessionPermissions.SESSION_WRITE);
+  });
+
+  it('POST /sessions/:id/runtime-ticket throws NotFoundException when the AI session is not attached yet', () => {
+    mockRuntimeTickets.issue.mockClear();
+
+    expect(() =>
+      controller.issueRuntimeTicket(resolvedSession('u1', { aiSessionId: null })),
+    ).toThrow(NotFoundException);
+    expect(mockRuntimeTickets.issue).not.toHaveBeenCalled();
+  });
+
+  it("POST /sessions/:id/runtime-ticket binds to the owner, not the collaborator asking for the ticket", async () => {
+    mockRuntimeTickets.issue.mockResolvedValueOnce({});
+    const shared = resolvedSession('owner-1', { aiSessionId: 'sess_1' }, 'shared');
+    shared.actorUserId = 'collab-1';
+
+    await controller.issueRuntimeTicket(shared);
+
+    expect(mockRuntimeTickets.issue).toHaveBeenCalledWith({
+      conversationSessionId: 'sess_1',
+      userId: 'owner-1',
+    });
+  });
+
+  // --- Revision reads share the runtime workspace key ---
+
+  it('GET /sessions/:id/revisions/:revisionId/files lists from the aiSessionId workspace', async () => {
+    mockRuntimeRevisions.listFiles.mockResolvedValueOnce({ revisionId: 'rev_0', files: [] });
+
+    await controller.getRevisionFiles(
+      resolvedSession('u1', { aiSessionId: 'sess_1' }),
+      'rev_0',
+    );
+
+    expect(mockRuntimeRevisions.listFiles).toHaveBeenCalledWith('sess_1', 'rev_0');
+  });
+
+  it('POST /sessions/:id/revisions/:revisionId/presign authorizes against the aiSessionId workspace', async () => {
+    mockRuntimeRevisions.getAuthorizedRevision.mockResolvedValueOnce({ revisionId: 'rev_0' });
+    mockRuntimeRevisions.resolveObjectKeys.mockReturnValueOnce([]);
+
+    await controller.presignRevisionFiles(
+      resolvedSession('u1', { aiSessionId: 'sess_1' }),
+      'rev_0',
+      { paths: ['src/App.tsx'] },
+    );
+
+    expect(mockRuntimeRevisions.getAuthorizedRevision).toHaveBeenCalledWith('sess_1', 'rev_0');
   });
 });
