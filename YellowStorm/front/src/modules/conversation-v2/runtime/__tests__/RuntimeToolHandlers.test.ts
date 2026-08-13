@@ -1,128 +1,711 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { dispatchTool, ToolError } from '../RuntimeToolHandlers';
-import { RuntimeErrorCodes } from '../runtime.types';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { dispatchTool, MUTATING_TOOLS, buildFileTree, type ToolContext } from '../RuntimeToolHandlers';
+import { WorkspaceRevisionStore } from '../WorkspaceRevisionStore';
+import { SpawnTimeoutError, type SpawnResult } from '../NodepodRuntimeAdapter';
 import type { NodepodRuntimeAdapter } from '../NodepodRuntimeAdapter';
 import type { PreviewController } from '../PreviewController';
+import { ToolError } from '../ToolError';
+import { sha256 } from '../hashing';
+import { RuntimeErrorCodes, type FileEntry } from '../runtime.types';
+import { MAX_FILE_SIZE, SEARCH_EXCERPT_CHARS } from '../limits';
 
-function mockAdapter(overrides: Partial<NodepodRuntimeAdapter> = {}): NodepodRuntimeAdapter {
-  return {
-    readFile: vi.fn().mockResolvedValue('file content'),
-    writeFile: vi.fn().mockResolvedValue(undefined),
-    deleteFile: vi.fn().mockResolvedValue(undefined),
-    listFiles: vi.fn().mockResolvedValue(['/src/App.tsx', '/package.json']),
-    spawn: vi.fn().mockResolvedValue({ exitCode: 0, stdout: 'ok', stderr: '' }),
-    currentPod: null,
-    ...overrides,
-  } as unknown as NodepodRuntimeAdapter;
+const PACKAGE_JSON = '{\n  "name": "app"\n}\n';
+const APP_TSX = ['import React from "react";', '', 'export const answer = 41;', ''].join('\n');
+
+/** In-memory stand-in for the Nodepod adapter, keyed by absolute VFS path. */
+function makeAdapter(initial: Record<string, string> = {}) {
+  const files = new Map(Object.entries(initial));
+  const markDepsDirty = vi.fn();
+  const spawn = vi.fn<(cmd: string, args: string[], opts?: unknown) => Promise<SpawnResult>>(
+    async () => ({ exitCode: 0, stdout: 'ok', stderr: '', truncated: false }),
+  );
+
+  const adapter = {
+    files,
+    markDepsDirty,
+    spawn,
+    currentPod: { instanceId: 'pod-1' },
+
+    async exists(path: string) {
+      return files.has(path);
+    },
+    async readFile(path: string) {
+      const found = files.get(path);
+      if (found === undefined) throw new Error(`ENOENT: ${path}`);
+      return found;
+    },
+    async writeFile(path: string, content: string) {
+      files.set(path, content);
+    },
+    async deleteFile(path: string) {
+      files.delete(path);
+    },
+    async listFiles(root = '/') {
+      const prefix = root === '/' ? '/' : `${root}/`;
+      return [...files.keys()].filter((p) => p.startsWith(prefix)).sort();
+    },
+    async listEntries(relativeRoot: string, depth: number): Promise<FileEntry[]> {
+      const prefix = relativeRoot === '.' ? '' : `${relativeRoot}/`;
+      const entries: FileEntry[] = [];
+      const dirs = new Set<string>();
+      for (const [full, content] of files) {
+        const relative = full.replace(/^\//, '');
+        if (prefix && !relative.startsWith(prefix)) continue;
+        const rest = relative.slice(prefix.length);
+        const parts = rest.split('/');
+        if (parts.length > depth) {
+          dirs.add(parts.slice(0, depth).join('/'));
+        } else if (parts.length > 1) {
+          dirs.add(parts[0]);
+        } else {
+          entries.push({
+            name: rest,
+            type: 'file',
+            size: content.length,
+            sha256: await sha256(content),
+          });
+        }
+      }
+      for (const name of dirs) entries.push({ name, type: 'dir', size: 0, sha256: null });
+      entries.sort((a, b) =>
+        a.type !== b.type ? (a.type === 'dir' ? -1 : 1) : a.name.localeCompare(b.name),
+      );
+      return entries;
+    },
+    async shaManifest() {
+      const manifest = new Map<string, string>();
+      for (const [full, content] of files) {
+        manifest.set(full.replace(/^\//, ''), await sha256(content));
+      }
+      return manifest;
+    },
+  };
+
+  return adapter as unknown as NodepodRuntimeAdapter & typeof adapter;
 }
 
-function mockPreview(): PreviewController {
+function makePreviewCtrl() {
   return {
-    inspectPreview: vi.fn().mockResolvedValue({ url: 'http://localhost:5173', healthy: true }),
-  } as unknown as PreviewController;
+    previewUrl: 'http://localhost/__virtual__/pod-1/5173/',
+    inspectPreview: vi.fn().mockResolvedValue({
+      url: 'http://localhost/__virtual__/pod-1/5173/',
+      title: 'App',
+      visibleText: 'Hello',
+      domSummary: [],
+      console: [],
+      runtimeErrors: [],
+      screenshotArtifactId: null,
+      capabilities: { screenshot: false, interaction: true },
+    }),
+    performAction: vi.fn().mockResolvedValue({ ok: true, action: 'click' }),
+  } as unknown as PreviewController & {
+    inspectPreview: ReturnType<typeof vi.fn>;
+    performAction: ReturnType<typeof vi.fn>;
+  };
 }
 
-describe('RuntimeToolHandlers', () => {
-  let adapter: NodepodRuntimeAdapter;
-  let preview: PreviewController;
+async function makeContext(initial: Record<string, string> = {}) {
+  const adapter = makeAdapter(initial);
+  const previewCtrl = makePreviewCtrl();
+  const revisions = new WorkspaceRevisionStore(await adapter.shaManifest());
+  const onProgress = vi.fn();
+  const ctx: ToolContext = {
+    adapter,
+    previewCtrl,
+    revisions,
+    workspaceId: 'ws-1',
+    onProgress,
+  };
+  return { ctx, adapter, previewCtrl, revisions, onProgress };
+}
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    adapter = mockAdapter();
-    preview = mockPreview();
+async function expectToolError(promise: Promise<unknown>, code: number): Promise<ToolError> {
+  const err = await promise.then(
+    () => {
+      throw new Error('expected a ToolError');
+    },
+    (e: unknown) => e,
+  );
+  expect(err).toBeInstanceOf(ToolError);
+  expect((err as ToolError).code).toBe(code);
+  return err as ToolError;
+}
+
+const BASE_FILES = {
+  '/package.json': PACKAGE_JSON,
+  '/src/App.tsx': APP_TSX,
+  '/src/components/Button.tsx': 'export const Button = () => null;\n',
+};
+
+describe('dispatchTool', () => {
+  it('rejects an unknown tool with METHOD_NOT_FOUND', async () => {
+    const { ctx } = await makeContext();
+    const err = await expectToolError(
+      dispatchTool('nope', {}, ctx),
+      RuntimeErrorCodes.METHOD_NOT_FOUND,
+    );
+    expect(err.data).toEqual({ tool: 'nope' });
   });
 
-  it('dispatches "list" tool', async () => {
-    const result = await dispatchTool('list', { path: '/' }, adapter, preview);
-    expect(result.entries).toEqual(['/src/App.tsx', '/package.json']);
-    expect(result.count).toBe(2);
+  it('marks exactly write/apply_patch/delete as mutating', () => {
+    expect([...MUTATING_TOOLS].sort()).toEqual(['apply_patch', 'delete', 'write']);
   });
 
-  it('dispatches "read" tool', async () => {
-    const result = await dispatchTool('read', { path: '/src/App.tsx' }, adapter, preview);
-    expect(result.content).toBe('file content');
-    expect(result.sha256).toBeDefined();
-    expect(typeof result.sha256).toBe('string');
-    expect((result.sha256 as string).length).toBe(64);
+  it.each(['read', 'search', 'write', 'apply_patch', 'delete', 'run'])(
+    'validates paths for %s',
+    async (tool) => {
+      const { ctx } = await makeContext(BASE_FILES);
+      const args: Record<string, unknown> =
+        tool === 'search'
+          ? { query: 'x', path: '../escape' }
+          : tool === 'run'
+            ? { command: 'ls', cwd: '../escape' }
+            : { path: '../escape', content: '', patch: 'p', expectedSha256: 'x' };
+      await expectToolError(dispatchTool(tool, args, ctx), RuntimeErrorCodes.SECURITY_DENIED);
+    },
+  );
+});
+
+describe('list', () => {
+  it('returns { path, entries } with FileEntry records', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const result = await dispatchTool('list', {}, ctx);
+
+    expect(Object.keys(result).sort()).toEqual(['entries', 'path']);
+    expect(result.path).toBe('.');
+    const entries = result.entries as FileEntry[];
+    expect(entries.every((e) => Object.keys(e).sort().join() === 'name,sha256,size,type')).toBe(
+      true,
+    );
+    expect(entries[0].type).toBe('dir');
   });
 
-  it('dispatches "write" tool with create', async () => {
-    (adapter.readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('not found'));
+  it('clamps depth into 1..10', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    const spy = vi.spyOn(adapter, 'listEntries');
+
+    await dispatchTool('list', { depth: 99 }, ctx);
+    expect(spy).toHaveBeenLastCalledWith('.', 10);
+
+    await dispatchTool('list', { depth: 0 }, ctx);
+    expect(spy).toHaveBeenLastCalledWith('.', 1);
+
+    await dispatchTool('list', {}, ctx);
+    expect(spy).toHaveBeenLastCalledWith('.', 2);
+  });
+
+  it('allows "." without path validation but still rejects absolute paths', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    await expect(dispatchTool('list', { path: '.' }, ctx)).resolves.toBeDefined();
+    await expectToolError(
+      dispatchTool('list', { path: '/etc' }, ctx),
+      RuntimeErrorCodes.SECURITY_DENIED,
+    );
+  });
+});
+
+describe('read', () => {
+  it('returns the exact contract keys', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const result = await dispatchTool('read', { path: 'src/App.tsx' }, ctx);
+
+    expect(Object.keys(result).sort()).toEqual([
+      'content',
+      'lineCount',
+      'path',
+      'sha256',
+      'truncated',
+    ]);
+    expect(result.content).toBe(APP_TSX);
+    expect(result.sha256).toBe(await sha256(APP_TSX));
+    expect(result.lineCount).toBe(4);
+    expect(result.truncated).toBe(false);
+  });
+
+  it('returns a placeholder instead of an error for a missing file', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const result = await dispatchTool('read', { path: 'src/Missing.tsx' }, ctx);
+    expect(result).toEqual({
+      path: 'src/Missing.tsx',
+      content: '// File not found: src/Missing.tsx\n',
+      sha256: '',
+      lineCount: 0,
+      truncated: false,
+    });
+  });
+
+  it('slices with 1-based inclusive line bounds and reports truncation', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const result = await dispatchTool(
+      'read',
+      { path: 'src/App.tsx', startLine: 3, endLine: 3 },
+      ctx,
+    );
+    expect(result.content).toBe('export const answer = 41;');
+    expect(result.lineCount).toBe(4);
+    expect(result.truncated).toBe(true);
+  });
+
+  it('rejects endLine < startLine with INVALID_PARAMS', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    await expectToolError(
+      dispatchTool('read', { path: 'src/App.tsx', startLine: 3, endLine: 1 }, ctx),
+      RuntimeErrorCodes.INVALID_PARAMS,
+    );
+  });
+});
+
+describe('search', () => {
+  it('returns { query, matches } with excerpt-shaped matches', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const result = await dispatchTool('search', { query: 'answer' }, ctx);
+
+    expect(Object.keys(result).sort()).toEqual(['matches', 'query']);
+    const matches = result.matches as Array<Record<string, unknown>>;
+    expect(matches).toHaveLength(1);
+    expect(Object.keys(matches[0]).sort()).toEqual(['excerpt', 'line', 'path', 'sha256']);
+    expect(matches[0]).toMatchObject({
+      path: 'src/App.tsx',
+      line: 3,
+      excerpt: 'export const answer = 41;',
+    });
+  });
+
+  it('matches case-insensitively', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const result = await dispatchTool('search', { query: 'ANSWER' }, ctx);
+    expect((result.matches as unknown[]).length).toBe(1);
+  });
+
+  it('caps the excerpt at 200 characters', async () => {
+    const { ctx } = await makeContext({ '/long.txt': `   ${'x'.repeat(500)}   ` });
+    const result = await dispatchTool('search', { query: 'xxx' }, ctx);
+    const [match] = result.matches as Array<{ excerpt: string }>;
+    expect(match.excerpt).toHaveLength(SEARCH_EXCERPT_CHARS);
+  });
+
+  it('honours maxResults', async () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `hit ${i}`).join('\n');
+    const { ctx } = await makeContext({ '/many.txt': lines });
+    const result = await dispatchTool('search', { query: 'hit', maxResults: 5 }, ctx);
+    expect((result.matches as unknown[]).length).toBe(5);
+  });
+
+  it('scopes to a sub-path', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const result = await dispatchTool(
+      'search',
+      { query: 'export', path: 'src/components' },
+      ctx,
+    );
+    const matches = result.matches as Array<{ path: string }>;
+    expect(matches.map((m) => m.path)).toEqual(['src/components/Button.tsx']);
+  });
+});
+
+describe('write', () => {
+  it('creates a file and mints a revision', async () => {
+    const { ctx, revisions } = await makeContext(BASE_FILES);
     const result = await dispatchTool(
       'write',
-      { path: '/new.ts', content: 'hello', create: true },
-      adapter,
-      preview,
+      { path: 'src/New.tsx', content: 'hello', create: true },
+      ctx,
     );
-    expect(result.created).toBe(true);
-    expect(result.newSha256).toBeDefined();
-    expect(adapter.writeFile).toHaveBeenCalledWith('/new.ts', 'hello');
+
+    expect(Object.keys(result).sort()).toEqual([
+      'created',
+      'newSha256',
+      'path',
+      'previousSha256',
+      'revisionId',
+    ]);
+    expect(result).toMatchObject({
+      path: 'src/New.tsx',
+      previousSha256: null,
+      created: true,
+      newSha256: await sha256('hello'),
+    });
+    expect(result.revisionId).toBe('rev_2');
+    expect(revisions.latestRevisionId).toBe('rev_2');
   });
 
-  it('dispatches "write" tool with SHA mismatch', async () => {
-    (adapter.readFile as ReturnType<typeof vi.fn>).mockResolvedValue('existing');
+  it('overwrites when expectedSha256 matches', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const result = await dispatchTool(
+      'write',
+      { path: 'src/App.tsx', content: 'new', expectedSha256: await sha256(APP_TSX) },
+      ctx,
+    );
+    expect(result.created).toBe(false);
+    expect(result.previousSha256).toBe(await sha256(APP_TSX));
+  });
 
-    try {
-      await dispatchTool(
+  it('raises REVISION_CONFLICT on a sha mismatch', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const err = await expectToolError(
+      dispatchTool(
         'write',
-        { path: '/f.ts', content: 'new', expectedSha256: 'wrong' },
-        adapter,
-        preview,
-      );
-      expect.fail('Should have thrown');
-    } catch (err) {
-      expect(err).toBeInstanceOf(ToolError);
-      expect((err as ToolError).code).toBe(RuntimeErrorCodes.REVISION_CONFLICT);
-    }
+        { path: 'src/App.tsx', content: 'new', expectedSha256: 'stale' },
+        ctx,
+      ),
+      RuntimeErrorCodes.REVISION_CONFLICT,
+    );
+    expect(err.data).toMatchObject({
+      path: 'src/App.tsx',
+      expectedSha256: 'stale',
+      actualSha256: await sha256(APP_TSX),
+    });
   });
 
-  it('dispatches "delete" tool', async () => {
-    const result = await dispatchTool('delete', { path: '/old.ts' }, adapter, preview);
-    expect(result.deletedSha256).toBeDefined();
-    expect(adapter.deleteFile).toHaveBeenCalledWith('/old.ts');
+  it('refuses a new file without create or expectedSha256', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    await expectToolError(
+      dispatchTool('write', { path: 'src/New.tsx', content: 'x' }, ctx),
+      RuntimeErrorCodes.INVALID_PARAMS,
+    );
   });
 
-  it('dispatches "run" tool', async () => {
-    const result = await dispatchTool('run', { command: 'npm test' }, adapter, preview);
+  it('rejects content beyond the 5 MiB cap', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    await expectToolError(
+      dispatchTool(
+        'write',
+        { path: 'big.txt', content: 'x'.repeat(MAX_FILE_SIZE + 1), create: true },
+        ctx,
+      ),
+      RuntimeErrorCodes.INVALID_PARAMS,
+    );
+  });
+
+  it('invalidates the install fingerprint when package.json changes', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    await dispatchTool(
+      'write',
+      { path: 'package.json', content: '{}', expectedSha256: await sha256(PACKAGE_JSON) },
+      ctx,
+    );
+    expect(adapter.markDepsDirty).toHaveBeenCalled();
+  });
+});
+
+describe('apply_patch', () => {
+  const patch = [
+    '--- a/src/App.tsx',
+    '+++ b/src/App.tsx',
+    '@@ -1,4 +1,4 @@',
+    ' import React from "react";',
+    ' ',
+    '-export const answer = 41;',
+    '+export const answer = 42;',
+    ' ',
+    '',
+  ].join('\n');
+
+  it('applies the patch and returns the contract keys', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    const result = await dispatchTool(
+      'apply_patch',
+      { path: 'src/App.tsx', patch, expectedSha256: await sha256(APP_TSX) },
+      ctx,
+    );
+
+    expect(Object.keys(result).sort()).toEqual([
+      'diff',
+      'newSha256',
+      'path',
+      'previousSha256',
+      'revisionId',
+    ]);
+    expect(adapter.files.get('/src/App.tsx')).toContain('answer = 42');
+    expect(result.revisionId).toBe('rev_2');
+    expect(result.diff).toContain('+++ b/src/App.tsx');
+  });
+
+  it('requires expectedSha256', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    await expectToolError(
+      dispatchTool('apply_patch', { path: 'src/App.tsx', patch }, ctx),
+      RuntimeErrorCodes.INVALID_PARAMS,
+    );
+  });
+
+  it('raises REVISION_CONFLICT on a stale sha', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    await expectToolError(
+      dispatchTool(
+        'apply_patch',
+        { path: 'src/App.tsx', patch, expectedSha256: 'stale' },
+        ctx,
+      ),
+      RuntimeErrorCodes.REVISION_CONFLICT,
+    );
+  });
+
+  it('raises INVALID_PARAMS when the patch does not apply', async () => {
+    const { ctx } = await makeContext({ '/src/App.tsx': 'totally different\n' });
+    await expectToolError(
+      dispatchTool(
+        'apply_patch',
+        {
+          path: 'src/App.tsx',
+          patch,
+          expectedSha256: await sha256('totally different\n'),
+        },
+        ctx,
+      ),
+      RuntimeErrorCodes.INVALID_PARAMS,
+    );
+  });
+
+  it('raises INVALID_PARAMS for a missing file', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    await expectToolError(
+      dispatchTool(
+        'apply_patch',
+        { path: 'src/Missing.tsx', patch, expectedSha256: 'x' },
+        ctx,
+      ),
+      RuntimeErrorCodes.INVALID_PARAMS,
+    );
+  });
+});
+
+describe('delete', () => {
+  it('deletes and returns { revisionId, path, deletedSha256 }', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    const result = await dispatchTool('delete', { path: 'src/App.tsx' }, ctx);
+
+    expect(Object.keys(result).sort()).toEqual(['deletedSha256', 'path', 'revisionId']);
+    expect(result.deletedSha256).toBe(await sha256(APP_TSX));
+    expect(result.revisionId).toBe('rev_2');
+    expect(adapter.files.has('/src/App.tsx')).toBe(false);
+  });
+
+  it('raises REVISION_CONFLICT on a stale sha', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    await expectToolError(
+      dispatchTool('delete', { path: 'src/App.tsx', expectedSha256: 'stale' }, ctx),
+      RuntimeErrorCodes.REVISION_CONFLICT,
+    );
+  });
+
+  it('raises INVALID_PARAMS for a missing file', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    await expectToolError(
+      dispatchTool('delete', { path: 'gone.txt' }, ctx),
+      RuntimeErrorCodes.INVALID_PARAMS,
+    );
+  });
+});
+
+describe('diff', () => {
+  it('returns { revisionId, parentRevisionId, diff, changedFiles }', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    await dispatchTool(
+      'write',
+      { path: 'src/App.tsx', content: 'changed', expectedSha256: await sha256(APP_TSX) },
+      ctx,
+    );
+
+    const result = await dispatchTool('diff', { revisionId: 'rev_1' }, ctx);
+    expect(Object.keys(result).sort()).toEqual([
+      'changedFiles',
+      'diff',
+      'parentRevisionId',
+      'revisionId',
+    ]);
+    expect(result.revisionId).toBe('rev_2');
+    expect(result.parentRevisionId).toBe('rev_1');
+    expect(result.changedFiles).toEqual(['src/App.tsx']);
+  });
+
+  it('reports no changes when the workspace is untouched', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const result = await dispatchTool('diff', { revisionId: 'rev_1' }, ctx);
+    expect(result.changedFiles).toEqual([]);
+    expect(result.diff).toBe('(no changes)');
+  });
+});
+
+describe('run', () => {
+  it('returns { exitCode, stdout, stderr, truncated, command }', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const result = await dispatchTool('run', { command: 'npm run build' }, ctx);
+
+    expect(Object.keys(result).sort()).toEqual([
+      'command',
+      'exitCode',
+      'stderr',
+      'stdout',
+      'truncated',
+    ]);
+    expect(result.command).toBe('npm run build');
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe('ok');
-    expect(adapter.spawn).toHaveBeenCalledWith('npm', ['test'], { timeoutMs: 180000 });
   });
 
-  it('dispatches "search" tool', async () => {
-    (adapter.readFile as ReturnType<typeof vi.fn>).mockImplementation((p: string) => {
-      if (p === '/src/App.tsx') return Promise.resolve('import React from "react";\nexport default App;');
-      return Promise.resolve('{}');
+  it('treats a non-zero exit as a normal result, not an error', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    adapter.spawn.mockResolvedValue({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'build failed',
+      truncated: false,
     });
 
-    const result = await dispatchTool('search', { query: 'React', path: '/' }, adapter, preview);
-    expect(result.matches).toBeInstanceOf(Array);
-    expect((result.matches as unknown[]).length).toBeGreaterThan(0);
+    const result = await dispatchTool('run', { command: 'npm run build' }, ctx);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe('build failed');
   });
 
-  it('rejects unknown tool', async () => {
-    try {
-      await dispatchTool('nonexistent', {}, adapter, preview);
-      expect.fail('Should have thrown');
-    } catch (err) {
-      expect(err).toBeInstanceOf(ToolError);
-      expect((err as ToolError).code).toBe(-32601);
-    }
+  it('maps a spawn failure to PROCESS_FAILED', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    adapter.spawn.mockRejectedValue(new Error('command not found'));
+    await expectToolError(
+      dispatchTool('run', { command: 'nope' }, ctx),
+      RuntimeErrorCodes.PROCESS_FAILED,
+    );
   });
 
-  it('dispatches "preview_action" with UNSUPPORTED_CAPABILITY', async () => {
-    try {
-      await dispatchTool('preview_action', {}, adapter, preview);
-      expect.fail('Should have thrown');
-    } catch (err) {
-      expect(err).toBeInstanceOf(ToolError);
-      expect((err as ToolError).code).toBe(RuntimeErrorCodes.UNSUPPORTED_CAPABILITY);
-    }
+  it('maps a timeout to TOOL_TIMEOUT', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    adapter.spawn.mockRejectedValue(new SpawnTimeoutError(1_000));
+    await expectToolError(
+      dispatchTool('run', { command: 'sleep 999' }, ctx),
+      RuntimeErrorCodes.TOOL_TIMEOUT,
+    );
   });
 
-  it('dispatches "finalize" tool', async () => {
-    const result = await dispatchTool('finalize', { revisionId: 'rev_1', title: 'My App' }, adapter, preview);
-    expect(result.status).toBe('finalized');
+  it('clamps timeoutMs into 1_000..600_000', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    await dispatchTool('run', { command: 'ls', timeoutMs: 9_999_999 }, ctx);
+    expect(adapter.spawn).toHaveBeenLastCalledWith(
+      'ls',
+      [],
+      expect.objectContaining({ timeoutMs: 600_000 }),
+    );
+  });
+
+  it('marks dependencies dirty after an install command', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    await dispatchTool('run', { command: 'npm install lodash' }, ctx);
+    expect(adapter.markDepsDirty).toHaveBeenCalled();
+  });
+
+  it('leaves dependencies alone for a plain command', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    await dispatchTool('run', { command: 'npm run build' }, ctx);
+    expect(adapter.markDepsDirty).not.toHaveBeenCalled();
+  });
+
+  it('emits a progress event before running', async () => {
+    const { ctx, onProgress } = await makeContext(BASE_FILES);
+    await dispatchTool('run', { command: 'npm run build' }, ctx);
+    expect(onProgress).toHaveBeenCalledWith({
+      phase: 'running',
+      message: 'npm run build',
+    });
+  });
+});
+
+describe('preview tools', () => {
+  it('delegates preview_inspect to the controller', async () => {
+    const { ctx, previewCtrl } = await makeContext(BASE_FILES);
+    const result = await dispatchTool('preview_inspect', {}, ctx);
+    expect(previewCtrl.inspectPreview).toHaveBeenCalled();
+    expect(Object.keys(result).sort()).toEqual([
+      'capabilities',
+      'console',
+      'domSummary',
+      'runtimeErrors',
+      'screenshotArtifactId',
+      'title',
+      'url',
+      'visibleText',
+    ]);
+  });
+
+  it('raises UNSUPPORTED_CAPABILITY when Nodepod is not booted', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    (adapter as unknown as { currentPod: unknown }).currentPod = null;
+    await expectToolError(
+      dispatchTool('preview_inspect', {}, ctx),
+      RuntimeErrorCodes.UNSUPPORTED_CAPABILITY,
+    );
+  });
+
+  it('forwards preview_action arguments', async () => {
+    const { ctx, previewCtrl } = await makeContext(BASE_FILES);
+    const result = await dispatchTool(
+      'preview_action',
+      { action: 'click', selector: '#go', value: 'v', x: 1, y: 2 },
+      ctx,
+    );
+    expect(previewCtrl.performAction).toHaveBeenCalledWith('click', {
+      selector: '#go',
+      value: 'v',
+      x: 1,
+      y: 2,
+    });
+    expect(result).toEqual({ ok: true, action: 'click' });
+  });
+
+  it('rejects an unsupported action', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    await expectToolError(
+      dispatchTool('preview_action', { action: 'teleport' }, ctx),
+      RuntimeErrorCodes.INVALID_PARAMS,
+    );
+  });
+});
+
+describe('finalize', () => {
+  it('returns the contract keys with a workspace-scoped manifest path', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const result = await dispatchTool(
+      'finalize',
+      { revisionId: 'rev_1', title: 'My App', verification: { build: 'ok' } },
+      ctx,
+    );
+
+    expect(Object.keys(result).sort()).toEqual([
+      'cephManifestPath',
+      'fileTree',
+      'preview',
+      'revisionId',
+      'verification',
+    ]);
+    expect(result.cephManifestPath).toBe('appbuilder/manifests/ws-1/rev_1.json');
+    expect(result.preview).toEqual({ runtime: 'browser', healthy: true });
+    expect(result.verification).toEqual({ build: 'ok', preview: '', tests: '' });
+  });
+
+  it('falls back to the latest local revision', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const result = await dispatchTool('finalize', { title: 'My App' }, ctx);
     expect(result.revisionId).toBe('rev_1');
+  });
+});
+
+describe('buildFileTree', () => {
+  it('nests flat VFS paths', () => {
+    expect(buildFileTree(['/package.json', '/src/App.tsx', '/src/lib/util.ts'])).toEqual({
+      name: '/',
+      type: 'dir',
+      children: [
+        { name: 'package.json', type: 'file' },
+        {
+          name: 'src',
+          type: 'dir',
+          children: [
+            { name: 'App.tsx', type: 'file' },
+            {
+              name: 'lib',
+              type: 'dir',
+              children: [{ name: 'util.ts', type: 'file' }],
+            },
+          ],
+        },
+      ],
+    });
   });
 });

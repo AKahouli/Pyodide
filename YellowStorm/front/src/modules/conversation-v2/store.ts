@@ -3,6 +3,7 @@ import { devtools } from 'zustand/middleware';
 import type { AgentEvent, ConversationV2PointerSummary, FilesTreeNode, AppBuildProgress, PendingQuestion } from './types';
 import { conversationV2Api } from './api';
 import type { DeployStatus } from './api';
+import type { AppRuntimeUiStatus } from './runtime/runtime.types';
 import {
   readSelectedModelForSession,
   writeSelectedModelForSession,
@@ -48,6 +49,11 @@ interface State {
   applicationComponent: ApplicationComponentState | null;
   /** Latest agent-reported build phase before sources / preview are ready. */
   appBuildProgress: AppBuildProgress | null;
+  /**
+   * Browser runtime lifecycle for the current session (Vague 5).
+   * Never stores ticket / mcpToken / lease / sandbox IDs.
+   */
+  runtimeStatus: AppRuntimeUiStatus;
   /** Files-in-this-conversation sheet open state. Independent of the right
    *  panel so the user can keep the tool detail open while browsing files. */
   filesSheetOpen: boolean;
@@ -116,6 +122,7 @@ export interface SessionSlice {
   rightPanelMode: State['rightPanelMode'];
   applicationComponent: State['applicationComponent'];
   appBuildProgress: State['appBuildProgress'];
+  runtimeStatus: State['runtimeStatus'];
   filesSheetOpen: boolean;
   systemWorkspaceId: string | null;
   workspaceIds: string[];
@@ -159,6 +166,11 @@ interface Actions {
   setRightPanelView: (view: 'code' | 'preview') => void;
   jumpToLive: () => void;
   closeRightPanel: () => void;
+  /**
+   * Mirror BrowserRuntimeHost status into the UI store. Opens the app panel when
+   * the runtime becomes active and the panel was closed — never overrides `tool`.
+   */
+  setRuntimeStatus: (status: AppRuntimeUiStatus) => void;
   stop: () => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
@@ -215,6 +227,7 @@ const initial: State = {
   rightPanelMode: 'closed',
   applicationComponent: null,
   appBuildProgress: null,
+  runtimeStatus: 'idle',
   filesSheetOpen: false,
   selectedToolCallId: null,
   liveToolCallId: null,
@@ -251,6 +264,7 @@ function createSessionViewDefaults(): Pick<
   | 'rightPanelMode'
   | 'applicationComponent'
   | 'appBuildProgress'
+  | 'runtimeStatus'
   | 'filesSheetOpen'
   | 'systemWorkspaceId'
   | 'workspaceIds'
@@ -275,6 +289,7 @@ function createSessionViewDefaults(): Pick<
     rightPanelMode: 'closed',
     applicationComponent: null,
     appBuildProgress: null,
+    runtimeStatus: 'idle',
     filesSheetOpen: false,
     systemWorkspaceId: null,
     workspaceIds: [],
@@ -301,6 +316,8 @@ function sliceFromState(s: State): SessionSlice {
     rightPanelMode: s.rightPanelMode,
     applicationComponent: s.applicationComponent,
     appBuildProgress: s.appBuildProgress,
+    // Host is destroyed on session leave; never hydrate a stale browser status.
+    runtimeStatus: 'idle',
     filesSheetOpen: s.filesSheetOpen,
     systemWorkspaceId: s.systemWorkspaceId,
     workspaceIds: s.workspaceIds,
@@ -362,6 +379,7 @@ export const useConversationV2Store = create<State & Actions>()(
               rightPanelMode: cached.rightPanelMode,
               applicationComponent: cached.applicationComponent,
               appBuildProgress: cached.appBuildProgress,
+              runtimeStatus: 'idle',
               filesSheetOpen: cached.filesSheetOpen,
               systemWorkspaceId: cached.systemWorkspaceId,
               workspaceIds: cached.workspaceIds,
@@ -564,6 +582,19 @@ export const useConversationV2Store = create<State & Actions>()(
         ),
       closeRightPanel: () =>
         set({ rightPanelMode: 'closed', selectedToolCallId: null }, false, 'closeRightPanel'),
+      setRuntimeStatus: (status) =>
+        set(
+          (s) => ({
+            runtimeStatus: status,
+            // Auto-open preview when the runtime becomes active — never clobber tool view.
+            ...((status === 'hydrating' || status === 'browser_active') &&
+            s.rightPanelMode === 'closed'
+              ? { rightPanelMode: 'app' as const }
+              : {}),
+          }),
+          false,
+          'setRuntimeStatus',
+        ),
       setSystemWorkspaceId: (id) =>
         set({ systemWorkspaceId: id }, false, 'setSystemWorkspaceId'),
       setWorkspaceIds: (ids) => set({ workspaceIds: ids }, false, 'setWorkspaceIds'),

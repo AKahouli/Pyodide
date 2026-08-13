@@ -13,6 +13,7 @@ vi.mock('../../hooks/useNodepodPreview', () => ({
       '/app/page.tsx': 'export default function Page() { return null }',
     },
     retry: vi.fn(),
+    previewIframeRef: vi.fn(),
   }),
 }));
 
@@ -23,6 +24,8 @@ describe('RightPanel', () => {
       streaming: false,
       liveToolCallId: null,
       applicationComponent: null,
+      appBuildProgress: null,
+      runtimeStatus: 'idle',
       deployStatus: 'idle',
       deployedUrl: null,
       appViewMode: 'nodepod',
@@ -185,6 +188,45 @@ describe('RightPanel', () => {
     });
     render(<RightPanel />);
     expect(screen.queryByRole('button', { name: /jumpToLive/i })).not.toBeInTheDocument();
+  });
+
+  it('shows Nodepod preview when runtime is browser_active without application_component', () => {
+    useConversationV2Store.setState({
+      rightPanelMode: 'app',
+      applicationComponent: null,
+      runtimeStatus: 'browser_active',
+    });
+
+    render(<RightPanel />);
+
+    expect(document.querySelector('iframe')).toHaveAttribute(
+      'src',
+      'https://nodepod.local/__virtual__/3000/',
+    );
+    // Deploy requires an application component — runtime alone is not enough.
+    expect(screen.queryByRole('button', { name: /publish/i })).not.toBeInTheDocument();
+  });
+
+  it('shows Nodepod preview while runtime is hydrating before SSE application_component', () => {
+    useConversationV2Store.setState({
+      rightPanelMode: 'app',
+      applicationComponent: null,
+      runtimeStatus: 'hydrating',
+    });
+
+    render(<RightPanel />);
+    expect(document.querySelector('iframe')).toBeInTheDocument();
+  });
+
+  it('renders nothing in app mode when there is no runtime, progress, or application', () => {
+    useConversationV2Store.setState({
+      rightPanelMode: 'app',
+      applicationComponent: null,
+      appBuildProgress: null,
+      runtimeStatus: 'idle',
+    });
+    const { container } = render(<RightPanel />);
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('close button collapses the panel', () => {

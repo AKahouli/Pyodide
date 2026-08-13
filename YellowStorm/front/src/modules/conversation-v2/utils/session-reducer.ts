@@ -13,6 +13,7 @@ export function emptySlice(): SessionSlice {
     rightPanelMode: 'closed',
     applicationComponent: null,
     appBuildProgress: null,
+    runtimeStatus: 'idle',
     filesSheetOpen: false,
     systemWorkspaceId: null,
     workspaceIds: [],

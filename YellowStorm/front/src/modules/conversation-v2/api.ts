@@ -202,6 +202,35 @@ export const conversationV2Api = {
       throw err;
     }
   },
+  /** List files for an authorized App Builder revision (starter or workspace). */
+  async getRevisionFiles(
+    sessionId: string,
+    revisionId: string,
+  ): Promise<{
+    revisionId: string;
+    files: Array<{ path: string; sha256: string; size: number }>;
+  }> {
+    const res = await apiClient.get<
+      ApiResponse<{
+        revisionId: string;
+        files: Array<{ path: string; sha256: string; size: number }>;
+      }>
+    >(`/conversation-v2/sessions/${sessionId}/revisions/${encodeURIComponent(revisionId)}/files`);
+    return res.data.data;
+  },
+  /** Presign blob reads for paths listed in an authorized revision manifest. */
+  async presignRevisionFiles(
+    sessionId: string,
+    revisionId: string,
+    paths: string[],
+  ): Promise<{ items: Array<{ path: string; url: string }> }> {
+    const res = await apiClient.post<
+      ApiResponse<{ items: Array<{ path: string; url: string }> }>
+    >(`/conversation-v2/sessions/${sessionId}/revisions/${encodeURIComponent(revisionId)}/presign`, {
+      paths,
+    });
+    return res.data.data;
+  },
   async createRuntimeTicket(sessionId: string): Promise<RuntimeTicketResponse> {
     const res = await apiClient.post<ApiResponse<RuntimeTicketResponse>>(
       `/conversation-v2/sessions/${sessionId}/runtime-ticket`,
