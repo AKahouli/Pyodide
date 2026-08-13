@@ -24,6 +24,7 @@ function makeAdapter(initial: Record<string, string> = {}) {
     files,
     markDepsDirty,
     spawn,
+    startDevServer: vi.fn(async () => 'http://localhost/__virtual__/pod-1/5173/'),
     currentPod: { instanceId: 'pod-1' },
 
     async exists(path: string) {
@@ -87,6 +88,7 @@ function makeAdapter(initial: Record<string, string> = {}) {
 function makePreviewCtrl() {
   return {
     previewUrl: 'http://localhost/__virtual__/pod-1/5173/',
+    port: 5173,
     inspectPreview: vi.fn().mockResolvedValue({
       url: 'http://localhost/__virtual__/pod-1/5173/',
       title: 'App',
@@ -604,6 +606,102 @@ describe('run', () => {
       phase: 'running',
       message: 'npm run build',
     });
+  });
+
+  it('keeps quoted arguments intact instead of splitting on spaces', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    await dispatchTool('run', { command: `node -e "console.log('hi')"` }, ctx);
+    expect(adapter.spawn).toHaveBeenCalledWith(
+      'node',
+      ['-e', "console.log('hi')"],
+      expect.objectContaining({ timeoutMs: expect.any(Number) }),
+    );
+  });
+
+  it('chains && and maps cd onto cwd instead of spawning a cd binary', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    await dispatchTool('run', { command: 'cd src && npm run build' }, ctx);
+    expect(adapter.spawn).toHaveBeenCalledTimes(1);
+    expect(adapter.spawn).toHaveBeenCalledWith(
+      'npm',
+      ['run', 'build'],
+      expect.objectContaining({ cwd: '/src' }),
+    );
+  });
+
+  it('stops a && chain after a non-zero exit', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    adapter.spawn.mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'nope',
+      truncated: false,
+    });
+    const result = await dispatchTool('run', { command: 'false && echo hi' }, ctx);
+    expect(result.exitCode).toBe(1);
+    expect(adapter.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs both sides of `;` even when the first step fails', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    adapter.spawn
+      .mockResolvedValueOnce({ exitCode: 1, stdout: 'a', stderr: '', truncated: false })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: 'b', stderr: '', truncated: false });
+    const result = await dispatchTool('run', { command: 'echo a; echo b' }, ctx);
+    expect(adapter.spawn).toHaveBeenCalledTimes(2);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('ab');
+  });
+
+  it('rejects pipes, redirections and background jobs with a usable error', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const err = await expectToolError(
+      dispatchTool('run', { command: 'npm run build > dist.log' }, ctx),
+      RuntimeErrorCodes.INVALID_PARAMS,
+    );
+    expect(err.message).toMatch(/>/);
+    expect(err.data).toMatchObject({ unsupported: '>' });
+
+    await expectToolError(
+      dispatchTool('run', { command: 'npm run dev &' }, ctx),
+      RuntimeErrorCodes.INVALID_PARAMS,
+    );
+  });
+});
+
+describe('dev_server', () => {
+  it('reports the current preview without spawning', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    const result = await dispatchTool('dev_server', { action: 'status' }, ctx);
+    expect(adapter.startDevServer).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      running: true,
+      url: 'http://localhost/__virtual__/pod-1/5173/',
+      port: 5173,
+    });
+    expect(String(result.message)).toMatch(/virtual URL|this URL/i);
+  });
+
+  it('restarts through startDevServer', async () => {
+    const { ctx, adapter, previewCtrl } = await makeContext(BASE_FILES);
+    (previewCtrl as { previewUrl: string | null }).previewUrl = null;
+    adapter.startDevServer.mockImplementation(async () => {
+      (previewCtrl as { previewUrl: string | null }).previewUrl =
+        'http://localhost/__virtual__/pod-1/5173/';
+      (previewCtrl as { port: number | null }).port = 5173;
+    });
+
+    const result = await dispatchTool('dev_server', { action: 'restart' }, ctx);
+    expect(adapter.startDevServer).toHaveBeenCalled();
+    expect(result.running).toBe(true);
+  });
+
+  it('rejects an unknown action', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    await expectToolError(
+      dispatchTool('dev_server', { action: 'stop' }, ctx),
+      RuntimeErrorCodes.INVALID_PARAMS,
+    );
   });
 });
 

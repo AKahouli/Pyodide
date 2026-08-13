@@ -36,11 +36,11 @@ export function applyUnifiedPatch(
     );
   }
 
-  if (patched === false) {
+    if (patched === false) {
     throw new ToolError(
       RuntimeErrorCodes.INVALID_PARAMS,
-      'Patch could not be applied',
-      { path },
+      `Patch could not be applied to ${path}: the context lines do not match the current file. Re-read it, or use write to replace the whole file.`,
+      { path, reason: 'context_mismatch' },
     );
   }
 

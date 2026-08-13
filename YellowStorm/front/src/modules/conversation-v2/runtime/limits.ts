@@ -51,3 +51,17 @@ export function boundOutput(
   if (text.length <= maxBytes) return { text, truncated: false };
   return { text: text.slice(text.length - maxBytes), truncated: true };
 }
+
+/**
+ * Prefer the longer of a streamed log and the completion payload. A first
+ * `output` event of "building..." used to hide the full `completion.stdout`
+ * because `streamed || completion` kept the non-empty prefix.
+ */
+export function preferCompleteOutput(
+  streamed: string,
+  completion: string | undefined,
+  maxBytes = RUN_OUTPUT_MAX_BYTES,
+): { text: string; truncated: boolean } {
+  const other = completion ?? '';
+  return boundOutput(other.length > streamed.length ? other : streamed, maxBytes);
+}

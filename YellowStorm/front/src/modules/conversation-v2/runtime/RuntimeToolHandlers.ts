@@ -4,6 +4,7 @@ import type { PreviewController } from './PreviewController';
 import type { WorkspaceRevisionStore } from './WorkspaceRevisionStore';
 import { ToolError } from './ToolError';
 import { sha256 } from './hashing';
+import { parseCommandLine, type CommandStep } from './command-line';
 import { applyUnifiedPatch, createUnifiedDiff } from './unified-diff';
 import {
   validateToolPath,
@@ -29,6 +30,7 @@ import {
   RuntimeErrorCodes,
   type ApplyPatchResult,
   type DeleteResult,
+  type DevServerResult,
   type DiffResult,
   type FileTreeNode,
   type FinalizeResult,
@@ -57,6 +59,7 @@ export type AnyToolResult =
   | DeleteResult
   | DiffResult
   | RunResult
+  | DevServerResult
   | PreviewInspectResult
   | PreviewActionResult
   | FinalizeResult;
@@ -362,56 +365,98 @@ const handlers: Record<string, Handler> = {
 
   async run(args, ctx): Promise<RunResult> {
     const command = requireString(args, 'command');
-    const cwd = validateToolPathOptional(optionalString(args, 'cwd'));
+    const initialCwd = validateToolPathOptional(optionalString(args, 'cwd'));
     const timeoutMs = clamp(
       optionalInt(args, 'timeoutMs') ?? RUN_TIMEOUT_DEFAULT,
       RUN_TIMEOUT_MIN,
       RUN_TIMEOUT_MAX,
     );
 
-    const [cmd, ...cmdArgs] = command.trim().split(/\s+/);
+    // Rejects shell-only constructs up front rather than handing `&&` or a
+    // torn-apart quoted script to the binary as literal argv.
+    const steps = parseCommandLine(command);
     ctx.onProgress?.({ phase: 'running', message: command });
 
     let lastProgressAt = 0;
-    try {
-      const result = await ctx.adapter.spawn(cmd, cmdArgs, {
-        cwd: cwd ? toVfsPath(cwd) : undefined,
-        timeoutMs,
-        // Throttled so a chatty build does not flood the socket; each emission
-        // re-arms the backend's per-call deadline.
+    let stdout = '';
+    let stderr = '';
+    let truncated = false;
+    let exitCode = 0;
+    let cwd = initialCwd;
+    const deadline = Date.now() + timeoutMs;
+
+    for (const step of steps) {
+      // `;` runs regardless of the previous outcome, `&&` does not.
+      if (step.joinedBy === '&&' && exitCode !== 0) break;
+
+      // `cd` has to mutate this loop's cwd — spawning a `cd` binary would
+      // not persist, which is exactly what models write (`cd src && npm run build`).
+      if (step.cmd === 'cd') {
+        cwd = resolveCd(cwd, step.args, command);
+        exitCode = 0;
+        continue;
+      }
+
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new ToolError(
+          RuntimeErrorCodes.TOOL_TIMEOUT,
+          `Command timed out after ${timeoutMs}ms`,
+          { command, timeoutMs },
+        );
+      }
+
+      const stepResult = await runStep(step, ctx, {
+        cwd,
+        timeoutMs: remainingMs,
+        command,
         onOutput: (chunk) => {
           const now = Date.now();
           if (now - lastProgressAt < 1_000) return;
           lastProgressAt = now;
-          ctx.onProgress?.({ phase: 'running', message: chunk.trim().slice(0, 500) });
+          ctx.onProgress?.({ phase: 'running', message: chunk.slice(-200) });
         },
       });
 
-      if (DEPENDENCY_MUTATING_RE.test(command)) ctx.adapter.markDepsDirty();
+      stdout += stepResult.stdout;
+      stderr += stepResult.stderr;
+      truncated ||= stepResult.truncated;
+      exitCode = stepResult.exitCode;
+    }
 
-      // A non-zero exit code is a normal result the model must be able to read.
-      return {
-        exitCode: result.exitCode,
-        stdout: result.stdout,
-        stderr: result.stderr,
-        truncated: result.truncated,
-        command,
-      };
-    } catch (err) {
-      if (err instanceof SpawnTimeoutError) {
-        throw new ToolError(RuntimeErrorCodes.TOOL_TIMEOUT, err.message, {
-          command,
-          timeoutMs,
-        });
-      }
-      // Reaching here means the process could not be started or the runtime
-      // itself failed — distinct from the command exiting non-zero.
+    return { exitCode, stdout, stderr, truncated, command };
+  },
+
+  async dev_server(args, ctx): Promise<DevServerResult> {
+    const action = optionalString(args, 'action') ?? 'status';
+    if (action !== 'status' && action !== 'restart') {
       throw new ToolError(
-        RuntimeErrorCodes.PROCESS_FAILED,
-        err instanceof Error ? err.message : String(err),
-        { command },
+        RuntimeErrorCodes.INVALID_PARAMS,
+        `Unknown dev_server action: ${action}`,
+        { action },
       );
     }
+
+    if (action === 'restart') {
+      ctx.onProgress?.({ phase: 'starting', message: 'dev server restart' });
+      // Boots the configured dev command, waits for the ready line and probes
+      // the URL before returning — the same path the host uses at boot.
+      await ctx.adapter.startDevServer(ctx.previewCtrl, () => false, (phase, message) =>
+        ctx.onProgress?.({ phase, message }),
+      );
+    }
+
+    const url = ctx.previewCtrl.previewUrl;
+    return {
+      running: url !== null,
+      url,
+      port: ctx.previewCtrl.port,
+      // The preview is served through a service worker, not a TCP port: probing
+      // localhost from inside the pod always fails and means nothing.
+      message: url
+        ? 'Dev server is running. The preview is reachable only through this URL, not via localhost.'
+        : 'Dev server is not running. Call dev_server with action "restart" to start it.',
+    };
   },
 
   async preview_inspect(_args, ctx): Promise<PreviewInspectResult> {
@@ -463,6 +508,62 @@ const handlers: Record<string, Handler> = {
     };
   },
 };
+
+/** Apply a `cd` step to the current workspace-relative cwd. */
+function resolveCd(cwd: string | null, args: string[], command: string): string {
+  if (args.length !== 1 || !args[0]) {
+    throw new ToolError(
+      RuntimeErrorCodes.INVALID_PARAMS,
+      '`cd` needs exactly one relative path. Absolute paths are rejected — the workspace root is already `/`.',
+      { command, args },
+    );
+  }
+  const joined = cwd && cwd !== '.' ? `${cwd}/${args[0]}` : args[0];
+  return validateToolPath(joined);
+}
+
+/** Spawn one parsed step, mapping runtime failures onto tool error codes. */
+async function runStep(
+  step: CommandStep,
+  ctx: ToolContext,
+  opts: {
+    cwd: string | null;
+    timeoutMs: number;
+    command: string;
+    onOutput: (chunk: string) => void;
+  },
+): Promise<{ exitCode: number; stdout: string; stderr: string; truncated: boolean }> {
+  const stepCommand = [step.cmd, ...step.args].join(' ');
+  try {
+    const result = await ctx.adapter.spawn(step.cmd, step.args, {
+      cwd: opts.cwd ? toVfsPath(opts.cwd) : undefined,
+      timeoutMs: opts.timeoutMs,
+      // Throttled so a chatty build does not flood the socket; each emission
+      // re-arms the backend's per-call deadline.
+      onOutput: opts.onOutput,
+    });
+
+    if (DEPENDENCY_MUTATING_RE.test(stepCommand)) ctx.adapter.markDepsDirty();
+
+    // A non-zero exit code is a normal result the model must be able to read.
+    return result;
+  } catch (err) {
+    if (err instanceof SpawnTimeoutError) {
+      throw new ToolError(RuntimeErrorCodes.TOOL_TIMEOUT, err.message, {
+        command: opts.command,
+        step: stepCommand,
+        timeoutMs: opts.timeoutMs,
+      });
+    }
+    // Reaching here means the process could not be started or the runtime
+    // itself failed — distinct from the command exiting non-zero.
+    throw new ToolError(
+      RuntimeErrorCodes.PROCESS_FAILED,
+      err instanceof Error ? err.message : String(err),
+      { command: opts.command, step: stepCommand },
+    );
+  }
+}
 
 /** Nest a flat list of absolute VFS paths into the `finalize.fileTree` shape. */
 export function buildFileTree(vfsPaths: string[]): FileTreeNode {

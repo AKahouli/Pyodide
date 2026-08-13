@@ -31,7 +31,8 @@ describe('applyUnifiedPatch', () => {
     } catch (err) {
       expect(err).toBeInstanceOf(ToolError);
       expect((err as ToolError).code).toBe(RuntimeErrorCodes.INVALID_PARAMS);
-      expect((err as ToolError).data).toMatchObject({ path: 'src/App.tsx' });
+      expect((err as ToolError).data).toMatchObject({ path: 'src/App.tsx', reason: 'context_mismatch' });
+      expect((err as ToolError).message).toMatch(/context lines do not match/);
     }
   });
 

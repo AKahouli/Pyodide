@@ -28,6 +28,7 @@ export const TOOL_REQUIRED_CAPABILITY: Record<string, keyof RuntimeCapabilities>
   diff: 'filesystem',
   finalize: 'filesystem',
   run: 'npm',
+  dev_server: 'npm',
   preview_inspect: 'previewInspection',
   preview_action: 'previewInspection',
 };

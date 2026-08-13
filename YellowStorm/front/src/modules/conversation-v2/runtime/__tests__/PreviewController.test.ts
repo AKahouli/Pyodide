@@ -114,6 +114,17 @@ describe('PreviewController inspection bridge', () => {
     });
     const result = await ctrl.inspectPreview(pod);
     expect(result.runtimeErrors).toHaveLength(1);
+    expect(result.runtimeErrors[0]).toMatch(/preview iframe is not attached/);
+  });
+
+  it('tells the model to restart the dev server when no preview URL is set', async () => {
+    const missing = new PreviewController();
+    const pod = makePod({
+      proxy: { handleRequest: vi.fn().mockRejectedValue(new Error('nope')) },
+    });
+    const result = await missing.inspectPreview(pod);
+    expect(result.runtimeErrors[0]).toMatch(/dev server is not running/);
+    expect(result.runtimeErrors[0]).toMatch(/dev_server/);
   });
 
   it('degrades gracefully when an inspector call fails', async () => {

@@ -225,6 +225,13 @@ export interface RunResult {
   command: string;
 }
 
+export interface DevServerResult {
+  running: boolean;
+  url: string | null;
+  port: number | null;
+  message: string;
+}
+
 /** One flattened DOM node in `preview_inspect.domSummary`. */
 export interface DomSummaryNode extends Record<string, unknown> {
   tag: string;

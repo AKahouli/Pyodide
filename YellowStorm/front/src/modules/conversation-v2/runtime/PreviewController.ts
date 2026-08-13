@@ -375,9 +375,13 @@ export class PreviewController {
 
     if (!this.iframe || !hasInspector(pod) || this.attachedPort === null) {
       const healthy = await this.probeHealth(pod, inspectPort);
-      base.runtimeErrors = healthy
-        ? []
-        : ['Preview is not reachable; no inspection bridge attached.'];
+      if (!healthy) {
+        base.runtimeErrors = [
+          this._previewUrl
+            ? 'The preview iframe is not attached; open the preview panel to inspect the live DOM. The dev server URL is set, so the app may still be running.'
+            : 'The dev server is not running. Call yellowruntime_dev_server with action "restart" to start it. Do not probe localhost from inside the runtime — the preview is served through a virtual URL, not a TCP port.',
+        ];
+      }
       return base;
     }
 
@@ -416,7 +420,9 @@ export class PreviewController {
     if (!iframe) {
       throw new ToolError(
         RuntimeErrorCodes.UNSUPPORTED_CAPABILITY,
-        'No preview iframe is attached; open the preview panel to interact with the app.',
+        this._previewUrl
+          ? 'No preview iframe is attached; open the preview panel to interact with the app.'
+          : 'The dev server is not running. Call yellowruntime_dev_server with action "restart", then open the preview panel.',
         { requiredCapability: 'previewInteraction', action },
       );
     }

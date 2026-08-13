@@ -15,6 +15,7 @@ import {
   RUN_OUTPUT_MAX_BYTES,
   RUN_TIMEOUT_DEFAULT,
   boundOutput,
+  preferCompleteOutput,
 } from './limits';
 
 const LOG = '[NodepodAdapter]';
@@ -611,9 +612,10 @@ export class NodepodRuntimeAdapter {
         }),
       ]);
 
-      // Fall back to the completion payload when no stream events fired.
-      const boundedOut = boundOutput(stdout || result.stdout || '', maxBytes);
-      const boundedErr = boundOutput(stderr || result.stderr || '', maxBytes);
+      // Prefer the longer of the stream and the completion payload so a
+      // partial first `output` event cannot hide the rest of the log.
+      const boundedOut = preferCompleteOutput(stdout, result.stdout, maxBytes);
+      const boundedErr = preferCompleteOutput(stderr, result.stderr, maxBytes);
       return {
         exitCode: result.exitCode,
         stdout: boundedOut.text,
