@@ -137,6 +137,16 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
       params: { table, replica: 'full', ...(secret ? { secret } : {}) },
       handle: cursor?.handle ?? undefined,
       offset: (cursor?.offset as never) ?? undefined,
+      // Without an onError handler, non-retryable errors (4xx) are THROWN and
+      // escape as an unhandled rejection that crashes the whole backend. The
+      // most common one: a shape whose Postgres table doesn't exist yet (the
+      // manager-owned message_components / plan_step_* tables). Handle it, log,
+      // and return void to stop just that shape — the app boots and every other
+      // shape keeps syncing. (5xx/network/429 are auto-retried before this runs.)
+      onError: (err) => {
+        this.onShapeError(shape, table, err);
+        return undefined;
+      },
     });
     const unsubscribe = stream.subscribe(
       async (messages) => {
@@ -147,6 +157,30 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
       (err) => this.logger.error('[worky-electric] stream error', { shape, error: (err as Error).message }),
     );
     this.streams.push({ unsubscribe });
+  }
+
+  /**
+   * Non-retryable shape error handler. A missing table (the manager hasn't
+   * created message_components / plan_step_* yet) is expected during rollout, so
+   * it's logged as a warning; anything else is a genuine error. Either way the
+   * caller returns void to ShapeStream, stopping just this shape rather than
+   * throwing and crashing the process.
+   */
+  onShapeError(shape: string, table: string, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/does not exist/i.test(message)) {
+      this.logger.warn('[worky-electric] shape table missing — skipping until it is created', {
+        shape,
+        table,
+        error: message,
+      });
+    } else {
+      this.logger.error('[worky-electric] shape stopped on a non-retryable error', {
+        shape,
+        table,
+        error: message,
+      });
+    }
   }
 
   async persistCursor(shape: string, handle: string | undefined, offset: string): Promise<void> {

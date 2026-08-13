@@ -399,6 +399,28 @@ describe('WorkyElectricConsumerService.handlePlans', () => {
   });
 });
 
+describe('WorkyElectricConsumerService.onShapeError', () => {
+  it('logs a WARN (not error) for a missing table so boot is not blocked', () => {
+    const { service, logger } = makeService();
+    service.onShapeError('message_components', 'message_components', new Error('Table "public"."message_components" does not exist.'));
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('table missing'),
+      expect.objectContaining({ shape: 'message_components' }),
+    );
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('logs an ERROR for any other non-retryable failure', () => {
+    const { service, logger } = makeService();
+    service.onShapeError('messages', 'messages', new Error('boom'));
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('non-retryable'),
+      expect.objectContaining({ shape: 'messages', error: 'boom' }),
+    );
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+});
+
 describe('WorkyElectricConsumerService.persistCursor', () => {
   it('upserts the cursor document for a shape', async () => {
     const { service, cursorModel } = makeService();
