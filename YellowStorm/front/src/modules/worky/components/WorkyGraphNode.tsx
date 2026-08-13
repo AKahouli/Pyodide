@@ -2,12 +2,20 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useModuleTranslation } from '@/modules/localization';
 import { cn } from '@/lib/utils';
 import { StatusBadge } from './StatusBadge';
+import { TaskTimestamp } from './TaskTimestamp';
 import type { OrchStepStatus } from '../status';
+import type { WorkyBoardLane } from '../types';
 
 export interface WorkyGraphNodeData {
   title: string;
   status: OrchStepStatus;
   wave: number | null;
+  // Timestamp source, enriched by WorkyGraphBoard from the underlying task.
+  lane?: WorkyBoardLane;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
   [key: string]: unknown;
 }
 
@@ -20,7 +28,7 @@ const STATUS_BORDER: Record<OrchStepStatus, string> = {
 };
 
 export function WorkyGraphNode({ data }: NodeProps): JSX.Element {
-  const { title, status, wave } = data as unknown as WorkyGraphNodeData;
+  const { title, status, wave, lane, createdAt, updatedAt, startedAt, completedAt } = data as unknown as WorkyGraphNodeData;
   const { t } = useModuleTranslation('worky');
   return (
     <div
@@ -39,7 +47,12 @@ export function WorkyGraphNode({ data }: NodeProps): JSX.Element {
           </span>
         ) : null}
       </div>
-      <StatusBadge status={status} />
+      <div className='flex items-center justify-between gap-2'>
+        <StatusBadge status={status} />
+        {lane ? (
+          <TaskTimestamp task={{ lane, createdAt, updatedAt, startedAt: startedAt ?? null, completedAt: completedAt ?? null }} />
+        ) : null}
+      </div>
     </div>
   );
 }

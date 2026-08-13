@@ -123,6 +123,12 @@ export class WorkyTaskService {
         startedAt: task.startedAt ? new Date(task.startedAt).toISOString() : null,
         completedAt: task.completedAt ? new Date(task.completedAt).toISOString() : null,
         durationMs: typeof task.durationMs === 'number' ? task.durationMs : null,
+        // Mongo timestamps (always populated). createdAt = when the task first
+        // appeared on the board; updatedAt = last Electric change / activity.
+        // These are the reliable relative-time source for manager-driven tasks,
+        // whose startedAt/completedAt the Electric sync never sets.
+        createdAt: task.createdAt ? new Date(task.createdAt as Date).toISOString() : null,
+        updatedAt: task.updatedAt ? new Date(task.updatedAt as Date).toISOString() : null,
       });
     }
     return lanes;
@@ -201,4 +207,8 @@ export interface IBoardTaskView {
   startedAt: string | null;
   completedAt: string | null;
   durationMs: number | null;
+  /** Mongo doc creation time — when the task first appeared on the board. */
+  createdAt: string | null;
+  /** Mongo doc last-modified time — last Electric change / activity. */
+  updatedAt: string | null;
 }

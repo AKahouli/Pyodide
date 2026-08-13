@@ -37,7 +37,24 @@ export function WorkyGraphBoard({ onTaskClick }: WorkyGraphBoardProps): JSX.Elem
   const { nodes, edges, taskById } = useMemo(() => {
     const byId = new Map(tasks.map((task) => [task.id, task]));
     const { nodes: rawNodes, edges: rawEdges } = buildWorkyGraph(tasks);
-    const { nodes, edges } = layoutCompactCanvasNodes(rawNodes, rawEdges);
+    const { nodes: laidOut, edges } = layoutCompactCanvasNodes(rawNodes, rawEdges);
+    // Enrich each node with its task's timestamp fields so WorkyGraphNode can
+    // render the contextual "created/started/done X ago" label.
+    const nodes = laidOut.map((node) => {
+      const task = byId.get(node.id);
+      if (!task) return node;
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          lane: task.lane,
+          createdAt: task.createdAt ?? null,
+          updatedAt: task.updatedAt ?? null,
+          startedAt: task.startedAt,
+          completedAt: task.completedAt,
+        },
+      };
+    });
     return { nodes, edges, taskById: byId };
   }, [tasks]);
 

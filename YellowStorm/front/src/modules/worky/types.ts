@@ -189,6 +189,10 @@ export interface WorkyTask {
   startedAt: string | null;
   completedAt: string | null;
   durationMs: number | null;
+  /** When the task first appeared on the board (Mongo createdAt). */
+  createdAt?: string | null;
+  /** Last change / activity on the task (Mongo updatedAt). */
+  updatedAt?: string | null;
 }
 
 export interface WorkyTaskResult {
