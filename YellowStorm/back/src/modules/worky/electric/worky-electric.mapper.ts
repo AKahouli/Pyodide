@@ -1,5 +1,12 @@
 import { WorkyEvent } from '../interfaces/worky-event.interface';
-import { PgMessageRow, PgPlanRow, PgPlanStepRow } from './worky-electric.contract';
+import {
+  PgMessageRow,
+  PgPlanRow,
+  PgPlanStepRow,
+  PgMessageComponentRow,
+  PgPlanStepComponentRow,
+  PgPlanStepArtifactRow,
+} from './worky-electric.contract';
 
 type Frame = Omit<WorkyEvent, 'streamId'>;
 const now = (): number => Date.now();
@@ -123,5 +130,76 @@ export function mapPlan(row: PgPlanRow, streamId: string): { set: Record<string,
     set: { streamId, title: row.title, status: row.status },
     // Reuse existing 'stream.updated' event so the frontend refetches; no new event type needed here.
     event: { type: 'stream.updated', emittedAt: now(), payload: { plan: { title: row.title, status: row.status } } },
+  };
+}
+
+/** Electric jsonb may arrive parsed or as a JSON string — normalize to an object. */
+function normalizeJson(value: unknown): Record<string, unknown> {
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+export function mapMessageComponent(row: PgMessageComponentRow, streamId: string): { set: Record<string, unknown>; event: Frame } {
+  const data = normalizeJson(row.data);
+  return {
+    set: {
+      streamId,
+      externalId: row.component_id,
+      messageExternalId: row.message_id,
+      ordinal: typeof row.ordinal === 'number' ? row.ordinal : 0,
+      type: row.type,
+      data,
+    },
+    event: {
+      type: 'message.component.appended',
+      emittedAt: now(),
+      payload: { messageExternalId: row.message_id, componentId: row.component_id },
+    },
+  };
+}
+
+export function mapPlanStepComponent(row: PgPlanStepComponentRow, streamId: string): { set: Record<string, unknown>; event: Frame } {
+  const data = normalizeJson(row.data);
+  return {
+    set: {
+      streamId,
+      externalId: row.component_id,
+      stepExternalId: row.step_id,
+      ordinal: typeof row.ordinal === 'number' ? row.ordinal : 0,
+      type: row.type,
+      data,
+    },
+    event: {
+      type: 'task.component.appended',
+      emittedAt: now(),
+      payload: { stepExternalId: row.step_id, componentId: row.component_id },
+    },
+  };
+}
+
+export function mapPlanStepArtifact(row: PgPlanStepArtifactRow, streamId: string): { set: Record<string, unknown>; event: Frame } {
+  return {
+    set: {
+      streamId,
+      externalId: row.artifact_id,
+      stepExternalId: row.step_id,
+      filePath: row.file_path,
+      filename: row.filename,
+      artifactKind: row.artifact_kind ?? null,
+      mimeType: row.mime_type ?? null,
+      size: typeof row.size === 'number' ? row.size : null,
+    },
+    event: {
+      type: 'task.artifact.appended',
+      emittedAt: now(),
+      payload: { stepExternalId: row.step_id, artifactId: row.artifact_id },
+    },
   };
 }

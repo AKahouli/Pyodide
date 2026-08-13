@@ -1,4 +1,5 @@
 import { mapMessage, mapPlan, mapPlanStep, mapRole, mapStatusToLane, isKnownPlanStepStatus } from './worky-electric.mapper';
+import { mapMessageComponent, mapPlanStepComponent, mapPlanStepArtifact } from './worky-electric.mapper';
 
 describe('worky-electric.mapper', () => {
   describe('mapRole / mapMessage', () => {
@@ -215,5 +216,65 @@ describe('worky-electric.mapper', () => {
         payload: { plan: { title: 'My Plan', status: 'completed' } },
       });
     });
+  });
+});
+
+describe('mapMessageComponent', () => {
+  it('maps a component row to a projection set + append event', () => {
+    const { set, event } = mapMessageComponent(
+      { session_id: 's1', message_id: 'msg-1', component_id: 'c-1', ordinal: 0, type: 'text', data: { content: 'hi' }, created_at: '2026-08-13T10:00:00.000Z' },
+      'stream-1',
+    );
+    expect(set).toMatchObject({
+      streamId: 'stream-1',
+      externalId: 'c-1',
+      messageExternalId: 'msg-1',
+      ordinal: 0,
+      type: 'text',
+      data: { content: 'hi' },
+    });
+    expect(event).toMatchObject({
+      type: 'message.component.appended',
+      payload: { messageExternalId: 'msg-1', componentId: 'c-1' },
+    });
+  });
+
+  it('parses a JSON-string data payload (Electric jsonb-as-string)', () => {
+    const { set } = mapMessageComponent(
+      { session_id: 's1', message_id: 'msg-1', component_id: 'c-2', ordinal: 1, type: 'code', data: '{"content":"x","language":"ts"}', created_at: '2026-08-13T10:00:00.000Z' },
+      'stream-1',
+    );
+    expect(set.data).toEqual({ content: 'x', language: 'ts' });
+  });
+});
+
+describe('mapPlanStepComponent', () => {
+  it('maps a step component row to a set + task.component event', () => {
+    const { set, event } = mapPlanStepComponent(
+      { session_id: 's1', step_id: 'step-1', component_id: 'c-9', ordinal: 2, type: 'artifact', data: { file_path: 'k/1', filename: 'a.png' }, created_at: '2026-08-13T10:00:00.000Z' },
+      'stream-1',
+    );
+    expect(set).toMatchObject({ streamId: 'stream-1', externalId: 'c-9', stepExternalId: 'step-1', ordinal: 2, type: 'artifact', data: { file_path: 'k/1', filename: 'a.png' } });
+    expect(event).toMatchObject({ type: 'task.component.appended', payload: { stepExternalId: 'step-1', componentId: 'c-9' } });
+  });
+});
+
+describe('mapPlanStepArtifact', () => {
+  it('maps an artifact row to a set + task.artifact event', () => {
+    const { set, event } = mapPlanStepArtifact(
+      { session_id: 's1', step_id: 'step-1', artifact_id: 'a-1', file_path: 'key/abc', filename: 'report.pdf', artifact_kind: 'document', mime_type: 'application/pdf', size: 1234, created_at: '2026-08-13T10:00:00.000Z' },
+      'stream-1',
+    );
+    expect(set).toMatchObject({
+      streamId: 'stream-1',
+      externalId: 'a-1',
+      stepExternalId: 'step-1',
+      filePath: 'key/abc',
+      filename: 'report.pdf',
+      artifactKind: 'document',
+      mimeType: 'application/pdf',
+      size: 1234,
+    });
+    expect(event).toMatchObject({ type: 'task.artifact.appended', payload: { stepExternalId: 'step-1', artifactId: 'a-1' } });
   });
 });
