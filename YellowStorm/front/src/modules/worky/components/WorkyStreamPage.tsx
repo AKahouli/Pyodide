@@ -10,6 +10,7 @@ import { WorkyGraphBoard } from './WorkyGraphBoard';
 import { PlanDeltaToast } from './PlanDeltaToast';
 import { ApprovalModal } from './ApprovalModal';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
+import { FileViewerSidebar } from '@/modules/file-viewer';
 import { WorkyWhatsAppConnectModal } from './WorkyWhatsAppConnectModal';
 import { workyKeys } from '../query/queryKeys';
 import { subscribeToStreamEvents } from '../stream/sse';
@@ -393,6 +394,10 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         onWhatsAppClick={() => setWhatsappModalOpen(true)}
         whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
       />
+      {/* Sidebar-mode file viewer host. Floating mode is mounted globally in
+          App.tsx; sidebar mode needs a per-page host — without this, clicking
+          "view" on a desktop artifact (sidebar display mode) rendered nothing. */}
+      <FileViewerSidebar />
       </div>
       <ManagerChatSheet
         streamId={streamId}
