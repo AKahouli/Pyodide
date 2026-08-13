@@ -382,6 +382,12 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           <KanbanBoard streamId={streamId} onTaskClick={setSelectedTask} />
         )}
       </main>
+      {selectedTask ? (
+        <TaskDetailDrawer
+          task={selectedTask}
+          onClose={() => setSelectedTask(null)}
+        />
+      ) : null}
       <WorkyActivityRail
         streamId={streamId}
         onWhatsAppClick={() => setWhatsappModalOpen(true)}
@@ -404,10 +410,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           onClose={() => setApprovalFor(null)}
         />
       ) : null}
-      <TaskDetailDrawer
-        task={selectedTask}
-        onClose={() => setSelectedTask(null)}
-      />
       {whatsappModalOpen ? (
         <WorkyWhatsAppConnectModal
           open

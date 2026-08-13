@@ -42,8 +42,8 @@ export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps): JSX.
 
   return (
     <div
-      className='fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-border bg-card shadow-lg'
-      role='dialog'
+      className='flex w-full flex-col border-border bg-card shadow-lg lg:h-full lg:min-h-0 lg:w-[380px] lg:shrink-0 lg:border-l'
+      role='region'
       aria-label={tWorky('taskDetail.title')}
       data-testid='task-detail-drawer'
     >
