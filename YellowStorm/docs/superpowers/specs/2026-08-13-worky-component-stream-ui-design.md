@@ -182,22 +182,32 @@ All additive, following the exact pattern in
    `message.component.appended`, `task.component.appended`, `task.artifact.appended`
    (payload = parent external id + the mapped component/artifact).
 
-7. **REST** (message history + board/task endpoints): include a message's
-   `components` and a step's `components` + `artifacts` in the initial fetch so the
-   first paint is complete; SSE events drive live deltas thereafter.
-   *(Inline vs dedicated endpoints finalized in the plan; leaning inline + deltas.)*
+7. **REST** (finalized): **messages** carry `components` **inline** in the existing
+   `GET :id/messages` response (chat is always visible; components are integral).
+   **Step results** use a **dedicated lazy endpoint** `GET /worky/tasks/:id/result-content`
+   returning `{ components, artifacts }`, fetched only when the task drawer opens —
+   this keeps the frequently-refetched board response lean. SSE events drive live
+   invalidation of both.
 
 8. **Artifact download:** artifacts carry `file_path` (storage key). Reuse the
-   conversation module's existing `file_path`→download resolution (endpoint/util
-   confirmed at plan time) rather than inventing a new one.
+   conversation module's existing `POST /conversations/artifact-url` resolution
+   (frontend `getArtifactDownloadUrl(filePath, filename)` →
+   `DocumentService.generateSasUrl`) — the existing `ArtifactPartRenderer` already
+   calls it, so rendering step artifacts as `type='artifact'` parts gets
+   download/preview for free.
 
 ## Frontend
 
-1. **Shared extraction:** move the pure `MessageComponent` type and
-   `mapComponentsToContentParts()` out of `front/src/modules/conversation/` into a
-   shared location alongside `front/src/components/ai-elements/`, so both
-   conversation and worky import them. `AIMessageContent` is **already** shared
-   (worky's `TaskResultPanel` uses it today) and stays unchanged.
+1. **Reuse the mapper (cross-module import, no relocation):** worky imports the
+   pure `mapComponentsToContentParts()` from `@/modules/conversation/utils` and the
+   `MessageComponent` type from `@/modules/conversation/types` directly. Both are
+   already pure (no React, no gRPC) and handle every component type worky needs
+   (including `artifact`). `AIMessageContent` is **already** shared
+   (worky's `TaskResultPanel` uses it today) and stays unchanged. This avoids a
+   risky refactor of the stable conversation module — the reuse is identical, only
+   the import direction differs. (If conversation→worky coupling ever needs
+   breaking, the pure mapper can later be relocated to `components/ai-elements/`
+   with re-exports; not required for this feature.)
 
 2. **Types** (`front/src/modules/worky/types.ts`): `WorkyMessage` gains
    `components?: MessageComponent[]`; the board task type gains
