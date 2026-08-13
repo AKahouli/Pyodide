@@ -1,4 +1,5 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { User } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import { cn } from '@/lib/utils';
 import { StatusBadge } from './StatusBadge';
@@ -10,12 +11,14 @@ export interface WorkyGraphNodeData {
   title: string;
   status: OrchStepStatus;
   wave: number | null;
-  // Timestamp source, enriched by WorkyGraphBoard from the underlying task.
+  // Enriched by WorkyGraphBoard from the underlying task.
   lane?: WorkyBoardLane;
   createdAt?: string | null;
   updatedAt?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
+  /** Resolved display name of the executor agent handling this task, if any. */
+  assigneeName?: string | null;
   [key: string]: unknown;
 }
 
@@ -28,7 +31,7 @@ const STATUS_BORDER: Record<OrchStepStatus, string> = {
 };
 
 export function WorkyGraphNode({ data }: NodeProps): JSX.Element {
-  const { title, status, wave, lane, createdAt, updatedAt, startedAt, completedAt } = data as unknown as WorkyGraphNodeData;
+  const { title, status, wave, lane, createdAt, updatedAt, startedAt, completedAt, assigneeName } = data as unknown as WorkyGraphNodeData;
   const { t } = useModuleTranslation('worky');
   return (
     <div
@@ -47,6 +50,12 @@ export function WorkyGraphNode({ data }: NodeProps): JSX.Element {
           </span>
         ) : null}
       </div>
+      {assigneeName ? (
+        <div className='mb-1 flex items-center gap-1 text-[10px] text-muted-foreground' title={assigneeName}>
+          <User className='h-3 w-3 shrink-0' aria-hidden />
+          <span className='truncate'>{assigneeName}</span>
+        </div>
+      ) : null}
       <div className='flex items-center justify-between gap-2'>
         <StatusBadge status={status} />
         {lane ? (
