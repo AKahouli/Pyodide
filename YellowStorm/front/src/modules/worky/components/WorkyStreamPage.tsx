@@ -240,6 +240,20 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           }
           break;
         }
+        case 'message.component.appended': {
+          // Manager message components arrived (Electric message_components) — refetch
+          // the history so the bubble upgrades from plain content to rich components.
+          void qc.invalidateQueries({ queryKey: workyKeys.messages(streamId) });
+          break;
+        }
+        case 'task.component.appended':
+        case 'task.artifact.appended': {
+          void qc.invalidateQueries({ queryKey: workyKeys.board(streamId) });
+          // Refetch whichever task drawer is open (keyed by Mongo taskId, which the
+          // event's stepExternalId doesn't give us — invalidate the whole family).
+          void qc.invalidateQueries({ queryKey: ['worky', 'task-result-content'] });
+          break;
+        }
         default:
           break;
       }
