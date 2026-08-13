@@ -10,6 +10,8 @@ interface ImportMetaEnv {
   readonly VITE_PLAYBOOK_AGENT_ASSISTANT_ENABLED?: string;
   /** Set to "false" to force legacy Nodepod boot without Socket.IO runtime ticket. */
   readonly VITE_APP_RUNTIME_ENABLED?: string;
+  /** Dev-only Socket.IO origin override (prod uses MY_APP_SOCKET_BASE_URL via env.sh). */
+  readonly VITE_SOCKET_BASE_URL?: string;
 }
 
 interface ImportMeta {

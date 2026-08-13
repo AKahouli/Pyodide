@@ -10,18 +10,39 @@ export const API_CONFIG = {
   withCredentials: true, // Required for HTTP-only cookies (refresh token)
 } as const;
 
-/** Origin for Socket.IO (strips `/api/v1` from the REST base URL). */
+/**
+ * Prod: env.sh replaces this literal with a real origin (e.g. https://poc.back.yellowmind.ai).
+ * Do not compare against another copy of the same placeholder — sed replaces both sides.
+ * Prefer this over nginx /socket.io/ proxy: the image runs as `metafront` and cannot
+ * sed /etc/nginx/conf.d/default.conf (Permission denied → container exit).
+ */
+const SOCKET_BASE_INJECTED = 'MY_APP_SOCKET_BASE_URL';
+
+function isHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+/** Origin for Socket.IO (app-runtime, browser-session, whatsapp). */
 export function getSocketBaseUrl(): string {
+  if (process.env.NODE_ENV === 'development') {
+    const devOverride = import.meta.env.VITE_SOCKET_BASE_URL?.trim();
+    if (devOverride && isHttpUrl(devOverride)) {
+      return new URL(devOverride).origin;
+    }
+  } else if (isHttpUrl(SOCKET_BASE_INJECTED)) {
+    return new URL(SOCKET_BASE_INJECTED).origin;
+  }
+
   const base = API_CONFIG.baseURL;
-  if (base === 'MY_APP_VITE_API_URL') {
-    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+  if (isHttpUrl(base)) {
+    try {
+      return new URL(base).origin;
+    } catch {
+      /* fall through */
+    }
   }
-  try {
-    const url = new URL(base);
-    return url.origin;
-  } catch {
-    return 'http://localhost:3000';
-  }
+
+  return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
 }
 
 export const AUTH_STORAGE_KEYS = {
