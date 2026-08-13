@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Loader2, Save, Sparkles, Wand2 } from 'lucide-react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ChevronDown, Loader2, Save, Sparkles, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -64,6 +65,42 @@ const LIMIT_FIELD_CONFIG = [
 ] as const;
 
 type LimitFieldKey = (typeof LIMIT_FIELD_CONFIG)[number]['key'];
+
+type SettingsPaneProps = Readonly<{
+  title: ReactNode;
+  description: ReactNode;
+  icon?: ReactNode;
+  contentClassName?: string;
+  children: ReactNode;
+}>;
+
+function SettingsPane({ title, description, icon, contentClassName = 'space-y-6', children }: SettingsPaneProps) {
+  return (
+    <Collapsible defaultOpen={false}>
+      <Card>
+        <CollapsibleTrigger asChild>
+          <button type="button" className="group w-full text-left">
+            <CardHeader>
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1.5">
+                  <CardTitle className="flex items-center gap-2">
+                    {icon}
+                    {title}
+                  </CardTitle>
+                  <CardDescription>{description}</CardDescription>
+                </div>
+                <ChevronDown className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+              </div>
+            </CardHeader>
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <CardContent className={contentClassName}>{children}</CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
+  );
+}
 
 function buildSelectableModels(models: AdminModelResponse[], selectedModelId: string | null): AdminModelResponse[] {
   const activeModels = models.filter((model) => model.isActive);
@@ -272,15 +309,12 @@ export function PlaybookSettingsPage() {
         </div>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Wand2 className="h-4 w-4" />
-            {t('playbookSettings.suggestor.title')}
-          </CardTitle>
-          <CardDescription>{t('playbookSettings.suggestor.description')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <SettingsPane
+        title={t('playbookSettings.suggestor.title')}
+        description={t('playbookSettings.suggestor.description')}
+        icon={<Wand2 className="h-4 w-4" />}
+        contentClassName="space-y-4"
+      >
           <div className="space-y-2">
             <Label htmlFor="playbook-suggestor-agent">{t('playbookSettings.suggestor.agent.label')}</Label>
             <Select
@@ -322,15 +356,12 @@ export function PlaybookSettingsPage() {
               {t('playbookSettings.actions.save')}
             </Button>
           </div>
-        </CardContent>
-      </Card>
+      </SettingsPane>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('playbookSettings.execution.title')}</CardTitle>
-          <CardDescription>{t('playbookSettings.execution.description')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
+      <SettingsPane
+        title={t('playbookSettings.execution.title')}
+        description={t('playbookSettings.execution.description')}
+      >
           <div className="grid gap-4 md:grid-cols-2">
             {EXECUTION_FIELD_KEYS.map((key) => (
               <div key={key} className="space-y-2">
@@ -415,18 +446,13 @@ export function PlaybookSettingsPage() {
               {t('playbookSettings.actions.save')}
             </Button>
           </div>
-        </CardContent>
-      </Card>
+      </SettingsPane>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4" />
-            {t('playbookSettings.inference.title')}
-          </CardTitle>
-          <CardDescription>{t('playbookSettings.inference.description')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
+      <SettingsPane
+        title={t('playbookSettings.inference.title')}
+        description={t('playbookSettings.inference.description')}
+        icon={<Sparkles className="h-4 w-4" />}
+      >
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -567,15 +593,12 @@ export function PlaybookSettingsPage() {
               </div>
             </>
           )}
-        </CardContent>
-      </Card>
+      </SettingsPane>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('playbookSettings.intentNormalization.title')}</CardTitle>
-          <CardDescription>{t('playbookSettings.intentNormalization.description')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
+      <SettingsPane
+        title={t('playbookSettings.intentNormalization.title')}
+        description={t('playbookSettings.intentNormalization.description')}
+      >
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -610,15 +633,12 @@ export function PlaybookSettingsPage() {
               </div>
             </>
           )}
-        </CardContent>
-      </Card>
+      </SettingsPane>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('playbookSettings.replay.title')}</CardTitle>
-          <CardDescription>{t('playbookSettings.replay.description')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
+      <SettingsPane
+        title={t('playbookSettings.replay.title')}
+        description={t('playbookSettings.replay.description')}
+      >
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -655,15 +675,12 @@ export function PlaybookSettingsPage() {
               </div>
             </>
           )}
-        </CardContent>
-      </Card>
+      </SettingsPane>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('playbookSettings.intent.title')}</CardTitle>
-          <CardDescription>{t('playbookSettings.intent.description')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
+      <SettingsPane
+        title={t('playbookSettings.intent.title')}
+        description={t('playbookSettings.intent.description')}
+      >
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -697,8 +714,7 @@ export function PlaybookSettingsPage() {
               </div>
             </>
           )}
-        </CardContent>
-      </Card>
+      </SettingsPane>
     </div>
   );
 }

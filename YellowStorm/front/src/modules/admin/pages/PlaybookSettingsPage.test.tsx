@@ -16,6 +16,12 @@ import { PlaybookSettingsPage } from './PlaybookSettingsPage';
 const translateMock = vi.hoisted(() => (
   (key: string) => ({
     'playbookSettings.actions.save': 'Save',
+    'playbookSettings.suggestor.title': 'Suggestor',
+    'playbookSettings.execution.title': 'Execution',
+    'playbookSettings.inference.title': 'Inference',
+    'playbookSettings.intentNormalization.title': 'Intent normalization',
+    'playbookSettings.replay.title': 'Replay',
+    'playbookSettings.intent.title': 'Intent',
     'playbookSettings.toasts.saveError.title': 'Settings were not saved',
   }[key] ?? key)
 ));
@@ -101,12 +107,22 @@ describe('PlaybookSettingsPage', () => {
     vi.mocked(showError).mockReset();
   });
 
+  it('collapses every settings pane by default', async () => {
+    renderWithProviders(<PlaybookSettingsPage />);
+
+    const paneTriggers = screen.getAllByRole('button').filter((button) => button.hasAttribute('aria-expanded'));
+    expect(paneTriggers).toHaveLength(6);
+    paneTriggers.forEach((button) => expect(button).toHaveAttribute('aria-expanded', 'false'));
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    await waitFor(() => expect(getPlaybookSuggestorAgents).toHaveBeenCalled());
+  });
+
   it('keeps a failed save visible and reports the parsed API error', async () => {
     vi.mocked(updateAdminPlaybookSettings).mockRejectedValue(new Error('request failed'));
 
     const { user } = renderWithProviders(<PlaybookSettingsPage />);
-    const saveButtons = await screen.findAllByRole('button', { name: 'Save' });
-    await user.click(saveButtons[0]);
+    await user.click(screen.getByRole('button', { name: /Suggestor/ }));
+    await user.click(await screen.findByRole('button', { name: 'Save' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Settings were not saved');
