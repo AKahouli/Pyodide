@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, User, Volume2, VolumeX } from 'lucide-react';
-import { format } from 'date-fns';
+import { Volume2, VolumeX } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
-import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
-import { MessageProvider } from '@/components/ai-elements/message-context';
+import {
+  ChatConversation,
+  ChatConversationContent,
+  ChatMessageBubble,
+  ChatScrollButton,
+  type ChatMessage,
+} from '@/components/ai-elements/chat-conversation';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import { synthesizeSpeech } from '../api';
 import { useWorkyMessages, useWorkyStore } from '../store';
@@ -64,60 +68,21 @@ function toChronologicalThread(
     );
 }
 
-function formatMessageTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return format(date, 'HH:mm');
-}
-
-function MessageBubble({ message }: { message: WorkyMessage }): JSX.Element {
-  const { t } = useModuleTranslation('worky');
-
-  return (
-    <li
-      data-testid={`worky-message-${message.role}`}
-      className={cn(
-        'flex w-full gap-1.5',
-        message.role === 'owner' ? 'justify-end' : 'justify-start',
-      )}
-    >
-      <div className={cn('flex-none pt-1', message.role === 'owner' ? 'order-2' : 'order-1')}>
-        {message.role === 'owner' ? (
-          <User className='h-3.5 w-3.5 text-muted-foreground' aria-hidden />
-        ) : (
-          <Bot className='h-3.5 w-3.5 text-primary' aria-hidden />
-        )}
-      </div>
-      <div
-        className={cn(
-          'min-w-0 max-w-[85%] rounded-2xl border px-2.5 py-1.5 shadow-sm',
-          message.role === 'owner'
-            ? 'order-1 rounded-br-sm border-primary/30 bg-primary/10'
-            : 'order-2 rounded-bl-sm border-border/60 bg-background/80',
-        )}
-      >
-        <div className='flex items-baseline justify-between gap-2'>
-          <span className='text-[10px] font-semibold uppercase tracking-wide text-muted-foreground'>
-            {t(`messages.role.${message.role}`)}
-          </span>
-          <span className='text-[10px] tabular-nums text-muted-foreground'>
-            {formatMessageTime(message.createdAt)}
-          </span>
-        </div>
-        {message.components && message.components.length > 0 ? (
-          <div className='mt-0.5'>
-            <MessageProvider>
-              <AIMessageContent parts={mapComponentsToContentParts(message.components)} />
-            </MessageProvider>
-          </div>
-        ) : (
-          <p className='mt-0.5 whitespace-pre-wrap break-words text-xs leading-snug text-foreground/90'>
-            {message.content}
-          </p>
-        )}
-      </div>
-    </li>
-  );
+/** Maps a worky message onto the shared ChatMessage shape the conversation chat
+ *  bubble consumes: owner→user (right, primary), manager/system→assistant (left).
+ *  Rich components render when present; otherwise the plain-text content. */
+function toChatMessage(message: WorkyMessage): ChatMessage {
+  const content =
+    message.components && message.components.length > 0
+      ? mapComponentsToContentParts(message.components)
+      : message.content;
+  const timestamp = message.createdAt ? new Date(message.createdAt) : undefined;
+  return {
+    id: message.id,
+    role: message.role === 'owner' ? 'user' : 'assistant',
+    content,
+    timestamp: timestamp && !Number.isNaN(timestamp.getTime()) ? timestamp : undefined,
+  };
 }
 // ponytail: Gemini TTS voice names; update if WORKY_TTS_MODEL changes provider.
 const TTS_VOICES = ['Kore', 'Puck', 'Zephyr', 'Charon', 'Fenrir', 'Aoede', 'Leda', 'Orus'];
@@ -138,7 +103,6 @@ export function ChatMessageThread({
         : messages.map((message) => ({ kind: 'message' as const, message })),
     [messages, pendingClarifications, showClarifications],
   );
-  const containerRef = useRef<HTMLUListElement>(null);
   // Read-aloud: opt-in toggle. When on, each new agent message is spoken via
   // OpenRouter TTS. Off by default so we don't fire paid calls / hit autoplay
   // blocks unprompted.
@@ -188,11 +152,6 @@ export function ChatMessageThread({
     })();
   }, [messages, ttsOn, voice]);
 
-  useEffect(() => {
-    const node = containerRef.current;
-    if (!node) return;
-    node.scrollTop = node.scrollHeight;
-  }, [threadItems.length]);
   const hasContent = messages.length > 0 || showClarifications;
 
   return (
@@ -244,23 +203,30 @@ export function ChatMessageThread({
         </div>
       </header>
       {hasContent ? (
-        <ul
-          ref={containerRef}
-          className='flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 py-2 text-xs'
-          data-testid='worky-message-list'
-        >
-          {threadItems.map((item) =>
-            item.kind === 'message' ? (
-              <MessageBubble key={item.message.id} message={item.message} />
-            ) : (
-              <ChatClarificationCard
-                key={item.clarification.id}
-                streamId={streamId as string}
-                clarification={item.clarification}
-              />
-            ),
-          )}
-        </ul>
+        <ChatConversation className='min-h-0 flex-1'>
+          <ChatConversationContent
+            className='gap-3 px-2 py-2'
+            data-testid='worky-message-list'
+          >
+            {threadItems.map((item) =>
+              item.kind === 'message' ? (
+                <ChatMessageBubble
+                  key={item.message.id}
+                  message={toChatMessage(item.message)}
+                  density='compact'
+                  data-testid={`worky-message-${item.message.role}`}
+                />
+              ) : (
+                <ChatClarificationCard
+                  key={item.clarification.id}
+                  streamId={streamId as string}
+                  clarification={item.clarification}
+                />
+              ),
+            )}
+          </ChatConversationContent>
+          <ChatScrollButton />
+        </ChatConversation>
       ) : (
         <p className='m-auto text-center text-xs text-muted-foreground'>
           {t('messages.empty')}

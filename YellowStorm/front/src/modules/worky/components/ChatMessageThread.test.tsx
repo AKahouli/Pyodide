@@ -62,7 +62,7 @@ describe('ChatMessageThread', () => {
     expect(screen.getByText('messages.empty')).toBeInTheDocument();
   });
 
-  it('renders each persisted message as a bullet list item with role label and timestamp', () => {
+  it('renders each persisted message as an owner/manager conversation bubble', () => {
     mockedUseMessages.mockReturnValue([
       {
         id: 'm1',
@@ -86,21 +86,14 @@ describe('ChatMessageThread', () => {
       </TestProviders>,
     );
 
-    const list = screen.getByTestId('worky-message-list');
-    expect(list.tagName).toBe('UL');
+    // Now rendered via the shared conversation ChatMessageBubble (owner→user
+    // bubble on the right, manager→assistant on the left) — role is exposed via
+    // the preserved test ids, not an inline role label.
+    expect(screen.getByTestId('worky-message-list')).toBeInTheDocument();
     expect(screen.getByTestId('worky-message-owner')).toBeInTheDocument();
     expect(screen.getByTestId('worky-message-manager')).toBeInTheDocument();
     expect(screen.getByText('Hello Manager')).toBeInTheDocument();
     expect(screen.getByText('Here is the plan')).toBeInTheDocument();
-    // Both messages should expose a localized role label (raw key in
-    // test environment — the component renders `messages.role.owner` /
-    // `messages.role.manager` which the i18n init resolves to the
-    // translation in production).
-    expect(screen.getByText('messages.role.owner')).toBeInTheDocument();
-    expect(screen.getByText('messages.role.manager')).toBeInTheDocument();
-    // Timestamps formatted by date-fns HH:mm
-    expect(screen.getByText('12:30')).toBeInTheDocument();
-    expect(screen.getByText('12:31')).toBeInTheDocument();
   });
 
   it('renders the manager reply in full from persisted messages once message.appended arrives, with no partial-token streaming bubble', () => {
