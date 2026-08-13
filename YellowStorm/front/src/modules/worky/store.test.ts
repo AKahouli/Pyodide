@@ -37,3 +37,28 @@ describe('useWorkyStore.appendMessage', () => {
     expect(useWorkyStore.getState().messages.map((m) => m.id)).toEqual(['m1', 'm2']);
   });
 });
+
+describe('useWorkyStore.setMessages', () => {
+  it('collapses same-id duplicates on replace (owner-message flicker guard)', () => {
+    // The React Query messages cache can transiently hold the just-sent owner
+    // message twice — a racing refetch lands it, then the POST onSuccess appends
+    // the same id again. WorkyStreamPage mirrors that cache into the store via
+    // setMessages, so the render source must be duplicate-proof by id.
+    const owner = msg({ id: 'm1', content: 'Ship the report' });
+    useWorkyStore.getState().setMessages([owner, { ...owner }]);
+
+    expect(useWorkyStore.getState().messages).toHaveLength(1);
+  });
+
+  it('keeps first occurrence and preserves order', () => {
+    useWorkyStore.getState().setMessages([
+      msg({ id: 'a', content: 'first' }),
+      msg({ id: 'b', content: 'second' }),
+      msg({ id: 'a', content: 'dup-of-first' }),
+    ]);
+
+    const messages = useWorkyStore.getState().messages;
+    expect(messages.map((m) => m.id)).toEqual(['a', 'b']);
+    expect(messages[0].content).toBe('first');
+  });
+});
