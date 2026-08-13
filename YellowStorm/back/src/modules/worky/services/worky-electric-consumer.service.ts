@@ -10,8 +10,26 @@ import { WorkyTask, WorkyTaskDocument } from '../schemas/worky-task.schema';
 import { WorkyMessage, WorkyMessageDocument } from '../schemas/worky-message.schema';
 import { WorkyPlanProjection, WorkyPlanProjectionDocument } from '../schemas/worky-plan-projection.schema';
 import { WorkyElectricCursor, WorkyElectricCursorDocument } from '../schemas/worky-electric-cursor.schema';
-import { PgMessageRow, PgPlanRow, PgPlanStepRow } from '../electric/worky-electric.contract';
-import { mapMessage, mapPlan, mapPlanStep, isKnownPlanStepStatus } from '../electric/worky-electric.mapper';
+import { WorkyMessageComponent, WorkyMessageComponentDocument } from '../schemas/worky-message-component.schema';
+import { WorkyPlanStepComponent, WorkyPlanStepComponentDocument } from '../schemas/worky-plan-step-component.schema';
+import { WorkyPlanStepArtifact, WorkyPlanStepArtifactDocument } from '../schemas/worky-plan-step-artifact.schema';
+import {
+  PgMessageRow,
+  PgPlanRow,
+  PgPlanStepRow,
+  PgMessageComponentRow,
+  PgPlanStepComponentRow,
+  PgPlanStepArtifactRow,
+} from '../electric/worky-electric.contract';
+import {
+  mapMessage,
+  mapPlan,
+  mapPlanStep,
+  isKnownPlanStepStatus,
+  mapMessageComponent,
+  mapPlanStepComponent,
+  mapPlanStepArtifact,
+} from '../electric/worky-electric.mapper';
 
 /**
  * Nest-side `ShapeStream` consumer that mirrors the manager's Postgres rows
@@ -40,6 +58,9 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     @InjectModel(WorkyMessage.name) private readonly messageModel: Model<WorkyMessageDocument>,
     @InjectModel(WorkyPlanProjection.name) private readonly planProjectionModel: Model<WorkyPlanProjectionDocument>,
     @InjectModel(WorkyElectricCursor.name) private readonly cursorModel: Model<WorkyElectricCursorDocument>,
+    @InjectModel(WorkyMessageComponent.name) private readonly messageComponentModel: Model<WorkyMessageComponentDocument>,
+    @InjectModel(WorkyPlanStepComponent.name) private readonly planStepComponentModel: Model<WorkyPlanStepComponentDocument>,
+    @InjectModel(WorkyPlanStepArtifact.name) private readonly planStepArtifactModel: Model<WorkyPlanStepArtifactDocument>,
   ) {
     this.logger.setContext(WorkyElectricConsumerService.name);
   }
@@ -64,6 +85,21 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
       'plan_steps',
       this.config.get<string>('worky.electricPlanStepsTable')!,
       (m) => this.handlePlanSteps(m),
+    );
+    await this.subscribe(
+      'message_components',
+      this.config.get<string>('worky.electricMessageComponentsTable')!,
+      (m) => this.handleMessageComponents(m),
+    );
+    await this.subscribe(
+      'plan_step_components',
+      this.config.get<string>('worky.electricPlanStepComponentsTable')!,
+      (m) => this.handlePlanStepComponents(m),
+    );
+    await this.subscribe(
+      'plan_step_artifacts',
+      this.config.get<string>('worky.electricPlanStepArtifactsTable')!,
+      (m) => this.handlePlanStepArtifacts(m),
     );
   }
 
@@ -320,6 +356,93 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
         }
       } catch (err) {
         this.logger.error('Failed to process plan row', { error: (err as Error).message });
+        continue;
+      }
+    }
+  }
+
+  async handleMessageComponents(messages: unknown[]): Promise<void> {
+    for (const m of messages as any[]) {
+      if (isControlMessage(m)) continue;
+      if (!isChangeMessage(m)) continue;
+      if (m.headers.operation === 'delete') continue;
+      try {
+        const row = m.value as unknown as PgMessageComponentRow;
+        const target = await this.streamService.findByAiSessionId(row.session_id);
+        if (!target) {
+          this.logger.warn('[worky-electric] unknown session', { shape: 'message_components', sid: row.session_id });
+          continue;
+        }
+        const streamOid = this.toStreamOid(target.streamId);
+        const { set, event } = mapMessageComponent(row, target.streamId);
+        await this.messageComponentModel
+          .findOneAndUpdate(
+            { streamId: streamOid, externalId: row.component_id },
+            { $set: { ...set, streamId: streamOid } },
+            { upsert: true, new: true, setDefaultsOnInsert: true },
+          )
+          .exec();
+        this.events.emit(target.ownerUserId, target.streamId, event);
+      } catch (err) {
+        this.logger.error('Failed to process message_component row', { error: (err as Error).message });
+        continue;
+      }
+    }
+  }
+
+  async handlePlanStepComponents(messages: unknown[]): Promise<void> {
+    for (const m of messages as any[]) {
+      if (isControlMessage(m)) continue;
+      if (!isChangeMessage(m)) continue;
+      if (m.headers.operation === 'delete') continue;
+      try {
+        const row = m.value as unknown as PgPlanStepComponentRow;
+        const target = await this.streamService.findByAiSessionId(row.session_id);
+        if (!target) {
+          this.logger.warn('[worky-electric] unknown session', { shape: 'plan_step_components', sid: row.session_id });
+          continue;
+        }
+        const streamOid = this.toStreamOid(target.streamId);
+        const { set, event } = mapPlanStepComponent(row, target.streamId);
+        await this.planStepComponentModel
+          .findOneAndUpdate(
+            { streamId: streamOid, externalId: row.component_id },
+            { $set: { ...set, streamId: streamOid } },
+            { upsert: true, new: true, setDefaultsOnInsert: true },
+          )
+          .exec();
+        this.events.emit(target.ownerUserId, target.streamId, event);
+      } catch (err) {
+        this.logger.error('Failed to process plan_step_component row', { error: (err as Error).message });
+        continue;
+      }
+    }
+  }
+
+  async handlePlanStepArtifacts(messages: unknown[]): Promise<void> {
+    for (const m of messages as any[]) {
+      if (isControlMessage(m)) continue;
+      if (!isChangeMessage(m)) continue;
+      if (m.headers.operation === 'delete') continue;
+      try {
+        const row = m.value as unknown as PgPlanStepArtifactRow;
+        const target = await this.streamService.findByAiSessionId(row.session_id);
+        if (!target) {
+          this.logger.warn('[worky-electric] unknown session', { shape: 'plan_step_artifacts', sid: row.session_id });
+          continue;
+        }
+        const streamOid = this.toStreamOid(target.streamId);
+        const { set, event } = mapPlanStepArtifact(row, target.streamId);
+        await this.planStepArtifactModel
+          .findOneAndUpdate(
+            { streamId: streamOid, externalId: row.artifact_id },
+            { $set: { ...set, streamId: streamOid } },
+            { upsert: true, new: true, setDefaultsOnInsert: true },
+          )
+          .exec();
+        this.events.emit(target.ownerUserId, target.streamId, event);
+      } catch (err) {
+        this.logger.error('Failed to process plan_step_artifact row', { error: (err as Error).message });
         continue;
       }
     }

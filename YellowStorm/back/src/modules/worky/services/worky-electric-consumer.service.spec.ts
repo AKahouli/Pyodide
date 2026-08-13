@@ -16,6 +16,15 @@ const makeService = () => {
     findOne: jest.fn(),
     updateOne: jest.fn().mockReturnValue({ exec: () => Promise.resolve({ acknowledged: true }) }),
   };
+  const messageComponentModel = {
+    findOneAndUpdate: jest.fn().mockReturnValue({ exec: () => Promise.resolve({ _id: 'mc-1' }) }),
+  };
+  const planStepComponentModel = {
+    findOneAndUpdate: jest.fn().mockReturnValue({ exec: () => Promise.resolve({ _id: 'pc-1' }) }),
+  };
+  const planStepArtifactModel = {
+    findOneAndUpdate: jest.fn().mockReturnValue({ exec: () => Promise.resolve({ _id: 'pa-1' }) }),
+  };
   const streamService = {
     findByAiSessionId: jest.fn(),
   };
@@ -36,6 +45,9 @@ const makeService = () => {
         'worky.electricMessagesTable': 'messages',
         'worky.electricPlansTable': 'plans',
         'worky.electricPlanStepsTable': 'plan_steps',
+        'worky.electricMessageComponentsTable': 'message_components',
+        'worky.electricPlanStepComponentsTable': 'plan_step_components',
+        'worky.electricPlanStepArtifactsTable': 'plan_step_artifacts',
         'worky.electricSecret': 'shh',
         'worky.electricDebug': false,
       };
@@ -52,9 +64,24 @@ const makeService = () => {
     messageModel as any,
     planProjectionModel as any,
     cursorModel as any,
+    messageComponentModel as any,
+    planStepComponentModel as any,
+    planStepArtifactModel as any,
   );
 
-  return { service, taskModel, messageModel, planProjectionModel, cursorModel, streamService, events, logger };
+  return {
+    service,
+    taskModel,
+    messageModel,
+    planProjectionModel,
+    cursorModel,
+    messageComponentModel,
+    planStepComponentModel,
+    planStepArtifactModel,
+    streamService,
+    events,
+    logger,
+  };
 };
 
 describe('WorkyElectricConsumerService.handleMessages', () => {
@@ -381,5 +408,62 @@ describe('WorkyElectricConsumerService.persistCursor', () => {
       { $set: { handle: 'handle-1', offset: '1234_0' } },
       { upsert: true },
     );
+  });
+});
+
+describe('WorkyElectricConsumerService.handleMessageComponents', () => {
+  it('upserts a component projection and emits message.component.appended', async () => {
+    const { service, messageComponentModel, streamService, events } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: '507f1f77bcf86cd799439011', ownerUserId: 'u1' });
+    await service.handleMessageComponents([
+      { key: 'k', headers: { operation: 'insert' }, value: { session_id: 's1', message_id: 'msg-1', component_id: 'c-1', ordinal: 0, type: 'text', data: { content: 'hi' }, created_at: '2026-08-13T10:00:00.000Z' } },
+    ]);
+    expect(messageComponentModel.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ externalId: 'c-1' }),
+      expect.objectContaining({ $set: expect.objectContaining({ externalId: 'c-1', messageExternalId: 'msg-1', type: 'text' }) }),
+      expect.objectContaining({ upsert: true }),
+    );
+    expect(events.emit).toHaveBeenCalledWith('u1', '507f1f77bcf86cd799439011', expect.objectContaining({ type: 'message.component.appended' }));
+  });
+
+  it('skips control frames and delete ops', async () => {
+    const { service, messageComponentModel } = makeService();
+    await service.handleMessageComponents([
+      { headers: { control: 'up-to-date' } },
+      { key: 'k', headers: { operation: 'delete' }, value: { session_id: 's1', message_id: 'm', component_id: 'c', ordinal: 0, type: 'text', data: {}, created_at: '' } },
+    ]);
+    expect(messageComponentModel.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('WorkyElectricConsumerService.handlePlanStepComponents', () => {
+  it('upserts and emits task.component.appended', async () => {
+    const { service, planStepComponentModel, streamService, events } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: '507f1f77bcf86cd799439011', ownerUserId: 'u1' });
+    await service.handlePlanStepComponents([
+      { key: 'k', headers: { operation: 'insert' }, value: { session_id: 's1', step_id: 'step-1', component_id: 'c-9', ordinal: 1, type: 'code', data: { content: 'x' }, created_at: '2026-08-13T10:00:00.000Z' } },
+    ]);
+    expect(planStepComponentModel.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ externalId: 'c-9' }),
+      expect.objectContaining({ $set: expect.objectContaining({ stepExternalId: 'step-1', type: 'code' }) }),
+      expect.objectContaining({ upsert: true }),
+    );
+    expect(events.emit).toHaveBeenCalledWith('u1', '507f1f77bcf86cd799439011', expect.objectContaining({ type: 'task.component.appended' }));
+  });
+});
+
+describe('WorkyElectricConsumerService.handlePlanStepArtifacts', () => {
+  it('upserts and emits task.artifact.appended', async () => {
+    const { service, planStepArtifactModel, streamService, events } = makeService();
+    streamService.findByAiSessionId.mockResolvedValue({ streamId: '507f1f77bcf86cd799439011', ownerUserId: 'u1' });
+    await service.handlePlanStepArtifacts([
+      { key: 'k', headers: { operation: 'insert' }, value: { session_id: 's1', step_id: 'step-1', artifact_id: 'a-1', file_path: 'key/abc', filename: 'r.pdf', artifact_kind: 'document', mime_type: 'application/pdf', size: 5, created_at: '2026-08-13T10:00:00.000Z' } },
+    ]);
+    expect(planStepArtifactModel.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ externalId: 'a-1' }),
+      expect.objectContaining({ $set: expect.objectContaining({ stepExternalId: 'step-1', filePath: 'key/abc', filename: 'r.pdf' }) }),
+      expect.objectContaining({ upsert: true }),
+    );
+    expect(events.emit).toHaveBeenCalledWith('u1', '507f1f77bcf86cd799439011', expect.objectContaining({ type: 'task.artifact.appended' }));
   });
 });
