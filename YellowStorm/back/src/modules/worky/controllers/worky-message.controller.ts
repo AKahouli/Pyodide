@@ -95,6 +95,7 @@ export class WorkyMessageController {
       content: string;
       planDeltaRef: string | null;
       createdAt: string;
+      components: Array<{ id: string; type: string; data: Record<string, unknown> }>;
     }>
   > {
     const parsedLimit = limit ? Math.max(1, Math.min(500, Number(limit))) : undefined;
