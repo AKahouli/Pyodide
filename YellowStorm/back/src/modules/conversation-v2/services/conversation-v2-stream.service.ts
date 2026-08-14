@@ -236,12 +236,34 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     // the terminal handlers wait for in-flight appends to drain.
     let pending: Promise<void> = Promise.resolve();
     let terminalEmitted = false;
+    let terminalReceived = false;
     let firstAssistantMessageEventId: string | null = null;
 
     const finish = () => {
       const active = this.activeCalls.get(key);
       if (active?.idleTimer) clearTimeout(active.idleTimer);
       this.cleanup(actorUserId, sessionId);
+    };
+
+    const emitTerminalDone = async (): Promise<void> => {
+      if (terminalEmitted) return;
+      terminalEmitted = true;
+      const doneEvent = {
+        type: 'done',
+        payload: {
+          event_id: randomUUID(),
+          timestamp: Math.floor(Date.now() / 1000),
+        },
+      } as unknown as ConversationV2Event;
+      let sequence: number | undefined;
+      try {
+        const r = await this.eventStore.append(sessionId, doneEvent);
+        sequence = r.sequence;
+        await this.pointerWriter.apply(sessionId, doneEvent).catch(() => undefined);
+      } catch {
+        /* persistence failed — still push so the client can react */
+      }
+      this.push(actorUserId, sessionId, doneEvent, sequence);
     };
 
     const emitTerminalError = async (message: string): Promise<void> => {
@@ -297,6 +319,9 @@ export class ConversationV2StreamService implements OnModuleDestroy {
           // flight upstream. Nothing to persist or push; resetting the idle
           // timer above is the entire point.
           if (event.type === 'heartbeat') return;
+          if (event.type === 'done' || event.type === 'error' || event.type === 'wait') {
+            terminalReceived = true;
+          }
           pending = pending.then(() =>
             this.processEvent(actorUserId, sessionId, event, req.model, systemWorkspaceId, {
               done: () => undefined,
@@ -317,12 +342,44 @@ export class ConversationV2StreamService implements OnModuleDestroy {
           });
         },
         complete: () => {
-          void pending.catch(() => undefined).then(finish);
+          void pending.catch(() => undefined).then(async () => {
+            if (!terminalReceived) {
+              await emitTerminalDone();
+            }
+            finish();
+          });
         },
       });
 
     this.activeCalls.set(key, { subscription, idleTimer: null });
     resetIdle();
+  }
+
+  /**
+   * Push an application_component from the app-runtime finalize path when
+   * OpenCode does not relay it over gRPC/SSE.
+   */
+  async publishApplicationComponent(
+    userId: string,
+    sessionId: string,
+    payload: {
+      event_id: string;
+      timestamp: number;
+      url: string;
+      title?: string;
+      ceph_path?: string;
+      files_tree?: import('../types/conversation-v2.types').FilesTreeNode | null;
+      file_count?: number;
+      revision_id?: string;
+    },
+  ): Promise<void> {
+    const event = {
+      type: 'application_component',
+      payload,
+    } as unknown as ConversationV2Event;
+    const { sequence } = await this.eventStore.append(sessionId, event);
+    await this.pointerWriter.apply(sessionId, event).catch(() => undefined);
+    this.push(userId, sessionId, event, sequence);
   }
 
   /** Persist one event, run side effects, and push it to the user's pipe. */

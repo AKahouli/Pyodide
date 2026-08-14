@@ -85,6 +85,7 @@ interface RawProtoEvent {
     ceph_path?: string;
     files_tree_json?: string;
     file_count?: number;
+    revision_id?: string;
   };
   heartbeat?: Record<string, never>;
   app_build_progress?: { phase: string; message: string };
@@ -561,6 +562,7 @@ export class ConversationV2GrpcClientService
             ceph_path: rawApp.ceph_path || undefined,
             files_tree: filesTree,
             file_count: rawApp.file_count || undefined,
+            revision_id: rawApp.revision_id || undefined,
           },
         };
       }

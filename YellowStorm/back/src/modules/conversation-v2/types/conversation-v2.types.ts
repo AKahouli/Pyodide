@@ -57,6 +57,7 @@ export interface ApplicationComponentEventPayload extends ConversationV2BaseEven
   ceph_path?: string;
   files_tree?: FilesTreeNode | null;
   file_count?: number;
+  revision_id?: string;
 }
 
 /** Agent workflow progress while generating / validating an app before preview. */

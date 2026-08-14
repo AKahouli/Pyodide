@@ -154,6 +154,16 @@ describe('ConversationV2StreamService', () => {
     expect(service.isStreaming('u1', 's1')).toBe(false);
   });
 
+  it('synthesizes done when gRPC completes without a terminal event', async () => {
+    await service.startStream('u1', 's1', { message: 'hi' });
+
+    chat$.complete();
+    await flush();
+
+    const pushed = gateway.sendToUser.mock.calls.map((c) => c[1]);
+    expect(pushed.map((e) => e.type)).toContain('done');
+  });
+
   it('rejects a second concurrent turn for the same conversation', async () => {
     await service.startStream('u1', 's1', { message: 'first' });
     await expect(service.startStream('u1', 's1', { message: 'second' })).rejects.toMatchObject({

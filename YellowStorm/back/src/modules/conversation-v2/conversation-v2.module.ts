@@ -48,7 +48,7 @@ import {
     JwtModule.register({}),
     forwardRef(() => AuthModule),
     forwardRef(() => WorkspaceModule),
-    AppRuntimeModule,
+    forwardRef(() => AppRuntimeModule),
     UserModule,
     NotificationsModule,
     ChatCompletionModule,
@@ -63,6 +63,6 @@ import {
   ],
   controllers: [ConversationV2Controller, ConversationV2StreamController],
   providers: [ConversationV2GrpcClientService, ConversationV2SessionService, SseAuthGuard, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2StreamGatewayService, ConversationV2StreamService, ConversationV2OwnerGuard, ConversationV2SessionAccessGuard, ConversationV2SessionAccessService, ConversationV2NameGeneratorService, ConversationV2DeployService, ConversationV2AppShareService],
-  exports: [ConversationV2GrpcClientService, ConversationV2SessionService, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2OwnerGuard, ConversationV2SessionAccessGuard, ConversationV2SessionAccessService],
+  exports: [ConversationV2GrpcClientService, ConversationV2SessionService, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2OwnerGuard, ConversationV2SessionAccessGuard, ConversationV2SessionAccessService, ConversationV2StreamService],
 })
 export class ConversationV2Module {}
