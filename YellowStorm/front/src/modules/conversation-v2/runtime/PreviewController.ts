@@ -11,6 +11,8 @@ import { DOM_SUMMARY_MAX_DEPTH, DOM_SUMMARY_MAX_NODES } from './limits';
 
 const LOG = '[PreviewController]';
 export const PREVIEW_PORTS = [5173, 3000, 8080] as const;
+/** Reuse a recent healthy DOM inspect during finalize to avoid duplicate work. */
+export const PREVIEW_INSPECT_CACHE_MS = 30_000;
 
 const VISIBLE_TEXT_MAX_CHARS = 8_000;
 const NODE_TEXT_MAX_CHARS = 120;
@@ -242,6 +244,8 @@ export class PreviewController {
   private iframe: HTMLIFrameElement | null = null;
   private attachedPort: number | null = null;
   private inspectorEnabled = false;
+  private lastHealthyInspect: { result: PreviewInspectResult; at: number; url: string } | null =
+    null;
 
   get previewUrl(): string | null {
     return this._previewUrl;
@@ -263,6 +267,28 @@ export class PreviewController {
   reset(): void {
     this._previewUrl = null;
     this._port = null;
+    this.lastHealthyInspect = null;
+  }
+
+  /** Return a recent healthy inspect snapshot when finalize follows preview_inspect. */
+  getCachedHealthyInspect(maxAgeMs = PREVIEW_INSPECT_CACHE_MS): PreviewInspectResult | null {
+    const cached = this.lastHealthyInspect;
+    if (!cached || !this._previewUrl || cached.url !== this._previewUrl) return null;
+    if (Date.now() - cached.at > maxAgeMs) return null;
+    return cached.result;
+  }
+
+  private isPreviewHealthy(result: PreviewInspectResult): boolean {
+    return (
+      result.domSummary.length > 0 &&
+      result.visibleText.trim().length > 0 &&
+      result.runtimeErrors.length === 0
+    );
+  }
+
+  private rememberHealthyInspect(result: PreviewInspectResult): void {
+    if (!this._previewUrl || !this.isPreviewHealthy(result)) return;
+    this.lastHealthyInspect = { result, at: Date.now(), url: this._previewUrl };
   }
 
   async probeAndPromote(
@@ -381,6 +407,10 @@ export class PreviewController {
             ? 'The preview iframe is not attached; open the preview panel to inspect the live DOM. The dev server URL is set, so the app may still be running.'
             : 'The dev server is not running. Call yellowruntime_dev_server with action "restart" to start it. Do not probe localhost from inside the runtime — the preview is served through a virtual URL, not a TCP port.',
         ];
+      } else {
+        base.runtimeErrors = [
+          'The preview URL responds but the inspector is not attached yet. Call yellowruntime_dev_server restart, then retry preview_inspect.',
+        ];
       }
       return base;
     }
@@ -404,6 +434,7 @@ export class PreviewController {
     base.console = normalizeConsole(snap.console);
     base.runtimeErrors = normalizeRuntimeErrors(snap.errors);
     base.domSummary = normalizeDomSummary(dom);
+    this.rememberHealthyInspect(base);
     return base;
   }
 

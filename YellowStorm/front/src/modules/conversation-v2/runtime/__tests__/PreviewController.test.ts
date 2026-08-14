@@ -95,6 +95,30 @@ describe('PreviewController inspection bridge', () => {
     ]);
     expect(result.capabilities).toEqual({ screenshot: false, interaction: true });
     expect(result.screenshotArtifactId).toBeNull();
+    expect(ctrl.getCachedHealthyInspect()).toBeNull();
+  });
+
+  it('caches a recent healthy inspect snapshot', async () => {
+    const pod = makePod();
+    await ctrl.attachIframe(pod, makeIframe());
+    vi.mocked(pod.inspect.snapshot).mockResolvedValueOnce({
+      data: {
+        text: 'Hello world',
+        console: [],
+        errors: [],
+      },
+    });
+    vi.mocked(pod.inspect.dom).mockResolvedValueOnce({
+      data: {
+        tag: 'body',
+        children: [{ tag: 'h1', id: 'title', text: 'Hello world', children: [] }],
+      },
+    });
+
+    const result = await ctrl.inspectPreview(pod);
+
+    expect(result.runtimeErrors).toEqual([]);
+    expect(ctrl.getCachedHealthyInspect()).toEqual(result);
   });
 
   it('falls back to an HTTP probe when no iframe is attached', async () => {
@@ -104,7 +128,8 @@ describe('PreviewController inspection bridge', () => {
     expect(pod.proxy.handleRequest).toHaveBeenCalled();
     expect(pod.inspect.snapshot).not.toHaveBeenCalled();
     expect(result.capabilities.interaction).toBe(false);
-    expect(result.runtimeErrors).toEqual([]);
+    expect(result.runtimeErrors).toHaveLength(1);
+    expect(result.runtimeErrors[0]).toMatch(/inspector is not attached/);
     expect(result.visibleText).toBe('');
   });
 

@@ -231,6 +231,31 @@ export const conversationV2Api = {
     });
     return res.data.data;
   },
+  /** Persist a workspace revision snapshot to Ceph after a browser mutation. */
+  async commitWorkspaceRevision(
+    sessionId: string,
+    body: {
+      revisionId: string;
+      parentRevisionId: string | null;
+      files: Array<{ path: string; content: string }>;
+      toolCallId?: string | null;
+    },
+  ): Promise<{
+    revisionId: string;
+    parentRevisionId: string | null;
+    manifestObjectKey: string;
+    fileCount: number;
+  }> {
+    const res = await apiClient.post<
+      ApiResponse<{
+        revisionId: string;
+        parentRevisionId: string | null;
+        manifestObjectKey: string;
+        fileCount: number;
+      }>
+    >(`/conversation-v2/sessions/${sessionId}/revisions/commit`, body);
+    return res.data.data;
+  },
   async createRuntimeTicket(sessionId: string): Promise<RuntimeTicketResponse> {
     const res = await apiClient.post<ApiResponse<RuntimeTicketResponse>>(
       `/conversation-v2/sessions/${sessionId}/runtime-ticket`,

@@ -2,10 +2,12 @@ import type { NodepodRuntimeAdapter } from './NodepodRuntimeAdapter';
 import { SpawnTimeoutError } from './NodepodRuntimeAdapter';
 import type { PreviewController } from './PreviewController';
 import type { WorkspaceRevisionStore } from './WorkspaceRevisionStore';
+import { conversationV2Api } from '../api';
 import { ToolError } from './ToolError';
 import { sha256 } from './hashing';
 import { parseCommandLine, type CommandStep } from './command-line';
 import { applyUnifiedPatch, createUnifiedDiff } from './unified-diff';
+import { buildFilesTreeFromVfsPaths } from '../utils/files-tree';
 import {
   validateToolPath,
   validateToolPathOptional,
@@ -49,6 +51,45 @@ import {
 
 type ToolArgs = Record<string, unknown>;
 
+type VerificationField = keyof VerificationEvidence;
+
+/** Coerce agent-supplied verification values to plain strings. */
+function normalizeVerificationField(value: unknown, field: VerificationField): string {
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
+  if (field === 'build') {
+    if (typeof value === 'number') return `exit ${value}`;
+    if (typeof value === 'object') {
+      const rec = value as Record<string, unknown>;
+      const command = typeof rec.command === 'string' ? rec.command.trim() : '';
+      const exitCode = rec.exitCode ?? rec.exit_code;
+      if (command && exitCode != null) return `${command} exit ${exitCode}`;
+      if (command) return command;
+      if (exitCode != null) return `exit ${exitCode}`;
+    }
+  }
+  if (field === 'preview' && typeof value === 'object') {
+    const rec = value as Record<string, unknown>;
+    if (rec.healthy === true) return 'inspected';
+    if (typeof rec.status === 'string') return rec.status;
+  }
+  if (field === 'tests' && typeof value === 'object') {
+    const rec = value as Record<string, unknown>;
+    if (rec.passed === true) return 'passed';
+    if (typeof rec.summary === 'string') return rec.summary;
+  }
+  return '';
+}
+
+function parseVerificationEvidence(raw: unknown): VerificationEvidence {
+  const obj = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  return {
+    build: normalizeVerificationField(obj.build, 'build'),
+    preview: normalizeVerificationField(obj.preview, 'preview'),
+    tests: normalizeVerificationField(obj.tests, 'tests'),
+  };
+}
+
 /** Every shape a tool handler may return, per `schemas.py`. */
 export type AnyToolResult =
   | ListResult
@@ -70,7 +111,14 @@ export interface ToolContext {
   previewCtrl: PreviewController;
   revisions: WorkspaceRevisionStore;
   workspaceId: string;
+  /** Conversation V2 session id (Mongo) for revision APIs. */
+  sessionId: string;
+  toolCallId?: string;
   onProgress?: ToolProgressReporter;
+  /** Attach off-screen preview iframe when the user panel is closed. */
+  ensurePreviewAttached?: () => Promise<void>;
+  /** Surface the live preview panel in the UI (best-effort). */
+  openPreviewPanel?: () => void;
 }
 
 const PREVIEW_ACTIONS: readonly PreviewActionName[] = [
@@ -136,9 +184,39 @@ async function readIfExists(
   }
 }
 
-/** Commit the current workspace state and return the freshly minted id. */
+/** Commit the current workspace state, persist to Ceph, return the revision id. */
 async function commitRevision(ctx: ToolContext): Promise<string> {
-  return ctx.revisions.commit(await ctx.adapter.shaManifest());
+  const manifest = await ctx.adapter.shaManifest();
+  const parentRevisionId = ctx.revisions.latestRevisionId;
+  const revisionId = ctx.revisions.commit(manifest);
+
+  const files: Array<{ path: string; content: string }> = [];
+  for (const relPath of manifest.keys()) {
+    const vfsPath = toVfsPath(relPath);
+    const content = await ctx.adapter.readFile(vfsPath);
+    if (typeof content === 'string') {
+      files.push({ path: relPath, content });
+    }
+  }
+
+  try {
+    await conversationV2Api.commitWorkspaceRevision(ctx.sessionId, {
+      revisionId,
+      parentRevisionId,
+      files,
+      toolCallId: ctx.toolCallId ?? null,
+    });
+  } catch (err) {
+    throw new ToolError(
+      RuntimeErrorCodes.INTERNAL_ERROR,
+      `Failed to persist revision ${revisionId} to Ceph: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      { revisionId, parentRevisionId },
+    );
+  }
+
+  return revisionId;
 }
 
 function conflict(
@@ -444,6 +522,8 @@ const handlers: Record<string, Handler> = {
       await ctx.adapter.startDevServer(ctx.previewCtrl, () => false, (phase, message) =>
         ctx.onProgress?.({ phase, message }),
       );
+      ctx.openPreviewPanel?.();
+      await ctx.ensurePreviewAttached?.();
     }
 
     const url = ctx.previewCtrl.previewUrl;
@@ -468,6 +548,7 @@ const handlers: Record<string, Handler> = {
         { requiredCapability: 'previewInspection' },
       );
     }
+    await ctx.ensurePreviewAttached?.();
     return ctx.previewCtrl.inspectPreview(pod);
   },
 
@@ -489,8 +570,70 @@ const handlers: Record<string, Handler> = {
   },
 
   async finalize(args, ctx): Promise<FinalizeResult> {
-    const revisionId = optionalString(args, 'revisionId') || ctx.revisions.latestRevisionId;
-    const rawVerification = (args.verification ?? {}) as Partial<VerificationEvidence>;
+    const requestedRevision = optionalString(args, 'revisionId');
+    let revisionId = requestedRevision || ctx.revisions.latestRevisionId;
+    if (requestedRevision && requestedRevision !== ctx.revisions.latestRevisionId) {
+      revisionId = ctx.revisions.latestRevisionId;
+    }
+    const title = requireString(args, 'title');
+    const rawVerification = args.verification;
+    const verification = parseVerificationEvidence(rawVerification);
+
+    if (!verification.build.trim()) {
+      const rawBuild =
+        rawVerification && typeof rawVerification === 'object'
+          ? (rawVerification as Record<string, unknown>).build
+          : undefined;
+      const objectHint =
+        rawBuild != null && typeof rawBuild !== 'string'
+          ? ' verification.build must be a string (e.g. "npm run build exit 0"), not an object.'
+          : '';
+      throw new ToolError(
+        RuntimeErrorCodes.INVALID_PARAMS,
+        `finalize requires verification.build evidence (e.g. npm run build exit 0).${objectHint}`,
+        { revisionId },
+      );
+    }
+
+    const pod = ctx.adapter.currentPod;
+    if (!pod) {
+      throw new ToolError(
+        RuntimeErrorCodes.UNSUPPORTED_CAPABILITY,
+        'Nodepod is not booted; cannot finalize',
+        { revisionId },
+      );
+    }
+
+    const cached = ctx.previewCtrl.getCachedHealthyInspect();
+    if (!cached) {
+      await ctx.ensurePreviewAttached?.();
+    }
+    const inspect = cached ?? (await ctx.previewCtrl.inspectPreview(pod));
+    const previewHealthy =
+      ctx.previewCtrl.previewUrl !== null &&
+      inspect.domSummary.length > 0 &&
+      inspect.visibleText.trim().length > 0 &&
+      inspect.runtimeErrors.length === 0;
+
+    if (!previewHealthy) {
+      throw new ToolError(
+        RuntimeErrorCodes.INVALID_PARAMS,
+        'finalize requires a healthy preview inspection (attach the preview panel and verify the UI)',
+        {
+          revisionId,
+          previewUrl: ctx.previewCtrl.previewUrl,
+          domNodes: inspect.domSummary.length,
+          runtimeErrors: inspect.runtimeErrors,
+        },
+      );
+    }
+
+    if (!verification.preview.trim()) {
+      verification.preview = 'inspected';
+    }
+
+    ctx.openPreviewPanel?.();
+    await ctx.adapter.refreshFileCache?.();
 
     return {
       revisionId,
@@ -498,13 +641,9 @@ const handlers: Record<string, Handler> = {
       fileTree: buildFileTree(await ctx.adapter.listFiles('/')),
       preview: {
         runtime: 'browser',
-        healthy: ctx.previewCtrl.previewUrl !== null,
+        healthy: true,
       },
-      verification: {
-        build: typeof rawVerification.build === 'string' ? rawVerification.build : '',
-        preview: typeof rawVerification.preview === 'string' ? rawVerification.preview : '',
-        tests: typeof rawVerification.tests === 'string' ? rawVerification.tests : '',
-      },
+      verification,
     };
   },
 };
@@ -565,28 +704,9 @@ async function runStep(
   }
 }
 
-/** Nest a flat list of absolute VFS paths into the `finalize.fileTree` shape. */
+/** @deprecated Use `buildFilesTreeFromVfsPaths` from `utils/files-tree`. */
 export function buildFileTree(vfsPaths: string[]): FileTreeNode {
-  const root: FileTreeNode = { name: '/', type: 'dir', children: [] };
-
-  for (const vfsPath of [...vfsPaths].sort()) {
-    const segments = toRelativePath(vfsPath).split('/').filter(Boolean);
-    let cursor = root;
-    segments.forEach((segment, index) => {
-      const isLeaf = index === segments.length - 1;
-      cursor.children ??= [];
-      let next = cursor.children.find((child) => child.name === segment);
-      if (!next) {
-        next = isLeaf
-          ? { name: segment, type: 'file' }
-          : { name: segment, type: 'dir', children: [] };
-        cursor.children.push(next);
-      }
-      cursor = next;
-    });
-  }
-
-  return root;
+  return buildFilesTreeFromVfsPaths(vfsPaths) as FileTreeNode;
 }
 
 /**

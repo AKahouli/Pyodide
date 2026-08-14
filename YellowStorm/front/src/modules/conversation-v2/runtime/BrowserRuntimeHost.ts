@@ -21,6 +21,11 @@ import {
 const LOG = '[BrowserRuntimeHost]';
 const MAX_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_DELAY_MS = 2_000;
+const HIDDEN_IFRAME_LOAD_MS = 4_000;
+const HIDDEN_IFRAME_STYLE =
+  'position:fixed;width:640px;height:480px;opacity:0;pointer-events:none;left:-10000px;top:0;border:0';
+const HIDDEN_IFRAME_SANDBOX =
+  'allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts';
 
 export type HostStateListener = (state: HostState) => void;
 
@@ -53,6 +58,8 @@ export class BrowserRuntimeHost {
   private reconnectAttempts = 0;
   private listeners = new Set<HostStateListener>();
   private pendingIframe: HTMLIFrameElement | null = null;
+  /** Off-screen iframe so preview_inspect works when the user panel is closed. */
+  private hiddenIframe: HTMLIFrameElement | null = null;
 
   /** Serializes mutating tools; the backend also serializes, this is depth. */
   private mutationLock: Promise<unknown> = Promise.resolve();
@@ -161,6 +168,7 @@ export class BrowserRuntimeHost {
       await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed);
       if (this._destroyed) return;
       this.flushPendingIframe();
+      await this.ensureHiddenPreviewIframe();
 
       // 9. Register
       this.setStatus('registering');
@@ -227,6 +235,7 @@ export class BrowserRuntimeHost {
       await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed);
       if (this._destroyed) return;
       this.flushPendingIframe();
+      await this.ensureHiddenPreviewIframe();
 
       this.setStatus('ready');
       console.log(LOG, 'legacy ready', { previewUrl: this.previewCtrl.previewUrl });
@@ -269,9 +278,15 @@ export class BrowserRuntimeHost {
       previewCtrl: this.previewCtrl,
       revisions: this.revisions,
       workspaceId: this.workspaceId ?? this.sessionId ?? 'unknown',
+      sessionId: this.sessionId ?? this.workspaceId ?? 'unknown',
+      toolCallId,
       onProgress: (progress) => {
         if (this._destroyed) return;
         this.client.emitToolProgress({ toolCallId, ...progress });
+      },
+      ensurePreviewAttached: () => this.ensureHiddenPreviewIframe(),
+      openPreviewPanel: () => {
+        useConversationV2Store.getState().setRightPanelView('preview');
       },
     };
   }
@@ -296,10 +311,26 @@ export class BrowserRuntimeHost {
 
       if (isMutation) {
         this.revisionId = this.revisions.latestRevisionId;
-        this.emit();
+        await this.refreshSourceFiles();
+        if (this.ticket) {
+          const ack = await this.client.register({
+            runtimeSessionId: this.ticket.runtimeSessionId,
+            workspaceId: this.ticket.workspaceId,
+            revisionId: this.revisionId,
+            capabilities: NODEPOD_CAPABILITIES,
+          });
+          if (!ack.ok) {
+            throw new ToolError(
+              RuntimeErrorCodes.INTERNAL_ERROR,
+              `Re-registration failed after mutation: ${ack.error ?? 'unknown'}`,
+              { revisionId: this.revisionId, tool },
+            );
+          }
+        }
       }
       if (this._destroyed) return;
       this.client.emitToolCompleted({ toolCallId, result });
+      this.emit();
     } catch (err) {
       if (this._destroyed) return;
       const error =
@@ -319,6 +350,59 @@ export class BrowserRuntimeHost {
    * then re-emit `runtime.register` — the backend has no `runtime.ready`
    * event, so re-registration is the readiness signal.
    */
+  /** Refresh the split-view source cache from the live Nodepod VFS. */
+  async refreshSourceFiles(): Promise<void> {
+    if (this._destroyed || !this.adapter.currentPod) return;
+    try {
+      await this.adapter.refreshFileCache();
+      this.emit();
+    } catch (err) {
+      console.warn(
+        LOG,
+        'refreshSourceFiles failed',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  /**
+   * Align the live pod + source cache with a persisted workspace revision (e.g.
+   * after backend finalize pushes application_component with revision_id).
+   */
+  async syncRevisionSources(revisionId: string): Promise<void> {
+    if (this._destroyed || !this.sessionId || !revisionId) return;
+    const pod = this.adapter.currentPod;
+    if (!pod) return;
+
+    try {
+      this.setStatus('hydrating');
+      const appComp = useConversationV2Store.getState().applicationComponent;
+      const files = await this.resolveHydrationFiles(this.sessionId, {
+        revisionId,
+        cephPath: appComp?.cephPath ?? null,
+        filesTree: (appComp?.filesTree as FilesTreeNode | undefined) ?? null,
+      });
+      if (this._destroyed) return;
+
+      await this.hydrator.syncToRevision(pod, files);
+      this.revisionId = revisionId;
+      this.revisions.seed(await this.adapter.shaManifest(), revisionId);
+      await this.adapter.refreshFileCache();
+      this.setStatus('ready');
+      console.log(LOG, 'syncRevisionSources ok', { revisionId });
+    } catch (err) {
+      console.warn(
+        LOG,
+        'syncRevisionSources failed, falling back to VFS refresh',
+        err instanceof Error ? err.message : String(err),
+      );
+      await this.refreshSourceFiles();
+      if (!this._destroyed && this._status === 'hydrating') {
+        this.setStatus('ready');
+      }
+    }
+  }
+
   private async handleRehydrate(payload: RuntimeRehydratePayload): Promise<void> {
     console.log(LOG, 'rehydrate', payload);
     if (this.rehydrating || this._destroyed || !this.sessionId) return;
@@ -367,8 +451,8 @@ export class BrowserRuntimeHost {
   }
 
   /**
-   * Prefer revision APIs (starter_react_vite_v1 / workspace revision). Fall back
-   * to legacy cephPath+filesTree, then bundled starter only as last resort.
+   * Hydrate from Ceph revision APIs only. Legacy cephPath is a fallback for
+   * already-generated apps; bundled starter files are never used.
    */
   private async resolveHydrationFiles(
     sessionId: string,
@@ -390,22 +474,17 @@ export class BrowserRuntimeHost {
     }
 
     if (opts.cephPath && opts.filesTree) {
-      try {
-        return await this.hydrator.hydrateFromCeph(
-          sessionId,
-          opts.cephPath,
-          opts.filesTree,
-        );
-      } catch (err) {
-        console.warn(
-          LOG,
-          'cephPath hydration failed, falling back to bundled starter',
-          err instanceof Error ? err.message : String(err),
-        );
-      }
+      return await this.hydrator.hydrateFromCeph(
+        sessionId,
+        opts.cephPath,
+        opts.filesTree,
+      );
     }
 
-    return this.hydrator.hydrateStarter();
+    throw new Error(
+      `Cannot hydrate workspace from Ceph for revision ${opts.revisionId}. ` +
+        'Ensure the starter manifest exists in Ceph and revision APIs are reachable.',
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -417,6 +496,7 @@ export class BrowserRuntimeHost {
    * iframe usually mounts before the pod exists, so it is queued until boot.
    */
   attachPreviewIframe(iframe: HTMLIFrameElement): void {
+    this.removeHiddenPreviewIframe();
     this.pendingIframe = iframe;
     this.flushPendingIframe();
   }
@@ -424,6 +504,54 @@ export class BrowserRuntimeHost {
   detachPreviewIframe(): void {
     this.pendingIframe = null;
     this.previewCtrl.detachIframe(this.adapter.currentPod ?? undefined);
+    void this.ensureHiddenPreviewIframe();
+  }
+
+  /**
+   * Mount an off-screen iframe when the dev server is up but the user has not
+   * opened the preview panel — required for `preview_inspect` / `finalize`.
+   */
+  async ensureHiddenPreviewIframe(): Promise<void> {
+    const url = this.previewCtrl.previewUrl;
+    const pod = this.adapter.currentPod;
+    if (!url || !pod || this._destroyed) return;
+    if (this.pendingIframe) {
+      this.flushPendingIframe();
+      return;
+    }
+
+    if (!this.hiddenIframe) {
+      this.hiddenIframe = document.createElement('iframe');
+      this.hiddenIframe.setAttribute('aria-hidden', 'true');
+      this.hiddenIframe.setAttribute('sandbox', HIDDEN_IFRAME_SANDBOX);
+      this.hiddenIframe.style.cssText = HIDDEN_IFRAME_STYLE;
+      this.hiddenIframe.title = 'YellowMind runtime preview';
+      document.body.appendChild(this.hiddenIframe);
+    }
+
+    if (this.hiddenIframe.src !== url) {
+      await new Promise<void>((resolve) => {
+        const iframe = this.hiddenIframe!;
+        const timer = window.setTimeout(resolve, HIDDEN_IFRAME_LOAD_MS);
+        const done = () => {
+          window.clearTimeout(timer);
+          iframe.removeEventListener('load', done);
+          resolve();
+        };
+        iframe.addEventListener('load', done, { once: true });
+        iframe.src = url;
+      });
+    }
+
+    await this.previewCtrl.attachIframe(pod, this.hiddenIframe);
+    console.log(LOG, 'hidden preview iframe attached', { url });
+  }
+
+  private removeHiddenPreviewIframe(): void {
+    if (!this.hiddenIframe) return;
+    this.previewCtrl.detachIframe(this.adapter.currentPod ?? undefined);
+    this.hiddenIframe.remove();
+    this.hiddenIframe = null;
   }
 
   private flushPendingIframe(): void {
@@ -484,6 +612,7 @@ export class BrowserRuntimeHost {
   destroy(): void {
     this._destroyed = true;
     this.client.disconnect();
+    this.removeHiddenPreviewIframe();
     this.previewCtrl.detachIframe(this.adapter.currentPod ?? undefined);
     this.previewCtrl.reset();
     this.pendingIframe = null;
@@ -520,4 +649,11 @@ export function removeHost(sessionId: string): void {
     host.destroy();
     hostRegistry.delete(sessionId);
   }
+}
+
+/** Sync split-view sources after SSE application_component (best-effort). */
+export function syncHostRevisionSources(sessionId: string, revisionId: string): void {
+  const host = hostRegistry.get(sessionId);
+  if (!host || !revisionId) return;
+  void host.syncRevisionSources(revisionId);
 }

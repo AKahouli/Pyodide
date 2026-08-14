@@ -52,6 +52,7 @@ export type AgentEvent =
       ceph_path?: string;
       files_tree?: RawFilesTreeNode | null;
       file_count?: number;
+      revision_id?: string;
     })
   | ({ type: 'app_build_progress' } & BaseEvent & {
       phase: string;

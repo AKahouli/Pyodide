@@ -39,16 +39,8 @@ describe('RevisionHydrator', () => {
     hydrator = new RevisionHydrator();
   });
 
-  it('hydrateStarter returns bundled Vite/React starter files', () => {
-    const files = hydrator.hydrateStarter();
-
-    expect(files['/package.json']).toContain('yellowmind-starter');
-    expect(files['/index.html']).toContain('<div id="root"></div>');
-    expect(files['/vite.config.js']).toContain('defineConfig');
-    expect(files['/src/main.jsx']).toContain('ReactDOM');
-    expect(files['/src/App.jsx']).toContain('YellowMind Starter');
-    expect(files['/src/App.css']).toContain('font-family');
-    expect(Object.keys(files)).toHaveLength(6);
+  it('hydrateStarter is disabled', () => {
+    expect(() => hydrator.hydrateStarter()).toThrow(/Bundled starter hydration is disabled/);
   });
 
   it('hydrateFromRevision lists files, presigns, and downloads blobs', async () => {

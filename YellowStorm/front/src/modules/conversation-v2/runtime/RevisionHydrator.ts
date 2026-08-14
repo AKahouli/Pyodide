@@ -21,79 +21,6 @@ function safeHost(url: string): string {
   }
 }
 
-/**
- * Offline fallback only — prefer {@link RevisionHydrator.hydrateFromRevision}
- * which loads the Ceph-seeded `starter_react_vite_v1` (or workspace revision).
- */
-const STARTER_PACKAGE_JSON = `{
-  "name": "yellowmind-starter",
-  "private": true,
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^6.3.5"
-  }
-}`;
-
-const STARTER_INDEX_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>YellowMind Starter</title>
-</head>
-<body>
-  <div id="root"></div>
-  <script type="module" src="/src/main.jsx"></script>
-</body>
-</html>`;
-
-const STARTER_VITE_CONFIG = `import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-
-export default defineConfig({
-  plugins: [react()],
-});`;
-
-const STARTER_MAIN_JSX = `import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App.jsx';
-
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);`;
-
-const STARTER_APP_JSX = `import React from 'react';
-
-export default function App() {
-  return (
-    <div style={{ fontFamily: 'system-ui, sans-serif', padding: '2rem', textAlign: 'center' }}>
-      <h1>YellowMind Starter</h1>
-      <p>Edit <code>src/App.jsx</code> to get started.</p>
-    </div>
-  );
-}`;
-
-const STARTER_APP_CSS = `:root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-}
-h1 {
-  color: #1a1a1a;
-}
-`;
-
 export type VfsFiles = Record<string, string | Uint8Array>;
 
 export class RevisionHydrator {
@@ -150,19 +77,12 @@ export class RevisionHydrator {
   }
 
   /**
-   * Last-resort offline starter when revision APIs are unavailable.
-   * Happy path should use {@link hydrateFromRevision}.
+   * @deprecated Bundled starter removed — all hydration must come from Ceph.
    */
   hydrateStarter(): VfsFiles {
-    log('hydrateStarter:fallback');
-    return {
-      '/package.json': STARTER_PACKAGE_JSON,
-      '/index.html': STARTER_INDEX_HTML,
-      '/vite.config.js': STARTER_VITE_CONFIG,
-      '/src/main.jsx': STARTER_MAIN_JSX,
-      '/src/App.jsx': STARTER_APP_JSX,
-      '/src/App.css': STARTER_APP_CSS,
-    };
+    throw new Error(
+      'Bundled starter hydration is disabled; use hydrateFromRevision against Ceph',
+    );
   }
 
   /**

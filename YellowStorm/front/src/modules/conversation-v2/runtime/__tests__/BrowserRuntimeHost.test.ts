@@ -114,7 +114,10 @@ vi.mock('../RuntimeToolHandlers', () => ({
 
 vi.mock('../../store', () => ({
   useConversationV2Store: {
-    getState: () => ({ applicationComponent: null }),
+    getState: () => ({
+      applicationComponent: null,
+      setRightPanelView: vi.fn(),
+    }),
   },
 }));
 
@@ -227,12 +230,12 @@ describe('BrowserRuntimeHost', () => {
     host.destroy();
   });
 
-  it('falls back to bundled starter when revision hydration fails', async () => {
+  it('fails startup when Ceph revision hydration is unavailable', async () => {
     mockHydrateFromRevision.mockRejectedValueOnce(new Error('ceph down'));
     const host = new BrowserRuntimeHost();
     await host.start('sess_1');
-    expect(mockHydrateStarter).toHaveBeenCalled();
-    expect(host.state.status).toBe('ready');
+    expect(mockHydrateStarter).not.toHaveBeenCalled();
+    expect(host.state.status).toBe('error');
     host.destroy();
   });
 

@@ -498,6 +498,32 @@ export class NodepodRuntimeAdapter {
     return entries;
   }
 
+  /** Refresh the cached workspace snapshot used by the source viewer. */
+  async refreshFileCache(): Promise<VfsFiles> {
+    const pod = this.requirePod();
+    const paths = await this.listFiles('/');
+    const files: VfsFiles = {};
+    for (const path of paths) {
+      try {
+        files[path] = await pod.fs.readFile(path, 'utf-8');
+      } catch {
+        try {
+          const raw: unknown = await pod.fs.readFile(path);
+          files[path] =
+            raw instanceof Uint8Array ? raw : new TextEncoder().encode(String(raw));
+        } catch {
+          // Skip unreadable paths.
+        }
+      }
+    }
+    this._files = files;
+    if (this.sessionId) {
+      const entry = podCache.get(cacheKey(this.sessionId, this.revision));
+      if (entry) entry.files = files;
+    }
+    return files;
+  }
+
   /**
    * Contract-shaped directory listing for the `list` tool. `name` is relative
    * to `relativeRoot`; entries deeper than `depth` levels are omitted (their

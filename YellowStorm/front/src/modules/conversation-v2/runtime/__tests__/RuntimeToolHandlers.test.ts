@@ -6,8 +6,19 @@ import type { NodepodRuntimeAdapter } from '../NodepodRuntimeAdapter';
 import type { PreviewController } from '../PreviewController';
 import { ToolError } from '../ToolError';
 import { sha256 } from '../hashing';
-import { RuntimeErrorCodes, type FileEntry } from '../runtime.types';
+import { RuntimeErrorCodes, type FileEntry, type FinalizeResult } from '../runtime.types';
 import { MAX_FILE_SIZE, SEARCH_EXCERPT_CHARS } from '../limits';
+
+vi.mock('../../api', () => ({
+  conversationV2Api: {
+    commitWorkspaceRevision: vi.fn().mockResolvedValue({
+      revisionId: 'rev_1',
+      parentRevisionId: 'rev_0',
+      manifestObjectKey: 'appbuilder/manifests/ws-1/rev_1.json',
+      fileCount: 1,
+    }),
+  },
+}));
 
 const PACKAGE_JSON = '{\n  "name": "app"\n}\n';
 const APP_TSX = ['import React from "react";', '', 'export const answer = 41;', ''].join('\n');
@@ -80,6 +91,11 @@ function makeAdapter(initial: Record<string, string> = {}) {
       }
       return manifest;
     },
+    refreshFileCache: vi.fn(async () => {
+      const snapshot: Record<string, string> = {};
+      for (const [path, content] of files) snapshot[path] = content;
+      return snapshot;
+    }),
   };
 
   return adapter as unknown as NodepodRuntimeAdapter & typeof adapter;
@@ -89,11 +105,12 @@ function makePreviewCtrl() {
   return {
     previewUrl: 'http://localhost/__virtual__/pod-1/5173/',
     port: 5173,
+    getCachedHealthyInspect: vi.fn().mockReturnValue(null),
     inspectPreview: vi.fn().mockResolvedValue({
       url: 'http://localhost/__virtual__/pod-1/5173/',
       title: 'App',
       visibleText: 'Hello',
-      domSummary: [],
+      domSummary: [{ tag: 'h1', text: 'Hello' }],
       console: [],
       runtimeErrors: [],
       screenshotArtifactId: null,
@@ -116,6 +133,7 @@ async function makeContext(initial: Record<string, string> = {}) {
     previewCtrl,
     revisions,
     workspaceId: 'ws-1',
+    sessionId: 'sess-1',
     onProgress,
   };
   return { ctx, adapter, previewCtrl, revisions, onProgress };
@@ -683,16 +701,23 @@ describe('dev_server', () => {
   });
 
   it('restarts through startDevServer', async () => {
+    const ensurePreviewAttached = vi.fn().mockResolvedValue(undefined);
+    const openPreviewPanel = vi.fn();
     const { ctx, adapter, previewCtrl } = await makeContext(BASE_FILES);
+    ctx.ensurePreviewAttached = ensurePreviewAttached;
+    ctx.openPreviewPanel = openPreviewPanel;
     (previewCtrl as { previewUrl: string | null }).previewUrl = null;
     adapter.startDevServer.mockImplementation(async () => {
       (previewCtrl as { previewUrl: string | null }).previewUrl =
         'http://localhost/__virtual__/pod-1/5173/';
       (previewCtrl as { port: number | null }).port = 5173;
+      return 'http://localhost/__virtual__/pod-1/5173/';
     });
 
     const result = await dispatchTool('dev_server', { action: 'restart' }, ctx);
     expect(adapter.startDevServer).toHaveBeenCalled();
+    expect(openPreviewPanel).toHaveBeenCalled();
+    expect(ensurePreviewAttached).toHaveBeenCalled();
     expect(result.running).toBe(true);
   });
 
@@ -774,32 +799,119 @@ describe('finalize', () => {
     ]);
     expect(result.cephManifestPath).toBe('appbuilder/manifests/ws-1/rev_1.json');
     expect(result.preview).toEqual({ runtime: 'browser', healthy: true });
-    expect(result.verification).toEqual({ build: 'ok', preview: '', tests: '' });
+    expect(result.verification).toEqual({ build: 'ok', preview: 'inspected', tests: '' });
+  });
+
+  it('rejects finalize without build verification', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    await expectToolError(
+      dispatchTool('finalize', { revisionId: 'rev_1', title: 'My App', verification: {} }, ctx),
+      RuntimeErrorCodes.INVALID_PARAMS,
+    );
   });
 
   it('falls back to the latest local revision', async () => {
     const { ctx } = await makeContext(BASE_FILES);
-    const result = await dispatchTool('finalize', { title: 'My App' }, ctx);
+    const result = await dispatchTool(
+      'finalize',
+      { title: 'My App', verification: { build: 'exit 0' } },
+      ctx,
+    );
     expect(result.revisionId).toBe('rev_1');
+  });
+
+  it('coalesces a stale revisionId to the latest local revision', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const result = await dispatchTool(
+      'finalize',
+      { revisionId: 'rev_0', title: 'My App', verification: { build: 'exit 0' } },
+      ctx,
+    );
+    expect(result.revisionId).toBe('rev_1');
+  });
+
+  it('reuses a cached healthy preview inspect during finalize', async () => {
+    const { ctx, previewCtrl } = await makeContext(BASE_FILES);
+    const cached = {
+      url: 'http://localhost/__virtual__/pod-1/5173/',
+      title: 'App',
+      visibleText: 'Hello',
+      domSummary: [{ tag: 'h1', text: 'Hello' }],
+      console: [],
+      runtimeErrors: [],
+      screenshotArtifactId: null,
+      capabilities: { screenshot: false, interaction: true },
+    };
+    previewCtrl.getCachedHealthyInspect = vi.fn().mockReturnValue(cached);
+
+    const result = await dispatchTool(
+      'finalize',
+      { title: 'My App', verification: { build: 'exit 0' } },
+      ctx,
+    );
+
+    expect(previewCtrl.inspectPreview).not.toHaveBeenCalled();
+    expect(result.preview).toEqual({ runtime: 'browser', healthy: true });
+  });
+
+  it('coerces object build verification to a string', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    const result = (await dispatchTool(
+      'finalize',
+      {
+        title: 'My App',
+        verification: { build: { command: 'npm run build', exitCode: 0 } },
+      },
+      ctx,
+    )) as unknown as FinalizeResult;
+    expect(result.verification.build).toBe('npm run build exit 0');
+  });
+
+  it('opens the preview panel on successful finalize', async () => {
+    const openPreviewPanel = vi.fn();
+    const { ctx } = await makeContext(BASE_FILES);
+    ctx.openPreviewPanel = openPreviewPanel;
+
+    await dispatchTool(
+      'finalize',
+      { title: 'Addition App', verification: { build: 'exit 0' } },
+      ctx,
+    );
+
+    expect(openPreviewPanel).toHaveBeenCalled();
+  });
+
+  it('reports a clear error when build verification is a non-coercible object', async () => {
+    const { ctx } = await makeContext(BASE_FILES);
+    await expect(
+      dispatchTool(
+        'finalize',
+        { title: 'My App', verification: { build: { stdout: 'ok' } } },
+        ctx,
+      ),
+    ).rejects.toMatchObject({
+      code: RuntimeErrorCodes.INVALID_PARAMS,
+      message: expect.stringContaining('not an object'),
+    });
   });
 });
 
 describe('buildFileTree', () => {
-  it('nests flat VFS paths', () => {
+  it('nests flat VFS paths in Manus display shape', () => {
     expect(buildFileTree(['/package.json', '/src/App.tsx', '/src/lib/util.ts'])).toEqual({
-      name: '/',
-      type: 'dir',
+      name: '',
+      type: 'directory',
       children: [
-        { name: 'package.json', type: 'file' },
+        { name: 'package.json', type: 'file', path: 'package.json' },
         {
           name: 'src',
-          type: 'dir',
+          type: 'directory',
           children: [
-            { name: 'App.tsx', type: 'file' },
+            { name: 'App.tsx', type: 'file', path: 'src/App.tsx' },
             {
               name: 'lib',
-              type: 'dir',
-              children: [{ name: 'util.ts', type: 'file' }],
+              type: 'directory',
+              children: [{ name: 'util.ts', type: 'file', path: 'src/lib/util.ts' }],
             },
           ],
         },
