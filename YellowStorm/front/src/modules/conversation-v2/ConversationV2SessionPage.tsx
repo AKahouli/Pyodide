@@ -21,6 +21,8 @@ import {
   type ConversationV2SessionPermission,
 } from './session-permissions';
 import { getOrCreateHost, removeHost } from './runtime/BrowserRuntimeHost';
+import { mapHostStatusToRuntimeUi } from './runtime/runtime.types';
+import { isTurnOpen } from './utils/session-reducer';
 
 interface LocationState {
   initialMessage?: string;
@@ -187,14 +189,15 @@ export default function ConversationV2SessionPage() {
         replayEvents(collected);
 
         // If the session is mid-turn server-side, show the thinking state; the
-        // per-user pipe delivers the rest (and a done/error to clear it). Guard
-        // the fresh-session case (status 'active' but no events yet).
-        const nonTerminal = pointer.status === 'active' || pointer.status === 'waiting';
+        // per-user pipe delivers the rest (and a done/error to clear it).
         const last = collected[collected.length - 1];
         const lastIsTerminal = last?.type === 'done' || last?.type === 'error';
         setStreaming(
           canWriteConversationV2Session(pointer.permissions)
-            ? nonTerminal && collected.length > 0 && !lastIsTerminal
+            ? isTurnOpen(collected) ||
+                (pointer.status === 'active' &&
+                  collected.length > 0 &&
+                  !lastIsTerminal)
             : false,
         );
       } catch {
@@ -236,6 +239,13 @@ export default function ConversationV2SessionPage() {
     if (!sessionId || loading || isReadOnlyViewer) return;
     const appComp = useConversationV2Store.getState().applicationComponent;
     const host = getOrCreateHost(sessionId);
+    const syncRuntime = () => {
+      useConversationV2Store
+        .getState()
+        .setRuntimeStatus(mapHostStatusToRuntimeUi(host.state.status));
+    };
+    syncRuntime();
+    const unsubscribe = host.subscribe(syncRuntime);
     if (host.state.status === 'idle') {
       void host.start(
         sessionId,
@@ -244,10 +254,23 @@ export default function ConversationV2SessionPage() {
       );
     }
     return () => {
+      unsubscribe();
       removeHost(sessionId);
       useConversationV2Store.getState().setRuntimeStatus('idle');
     };
   }, [sessionId, loading, isReadOnlyViewer]);
+
+  // While a turn is in flight, periodically gap-fill events in case the SSE
+  // pipe missed the terminal `done` (backend already completed via gRPC).
+  useEffect(() => {
+    if (!sessionId || loading || !streaming || isReadOnlyViewer) return;
+    const reconcile = () => {
+      void useConversationV2Store.getState().reconcileCurrentSession();
+    };
+    reconcile();
+    const timer = window.setInterval(reconcile, 8_000);
+    return () => window.clearInterval(timer);
+  }, [sessionId, loading, streaming, isReadOnlyViewer]);
 
   if (loading) {
     return (

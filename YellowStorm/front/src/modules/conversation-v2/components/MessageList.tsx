@@ -10,6 +10,7 @@ import {
 import { useConversationV2Store } from '../store';
 import { useConversationV2Translation } from '../translation';
 import { buildTimeline } from '../utils/timeline';
+import { isTurnOpen } from '../utils/session-reducer';
 import { MessageBubble } from './MessageBubble';
 import { ToolCallCard } from './ToolCallCard';
 import { StepBlock } from './StepBlock';
@@ -23,11 +24,18 @@ interface MessageListProps {
 }
 
 export function MessageList({ events: eventsProp, canOpenAttachments = true }: MessageListProps = {}) {
-  const storeEvents = useConversationV2Store(useShallow((s) => s.events));
-  const streaming = useConversationV2Store((s) => s.streaming);
-  const liveAssistantIds = useConversationV2Store((s) => s.liveAssistantIds);
+  const { storeEvents, streaming, liveAssistantIds, applicationComponent } = useConversationV2Store(
+    useShallow((s) => ({
+      storeEvents: s.events,
+      streaming: s.streaming,
+      liveAssistantIds: s.liveAssistantIds,
+      applicationComponent: s.applicationComponent,
+    })),
+  );
   const events = eventsProp ?? storeEvents;
-  const showThinking = !eventsProp && streaming;
+  const turnOpen = isTurnOpen(events);
+  // Preview opens on finalize before APImanus emits `done`; hide the spinner once the app is ready.
+  const showThinking = !eventsProp && (streaming || turnOpen) && !applicationComponent;
   const { t } = useConversationV2Translation();
 
   const { nodes } = useMemo(() => buildTimeline(events), [events]);

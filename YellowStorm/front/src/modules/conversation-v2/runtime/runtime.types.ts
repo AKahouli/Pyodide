@@ -288,7 +288,8 @@ export interface FinalizeResult {
 
 export interface FileTreeNode extends Record<string, unknown> {
   name: string;
-  type: 'file' | 'dir';
+  type: 'file' | 'directory';
+  path?: string;
   children?: FileTreeNode[];
 }
 
