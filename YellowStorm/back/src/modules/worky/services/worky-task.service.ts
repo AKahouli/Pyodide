@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { WorkyTask, WorkyTaskDocument } from '../schemas/worky-task.schema';
+import { WorkyPlanStepComponent, WorkyPlanStepComponentDocument } from '../schemas/worky-plan-step-component.schema';
+import { WorkyPlanStepArtifact, WorkyPlanStepArtifactDocument } from '../schemas/worky-plan-step-artifact.schema';
 import { LoggerService } from '../../logger';
 
 const PROJECTION_LIMIT = 2000;
@@ -17,8 +19,45 @@ export class WorkyTaskService {
     @InjectModel(WorkyTask.name)
     private readonly tasks: Model<WorkyTaskDocument>,
     private readonly logger: LoggerService,
+    @InjectModel(WorkyPlanStepComponent.name)
+    private readonly stepComponents: Model<WorkyPlanStepComponentDocument>,
+    @InjectModel(WorkyPlanStepArtifact.name)
+    private readonly stepArtifacts: Model<WorkyPlanStepArtifactDocument>,
   ) {
     this.logger.setContext(WorkyTaskService.name);
+  }
+
+  /**
+   * Lazy step result-content: the components + file artifacts a step produced,
+   * keyed by the step's `externalId` (== plan_steps.step_id). Fetched only when
+   * the task drawer opens, so the frequently-refetched board response stays lean.
+   */
+  async getResultContent(taskId: string): Promise<{
+    components: Array<{ id: string; type: string; data: Record<string, unknown> }>;
+    artifacts: Array<{ id: string; filePath: string; filename: string; artifactKind: string | null; mimeType: string | null; size: number | null; createdAt: string }>;
+  }> {
+    if (!Types.ObjectId.isValid(taskId)) return { components: [], artifacts: [] };
+    const task = await this.tasks.findById(new Types.ObjectId(taskId)).lean().exec();
+    if (!task || typeof task.externalId !== 'string') return { components: [], artifacts: [] };
+    const filter = { streamId: task.streamId as Types.ObjectId, stepExternalId: task.externalId };
+
+    const [componentDocs, artifactDocs] = await Promise.all([
+      this.stepComponents.find(filter).sort({ ordinal: 1 }).lean().exec(),
+      this.stepArtifacts.find(filter).sort({ createdAt: 1 }).lean().exec(),
+    ]);
+
+    return {
+      components: componentDocs.map((c) => ({ id: (c.externalId as string) ?? '', type: c.type as string, data: (c.data as Record<string, unknown>) ?? {} })),
+      artifacts: artifactDocs.map((a) => ({
+        id: (a.externalId as string) ?? '',
+        filePath: a.filePath as string,
+        filename: a.filename as string,
+        artifactKind: (a.artifactKind as string | null) ?? null,
+        mimeType: (a.mimeType as string | null) ?? null,
+        size: (a.size as number | null) ?? null,
+        createdAt: (a.createdAt as Date).toISOString(),
+      })),
+    };
   }
 
   /**
@@ -84,6 +123,12 @@ export class WorkyTaskService {
         startedAt: task.startedAt ? new Date(task.startedAt).toISOString() : null,
         completedAt: task.completedAt ? new Date(task.completedAt).toISOString() : null,
         durationMs: typeof task.durationMs === 'number' ? task.durationMs : null,
+        // Mongo timestamps (always populated). createdAt = when the task first
+        // appeared on the board; updatedAt = last Electric change / activity.
+        // These are the reliable relative-time source for manager-driven tasks,
+        // whose startedAt/completedAt the Electric sync never sets.
+        createdAt: task.createdAt ? new Date(task.createdAt as Date).toISOString() : null,
+        updatedAt: task.updatedAt ? new Date(task.updatedAt as Date).toISOString() : null,
       });
     }
     return lanes;
@@ -162,4 +207,8 @@ export interface IBoardTaskView {
   startedAt: string | null;
   completedAt: string | null;
   durationMs: number | null;
+  /** Mongo doc creation time — when the task first appeared on the board. */
+  createdAt: string | null;
+  /** Mongo doc last-modified time — last Electric change / activity. */
+  updatedAt: string | null;
 }

@@ -33,6 +33,9 @@ import { WorkySttController } from './controllers/worky-stt.controller';
 import { WorkySttService } from './services/worky-stt.service';
 import { WorkyTtsController } from './controllers/worky-tts.controller';
 import { WorkyTtsService } from './services/worky-tts.service';
+import { WorkyVoiceController } from './voice/worky-voice.controller';
+import { GeminiTokenService } from './voice/gemini-token.service';
+import { VoiceToolService } from './voice/voice-tool.service';
 import { WorkyBoardController } from './controllers/worky-board.controller';
 import { WorkyInteractionController } from './controllers/worky-interaction.controller';
 import { WorkyTaskController } from './controllers/worky-task.controller';
@@ -140,6 +143,18 @@ import {
   WorkyPlanProjection,
   WorkyPlanProjectionSchema,
 } from './schemas/worky-plan-projection.schema';
+import {
+  WorkyMessageComponent,
+  WorkyMessageComponentSchema,
+} from './schemas/worky-message-component.schema';
+import {
+  WorkyPlanStepComponent,
+  WorkyPlanStepComponentSchema,
+} from './schemas/worky-plan-step-component.schema';
+import {
+  WorkyPlanStepArtifact,
+  WorkyPlanStepArtifactSchema,
+} from './schemas/worky-plan-step-artifact.schema';
 import { Workspace, WorkspaceSchema } from '../workspace/schemas/workspace.schema';
 import workyConfig from '../../config/worky.config';
 import workyOrchestratorConfig from '../../config/worky-orchestrator.config';
@@ -209,6 +224,9 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
       { name: WorkyMemoryEntry.name, schema: WorkyMemoryEntrySchema },
       { name: WorkyElectricCursor.name, schema: WorkyElectricCursorSchema },
       { name: WorkyPlanProjection.name, schema: WorkyPlanProjectionSchema },
+      { name: WorkyMessageComponent.name, schema: WorkyMessageComponentSchema },
+      { name: WorkyPlanStepComponent.name, schema: WorkyPlanStepComponentSchema },
+      { name: WorkyPlanStepArtifact.name, schema: WorkyPlanStepArtifactSchema },
       // Re-registered here so WorkyStreamService can inject them directly
       // without pulling in AgentModule/WorkspaceModule's full transitive
       // dependency graph. Nest reuses the same Mongoose model instance via DI.
@@ -225,6 +243,7 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyMessageController,
     WorkySttController,
     WorkyTtsController,
+    WorkyVoiceController,
     WorkyBoardController,
     WorkyInteractionController,
     WorkyTaskController,
@@ -266,6 +285,8 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyTaskResultService,
     WorkySttService,
     WorkyTtsService,
+    GeminiTokenService,
+    VoiceToolService,
     WorkyWhatsAppIngressService,
     WorkyWhatsAppIntegrationService,
     WorkyWhatsAppSystemBotService,

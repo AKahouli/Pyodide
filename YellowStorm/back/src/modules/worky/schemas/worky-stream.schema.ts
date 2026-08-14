@@ -68,6 +68,10 @@ export class WorkyStream extends Document {
   @Prop({ type: String, default: null, trim: true, maxlength: 256 })
   workerModelId?: string | null;
 
+  /** Per-stream concierge system prompt. null → use the global default. */
+  @Prop({ type: String, default: null, trim: true, maxlength: 8000 })
+  voicePrompt?: string | null;
+
   /**
    * CompanionAi session id for this stream. Created via the gRPC
    * `CreateSession` RPC when the stream is created, and used as the

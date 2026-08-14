@@ -28,6 +28,7 @@ import type {
   WorkyStreamQueryParams,
   WorkyTask,
   WorkyTaskResult,
+  WorkyTaskResultContent,
   WorkyWhatsAppConnectResponse,
   WorkyWhatsAppIntegration,
   WorkyWhatsAppPairingResponse,
@@ -272,6 +273,13 @@ export async function getTaskResults(taskId: string): Promise<WorkyTaskResult[]>
   return unwrap(response);
 }
 
+export async function getTaskResultContent(taskId: string): Promise<WorkyTaskResultContent> {
+  const response = await apiClient.get<ApiResponse<WorkyTaskResultContent>>(
+    API_ENDPOINTS.worky.taskResultContent(taskId),
+  );
+  return unwrap(response);
+}
+
 export async function getGovernancePolicy(workspaceId: string): Promise<WorkyGovernancePolicy> {
   const response = await apiClient.get<ApiResponse<WorkyGovernancePolicy>>(
     API_ENDPOINTS.worky.governancePolicy,
@@ -413,6 +421,69 @@ export async function synthesizeSpeech(
     { responseType: 'blob' },
   );
   return response.data as Blob;
+}
+
+// =================================================================
+// Realtime voice concierge (Gemini Live via backend-minted token)
+// =================================================================
+
+/** Opaque connection descriptor for a Gemini Live session (all config server-bound). */
+export interface VoiceSessionEnvelope {
+  wsUrl: string;
+  setup: Record<string, unknown>;
+  expiresAt: string;
+}
+
+/** Mint a locked, single-use Gemini Live session token via the BFF. */
+export async function createVoiceSession(streamId: string, resumptionHandle?: string): Promise<VoiceSessionEnvelope> {
+  const res = await apiClient.post<ApiResponse<VoiceSessionEnvelope>>(API_ENDPOINTS.worky.voiceSession, {
+    streamId,
+    resumptionHandle,
+  });
+  return unwrap(res);
+}
+
+/** Get the per-stream concierge prompt (or the default when unset). */
+export async function getVoicePrompt(streamId: string): Promise<{ prompt: string; isDefault: boolean }> {
+  const res = await apiClient.get<ApiResponse<{ prompt: string; isDefault: boolean }>>(
+    API_ENDPOINTS.worky.voicePrompt(streamId),
+  );
+  return unwrap(res);
+}
+
+/** Save the per-stream concierge prompt; a blank prompt resets to the default. */
+export async function setVoicePrompt(streamId: string, prompt: string): Promise<{ prompt: string; isDefault: boolean }> {
+  const res = await apiClient.put<ApiResponse<{ prompt: string; isDefault: boolean }>>(
+    API_ENDPOINTS.worky.voicePrompt(streamId),
+    { prompt },
+  );
+  return unwrap(res);
+}
+
+/** Voice tool: dispatch a worky task (server runs the orchestrator gRPC call). */
+export async function voiceDispatch(
+  streamId: string,
+  message: string,
+): Promise<{ runId: string; sessionId: string; accepted: boolean }> {
+  const res = await apiClient.post<ApiResponse<{ runId: string; sessionId: string; accepted: boolean }>>(
+    API_ENDPOINTS.worky.voiceDispatch,
+    { streamId, message },
+  );
+  return unwrap(res);
+}
+
+/** Voice tool: read the current worky task status/plan. */
+export async function voiceStatus(streamId: string): Promise<{ status: string; title: string; plan: unknown }> {
+  const res = await apiClient.post<ApiResponse<{ status: string; title: string; plan: unknown }>>(
+    API_ENDPOINTS.worky.voiceStatus,
+    { streamId },
+  );
+  return unwrap(res);
+}
+
+/** Persist a voice transcript turn into the unified chat history. */
+export async function voiceTranscript(streamId: string, role: 'owner' | 'manager', text: string): Promise<void> {
+  await apiClient.post(API_ENDPOINTS.worky.voiceTranscript, { streamId, role, text });
 }
 
 // =================================================================

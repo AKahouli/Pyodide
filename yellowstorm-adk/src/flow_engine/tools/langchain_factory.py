@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, create_model
 from structlog import get_logger
 
 from src.connector_tool_name import build_connector_tool_name
+from src.run_workspace import with_run_workspace_path
 from src.config.settings import get_settings
 from src.flow_engine.runtime.artifact_routing import (
     infer_artifact_kind,
@@ -29,7 +30,6 @@ from src.smart_rag.tools.utilities.code_interpreter_payload import (
     _extract_workspace_name_hint,
     build_code_interpreter_payload_context,
 )
-from src.smart_rag.tools.utilities.connector_tools import import_connector_items_to_workspace_request
 
 logger = get_logger(__name__)
 
@@ -553,36 +553,6 @@ class ActivateSkillInput(BaseModel):
     name: str = Field(description="The exact skill name to activate.")
 
 
-class ConnectorImportInput(BaseModel):
-    mode: str = Field(
-        description="Import mode: 'file', 'files', or 'folder'.",
-    )
-    drive_id: Optional[str] = Field(
-        default=None,
-        description="Optional direct drive ID for simple file or folder import calls.",
-    )
-    item_id: Optional[str] = Field(
-        default=None,
-        description="Optional direct item ID for simple file or folder import calls.",
-    )
-    path: Optional[str] = Field(
-        default=None,
-        description="Optional direct path for simple file or folder import calls when item_id is not available.",
-    )
-    item_ref: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Single connector item reference for file or folder import.",
-    )
-    item_refs: Optional[List[Dict[str, Any]]] = Field(
-        default=None,
-        description="Multiple connector item references for batch file import.",
-    )
-    recursive: bool = Field(
-        default=True,
-        description="Recursively import folder contents when mode is 'folder'.",
-    )
-
-
 def create_langchain_tools(
     agent_config: dict,
     workspace_context: Optional[list] = None,
@@ -632,6 +602,9 @@ def create_langchain_tools(
         workspace_paths = _collect_workspace_paths(
             workspace_context, code_interpreter_files, user_id
         )
+    workspace_paths = with_run_workspace_path(
+        workspace_paths, user_id, session_id or execution_id
+    )
 
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
     mcp_tools: List[StructuredTool] = []
@@ -1761,21 +1734,6 @@ def _create_connector_mcp_tools(
         # search_relevant_documents, and filter the action below.
         if not deep_search:
             binding_auth_headers.pop("X-Deep-Search", None)
-        if (
-            connector_id
-            and output_workspace_id
-            and binding_auth_headers.get("Authorization")
-        ):
-            tools.append(
-                _create_connector_import_tool(
-                    connector_id=connector_id,
-                    connector_name=connector_name,
-                    auth_headers=binding_auth_headers,
-                    workspace_id=output_workspace_id,
-                    user_id=user_id or "",
-                    platform_api_token=platform_api_token,
-                )
-            )
         actions = (
             [
                 {
@@ -1877,6 +1835,14 @@ def _create_connector_mcp_tools(
                                 merged_params.pop(filename_param, None)
 
                         effective_auth_headers = dict(ah)
+                        # Run/turn correlation applies to every HTTP MCP transport,
+                        # not just streamable_http -- an sse connector is the same
+                        # server behind a different stream.
+                        if tt in ("streamable_http", "sse"):
+                            if sid:
+                                effective_auth_headers["x-conversation-id"] = sid
+                            if eid:
+                                effective_auth_headers["x-execution-id"] = eid
                         if tt == "streamable_http":
                             # Filenames are model-visible context, not runtime scope.
                             # Let each MCP action's schema, instructions, and docstring
@@ -1891,10 +1857,6 @@ def _create_connector_mcp_tools(
                                 merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
                                 merged_params.pop("workspace_name", None)
                                 effective_auth_headers.pop("workspace_name", None)
-                            if sid:
-                                effective_auth_headers["x-conversation-id"] = sid
-                            if eid:
-                                effective_auth_headers["x-execution-id"] = eid
                             if wsp:
                                 effective_auth_headers["x-workspace-paths"] = ",".join(wsp)
                             if fpths:
@@ -1955,8 +1917,7 @@ def _create_connector_mcp_tools(
                     name=tn,
                     description=(
                         f"{ad} (connector: {cn}, action: {al}). "
-                        "Use this connector action to search, browse, or inspect remote items first. "
-                        "When you need those files inside the current workspace for downstream processing, call the matching import_to_workspace tool with the returned item references."
+                        "Use this connector action to search, browse, or inspect remote items first."
                     ),
                     func=None,
                     coroutine=_execute_mcp,
@@ -1984,56 +1945,3 @@ def _create_connector_mcp_tools(
 
     return tools
 
-
-def _create_connector_import_tool(
-    connector_id: str,
-    connector_name: str,
-    auth_headers: Dict[str, str],
-    workspace_id: str,
-    user_id: str,
-    platform_api_token: str,
-) -> StructuredTool:
-    settings = get_settings()
-    backend_url = getattr(settings, "API_URL", None)
-
-    async def _import_connector_items(
-        mode: str,
-        drive_id: Optional[str] = None,
-        item_id: Optional[str] = None,
-        path: Optional[str] = None,
-        item_ref: Optional[Dict[str, Any]] = None,
-        item_refs: Optional[List[Dict[str, Any]]] = None,
-        recursive: bool = True,
-    ) -> str:
-        direct_item_ref = item_ref
-        if not direct_item_ref and drive_id and (item_id or path):
-            direct_item_ref = {
-                "driveId": drive_id,
-                **({"itemId": item_id} if item_id else {}),
-                **({"path": path} if path else {}),
-            }
-        return import_connector_items_to_workspace_request(
-            backend_url=backend_url or "",
-            connector_id=connector_id,
-            connector_name=connector_name,
-            workspace_id=workspace_id,
-            auth_headers=auth_headers,
-            user_id=user_id,
-            platform_api_token=platform_api_token,
-            mode=mode,
-            item_ref=direct_item_ref,
-            item_refs=item_refs,
-            recursive=recursive,
-        )
-
-    return StructuredTool(
-        name=f"{re.sub(r'[^a-z0-9-]', '', connector_name.lower())[:24] or 'connector'}_import_to_workspace",
-        description=(
-            f"Import one file, multiple files, or a folder from {connector_name} into the current workspace. "
-            "Use the connector search or browse tools first to discover the target driveId/itemId values, then call this import tool so downstream tools like the code interpreter can access the files from workspace. "
-            "You can pass direct drive_id/item_id arguments, a direct item_ref like {driveId, itemId}, or the full item object returned by connector tools."
-        ),
-        func=None,
-        coroutine=_import_connector_items,
-        args_schema=ConnectorImportInput,
-    )

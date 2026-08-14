@@ -10,6 +10,7 @@ import { WorkyGraphBoard } from './WorkyGraphBoard';
 import { PlanDeltaToast } from './PlanDeltaToast';
 import { ApprovalModal } from './ApprovalModal';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
+import { FileViewerSidebar } from '@/modules/file-viewer';
 import { WorkyWhatsAppConnectModal } from './WorkyWhatsAppConnectModal';
 import { workyKeys } from '../query/queryKeys';
 import { subscribeToStreamEvents } from '../stream/sse';
@@ -32,7 +33,9 @@ import { WorkyVoiceDock } from './desktop/WorkyVoiceDock';
 import { WorkyTopBar } from './desktop/WorkyTopBar';
 import { WorkyActivityRail } from './desktop/WorkyActivityRail';
 import { ManagerChatSheet } from './mobile/ManagerChatSheet';
-import { VoiceSession } from './voice/VoiceSession';
+import { useWorkyVoiceSession } from '../voice/useWorkyVoiceSession';
+import { VoiceSettingsSheet } from './voice/VoiceSettingsSheet';
+import { ConciergeInstructionsDialog } from './voice/ConciergeInstructionsDialog';
 import type { WorkyEvent, WorkyMessage, WorkyPendingClarification, WorkyTask } from '../types';
 
 function summarizeDelta(event: WorkyEvent, fallback: string): string {
@@ -238,6 +241,20 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           }
           break;
         }
+        case 'message.component.appended': {
+          // Manager message components arrived (Electric message_components) — refetch
+          // the history so the bubble upgrades from plain content to rich components.
+          void qc.invalidateQueries({ queryKey: workyKeys.messages(streamId) });
+          break;
+        }
+        case 'task.component.appended':
+        case 'task.artifact.appended': {
+          void qc.invalidateQueries({ queryKey: workyKeys.board(streamId) });
+          // Refetch whichever task drawer is open (keyed by Mongo taskId, which the
+          // event's stepExternalId doesn't give us — invalidate the whole family).
+          void qc.invalidateQueries({ queryKey: ['worky', 'task-result-content'] });
+          break;
+        }
         default:
           break;
       }
@@ -277,6 +294,12 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const setOrchestratorOpen = useWorkyUiStore((s) => s.setOrchestratorOpen);
   const voiceOpen = useWorkyUiStore((s) => s.voiceOpen);
   const setVoiceOpen = useWorkyUiStore((s) => s.setVoiceOpen);
+  // Inline voice runs on the desktop dock; gate on !isMobile so the mobile sheet
+  // (which runs its own session) doesn't double-instantiate. Must be called
+  // before the isMobile early return below (Rules of Hooks).
+  const voice = useWorkyVoiceSession(streamId, voiceOpen && !isMobile);
+  const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
+  const [promptOpen, setPromptOpen] = useState(false);
   // Close the slide-over automatically on stream switch so the next
   // stream doesn't inherit the open state of the previous one.
   useEffect(() => {
@@ -360,11 +383,21 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           <KanbanBoard streamId={streamId} onTaskClick={setSelectedTask} />
         )}
       </main>
+      {selectedTask ? (
+        <TaskDetailDrawer
+          task={selectedTask}
+          onClose={() => setSelectedTask(null)}
+        />
+      ) : null}
       <WorkyActivityRail
         streamId={streamId}
         onWhatsAppClick={() => setWhatsappModalOpen(true)}
         whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
       />
+      {/* Sidebar-mode file viewer host. Floating mode is mounted globally in
+          App.tsx; sidebar mode needs a per-page host — without this, clicking
+          "view" on a desktop artifact (sidebar display mode) rendered nothing. */}
+      <FileViewerSidebar />
       </div>
       <ManagerChatSheet
         streamId={streamId}
@@ -382,10 +415,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           onClose={() => setApprovalFor(null)}
         />
       ) : null}
-      <TaskDetailDrawer
-        task={selectedTask}
-        onClose={() => setSelectedTask(null)}
-      />
       {whatsappModalOpen ? (
         <WorkyWhatsAppConnectModal
           open
@@ -393,13 +422,18 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           onClose={() => setWhatsappModalOpen(false)}
         />
       ) : null}
-      <WorkyVoiceDock onOpen={() => setVoiceOpen(true)} />
-      <VoiceSession
-        streamId={streamId}
-        open={voiceOpen}
-        onOpenChange={setVoiceOpen}
-        onKeyboard={() => setOrchestratorOpen(true)}
+      <WorkyVoiceDock
+        state={voice.state}
+        level={voice.level}
+        muted={voice.muted}
+        active={voiceOpen}
+        onToggle={() => setVoiceOpen(!voiceOpen)}
+        onMute={voice.toggleMute}
+        onOpenSettings={() => setVoiceSettingsOpen(true)}
+        onOpenPrompt={() => setPromptOpen(true)}
       />
+      <VoiceSettingsSheet open={voiceSettingsOpen} onOpenChange={setVoiceSettingsOpen} level={voice.level} />
+      <ConciergeInstructionsDialog streamId={streamId} open={promptOpen} onOpenChange={setPromptOpen} />
     </div>
   );
 }

@@ -36,6 +36,10 @@ export class WorkyMessage extends Document {
   @Prop({ type: Date, default: null })
   emittedAt?: Date | null;
 
+  /** Set to 'voice' when the message originates from the realtime voice concierge. */
+  @Prop({ type: String, required: false, enum: ['voice'] })
+  origin?: 'voice';
+
   createdAt!: Date;
   updatedAt!: Date;
 }
