@@ -73,6 +73,7 @@ describe('RightPanel', () => {
         },
         fileCount: 2,
         revision: 'app-1',
+        workspaceRevisionId: 'rev_15',
       },
     });
 
@@ -83,7 +84,22 @@ describe('RightPanel', () => {
       'src',
       'https://nodepod.local/__virtual__/3000/',
     );
-    expect(screen.getByRole('button', { name: /publish/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /publish/i })).toBeEnabled();
+  });
+
+  it('enables Publish once an application component is ready', () => {
+    useConversationV2Store.setState({
+      rightPanelMode: 'app',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'https://preview.example/app',
+        revision: 'app-1',
+      },
+    });
+
+    render(<RightPanel />);
+
+    expect(screen.getByRole('button', { name: /publish/i })).toBeEnabled();
   });
 
   it('disables deploy and shows only the spinner while deployment is running', () => {
@@ -93,6 +109,7 @@ describe('RightPanel', () => {
         title: 'Generated app',
         url: 'https://preview.example/app',
         revision: 'app-1',
+        workspaceRevisionId: 'rev_15',
       },
       deployStatus: 'deploying',
     });

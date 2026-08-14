@@ -6,6 +6,7 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
+import { Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { Subscription } from 'rxjs';
@@ -361,7 +362,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
    */
   async publishApplicationComponent(
     userId: string,
-    sessionId: string,
+    sessionOrWorkspaceId: string,
     payload: {
       event_id: string;
       timestamp: number;
@@ -373,6 +374,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
       revision_id?: string;
     },
   ): Promise<void> {
+    const sessionId = await this.resolveConversationSessionId(sessionOrWorkspaceId);
     const event = {
       type: 'application_component',
       payload,
@@ -380,6 +382,20 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     const { sequence } = await this.eventStore.append(sessionId, event);
     await this.pointerWriter.apply(sessionId, event).catch(() => undefined);
     this.push(userId, sessionId, event, sequence);
+  }
+
+  /**
+   * Runtime bindings are keyed by APImanus `aiSessionId` (`workspaceId`).
+   * Conversation events are keyed by the YellowStorm pointer `_id`.
+   */
+  private async resolveConversationSessionId(sessionOrWorkspaceId: string): Promise<string> {
+    const byAi = await this.sessions.findByAiSessionId(sessionOrWorkspaceId);
+    if (byAi?._id) return byAi._id.toString();
+    if (Types.ObjectId.isValid(sessionOrWorkspaceId)) {
+      const byId = await this.sessions.getById(sessionOrWorkspaceId);
+      if (byId?._id) return byId._id.toString();
+    }
+    throw new NotFoundException(`Invalid session id ${sessionOrWorkspaceId}`);
   }
 
   /** Persist one event, run side effects, and push it to the user's pipe. */

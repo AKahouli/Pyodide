@@ -180,8 +180,11 @@ export class RuntimeToolDispatcherService {
     }
 
     const binding = await this.bindings.findByWorkspaceId(workspaceId);
+    // Prefer the live binding revision. MCP `baseRevisionId` is a snapshot from
+    // before the mutation lock; using it here rolls the browser back when a
+    // queued write still carries the previous revision.
     const expectedRevisionId =
-      params.baseRevisionId ?? binding?.latestRevisionId ?? 'rev_0';
+      binding?.latestRevisionId ?? params.baseRevisionId ?? 'rev_0';
 
     if (isMutating && connection.revisionId !== expectedRevisionId) {
       const revisionPersisted = await this.revisions.revisionExists(

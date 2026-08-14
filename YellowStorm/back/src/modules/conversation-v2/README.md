@@ -143,9 +143,22 @@ Single-file attachments still use `POST /conversation-v2/files/signed-url`.
 
 ## Deploy
 
-`POST /conversation-v2/sessions/:id/deploy` → App Builder HTTP
-(`conversation-v2-deploy.service.ts`). Unchanged by Nodepod: publish stays on
-the remote App Builder URL; the in-browser preview keeps using Ceph sources.
+`POST /conversation-v2/sessions/:id/deploy` launches the finalized revision:
+
+```json
+POST https://app-deployer.yellowsys.org/app/deploy
+{ "aiSessionId": "<pointer.aiSessionId>", "revisionId": "rev_15" }
+```
+
+Then polls every 15s:
+
+```json
+POST https://app-deployer.yellowsys.org/app/deploy/status
+{ "aiSessionId": "<pointer.aiSessionId>" }
+```
+
+When status is `ready`, YellowStorm stores `url` / `preview_url` and the frontend
+switches the right-panel iframe from Nodepod to the live app.
 
 ## Key files
 

@@ -27,6 +27,13 @@ describe('ConversationV2StreamService', () => {
   let chat$: Subject<ConversationV2Event>;
   let gateway: { sendToUser: jest.Mock };
   let eventStore: { append: jest.Mock; tagModel: jest.Mock };
+  let sessions: {
+    getOne: jest.Mock;
+    getById: jest.Mock;
+    findByAiSessionId: jest.Mock;
+    setSelectedSkills: jest.Mock;
+    setSelectedConnectors: jest.Mock;
+  };
 
   const pointer = {
     aiSessionId: 'ai-1',
@@ -41,6 +48,13 @@ describe('ConversationV2StreamService', () => {
     eventStore = {
       append: jest.fn().mockImplementation(async () => ({ sequence: ++seq, inserted: true })),
       tagModel: jest.fn().mockResolvedValue(undefined),
+    };
+    sessions = {
+      getOne: jest.fn().mockResolvedValue(pointer),
+      getById: jest.fn().mockResolvedValue(null),
+      findByAiSessionId: jest.fn().mockResolvedValue(null),
+      setSelectedSkills: jest.fn().mockResolvedValue(undefined),
+      setSelectedConnectors: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -62,14 +76,7 @@ describe('ConversationV2StreamService', () => {
             })),
           },
         },
-        {
-          provide: ConversationV2SessionService,
-          useValue: {
-            getOne: jest.fn().mockResolvedValue(pointer),
-            setSelectedSkills: jest.fn().mockResolvedValue(undefined),
-            setSelectedConnectors: jest.fn().mockResolvedValue(undefined),
-          },
-        },
+        { provide: ConversationV2SessionService, useValue: sessions },
         { provide: ConversationV2StreamGatewayService, useValue: gateway },
         { provide: WorkspaceDocumentService, useValue: { createFromAiArtifact: jest.fn() } },
         { provide: SkillService, useValue: { findByIdsForGrpc: jest.fn().mockResolvedValue([]) } },
@@ -181,5 +188,42 @@ describe('ConversationV2StreamService', () => {
     expect(errorFrame).toBeTruthy();
     expect(errorFrame.data.error).toBe('upstream boom');
     expect(service.isStreaming('u1', 's1')).toBe(false);
+  });
+
+  it('publishApplicationComponent maps an APImanus workspace id to the YellowStorm pointer', async () => {
+    const pointerId = '507f1f77bcf86cd799439011';
+    sessions.findByAiSessionId.mockResolvedValueOnce({ _id: pointerId });
+
+    await service.publishApplicationComponent('u1', '72e7924c2cc04f5f', {
+      event_id: 'app-1',
+      timestamp: 1,
+      url: 'nodepod://preview',
+      title: 'Finance app',
+      revision_id: 'rev_8',
+    });
+
+    expect(sessions.findByAiSessionId).toHaveBeenCalledWith('72e7924c2cc04f5f');
+    expect(eventStore.append).toHaveBeenCalledWith(
+      pointerId,
+      expect.objectContaining({ type: 'application_component' }),
+    );
+    expect(gateway.sendToUser).toHaveBeenCalledWith(
+      'u1',
+      expect.objectContaining({
+        type: 'application_component',
+        data: expect.objectContaining({ sessionId: pointerId, revision_id: 'rev_8' }),
+      }),
+    );
+  });
+
+  it('publishApplicationComponent rejects an unknown workspace id', async () => {
+    await expect(
+      service.publishApplicationComponent('u1', '72e7924c2cc04f5f', {
+        event_id: 'app-1',
+        timestamp: 1,
+        url: 'nodepod://preview',
+      }),
+    ).rejects.toThrow('Invalid session id 72e7924c2cc04f5f');
+    expect(eventStore.append).not.toHaveBeenCalled();
   });
 });

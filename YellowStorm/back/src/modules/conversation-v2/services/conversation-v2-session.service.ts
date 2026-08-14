@@ -162,6 +162,20 @@ export class ConversationV2SessionService {
       .exec() as unknown as ConversationV2SessionDocument | null;
   }
 
+  /**
+   * App-runtime workspace id is the APImanus session id. Event persistence
+   * still keys on the YellowStorm pointer `_id`.
+   */
+  async findByAiSessionId(
+    aiSessionId: string,
+  ): Promise<ConversationV2SessionDocument | null> {
+    if (!aiSessionId) return null;
+    return this.model
+      .findOne({ aiSessionId, deletedAt: null })
+      .lean()
+      .exec() as unknown as ConversationV2SessionDocument | null;
+  }
+
   async getByShareToken(shareTokenHash: string): Promise<ConversationV2SessionDocument | null> {
     return this.model
       .findOne({ shareTokenHash, isShared: true, deletedAt: null })

@@ -144,8 +144,8 @@
     }
   },
   "deploy": {
-    "publish": "Publish",
-    "publishing": "Publishing…",
+    "publish": "Deploy",
+    "publishing": "Deploying…",
     "update": "Update",
     "liveUrl": "Live URL",
     "copy": "Copy link",

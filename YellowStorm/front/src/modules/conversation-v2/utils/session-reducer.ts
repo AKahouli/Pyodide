@@ -161,7 +161,7 @@ export function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSl
         filesTree: normalizeFilesTree(event.files_tree) ?? event.files_tree ?? null,
         fileCount: event.file_count,
         revision: event.event_id,
-        workspaceRevisionId: event.revision_id,
+        workspaceRevisionId: event.revision_id ?? slice.applicationComponent?.workspaceRevisionId,
       };
       return {
         ...base,
@@ -223,7 +223,7 @@ export function deriveApplicationComponent(
         filesTree: normalizeFilesTree(ev.files_tree) ?? ev.files_tree ?? null,
         fileCount: ev.file_count,
         revision: ev.event_id,
-        workspaceRevisionId: ev.revision_id,
+        workspaceRevisionId: ev.revision_id ?? previous?.workspaceRevisionId,
       };
     }
   }

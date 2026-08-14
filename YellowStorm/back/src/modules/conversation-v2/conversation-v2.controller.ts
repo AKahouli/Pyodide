@@ -52,6 +52,7 @@ import { ConversationV2AppShareService } from './services/conversation-v2-app-sh
 import { normalizeAppSourceCephPrefix } from './utils/normalize-app-source-ceph-prefix';
 import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
 import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
+import { RuntimeBindingService } from '@modules/app-runtime/services/runtime-binding.service';
 import type { RuntimeTicketResult } from '@modules/app-runtime/types/app-runtime-protocol';
 
 interface AuthUser { id: string; }
@@ -80,6 +81,7 @@ export class ConversationV2Controller {
     private readonly appShares: ConversationV2AppShareService,
     private readonly runtimeTickets: RuntimeTicketService,
     private readonly runtimeRevisions: RuntimeRevisionService,
+    private readonly runtimeBindings: RuntimeBindingService,
   ) {}
 
   @Post('sessions')
@@ -450,7 +452,13 @@ export class ConversationV2Controller {
 
     let deployedUrl: string;
     try {
-      const result = await this.deployment.deploy(ownerId, pointer.aiSessionId);
+      const revisionId = await this.resolveDeployRevisionId(pointer.aiSessionId, body.revisionId);
+      if (!revisionId) {
+        throw new BadRequestException(
+          'No finalized revision is available to deploy. Wait until the app is ready.',
+        );
+      }
+      const result = await this.deployment.deploy(pointer.aiSessionId, revisionId);
       deployedUrl = result.url;
     } catch (err) {
       await this.sessions
@@ -723,6 +731,21 @@ export class ConversationV2Controller {
       throw new NotFoundException('Session not found');
     }
     return aiSessionId;
+  }
+
+  private async resolveDeployRevisionId(
+    aiSessionId: string,
+    requestedRevisionId?: string,
+  ): Promise<string | undefined> {
+    const trimmed = requestedRevisionId?.trim();
+    if (trimmed) return trimmed;
+
+    const binding = await this.runtimeBindings.findByWorkspaceId(aiSessionId);
+    const latest = binding?.latestRevisionId?.trim();
+    if (!latest || latest === 'starter_react_vite_v1') {
+      return undefined;
+    }
+    return latest;
   }
 
   private translateGrpcError(err: unknown): never {

@@ -497,11 +497,42 @@ describe('useConversationV2Store', () => {
 
     await useConversationV2Store.getState().deploy();
 
-    expect(deploySpy).toHaveBeenCalledWith('session-1', 'Generated app');
+    expect(deploySpy).toHaveBeenCalledWith('session-1', {
+      title: 'Generated app',
+      revisionId: undefined,
+    });
     expect(useConversationV2Store.getState().lastDeployedAt).toBe(
       '2026-07-17T10:00:00.000Z',
     );
     expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
+  });
+
+  it('deploy sends the finalized workspace revision id', async () => {
+    const deploySpy = vi.spyOn(conversationV2Api, 'deploySession').mockResolvedValueOnce({
+      deployStatus: 'deployed',
+      deployedUrl: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      lastDeployedAt: '2026-08-14T10:00:00.000Z',
+    });
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'nodepod://preview',
+        revision: 'evt-1',
+        workspaceRevisionId: 'rev_15',
+      },
+    });
+
+    await useConversationV2Store.getState().deploy();
+
+    expect(deploySpy).toHaveBeenCalledWith('session-1', {
+      title: 'Generated app',
+      revisionId: 'rev_15',
+    });
+    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
+    expect(useConversationV2Store.getState().deployedUrl).toBe(
+      'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+    );
   });
 
   it('replayEvents restores application sources without overwriting with deployed URL', () => {
@@ -528,6 +559,29 @@ describe('useConversationV2Store', () => {
       filesTree: null,
       fileCount: undefined,
       revision: 'app-1',
+      workspaceRevisionId: undefined,
     });
+  });
+
+  it('keeps workspaceRevisionId when a later application_component omits revision_id', () => {
+    const { handleEvent } = useConversationV2Store.getState();
+    handleEvent({
+      type: 'application_component',
+      event_id: 'app-1',
+      timestamp: 1,
+      title: 'App',
+      url: 'nodepod://preview',
+      revision_id: 'rev_15',
+    });
+    handleEvent({
+      type: 'application_component',
+      event_id: 'app-2',
+      timestamp: 2,
+      title: 'App',
+      url: 'nodepod://preview',
+    });
+    expect(useConversationV2Store.getState().applicationComponent?.workspaceRevisionId).toBe(
+      'rev_15',
+    );
   });
 });

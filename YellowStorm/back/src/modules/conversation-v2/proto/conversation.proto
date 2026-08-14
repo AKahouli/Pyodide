@@ -176,6 +176,7 @@ message ApplicationComponentEvent {
   string ceph_path = 3;         // Ceph storage path of the generated project
   string files_tree_json = 4;   // JSON-encoded nested source file tree
   int32  file_count = 5;        // total number of generated source files
+  string revision_id = 6;       // finalized workspace revision (e.g. rev_15)
 }
 
 message ToolContent {

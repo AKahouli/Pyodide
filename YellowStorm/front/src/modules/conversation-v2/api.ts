@@ -110,11 +110,17 @@ export const conversationV2Api = {
   async deleteSession(sessionId: string): Promise<void> {
     await apiClient.delete(`/conversation-v2/sessions/${sessionId}`);
   },
-  async deploySession(sessionId: string, title?: string): Promise<DeployState> {
+  async deploySession(
+    sessionId: string,
+    options?: { title?: string; revisionId?: string },
+  ): Promise<DeployState> {
     const res = await apiClient.post<ApiResponse<DeployState>>(
       `/conversation-v2/sessions/${sessionId}/deploy`,
-      { title: title || undefined },
-      { timeout: 200_000 },
+      {
+        title: options?.title || undefined,
+        revisionId: options?.revisionId || undefined,
+      },
+      { timeout: 630_000 },
     );
     return res.data.data;
   },

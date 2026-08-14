@@ -57,14 +57,15 @@ export default registerAs('conversationV2', () => ({
     process.env.CONVERSATION_V2_GRPC_IDLE_TIMEOUT_MS || '900000',
     10,
   ),
-  appBuilderDeployBaseUrl: process.env.APP_BUILDER_DEPLOY_BASE_URL,
+  appBuilderDeployBaseUrl:
+    process.env.APP_BUILDER_DEPLOY_BASE_URL || 'https://app-deployer.yellowsys.org/',
   appBuilderDeployToken: process.env.APP_BUILDER_DEPLOY_TOKEN,
   appBuilderDeployTimeoutMs: Number.parseInt(
     process.env.APP_BUILDER_DEPLOY_TIMEOUT_MS || `${10 * 60 * 1000}`,
     10,
   ),
   appBuilderDeployInitialStatusDelayMs: Number.parseInt(
-    process.env.APP_BUILDER_DEPLOY_INITIAL_STATUS_DELAY_MS || '20000',
+    process.env.APP_BUILDER_DEPLOY_INITIAL_STATUS_DELAY_MS || '15000',
     10,
   ),
   appBuilderDeployStatusPollIntervalMs: Number.parseInt(

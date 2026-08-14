@@ -353,6 +353,54 @@ describe('RuntimeToolDispatcherService', () => {
       expect(inFlight).toEqual(['tc_1', 'tc_2']);
     });
 
+    it('applies queued writes against the live revision instead of a stale MCP base', async () => {
+      let latest = 'rev_8';
+      findByWorkspaceId.mockImplementation(async () => ({
+        ...BINDING,
+        latestRevisionId: latest,
+      }));
+      updateRevision.mockImplementation(async (_workspaceId: string, revisionId: string) => {
+        latest = revisionId;
+      });
+      connect({ revisionId: 'rev_8' });
+
+      let next = 8;
+      socket.emit.mockImplementation((event: string, payload: { toolCallId: string }) => {
+        if (event !== 'tool.invoke') return;
+        next += 1;
+        const revisionId = `rev_${next}`;
+        setImmediate(() =>
+          dispatcher.handleCompleted('sess_1', {
+            toolCallId: payload.toolCallId,
+            result: { revisionId },
+          }),
+        );
+      });
+
+      const [first, second] = await Promise.all([
+        dispatcher.invoke({
+          workspaceId: 'sess_1',
+          toolCallId: 'tc_1',
+          tool: 'write',
+          arguments: { path: 'a.ts' },
+          baseRevisionId: 'rev_8',
+        }),
+        dispatcher.invoke({
+          workspaceId: 'sess_1',
+          toolCallId: 'tc_2',
+          tool: 'write',
+          arguments: { path: 'b.ts' },
+          baseRevisionId: 'rev_8',
+        }),
+      ]);
+
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      expect(socket.emit).not.toHaveBeenCalledWith('runtime.rehydrate', expect.anything());
+      expect(updateRevision).toHaveBeenCalledWith('sess_1', 'rev_9');
+      expect(updateRevision).toHaveBeenCalledWith('sess_1', 'rev_10');
+    });
+
     it('fails with TOOL_TIMEOUT when waiting for the mutation lock expires', async () => {
       (config.get as jest.Mock).mockImplementation(
         (key: string, fallback?: number) =>

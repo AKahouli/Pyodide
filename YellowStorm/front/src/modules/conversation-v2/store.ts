@@ -642,10 +642,10 @@ export const useConversationV2Store = create<State & Actions>()(
         if (!id) return;
         set({ deployStatus: 'deploying' }, false, 'deploy/start');
         try {
-          const r = await conversationV2Api.deploySession(
-            id,
-            get().applicationComponent?.title,
-          );
+          const r = await conversationV2Api.deploySession(id, {
+            title: get().applicationComponent?.title,
+            revisionId: get().applicationComponent?.workspaceRevisionId,
+          });
           set(
             {
               deployStatus: r.deployStatus,
@@ -963,7 +963,8 @@ export const useConversationV2Store = create<State & Actions>()(
                     filesTree: normalizeFilesTree(event.files_tree) ?? event.files_tree ?? null,
                     fileCount: event.file_count,
                     revision: event.event_id,
-                    workspaceRevisionId: event.revision_id,
+                    workspaceRevisionId:
+                      event.revision_id ?? state.applicationComponent?.workspaceRevisionId,
                   },
                   appBuildProgress: null,
                   rightPanelMode: 'app',
