@@ -25,6 +25,7 @@ import {
   RuntimeConnection,
   RuntimeConnectionRegistry,
 } from './runtime-connection.registry';
+import { RuntimeRevisionService } from './runtime-revision.service';
 
 export interface InvokeToolParams {
   workspaceId: string;
@@ -72,6 +73,7 @@ export class RuntimeToolDispatcherService {
     private readonly toolCalls: Model<AppRuntimeToolCallDocument>,
     private readonly bindings: RuntimeBindingService,
     private readonly registry: RuntimeConnectionRegistry,
+    private readonly revisions: RuntimeRevisionService,
     private readonly config: ConfigService,
   ) {}
 
@@ -182,19 +184,37 @@ export class RuntimeToolDispatcherService {
       params.baseRevisionId ?? binding?.latestRevisionId ?? 'rev_0';
 
     if (isMutating && connection.revisionId !== expectedRevisionId) {
-      connection.socket.emit(AppRuntimeEvents.REHYDRATE, {
+      const revisionPersisted = await this.revisions.revisionExists(
         workspaceId,
         expectedRevisionId,
-        actualRevisionId: connection.revisionId,
-      });
+      );
+      if (revisionPersisted) {
+        connection.socket.emit(AppRuntimeEvents.REHYDRATE, {
+          workspaceId,
+          expectedRevisionId,
+          actualRevisionId: connection.revisionId,
+        });
+        this.logger.warn(
+          `Stale browser filesystem workspaceId=${workspaceId} expected=${expectedRevisionId} actual=${connection.revisionId}`,
+        );
+        return this.settleFailure(
+          toolCallId,
+          runtimeError(
+            AppRuntimeErrorCodes.REVISION_CONFLICT,
+            'Browser filesystem is behind the workspace revision; rehydration requested',
+            { expectedRevisionId, actualRevisionId: connection.revisionId },
+          ),
+        );
+      }
+
       this.logger.warn(
-        `Stale browser filesystem workspaceId=${workspaceId} expected=${expectedRevisionId} actual=${connection.revisionId}`,
+        `Revision ${expectedRevisionId} not persisted for workspaceId=${workspaceId}; browser at ${connection.revisionId}`,
       );
       return this.settleFailure(
         toolCallId,
         runtimeError(
           AppRuntimeErrorCodes.REVISION_CONFLICT,
-          'Browser filesystem is behind the workspace revision; rehydration requested',
+          'Workspace revision is not yet available in Ceph; retry the mutation',
           { expectedRevisionId, actualRevisionId: connection.revisionId },
         ),
       );

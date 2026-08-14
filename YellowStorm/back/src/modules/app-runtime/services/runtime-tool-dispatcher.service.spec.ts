@@ -34,6 +34,7 @@ describe('RuntimeToolDispatcherService', () => {
   const findByWorkspaceId = jest.fn();
   const markWaitingForBrowser = jest.fn();
   const updateRevision = jest.fn();
+  const revisionExists = jest.fn().mockResolvedValue(true);
 
   const config = {
     get: jest.fn((key: string, fallback?: number) => CONFIG[key] ?? fallback),
@@ -96,6 +97,7 @@ describe('RuntimeToolDispatcherService', () => {
         updateRevision,
       } as unknown as RuntimeBindingService,
       registry,
+      { revisionExists } as unknown as import('./runtime-revision.service').RuntimeRevisionService,
       config,
     );
   });
@@ -222,6 +224,7 @@ describe('RuntimeToolDispatcherService', () => {
     it('requests rehydration and refuses a mutation on a stale filesystem', async () => {
       connect({ revisionId: 'rev_0' });
       findByWorkspaceId.mockResolvedValue({ ...BINDING, latestRevisionId: 'rev_4' });
+      revisionExists.mockResolvedValueOnce(true);
 
       const envelope = await dispatcher.invoke({
         workspaceId: 'sess_1',
@@ -241,6 +244,26 @@ describe('RuntimeToolDispatcherService', () => {
         actualRevisionId: 'rev_0',
       });
       expect(socket.emit).not.toHaveBeenCalledWith('tool.invoke', expect.anything());
+    });
+
+    it('refuses rehydrate when the expected revision is not persisted yet', async () => {
+      connect({ revisionId: 'rev_0' });
+      findByWorkspaceId.mockResolvedValue({ ...BINDING, latestRevisionId: 'rev_4' });
+      revisionExists.mockResolvedValueOnce(false);
+
+      const envelope = await dispatcher.invoke({
+        workspaceId: 'sess_1',
+        toolCallId: 'tc_1',
+        tool: 'write',
+        arguments: { path: 'a.ts', content: 'x' },
+      });
+
+      expect(asFailure(envelope)).toEqual({
+        code: AppRuntimeErrorCodes.REVISION_CONFLICT,
+        message: expect.stringContaining('not yet available'),
+        data: { expectedRevisionId: 'rev_4', actualRevisionId: 'rev_0' },
+      });
+      expect(socket.emit).not.toHaveBeenCalledWith('runtime.rehydrate', expect.anything());
     });
 
     it('lets a read through on a stale filesystem', async () => {
