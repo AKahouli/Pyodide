@@ -696,6 +696,8 @@ export const API_ENDPOINTS = {
     voiceSession: '/worky/voice/session',
     voiceDispatch: '/worky/voice/tool/dispatch',
     voiceStatus: '/worky/voice/tool/status',
+    voiceListTasks: '/worky/voice/tool/list-tasks',
+    voiceTaskDetails: '/worky/voice/tool/task-details',
     voiceTranscript: '/worky/voice/tool/transcript',
     voicePrompt: (streamId: string) => `/worky/voice/prompt/${streamId}`,
     whatsappIntegration: (id: string) => `/worky/streams/${id}/whatsapp-integration`,
