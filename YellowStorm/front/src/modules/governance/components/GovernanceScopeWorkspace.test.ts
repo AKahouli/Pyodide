@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GovernanceScope } from '@/modules/governance';
-import { buildScopeSettingsPayload, createScopeSettingsDraft, isScopeSettingsDraftDirty } from './GovernanceScopeWorkspace';
+import { buildScopeSettingsPayload, buildScopeWorkspaceBindingPayload, createScopeSettingsDraft, isScopeSettingsDraftDirty } from './GovernanceScopeWorkspace';
 
 function scopeWithDescription(description: string): GovernanceScope {
   return {
@@ -37,6 +37,18 @@ describe('governance scope settings description', () => {
       description: 'New guidance',
       classification: { audience: 'public_facing', riskLevel: 'standard', compliance: 'none', stage: 'pilot' },
       review: { status: 'in_review' },
+    });
+  });
+});
+
+describe('scope workspace connections', () => {
+  it('uses fixed MVP defaults instead of exposing ingestion and versioning settings', () => {
+    expect(buildScopeWorkspaceBindingPayload('workspace-1', 'scope-1')).toEqual({
+      workspaceId: 'workspace-1',
+      visibility: 'scope_specific',
+      scopeIds: ['scope-1'],
+      ingestionMode: 'assisted',
+      defaults: { validityMode: 'unknown' },
     });
   });
 });

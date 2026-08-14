@@ -66,9 +66,8 @@ export function GovernanceReadinessPanel({ className, overview, onNavigateTab }:
   const visibleWarnings = sortReadinessChecks(overview.readiness.warnings.filter((check) => isUserVisibleCheck(check.key)));
   const checks = sortReadinessChecks(overview.readiness.checks.filter((check) => isUserVisibleCheck(check.key)));
   const nextAction = findNextReadinessCheck(checks);
-  const hasMappedWorkspace = overview.knowledge.sharedWorkspaces.length + overview.knowledge.localWorkspaces.length > 0;
-  const actionLabelKey = nextAction?.key === 'knowledge_mapped' && hasMappedWorkspace ? 'scopeShell.readiness.actions.prepareKnowledge' : nextAction ? actionLabelKeys[nextAction.key] : undefined;
-  const actionHelpKey = nextAction?.key === 'knowledge_mapped' && hasMappedWorkspace ? 'scopeShell.readiness.help.prepareKnowledge' : nextAction ? actionHelpKeys[nextAction.key] : undefined;
+  const actionLabelKey = nextAction ? actionLabelKeys[nextAction.key] : undefined;
+  const actionHelpKey = nextAction ? actionHelpKeys[nextAction.key] : undefined;
   const nextActionLabel = nextAction ? (actionLabelKey ? t(actionLabelKey as never) : translateBlocker(nextAction.key, nextAction.label)) : undefined;
   const nextActionHelp = nextAction ? (actionHelpKey ? t(actionHelpKey as never) : translateBlocker(nextAction.key, nextAction.label)) : undefined;
   const nextActionTab = nextAction ? tabForCheck(nextAction.key) : undefined;

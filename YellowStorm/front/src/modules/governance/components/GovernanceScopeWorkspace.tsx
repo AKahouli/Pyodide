@@ -39,20 +39,18 @@ import {
   type GovernanceMembershipRole,
   type GovernanceMetric,
   type GovernanceScope,
-  type GovernanceDocument,
+  type CreateGovernanceWorkspaceBindingPayload,
   type GovernanceScopeMetadata,
   type GovernanceScopeOverview,
   type GovernanceUserSearchResult,
 } from '@/modules/governance';
 import { GovernanceAgentName } from './GovernanceAgentSelector';
 import { GovernanceDryRunConversationModal } from './GovernanceDryRunConversationModal';
-import { DocumentPassportDrawer } from './document/DocumentPassportDrawer';
 import { WorkspaceBindingList as WorkspaceBindingListPanel } from './bindings/WorkspaceBindingList';
-import { KnowledgeActionCenter } from './intelligence/KnowledgeActionCenter';
 import { dataRoomFeatures } from '@/config/dataRoomFeatures';
 import { governanceQueryKeys } from '../query/queryKeys';
 import { ScopeAudienceTab } from './scope/ScopeAudienceTab';
-import { getLatestDryRunRevisionNumber, governanceScopeTabs, isCurrentDraftDryRunPassed, isScopeKnowledgeReady, type TabKey } from './scope-readiness';
+import { getLatestDryRunRevisionNumber, governanceScopeTabs, isCurrentDraftDryRunPassed, type TabKey } from './scope-readiness';
 
 export type { TabKey } from './scope-readiness';
 
@@ -197,7 +195,7 @@ export function GovernanceScopeWorkspace({ programId, scopeId, overview, members
       </div>
       <div className='p-5'>
         {activeTab === 'overview' && settingsDraft && <OverviewTab programId={programId} overview={overview} settingsDraft={settingsDraft} onSettingsDraftChange={setSettingsDraft} onNavigate={(tab) => void changeTab(tab)} />}
-        {activeTab === 'knowledge' && <KnowledgeTab programId={programId} scopeId={scopeId} overview={overview} />}
+        {activeTab === 'knowledge' && <KnowledgeTab programId={programId} scopeId={scopeId} />}
         {activeTab === 'agents' && <AgentsTab programId={programId} scopeId={scopeId} overview={overview} />}
         {activeTab === 'audience' && programId && <ScopeAudienceTab programId={programId} scopeId={scopeId} />}
         {activeTab === 'ownership' && <OwnershipTab programId={programId} memberships={memberships} scopeId={scopeId} />}
@@ -440,25 +438,22 @@ function ChannelStatusPill({ value }: Readonly<{ value: unknown }>): JSX.Element
   );
 }
 
-function KnowledgeTab({ programId, scopeId, overview }: Readonly<{ programId: string | null; scopeId: string; overview: GovernanceScopeOverview }>): JSX.Element {
+function KnowledgeTab({ programId, scopeId }: Readonly<{ programId: string | null; scopeId: string }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [passportDocument, setPassportDocument] = useState<GovernanceDocument | null>(null);
-  const workspaces = useWorkspaces();
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const { data: bindings = [] } = useGovernanceWorkspaceBindings(dataRoomFeatures.workspaceBindingEnabled ? programId : null);
-  const documents = overview.knowledge.documents;
-  const knowledgeReady = isScopeKnowledgeReady(overview);
-  const workspaceNames = Object.fromEntries(workspaces.map((workspace) => [workspace.id, workspace.name]));
   const scopeBindings = bindings.filter((binding) => binding.visibility === 'program_shared' || binding.scopeIds?.includes(scopeId));
-  const mappedWorkspaceIds = [...documents.map((document) => document.workspaceId), ...scopeBindings.map((binding) => binding.workspaceId)].filter((id): id is string => Boolean(id));
+  const mappedWorkspaceIds = scopeBindings.map((binding) => binding.workspaceId);
 
   useEffect(() => { void fetchWorkspaces(1); }, [fetchWorkspaces]);
 
+  if (!dataRoomFeatures.workspaceBindingEnabled) {
+    return <p className='text-sm text-muted-foreground'>{t('workspaceBinding.connectionUnavailable')}</p>;
+  }
+
   return (
     <div className='grid gap-4'>
-      {dataRoomFeatures.knowledgeAssessmentEnabled && documents.length > 0 && <KnowledgeActionCenter programId={programId} scopeId={scopeId} documents={documents} workspaceNames={workspaceNames} onOpenDocument={(documentId) => { const document = documents.find((item) => item.documentId === documentId); if (document) setPassportDocument(document); }} />}
-      {scopeBindings.length > 0 && !knowledgeReady && <div className='rounded-xl border bg-muted/40 p-4'><p className='text-sm font-medium'>{t('scopeShell.knowledge.connectedTitle')}</p><p className='mt-1 text-xs text-muted-foreground'>{t('scopeShell.knowledge.connectedDescription')}</p></div>}
       <div className='flex items-center justify-between gap-3'>
         <div>
           <h3 className='text-sm font-semibold'>{t('scopeShell.knowledge.mapTitle')}</h3>
@@ -467,14 +462,22 @@ function KnowledgeTab({ programId, scopeId, overview }: Readonly<{ programId: st
         <Button type='button' size='sm' className='min-h-11' onClick={() => setDialogOpen(true)}>{t('scopeShell.knowledge.addWorkspace')}</Button>
       </div>
       <div className='grid gap-2'>
-        {dataRoomFeatures.workspaceBindingEnabled && <WorkspaceBindingListPanel programId={programId} bindings={scopeBindings} />}
-        {documents.map((document) => <button type='button' key={document.id} onClick={() => setPassportDocument(document)} className='flex items-center justify-between gap-3 rounded-xl border p-3 text-left hover:bg-muted/20'><span className='min-w-0'><span className='block truncate font-medium'>{document.document.originalName}</span><span className='text-xs text-muted-foreground'>{t(`documentPassport.status.${document.governance.status}` as never)}</span></span></button>)}
-        {documents.length === 0 && scopeBindings.length === 0 && <GuidedEmptyState title={t('scopeShell.knowledge.emptyTitle')} description={t('scopeShell.knowledge.empty')} actionLabel={t('scopeShell.knowledge.addWorkspace')} onAction={() => setDialogOpen(true)} />}
+        <WorkspaceBindingListPanel programId={programId} scopeId={scopeId} bindings={scopeBindings} />
+        {scopeBindings.length === 0 && <GuidedEmptyState title={t('scopeShell.knowledge.emptyTitle')} description={t('scopeShell.knowledge.empty')} actionLabel={t('scopeShell.knowledge.addWorkspace')} onAction={() => setDialogOpen(true)} />}
       </div>
       <WorkspaceMapDialog open={dialogOpen} onOpenChange={setDialogOpen} programId={programId} scopeId={scopeId} mappedWorkspaceIds={mappedWorkspaceIds} />
-      <DocumentPassportDrawer open={Boolean(passportDocument)} onOpenChange={(open) => !open && setPassportDocument(null)} programId={programId} document={passportDocument} />
     </div>
   );
+}
+
+export function buildScopeWorkspaceBindingPayload(workspaceId: string, scopeId: string): CreateGovernanceWorkspaceBindingPayload {
+  return {
+    workspaceId,
+    visibility: 'scope_specific',
+    scopeIds: [scopeId],
+    ingestionMode: 'assisted',
+    defaults: { validityMode: 'unknown' },
+  };
 }
 
 function WorkspaceMapDialog({ open, onOpenChange, programId, scopeId, mappedWorkspaceIds }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; programId: string | null; scopeId: string; mappedWorkspaceIds: string[] }>): JSX.Element {
@@ -487,9 +490,6 @@ function WorkspaceMapDialog({ open, onOpenChange, programId, scopeId, mappedWork
   const isLoading = useWorkspaceStore((state) => state.isLoadingWorkspaces);
   const [search, setSearch] = useState('');
   const [addedIds, setAddedIds] = useState<string[]>([]);
-  const [visibility, setVisibility] = useState<'program_shared' | 'scope_specific'>('scope_specific');
-  const [ingestionMode, setIngestionMode] = useState<'manual' | 'assisted' | 'automatic'>('assisted');
-  const [reviewFrequencyDays, setReviewFrequencyDays] = useState('');
 
   useEffect(() => {
     if (open) void fetchWorkspaces(1);
@@ -502,12 +502,12 @@ function WorkspaceMapDialog({ open, onOpenChange, programId, scopeId, mappedWork
   }, [search, searchWorkspaces, open]);
 
   useEffect(() => {
-    if (!open) { setSearch(''); setAddedIds([]); setVisibility('scope_specific'); setIngestionMode('assisted'); setReviewFrequencyDays(''); }
+    if (!open) { setSearch(''); setAddedIds([]); }
   }, [open]);
 
   const handleAdd = (workspace: Workspace) => {
     createBinding.mutate(
-      { workspaceId: workspace.id, visibility, scopeIds: visibility === 'scope_specific' ? [scopeId] : [], ingestionMode, defaults: { validityMode: 'unknown', ...(reviewFrequencyDays ? { reviewFrequencyDays: Number(reviewFrequencyDays) } : {}) } },
+      buildScopeWorkspaceBindingPayload(workspace.id, scopeId),
       { onSuccess: () => setAddedIds((prev) => [...prev, workspace.id]) },
     );
   };
@@ -524,7 +524,6 @@ function WorkspaceMapDialog({ open, onOpenChange, programId, scopeId, mappedWork
           <DialogDescription>{t('scopeShell.knowledge.mapHint')}</DialogDescription>
         </DialogHeader>
         <Input aria-label={t('scopeShell.knowledge.workspaceSearch')} placeholder={t('scopeShell.knowledge.workspaceSearch')} value={search} onChange={(event) => setSearch(event.target.value)} />
-        {dataRoomFeatures.workspaceBindingEnabled && <div className='grid gap-2 rounded-xl border p-3 sm:grid-cols-3'><label className='grid gap-1 text-sm'>{t('workspaceBinding.visibility')}<select className='h-9 rounded-md border bg-background px-2' value={visibility} onChange={(event) => setVisibility(event.target.value as 'program_shared' | 'scope_specific')}><option value='scope_specific'>{t('workspaceBinding.scopeSpecific')}</option><option value='program_shared'>{t('workspaceBinding.programShared')}</option></select></label><div className='grid gap-1'><label className='grid gap-1 text-sm'>{t('workspaceBinding.ingestionMode')}<select className='h-9 rounded-md border bg-background px-2' value={ingestionMode} onChange={(event) => setIngestionMode(event.target.value as 'manual' | 'assisted' | 'automatic')}><option value='manual'>{t('workspaceBinding.modeManual')}</option><option value='assisted'>{t('workspaceBinding.modeAssisted')}</option><option value='automatic'>{t('workspaceBinding.modeAutomatic')}</option></select></label><p className='text-xs text-muted-foreground'>{t(`workspaceBinding.modeDescription.${ingestionMode}`)}</p></div><label className='grid content-start gap-1 text-sm'>{t('workspaceBinding.reviewFrequency')}<Input type='number' min='1' value={reviewFrequencyDays} onChange={(event) => setReviewFrequencyDays(event.target.value)} /></label></div>}
         <div className='grid max-h-72 gap-1 overflow-y-auto rounded-xl border bg-background p-2'>
           {availableWorkspaces.map((workspace) => (
             <div key={workspace.id} className='flex items-center justify-between gap-3 rounded-lg px-3 py-2 hover:bg-muted'>
