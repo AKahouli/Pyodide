@@ -35,6 +35,7 @@ import { CreateSessionDto } from './dto/create-session.dto';
 import { GetFileSignedUrlDto } from './dto/get-file-signed-url.dto';
 import { GetAppSourceUrlsDto } from './dto/get-app-source-urls.dto';
 import { PresignRevisionDto } from './dto/presign-revision.dto';
+import { CommitWorkspaceRevisionDto } from './dto/commit-workspace-revision.dto';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
@@ -617,6 +618,38 @@ export class ConversationV2Controller {
     }
 
     return { items };
+  }
+
+  /**
+   * Persist a workspace revision snapshot to Ceph after a browser runtime mutation.
+   * The browser is the only writer; object keys are server-assigned from content hashes.
+   */
+  @Post('sessions/:id/revisions/commit')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_WRITE)
+  async commitWorkspaceRevision(
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
+    @Body() body: CommitWorkspaceRevisionDto,
+  ): Promise<{
+    revisionId: string;
+    parentRevisionId: string | null;
+    manifestObjectKey: string;
+    fileCount: number;
+  }> {
+    const manifest = await this.runtimeRevisions.commitWorkspaceRevision({
+      workspaceId: this.requireWorkspaceId(session),
+      revisionId: body.revisionId,
+      parentRevisionId: body.parentRevisionId ?? null,
+      files: body.files,
+      toolCallId: body.toolCallId ?? null,
+    });
+    return {
+      revisionId: manifest.revisionId,
+      parentRevisionId: manifest.parentRevisionId,
+      manifestObjectKey: manifest.manifestObjectKey,
+      fileCount: manifest.files.length,
+    };
   }
 
   /**

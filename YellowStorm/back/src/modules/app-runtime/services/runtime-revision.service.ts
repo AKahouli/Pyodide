@@ -199,6 +199,134 @@ export class RuntimeRevisionService {
     return normalized;
   }
 
+  /** True when the workspace (or system starter) owns this revision id. */
+  async revisionExists(workspaceId: string, revisionId: string): Promise<boolean> {
+    if (revisionId === this.starterRevisionId) {
+      return true;
+    }
+    const doc = await this.model
+      .findOne({ workspaceId, revisionId })
+      .select({ _id: 1 })
+      .lean()
+      .exec();
+    return !!doc;
+  }
+
+  /**
+   * Persist a workspace revision snapshot to Ceph (content-addressed blobs +
+   * manifest) and Mongo. Called by the browser runtime after each mutating tool.
+   */
+  async commitWorkspaceRevision(input: {
+    workspaceId: string;
+    revisionId: string;
+    parentRevisionId?: string | null;
+    files: Array<{ path: string; content: string }>;
+    toolCallId?: string | null;
+  }): Promise<RevisionManifest> {
+    const { workspaceId, revisionId } = input;
+    const parentRevisionId = input.parentRevisionId ?? null;
+
+    if (!revisionId || revisionId === this.starterRevisionId) {
+      throw new BadRequestException('Cannot overwrite the system starter revision');
+    }
+
+    const existing = await this.model
+      .findOne({ workspaceId, revisionId })
+      .lean()
+      .exec();
+    if (existing) {
+      return {
+        revisionId: existing.revisionId,
+        workspaceId: existing.workspaceId,
+        parentRevisionId: existing.parentRevisionId ?? null,
+        manifestHash: existing.manifestHash,
+        manifestObjectKey: existing.manifestObjectKey,
+        files: existing.files,
+      };
+    }
+
+    if (parentRevisionId) {
+      const parentOk = await this.revisionExists(workspaceId, parentRevisionId);
+      if (!parentOk) {
+        throw new BadRequestException(
+          `Parent revision ${parentRevisionId} is not authorized for workspace ${workspaceId}`,
+        );
+      }
+    }
+
+    const manifestFiles: AppSourceRevisionFile[] = [];
+    for (const raw of input.files) {
+      const path = this.normalizeRelativePath(raw.path);
+      const body = Buffer.from(raw.content, 'utf8');
+      const sha256 = createHash('sha256').update(body).digest('hex');
+      const objectKey = `appbuilder/blobs/sha256/${sha256}`;
+
+      if (!(await this.documents.exists(objectKey))) {
+        await this.documents.upload(body, path.split('/').pop() || path, 'text/plain', {
+          generateUniqueName: false,
+          customFileName: objectKey,
+        });
+      }
+
+      manifestFiles.push({
+        path,
+        sha256,
+        objectKey,
+        size: body.length,
+      });
+    }
+
+    manifestFiles.sort((a, b) => a.path.localeCompare(b.path));
+
+    const manifestPayload = JSON.stringify({
+      revisionId,
+      workspaceId,
+      parentRevisionId,
+      files: manifestFiles,
+    });
+    const manifestHash = createHash('sha256').update(manifestPayload).digest('hex');
+    const manifestObjectKey = `appbuilder/manifests/${workspaceId}/${revisionId}.json`;
+
+    await this.documents.upload(
+      Buffer.from(manifestPayload, 'utf8'),
+      `${revisionId}.json`,
+      'application/json',
+      {
+        generateUniqueName: false,
+        customFileName: manifestObjectKey,
+      },
+    );
+
+    try {
+      await this.model.create({
+        revisionId,
+        workspaceId,
+        parentRevisionId,
+        manifestHash,
+        manifestObjectKey,
+        files: manifestFiles,
+        createdByToolCallId: input.toolCallId ?? null,
+      });
+    } catch (error) {
+      if ((error as { code?: number } | null)?.code !== 11000) {
+        throw error;
+      }
+    }
+
+    this.logger.log(
+      `Committed workspace revision workspaceId=${workspaceId} revisionId=${revisionId} files=${manifestFiles.length}`,
+    );
+
+    return {
+      revisionId,
+      workspaceId,
+      parentRevisionId,
+      manifestHash,
+      manifestObjectKey,
+      files: manifestFiles,
+    };
+  }
+
   async getStarterManifest(): Promise<RevisionManifest> {
     if (this.starterCache) {
       return this.starterCache;
