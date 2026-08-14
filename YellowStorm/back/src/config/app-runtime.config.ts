@@ -1,31 +1,35 @@
 import { registerAs } from '@nestjs/config';
 
 /**
- * App Builder runtime configuration. The Runtime MCP endpoint itself lives in
- * APImanus for now (`/api/v1/opencode/runtime-mcp`), so `mcpUrl` is what the
- * internal bind endpoint hands back to the OpenCode gateway.
+ * App Builder runtime configuration.
+ *
+ * Target architecture: Runtime MCP + Broker live on YellowStorm; APImanus is
+ * only the OpenCode gateway and calls internal bind for mcpUrl + mcpToken.
  */
 export default registerAs('appRuntime', () => ({
-  mcpUrl:
-    process.env.APP_RUNTIME_MCP_URL ||
-    'http://127.0.0.1:8000/api/v1/opencode/runtime-mcp',
+  /** When false, POST /mcp/app-runtime returns 503. */
+  mcpEnabled: process.env.APP_RUNTIME_MCP_ENABLED !== 'false',
+  /**
+   * Public MCP URL returned on bind. Prefer APP_RUNTIME_MCP_URL in production;
+   * otherwise derived from APP_RUNTIME_PUBLIC_BASE_URL or localhost default.
+   */
+  mcpUrl: process.env.APP_RUNTIME_MCP_URL || '',
+  publicBaseUrl: process.env.APP_RUNTIME_PUBLIC_BASE_URL || '',
+  /**
+   * Legacy: APImanus BrowserRuntimeAdapter HTTP POST /internal/app-runtime/tool-invoke.
+   * Set false once APP_RUNTIME_MCP_LOCATION=yellowstorm is validated.
+   */
+  legacyToolInvokeEnabled: process.env.APP_RUNTIME_LEGACY_TOOL_INVOKE !== 'false',
   ticketTtlMs: parseInt(process.env.APP_RUNTIME_TICKET_TTL_MS || '60000', 10),
-  /** A runtime without a heartbeat within this window is treated as offline. */
   heartbeatTimeoutMs: parseInt(
     process.env.APP_RUNTIME_HEARTBEAT_TIMEOUT_MS || '45000',
     10,
   ),
-  /** Matches the default `timeoutMs` of the APImanus `run` tool input. */
   toolTimeoutMs: parseInt(process.env.APP_RUNTIME_TOOL_TIMEOUT_MS || '180000', 10),
-  /** How long a mutation may wait for the workspace lock before giving up. */
   mutationWaitMs: parseInt(
     process.env.APP_RUNTIME_MUTATION_WAIT_MS || '30000',
     10,
   ),
-  /**
-   * Canonical Ceph starter revision assigned on first bind when the workspace
-   * has no prior source revision. Must match the seeded Ceph manifest.
-   */
   starterRevisionId:
     process.env.APP_BUILDER_STARTER_REVISION_ID || 'starter_react_vite_v1',
   starterManifestKey:

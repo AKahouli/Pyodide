@@ -1,13 +1,29 @@
 # App Runtime
 
 Server side of the App Builder browser runtime. OpenCode (hosted in APImanus)
-calls Runtime MCP tools; this module relays them to a Nodepod filesystem living
-in the user's browser and returns the result.
+calls Runtime MCP tools on **YellowStorm**; this module relays them to a Nodepod
+filesystem living in the user's browser and returns the result.
+
+## Target architecture (default)
 
 ```
-OpenCode -> Runtime MCP (APImanus) -> POST /internal/app-runtime/tool-invoke
-         -> AppRuntimeGateway (Socket.IO /app-runtime) -> browser Nodepod
+OpenCode → POST /api/v1/mcp/app-runtime (YellowStorm MCP, JSON-RPC)
+         → RuntimeBrokerService → RuntimeToolDispatcherService
+         → AppRuntimeGateway (Socket.IO /app-runtime) → browser Nodepod → Ceph
 ```
+
+APImanus is limited to **OpenCode gateway + bind**: it calls
+`POST /internal/app-runtime/bind` and passes the returned `mcpUrl` + `mcpToken`
+to OpenCode. It does **not** host Runtime MCP on the main path.
+
+## Legacy rollback
+
+Set on APImanus: `APP_RUNTIME_MCP_LOCATION=apimanus` — MCP is served again at
+`/api/v1/opencode/runtime-mcp` and tools go through `BrowserRuntimeAdapter` →
+`POST /internal/app-runtime/tool-invoke`.
+
+Set on YellowStorm: `APP_RUNTIME_LEGACY_TOOL_INVOKE=false` to return HTTP 410 on
+tool-invoke once the YellowStorm MCP path is validated in production.
 
 ## Credentials
 
@@ -15,12 +31,25 @@ Two secrets, never mixed:
 
 | Secret | Holder | Issued by | Storage |
 |---|---|---|---|
-| `mcpToken` | APImanus | `POST /internal/app-runtime/bind` | SHA-256 in `app_runtime_bindings.mcpTokenHash` |
+| `mcpToken` | APImanus (config only) | `POST /internal/app-runtime/bind` | SHA-256 in `app_runtime_bindings.mcpTokenHash` |
 | `ticket` | Browser | `POST /conversation-v2/sessions/:id/runtime-ticket` | SHA-256 in `app_runtime_tickets.ticketHash` |
 
 The browser never sees the `mcpToken`. A ticket is single use and short lived
 (`APP_RUNTIME_TICKET_TTL_MS`); redeeming it is an atomic `findOneAndUpdate`, so a
 replayed ticket is rejected even under a race. A reconnect needs a fresh ticket.
+
+## Environment
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `APP_RUNTIME_MCP_ENABLED` | `true` | When false, MCP endpoint returns 503 |
+| `APP_RUNTIME_MCP_URL` | — | Explicit public MCP URL returned on bind |
+| `APP_RUNTIME_PUBLIC_BASE_URL` | — | Used to derive MCP URL if `MCP_URL` unset |
+| `APP_RUNTIME_LEGACY_TOOL_INVOKE` | `true` | Legacy APImanus HTTP bridge to dispatcher |
+| `APP_RUNTIME_TICKET_TTL_MS` | `60000` | Browser runtime ticket lifetime |
+| `APP_RUNTIME_HEARTBEAT_TIMEOUT_MS` | `45000` | Offline detection |
+| `APP_RUNTIME_TOOL_TIMEOUT_MS` | `180000` | Default tool timeout |
+| `APP_RUNTIME_MUTATION_WAIT_MS` | `30000` | Per-workspace mutation lock wait |
 
 ## Socket protocol (`/app-runtime`)
 
@@ -40,7 +69,7 @@ An invalid, expired or already consumed ticket is disconnected immediately.
 | `runtime.heartbeat` | `{ workspaceId, revisionId? }` | Persisted to Mongo at most every 15s. |
 | `tool.progress` | `{ toolCallId, phase?, message? }` | Rearms the tool timeout for long-running work. |
 | `tool.completed` | `{ toolCallId, result }` | `result` is the Runtime MCP output object, camelCase. |
-| `tool.failed` | `{ toolCallId, error: { code, message, data? } }` | `code` is relayed verbatim to APImanus. |
+| `tool.failed` | `{ toolCallId, error: { code, message, data? } }` | `code` is relayed verbatim to MCP clients. |
 
 ### Server to browser
 
@@ -48,6 +77,13 @@ An invalid, expired or already consumed ticket is disconnected immediately.
 |---|---|
 | `tool.invoke` | `{ toolCallId, workspaceId, tool, arguments, baseRevisionId, timeoutMs }` |
 | `runtime.rehydrate` | `{ workspaceId, expectedRevisionId, actualRevisionId }` |
+
+## Runtime MCP tools
+
+`list`, `read`, `search`, `write`, `apply_patch`, `delete`, `diff`, `run`,
+`dev_server`, `preview_inspect`, `preview_action`, `finalize`.
+
+Auth: `Authorization: Bearer <mcpToken>` on every MCP request after bind.
 
 ## Capabilities
 
@@ -57,8 +93,7 @@ An invalid, expired or already consumed ticket is disconnected immediately.
 
 ## Error codes
 
-Mirrors `McpErrorCode` in APImanus, so `error.code` maps straight onto an
-`McpError`:
+Mirrors APImanus `McpErrorCode`, so `error.code` maps straight onto JSON-RPC errors:
 
 | Code | Meaning |
 |---|---|
@@ -67,7 +102,7 @@ Mirrors `McpErrorCode` in APImanus, so `error.code` maps straight onto an
 | `-32003` | `REVISION_CONFLICT` (browser filesystem is stale) |
 | `-32005` | `TOOL_TIMEOUT` (tool or mutation lock) |
 
-`POST /internal/app-runtime/tool-invoke` always answers HTTP 200 with a flat
+Legacy `POST /internal/app-runtime/tool-invoke` always answers HTTP 200 with a flat
 `{ ok: true, result }` or `{ ok: false, error }` body, outside the global
 `{ success, data }` wrapper.
 
@@ -84,6 +119,6 @@ Mirrors `McpErrorCode` in APImanus, so `error.code` maps straight onto an
 ## Known limitation
 
 The socket registry is process-local and there is no Redis Socket.IO adapter, so
-`tool-invoke` only reaches the browser on the instance holding the socket. Same
+tool dispatch only reaches the browser on the instance holding the socket. Same
 constraint as `BrowserSessionService`. Running more than one backend replica
 requires a Redis adapter plus routing tool dispatch to the owning instance.

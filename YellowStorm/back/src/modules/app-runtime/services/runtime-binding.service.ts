@@ -67,7 +67,7 @@ export class RuntimeBindingService {
       bindingId: binding.bindingId,
       workspaceId: binding.workspaceId,
       latestRevisionId: binding.latestRevisionId,
-      mcpUrl: this.config.get<string>('appRuntime.mcpUrl', ''),
+      mcpUrl: this.resolveMcpUrl(),
       mcpToken: token,
     };
   }
@@ -88,6 +88,10 @@ export class RuntimeBindingService {
 
   findByWorkspaceId(workspaceId: string): Promise<AppRuntimeBinding | null> {
     return this.model.findOne({ workspaceId }).lean().exec();
+  }
+
+  findByMcpTokenHash(mcpTokenHash: string): Promise<AppRuntimeBinding | null> {
+    return this.model.findOne({ mcpTokenHash }).lean().exec();
   }
 
   async markBrowserActive(params: MarkBrowserActiveParams): Promise<void> {
@@ -146,6 +150,17 @@ export class RuntimeBindingService {
     }
 
     return binding;
+  }
+
+  /** Public MCP URL returned to APImanus for OpenCode remote MCP config. */
+  private resolveMcpUrl(): string {
+    const explicit = this.config.get<string>('appRuntime.mcpUrl', '').trim();
+    if (explicit) return explicit;
+    const publicBase = this.config.get<string>('appRuntime.publicBaseUrl', '').replace(/\/$/, '');
+    if (publicBase) {
+      return `${publicBase}/api/v1/mcp/app-runtime`;
+    }
+    return 'http://127.0.0.1:3000/api/v1/mcp/app-runtime';
   }
 
   private get starterRevisionId(): string {

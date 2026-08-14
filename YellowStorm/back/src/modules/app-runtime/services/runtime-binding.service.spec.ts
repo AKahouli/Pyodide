@@ -6,7 +6,7 @@ import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeRevisionService } from './runtime-revision.service';
 import { RuntimeTokenService } from './runtime-token.service';
 
-const MCP_URL = 'http://apimanus:8000/api/v1/opencode/runtime-mcp';
+const MCP_URL = 'http://127.0.0.1:3000/api/v1/mcp/app-runtime';
 const STARTER = 'starter_react_vite_v1';
 
 describe('RuntimeBindingService', () => {

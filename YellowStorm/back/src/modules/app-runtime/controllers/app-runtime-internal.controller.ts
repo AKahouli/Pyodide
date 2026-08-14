@@ -1,5 +1,6 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, GoneException, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { InternalServiceGuard } from '@modules/auth/guards/internal-service.guard';
 import { SkipResponseWrap } from '@modules/response/decorators/skip-response-wrap.decorator';
@@ -27,6 +28,7 @@ export class AppRuntimeInternalController {
   constructor(
     private readonly bindings: RuntimeBindingService,
     private readonly dispatcher: RuntimeToolDispatcherService,
+    private readonly config: ConfigService,
   ) {}
 
   @Post('bind')
@@ -40,13 +42,18 @@ export class AppRuntimeInternalController {
   }
 
   /**
-   * Always answers HTTP 200. Tool failures travel in the body so the gateway
-   * can rebuild an `McpError` from `error.code` without decoding HTTP statuses.
+   * Legacy bridge for APImanus-hosted Runtime MCP (APP_RUNTIME_MCP_LOCATION=apimanus).
+   * Primary path: OpenCode → YellowStorm MCP → Broker → Socket.IO (no HTTP hop).
    */
   @Post('tool-invoke')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Dispatch a runtime tool to the connected browser runtime' })
   invokeTool(@Body() dto: InvokeAppRuntimeToolDto): Promise<ToolInvokeEnvelope> {
+    if (!this.config.get<boolean>('appRuntime.legacyToolInvokeEnabled', true)) {
+      throw new GoneException(
+        'Legacy tool-invoke is disabled; configure OpenCode to use YellowStorm Runtime MCP',
+      );
+    }
     return this.dispatcher.invoke(dto);
   }
 }
