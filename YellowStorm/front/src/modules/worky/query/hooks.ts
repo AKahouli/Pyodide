@@ -113,7 +113,15 @@ export function useSendMessage(streamId: string) {
     onSuccess: (msg) => {
       qc.setQueryData<Awaited<ReturnType<typeof api.getMessages>>>(
         workyKeys.messages(streamId),
-        (existing) => (existing ? [...existing, { ...msg, role: 'owner', planDeltaRef: null }] : existing),
+        (existing) => {
+          if (!existing) return existing;
+          // Idempotent: a racing refetch (triggered by turn-start SSE events that
+          // invalidate this query) may have already landed the saved owner
+          // message. Appending again would duplicate it by id and flicker the
+          // thread until the next refetch collapses it.
+          if (existing.some((m) => m.id === msg.id)) return existing;
+          return [...existing, { ...msg, role: 'owner', planDeltaRef: null }];
+        },
       );
     },
   });
@@ -320,6 +328,17 @@ export function useTaskResults(taskId: string | null | undefined) {
     queryFn: () => {
       if (!taskId) throw new Error('taskId is required');
       return api.getTaskResults(taskId);
+    },
+    enabled: Boolean(taskId),
+  });
+}
+
+export function useTaskResultContent(taskId: string | null | undefined) {
+  return useQuery({
+    queryKey: taskId ? workyKeys.taskResultContent(taskId) : ['worky', 'task-result-content', 'noop'],
+    queryFn: () => {
+      if (!taskId) throw new Error('taskId is required');
+      return api.getTaskResultContent(taskId);
     },
     enabled: Boolean(taskId),
   });

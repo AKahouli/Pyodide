@@ -10,6 +10,7 @@ import { WorkyGraphBoard } from './WorkyGraphBoard';
 import { PlanDeltaToast } from './PlanDeltaToast';
 import { ApprovalModal } from './ApprovalModal';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
+import { FileViewerSidebar } from '@/modules/file-viewer';
 import { WorkyWhatsAppConnectModal } from './WorkyWhatsAppConnectModal';
 import { workyKeys } from '../query/queryKeys';
 import { subscribeToStreamEvents } from '../stream/sse';
@@ -240,6 +241,20 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           }
           break;
         }
+        case 'message.component.appended': {
+          // Manager message components arrived (Electric message_components) — refetch
+          // the history so the bubble upgrades from plain content to rich components.
+          void qc.invalidateQueries({ queryKey: workyKeys.messages(streamId) });
+          break;
+        }
+        case 'task.component.appended':
+        case 'task.artifact.appended': {
+          void qc.invalidateQueries({ queryKey: workyKeys.board(streamId) });
+          // Refetch whichever task drawer is open (keyed by Mongo taskId, which the
+          // event's stepExternalId doesn't give us — invalidate the whole family).
+          void qc.invalidateQueries({ queryKey: ['worky', 'task-result-content'] });
+          break;
+        }
         default:
           break;
       }
@@ -368,11 +383,21 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           <KanbanBoard streamId={streamId} onTaskClick={setSelectedTask} />
         )}
       </main>
+      {selectedTask ? (
+        <TaskDetailDrawer
+          task={selectedTask}
+          onClose={() => setSelectedTask(null)}
+        />
+      ) : null}
       <WorkyActivityRail
         streamId={streamId}
         onWhatsAppClick={() => setWhatsappModalOpen(true)}
         whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
       />
+      {/* Sidebar-mode file viewer host. Floating mode is mounted globally in
+          App.tsx; sidebar mode needs a per-page host — without this, clicking
+          "view" on a desktop artifact (sidebar display mode) rendered nothing. */}
+      <FileViewerSidebar />
       </div>
       <ManagerChatSheet
         streamId={streamId}
@@ -390,10 +415,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           onClose={() => setApprovalFor(null)}
         />
       ) : null}
-      <TaskDetailDrawer
-        task={selectedTask}
-        onClose={() => setSelectedTask(null)}
-      />
       {whatsappModalOpen ? (
         <WorkyWhatsAppConnectModal
           open

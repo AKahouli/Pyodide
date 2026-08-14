@@ -7,6 +7,7 @@ export const workyKeys = {
   messages: (id: string) => [...workyKeys.detail(id), 'messages'] as const,
   board: (id: string) => [...workyKeys.detail(id), 'board'] as const,
   taskResults: (id: string) => [...workyKeys.all, 'task-results', id] as const,
+  taskResultContent: (id: string) => [...workyKeys.all, 'task-result-content', id] as const,
   budget: (id: string) => [...workyKeys.detail(id), 'budget'] as const,
   report: (id: string) => [...workyKeys.detail(id), 'report'] as const,
   memoryProposals: (status?: string) =>

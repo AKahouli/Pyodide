@@ -1,8 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, User, Volume2, VolumeX } from 'lucide-react';
-import { format } from 'date-fns';
+import { useMemo } from 'react';
 import { useModuleTranslation } from '@/modules/localization';
-import { synthesizeSpeech } from '../api';
+import {
+  ChatConversation,
+  ChatConversationContent,
+  ChatMessageBubble,
+  ChatScrollButton,
+  type ChatMessage,
+} from '@/components/ai-elements/chat-conversation';
+import { MessageProvider } from '@/components/ai-elements/message-context';
+import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import { useWorkyMessages, useWorkyStore } from '../store';
 import { cn } from '@/lib/utils';
 import { ChatClarificationCard } from './ChatClarificationCard';
@@ -61,55 +67,22 @@ function toChronologicalThread(
     );
 }
 
-function formatMessageTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return format(date, 'HH:mm');
+/** Maps a worky message onto the shared ChatMessage shape the conversation chat
+ *  bubble consumes: owner→user (right, primary), manager/system→assistant (left).
+ *  Rich components render when present; otherwise the plain-text content. */
+function toChatMessage(message: WorkyMessage): ChatMessage {
+  const content =
+    message.components && message.components.length > 0
+      ? mapComponentsToContentParts(message.components)
+      : message.content;
+  const timestamp = message.createdAt ? new Date(message.createdAt) : undefined;
+  return {
+    id: message.id,
+    role: message.role === 'owner' ? 'user' : 'assistant',
+    content,
+    timestamp: timestamp && !Number.isNaN(timestamp.getTime()) ? timestamp : undefined,
+  };
 }
-
-function MessageBubble({ message }: { message: WorkyMessage }): JSX.Element {
-  const { t } = useModuleTranslation('worky');
-
-  return (
-    <li
-      data-testid={`worky-message-${message.role}`}
-      className={cn(
-        'flex w-full gap-1.5',
-        message.role === 'owner' ? 'justify-end' : 'justify-start',
-      )}
-    >
-      <div className={cn('flex-none pt-1', message.role === 'owner' ? 'order-2' : 'order-1')}>
-        {message.role === 'owner' ? (
-          <User className='h-3.5 w-3.5 text-muted-foreground' aria-hidden />
-        ) : (
-          <Bot className='h-3.5 w-3.5 text-primary' aria-hidden />
-        )}
-      </div>
-      <div
-        className={cn(
-          'min-w-0 max-w-[85%] rounded-2xl border px-2.5 py-1.5 shadow-sm',
-          message.role === 'owner'
-            ? 'order-1 rounded-br-sm border-primary/30 bg-primary/10'
-            : 'order-2 rounded-bl-sm border-border/60 bg-background/80',
-        )}
-      >
-        <div className='flex items-baseline justify-between gap-2'>
-          <span className='text-[10px] font-semibold uppercase tracking-wide text-muted-foreground'>
-            {t(`messages.role.${message.role}`)}
-          </span>
-          <span className='text-[10px] tabular-nums text-muted-foreground'>
-            {formatMessageTime(message.createdAt)}
-          </span>
-        </div>
-        <p className='mt-0.5 whitespace-pre-wrap break-words text-xs leading-snug text-foreground/90'>
-          {message.content}
-        </p>
-      </div>
-    </li>
-  );
-}
-// ponytail: Gemini TTS voice names; update if WORKY_TTS_MODEL changes provider.
-const TTS_VOICES = ['Kore', 'Puck', 'Zephyr', 'Charon', 'Fenrir', 'Aoede', 'Leda', 'Orus'];
 
 export function ChatMessageThread({
   streamId,
@@ -127,61 +100,6 @@ export function ChatMessageThread({
         : messages.map((message) => ({ kind: 'message' as const, message })),
     [messages, pendingClarifications, showClarifications],
   );
-  const containerRef = useRef<HTMLUListElement>(null);
-  // Read-aloud: opt-in toggle. When on, each new agent message is spoken via
-  // OpenRouter TTS. Off by default so we don't fire paid calls / hit autoplay
-  // blocks unprompted.
-  const [ttsOn, setTtsOn] = useState(false);
-  const [voice, setVoice] = useState(() => localStorage.getItem('worky-tts-voice') ?? TTS_VOICES[0]);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const lastSpokenRef = useRef<string | null>(null);
-  const initializedRef = useRef(false);
-
-  const chooseVoice = (v: string) => {
-    setVoice(v);
-    localStorage.setItem('worky-tts-voice', v);
-  };
-
-  // Stop audio when muted or unmounted.
-  useEffect(() => {
-    if (!ttsOn) audioRef.current?.pause();
-  }, [ttsOn]);
-  useEffect(() => () => audioRef.current?.pause(), []);
-
-  useEffect(() => {
-    const last = messages[messages.length - 1];
-    if (!last) return;
-    // Don't replay history on first load — only speak messages that arrive after.
-    if (!initializedRef.current) {
-      initializedRef.current = true;
-      lastSpokenRef.current = last.id;
-      return;
-    }
-    if (last.id === lastSpokenRef.current) return;
-    lastSpokenRef.current = last.id;
-    if (!ttsOn || last.role === 'owner' || !last.content?.trim()) return;
-    void (async () => {
-      try {
-        const blob = await synthesizeSpeech(last.content, voice || undefined);
-        const url = URL.createObjectURL(blob);
-        audioRef.current?.pause();
-        const audio = new Audio(url);
-        audioRef.current = audio;
-        const free = () => URL.revokeObjectURL(url);
-        audio.onended = free;
-        audio.onerror = free;
-        await audio.play().catch(() => undefined); // autoplay may need a gesture
-      } catch {
-        /* TTS failure is non-fatal — the text answer is already shown. */
-      }
-    })();
-  }, [messages, ttsOn, voice]);
-
-  useEffect(() => {
-    const node = containerRef.current;
-    if (!node) return;
-    node.scrollTop = node.scrollHeight;
-  }, [threadItems.length]);
   const hasContent = messages.length > 0 || showClarifications;
 
   return (
@@ -197,59 +115,39 @@ export function ChatMessageThread({
         <h3 className='text-[10px] font-semibold uppercase tracking-wide text-muted-foreground'>
           {t('messages.title')}
         </h3>
-        <div className='flex items-center gap-2'>
-          {streaming ? (
-            <span className='text-[10px] italic text-muted-foreground'>
-              {t('messages.streamingLabel')}
-            </span>
-          ) : null}
-          {ttsOn ? (
-            <select
-              value={voice}
-              onChange={(e) => chooseVoice(e.target.value)}
-              aria-label={t('messages.speak.voice')}
-              title={t('messages.speak.voice')}
-              className='rounded border border-border/60 bg-background/60 px-1 py-0.5 text-[10px] text-muted-foreground'
-              data-testid='worky-tts-voice'
-            >
-              {TTS_VOICES.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          ) : null}
-          <button
-            type='button'
-            onClick={() => setTtsOn((on) => !on)}
-            aria-pressed={ttsOn}
-            aria-label={ttsOn ? t('messages.speak.disable') : t('messages.speak.enable')}
-            title={ttsOn ? t('messages.speak.disable') : t('messages.speak.enable')}
-            className='text-muted-foreground hover:text-foreground'
-            data-testid='worky-tts-toggle'
-          >
-            {ttsOn ? <Volume2 className='h-3.5 w-3.5' /> : <VolumeX className='h-3.5 w-3.5' />}
-          </button>
-        </div>
+        {streaming ? (
+          <span className='text-[10px] italic text-muted-foreground'>
+            {t('messages.streamingLabel')}
+          </span>
+        ) : null}
       </header>
       {hasContent ? (
-        <ul
-          ref={containerRef}
-          className='flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 py-2 text-xs'
-          data-testid='worky-message-list'
-        >
-          {threadItems.map((item) =>
-            item.kind === 'message' ? (
-              <MessageBubble key={item.message.id} message={item.message} />
-            ) : (
-              <ChatClarificationCard
-                key={item.clarification.id}
-                streamId={streamId as string}
-                clarification={item.clarification}
-              />
-            ),
-          )}
-        </ul>
+        <MessageProvider fileViewerDisplayMode='floating'>
+        <ChatConversation className='min-h-0 flex-1'>
+          <ChatConversationContent
+            className='gap-3 px-2 py-2'
+            data-testid='worky-message-list'
+          >
+            {threadItems.map((item) =>
+              item.kind === 'message' ? (
+                <ChatMessageBubble
+                  key={item.message.id}
+                  message={toChatMessage(item.message)}
+                  density='compact'
+                  data-testid={`worky-message-${item.message.role}`}
+                />
+              ) : (
+                <ChatClarificationCard
+                  key={item.clarification.id}
+                  streamId={streamId as string}
+                  clarification={item.clarification}
+                />
+              ),
+            )}
+          </ChatConversationContent>
+          <ChatScrollButton />
+        </ChatConversation>
+        </MessageProvider>
       ) : (
         <p className='m-auto text-center text-xs text-muted-foreground'>
           {t('messages.empty')}

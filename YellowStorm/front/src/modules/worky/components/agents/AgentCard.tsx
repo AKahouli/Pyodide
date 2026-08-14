@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { AgentAvatar } from './AgentAvatar';
 import { AgentStatusPill } from './AgentStatusPill';
+import { TaskTimestamp } from '../TaskTimestamp';
 import type { WorkyAgent } from '../../agents/agentModel';
 import type { WorkyTask } from '../../types';
 
@@ -105,8 +106,9 @@ export function AgentCard({
               <span className={cn('size-2 shrink-0 rounded-full', laneDot(task.lane))} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium text-foreground">{task.title}</div>
-                <div className="text-xs text-muted-foreground">
-                  {t(`kanban.lanes.${task.lane}` as 'kanban.lanes.running')}
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>{t(`kanban.lanes.${task.lane}` as 'kanban.lanes.running')}</span>
+                  <TaskTimestamp task={task} />
                 </div>
               </div>
               <ChevronRight className="size-4 shrink-0 text-muted-foreground" />

@@ -28,6 +28,7 @@ import type {
   WorkyStreamQueryParams,
   WorkyTask,
   WorkyTaskResult,
+  WorkyTaskResultContent,
   WorkyWhatsAppConnectResponse,
   WorkyWhatsAppIntegration,
   WorkyWhatsAppPairingResponse,
@@ -268,6 +269,13 @@ export async function reviewTask(taskId: string, reason?: string): Promise<Worky
 export async function getTaskResults(taskId: string): Promise<WorkyTaskResult[]> {
   const response = await apiClient.get<ApiResponse<WorkyTaskResult[]>>(
     API_ENDPOINTS.worky.taskResults(taskId),
+  );
+  return unwrap(response);
+}
+
+export async function getTaskResultContent(taskId: string): Promise<WorkyTaskResultContent> {
+  const response = await apiClient.get<ApiResponse<WorkyTaskResultContent>>(
+    API_ENDPOINTS.worky.taskResultContent(taskId),
   );
   return unwrap(response);
 }

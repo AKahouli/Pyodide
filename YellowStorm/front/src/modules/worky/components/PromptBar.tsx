@@ -1,6 +1,6 @@
 import { Loader2, MessageCircle, Mic, Send, Square } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSendMessage, useTranscribeAudio } from '../query/hooks';
 import { useWorkyStore, useWorkyStreaming } from '../store';
@@ -137,80 +137,82 @@ export function PromptBar({
           </button>
         </div>
       ) : null}
-      <form
-        className='flex items-center gap-2 rounded-md border border-border/60 bg-background/60 px-2 py-1.5'
-        onSubmit={submit}
-      >
-        <textarea
-          id='worky-prompt-content'
-          name='content'
-          data-testid='worky-prompt-content'
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          placeholder={t('promptBar.placeholder')}
-          rows={1}
-          disabled={isDisabled}
-          className='min-h-[36px] flex-1 resize-none rounded-md border border-border/60 bg-background/60 px-2 py-1.5 text-xs placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60'
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              submit(e);
-            }
-          }}
-        />
-        {onWhatsAppClick ? (
-          <Button
-            type='button'
-            size='icon'
-            variant='ghost'
-            onClick={onWhatsAppClick}
+      <form onSubmit={submit}>
+        <InputGroup className='bg-background/60'>
+          <InputGroupTextarea
+            id='worky-prompt-content'
+            name='content'
+            data-testid='worky-prompt-content'
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            placeholder={t('promptBar.placeholder')}
+            rows={1}
             disabled={isDisabled}
-            aria-label={t('whatsapp.openModal')}
-            data-testid='worky-prompt-whatsapp'
-            className='relative'
-          >
-            <MessageCircle className='h-4 w-4' />
-            {whatsappConnected ? (
-              <span
-                className='absolute right-1 top-1 h-2 w-2 rounded-full bg-green-500'
-                data-testid='worky-prompt-whatsapp-connected'
-              />
+            className='max-h-40 min-h-[44px] py-2 text-xs'
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submit(e);
+              }
+            }}
+          />
+          <InputGroupAddon align='block-end' className='justify-end gap-1'>
+            {onWhatsAppClick ? (
+              <InputGroupButton
+                type='button'
+                size='icon-sm'
+                variant='ghost'
+                onClick={onWhatsAppClick}
+                disabled={isDisabled}
+                aria-label={t('whatsapp.openModal')}
+                data-testid='worky-prompt-whatsapp'
+                className='relative'
+              >
+                <MessageCircle className='h-4 w-4' />
+                {whatsappConnected ? (
+                  <span
+                    className='absolute right-1 top-1 h-2 w-2 rounded-full bg-green-500'
+                    data-testid='worky-prompt-whatsapp-connected'
+                  />
+                ) : null}
+              </InputGroupButton>
             ) : null}
-          </Button>
-        ) : null}
-        {recorder.isSupported ? (
-          <Button
-            type='button'
-            size='icon'
-            variant={recorder.isRecording ? 'destructive' : 'ghost'}
-            onClick={toggleMic}
-            disabled={isDisabled || isTranscribing}
-            aria-pressed={recorder.isRecording}
-            aria-label={
-              isTranscribing
-                ? t('promptBar.voice.transcribing')
-                : recorder.isRecording
-                  ? t('promptBar.voice.stop')
-                  : t('promptBar.voice.start')
-            }
-            data-testid='worky-prompt-mic'
-          >
-            {isTranscribing ? (
-              <Loader2 className='h-4 w-4 animate-spin' />
-            ) : (
-              <Mic className={recorder.isRecording ? 'h-4 w-4 animate-pulse' : 'h-4 w-4'} />
-            )}
-          </Button>
-        ) : null}
-        <Button
-          type='submit'
-          size='icon'
-          disabled={isDisabled || !value.trim()}
-          aria-label={streaming ? t('promptBar.streaming') : t('promptBar.send')}
-          data-testid='worky-prompt-send'
-        >
-          {streaming ? <Square className='h-4 w-4' /> : <Send className='h-4 w-4' />}
-        </Button>
+            {recorder.isSupported ? (
+              <InputGroupButton
+                type='button'
+                size='icon-sm'
+                variant={recorder.isRecording ? 'destructive' : 'ghost'}
+                onClick={toggleMic}
+                disabled={isDisabled || isTranscribing}
+                aria-pressed={recorder.isRecording}
+                aria-label={
+                  isTranscribing
+                    ? t('promptBar.voice.transcribing')
+                    : recorder.isRecording
+                      ? t('promptBar.voice.stop')
+                      : t('promptBar.voice.start')
+                }
+                data-testid='worky-prompt-mic'
+              >
+                {isTranscribing ? (
+                  <Loader2 className='h-4 w-4 animate-spin' />
+                ) : (
+                  <Mic className={recorder.isRecording ? 'h-4 w-4 animate-pulse' : 'h-4 w-4'} />
+                )}
+              </InputGroupButton>
+            ) : null}
+            <InputGroupButton
+              type='submit'
+              size='icon-sm'
+              variant='default'
+              disabled={isDisabled || !value.trim()}
+              aria-label={streaming ? t('promptBar.streaming') : t('promptBar.send')}
+              data-testid='worky-prompt-send'
+            >
+              {streaming ? <Square className='h-4 w-4' /> : <Send className='h-4 w-4' />}
+            </InputGroupButton>
+          </InputGroupAddon>
+        </InputGroup>
       </form>
     </div>
   );

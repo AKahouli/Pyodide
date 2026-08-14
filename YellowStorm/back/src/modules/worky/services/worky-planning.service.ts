@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { Subject, Observable } from 'rxjs';
 import { WorkyStream, WorkyStreamDocument } from '../schemas/worky-stream.schema';
 import { WorkyMessage, WorkyMessageDocument } from '../schemas/worky-message.schema';
+import { WorkyMessageComponent, WorkyMessageComponentDocument } from '../schemas/worky-message-component.schema';
 import { WorkyInteraction, WorkyInteractionDocument } from '../schemas/worky-interaction.schema';
 import { LoggerService } from '../../logger';
 import { BadRequestException, NotFoundException } from '../../exceptions';
@@ -80,6 +81,8 @@ export class WorkyPlanningService {
     private readonly streams: Model<WorkyStreamDocument>,
     @InjectModel(WorkyMessage.name)
     private readonly messages: Model<WorkyMessageDocument>,
+    @InjectModel(WorkyMessageComponent.name)
+    private readonly messageComponents: Model<WorkyMessageComponentDocument>,
     @InjectModel(WorkyInteraction.name)
     private readonly interactions: Model<WorkyInteractionDocument>,
     private readonly tasks: WorkyTaskService,
@@ -179,7 +182,7 @@ export class WorkyPlanningService {
     userId: string,
     streamId: string,
     limit = 200,
-  ): Promise<Array<{ id: string; role: string; content: string; planDeltaRef: string | null; createdAt: string }>> {
+  ): Promise<Array<{ id: string; role: string; content: string; planDeltaRef: string | null; createdAt: string; components: Array<{ id: string; type: string; data: Record<string, unknown> }> }>> {
     await this.loadStream(streamId, userId);
     const docs = await this.messages
       .find({ streamId: new Types.ObjectId(streamId) })
@@ -187,12 +190,34 @@ export class WorkyPlanningService {
       .limit(limit)
       .lean()
       .exec();
+
+    // Manager messages carry component rows (Electric message_components), keyed by
+    // messageExternalId === messages.id (== WorkyMessage.externalId). Attach them so
+    // the frontend renders rich components; messages without rows fall back to `content`.
+    const externalIds = docs.map((m) => m.externalId).filter((v): v is string => typeof v === 'string');
+    const componentDocs = externalIds.length
+      ? await this.messageComponents
+          .find({ streamId: new Types.ObjectId(streamId), messageExternalId: { $in: externalIds } })
+          .sort({ ordinal: 1 })
+          .lean()
+          .exec()
+      : [];
+
+    const byMessage = new Map<string, Array<{ id: string; type: string; data: Record<string, unknown> }>>();
+    for (const c of componentDocs) {
+      const key = c.messageExternalId as string;
+      const list = byMessage.get(key) ?? [];
+      list.push({ id: (c.externalId as string) ?? '', type: c.type as string, data: (c.data as Record<string, unknown>) ?? {} });
+      byMessage.set(key, list);
+    }
+
     return docs.map((m) => ({
       id: (m._id as Types.ObjectId).toString(),
       role: m.role as string,
       content: m.content as string,
       planDeltaRef: m.planDeltaRef ? (m.planDeltaRef as Types.ObjectId).toString() : null,
       createdAt: (m.createdAt as Date).toISOString(),
+      components: typeof m.externalId === 'string' ? byMessage.get(m.externalId) ?? [] : [],
     }));
   }
 

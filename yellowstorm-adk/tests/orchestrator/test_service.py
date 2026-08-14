@@ -1227,3 +1227,68 @@ def test_a_step_result_keeps_the_answer_not_the_models_reasoning():
 
     assert plan.step("s1").result == "No new features to implement."
     assert "Let me think" not in (plan.step("s1").result or "")
+
+
+def test_a_step_producing_several_files_records_every_one():
+    """One tool call can return many files (the interpreter returns
+    generated_files[]), and a step can call such a tool more than once. Each
+    file becomes its own row so the client can list them all against the step
+    that produced them."""
+    recorded = []
+
+    async def add_step_artifact(session_id, step_id, **artifact):
+        recorded.append((session_id, step_id, artifact))
+
+    rm = MagicMock(add_step_artifact=add_step_artifact)
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    step = Step(id="s1", kind="execute", description="build the report")
+
+    async def code_interpreter_shell_exec(**kwargs):
+        return {"generated_files": [
+            {"ceph_path": "ceph/a/chart.png", "path": "/home/ubuntu/chart.png"},
+            {"ceph_path": "ceph/a/data.csv", "path": "/home/ubuntu/data.csv"},
+        ]}
+
+    tool = MagicMock(func=code_interpreter_shell_exec, custom_schema={})
+    code_interpreter_shell_exec.__signature__ = None
+    wrapped = service._capture_artifacts("sess1", step, [tool])[0]
+    asyncio.run(wrapped.func())
+
+    assert [a["filename"] for _, _, a in recorded] == ["chart.png", "data.csv"]
+    assert [a["artifact_kind"] for _, _, a in recorded] == ["image", "data"]
+    assert {(s, st) for s, st, _ in recorded} == {("sess1", "s1")}
+    assert [a["file_path"] for _, _, a in recorded] == ["ceph/a/chart.png", "ceph/a/data.csv"]
+
+
+def test_a_single_file_result_is_captured_and_a_fileless_one_is_not():
+    """send_file_to_user returns the path on the result itself, not in a list.
+    Every other tool call returns no file at all and must produce no row."""
+    from src.companion_ai import nodes as n
+
+    single = n.artifacts_from_tool_result(
+        {"ceph_path": "ceph/x/report.pdf", "path": "/home/ubuntu/report.pdf"})
+    assert len(single) == 1
+    assert single[0]["filename"] == "report.pdf"
+    assert single[0]["artifact_kind"] == "document"
+
+    for fileless in ({"status": "ok"}, {"ceph_path": ""}, "just a string", None, {}):
+        assert n.artifacts_from_tool_result(fileless) == [], fileless
+
+
+def test_a_projection_failure_never_fails_the_tool_call():
+    """The file exists whether or not the row lands. Losing a step's real work
+    because a read-model write failed is the worse trade."""
+    from src.companion_ai import nodes as n
+
+    async def boom(_artifact):
+        raise RuntimeError("read model down")
+
+    async def original(**kwargs):
+        return {"ceph_path": "ceph/x/report.pdf", "path": "/report.pdf"}
+
+    original.__signature__ = None
+    wrapped = n.capture_artifacts_tool(
+        MagicMock(func=original, custom_schema={}), on_artifact=boom)
+
+    assert asyncio.run(wrapped.func()) == {"ceph_path": "ceph/x/report.pdf",
+                                           "path": "/report.pdf"}

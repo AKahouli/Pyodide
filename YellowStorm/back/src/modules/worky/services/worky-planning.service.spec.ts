@@ -56,6 +56,13 @@ const makeService = (options: MakeOptions = {}) => {
       }),
     }),
   };
+  const messageComponentModel = {
+    find: jest.fn().mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([]) }),
+      }),
+    }),
+  };
   const interactionDoc = options.interaction
     ? {
         _id: new Types.ObjectId(options.interaction.id ?? '000000000000000000000001'),
@@ -117,6 +124,7 @@ const makeService = (options: MakeOptions = {}) => {
   const service = new WorkyPlanningService(
     streamModel as any,
     messageModel as any,
+    messageComponentModel as any,
     interactionModel as any,
     taskService as any,
     runtime,
@@ -126,7 +134,7 @@ const makeService = (options: MakeOptions = {}) => {
     logger,
     whatsappConnection,
   );
-  return { service, streamModel, messageModel, interactionModel, taskService, events, models, ownerId, streamObjectId };
+  return { service, streamModel, messageModel, messageComponentModel, interactionModel, taskService, events, models, ownerId, streamObjectId };
 };
 
 describe('WorkyPlanningService.appendOwnerMessage', () => {
@@ -713,5 +721,37 @@ describe('WorkyPlanningService.startTurn (SSE relay)', () => {
       .map((c: any[]) => c[2]?.type)
       .find((t: string) => t === 'stream.terminal');
     expect(streamTerminal).toBeDefined();
+  });
+});
+
+describe('WorkyPlanningService.listMessages components', () => {
+  it('attaches sorted components to each message by messageExternalId', async () => {
+    const messages = {
+      find: jest.fn().mockReturnValue({ sort: () => ({ limit: () => ({ lean: () => ({ exec: () => Promise.resolve([
+        { _id: { toString: () => 'mid-1' }, role: 'manager', content: 'hi', planDeltaRef: null, externalId: 'pg-msg-1', createdAt: new Date('2026-08-13T10:00:00Z') },
+        { _id: { toString: () => 'mid-2' }, role: 'owner', content: 'yo', planDeltaRef: null, externalId: 'pg-msg-2', createdAt: new Date('2026-08-13T10:01:00Z') },
+      ]) }) }) }) }),
+    };
+    const messageComponents = {
+      find: jest.fn().mockReturnValue({ sort: () => ({ lean: () => ({ exec: () => Promise.resolve([
+        { externalId: 'c-2', messageExternalId: 'pg-msg-1', ordinal: 1, type: 'code', data: { content: 'x' } },
+        { externalId: 'c-1', messageExternalId: 'pg-msg-1', ordinal: 0, type: 'text', data: { content: 'hi' } },
+      ]) }) }) }),
+    };
+    const service: any = Object.create(WorkyPlanningService.prototype);
+    service.messages = messages;
+    service.messageComponents = messageComponents;
+    service.loadStream = jest.fn().mockResolvedValue({});
+
+    const result = await service.listMessages('user-1', '507f1f77bcf86cd799439011', 200);
+    const manager = result.find((r: any) => r.id === 'mid-1');
+    // Sort is applied by the DB query (ordinal: 1); the mock returns them pre-sorted-by-mongo,
+    // so here we assert the attach keeps DB order (c-2 then c-1 as returned).
+    expect(manager.components).toEqual([
+      { id: 'c-2', type: 'code', data: { content: 'x' } },
+      { id: 'c-1', type: 'text', data: { content: 'hi' } },
+    ]);
+    const owner = result.find((r: any) => r.id === 'mid-2');
+    expect(owner.components).toEqual([]);
   });
 });

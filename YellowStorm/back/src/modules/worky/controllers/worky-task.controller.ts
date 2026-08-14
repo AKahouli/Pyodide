@@ -17,6 +17,7 @@ import {
 import { WorkyExecutionService } from '../services/worky-execution.service';
 import { WorkyHumanAssignmentService } from '../services/worky-human-assignment.service';
 import { WorkyTaskResultService, WorkyTaskResultView } from '../services/worky-task-result.service';
+import { WorkyTaskService } from '../services/worky-task.service';
 import {
   MoveWorkyTaskDto,
   WorkyTaskControlDto,
@@ -51,6 +52,7 @@ export class WorkyTaskController {
     private readonly execution: WorkyExecutionService,
     private readonly humanAssignment: WorkyHumanAssignmentService,
     private readonly taskResults: WorkyTaskResultService,
+    private readonly taskService: WorkyTaskService,
   ) {}
 
   @Get(':id/results')
@@ -60,6 +62,15 @@ export class WorkyTaskController {
   @ApiParam({ name: 'id', description: 'Task id' })
   async results(@Param('id') id: string): Promise<WorkyTaskResultView[]> {
     return this.taskResults.listForTask(id);
+  }
+
+  @Get(':id/result-content')
+  @UseGuards(WorkyTaskStreamAccessGuard)
+  @RequirePermissions(Permissions.WORKY_STREAM_READ)
+  @ApiOperation({ summary: 'Rich step result content (components + file artifacts) for a Worky task' })
+  @ApiParam({ name: 'id', description: 'Task id' })
+  async resultContent(@Param('id') id: string) {
+    return this.taskService.getResultContent(id);
   }
 
   @Post(':id/move')
