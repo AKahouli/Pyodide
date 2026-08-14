@@ -481,6 +481,52 @@ export async function voiceStatus(streamId: string): Promise<{ status: string; t
   return unwrap(res);
 }
 
+/** Compact per-task summary the concierge orients with (via list_tasks). */
+export interface VoiceTaskSummary {
+  id: string;
+  title: string;
+  lane: string;
+  executionState: string;
+  blocked: boolean;
+}
+
+/** Voice-friendly per-task detail the concierge describes tasks with (via get_task_details). */
+export interface VoiceTaskDetails {
+  id: string;
+  title: string;
+  description: string;
+  lane: string;
+  executionState: string;
+  result: string | null;
+  resultTruncated: boolean;
+  blockedReason: string | null;
+  acceptanceCriteria: string[];
+  assigneeKey: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  budget: { estimateUsd: number; actualUsd: number } | null;
+  artifacts: Array<{ filename: string; kind: string | null }>;
+}
+
+/** Voice tool: list the stream's tasks as compact summaries. */
+export async function voiceListTasks(streamId: string): Promise<{ tasks: VoiceTaskSummary[] }> {
+  const res = await apiClient.post<ApiResponse<{ tasks: VoiceTaskSummary[] }>>(
+    API_ENDPOINTS.worky.voiceListTasks,
+    { streamId },
+  );
+  return unwrap(res);
+}
+
+/** Voice tool: get full detail for one task. */
+export async function voiceTaskDetails(streamId: string, taskId: string): Promise<VoiceTaskDetails> {
+  const res = await apiClient.post<ApiResponse<VoiceTaskDetails>>(
+    API_ENDPOINTS.worky.voiceTaskDetails,
+    { streamId, taskId },
+  );
+  return unwrap(res);
+}
+
 /** Persist a voice transcript turn into the unified chat history. */
 export async function voiceTranscript(streamId: string, role: 'owner' | 'manager', text: string): Promise<void> {
   await apiClient.post(API_ENDPOINTS.worky.voiceTranscript, { streamId, role, text });

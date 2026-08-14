@@ -18,6 +18,15 @@ export class VoiceStatusDto {
   @IsString() @IsNotEmpty() @MaxLength(256) streamId!: string;
 }
 
+export class VoiceListTasksDto {
+  @IsString() @IsNotEmpty() @MaxLength(256) streamId!: string;
+}
+
+export class VoiceTaskDetailsDto {
+  @IsString() @IsNotEmpty() @MaxLength(256) streamId!: string;
+  @IsString() @IsNotEmpty() @MaxLength(256) taskId!: string;
+}
+
 export class VoiceTranscriptDto {
   @IsString() @IsNotEmpty() @MaxLength(256) streamId!: string;
   @IsIn(['owner', 'manager']) role!: 'owner' | 'manager';

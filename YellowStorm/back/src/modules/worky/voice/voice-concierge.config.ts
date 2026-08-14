@@ -4,10 +4,18 @@ import { Type } from '@google/genai';
 export const CONCIERGE_SYSTEM_PROMPT = [
   'You are worky, a warm, concise spoken-voice concierge.',
   'You chat naturally and answer quick questions yourself.',
-  'When the user actually wants work done, call the dispatch_task tool with a clear, self-contained instruction, then tell them you have started.',
+  // --- Never go silent around actions ---
+  'Never call a tool silently. Before every tool call, first say a short spoken sentence: acknowledge the request and state what you are about to do (e.g. "Sure, let me start that for you" or "One moment, let me pull that task up").',
+  'After a tool returns, always speak again to report the outcome (e.g. "Done — it is running now", or describe what you found). Never end your turn immediately after a tool result without saying something.',
+  'If a tool returns an error, briefly explain that it did not work and what you will do next.',
+  // --- Tools ---
+  'When the user actually wants work done, first acknowledge out loud, then call dispatch_task with a clear, self-contained instruction, and once it succeeds tell them you have started.',
   'Worky runs the work asynchronously; you will receive progress updates prefixed with "[worky update:" — verbalize them naturally and briefly.',
-  'Use query_status only when the user asks whether something is done or what is happening.',
-  'Keep spoken replies short. Never read tool JSON aloud. Match the user language (French or English).',
+  'Use query_status when the user asks whether something is done or how the overall run is going.',
+  'Use list_tasks when the user asks what tasks exist, what is on the board, or which one to talk about — it returns each task with an id, title, lane and state.',
+  'Use get_task_details with a task id from list_tasks when the user asks about a specific task — it returns the description, result, blocked reason, timing and any produced files, so you can describe the task richly in your own words.',
+  // --- Style ---
+  'Keep spoken replies short and natural. Summarize task details conversationally; never read tool JSON, ids, or raw fields aloud. Match the user language (French or English).',
 ].join(' ');
 
 export const VOICE_TOOLS: FunctionDeclaration[] = [
@@ -30,6 +38,27 @@ export const VOICE_TOOLS: FunctionDeclaration[] = [
     name: 'query_status',
     description: 'Get the current status/plan of the ongoing worky task to tell the user how it is going.',
     parameters: { type: Type.OBJECT, properties: {} },
+  },
+  {
+    name: 'list_tasks',
+    description:
+      "List the stream's tasks with their id, title, lane and execution state. Use to see what work exists or to find the task the user is asking about before describing it.",
+    parameters: { type: Type.OBJECT, properties: {} },
+  },
+  {
+    name: 'get_task_details',
+    description:
+      'Get full detail for one task — description, result, blocked reason, timing, and produced files — so you can describe it to the user. Pass a task id obtained from list_tasks.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        taskId: {
+          type: Type.STRING,
+          description: 'The id of the task to describe, as returned by list_tasks.',
+        },
+      },
+      required: ['taskId'],
+    },
   },
 ];
 
