@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.smart_rag.tools.utilities.connector_tools import (
-    _build_connector_import_url,
     _build_function_schema,
     _build_image_reference_labels,
     _build_signature,
@@ -23,7 +22,6 @@ from src.smart_rag.tools.utilities.connector_tools import (
     _with_default_workspace_params,
     _with_tool_context_signature,
     create_save_file_to_workspace,
-    import_connector_items_to_workspace_request,
 )
 
 
@@ -150,95 +148,6 @@ class TestConnectorMcpAndImport:
         result = _buffer_mcp_images_for_model(response, tool_context)
         assert "mcp_content_parts" not in result
         assert any(key.startswith("_pending_tool_images_") for key in tool_context.state)
-
-    def test_build_connector_import_url_variants(self):
-        assert _build_connector_import_url("https://api.example.com/api/v1").endswith(
-            "/connectors/internal/transfer/import"
-        )
-        assert "/api/v1/connectors/internal/transfer/import" in _build_connector_import_url(
-            "https://api.example.com"
-        )
-
-    def test_import_connector_items_validation_errors(self):
-        assert "mode must be" in import_connector_items_to_workspace_request(
-            backend_url="http://localhost",
-            connector_id="c1",
-            connector_name="SharePoint",
-            workspace_id="w1",
-            auth_headers={},
-            user_id="u1",
-            platform_api_token="internal-token",
-            mode="invalid",
-        )
-        assert "could not extract a supported" in import_connector_items_to_workspace_request(
-            backend_url="http://localhost",
-            connector_id="c1",
-            connector_name="SharePoint",
-            workspace_id="w1",
-            auth_headers={},
-            user_id="u1",
-            platform_api_token="internal-token",
-            mode="file",
-            item_ref={"bad": "shape"},
-        )
-
-    @patch("src.smart_rag.tools.utilities.connector_tools.requests.post")
-    def test_import_connector_items_success(self, mock_post):
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "data": {
-                "summary": {"requested": 1, "imported": 1, "failed": 0},
-                "imported": [
-                    {"success": True, "finalFilename": "doc.pdf", "workspaceDocumentId": "d1"}
-                ],
-                "errors": [],
-            }
-        }
-        mock_post.return_value = mock_response
-        result = import_connector_items_to_workspace_request(
-            backend_url="http://localhost/api/v1",
-            connector_id="c1",
-            connector_name="SharePoint",
-            workspace_id="w1",
-            auth_headers={},
-            user_id="u1",
-            platform_api_token="internal-token",
-            mode="file",
-            item_ref={"driveId": "d", "itemId": "i"},
-        )
-        assert "Imported connector items" in result
-        assert "doc.pdf" in result
-        _, kwargs = mock_post.call_args
-        assert kwargs["headers"] == {
-            "X-Internal-Token": "internal-token",
-            "Content-Type": "application/json",
-        }
-        assert kwargs["json"]["userId"] == "u1"
-
-    @patch("src.smart_rag.tools.utilities.connector_tools.requests.post")
-    def test_import_accepts_provider_neutral_file_reference(self, mock_post):
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "data": {"summary": {}, "imported": [], "errors": []}
-        }
-        mock_post.return_value = mock_response
-
-        import_connector_items_to_workspace_request(
-            backend_url="http://localhost/api/v1",
-            connector_id="gdrive",
-            connector_name="Google Drive",
-            workspace_id="w1",
-            auth_headers={"Authorization": "Bearer provider-token"},
-            user_id="u1",
-            platform_api_token="internal-token",
-            mode="file",
-            item_ref={"fileId": "google-file-1"},
-        )
-
-        _, kwargs = mock_post.call_args
-        assert kwargs["json"]["itemRef"] == {"fileId": "google-file-1"}
-        assert "Authorization" not in kwargs["headers"]
-
 
 class TestSaveFileToWorkspace:
     @pytest.mark.asyncio

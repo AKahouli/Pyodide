@@ -1,6 +1,7 @@
 import { useModuleTranslation } from '@/modules/localization';
 import { AlertCircle, Clock } from 'lucide-react';
 import { StatusBadge } from './StatusBadge';
+import { TaskTimestamp } from './TaskTimestamp';
 import { laneToOrch } from '../status';
 import type { WorkyTask } from '../types';
 
@@ -31,6 +32,7 @@ export function KanbanCard({ task }: KanbanCardProps): JSX.Element {
           </span>
         ) : null}
       </footer>
+      <TaskTimestamp task={task} className='mt-1.5' />
       {task.blockerReason ? (
         <p className='mt-2 flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300'>
           <AlertCircle className='h-3 w-3' aria-hidden />

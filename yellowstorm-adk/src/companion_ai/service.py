@@ -361,6 +361,30 @@ class OrchestratorService:
         return create_connector_tools(
             connectors, ConnectorToolContext(session_id=session_id))
 
+    def _capture_artifacts(self, session_id: str, step: Step, tools: List) -> List:
+        """Wrap this step's connector tools so files they produce become rows.
+
+        The playbook surfaces a generated file as a gRPC artifact component on
+        the turn's stream. Worky has no stream — the client reads the Postgres
+        read model over Electric — so the same file has to become a durable row
+        instead, or it is invisible: the model sees the storage key in its own
+        tool result and nothing else ever does.
+
+        Wrapped per step rather than once per turn because the row needs the
+        step id, which is what lets the client hang each file off the card that
+        produced it. Same reason _mail_stamping wraps per step.
+        """
+        if self._rm is None:
+            return tools
+        rm = self._rm
+
+        async def on_artifact(artifact: dict, _step_id=step.id):
+            await rm.add_step_artifact(session_id, _step_id, **artifact)
+
+        return [nodes.capture_artifacts_tool(t, on_artifact=on_artifact)
+                if getattr(t, "func", None) is not None else t
+                for t in tools]
+
     def _mail_stamping(self, session_id: str, user_id: str, plan: Plan):
         """Give each send step the token of the step waiting on its reply.
 
@@ -906,6 +930,7 @@ class OrchestratorService:
             # mail reply named work the planner never saw.
             if mail_tools_for_step:
                 tools = mail_tools_for_step(step, tools)
+            tools = self._capture_artifacts(session_id, step, tools)
             # Shared with both dynamic-step tools below: whichever spawns
             # a step first, the other must still treat it as a sibling,
             # not something to chain the next one after.
@@ -1346,8 +1371,13 @@ class OrchestratorService:
         planner = LlmAgent(
             name="planner",
             model=self._build_planner_model(planner_model),
-            instruction=(f"{planner_prompt}\n\n{PLANNER_INSTRUCTION}"
-                         if planner_prompt else PLANNER_INSTRUCTION),
+            # The DB prompt (agentstore) is the source of truth: it REPLACES the
+            # instruction rather than stacking on it. PLANNER_INSTRUCTION is only
+            # a fallback when the DB has none. Concatenating the two made the
+            # planner read the whole prompt twice -- once from the DB, once from
+            # this hardcoded copy (whose {{ }} JSON examples reached the model as
+            # invalid doubled braces). Same replace-semantics the executor uses.
+            instruction=(planner_prompt or PLANNER_INSTRUCTION),
             tools=[human_agents.make_find_human_agents_tool()],
             output_schema=_PlannerOutput,
         )

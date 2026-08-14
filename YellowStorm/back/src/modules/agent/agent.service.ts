@@ -1495,6 +1495,11 @@ export class AgentService {
     ) {
       throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is unavailable or has no model configured');
     }
+    // The planner agent type must itself be active (findBySlug filters on isActive).
+    const plannerType = await this.agentTypeService.findBySlug(PLAYBOOK_PLANNER_AGENT_TYPE_SLUG);
+    if (!plannerType) {
+      throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is unavailable or has no model configured');
+    }
     return {
       agentTypeId: plannerType.id,
       agentTypeSlug: plannerType.slug,
@@ -1532,6 +1537,7 @@ export class AgentService {
     const model = (agent?.llmModel as string | undefined)?.trim();
     if (
       !agent
+      || !agent.isActive
       || !model
     ) {
       throw new BadRequestException(ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE, 'The selected Playbook Suggestor agent is unavailable or has no model configured');
