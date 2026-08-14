@@ -28,6 +28,7 @@ import type { FilesTreeNode } from '../../types';
 import { useNodepodPreview, type NodepodPreviewStatus } from '../../hooks/useNodepodPreview';
 import { AppSourceFileTree } from './AppSourceFileTree';
 import { AppSourceFileViewer } from './AppSourceFileViewer';
+import { resolveSourceFilesTree } from '../../utils/files-tree';
 
 // Vague 5 contract: this view NEVER boots Nodepod.
 // BrowserRuntimeHost is started once in ConversationV2SessionPage; useNodepodPreview
@@ -135,10 +136,25 @@ export function ApplicationComponentView({
   const badge = badgeKey && badgeClass ? { label: t(badgeKey), className: badgeClass } : null;
   const busy = status === 'loading' || status === 'installing' || status === 'starting';
 
+  const sourceTree = useMemo(
+    () => resolveSourceFilesTree(filesTree, files),
+    [filesTree, files],
+  );
+
   const selectedContent = useMemo(() => {
     if (!selectedPath || !files) return null;
-    const key = selectedPath.startsWith('/') ? selectedPath : `/${selectedPath}`;
-    return files[key] ?? files[selectedPath] ?? null;
+    const rel = selectedPath.replace(/^\/+/, '');
+    const candidates = [
+      selectedPath,
+      rel,
+      `/${rel}`,
+      rel.startsWith('/') ? rel : `/${rel}`,
+    ];
+    for (const key of candidates) {
+      const hit = files[key];
+      if (hit != null) return hit;
+    }
+    return null;
   }, [files, selectedPath]);
 
   const statusLabel =
@@ -413,7 +429,7 @@ export function ApplicationComponentView({
                   className='flex min-h-0 min-w-0 flex-col overflow-hidden'
                 >
                   <AppSourceFileTree
-                    tree={filesTree}
+                    tree={sourceTree}
                     selectedPath={selectedPath}
                     onSelect={handleSelectFile}
                     className='h-full min-h-0'

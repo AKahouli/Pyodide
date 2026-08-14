@@ -4,6 +4,7 @@ import type { AgentEvent, ConversationV2PointerSummary, FilesTreeNode, AppBuildP
 import { conversationV2Api } from './api';
 import type { DeployStatus } from './api';
 import type { AppRuntimeUiStatus } from './runtime/runtime.types';
+import { isRuntimePreviewVisible } from './runtime/runtime.types';
 import {
   readSelectedModelForSession,
   writeSelectedModelForSession,
@@ -16,9 +17,14 @@ import {
   deriveAppBuildProgress,
   derivePendingQuestion,
   dedupeReplayEvents,
+  completePendingToolsInTurn,
   currentTurnStartIndex,
   findIndexFrom,
+  isTurnOpen,
+  shouldApplyTerminalEvent,
 } from './utils/session-reducer';
+import { normalizeFilesTree } from './utils/files-tree';
+import { syncHostRevisionSources } from './runtime/BrowserRuntimeHost';
 
 export interface ApplicationComponentState {
   url: string;
@@ -26,7 +32,10 @@ export interface ApplicationComponentState {
   cephPath?: string;
   filesTree?: FilesTreeNode | null;
   fileCount?: number;
+  /** SSE event id (dedupe / replay). */
   revision: string;
+  /** Workspace revision id from finalize (e.g. rev_13). */
+  workspaceRevisionId?: string;
 }
 
 export interface SelectedConnectorRepoState {
@@ -443,6 +452,15 @@ export const useConversationV2Store = create<State & Actions>()(
           attachments: [],
         } as AgentEvent);
         set({ streaming: true, streamError: null, pendingQuestion: null }, false, 'sendMessage/optimistic');
+        useConversationV2PointersStore.setState(
+          (p) => ({
+            items: p.items.map((row) =>
+              row.sessionId === sessionId ? { ...row, status: 'active' as const } : row,
+            ),
+          }),
+          false,
+          'pointers/active-on-send',
+        );
 
         const repo = get().selectedConnectorRepo;
         const skillIds = get().selectedSkillIds;
@@ -547,9 +565,11 @@ export const useConversationV2Store = create<State & Actions>()(
               if (get().sessionId !== sessionId) return;
               get().handleEvent(event);
             }
-            if (items.length < 200 || nextSince <= cursor) return;
+            if (!get().streaming) return;
+            if (items.length < 200 || nextSince <= cursor) break;
             cursor = nextSince;
           }
+          if (get().sessionId !== sessionId || !get().streaming) return;
         })().catch((err) => {
           console.error('[ConversationV2Store] session reconciliation failed:', err);
         }).finally(() => {
@@ -804,10 +824,29 @@ export const useConversationV2Store = create<State & Actions>()(
                     : {}),
                 });
               }
-              case 'done':
-                return withSeq({ streaming: false, liveToolCallId: null, pendingQuestion: null });
-              case 'error':
+              case 'done': {
+                if (!shouldApplyTerminalEvent(state.events, event)) {
+                  return withSeq({ events: [...state.events, event] });
+                }
+                const showRuntimePreview =
+                  isRuntimePreviewVisible(state.runtimeStatus) ||
+                  !!state.applicationComponent;
+                const events = completePendingToolsInTurn(state.events);
                 return withSeq({
+                  events: [...events, event],
+                  streaming: false,
+                  liveToolCallId: null,
+                  liveAssistantIds: new Set<string>(),
+                  pendingQuestion: null,
+                  ...(showRuntimePreview ? { rightPanelMode: 'app' as const } : {}),
+                });
+              }
+              case 'error':
+                if (!shouldApplyTerminalEvent(state.events, event)) {
+                  return withSeq({ events: [...state.events, event] });
+                }
+                return withSeq({
+                  events: [...state.events, event],
                   streamError: event.error,
                   streaming: false,
                   liveToolCallId: null,
@@ -875,6 +914,9 @@ export const useConversationV2Store = create<State & Actions>()(
                 return withSeq({ events: [...filtered, event] });
               }
               case 'wait': {
+                if (!shouldApplyTerminalEvent(state.events, event)) {
+                  return withSeq({ events: [...state.events, event] });
+                }
                 const pendingQuestion =
                   event.options?.length
                     ? {
@@ -883,7 +925,7 @@ export const useConversationV2Store = create<State & Actions>()(
                         options: event.options,
                       }
                     : null;
-                return withSeq({ streaming: false, liveToolCallId: null, pendingQuestion });
+                return withSeq({ streaming: false, liveToolCallId: null, pendingQuestion, events: [...state.events, event] });
               }
               case 'app_build_progress': {
                 const progress: AppBuildProgress = {
@@ -905,18 +947,23 @@ export const useConversationV2Store = create<State & Actions>()(
                   url: event.url,
                   title: event.title,
                   ceph_path: event.ceph_path,
+                  revision_id: event.revision_id,
                   file_count: event.file_count,
                   hasFilesTree: !!event.files_tree,
                 });
+                if (state.sessionId && event.revision_id) {
+                  syncHostRevisionSources(state.sessionId, event.revision_id);
+                }
                 return withSeq({
                   events: [...state.events, event],
                   applicationComponent: {
                     url: event.url,
                     title: event.title ?? '',
                     cephPath: event.ceph_path,
-                    filesTree: event.files_tree ?? null,
+                    filesTree: normalizeFilesTree(event.files_tree) ?? event.files_tree ?? null,
                     fileCount: event.file_count,
                     revision: event.event_id,
+                    workspaceRevisionId: event.revision_id,
                   },
                   appBuildProgress: null,
                   rightPanelMode: 'app',

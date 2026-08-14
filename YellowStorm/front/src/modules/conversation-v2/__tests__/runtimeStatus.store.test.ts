@@ -38,6 +38,24 @@ describe('conversation-v2 runtimeStatus store', () => {
     useConversationV2Store.getState().reset();
     expect(useConversationV2Store.getState().runtimeStatus).toBe('idle');
   });
+
+  it('done switches back to the app preview when the runtime is active', () => {
+    useConversationV2Store.setState({
+      runtimeStatus: 'browser_active',
+      rightPanelMode: 'tool',
+      selectedToolCallId: 'tc_finalize',
+      streaming: true,
+      liveToolCallId: 'tc_finalize',
+    });
+    useConversationV2Store.getState().handleEvent({
+      type: 'done',
+      event_id: 'done-1',
+      timestamp: 1,
+    });
+    const state = useConversationV2Store.getState();
+    expect(state.streaming).toBe(false);
+    expect(state.rightPanelMode).toBe('app');
+  });
 });
 
 describe('mapHostStatusToRuntimeUi', () => {

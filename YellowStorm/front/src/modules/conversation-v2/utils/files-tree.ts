@@ -47,6 +47,83 @@ export function countFilesInTree(tree: FilesTreeNode | null | undefined): number
   return flattenFilesTree(tree).length;
 }
 
+type LegacyTreeNode = {
+  name?: string;
+  type?: string;
+  path?: string;
+  size?: number;
+  children?: LegacyTreeNode[];
+};
+
+/** Build a Manus-shaped tree from absolute Nodepod VFS paths (`/src/App.jsx`). */
+export function buildFilesTreeFromVfsPaths(vfsPaths: string[]): FilesTreeNode {
+  const root: FilesTreeNode = { name: '', type: 'directory', children: [] };
+
+  for (const vfsPath of [...vfsPaths].sort()) {
+    const rel = vfsPath.replace(/^\/+/, '');
+    if (!rel) continue;
+    const segments = rel.split('/').filter(Boolean);
+    let cursor = root;
+    segments.forEach((segment, index) => {
+      const isLeaf = index === segments.length - 1;
+      cursor.children ??= [];
+      let next = cursor.children.find((child) => child.name === segment);
+      if (!next) {
+        const relPath = segments.slice(0, index + 1).join('/');
+        next = isLeaf
+          ? { name: segment, type: 'file', path: relPath }
+          : { name: segment, type: 'directory', children: [] };
+        cursor.children.push(next);
+      }
+      cursor = next;
+    });
+  }
+
+  return root;
+}
+
+/** Coerce runtime/finalize trees (`dir` + missing paths) into Manus display shape. */
+export function normalizeFilesTree(tree: unknown): FilesTreeNode | null {
+  if (!tree || typeof tree !== 'object') return null;
+
+  const normalizeNode = (node: LegacyTreeNode, parentRel: string): FilesTreeNode => {
+    const rawName = String(node.name ?? '');
+    const name = rawName === '/' ? '' : rawName;
+    const isFile = node.type === 'file';
+    if (isFile) {
+      const path = (node.path ?? (parentRel ? `${parentRel}/${name}` : name)).replace(/^\/+/, '');
+      return {
+        name: name || path.split('/').pop() || path,
+        type: 'file',
+        path,
+        ...(node.size != null ? { size: node.size } : {}),
+      };
+    }
+    const rel = parentRel ? (name ? `${parentRel}/${name}` : parentRel) : name;
+    const children = (node.children ?? []).map((child) => normalizeNode(child, rel));
+    return { name, type: 'directory', children };
+  };
+
+  const normalized = normalizeNode(tree as LegacyTreeNode, '');
+  return countFilesInTree(normalized) > 0 ? normalized : null;
+}
+
+/**
+ * Resolve the tree shown in split view: prefer SSE metadata, else live Nodepod files.
+ */
+export function resolveSourceFilesTree(
+  tree: FilesTreeNode | null | undefined,
+  vfsFiles: Record<string, string | Uint8Array> | null | undefined,
+): FilesTreeNode | null {
+  // Prefer the live Nodepod VFS so split view tracks write/apply_patch mutations.
+  if (vfsFiles && Object.keys(vfsFiles).length > 0) {
+    return buildFilesTreeFromVfsPaths(Object.keys(vfsFiles));
+  }
+  const normalized = normalizeFilesTree(tree);
+  if (normalized && countFilesInTree(normalized) > 0) return normalized;
+  return null;
+}
+
 /**
  * Prune a tree to nodes matching `query` (name or path), keeping ancestor folders.
  */

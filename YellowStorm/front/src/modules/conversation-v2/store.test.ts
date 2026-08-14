@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useConversationV2Store } from './store';
 import { conversationV2Api } from './api';
+import type { AgentEvent } from './types';
 
 describe('useConversationV2Store', () => {
   beforeEach(() => {
@@ -46,6 +47,57 @@ describe('useConversationV2Store', () => {
     setStreaming(true);
     handleEvent({ type: 'done', event_id: 'e1', timestamp: 1 });
     expect(useConversationV2Store.getState().streaming).toBe(false);
+  });
+
+  it('handleEvent("done") marks in-flight tools as called', () => {
+    const { handleEvent, setStreaming } = useConversationV2Store.getState();
+    handleEvent({
+      type: 'message',
+      event_id: 'u1',
+      timestamp: 1,
+      role: 'user',
+      content: 'build',
+    });
+    handleEvent({
+      type: 'tool',
+      event_id: 't1',
+      timestamp: 2,
+      tool_call_id: 'tc1',
+      name: 'mcp',
+      status: 'calling',
+      function: 'yellowruntime_write',
+      args: {},
+    });
+    setStreaming(true);
+    handleEvent({ type: 'done', event_id: 'd1', timestamp: 3 });
+    const tool = useConversationV2Store
+      .getState()
+      .events.find((e) => e.type === 'tool' && e.tool_call_id === 'tc1');
+    expect(tool?.type === 'tool' ? tool.status : null).toBe('called');
+  });
+
+  it('ignores stale done events that predate the latest user message sequence', () => {
+    const { handleEvent, setStreaming } = useConversationV2Store.getState();
+    handleEvent({
+      type: 'message',
+      event_id: 'u1',
+      timestamp: 1,
+      role: 'user',
+      content: 'first',
+      sequence: 10,
+    } as AgentEvent);
+    handleEvent({ type: 'done', event_id: 'd1', timestamp: 2, sequence: 20 } as AgentEvent);
+    handleEvent({
+      type: 'message',
+      event_id: 'u2',
+      timestamp: 3,
+      role: 'user',
+      content: 'modify',
+      sequence: 30,
+    } as AgentEvent);
+    setStreaming(true);
+    handleEvent({ type: 'done', event_id: 'd-stale', timestamp: 4, sequence: 25 } as AgentEvent);
+    expect(useConversationV2Store.getState().streaming).toBe(true);
   });
 
   it('reconciles a missed final event after reconnect', async () => {
