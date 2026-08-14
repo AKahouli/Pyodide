@@ -471,6 +471,7 @@ function PlaybookCanvasInner() {
   const saveCurrentPlaybook = usePlaybookStore((state) => state.saveCurrentPlaybook);
 
   const [editingTask, setEditingTask] = useState<PlaybookTask | null>(null);
+  const [editorInitialView, setEditorInitialView] = useState<'setup' | 'quality' | 'reference'>('setup');
   const [dataBindingsVisible, setDataBindingsVisible] = useState(false);
   const editorOpen = usePlaybookStore((s) => s.nodeEditorOpen);
   const setEditorOpen = usePlaybookStore((s) => s.setNodeEditorOpen);
@@ -1548,7 +1549,18 @@ function PlaybookCanvasInner() {
 
   const nodeContextMenuActions = useMemo<NodeContextMenuActions>(
     () => ({
-      onEdit: handleEditNode,
+      onEdit: (nodeId) => {
+        setEditorInitialView('setup');
+        handleEditNode(nodeId);
+      },
+      onEditReference: (nodeId) => {
+        const task = playbook?.tasks.find((candidate) => candidate.id === nodeId);
+        if (!task) return;
+        setEditorInitialView('reference');
+        setEditingTask(task);
+        setEditorOpen(true);
+        setDesignerOpen(false);
+      },
       onAdvise: (nodeId) => { void handleOpenNodeAdvisor(nodeId); },
       onClone: handleCloneNode,
       onDelete: removeNode,
@@ -1571,6 +1583,8 @@ function PlaybookCanvasInner() {
     }),
     [
       handleEditNode,
+      playbook?.tasks,
+      setDesignerOpen,
       handleOpenNodeAdvisor,
       handleCloneNode,
       removeNode,
@@ -1604,6 +1618,7 @@ function PlaybookCanvasInner() {
         return;
       }
       const taskFromPlaybook = playbook?.tasks.find((t) => t.id === node.id) ?? null;
+      setEditorInitialView('setup');
       setEditingTask(taskFromPlaybook || node.data);
       setEditorOpen(true);
       setDesignerOpen(false);
@@ -4027,7 +4042,7 @@ function PlaybookCanvasInner() {
         open={editorOpen}
         onOpenChange={setEditorOpen}
         onSave={handleNodeSave}
-        onOpenOutputFormatEditor={openOutputFormatEditor}
+        initialView={editorInitialView}
       />
 
       <PlaybookNodeAdvisorDialog

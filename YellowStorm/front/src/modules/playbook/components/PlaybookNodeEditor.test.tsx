@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PlaybookNodeEditor } from './PlaybookNodeEditor';
-import type { PlaybookTask } from '../types';
+import type { PlaybookTask, ValidatedTaskReplay } from '../types';
 
 const fetchAgents = vi.fn();
 const fetchModels = vi.fn();
@@ -13,6 +13,7 @@ const updateTaskReplayFormatGuide = vi.fn();
 const renameTaskReplay = vi.fn();
 const deleteTaskReplay = vi.fn();
 const updateDataBindings = vi.fn();
+const saveCurrentPlaybook = vi.fn().mockResolvedValue(undefined);
 const storeState = {
   fetchTaskReplays,
   activateTaskReplay,
@@ -21,6 +22,10 @@ const storeState = {
   renameTaskReplay,
   deleteTaskReplay,
   updateDataBindings,
+  saveCurrentPlaybook,
+  isDirty: false,
+  isSaving: false,
+  autosaveBackoffUntil: null as number | null,
   currentPlaybook: {
     id: 'playbook-1',
     tasks: [],
@@ -100,7 +105,12 @@ vi.mock('@/components/ui/badge', () => ({
 }));
 
 vi.mock('@/components/ui/dialog', () => ({
-  Dialog: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Dialog: ({ children, onOpenChange }: { children: ReactNode; onOpenChange?: (open: boolean) => void }) => (
+    <div>
+      {children}
+      <button type="button" aria-label="test-dialog-close" onClick={() => onOpenChange?.(false)} />
+    </div>
+  ),
   DialogContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogDescription: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -151,7 +161,10 @@ vi.mock('@/components/ui/collapsible', async () => {
         </button>
       );
     },
-    CollapsibleContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+    CollapsibleContent: ({ children }: { children: ReactNode }) => {
+      const context = React.useContext(CollapsibleContext);
+      return context?.open ? <div>{children}</div> : null;
+    },
   };
 });
 
@@ -202,7 +215,9 @@ vi.mock('@/components/ui/tabs', async () => {
 });
 
 vi.mock('@/components/ui/searchable-select', () => ({
-  SearchableSelect: () => null,
+  SearchableSelect: ({ id, name, value, 'aria-labelledby': ariaLabelledBy }: { id?: string; name?: string; value?: string; 'aria-labelledby'?: string }) => (
+    <button type="button" role="combobox" id={id} name={name} aria-labelledby={ariaLabelledBy}>{value}</button>
+  ),
 }));
 
 vi.mock('./PlaybookDataFlowSection', () => ({
@@ -323,6 +338,72 @@ describe('PlaybookNodeEditor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fetchTaskReplays.mockResolvedValue([]);
+    storeState.isDirty = false;
+    storeState.isSaving = false;
+    storeState.autosaveBackoffUntil = null;
+  });
+
+  it('shows the focused basic path and communicates local save progress', () => {
+    vi.useFakeTimers();
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={genericTask}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(screen.getByLabelText('nodeEditor.stepTitle')).toHaveAttribute('name', 'step-title');
+    expect(screen.getByLabelText('nodeEditor.instructions')).toHaveAttribute('name', 'step-instructions');
+    expect(screen.getByRole('combobox', { name: 'nodeEditor.agent' })).toHaveAttribute('name', 'step-agent');
+    expect(screen.getByText('nodeEditor.saveState.saved')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('nodeEditor.stepTitle'), { target: { value: 'Updated title' } });
+    expect(screen.getByText('nodeEditor.saveState.saving')).toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it('shows autosave failure and retries through the playbook store', async () => {
+    storeState.isDirty = true;
+    storeState.autosaveBackoffUntil = Date.now() + 1000;
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={genericTask}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('nodeEditor.saveState.failed')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /nodeEditor.saveState.retry/ }));
+    await waitFor(() => {
+      expect(saveCurrentPlaybook).toHaveBeenCalledWith({ reason: 'autosave' });
+    });
+  });
+
+  it('settles to a truthful queued state while playbook autosave is pending', () => {
+    storeState.isDirty = true;
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={genericTask}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('nodeEditor.saveState.queued')).toBeInTheDocument();
+    expect(screen.queryByText('nodeEditor.saveState.saving')).not.toBeInTheDocument();
   });
 
   it('does not fetch the evaluation baseline when task is null', () => {
@@ -463,6 +544,28 @@ describe('PlaybookNodeEditor', () => {
     });
   });
 
+  it('associates labels with evaluation and rubric controls', () => {
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={baseTask}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /nodeEditor.tabs.quality/ }));
+    expect(screen.getByLabelText('nodeEditor.evaluationPassThreshold')).toHaveAttribute('name', 'evaluation-pass-threshold');
+    expect(screen.getByLabelText('nodeEditor.evaluationWarningThreshold')).toHaveAttribute('name', 'evaluation-warning-threshold');
+    expect(screen.getByLabelText('nodeEditor.evaluationWeight')).toHaveAttribute('name', 'evaluation-score-weight');
+
+    fireEvent.click(screen.getByText('nodeEditor.evaluationAdvanced'));
+    expect(screen.getByLabelText('nodeEditor.evaluationRubricVersion')).toHaveAttribute('name', 'evaluation-rubric-version');
+    expect(screen.getByLabelText('nodeEditor.evaluationWeightSemantic')).toHaveAttribute('name', 'evaluation-weight-semanticMatch');
+    expect(screen.getByLabelText('nodeEditor.evaluationWeightExecution')).toHaveAttribute('name', 'evaluation-weight-executionHealth');
+  });
+
   it('locks iterator output ports to the canonical results data port', async () => {
     render(
       <PlaybookNodeEditor
@@ -497,14 +600,21 @@ describe('PlaybookNodeEditor', () => {
       />,
     );
 
-    const nodeTypeSelect = container.querySelector('select') as HTMLSelectElement;
     act(() => {
       vi.runOnlyPendingTimers();
     });
+    onSave.mockClear();
+
+    const nodeTypeSelect = container.querySelector('#step-node-type') as HTMLSelectElement;
 
     act(() => {
       fireEvent.change(nodeTypeSelect, { target: { value: 'iterator' } });
     });
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(nodeTypeSelect.value).toBe('agent');
+
+    fireEvent.click(screen.getByRole('button', { name: 'nodeEditor.convert.confirm' }));
 
     act(() => {
       vi.runAllTimers();
@@ -520,6 +630,98 @@ describe('PlaybookNodeEditor', () => {
     );
 
     vi.useRealTimers();
+  });
+
+  it('canonicalizes the execution mode when editing a legacy action node', () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={{ ...genericTask, nodeType: 'action', executionMode: undefined }}
+        open
+        onOpenChange={vi.fn()}
+        onSave={onSave}
+      />,
+    );
+
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+    onSave.mockClear();
+
+    fireEvent.change(screen.getByLabelText('nodeEditor.action'), { target: { value: 'delete' } });
+    act(() => {
+      vi.runAllTimers();
+    });
+
+    expect(onSave).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        executionMode: 'action',
+        selectedAction: 'delete',
+      }),
+    );
+    vi.useRealTimers();
+  });
+
+  it('does not save or synthesize action defaults merely by opening the editor', () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={{ ...genericTask, nodeType: 'action', executionMode: 'agent', selectedAction: undefined }}
+        open
+        onOpenChange={vi.fn()}
+        onSave={onSave}
+      />,
+    );
+
+    act(() => {
+      vi.runAllTimers();
+    });
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.queryByRole('combobox', { name: 'nodeEditor.model' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('nodeEditor.dynamicReasoning.label')).not.toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it('saves only the semantic field changed on an unconfigured action', () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={{ ...genericTask, nodeType: 'action', executionMode: 'agent', selectedAction: undefined }}
+        open
+        onOpenChange={vi.fn()}
+        onSave={onSave}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText('nodeEditor.stepTitle'), { target: { value: 'Renamed action' } });
+    act(() => {
+      vi.runAllTimers();
+    });
+
+    expect(onSave).toHaveBeenCalledWith('task-1', { title: 'Renamed action' });
+    vi.useRealTimers();
+  });
+
+  it('keeps Data Flow available for evaluation nodes', () => {
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={baseTask}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('data-flow-section')).toBeInTheDocument();
   });
 
   it('keeps router output artifact kinds editable without duplicating label editing', () => {
@@ -540,8 +742,8 @@ describe('PlaybookNodeEditor', () => {
     expect(screen.queryAllByTestId('data-flow-output-port')).toHaveLength(2);
   });
 
-  it('renders data flow section before retry policy for generic steps', () => {
-    const { container } = render(
+  it('organizes the editor into business-focused tabs while keeping global save status visible', () => {
+    render(
       <PlaybookNodeEditor
         playbookId="playbook-1"
         task={genericTask}
@@ -551,9 +753,66 @@ describe('PlaybookNodeEditor', () => {
       />,
     );
 
-    const content = container.textContent ?? '';
-    expect(content.indexOf('dataFlow.sectionTitle')).toBeGreaterThan(content.indexOf('nodeEditor.sectionExecution'));
-    expect(content.indexOf('nodeEditor.retryPolicy')).toBeGreaterThan(content.indexOf('dataFlow.sectionTitle'));
+    const setupRow = screen.getByTestId('step-setup-row');
+    expect(within(setupRow).getByLabelText('nodeEditor.nodeType')).toHaveAttribute('name', 'step-node-type');
+    expect(within(setupRow).getByRole('combobox', { name: 'nodeEditor.agent' })).toBeInTheDocument();
+    expect(within(setupRow).getByRole('combobox', { name: 'nodeEditor.model' })).toBeInTheDocument();
+    expect(within(setupRow).getByLabelText('nodeEditor.dynamicReasoning.label')).toHaveAttribute('name', 'dynamic-reasoning-enabled');
+    expect(screen.getByTestId('data-flow-section')).toBeInTheDocument();
+    expect(screen.queryByText('nodeEditor.retryPolicy')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('nodeEditor.stepTitle'), { target: { value: 'Business-ready step' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /nodeEditor.tabs.quality/ }));
+    expect(screen.queryByTestId('data-flow-section')).not.toBeInTheDocument();
+    expect(screen.getByText('nodeEditor.expectedResult')).toBeInTheDocument();
+    expect(screen.getByLabelText('nodeEditor.advisorEvaluation')).toBeInTheDocument();
+    expect(screen.getByText('nodeEditor.saveState.saving')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /nodeEditor.tabs.oversight/ }));
+    expect(screen.getByText('nodeEditor.retryPolicy')).toBeInTheDocument();
+    expect(screen.getByText('nodeEditor.interruptSettings')).toBeInTheDocument();
+    expect(screen.getByText('nodeEditor.notificationSettings')).toBeInTheDocument();
+    expect(screen.queryByLabelText('nodeEditor.deepSearch')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /nodeEditor.tabs.setup/ }));
+    expect(screen.getByLabelText('nodeEditor.stepTitle')).toHaveValue('Business-ready step');
+  });
+
+  it('saves Advisor controls through their existing task fields', () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={genericTask}
+        open
+        onOpenChange={vi.fn()}
+        onSave={onSave}
+      />,
+    );
+
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+    onSave.mockClear();
+
+    fireEvent.click(screen.getByText('nodeEditor.capabilitiesTitle'));
+    fireEvent.click(screen.getByLabelText('nodeEditor.deepSearch'));
+    fireEvent.click(screen.getByRole('button', { name: /nodeEditor.tabs.quality/ }));
+    fireEvent.click(screen.getByLabelText('nodeEditor.advisorEvaluation'));
+
+    act(() => {
+      vi.runAllTimers();
+    });
+
+    expect(onSave).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        deepSearch: true,
+        disableAdvisorEvaluation: true,
+      }),
+    );
+    vi.useRealTimers();
   });
 
   it('opens replay baseline settings dialog from the replay list', async () => {
@@ -589,23 +848,253 @@ describe('PlaybookNodeEditor', () => {
         open
         onOpenChange={vi.fn()}
         onSave={vi.fn()}
-        onOpenOutputFormatEditor={vi.fn()}
       />,
     );
 
-    fireEvent.click(screen.getByText('nodeEditor.sectionReplays'));
+    fireEvent.click(screen.getByRole('button', { name: /nodeEditor.tabs.quality/ }));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'nodeEditor.replayEditFormatGuide' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'nodeEditor.replayConfigureReference' })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'nodeEditor.replayEditFormatGuide' }));
+    fireEvent.click(screen.getByRole('button', { name: 'nodeEditor.replayConfigureReference' }));
 
     await waitFor(() => {
-      expect(screen.getByText('baselineBadge.dialogTitle')).toBeInTheDocument();
+      expect(screen.getByText('nodeEditor.referenceSubviewTitle')).toBeInTheDocument();
       expect(screen.getByDisplayValue('Baseline One')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'baselineBadge.editOutputFormatTemplate' })).toBeInTheDocument();
-      expect(screen.queryByDisplayValue('Guide text')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('nodeEditor.formatGuideLabel')).toHaveValue('Guide text');
+      expect(screen.queryByRole('button', { name: 'baselineBadge.editOutputFormatTemplate' })).not.toBeInTheDocument();
+    });
+
+    const workspace = screen.getByTestId('reference-output-workspace');
+    const answer = within(workspace).getByRole('region', { name: 'nodeEditor.formatGuideReference' });
+    const format = within(workspace).getByLabelText('nodeEditor.formatGuideLabel');
+    expect(answer.compareDocumentPosition(format) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('keeps every inactive replay individually configurable when none is active', async () => {
+    const inactiveReplay: ValidatedTaskReplay = {
+      id: 'replay-1',
+      playbookId: 'playbook-1',
+      taskId: 'task-1',
+      taskTitle: 'Evaluate result',
+      agentName: 'Agent',
+      createdBy: 'user',
+      referenceExecutionId: 'exec-1',
+      referenceExecutionNumber: 1,
+      validationVersion: 1,
+      status: 'inactive',
+      mode: 'strict_replay',
+      toolCalls: [],
+      referenceOutput: 'First reference',
+      preserveOutputFormat: false,
+      outputFormatGuide: null,
+      formatGuideStatus: 'disabled',
+      label: 'First inactive reference',
+      createdAt: '2026-05-23T10:00:00.000Z',
+      updatedAt: '2026-05-23T10:00:00.000Z',
+    };
+    fetchTaskReplays.mockResolvedValue([
+      inactiveReplay,
+      {
+        ...inactiveReplay,
+        id: 'replay-2',
+        referenceExecutionId: 'exec-2',
+        referenceExecutionNumber: 2,
+        validationVersion: 2,
+        label: 'Second inactive reference',
+      },
+    ]);
+    updateTaskReplayFormatGuide.mockImplementation(async (_playbookId: string, _taskId: string, replayId: string, data: { outputFormatGuide?: string }) => ({
+      ...(replayId === 'replay-1'
+        ? inactiveReplay
+        : { ...inactiveReplay, id: 'replay-2', label: 'Second inactive reference' }),
+      outputFormatGuide: data.outputFormatGuide,
+    }));
+
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={baseTask}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /nodeEditor.tabs.quality/ }));
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'nodeEditor.replayConfigureReference' })).toHaveLength(3);
+    });
+    const configureButtons = screen.getAllByRole('button', { name: 'nodeEditor.replayConfigureReference' });
+
+    fireEvent.click(configureButtons[1]);
+    expect(await screen.findByDisplayValue('First inactive reference')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'nodeEditor.referenceBack' }));
+
+    const refreshedConfigureButtons = await screen.findAllByRole('button', { name: 'nodeEditor.replayConfigureReference' });
+    fireEvent.click(refreshedConfigureButtons[2]);
+    expect(await screen.findByDisplayValue('Second inactive reference')).toBeInTheDocument();
+  });
+
+  it('initializes and saves missing reference defaults without creating replay settings', async () => {
+    const replayWithoutConfig: ValidatedTaskReplay = {
+      id: 'replay-1',
+      playbookId: 'playbook-1',
+      taskId: 'task-1',
+      taskTitle: 'Evaluate result',
+      agentName: 'Agent',
+      createdBy: 'user',
+      referenceExecutionId: 'exec-1',
+      referenceExecutionNumber: 1,
+      validationVersion: 2,
+      status: 'active',
+      mode: 'strict_replay',
+      toolCalls: [],
+      referenceOutput: '## Reference result\n\nA concise validated answer.',
+      preserveOutputFormat: false,
+      outputFormatGuide: null,
+      formatGuideStatus: 'disabled',
+      label: null,
+      createdAt: '2026-05-23T10:00:00.000Z',
+      updatedAt: '2026-05-23T10:00:00.000Z',
+    };
+    fetchTaskReplays.mockResolvedValue([replayWithoutConfig]);
+    renameTaskReplay.mockResolvedValue({ ...replayWithoutConfig, label: 'nodeEditor.referenceDefaultName' });
+    updateTaskReplayFormatGuide.mockResolvedValue({
+      ...replayWithoutConfig,
+      label: 'nodeEditor.referenceDefaultName',
+      outputFormatGuide: 'nodeEditor.referenceFormatGeneratedMarkdown',
+    });
+    const onOpenChange = vi.fn();
+
+    const { rerender } = render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={{ ...baseTask, hasValidatedReplay: true, activeReplayId: 'replay-1' }}
+        open
+        initialView="reference"
+        onOpenChange={onOpenChange}
+        onSave={vi.fn()}
+      />,
+    );
+
+    await screen.findByText('nodeEditor.referenceSubviewTitle');
+    expect(screen.getByLabelText('baselineBadge.nameLabel')).toHaveValue('nodeEditor.referenceDefaultName');
+    expect(screen.getByLabelText('nodeEditor.formatGuideLabel')).toHaveValue('nodeEditor.referenceFormatGeneratedMarkdown');
+    fireEvent.click(screen.getAllByRole('button', { name: 'test-dialog-close' })[0]);
+
+    await waitFor(() => {
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+      expect(screen.queryByText('nodeEditor.referenceSubviewTitle')).not.toBeInTheDocument();
+    });
+    expect(renameTaskReplay).toHaveBeenCalledWith('playbook-1', 'task-1', 'replay-1', 'nodeEditor.referenceDefaultName');
+    expect(updateTaskReplayFormatGuide).toHaveBeenCalledWith('playbook-1', 'task-1', 'replay-1', {
+      outputFormatGuide: 'nodeEditor.referenceFormatGeneratedMarkdown',
+    });
+
+    rerender(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={{ ...genericTask, id: 'task-2', title: 'Second step' }}
+        open
+        initialView="setup"
+        onOpenChange={onOpenChange}
+        onSave={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText('nodeEditor.stepTitle')).toHaveValue('Second step'));
+    expect(screen.queryByText('nodeEditor.referenceSubviewTitle')).not.toBeInTheDocument();
+  });
+
+  it('does not mutate a fully configured reference when it is opened and closed unchanged', async () => {
+    const configuredReplay: ValidatedTaskReplay = {
+      id: 'replay-1',
+      playbookId: 'playbook-1',
+      taskId: 'task-1',
+      taskTitle: 'Evaluate result',
+      agentName: 'Agent',
+      createdBy: 'user',
+      referenceExecutionId: 'exec-1',
+      referenceExecutionNumber: 1,
+      validationVersion: 2,
+      status: 'active',
+      mode: 'strict_replay',
+      toolCalls: [],
+      referenceOutput: 'Reference result',
+      preserveOutputFormat: false,
+      outputFormatGuide: 'Return one concise paragraph.',
+      formatGuideStatus: 'ready',
+      label: 'Trusted result',
+      createdAt: '2026-05-23T10:00:00.000Z',
+      updatedAt: '2026-05-23T10:00:00.000Z',
+    };
+    fetchTaskReplays.mockResolvedValue([configuredReplay]);
+
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={{ ...baseTask, hasValidatedReplay: true, activeReplayId: 'replay-1' }}
+        open
+        initialView="reference"
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    await screen.findByDisplayValue('Return one concise paragraph.');
+    fireEvent.click(screen.getByRole('button', { name: 'nodeEditor.referenceBack' }));
+
+    await waitFor(() => expect(screen.queryByText('nodeEditor.referenceSubviewTitle')).not.toBeInTheDocument());
+    expect(renameTaskReplay).not.toHaveBeenCalled();
+    expect(updateTaskReplayFormatGuide).not.toHaveBeenCalled();
+  });
+
+  it('saves an expected-format-only edit without synthesizing replay settings', async () => {
+    const configuredReplay: ValidatedTaskReplay = {
+      id: 'replay-1',
+      playbookId: 'playbook-1',
+      taskId: 'task-1',
+      taskTitle: 'Evaluate result',
+      agentName: 'Agent',
+      createdBy: 'user',
+      referenceExecutionId: 'exec-1',
+      referenceExecutionNumber: 1,
+      validationVersion: 2,
+      status: 'active',
+      mode: 'strict_replay',
+      toolCalls: [],
+      referenceOutput: 'Reference result',
+      preserveOutputFormat: false,
+      outputFormatGuide: 'Original guide',
+      formatGuideStatus: 'ready',
+      label: 'Trusted result',
+      createdAt: '2026-05-23T10:00:00.000Z',
+      updatedAt: '2026-05-23T10:00:00.000Z',
+    };
+    fetchTaskReplays.mockResolvedValue([configuredReplay]);
+    updateTaskReplayFormatGuide.mockResolvedValue({ ...configuredReplay, outputFormatGuide: 'Updated guide' });
+
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={{ ...baseTask, hasValidatedReplay: true, activeReplayId: 'replay-1' }}
+        open
+        initialView="reference"
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(await screen.findByLabelText('nodeEditor.formatGuideLabel'), { target: { value: 'Updated guide' } });
+    fireEvent.click(screen.getByRole('button', { name: 'nodeEditor.referenceBack' }));
+
+    await waitFor(() => {
+      expect(updateTaskReplayFormatGuide).toHaveBeenCalledWith('playbook-1', 'task-1', 'replay-1', {
+        outputFormatGuide: 'Updated guide',
+      });
     });
   });
 

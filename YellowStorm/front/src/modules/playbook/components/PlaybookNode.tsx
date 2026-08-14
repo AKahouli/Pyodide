@@ -85,6 +85,7 @@ function resolveIteratorChildExecutionStatus(
 
 export interface NodeContextMenuActions {
   onEdit: (nodeId: string) => void;
+  onEditReference?: (nodeId: string) => void;
   onAdvise?: (nodeId: string) => void;
   onClone: (nodeId: string) => void;
   onDelete: (nodeId: string) => void;
@@ -990,6 +991,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                     toneClassName={currentTask?.activeReplayIsStale
                       ? 'border-orange-500/30 bg-orange-100 text-orange-700'
                       : 'border-emerald-500/30 bg-emerald-100 text-emerald-700'}
+                    onClick={() => actions?.onEditReference?.(id)}
                   />
                 )}
                 {!showReplayBadge && canSaveReference && (
@@ -1126,6 +1128,23 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 ) : null}
               </div>
               <div className="flex items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      aria-label={t('nodeContextMenu.edit')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        actions?.onEdit(id);
+                      }}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{t('nodeContextMenu.edit')}</TooltipContent>
+                </Tooltip>
                 {status && status !== 'pending' && status !== 'running' && (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -1133,6 +1152,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-muted-foreground hover:text-primary"
+                        aria-label={t('node.viewResults')}
                         onClick={(e) => {
                           e.stopPropagation();
                           openExecutionDetailTab('results', id);
@@ -1150,6 +1170,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7 text-muted-foreground hover:text-primary"
+                      aria-label={t('node.executeStep')}
                       disabled={!isEnabled || !isConfigured || !actions?.canExecute || actions?.isExecuting}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -1171,6 +1192,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      aria-label={isEnabled ? t('node.disable') : t('node.enable')}
                       onClick={(e) => {
                         e.stopPropagation();
                         actions?.onToggleEnabled(id);
@@ -1187,6 +1209,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      aria-label={t('nodeContextMenu.clone')}
                       onClick={(e) => {
                         e.stopPropagation();
                         actions?.onClone(id);
@@ -1203,6 +1226,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                      aria-label={t('nodeContextMenu.delete')}
                       onClick={(e) => {
                         e.stopPropagation();
                         actions?.onDelete(id);

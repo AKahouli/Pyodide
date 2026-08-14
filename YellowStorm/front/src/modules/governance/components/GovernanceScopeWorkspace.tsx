@@ -40,6 +40,7 @@ import {
   type GovernanceMetric,
   type GovernanceScope,
   type CreateGovernanceWorkspaceBindingPayload,
+  type GovernanceWorkspaceBinding,
   type GovernanceScopeMetadata,
   type GovernanceScopeOverview,
   type GovernanceUserSearchResult,
@@ -443,7 +444,7 @@ function KnowledgeTab({ programId, scopeId }: Readonly<{ programId: string | nul
   const [dialogOpen, setDialogOpen] = useState(false);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
   const { data: bindings = [] } = useGovernanceWorkspaceBindings(dataRoomFeatures.workspaceBindingEnabled ? programId : null);
-  const scopeBindings = bindings.filter((binding) => binding.visibility === 'program_shared' || binding.scopeIds?.includes(scopeId));
+  const scopeBindings = bindings.filter((binding) => isEffectiveScopeWorkspaceBinding(binding, scopeId));
   const mappedWorkspaceIds = scopeBindings.map((binding) => binding.workspaceId);
 
   useEffect(() => { void fetchWorkspaces(1); }, [fetchWorkspaces]);
@@ -468,6 +469,10 @@ function KnowledgeTab({ programId, scopeId }: Readonly<{ programId: string | nul
       <WorkspaceMapDialog open={dialogOpen} onOpenChange={setDialogOpen} programId={programId} scopeId={scopeId} mappedWorkspaceIds={mappedWorkspaceIds} />
     </div>
   );
+}
+
+export function isEffectiveScopeWorkspaceBinding(binding: GovernanceWorkspaceBinding, scopeId: string): boolean {
+  return binding.enabled && (binding.visibility === 'program_shared' || Boolean(binding.scopeIds?.includes(scopeId)));
 }
 
 export function buildScopeWorkspaceBindingPayload(workspaceId: string, scopeId: string): CreateGovernanceWorkspaceBindingPayload {
@@ -1061,7 +1066,7 @@ function revisionAudience(revision: GovernanceDeploymentRevision | undefined): {
   return { mode: snapshot?.mode, userIds: (snapshot?.userIds ?? []).map(String), groupIds: (snapshot?.groupIds ?? []).map(String) };
 }
 
-function reviewChanges(overview: GovernanceScopeOverview, agents: Agent[], workspaces: Workspace[], t: (key: string, options?: Record<string, unknown>) => string): ReviewChange[] {
+export function reviewChanges(overview: GovernanceScopeOverview, agents: Agent[], workspaces: Workspace[], t: (key: string, options?: Record<string, unknown>) => string): ReviewChange[] {
   const draft = overview.draftRevision;
   const published = overview.publishedRevision;
   if (!draft || draft.id === published?.id) return [];
@@ -1072,18 +1077,18 @@ function reviewChanges(overview: GovernanceScopeOverview, agents: Agent[], works
   const draftAgents = new Set(draft.allowedAgentIds);
   draft.allowedAgentIds.filter((id) => !publishedAgents.has(id)).forEach((id) => changes.push({ category: 'agents', kind: 'added', label: agentName(id) }));
   (published?.allowedAgentIds ?? []).filter((id) => !draftAgents.has(id)).forEach((id) => changes.push({ category: 'agents', kind: 'removed', label: agentName(id) }));
-  const publishedWorkspaces = new Set(published?.workspaceIds ?? []);
-  const draftWorkspaces = new Set(draft.workspaceIds);
-  draft.workspaceIds.filter((id) => !publishedWorkspaces.has(id)).forEach((id) => changes.push({ category: 'knowledge', kind: 'added', label: workspaceName(id) }));
-  (published?.workspaceIds ?? []).filter((id) => !draftWorkspaces.has(id)).forEach((id) => changes.push({ category: 'knowledge', kind: 'removed', label: workspaceName(id) }));
   const publishedBindings = published?.workspaceBindingSnapshot ?? {};
   const draftBindings = draft.workspaceBindingSnapshot ?? {};
-  Object.keys(draftBindings).filter((id) => !publishedBindings[id]).forEach((id) => changes.push({ category: 'knowledge', kind: 'added', label: workspaceName(draftBindings[id]?.workspaceId ?? '') }));
-  Object.keys(publishedBindings).filter((id) => !draftBindings[id]).forEach((id) => changes.push({ category: 'knowledge', kind: 'removed', label: workspaceName(publishedBindings[id]?.workspaceId ?? '') }));
-  Object.keys(draftBindings).filter((id) => publishedBindings[id] && JSON.stringify(publishedBindings[id]) !== JSON.stringify(draftBindings[id])).forEach((id) => {
-    const workspaceId = draftBindings[id]?.workspaceId ?? publishedBindings[id]?.workspaceId ?? '';
-    changes.push({ category: 'knowledge', kind: 'changed', label: workspaceName(workspaceId), detail: t('scopeShell.review.workspaceSettingsChanged') });
-  });
+  const publishedBindingsByWorkspace = new Map(Object.values(publishedBindings).flatMap((binding) => binding.workspaceId ? [[binding.workspaceId, binding] as const] : []));
+  const draftBindingsByWorkspace = new Map(Object.values(draftBindings).flatMap((binding) => binding.workspaceId ? [[binding.workspaceId, binding] as const] : []));
+  const publishedWorkspaces = new Set([...(published?.workspaceIds ?? []), ...publishedBindingsByWorkspace.keys()]);
+  const draftWorkspaces = new Set([...draft.workspaceIds, ...draftBindingsByWorkspace.keys()]);
+  [...draftWorkspaces].filter((id) => !publishedWorkspaces.has(id)).forEach((id) => changes.push({ category: 'knowledge', kind: 'added', label: workspaceName(id) }));
+  [...publishedWorkspaces].filter((id) => !draftWorkspaces.has(id)).forEach((id) => changes.push({ category: 'knowledge', kind: 'removed', label: workspaceName(id) }));
+  [...draftBindingsByWorkspace.entries()].filter(([workspaceId, binding]) => {
+    const publishedBinding = publishedBindingsByWorkspace.get(workspaceId);
+    return publishedBinding && JSON.stringify(publishedBinding) !== JSON.stringify(binding);
+  }).forEach(([workspaceId]) => changes.push({ category: 'knowledge', kind: 'changed', label: workspaceName(workspaceId), detail: t('scopeShell.review.workspaceSettingsChanged') }));
 
   const draftScope = draft.scopeSnapshot ?? {};
   const publishedScope = published?.scopeSnapshot ?? {};

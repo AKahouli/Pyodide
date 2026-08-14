@@ -229,7 +229,7 @@ describe('ExecutionStepDetail', () => {
     expect(screen.queryByText(runtimeTaskId)).not.toBeInTheDocument();
   });
 
-  it('renders replay and output-format badges immediately from task state and opens the format editor', async () => {
+  it('does not present current reference readiness as historical execution evidence', async () => {
     const onOpenOutputFormatEditor = vi.fn();
     storeState.currentPlaybook = {
       id: 'p1',
@@ -268,7 +268,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(screen.getByText('detail.badges.replayBaseline')).toBeInTheDocument();
+    expect(screen.queryByText('detail.badges.replayUsed')).not.toBeInTheDocument();
     expect(screen.getByText('detail.badges.outputFormatTemplate')).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'detail.badges.outputFormatTemplate' }));
@@ -548,7 +548,7 @@ describe('ExecutionStepDetail', () => {
     expect(screen.queryByText(/cbd665d0-e3b7-4bac-bb1b-4393de74e116/)).not.toBeInTheDocument();
   });
 
-  it('updates the step replay mode selector when the selected task mode changes', () => {
+  it('keeps execution mode provenance read-only when current task configuration changes', () => {
     storeState.currentPlaybook = {
       id: 'p1',
       tasks: [{ id: 't1', stepReplayMode: 'live' }],
@@ -560,8 +560,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    const trigger = screen.getByRole('combobox');
-    expect(trigger).toHaveTextContent('execution.mode.live');
+    expect(screen.getByText('execution.modeLabel.liveRun')).toBeInTheDocument();
 
     storeState.currentPlaybook = {
       id: 'p1',
@@ -574,12 +573,12 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(trigger).toHaveTextContent('execution.mode.replayStrict');
+    expect(screen.getByText('execution.modeLabel.liveRun')).toBeInTheDocument();
 
     storeState.currentPlaybook = null;
   });
 
-  it('prefers the live playbook task replay mode over the stale execution snapshot', () => {
+  it('reports the mode captured by the selected execution instead of current task configuration', () => {
     storeState.currentPlaybook = {
       id: 'p1',
       tasks: [{ id: 't1', stepReplayMode: 'replay_flex' }],
@@ -602,6 +601,8 @@ describe('ExecutionStepDetail', () => {
           startedAt: '2025-01-01T00:00:00.000Z',
           completedAt: '2025-01-01T00:00:01.000Z',
           singleStepTaskId: null,
+          executionMode: 'live',
+          stepExecutionModes: { t1: 'replay_strict' },
           playbookSnapshot: { tasks: [{ id: 't1', stepReplayMode: 'live' }] },
           totalInputTokens: 0,
           totalOutputTokens: 0,
@@ -612,7 +613,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(screen.getByRole('combobox')).toHaveTextContent('execution.mode.replayFlex');
+    expect(screen.getByText('execution.modeLabel.exactReference')).toBeInTheDocument();
 
     storeState.currentPlaybook = null;
   });
@@ -2185,7 +2186,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(screen.getAllByRole('combobox')).toHaveLength(2);
+    expect(screen.getAllByRole('combobox')).toHaveLength(1);
     expect(screen.getByText(/detail.evaluation.attempt - \| .*2025/)).toBeInTheDocument();
     expect(screen.getAllByText('Latest advisor result.').length).toBeGreaterThan(0);
   });
