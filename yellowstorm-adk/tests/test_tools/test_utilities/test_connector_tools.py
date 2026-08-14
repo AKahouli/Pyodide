@@ -374,7 +374,40 @@ def test_connector_tool_injects_streamable_http_file_workspace_headers(
         "workspace_id": '["workspace-1", "workspace-2", "workspace-alpha"]',
         "Workspace-Id": "workspace-1,workspace-2",
         "x-conversation-id": "conversation-1",
-        "x-workspace-paths": "workspace-alpha,workspace-beta",
+        # The run's own Ceph folder rides last, so the sandbox mounts somewhere a
+        # connector can drop a file mid-run and the code interpreter can read it.
+        "x-workspace-paths": "workspace-alpha,workspace-beta,user-1/system_conversation-1",
+    }
+
+
+def test_sse_connector_tool_gets_conversation_and_execution_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """sse is the same MCP server behind a different stream, so it needs the
+    same run/turn correlation headers streamable_http already got -- and only
+    those, not the workspace-scoping set."""
+    captured = {}
+
+    async def fake_call_mcp_tool(*args, **kwargs):
+        captured["auth_headers"] = kwargs.get("auth_headers")
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+
+    binding = _connector_binding({"type": "object", "properties": {}})
+    binding["mcp_transport_type"] = "sse"
+    binding["auth_headers"] = {"Authorization": "Bearer token"}
+    tool = create_connector_tools(
+        [binding],
+        ConnectorToolContext(workspace_id="workspace-1", session_id="conversation-1"),
+    )[-1]
+
+    asyncio.run(tool.func(tool_context=SimpleNamespace(invocation_id="e-123")))
+
+    assert captured["auth_headers"] == {
+        "Authorization": "Bearer token",
+        "x-conversation-id": "conversation-1",
+        "x-execution-id": "e-123",
     }
 
 

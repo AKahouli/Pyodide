@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, create_model
 from structlog import get_logger
 
 from src.connector_tool_name import build_connector_tool_name
+from src.run_workspace import with_run_workspace_path
 from src.config.settings import get_settings
 from src.flow_engine.runtime.artifact_routing import (
     infer_artifact_kind,
@@ -632,6 +633,9 @@ def create_langchain_tools(
         workspace_paths = _collect_workspace_paths(
             workspace_context, code_interpreter_files, user_id
         )
+    workspace_paths = with_run_workspace_path(
+        workspace_paths, user_id, session_id or execution_id
+    )
 
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
     mcp_tools: List[StructuredTool] = []
@@ -1759,19 +1763,6 @@ def _create_connector_mcp_tools(
         # search_relevant_documents, and filter the action below.
         if not deep_search:
             binding_auth_headers.pop("X-Deep-Search", None)
-        if (
-            connector_id
-            and output_workspace_id
-            and binding_auth_headers.get("Authorization")
-        ):
-            tools.append(
-                _create_connector_import_tool(
-                    connector_id=connector_id,
-                    connector_name=connector_name,
-                    auth_headers=binding_auth_headers,
-                    workspace_id=output_workspace_id,
-                )
-            )
         actions = (
             [
                 {
@@ -1873,6 +1864,14 @@ def _create_connector_mcp_tools(
                                 merged_params.pop(filename_param, None)
 
                         effective_auth_headers = dict(ah)
+                        # Run/turn correlation applies to every HTTP MCP transport,
+                        # not just streamable_http -- an sse connector is the same
+                        # server behind a different stream.
+                        if tt in ("streamable_http", "sse"):
+                            if sid:
+                                effective_auth_headers["x-conversation-id"] = sid
+                            if eid:
+                                effective_auth_headers["x-execution-id"] = eid
                         if tt == "streamable_http":
                             # Filenames are model-visible context, not runtime scope.
                             # Let each MCP action's schema, instructions, and docstring
@@ -1887,10 +1886,6 @@ def _create_connector_mcp_tools(
                                 merged_params["workspace_id"] = _wi[0] if len(_wi) == 1 else _wi
                                 merged_params.pop("workspace_name", None)
                                 effective_auth_headers.pop("workspace_name", None)
-                            if sid:
-                                effective_auth_headers["x-conversation-id"] = sid
-                            if eid:
-                                effective_auth_headers["x-execution-id"] = eid
                             if wsp:
                                 effective_auth_headers["x-workspace-paths"] = ",".join(wsp)
                             if fpths:
@@ -1951,8 +1946,7 @@ def _create_connector_mcp_tools(
                     name=tn,
                     description=(
                         f"{ad} (connector: {cn}, action: {al}). "
-                        "Use this connector action to search, browse, or inspect remote items first. "
-                        "When you need those files inside the current workspace for downstream processing, call the matching import_to_workspace tool with the returned item references."
+                        "Use this connector action to search, browse, or inspect remote items first."
                     ),
                     func=None,
                     coroutine=_execute_mcp,
@@ -1987,6 +1981,9 @@ def _create_connector_import_tool(
     auth_headers: Dict[str, str],
     workspace_id: str,
 ) -> StructuredTool:
+    # ponytail: unreferenced since the import_to_workspace tool was withdrawn --
+    # connectors now write straight into the run's mounted Ceph folder. Kept only
+    # so re-enabling is a one-line restore; delete once that call is final.
     settings = get_settings()
     backend_url = getattr(settings, "API_URL", None)
 
