@@ -102,7 +102,7 @@ function buildWidgetHtml(agentDisplayName: string, avatarInitials: string): stri
     '    </div>',
     '    <p id="ys-input-hint" class="ys-input-hint">Enter to send &middot; Shift+Enter for new line</p>',
     '  </form>',
-    '  <div id="ys-widget-powered">Powered by <span>YellowStorm</span></div>',
+    '  <div id="ys-widget-powered">Powered by <span>Yellowmind</span></div>',
     '</div>',
   ].join('\n');
 }

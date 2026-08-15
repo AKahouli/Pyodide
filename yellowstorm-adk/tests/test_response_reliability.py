@@ -22,6 +22,15 @@ def request_fixture() -> ResponseReliabilityRequest:
     )
 
 
+def test_accepts_max_findings_above_the_former_limit():
+    request = ResponseReliabilityRequest.model_validate({
+        **request_fixture().model_dump(),
+        "maxFindings": 11,
+    })
+
+    assert request.maxFindings == 11
+
+
 @pytest.mark.asyncio
 async def test_returns_versioned_claims_without_overall_score():
     response = AsyncMock()

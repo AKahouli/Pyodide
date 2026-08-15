@@ -1765,7 +1765,7 @@
   "catalogTransfer.exportTitle": "Export catalog",
   "catalogTransfer.exportDescription": "Export every catalog property and preserve connector-to-skill relationships across environments.",
   "catalogTransfer.importTitle": "Import catalog",
-  "catalogTransfer.importDescription": "Import a YellowStorm catalog archive and match connectors and skills by stable slug.",
+  "catalogTransfer.importDescription": "Import a Yellowmind catalog archive and match connectors and skills by stable slug.",
   "catalogTransfer.selectedItems": "Selected items ({{count}})",
   "catalogTransfer.allConnectors": "All connectors and their linked skills",
   "catalogTransfer.allSkills": "All skills",

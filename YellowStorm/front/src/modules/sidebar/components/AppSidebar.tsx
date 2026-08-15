@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useState, useCallback, memo } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { Bot, History, LayoutGrid } from 'lucide-react';
+import {
+  Bot,
+  BookOpen,
+  ChevronRight,
+  History,
+  LayoutGrid,
+  Network,
+  Plug,
+  ShieldCheck,
+  Sparkles,
+} from 'lucide-react';
 import { ChatBubbleIcon } from '@radix-ui/react-icons';
 import { toast } from 'sonner';
 
@@ -60,6 +70,119 @@ import { ProjectsSection } from './ProjectsSection';
 import { useAutoCollapse } from '../hooks/useAutoCollapse';
 import { useAuth } from '@/modules/auth';
 import { decodeConversationDrag, hasConversationDrag } from './drag-types';
+
+type OutcomeGroupKey = 'ask' | 'knowledge' | 'automate' | 'govern';
+
+function getOpenOutcomeGroups(group: OutcomeGroupKey | null): Record<OutcomeGroupKey, boolean> {
+  return {
+    ask: group === 'ask',
+    knowledge: group === 'knowledge',
+    automate: group === 'automate',
+    govern: group === 'govern',
+  };
+}
+
+function OutcomeGroup({
+  label,
+  tooltip,
+  icon,
+  active,
+  collapsed,
+  open,
+  onOpenChange,
+  children,
+}: {
+  label: string;
+  tooltip: string;
+  icon: React.ReactNode;
+  active: boolean;
+  collapsed: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  children: React.ReactNode;
+}) {
+  const resolvedOpen = !collapsed && open;
+
+  return (
+    <SidebarGroup className={cn('min-h-0 shrink-0 py-1', resolvedOpen && 'flex flex-1 flex-col overflow-hidden')}>
+      <Collapsible
+        open={resolvedOpen}
+        onOpenChange={onOpenChange}
+        className={cn(resolvedOpen && 'flex min-h-0 flex-1 flex-col overflow-hidden')}
+      >
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <CollapsibleTrigger asChild>
+              <SidebarMenuButton
+                tooltip={tooltip}
+                isActive={active}
+                aria-label={label}
+                className='font-medium'
+              >
+                {icon}
+                <span>{label}</span>
+                <ChevronRight
+                  aria-hidden='true'
+                  className={cn(
+                    'ml-auto size-4 transition-transform duration-200 group-data-[collapsible=icon]:hidden',
+                    resolvedOpen && 'rotate-90',
+                  )}
+                />
+              </SidebarMenuButton>
+            </CollapsibleTrigger>
+          </SidebarMenuItem>
+        </SidebarMenu>
+        <CollapsibleContent className='min-h-0 overflow-y-auto overscroll-y-contain'>
+          <div className='ml-4 border-l border-sidebar-border pl-1.5'>{children}</div>
+        </CollapsibleContent>
+      </Collapsible>
+    </SidebarGroup>
+  );
+}
+
+function OutcomeSubgroup({
+  label,
+  tooltip,
+  icon,
+  active,
+  children,
+}: {
+  label: string;
+  tooltip: string;
+  icon: React.ReactNode;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(active);
+
+  useEffect(() => {
+    if (active) setOpen(true);
+  }, [active]);
+
+  return (
+    <Collapsible open={active || open} onOpenChange={setOpen}>
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <CollapsibleTrigger asChild>
+            <SidebarMenuButton tooltip={tooltip} isActive={active} aria-label={label}>
+              {icon}
+              <span>{label}</span>
+              <ChevronRight
+                aria-hidden='true'
+                className={cn('ml-auto size-4 transition-transform duration-200', (active || open) && 'rotate-90')}
+              />
+            </SidebarMenuButton>
+          </CollapsibleTrigger>
+        </SidebarMenuItem>
+      </SidebarMenu>
+      <CollapsibleContent>
+        <div className='ml-4 border-l border-sidebar-border pl-1'>
+          <SidebarMenu>{children}</SidebarMenu>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
 
 function HistoryDropZone({
   children,
@@ -122,7 +245,14 @@ export const AppSidebar = memo(function AppSidebar() {
   const { user } = useAuth();
   const { hasAnyPermission } = usePermissions();
   const canOpenGovernance = hasAnyPermission(['governance.read', 'governance.*', '*']);
+  const canOpenSemanticModels = hasAnyPermission(['semantic_models.read', 'semantic_models.*', '*']);
   const [featureVisibility, setFeatureVisibility] = useState<FeatureVisibility>(DEFAULT_FEATURE_VISIBILITY);
+  const [openGroups, setOpenGroups] = useState<Record<OutcomeGroupKey, boolean>>({
+    ask: false,
+    knowledge: false,
+    automate: false,
+    govern: false,
+  });
 
   useEffect(() => {
     let active = true;
@@ -159,6 +289,53 @@ export const AppSidebar = memo(function AppSidebar() {
   const [historySearch, setHistorySearch] = useState('');
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [pendingMoveConvId, setPendingMoveConvId] = useState<string | null>(null);
+
+  const activeGroup = useMemo<OutcomeGroupKey | null>(() => {
+    const path = location.pathname;
+    if (
+      path === '/' ||
+      path.startsWith('/conversation') ||
+      path.startsWith('/projet')
+    ) {
+      return 'ask';
+    }
+    if (path.startsWith('/workspace') || path.startsWith('/semantic-models')) {
+      return 'knowledge';
+    }
+    if (
+      path.startsWith('/agents') ||
+      path.startsWith('/teams') ||
+      path.startsWith('/groups') ||
+      path.startsWith('/playbooks') ||
+      path.startsWith('/worky') ||
+      path.startsWith('/apps') ||
+      path.startsWith('/app-market')
+    ) {
+      return 'automate';
+    }
+    if (path.startsWith('/governance') || path.startsWith('/admin')) {
+      return 'govern';
+    }
+    return null;
+  }, [location.pathname]);
+
+  const handleGroupOpenChange = useCallback(
+    (group: OutcomeGroupKey, open: boolean) => {
+      if (state === 'collapsed') {
+        toggleSidebar();
+        setOpenGroups(getOpenOutcomeGroups(group));
+        return;
+      }
+      setOpenGroups(getOpenOutcomeGroups(open ? group : null));
+    },
+    [state, toggleSidebar],
+  );
+
+  useEffect(() => {
+    if (activeGroup) {
+      setOpenGroups(getOpenOutcomeGroups(activeGroup));
+    }
+  }, [activeGroup]);
 
   useEffect(() => {
     fetchConversations({ reset: true, limit: DEFAULT_CONVERSATIONS_LIMIT });
@@ -286,8 +463,8 @@ export const AppSidebar = memo(function AppSidebar() {
         </NavLink>
       </SidebarHeader>
 
-      <SidebarContent className='my-3 w-full min-h-0 overflow-y-auto overscroll-y-contain'>
-        <SidebarGroup>
+      <SidebarContent className='my-3 flex min-h-0 w-full flex-col overflow-hidden'>
+        <SidebarGroup className='pb-1'>
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
@@ -301,50 +478,32 @@ export const AppSidebar = memo(function AppSidebar() {
                 </NavLink>
               </SidebarMenuButton>
             </SidebarMenuItem>
-
-            {featureVisibility.conversation && <SidebarMenuItem>
-              <SidebarMenuButton tooltip={t('actions.newChat.tooltip')} onClick={() => navigate('/')}>
-                <ChatBubbleIcon />
-                <span>{t('actions.newChat.label')}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>}
-
-            {featureVisibility.workspace && <WorkspaceButton />}
-
-            <SemanticModelButton />
-
-            {featureVisibility.agents && <AgentButton />}
-
-            {featureVisibility.governance && canOpenGovernance && <GovernanceButton />}
-
-            <TeamButton />
-
-            <GroupsButton />
-
-            {featureVisibility.playbook && <PlaybookButton />}
-
-            {featureVisibility.worky && <WorkyButton />}
-
-            <ConnectedAppButton />
-
-            {featureVisibility.appMarketplace && <AppMarketplaceButton />}
-
-            <AdminButton />
           </SidebarMenu>
         </SidebarGroup>
 
-        {state !== 'collapsed' && <ProjectsSection />}
+        <OutcomeGroup
+          label={t('groups.ask.label')}
+          tooltip={t('groups.ask.tooltip')}
+          icon={<ChatBubbleIcon />}
+          active={activeGroup === 'ask'}
+          collapsed={state === 'collapsed'}
+          open={openGroups.ask}
+          onOpenChange={(open) => handleGroupOpenChange('ask', open)}
+        >
+          <SidebarMenu>
+            {featureVisibility.conversation && (
+              <SidebarMenuItem>
+                <SidebarMenuButton tooltip={t('actions.newChat.tooltip')} onClick={() => navigate('/')}>
+                  <Sparkles />
+                  <span>{t('actions.newChat.label')}</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )}
+          </SidebarMenu>
 
-        <SidebarGroup>
-          <Collapsible
-            open={historyPanelOpen && state !== 'collapsed'}
-            onOpenChange={() => {
-              if (state === 'collapsed') {
-                toggleSidebar();
-              }
-              toggleHistoryPanel();
-            }}
-          >
+          <ProjectsSection />
+
+          <Collapsible open={historyPanelOpen} onOpenChange={toggleHistoryPanel}>
             <SidebarMenu>
               <SidebarMenuItem>
                 <CollapsibleTrigger asChild>
@@ -436,7 +595,80 @@ export const AppSidebar = memo(function AppSidebar() {
               </HistoryDropZone>
             </CollapsibleContent>
           </Collapsible>
-        </SidebarGroup>
+        </OutcomeGroup>
+
+        <OutcomeGroup
+          label={t('groups.knowledge.label')}
+          tooltip={t('groups.knowledge.tooltip')}
+          icon={<BookOpen />}
+          active={activeGroup === 'knowledge'}
+          collapsed={state === 'collapsed'}
+          open={openGroups.knowledge}
+          onOpenChange={(open) => handleGroupOpenChange('knowledge', open)}
+        >
+          <SidebarMenu>
+            {featureVisibility.workspace && <WorkspaceButton />}
+            {canOpenSemanticModels && <SemanticModelButton />}
+          </SidebarMenu>
+        </OutcomeGroup>
+
+        <OutcomeGroup
+          label={t('groups.automate.label')}
+          tooltip={t('groups.automate.tooltip')}
+          icon={<Sparkles />}
+          active={activeGroup === 'automate'}
+          collapsed={state === 'collapsed'}
+          open={openGroups.automate}
+          onOpenChange={(open) => handleGroupOpenChange('automate', open)}
+        >
+          <SidebarMenu>
+            {featureVisibility.playbook && <PlaybookButton />}
+          </SidebarMenu>
+
+          <OutcomeSubgroup
+            label={t('groups.agentNetwork.label')}
+            tooltip={t('groups.agentNetwork.tooltip')}
+            icon={<Network />}
+            active={
+              location.pathname.startsWith('/agents') ||
+              location.pathname.startsWith('/teams') ||
+              location.pathname.startsWith('/groups')
+            }
+          >
+            {featureVisibility.agents && <AgentButton />}
+            <TeamButton />
+            <GroupsButton />
+          </OutcomeSubgroup>
+
+          <SidebarMenu>
+            {featureVisibility.worky && <WorkyButton />}
+          </SidebarMenu>
+
+          <OutcomeSubgroup
+            label={t('groups.integrations.label')}
+            tooltip={t('groups.integrations.tooltip')}
+            icon={<Plug />}
+            active={location.pathname.startsWith('/apps') || location.pathname.startsWith('/app-market')}
+          >
+            <ConnectedAppButton />
+            {featureVisibility.appMarketplace && <AppMarketplaceButton />}
+          </OutcomeSubgroup>
+        </OutcomeGroup>
+
+        <OutcomeGroup
+          label={t('groups.govern.label')}
+          tooltip={t('groups.govern.tooltip')}
+          icon={<ShieldCheck />}
+          active={activeGroup === 'govern'}
+          collapsed={state === 'collapsed'}
+          open={openGroups.govern}
+          onOpenChange={(open) => handleGroupOpenChange('govern', open)}
+        >
+          <SidebarMenu>
+            {featureVisibility.governance && canOpenGovernance && <GovernanceButton />}
+            <AdminButton />
+          </SidebarMenu>
+        </OutcomeGroup>
       </SidebarContent>
 
       <SidebarFooter className='grid grid-cols-[1fr_auto_auto] items-center gap-1 group-data-[collapsible=icon]:grid-cols-1 group-data-[collapsible=icon]:justify-items-center'>

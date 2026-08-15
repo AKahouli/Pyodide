@@ -436,7 +436,7 @@ export function renderStepResultHtml(step: TaskResult, options?: { includeToolTr
   </div>
 
   <div style="margin-top:32px;padding-top:12px;border-top:1px solid #e5e5e5;font-size:11px;color:#9ca3af;text-align:center;">
-    Generated on ${new Date().toLocaleString()} &middot; YellowStorm Playbook
+    Generated on ${new Date().toLocaleString()} &middot; Yellowmind Playbook
   </div>
 </body>
 </html>`;
@@ -488,7 +488,7 @@ export function renderWorkflowExecutionResultsHtml(execution: PlaybookExecution)
   </div>
 
   <div style="margin-top:32px;padding-top:12px;border-top:1px solid #e5e5e5;font-size:11px;color:#9ca3af;text-align:center;">
-    Generated on ${new Date().toLocaleString()} &middot; YellowStorm Playbook
+    Generated on ${new Date().toLocaleString()} &middot; Yellowmind Playbook
   </div>
 </body>
 </html>`;

@@ -63,7 +63,7 @@
   "resetPassword.noToken.description": "No reset token was provided. Please check your email for the password reset link.",
   "resetPassword.noToken.submit": "Go to Login",
   "register.title": "Create an account",
-  "register.description": "Get started with YellowMind today",
+  "register.description": "Get started with Yellowmind today",
   "register.email.label": "Email",
   "register.email.placeholder": "Enter your email",
   "register.password.label": "Password",

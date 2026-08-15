@@ -1763,7 +1763,7 @@
   "catalogTransfer.exportTitle": "Exporter le catalogue",
   "catalogTransfer.exportDescription": "Exporte toutes les propriétés du catalogue et conserve les relations entre connecteurs et compétences.",
   "catalogTransfer.importTitle": "Importer le catalogue",
-  "catalogTransfer.importDescription": "Importe une archive YellowStorm et associe les connecteurs et compétences par slug stable.",
+  "catalogTransfer.importDescription": "Importe une archive Yellowmind et associe les connecteurs et compétences par slug stable.",
   "catalogTransfer.selectedItems": "Éléments sélectionnés ({{count}})",
   "catalogTransfer.allConnectors": "Tous les connecteurs et leurs compétences liées",
   "catalogTransfer.allSkills": "Toutes les compétences",

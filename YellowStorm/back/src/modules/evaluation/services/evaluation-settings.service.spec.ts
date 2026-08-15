@@ -43,20 +43,20 @@ describe('EvaluationSettingsService', () => {
     });
   });
 
-  it('validates and upserts enabled corrective transparent settings by global key', async () => {
+  it('persists enabled corrective transparent settings without clamping values', async () => {
     const saved = {
       key: 'global',
       responseReliability: {
         enabled: true,
         mode: 'corrective_transparent',
         judgeModelId: 'judge-1',
-        maxConcurrentEvaluations: 3,
-        timeoutMs: 30000,
-        maxFindings: 5,
+        maxConcurrentEvaluations: 11,
+        timeoutMs: 601000,
+        maxFindings: 11,
         correction: {
           ...DEFAULT_RESPONSE_CORRECTION_SETTINGS,
-          threshold: 75,
-          maxAttempts: 2,
+          threshold: 101,
+          maxAttempts: 4,
           failureBehavior: 'abstain',
         },
       },
@@ -73,7 +73,13 @@ describe('EvaluationSettingsService', () => {
       { key: 'global' },
       expect.objectContaining({
         $set: expect.objectContaining({
-          responseReliability: expect.objectContaining({ mode: 'corrective_transparent' }),
+          responseReliability: expect.objectContaining({
+            mode: 'corrective_transparent',
+            maxConcurrentEvaluations: 11,
+            timeoutMs: 601000,
+            maxFindings: 11,
+            correction: expect.objectContaining({ threshold: 101, maxAttempts: 4 }),
+          }),
         }),
       }),
       expect.objectContaining({ upsert: true, new: true }),
