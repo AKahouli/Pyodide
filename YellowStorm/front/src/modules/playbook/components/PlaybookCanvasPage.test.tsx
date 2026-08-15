@@ -1,8 +1,43 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildIntentEdgeOptions, buildOverviewResultNodeIds, hydrateAssistantOperationHandoff, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyHomeAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldEnableCanvasNodeDragging, shouldUsePlaybookAgentAssistant } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, buildOverviewResultNodeIds, hydrateAssistantOperationHandoff, isTaskConfiguredForExecution, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyInitialAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldEnableCanvasNodeDragging, shouldUsePlaybookAgentAssistant } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
+import type { PlaybookTask } from '../types';
+
+const makeTask = (overrides: Partial<PlaybookTask> = {}) => ({
+  id: 'task-1',
+  title: 'Task',
+  description: '',
+  nodeType: 'agent',
+  taskType: 'generic',
+  executionMode: 'agent',
+  enabled: true,
+  assignedAgentId: 'agent-1',
+  ...overrides,
+}) as PlaybookTask;
+
+describe('isTaskConfiguredForExecution', () => {
+  it('requires an assigned agent for enabled agent tasks', () => {
+    expect(isTaskConfiguredForExecution(makeTask())).toBe(true);
+    expect(isTaskConfiguredForExecution(makeTask({ assignedAgentId: undefined }))).toBe(false);
+    expect(isTaskConfiguredForExecution(makeTask({ assignedAgentId: undefined, enabled: false }))).toBe(true);
+  });
+
+  it('uses effective action type even when legacy execution mode says agent', () => {
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'action', executionMode: 'agent', assignedAgentId: undefined, selectedAction: 'send' }))).toBe(true);
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'action', executionMode: 'agent', selectedAction: undefined }))).toBe(false);
+  });
+
+  it('requires evaluation, iterator, and structural configuration by node type', () => {
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'evaluation', evaluationConfig: { expectation: 'Accurate' } as PlaybookTask['evaluationConfig'] }))).toBe(true);
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'evaluation', evaluationConfig: undefined }))).toBe(false);
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'iterator', assignedAgentId: undefined, iteratorConfig: { source: 'items' } as PlaybookTask['iteratorConfig'] }))).toBe(true);
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'iterator', iteratorConfig: undefined }))).toBe(false);
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'router', assignedAgentId: undefined }))).toBe(true);
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'human_approval', assignedAgentId: undefined }))).toBe(true);
+  });
+});
 
 describe('shouldBlockCanvasMutationShortcut', () => {
   it('blocks undo, redo, cut, and paste shortcuts during direct construction', () => {
@@ -234,15 +269,15 @@ describe('shouldAutoLayoutAfterConstruction', () => {
   });
 });
 
-describe('shouldApplyHomeAutoLayout', () => {
+describe('shouldApplyInitialAutoLayout', () => {
   it('waits for the current route load instead of laying out a stale cached playbook', () => {
-    expect(shouldApplyHomeAutoLayout(true, 'playbook-1', null, 'playbook-1', null)).toBe(false);
-    expect(shouldApplyHomeAutoLayout(true, 'playbook-1', 'playbook-1', 'playbook-1', null)).toBe(true);
+    expect(shouldApplyInitialAutoLayout('playbook-1', null, 'playbook-1', null)).toBe(false);
+    expect(shouldApplyInitialAutoLayout('playbook-1', 'playbook-1', 'playbook-1', null)).toBe(true);
   });
 
-  it('does not repeat layout or apply it to direct navigation', () => {
-    expect(shouldApplyHomeAutoLayout(true, 'playbook-1', 'playbook-1', 'playbook-1', 'playbook-1')).toBe(false);
-    expect(shouldApplyHomeAutoLayout(false, 'playbook-1', 'playbook-1', 'playbook-1', null)).toBe(false);
+  it('applies to direct navigation once per loaded playbook', () => {
+    expect(shouldApplyInitialAutoLayout('playbook-1', 'playbook-1', 'playbook-1', null)).toBe(true);
+    expect(shouldApplyInitialAutoLayout('playbook-1', 'playbook-1', 'playbook-1', 'playbook-1')).toBe(false);
   });
 });
 

@@ -1496,7 +1496,6 @@ export class AgentService {
       throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is unavailable or has no model configured');
     }
     // The planner agent type must itself be active (findBySlug filters on isActive).
-    const plannerType = await this.agentTypeService.findBySlug(PLAYBOOK_PLANNER_AGENT_TYPE_SLUG);
     if (!plannerType) {
       throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is unavailable or has no model configured');
     }

@@ -31,6 +31,7 @@ export interface UsePlaybookCanvasPageHandlersParams {
   setNodeReflectionEnabled: (enabled: boolean) => void;
   setAdvisorScoringMode: (mode: 'llm' | 'heuristic') => void;
   setAdvisorAutopilotEnabled: (enabled: boolean) => void;
+  fitCanvasToNodes: () => void;
   setNodes: Dispatch<SetStateAction<Node[]>>;
   setEdges: Dispatch<SetStateAction<Edge[]>>;
   setPendingImport: Dispatch<SetStateAction<PlaybookDefinitionExport | null>>;
@@ -92,9 +93,10 @@ export function usePlaybookCanvasPageHandlers({
   pendingImport,
   setEditingName,
   setNodeReflectionEnabled,
-  setAdvisorScoringMode,
-  setAdvisorAutopilotEnabled,
-  setNodes,
+    setAdvisorScoringMode,
+    setAdvisorAutopilotEnabled,
+    fitCanvasToNodes,
+    setNodes,
   setEdges,
   setPendingImport,
   setImportWarningOpen,
@@ -170,7 +172,8 @@ export function usePlaybookCanvasPageHandlers({
     const layoutedTasks = autoLayoutTasks(playbook.tasks, playbook.edges);
     setNodes(tasksToNodes(layoutedTasks));
     updateTasks(layoutedTasks);
-  }, [captureSnapshot, playbook, setNodes, updateTasks]);
+    fitCanvasToNodes();
+  }, [captureSnapshot, fitCanvasToNodes, playbook, setNodes, updateTasks]);
 
   const handleExportPlaybook = useCallback(() => {
     if (!playbook) return;

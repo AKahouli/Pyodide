@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { ArrowLeft, BarChart3, Loader2, Share2, Copy, PanelRightOpen } from 'lucide-react';
+import { ArrowLeft, Loader2, PanelRightOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { ReactFlowProvider, useReactFlow, getNodesBounds, type Edge, type Node } from '@xyflow/react';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -84,7 +83,7 @@ import { ConditionalEdge } from './ConditionalEdge';
 import { DataBindingEdge } from './DataBindingEdge';
 import { PlaybookOverviewCanvas } from './PlaybookOverviewCanvas';
 import { PlaybookNodeEditor, type PlaybookNodeEditorHandle } from './PlaybookNodeEditor';
-import { PlaybookToolbar } from './PlaybookToolbar';
+import { PlaybookStatusActions, PlaybookToolbar } from './PlaybookToolbar';
 import { PlaybookCanvasFloatingToolbar, type PlaybookCanvasFloatingToolbarHandle } from './PlaybookCanvasFloatingToolbar';
 import { ReferenceModePromptDialog, type ReferenceModePromptState, type StepReplayMode } from './ReferenceModePromptDialog';
 import { PlaybookIntentGhostNode } from './PlaybookIntentGhostNode';
@@ -152,6 +151,7 @@ import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { usePlaybookIntentFlow } from '../utils/playbook-intent-flow';
 import { getUnboundRequiredPortsForTaskIds } from '../utils/required-port-validation';
 import type { PlaybookValidationIssue } from '../utils/required-port-validation';
+import { getEffectiveNodeType } from '../utils/node-type';
 import {
   buildCanvasJudgeStateMap,
   buildCanvasStepStatusMap,
@@ -282,15 +282,13 @@ export function resolveIntentNodeSemantics(
   return { nodeType, taskType };
 }
 
-export function shouldApplyHomeAutoLayout(
-  requested: boolean,
+export function shouldApplyInitialAutoLayout(
   routePlaybookId: string | undefined,
   loadedPlaybookId: string | null,
   currentPlaybookId: string | undefined,
   appliedPlaybookId: string | null,
 ): boolean {
-  return requested
-    && Boolean(routePlaybookId)
+  return Boolean(routePlaybookId)
     && loadedPlaybookId === routePlaybookId
     && currentPlaybookId === routePlaybookId
     && appliedPlaybookId !== routePlaybookId;
@@ -302,6 +300,18 @@ export function buildOverviewResultNodeIds(
   return new Set((taskResults ?? [])
     .filter((result) => result.status !== 'pending' && result.status !== 'running')
     .map((result) => result.taskId));
+}
+
+export function isTaskConfiguredForExecution(task: PlaybookTask): boolean {
+  if (task.enabled === false) return true;
+  const nodeType = getEffectiveNodeType(task);
+  if (nodeType === 'router' || nodeType === 'human_approval') return true;
+  if (nodeType === 'iterator') return Boolean(task.iteratorConfig?.source?.trim());
+  if (nodeType === 'evaluation') {
+    return Boolean(task.assignedAgentId && (task.evaluationConfig?.expectation || task.evaluationConfig?.referenceBaselineId));
+  }
+  if (nodeType === 'action') return Boolean(task.selectedAction);
+  return Boolean(task.assignedAgentId);
 }
 
 function PlaybookCanvasInner() {
@@ -450,10 +460,21 @@ function PlaybookCanvasInner() {
     artifactKindMismatch,
   } = usePlaybookCanvas(triggerNodeActions);
 
+  const fitCanvasToNodes = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        void reactFlow.fitView({
+          padding: 0.24,
+          duration: 300,
+          maxZoom: 1.1,
+        });
+      });
+    });
+  }, [reactFlow]);
+
   useEffect(() => {
     const navigationState = location.state as { autoLayoutOnOpen?: boolean } | null;
-    if (!shouldApplyHomeAutoLayout(
-      navigationState?.autoLayoutOnOpen === true,
+    if (!shouldApplyInitialAutoLayout(
       id,
       loadedPlaybookId,
       playbook?.id,
@@ -465,8 +486,14 @@ function PlaybookCanvasInner() {
     const layoutedTasks = autoLayoutTasks(playbook.tasks, playbook.edges);
     setNodes(tasksToNodes(layoutedTasks, playbook.automatedTriggerType === 'mail'));
     updateTasks(layoutedTasks);
-    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
-  }, [id, loadedPlaybookId, location.pathname, location.search, location.state, navigate, playbook, setNodes, updateTasks]);
+    if (layoutedTasks.length > 0) {
+      viewportInitializedPlaybookRef.current = id!;
+      fitCanvasToNodes();
+    }
+    if (navigationState?.autoLayoutOnOpen === true) {
+      navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+    }
+  }, [fitCanvasToNodes, id, loadedPlaybookId, location.pathname, location.search, location.state, navigate, playbook, setNodes, updateTasks]);
 
   const saveCurrentPlaybook = usePlaybookStore((state) => state.saveCurrentPlaybook);
 
@@ -565,6 +592,7 @@ function PlaybookCanvasInner() {
     if (id && !isGeneratingRoute) {
       let cancelled = false;
       setLoadedPlaybookId(null);
+      setCanvasViewMode('expanded');
       const hasExecutionParam = searchParams.has('execution');
 
       // A normal playbook open always starts in the design view. Execution links restore the pane below.
@@ -699,7 +727,7 @@ function PlaybookCanvasInner() {
     if (viewportInitializedPlaybookRef.current === id) {
       return;
     }
-    if (!id || isGeneratingRoute || playbookLoading || playbook?.id !== id || nodes.length === 0) {
+    if (!id || loadedPlaybookId !== id || isGeneratingRoute || playbookLoading || playbook?.id !== id || nodes.length === 0) {
       return;
     }
 
@@ -734,7 +762,7 @@ function PlaybookCanvasInner() {
       window.cancelAnimationFrame(frameTwo);
       window.clearTimeout(zoomTimeout);
     };
-  }, [id, isGeneratingRoute, nodes.length, playbookLoading, playbook?.id, reactFlow]);
+  }, [id, isGeneratingRoute, loadedPlaybookId, nodes.length, playbookLoading, playbook?.id, reactFlow]);
 
   useEffect(() => {
     if (executionPanelOpen && pageMode === 'run' && executionPanelCollapsed) {
@@ -3398,6 +3426,7 @@ function PlaybookCanvasInner() {
     setNodeReflectionEnabled,
     setAdvisorScoringMode,
     setAdvisorAutopilotEnabled,
+    fitCanvasToNodes,
     setNodes,
     setEdges,
     setPendingImport,
@@ -3618,50 +3647,48 @@ function PlaybookCanvasInner() {
   }
 
   const isExecutionPanelVisible = !executionPanelCollapsed && (pageMode !== 'design' || executionPanelOpen);
-  const renderCanvasViewModeButtons = (shortLabels: boolean) => (
+  const renderCanvasViewModeButtons = () => (
     <>
       <Button
         type="button"
         variant={canvasViewMode === 'expanded' ? 'default' : 'ghost'}
         size="sm"
-        className="h-8 rounded-full px-2 text-[11px] sm:px-3 sm:text-xs"
+        className="h-10 rounded-full px-3 text-xs sm:h-8"
         aria-pressed={canvasViewMode === 'expanded'}
         onClick={() => setCanvasViewMode('expanded')}
       >
-        {t(shortLabels ? 'canvas.view.expandedShort' : 'canvas.view.expanded')}
+        <span className="sm:hidden">{t('canvas.view.expandedShort')}</span>
+        <span className="hidden sm:inline">{t('canvas.view.expanded')}</span>
       </Button>
       <Button
         type="button"
         variant={canvasViewMode === 'overview' ? 'default' : 'ghost'}
         size="sm"
-        className="h-8 rounded-full px-2 text-[11px] sm:px-3 sm:text-xs"
+        className="h-10 rounded-full px-3 text-xs sm:h-8"
         aria-pressed={canvasViewMode === 'overview'}
         onClick={() => setCanvasViewMode('overview')}
       >
-        {t(shortLabels ? 'canvas.view.overviewShort' : 'canvas.view.overview')}
+        <span className="sm:hidden">{t('canvas.view.overviewShort')}</span>
+        <span className="hidden sm:inline">{t('canvas.view.overview')}</span>
       </Button>
     </>
   );
+  const hasRunnableContent = playbook.tasks.length > 0 || (playbook.nodes?.length || 0) > 0;
+  const hasWorkspace = (playbook.workspaces?.length || 0) > 0;
+  const unconfiguredTaskCount = playbook.tasks.filter((task) => !isTaskConfiguredForExecution(task)).length;
+  const canRun = hasRunnableContent && hasWorkspace && unconfiguredTaskCount === 0 && !hasActiveExecution && !isSaving && !isDirty;
 
   return (
     <div className="flex flex-col h-full w-full">
-      {typeof document !== 'undefined'
-        ? createPortal(
-            <div
-              className="fixed left-2 top-16 z-20 inline-flex rounded-full border bg-background/95 p-1 shadow-sm backdrop-blur sm:hidden"
-              role="group"
-              aria-label={t('canvas.view.groupLabel')}
-            >
-              {renderCanvasViewModeButtons(true)}
-            </div>,
-            document.body,
-          )
-        : null}
-      {/* Header */}
-      <div className="flex flex-wrap items-center gap-2 px-2 sm:px-4 py-2 border-b bg-background z-10">
-        {/* Left: back + name + live indicator */}
+      <div className="z-10 flex min-w-0 items-center gap-2 border-b bg-background px-2 py-2 sm:px-4">
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <Button variant="ghost" size="icon" className="shrink-0" onClick={() => navigate('/playbooks')}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11 shrink-0 sm:h-9 sm:w-9"
+            onClick={() => navigate('/playbooks')}
+            aria-label={t('header.backToPlaybooks')}
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           {editingName ? (
@@ -3689,84 +3716,63 @@ function PlaybookCanvasInner() {
             </span>
           )}
         </div>
-        {/* Right: share + workspace select + usage + evaluation + toolbar */}
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setEvaluationDialogOpen(true)}
-            title={t('header.evaluation')}
-            aria-label={t('header.evaluation')}
-          >
-            <BarChart3 className="h-4 w-4" />
-            <span className="hidden xl:inline">{t('header.evaluation')}</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void (id && clonePlaybook(id))}
-            title={t('header.clonePlaybook')}
-            aria-label={t('header.clonePlaybook')}
-          >
-            <Copy className="h-4 w-4" />
-          </Button>
-          {playbook.accessLevel !== 'read' && playbook.accessLevel !== 'write' && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShareDialogOpen(true)}
-              title={t('share.share')}
-            >
-              <Share2 className="h-4 w-4" />
-            </Button>
-          )}
-          <div className="w-40 sm:w-64">
-            <PlaybookWorkspaceSelect
-              value={playbook.workspaces || []}
-              onChange={handleWorkspacesChange}
-            />
-          </div>
-          <PlaybookUsageIndicator />
-          <PlaybookToolbar
-            pageMode={pageMode}
-            onPageModeChange={handlePageModeChange}
-            hasExecutionContext={Boolean(currentExecution || execution)}
-            onRun={handleRun}
-            onStop={handleStop}
-            onSave={saveNow}
-            onViewExecutions={handleViewExecutions}
-            isDirty={isDirty}
-            isSaving={isSaving}
-            isExecuting={isExecuting}
-            hasActiveExecution={hasActiveExecution}
-            isStopping={isStopping}
-            canRun={(playbook.tasks.length > 0 || (playbook.nodes?.length || 0) > 0) && (playbook.workspaces?.length || 0) > 0 && !hasActiveExecution && !isSaving && !isDirty}
-            validationIssues={validationIssues}
-            onValidationIssueSelect={handleValidationIssueSelect}
-            nodeReflectionEnabled={nodeReflectionEnabled}
-            onNodeReflectionChange={handleNodeReflectionChange}
-            advisorAutopilotEnabled={advisorAutopilotEnabled}
-            onAdvisorAutopilotChange={handleAdvisorAutopilotChange}
-            advisorScoringMode={advisorScoringMode}
-            onAdvisorScoringModeChange={handleAdvisorScoringModeChange}
-            onDownloadAllResults={handleDownloadAllResults}
-            canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
-            onTriggers={() => setTriggersSheetOpen(true)}
-            triggersOpen={triggersSheetOpen}
-            designSettings={playbook.designSettings}
-            onDesignSettingsChange={(settings) => {
-              void updatePlaybook(playbook.id, {
-                designSettings: {
-                  ...playbook.designSettings,
-                  ...settings,
-                },
-              });
-            }}
-            onOpenFlowSettings={() => setFlowSettingsOpen(true)}
-            onExport={handleExportPlaybook}
-            onImport={() => importFileInputRef.current?.click()}
+        <div className="hidden xl:block"><PlaybookUsageIndicator /></div>
+        <PlaybookStatusActions
+          onRun={handleRun}
+          onStop={handleStop}
+          onSave={saveNow}
+          isDirty={isDirty}
+          isSaving={isSaving}
+          isExecuting={isExecuting}
+          hasActiveExecution={hasActiveExecution}
+          isStopping={isStopping}
+          canRun={canRun}
+          hasRunnableContent={hasRunnableContent}
+          hasWorkspace={hasWorkspace}
+          unconfiguredTaskCount={unconfiguredTaskCount}
+          validationIssues={validationIssues}
+          onValidationIssueSelect={handleValidationIssueSelect}
+        />
+      </div>
+
+      <div className="z-10 flex min-w-0 items-center gap-2 border-b bg-muted/20 px-2 py-1.5 sm:px-4">
+        <div className="min-w-0 flex-1 sm:max-w-64">
+          <PlaybookWorkspaceSelect
+            value={playbook.workspaces || []}
+            onChange={handleWorkspacesChange}
           />
         </div>
+        <PlaybookToolbar
+          pageMode={pageMode}
+          onPageModeChange={handlePageModeChange}
+          hasExecutionContext={Boolean(currentExecution || execution)}
+          onViewExecutions={handleViewExecutions}
+          nodeReflectionEnabled={nodeReflectionEnabled}
+          onNodeReflectionChange={handleNodeReflectionChange}
+          advisorAutopilotEnabled={advisorAutopilotEnabled}
+          onAdvisorAutopilotChange={handleAdvisorAutopilotChange}
+          advisorScoringMode={advisorScoringMode}
+          onAdvisorScoringModeChange={handleAdvisorScoringModeChange}
+          onDownloadAllResults={handleDownloadAllResults}
+          canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
+          onTriggers={() => setTriggersSheetOpen(true)}
+          triggersOpen={triggersSheetOpen}
+          designSettings={playbook.designSettings}
+          onDesignSettingsChange={(settings) => {
+            void updatePlaybook(playbook.id, {
+              designSettings: {
+                ...playbook.designSettings,
+                ...settings,
+              },
+            });
+          }}
+          onOpenFlowSettings={() => setFlowSettingsOpen(true)}
+          onExport={handleExportPlaybook}
+          onImport={() => importFileInputRef.current?.click()}
+          onEvaluation={() => setEvaluationDialogOpen(true)}
+          onClone={() => void (id && clonePlaybook(id))}
+          onShare={playbook.accessLevel !== 'read' && playbook.accessLevel !== 'write' ? () => setShareDialogOpen(true) : undefined}
+        />
       </div>
 
       {id && playbook?.accessLevel !== 'read' && playbook?.accessLevel !== 'write' && (
@@ -3845,14 +3851,15 @@ function PlaybookCanvasInner() {
           >
             <div
               ref={canvasViewModeRef}
-              className="absolute left-4 top-4 z-20 hidden rounded-full border bg-background/95 p-1 shadow-sm backdrop-blur sm:inline-flex"
+              className="absolute left-3 top-3 z-30 inline-flex rounded-full border bg-background/95 p-1 shadow-sm sm:left-4 sm:top-4"
               role="group"
               aria-label={t('canvas.view.groupLabel')}
             >
-              {renderCanvasViewModeButtons(false)}
+              {renderCanvasViewModeButtons()}
               <Button
                 type="button"
                 size="sm"
+                className="hidden sm:inline-flex"
                 variant={executionViewMode === 'focus' ? 'default' : 'ghost'}
                 disabled={executionRuntimeGraph.focusNodes.length === 0}
                 aria-pressed={executionViewMode === 'focus'}
@@ -3905,6 +3912,7 @@ function PlaybookCanvasInner() {
                   panOnDrag
                   panOnScroll={false}
                   zoomOnScroll
+                  minZoom={0.1}
                   fitView
                   selectionOnDrag
                   selectionKeyCode="Shift"

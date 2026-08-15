@@ -380,11 +380,16 @@ export function PlaybookDesignerPanel({
     };
   }, [designerOpen, isMobileOverlay]);
 
+  const closeDesignerPanel = useCallback(() => {
+    document.querySelector<HTMLElement>('[data-playbook-designer-trigger="true"]')?.focus();
+    setDesignerOpen(false);
+  }, [setDesignerOpen]);
+
   const handleMobileDialogKeyDown = useCallback((event: globalThis.KeyboardEvent) => {
     if (!isMobileOverlay) return;
     if (event.key === 'Escape') {
       event.preventDefault();
-      setDesignerOpen(false);
+      closeDesignerPanel();
       return;
     }
     if (event.key !== 'Tab') return;
@@ -407,7 +412,7 @@ export function PlaybookDesignerPanel({
       event.preventDefault();
       first.focus();
     }
-  }, [isMobileOverlay, setDesignerOpen]);
+  }, [closeDesignerPanel, isMobileOverlay]);
 
   useEffect(() => {
     if (!designerOpen || !isMobileOverlay) return;
@@ -992,10 +997,10 @@ export function PlaybookDesignerPanel({
         </Button>
       )}
       <div
+        {...(!designerOpen ? { inert: '' } : {})}
         ref={panelRef}
         role={isMobileOverlay ? (designerOpen ? 'dialog' : undefined) : 'complementary'}
         aria-modal={isMobileOverlay && designerOpen ? true : undefined}
-        aria-hidden={!designerOpen}
         aria-labelledby="playbook-designer-panel-title"
         tabIndex={-1}
         className="fixed inset-0 z-50 flex flex-col border-l bg-background transition-transform duration-300 sm:absolute sm:left-auto sm:z-40"
@@ -1070,7 +1075,7 @@ export function PlaybookDesignerPanel({
           >
             {intentTracesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScrollText className="h-4 w-4" />}
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setDesignerOpen(false)} aria-label={t('interrupt.collapseAssistant')}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={closeDesignerPanel} aria-label={t('interrupt.collapseAssistant')}>
             <X className="h-4 w-4" />
           </Button>
         </div>

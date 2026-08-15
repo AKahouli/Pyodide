@@ -24,6 +24,7 @@ describe('usePlaybookCanvasPageHandlers', () => {
   const setNodeReflectionEnabled = vi.fn();
   const setAdvisorScoringMode = vi.fn();
   const setAdvisorAutopilotEnabled = vi.fn();
+  const fitCanvasToNodes = vi.fn();
   const setNodes = vi.fn();
   const setEdges = vi.fn();
   const setPendingImport = vi.fn();
@@ -102,6 +103,7 @@ describe('usePlaybookCanvasPageHandlers', () => {
         setNodeReflectionEnabled,
         setAdvisorScoringMode,
         setAdvisorAutopilotEnabled,
+        fitCanvasToNodes,
         setNodes,
         setEdges,
         setPendingImport,
@@ -134,6 +136,7 @@ describe('usePlaybookCanvasPageHandlers', () => {
     setNodeReflectionEnabled.mockClear();
     setAdvisorScoringMode.mockClear();
     setAdvisorAutopilotEnabled.mockClear();
+    fitCanvasToNodes.mockClear();
     setNodes.mockClear();
     setEdges.mockClear();
     setPendingImport.mockClear();
@@ -230,6 +233,7 @@ describe('usePlaybookCanvasPageHandlers', () => {
     expect(autoLayoutSpy).toHaveBeenCalledWith(playbook.tasks, playbook.edges);
     expect(setNodes).toHaveBeenCalledWith(tasksToNodes(layoutedTasks));
     expect(updateTasks).toHaveBeenCalledWith(layoutedTasks);
+    expect(fitCanvasToNodes).toHaveBeenCalledOnce();
 
     autoLayoutSpy.mockRestore();
   });

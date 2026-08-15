@@ -401,6 +401,8 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
   const deleteTaskReplay = usePlaybookStore((s) => s.deleteTaskReplay);
   const updateTaskReplayFormatGuide = usePlaybookStore((s) => s.updateTaskReplayFormatGuide);
   const renameTaskReplay = usePlaybookStore((s) => s.renameTaskReplay);
+  const grabOutputFormatTemplate = usePlaybookStore((s) => s.grabOutputFormatTemplate);
+  const fetchOutputFormatTemplate = usePlaybookStore((s) => s.fetchOutputFormatTemplate);
   const fetchEvaluationBaseline = usePlaybookStore((s) => s.fetchEvaluationBaseline);
   const fetchEvaluationExecutions = usePlaybookStore((s) => s.fetchEvaluationExecutions);
   const createEvaluationBaselineFromExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromExecution);
@@ -500,19 +502,36 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
   const [activeTab, setActiveTab] = useState<EditorTab>('setup');
   const [pendingNodeType, setPendingNodeType] = useState<PlaybookNodeType | null>(null);
   const [editorSavePending, setEditorSavePending] = useState(false);
+  const [generatingReplayFormatId, setGeneratingReplayFormatId] = useState<string | null>(null);
+  const [replayFormatGenerationFailed, setReplayFormatGenerationFailed] = useState(false);
+  const replayFormatGenerationRequestRef = useRef(0);
   const translationRef = useRef(t);
   translationRef.current = t;
+
+  const generateReplayOutputFormat = useCallback((referenceOutput: string | null | undefined) => (
+    generateExpectedOutputFormat(
+      referenceOutput,
+      (key, values) => translationRef.current(key as Parameters<typeof t>[0], values),
+    )
+  ), []);
 
   const prepareReplayForEditing = useCallback((replay: ValidatedTaskReplay): ValidatedTaskReplay => ({
     ...replay,
     label: replay.label?.trim() ? replay.label : translationRef.current('nodeEditor.referenceDefaultName'),
     outputFormatGuide: replay.outputFormatGuide?.trim()
       ? replay.outputFormatGuide
-      : generateExpectedOutputFormat(
-        replay.referenceOutput,
-        (key, values) => translationRef.current(key as Parameters<typeof t>[0], values),
-      ),
-  }), []);
+      : generateReplayOutputFormat(replay.referenceOutput),
+  }), [generateReplayOutputFormat]);
+
+  const cancelReplayFormatGeneration = useCallback(() => {
+    replayFormatGenerationRequestRef.current += 1;
+    setGeneratingReplayFormatId(null);
+    setReplayFormatGenerationFailed(false);
+  }, []);
+
+  useEffect(() => () => {
+    replayFormatGenerationRequestRef.current += 1;
+  }, []);
 
   useImperativeHandle(ref, () => ({
     flushSave: () => {
@@ -545,6 +564,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
     wasOpenRef.current = open;
 
     if (!open) {
+      cancelReplayFormatGeneration();
       setEditingReplay(null);
     }
 
@@ -562,13 +582,14 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
       setPendingNodeType(null);
       setEditorSavePending(false);
       setEditingReplay(null);
+      cancelReplayFormatGeneration();
       lastSuggestionSignatureRef.current = '';
     }
 
     if (!task) {
       hydratedTaskIdRef.current = null;
     }
-  }, [initialView, open, task, t]);
+  }, [cancelReplayFormatGeneration, initialView, open, task, t]);
 
   useEffect(() => {
     if (!open || !task || !editorSavePending) return;
@@ -773,6 +794,54 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
     setEditingReplay(prepareReplayForEditing(replay));
   };
 
+  const regenerateReplayOutputFormat = useCallback(async () => {
+    if (!playbookId || !task || !editingReplay) return;
+    const replayId = editingReplay.id;
+    const referenceExecutionId = editingReplay.referenceExecutionId;
+    const requestId = replayFormatGenerationRequestRef.current + 1;
+    replayFormatGenerationRequestRef.current = requestId;
+    setGeneratingReplayFormatId(replayId);
+    setReplayFormatGenerationFailed(false);
+
+    const requestIsCurrent = () => replayFormatGenerationRequestRef.current === requestId;
+    try {
+      let template = await grabOutputFormatTemplate(playbookId, task.id, {
+        executionId: referenceExecutionId,
+      });
+      if (!requestIsCurrent()) return;
+
+      let attempts = 0;
+      while (template.generationStatus === 'pending' && attempts < 60) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        if (!requestIsCurrent()) return;
+        attempts += 1;
+        const current = await fetchOutputFormatTemplate(playbookId, task.id);
+        if (!requestIsCurrent()) return;
+        if (!current) {
+          setReplayFormatGenerationFailed(true);
+          return;
+        }
+        template = current;
+      }
+
+      if (
+        template.generationStatus !== 'ready'
+        || template.sourceExecutionId !== referenceExecutionId
+        || !template.formatGuide?.trim()
+      ) {
+        setReplayFormatGenerationFailed(true);
+        return;
+      }
+      setEditingReplay((current) => current?.id === replayId
+        ? { ...current, outputFormatGuide: template.formatGuide }
+        : current);
+    } catch {
+      if (requestIsCurrent()) setReplayFormatGenerationFailed(true);
+    } finally {
+      if (requestIsCurrent()) setGeneratingReplayFormatId(null);
+    }
+  }, [editingReplay, fetchOutputFormatTemplate, grabOutputFormatTemplate, playbookId, task]);
+
   const saveEditingReplay = useCallback(async () => {
     if (!playbookId || !task || !editingReplay) return;
     const originalReplay = replays.find((replay) => replay.id === editingReplay.id);
@@ -797,9 +866,10 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
   saveEditingReplayRef.current = saveEditingReplay;
 
   const closeReferenceSubview = useCallback(async () => {
+    cancelReplayFormatGeneration();
     await saveEditingReplay();
     setEditingReplay(null);
-  }, [saveEditingReplay]);
+  }, [cancelReplayFormatGeneration, saveEditingReplay]);
 
   const handleCreateBaselineFromSelectedExecution = async () => {
     if (!playbookId || !task || !selectedBaselineExecutionId) return;
@@ -873,9 +943,10 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
     hasUnsavedEditorChangesRef.current = false;
     setEditorSavePending(false);
     const replaySave = saveEditingReplayRef.current();
+    cancelReplayFormatGeneration();
     setEditingReplay(null);
     void replaySave;
-  }, [onSave, onOpenChange]);
+  }, [cancelReplayFormatGeneration, onSave, onOpenChange]);
 
   const handleRemoveStaleReplay = useCallback(async () => {
     const currentTask = taskRef.current;
@@ -997,7 +1068,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                         <div
                           role="region"
                           aria-labelledby="trusted-answer-label"
-                          className="h-72 overflow-auto rounded-lg border bg-muted/20 p-4 text-sm leading-6 whitespace-pre-wrap break-words lg:h-[26rem]"
+                          className="h-52 overflow-auto rounded-lg border bg-muted/20 p-4 text-sm leading-6 whitespace-pre-wrap break-words"
                         >
                           {editingReplay.referenceOutput || t('baselineBadge.overview.noTrustedAnswer')}
                         </div>
@@ -1005,16 +1076,43 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                       </div>
 
                       <div className="min-w-0 space-y-2">
-                        <Label htmlFor="reference-output-format">{t('nodeEditor.formatGuideLabel')}</Label>
-                        <Textarea
-                          id="reference-output-format"
-                          name="reference-output-format"
-                          value={editingReplay.outputFormatGuide ?? ''}
-                          onChange={(event) => setEditingReplay((current) => current ? { ...current, outputFormatGuide: event.target.value } : current)}
-                          placeholder={t('nodeEditor.formatGuidePlaceholder')}
-                          maxLength={10000}
-                          className="h-72 resize-y bg-background leading-6 lg:h-[26rem]"
-                        />
+                        <div className="flex min-h-8 items-center justify-between gap-3">
+                          <Label htmlFor="reference-output-format">{t('nodeEditor.formatGuideLabel')}</Label>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 shrink-0 px-2.5 text-xs"
+                            disabled={generatingReplayFormatId === editingReplay.id}
+                            onClick={() => void regenerateReplayOutputFormat()}
+                          >
+                            {generatingReplayFormatId === editingReplay.id
+                              ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                              : <RotateCcw className="mr-1.5 h-3.5 w-3.5" />}
+                            {t('nodeEditor.referenceGenerateFormat')}
+                          </Button>
+                        </div>
+                        <div className="relative">
+                          <Textarea
+                            id="reference-output-format"
+                            name="reference-output-format"
+                            value={editingReplay.outputFormatGuide ?? ''}
+                            onChange={(event) => setEditingReplay((current) => current ? { ...current, outputFormatGuide: event.target.value } : current)}
+                            placeholder={t('nodeEditor.formatGuidePlaceholder')}
+                            maxLength={10000}
+                            disabled={generatingReplayFormatId === editingReplay.id}
+                            className="h-52 resize-y bg-background leading-6"
+                          />
+                          {generatingReplayFormatId === editingReplay.id && (
+                            <div className="absolute inset-px flex items-center justify-center gap-2 rounded-md bg-background/85 text-sm text-muted-foreground backdrop-blur-[1px]">
+                              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                              <span role="status" aria-live="polite">{t('outputFormatDialog.generating')}</span>
+                            </div>
+                          )}
+                        </div>
+                        {replayFormatGenerationFailed && (
+                          <p role="alert" className="text-xs text-destructive">{t('nodeEditor.formatGuideFailed')}</p>
+                        )}
                         <p className="text-xs text-muted-foreground">{t('nodeEditor.referenceFormatHint')}</p>
                       </div>
                     </div>

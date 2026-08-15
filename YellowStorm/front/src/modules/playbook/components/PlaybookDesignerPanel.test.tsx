@@ -653,6 +653,10 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
 
     render(<PlaybookDesignerPanel playbookId="playbook-1" />);
 
+    const collapsedPanel = document.querySelector('[aria-labelledby="playbook-designer-panel-title"]');
+    expect(collapsedPanel).toHaveAttribute('inert');
+    expect(collapsedPanel).not.toHaveAttribute('aria-hidden');
+
     await user.click(screen.getByRole('button', { name: 'interrupt.reopenAssistant' }));
 
     expect(storeState.setCopilotMode).toHaveBeenCalledWith('interrupt');

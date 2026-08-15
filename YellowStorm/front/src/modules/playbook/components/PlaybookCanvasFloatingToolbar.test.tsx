@@ -133,7 +133,9 @@ describe('PlaybookCanvasFloatingToolbar', () => {
     await userEvent.click(screen.getByText('toolbar.undo'));
     await userEvent.click(screen.getByText('toolbar.redo'));
     await userEvent.click(screen.getByText('toolbar.autoLayout'));
+    await userEvent.click(screen.getByText('toolbar.moreActions'));
     await userEvent.click(screen.getByText('toolbar.showExplorer'));
+    await userEvent.click(screen.getByText('toolbar.moreActions'));
     await userEvent.click(screen.getByText('toolbar.showConnectors'));
 
     expect(onAddStep).toHaveBeenCalledOnce();
@@ -144,7 +146,7 @@ describe('PlaybookCanvasFloatingToolbar', () => {
     expect(onToggleConnectors).toHaveBeenCalledOnce();
   });
 
-  it('disables canvas mutation actions while editing is locked', () => {
+  it('disables canvas mutation actions while editing is locked', async () => {
     render(
       <PlaybookCanvasFloatingToolbar
         containerRef={containerRef}
@@ -171,8 +173,9 @@ describe('PlaybookCanvasFloatingToolbar', () => {
 
     expect(screen.getByText('toolbar.addBlankStep').closest('button')).toBeDisabled();
     expect(screen.getByText('toolbar.autoLayout').closest('button')).toBeDisabled();
-    expect(screen.getByText('floatingToolbar.deepSearchEnable').closest('button')).toBeDisabled();
-    expect(screen.getByText('toolbar.removeAllTasks').closest('button')).toBeDisabled();
+    await userEvent.click(screen.getByText('toolbar.moreActions'));
+    expect(screen.getByText('floatingToolbar.deepSearchEnable').closest('[role="menuitem"]')).toHaveAttribute('data-disabled');
+    expect(screen.getByText('toolbar.removeAllTasks').closest('[role="menuitem"]')).toHaveAttribute('data-disabled');
   });
 
   it('opens template menu and calls template handler', async () => {

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PlaybookNodeEditor } from './PlaybookNodeEditor';
-import type { PlaybookTask, ValidatedTaskReplay } from '../types';
+import type { OutputFormatTemplate, PlaybookTask, ValidatedTaskReplay } from '../types';
 
 const fetchAgents = vi.fn();
 const fetchModels = vi.fn();
@@ -12,6 +12,8 @@ const fetchEvaluationBaseline = vi.fn();
 const updateTaskReplayFormatGuide = vi.fn();
 const renameTaskReplay = vi.fn();
 const deleteTaskReplay = vi.fn();
+const grabOutputFormatTemplate = vi.fn();
+const fetchOutputFormatTemplate = vi.fn();
 const updateDataBindings = vi.fn();
 const saveCurrentPlaybook = vi.fn().mockResolvedValue(undefined);
 const storeState = {
@@ -21,6 +23,8 @@ const storeState = {
   fetchEvaluationBaseline,
   renameTaskReplay,
   deleteTaskReplay,
+  grabOutputFormatTemplate,
+  fetchOutputFormatTemplate,
   updateDataBindings,
   saveCurrentPlaybook,
   isDirty: false,
@@ -338,6 +342,20 @@ describe('PlaybookNodeEditor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fetchTaskReplays.mockResolvedValue([]);
+    grabOutputFormatTemplate.mockResolvedValue({
+      id: 'template-1',
+      playbookId: 'playbook-1',
+      taskId: 'task-1',
+      sourceExecutionId: 'exec-1',
+      sourceExecutionNumber: 1,
+      templateVersion: 1,
+      status: 'active',
+      generationStatus: 'ready',
+      formatGuide: 'Server-generated guide',
+      createdAt: '2026-08-14T00:00:00.000Z',
+      updatedAt: '2026-08-14T00:00:00.000Z',
+    } satisfies OutputFormatTemplate);
+    fetchOutputFormatTemplate.mockResolvedValue(null);
     storeState.isDirty = false;
     storeState.isSaving = false;
     storeState.autosaveBackoffUntil = null;
@@ -870,6 +888,133 @@ describe('PlaybookNodeEditor', () => {
     const answer = within(workspace).getByRole('region', { name: 'nodeEditor.formatGuideReference' });
     const format = within(workspace).getByLabelText('nodeEditor.formatGuideLabel');
     expect(answer.compareDocumentPosition(format) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(answer).toHaveClass('h-52');
+    expect(format).toHaveClass('h-52');
+
+    fireEvent.click(within(workspace).getByRole('button', { name: 'nodeEditor.referenceGenerateFormat' }));
+    await waitFor(() => expect(format).toHaveValue('Server-generated guide'));
+    expect(grabOutputFormatTemplate).toHaveBeenCalledWith('playbook-1', 'task-1', { executionId: 'exec-1' });
+  });
+
+  it('locks and overlays the format textarea while server generation is pending', async () => {
+    const replay: ValidatedTaskReplay = {
+      id: 'replay-1',
+      playbookId: 'playbook-1',
+      taskId: 'task-1',
+      taskTitle: 'Evaluate result',
+      agentName: 'Agent',
+      createdBy: 'user',
+      referenceExecutionId: 'exec-1',
+      referenceExecutionNumber: 1,
+      validationVersion: 2,
+      status: 'active',
+      mode: 'strict_replay',
+      toolCalls: [],
+      referenceOutput: 'Reference result',
+      outputFormatGuide: 'Existing guide',
+      label: 'Baseline One',
+      createdAt: '2026-05-23T10:00:00.000Z',
+      updatedAt: '2026-05-23T10:00:00.000Z',
+    };
+    fetchTaskReplays.mockResolvedValue([replay]);
+    grabOutputFormatTemplate.mockResolvedValue({
+      id: 'template-1',
+      playbookId: 'playbook-1',
+      taskId: 'task-1',
+      sourceExecutionId: 'exec-1',
+      sourceExecutionNumber: 1,
+      templateVersion: 1,
+      status: 'active',
+      generationStatus: 'pending',
+      createdAt: '2026-08-14T00:00:00.000Z',
+      updatedAt: '2026-08-14T00:00:00.000Z',
+    } satisfies OutputFormatTemplate);
+    fetchOutputFormatTemplate.mockResolvedValue({
+      id: 'template-1',
+      playbookId: 'playbook-1',
+      taskId: 'task-1',
+      sourceExecutionId: 'exec-1',
+      sourceExecutionNumber: 1,
+      templateVersion: 1,
+      status: 'active',
+      generationStatus: 'ready',
+      formatGuide: 'Finished guide',
+      createdAt: '2026-08-14T00:00:00.000Z',
+      updatedAt: '2026-08-14T00:00:00.000Z',
+    } satisfies OutputFormatTemplate);
+
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={{ ...baseTask, hasValidatedReplay: true, activeReplayId: replay.id }}
+        open
+        initialView="reference"
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    const format = await screen.findByLabelText('nodeEditor.formatGuideLabel');
+    fireEvent.click(screen.getByRole('button', { name: 'nodeEditor.referenceGenerateFormat' }));
+
+    expect(format).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('outputFormatDialog.generating');
+    await waitFor(() => expect(fetchOutputFormatTemplate).toHaveBeenCalled(), { timeout: 3000 });
+    await waitFor(() => expect(format).toHaveValue('Finished guide'));
+    expect(format).toBeEnabled();
+  });
+
+  it('rejects a generated template from another execution without replacing the guide', async () => {
+    const replay: ValidatedTaskReplay = {
+      id: 'replay-1',
+      playbookId: 'playbook-1',
+      taskId: 'task-1',
+      taskTitle: 'Evaluate result',
+      agentName: 'Agent',
+      createdBy: 'user',
+      referenceExecutionId: 'exec-1',
+      referenceExecutionNumber: 1,
+      validationVersion: 2,
+      status: 'active',
+      mode: 'strict_replay',
+      toolCalls: [],
+      referenceOutput: 'Reference result',
+      outputFormatGuide: 'Existing guide',
+      label: 'Baseline One',
+      createdAt: '2026-05-23T10:00:00.000Z',
+      updatedAt: '2026-05-23T10:00:00.000Z',
+    };
+    fetchTaskReplays.mockResolvedValue([replay]);
+    grabOutputFormatTemplate.mockResolvedValue({
+      id: 'template-other',
+      playbookId: 'playbook-1',
+      taskId: 'task-1',
+      sourceExecutionId: 'exec-other',
+      sourceExecutionNumber: 2,
+      templateVersion: 2,
+      status: 'active',
+      generationStatus: 'ready',
+      formatGuide: 'Guide from another execution',
+      createdAt: '2026-08-14T00:00:00.000Z',
+      updatedAt: '2026-08-14T00:00:00.000Z',
+    } satisfies OutputFormatTemplate);
+
+    render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={{ ...baseTask, hasValidatedReplay: true, activeReplayId: replay.id }}
+        open
+        initialView="reference"
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    const format = await screen.findByLabelText('nodeEditor.formatGuideLabel');
+    fireEvent.click(screen.getByRole('button', { name: 'nodeEditor.referenceGenerateFormat' }));
+
+    await screen.findByRole('alert');
+    expect(format).toHaveValue('Existing guide');
   });
 
   it('keeps every inactive replay individually configurable when none is active', async () => {
