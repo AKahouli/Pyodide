@@ -1,24 +1,25 @@
 import * as React from 'react';
-import { Activity, ArrowUpRight, Bot, CheckCircle2, Library, ListChecks, Loader2, Send, ShieldCheck, Sparkles, Workflow, X } from 'lucide-react';
+import { Activity, ArrowUpRight, Bot, History, Library, ListChecks, MessageSquarePlus, Send, ShieldCheck, Sparkles, Workflow, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Streamdown } from 'streamdown';
+import { useStickToBottomContext } from 'use-stick-to-bottom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ResizablePanel } from '@/components/ui/resizable-panel';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Textarea } from '@/components/ui/textarea';
+import { ChatConversation, ChatConversationContent, ChatScrollButton } from '@/components/ai-elements/chat-conversation';
 import { handleApiError } from '@/lib/api-error';
 import { useModuleTranslation } from '@/modules/localization';
-import { getExecution } from '@/modules/playbook/api';
 import { usePlaybookStore, usePlaybookUiStore } from '@/modules/playbook';
-import { confirmSecondBrainAction, rejectSecondBrainAction, runSecondBrainTurn } from './api';
+import type { Message as ConversationMessage, MessageComponent } from '@/modules/conversation/types';
 import { dedupeSecondBrainUiTargets, executeSecondBrainUiTarget, findUiTargets, getSecondBrainUiTargetIdentity } from './action-bus';
-import type { PendingSecondBrainAction, SecondBrainPageContext, SecondBrainTurnResponse, SecondBrainUiTarget } from './types';
+import type { SecondBrainPageContext, SecondBrainUiTarget } from './types';
+import { SecondBrainActivity } from './SecondBrainActivity';
+import { SecondBrainHistoryDialog } from './SecondBrainHistoryDialog';
+import { useSecondBrainConversation } from './useSecondBrainConversation';
 
-type Message = { id: string; role: 'user' | 'assistant'; text: string; targets?: SecondBrainUiTarget[] };
-type PendingActionState = { messageId: string; action: PendingSecondBrainAction };
-type MonitoredExecution = { messageId: string; playbookId: string; executionId: string; status: string };
+type Message = { id: string; role: 'user' | 'assistant'; text: string; components: MessageComponent[]; isStreaming: boolean; targets?: SecondBrainUiTarget[] };
 
 export const SECOND_BRAIN_PANEL_WIDTH_STORAGE_KEY = 'ys_second_brain_panel_width';
 const SECOND_BRAIN_PANEL_DEFAULT_WIDTH = 400;
@@ -37,11 +38,8 @@ export function SecondBrainMascot() {
   const useDrawer = useCompactAssistantLayout();
   const [open, setOpen] = React.useState(false);
   const [input, setInput] = React.useState('');
-  const [messages, setMessages] = React.useState<Message[]>([]);
-  const [conversationId, setConversationId] = React.useState<string>();
-  const [pendingAction, setPendingAction] = React.useState<PendingActionState | null>(null);
-  const [execution, setExecution] = React.useState<MonitoredExecution | null>(null);
-  const [loading, setLoading] = React.useState(false);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [scrollRequest, setScrollRequest] = React.useState(0);
   const launcherRef = React.useRef<HTMLButtonElement>(null);
   const hasOpenedRef = React.useRef(false);
   const previousDesignerOpenRef = React.useRef(designerOpen);
@@ -83,79 +81,40 @@ export function SecondBrainMascot() {
     };
   }, [isDirty, language, location.pathname, location.search, selectedTaskId]);
 
+  const secondBrain = useSecondBrainConversation(open, pageContext);
   React.useEffect(() => {
-    if (!execution || ['completed', 'failed', 'cancelled'].includes(execution.status)) return;
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const latest = await getExecution(execution.playbookId, execution.executionId);
-        if (!cancelled) setExecution((current) => current ? { ...current, status: latest.status } : null);
-      } catch {
-        // The existing API client surfaces authenticated request failures.
-      }
-    };
-    const timer = window.setInterval(() => void poll(), 3000);
-    void poll();
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [execution?.executionId, execution?.playbookId, execution?.status]);
-
-  const applyResponse = (response: SecondBrainTurnResponse) => {
-    const messageId = crypto.randomUUID();
-    setConversationId(response.conversationId);
-    setMessages((current) => [...current, {
-      id: messageId,
-      role: 'assistant',
-      text: response.answer,
-      targets: dedupeSecondBrainUiTargets(response.toolResults.flatMap((result) => findUiTargets(result.result))),
-    }]);
-    setPendingAction(response.pendingAction ? { messageId, action: response.pendingAction } : null);
-    const identifiers = findExecutionIdentifiers(response.toolResults);
-    if (identifiers) setExecution({ messageId, ...identifiers, status: 'queued' });
-  };
+    if (secondBrain.error) handleApiError(secondBrain.error);
+  }, [secondBrain.error]);
+  const messages = React.useMemo(() => {
+    const persisted = secondBrain.messages
+      .map((message) => {
+        const isStreaming = message.id === secondBrain.streamingMessageId;
+        return toDisplayMessage({
+          ...message,
+          components: isStreaming ? secondBrain.streamingComponents : message.components,
+        }, isStreaming);
+      })
+      .filter((message): message is Message => message !== null);
+    if (!secondBrain.streamingMessageId || persisted.some((message) => message.id === secondBrain.streamingMessageId)) return persisted;
+    const streaming = toDisplayMessage({
+      id: secondBrain.streamingMessageId,
+      conversationId: secondBrain.conversationId ?? '',
+      conversationType: 'ai',
+      components: secondBrain.streamingComponents,
+      webSearchEnabled: false,
+      isStreaming: true,
+      isComplete: false,
+      createdAt: new Date().toISOString(),
+    }, true);
+    return streaming ? [...persisted, streaming] : persisted;
+  }, [secondBrain.conversationId, secondBrain.messages, secondBrain.streamingComponents, secondBrain.streamingMessageId]);
+  const loading = secondBrain.loading || Boolean(secondBrain.streamingMessageId);
 
   const sendMessage = async () => {
     const message = input.trim();
     if (!message || loading) return;
-    setInput('');
-    setMessages((current) => [...current, { id: crypto.randomUUID(), role: 'user', text: message }]);
-    setLoading(true);
-    try {
-      applyResponse(await runSecondBrainTurn({ message, conversationId, pageContext }));
-    } catch (error) {
-      handleApiError(error);
-      setMessages((current) => [...current, { id: crypto.randomUUID(), role: 'assistant', text: t('error.generic') }]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const confirm = async () => {
-    if (!pendingAction || loading) return;
-    setLoading(true);
-    try {
-      applyResponse(await confirmSecondBrainAction(pendingAction.action.confirmationId));
-      setPendingAction(null);
-    } catch (error) {
-      handleApiError(error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const reject = async () => {
-    if (!pendingAction || loading) return;
-    setLoading(true);
-    try {
-      await rejectSecondBrainAction(pendingAction.action.confirmationId);
-      setPendingAction(null);
-    } catch (error) {
-      handleApiError(error);
-    } finally {
-      setLoading(false);
-    }
+    setScrollRequest((request) => request + 1);
+    if (await secondBrain.send(message)) setInput('');
   };
 
   const routePlaybookId = pageContext.entity?.type === 'playbook' ? pageContext.entity.id : undefined;
@@ -188,17 +147,23 @@ export function SecondBrainMascot() {
   const panel = (
     <>
       <header className='min-w-0 shrink-0 border-b bg-card px-4 py-4'>
-        <div className='flex items-start gap-3 pr-10'>
+        <div className={`flex items-start gap-3 ${useDrawer ? 'pr-10' : ''}`}>
           <div className='grid size-10 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm'><Bot className='size-5' /></div>
           <div className='min-w-0 flex-1'>
             <h2 className='text-base font-semibold leading-5'>{t('title')}</h2>
             <p className='mt-0.5 text-xs text-muted-foreground'>{t('description')}</p>
           </div>
-          {!useDrawer && (
-            <Button type='button' variant='ghost' size='icon' className='absolute right-3 top-3' aria-label={t('close')} onClick={() => setOpen(false)}>
-              <X className='size-4' />
+          <div className='ml-auto flex shrink-0 items-center gap-1'>
+            <Button type='button' variant='ghost' size='icon' className='size-9' title={t('newConversation')} aria-label={t('newConversation')} disabled={loading} onClick={() => { void secondBrain.createNewConversation().then((created) => { if (created) { setInput(''); setScrollRequest((request) => request + 1); } }); }}>
+              <MessageSquarePlus className='size-4' />
             </Button>
-          )}
+            <Button type='button' variant='ghost' size='icon' className='size-9' title={t('history.open')} aria-label={t('history.open')} disabled={loading} onClick={() => { setHistoryOpen(true); void secondBrain.refreshHistory(); }}>
+              <History className='size-4' />
+            </Button>
+            {!useDrawer && <Button type='button' variant='ghost' size='icon' className='size-9' aria-label={t('close')} onClick={() => setOpen(false)}>
+              <X className='size-4' />
+            </Button>}
+          </div>
         </div>
         <div className='mt-3 flex min-w-0 items-center gap-2 rounded-lg border bg-muted/45 px-3 py-2'>
           <Workflow className='size-4 shrink-0 text-primary' />
@@ -209,8 +174,9 @@ export function SecondBrainMascot() {
           <Badge variant='outline' className='ml-auto shrink-0 text-[10px]'>{t('context.live')}</Badge>
         </div>
       </header>
-      <ScrollArea className='min-h-0 min-w-0 flex-1'>
-        <div className='min-w-0 space-y-5 px-4 py-5' aria-live='polite'>
+      <ChatConversation className='min-h-0 min-w-0 flex-1'>
+        <FollowConversation request={scrollRequest} />
+        <ChatConversationContent className='min-w-0 space-y-5 px-4 py-5' aria-live='polite'>
           {messages.length === 0 && (
             <div className='rounded-xl border border-dashed bg-muted/25 p-4'>
               <Sparkles className='size-5 text-primary' />
@@ -219,7 +185,7 @@ export function SecondBrainMascot() {
             </div>
           )}
           {messages.map((message) => (
-            <article key={message.id} className={`min-w-0 max-w-full ${message.role === 'user' ? 'ml-8' : ''}`}>
+            <article key={message.id} className={`min-w-0 max-w-full ${message.role === 'user' ? 'ml-8' : 'w-full'}`}>
               <div className='mb-1.5 flex items-center gap-2 text-[11px] font-medium text-muted-foreground'>
                 {message.role === 'assistant' && <Bot className='size-3.5' />}
                 {message.role === 'user' ? t('you') : t('assistant')}
@@ -227,25 +193,13 @@ export function SecondBrainMascot() {
               <div className={message.role === 'user'
                 ? 'rounded-2xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground shadow-sm'
                 : 'min-w-0 max-w-full overflow-hidden text-sm leading-6 text-foreground'}>
-                {message.role === 'assistant'
-                  ? <Streamdown className='min-w-0 max-w-full break-words [&_code]:break-words [&_ol]:my-2 [&_ol]:pl-5 [&_p]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre_code]:break-normal [&_table]:my-3 [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:whitespace-nowrap [&_ul]:my-2 [&_ul]:pl-5'>{message.text}</Streamdown>
-                  : <p className='whitespace-pre-wrap break-words'>{message.text}</p>}
+                {message.role === 'assistant' ? (
+                  <>
+                    <SecondBrainActivity components={message.components} isStreaming={message.isStreaming} />
+                    {message.text && <Streamdown className='min-w-0 w-full max-w-full overflow-hidden break-words [&_code]:[overflow-wrap:anywhere] [&_ol]:my-2 [&_ol]:pl-5 [&_p]:my-2 [&_p]:[overflow-wrap:anywhere] [&_pre]:w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre_code]:break-normal [&_pre_code]:[overflow-wrap:normal] [&_table]:my-3 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:whitespace-nowrap [&_ul]:my-2 [&_ul]:pl-5'>{message.text}</Streamdown>}
+                  </>
+                ) : <p className='whitespace-pre-wrap break-words'>{message.text}</p>}
               </div>
-              {pendingAction?.messageId === message.id && (
-                <div className='mt-3 rounded-xl border border-primary/35 bg-primary/5 p-3'>
-                  <div className='flex items-center gap-2'><ShieldCheck className='size-4 text-primary' /><h3 className='text-sm font-semibold'>{t('confirmation.title')}</h3></div>
-                  <p className='mt-2 text-sm'>{pendingAction.action.summary.playbookName}</p>
-                  <p className='mt-1 text-xs text-muted-foreground'>{t('confirmation.validation', { status: pendingAction.action.summary.validationStatus ?? 'valid' })}</p>
-                  <p className='text-xs text-muted-foreground'>{pendingAction.action.summary.inputLabels?.length ? t('confirmation.inputs', { inputs: pendingAction.action.summary.inputLabels.join(', ') }) : t('confirmation.noInputs')}</p>
-                  <div className='mt-3 flex gap-2'><Button type='button' className='min-h-11' onClick={() => void confirm()} disabled={loading}>{t('confirmation.run')}</Button><Button type='button' className='min-h-11' variant='outline' onClick={() => void reject()} disabled={loading}>{t('confirmation.cancel')}</Button></div>
-                </div>
-              )}
-              {execution?.messageId === message.id && (
-                <div className='mt-3 flex items-center gap-2 rounded-lg border bg-muted/35 px-3 py-2 text-xs'>
-                  {['completed', 'failed', 'cancelled'].includes(execution.status) ? <CheckCircle2 className='size-4 text-primary' /> : <Loader2 className='size-4 animate-spin text-primary' />}
-                  {t('execution.status', { status: execution.status })}
-                </div>
-              )}
               {message.targets && message.targets.length > 0 && (
                 <div className='mt-3 space-y-2'>
                   <p className='text-[11px] font-medium text-muted-foreground'>{t('navigation.related')}</p>
@@ -254,9 +208,9 @@ export function SecondBrainMascot() {
               )}
             </article>
           ))}
-          {loading && <div className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin text-primary' />{t('sending')}</div>}
-        </div>
-      </ScrollArea>
+        </ChatConversationContent>
+        <ChatScrollButton className='bottom-3 z-10' aria-label={t('scrollLatest')} title={t('scrollLatest')} />
+      </ChatConversation>
       <footer className='shrink-0 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]'>
         <label htmlFor='second-brain-message' className='sr-only'>{t('placeholder')}</label>
         <div className='flex items-end gap-2 rounded-xl border bg-card p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring'>
@@ -299,8 +253,24 @@ export function SecondBrainMascot() {
           </aside>
         </ResizablePanel>
       )}
+      <SecondBrainHistoryDialog
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        conversations={secondBrain.history}
+        activeConversationId={secondBrain.conversationId}
+        loading={secondBrain.historyLoading || secondBrain.loading}
+        onSelect={secondBrain.selectConversation}
+      />
     </>
   );
+}
+
+function FollowConversation({ request }: Readonly<{ request: number }>) {
+  const { scrollToBottom } = useStickToBottomContext();
+  React.useEffect(() => {
+    if (request > 0) void scrollToBottom();
+  }, [request, scrollToBottom]);
+  return null;
 }
 
 function useCompactAssistantLayout(): boolean {
@@ -334,20 +304,38 @@ function getTargetPresentation(surface: SecondBrainUiTarget['surface']) {
   return presentations[surface];
 }
 
-function findExecutionIdentifiers(value: unknown, depth = 0): { playbookId: string; executionId: string } | null {
-  if (depth > 6 || value == null) return null;
-  if (typeof value === 'string') {
-    try { return findExecutionIdentifiers(JSON.parse(value), depth + 1); } catch { return null; }
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) { const result = findExecutionIdentifiers(item, depth + 1); if (result) return result; }
+function toDisplayMessage(message: ConversationMessage, isStreaming = false): Message | null {
+  const components = message.components ?? [];
+  const displayMessage: Message = {
+    id: message.id,
+    role: message.conversationType === 'user' ? 'user' : 'assistant',
+    text: message.conversationType === 'user' ? message.content ?? '' : getAssistantText(components),
+    components,
+    isStreaming,
+    targets: dedupeSecondBrainUiTargets(components.flatMap((component) => findUiTargets(getToolResult(component)))),
+  };
+  if (displayMessage.role === 'assistant'
+    && !displayMessage.text
+    && !displayMessage.targets?.length
+    && !isStreaming
+    && !components.some((component) => ['reasoning', 'chainOfThought', 'toolInfo', 'plan', 'queue', 'checkpoint', 'task'].includes(component.type))) {
     return null;
   }
-  if (typeof value !== 'object') return null;
-  const record = value as Record<string, unknown>;
-  const playbookId = record.playbookId ?? record.playbook_id;
-  const executionId = record.executionId ?? record.execution_id;
-  if (typeof playbookId === 'string' && typeof executionId === 'string') return { playbookId, executionId };
-  for (const nested of Object.values(record)) { const result = findExecutionIdentifiers(nested, depth + 1); if (result) return result; }
-  return null;
+  return displayMessage;
+}
+
+function getAssistantText(components: MessageComponent[]): string {
+  return components
+    .filter((component) => component.type === 'text' || component.type === 'code' || component.type === 'error')
+    .map((component) => {
+      const content = component.data.content ?? component.data.text;
+      if (typeof content !== 'string') return '';
+      return component.type === 'error' ? `\n\n${content}` : content;
+    })
+    .join('');
+}
+
+function getToolResult(component: MessageComponent): unknown {
+  if (component.type !== 'toolInfo') return undefined;
+  return component.data.resultJson ?? component.data.result_json;
 }

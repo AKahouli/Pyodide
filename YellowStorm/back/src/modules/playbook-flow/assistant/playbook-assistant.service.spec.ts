@@ -38,6 +38,7 @@ describe('PlaybookAssistantService.runTurn', () => {
           mutationOperationId: null,
         },
       }),
+      claimGenerationForTurn: jest.fn().mockResolvedValue({ requestId: 'generation-request-1' }),
       getContinuationForUser: jest.fn(),
       getByContinuation: jest.fn().mockResolvedValue({
         requestId: 'request-1',
@@ -85,6 +86,16 @@ describe('PlaybookAssistantService.runTurn', () => {
       removeAssistantDraftIfUnchanged: jest.fn().mockResolvedValue(true),
     };
     const intentService = { assessDesign: jest.fn() };
+    const conversationService = { getConversationDocument: jest.fn().mockResolvedValue({
+      createdBy: 'user-1', runtimePurpose: 'platform_copilot', pinnedAgentId: 'agent-1',
+    }) };
+    const messageService = { getMessageDocument: jest.fn()
+      .mockResolvedValueOnce({
+        conversationId: 'conversation-1', conversationType: 'ai', senderId: 'user-1', questionMessageId: 'question-1',
+      })
+      .mockResolvedValueOnce({
+        conversationId: 'conversation-1', conversationType: 'user', senderId: 'user-1', content: 'Build lead generation',
+      }) };
     const service = new PlaybookAssistantService(
       { mcpAssistantEnabled: true } as any,
       {} as any,
@@ -100,8 +111,10 @@ describe('PlaybookAssistantService.runTurn', () => {
       historyService as any,
       intentService as any,
       attachmentService as any,
+      conversationService as any,
+      messageService as any,
     );
-    return { service, accessService, constructionService, flowService, agentService, taskExecutionService, requestService, historyService, intentService, attachmentService };
+    return { service, accessService, constructionService, flowService, agentService, taskExecutionService, requestService, historyService, intentService, attachmentService, conversationService, messageService };
   };
 
   it('returns a read-only assistant answer without creating an operation', async () => {
@@ -251,6 +264,41 @@ describe('PlaybookAssistantService.runTurn', () => {
       0,
     );
     expect(requestService.resetMutation).toHaveBeenCalledWith('request-1', operationId);
+  });
+
+  it('creates a bound generation request from the canonical platform conversation turn', async () => {
+    const { service, requestService, flowService } = createService();
+    requestService.getBound.mockResolvedValueOnce({
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation', originalText: 'Build lead generation',
+    });
+    const actor = {
+      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-1',
+    };
+
+    await expect(service.startCurrentTurnGeneration(actor, { name: 'Lead generation' }))
+      .resolves.toEqual(expect.objectContaining({ status: 'planning' }));
+    expect(requestService.claimGenerationForTurn).toHaveBeenCalledWith({
+      actor,
+      text: 'Build lead generation',
+    });
+    expect(flowService.create).toHaveBeenCalledWith('user-1', expect.objectContaining({
+      name: 'Lead generation',
+      description: 'Build lead generation',
+    }), expect.any(Object));
+  });
+
+  it('rejects a platform generation turn whose pinned agent does not match', async () => {
+    const { service, conversationService, requestService } = createService();
+    conversationService.getConversationDocument.mockResolvedValueOnce({
+      createdBy: 'user-1', runtimePurpose: 'platform_copilot', pinnedAgentId: 'other-agent',
+    });
+
+    await expect(service.startCurrentTurnGeneration({
+      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-1',
+    }, {})).rejects.toThrow('conversation binding does not match');
+    expect(requestService.claimGenerationForTurn).not.toHaveBeenCalled();
   });
 
   it('rejects duplicate clarification answers before changing durable state', async () => {

@@ -53,41 +53,6 @@ export class ListRecentExecutionsDto {
   limit?: number = 10;
 }
 
-export class RunSecondBrainTurnDto {
-  @ApiProperty()
-  @IsString()
-  @MaxLength(10000)
-  message!: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  conversationId?: string;
-
-  @ApiPropertyOptional({ type: Object })
-  @IsOptional()
-  @IsObject()
-  pageContext?: Record<string, unknown>;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  requestId?: string;
-}
-
-export class EvaluateMascotToolDto {
-  @ApiProperty()
-  @IsString()
-  @MaxLength(200)
-  toolName!: string;
-
-  @ApiProperty({ type: Object })
-  @IsObject()
-  arguments!: Record<string, unknown>;
-}
-
 export class RunPlaybookAssistantTurnDto {
   @ApiProperty()
   @IsString()

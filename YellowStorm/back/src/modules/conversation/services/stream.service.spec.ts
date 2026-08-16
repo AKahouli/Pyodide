@@ -2,6 +2,39 @@ import { StreamService } from './stream.service';
 import type { MessageComponent } from '../interfaces/message.interface';
 
 describe('StreamService guardrail metadata buffering', () => {
+  it('does not create a gRPC call when the durable lease was lost during request preparation', async () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    const executeGrpcStream = jest.fn();
+    const releaseStreamExecution = jest.fn().mockResolvedValue(undefined);
+    Object.assign(service as object, {
+      isGrpcAvailable: true,
+      activeStreams: new Map(),
+      activeCalls: new Map(),
+      componentBuffers: new Map(),
+      streamUsage: new Map(),
+      streamExecutionLeases: new Map(),
+      configService: { get: jest.fn((key: string, fallback: unknown) => key === 'conversation.maxConcurrentStreams' ? 5 : fallback) },
+      messageService: {
+        claimStreamExecution: jest.fn().mockResolvedValue(true),
+        renewStreamExecution: jest.fn().mockResolvedValue(false),
+        releaseStreamExecution,
+        markStreamFailed: jest.fn(),
+      },
+      logger: { debug: jest.fn(), error: jest.fn(), warn: jest.fn() },
+      streamGateway: { broadcastToConversation: jest.fn().mockResolvedValue(undefined) },
+      resolveMemberIds: jest.fn().mockResolvedValue(['user-1']),
+      buildAgentExecutionRequest: jest.fn().mockResolvedValue({ rpc: 'RunSingleAgent', payload: {} }),
+      executeGrpcStream,
+    });
+
+    await expect(service.startStream(
+      'user-1', 'conversation-1', '507f1f77bcf86cd799439011', { content: 'hello' }, 'request-1',
+    )).rejects.toThrow('lease was lost');
+
+    expect(executeGrpcStream).not.toHaveBeenCalled();
+    expect(releaseStreamExecution).toHaveBeenCalledWith('507f1f77bcf86cd799439011', expect.any(String));
+  });
+
   it('rejects both private replay lifecycle promises when grpc-js throws synchronously', async () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     Object.assign(service as object, {

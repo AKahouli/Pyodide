@@ -301,6 +301,44 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].agent_params?.params.temperature).toBe('0');
   });
 
+  it('injects trusted actor headers into platform copilot connector bindings', async () => {
+    const { service, skillService, connectorService } = createService();
+    const platformAgent: IAgentForStream = {
+      id: 'platform-agent', name: 'Yellowmind', agentTypeName: 'Platform Copilot',
+      agentTypeSlug: 'platform_copilot', agentTypeId: 'type-platform', role: 'Assistant',
+      description: '', temperature: 0, model: 'model-1', instruction: '', ignorePrePrompt: false,
+      knowledgeBases: [], toolIds: [], guardrails: defaultGuardrails, connectorIds: ['playbook-connector'],
+      connectorActionSelections: [], skillIds: [], disabledSkillIds: [], agentTypeSkillIds: [],
+      enable_temporary_child_agents: false, max_temporary_child_agents: 4,
+      isDefault: true, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([platformAgent]);
+    connectorService.findByIds.mockResolvedValue([{
+      id: 'playbook-connector', name: 'Playbook', slug: 'playbook',
+      actions: [{ key: 'get_playbook', label: 'Get playbook', isEnabled: true }],
+    }]);
+    skillService.findByIds.mockResolvedValue([]);
+
+    const result = await service.buildAgentsForStream(
+      userId,
+      undefined,
+      ['platform-agent'],
+      undefined,
+      undefined,
+      undefined,
+      { tenantId: 'default', conversationId: 'conversation-1', correlationId: 'message-1' },
+    );
+
+    const [binding] = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string);
+    expect(binding.auth_headers).toEqual(expect.objectContaining({
+      'X-YellowStorm-Tenant-Id': 'default',
+      'X-YellowStorm-User-Id': userId,
+      'X-YellowStorm-Agent-Id': 'platform-agent',
+      'X-YellowStorm-Conversation-Id': 'conversation-1',
+      'X-Correlation-Id': 'message-1',
+    }));
+  });
+
   it('resolves the mono-agent directly from the DB even though it is not part of the user\'s roster', async () => {
     const { service, agentRepository, agentTypeService } = createService();
 

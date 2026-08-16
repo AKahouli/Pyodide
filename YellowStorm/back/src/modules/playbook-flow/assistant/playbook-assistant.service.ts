@@ -24,6 +24,8 @@ import { PlaybookAssistantHistoryService } from './playbook-assistant-history.se
 import { PlaybookFlowIntentService } from '../services/playbook-flow-intent.service';
 import { randomUUID } from 'crypto';
 import { PlaybookAssistantAttachmentService } from './playbook-assistant-attachment.service';
+import { ConversationService } from '@modules/conversation/services/conversation.service';
+import { MessageService } from '@modules/conversation/services/message.service';
 
 const DEFAULT_OPTIMIZATION_DIMENSIONS = ['clarity', 'agent', 'tools', 'inputs', 'outputs', 'bindings', 'cost', 'latency', 'determinism'];
 
@@ -52,6 +54,8 @@ export class PlaybookAssistantService {
     private readonly historyService: PlaybookAssistantHistoryService,
     private readonly intentService: PlaybookFlowIntentService,
     private readonly attachmentService: PlaybookAssistantAttachmentService,
+    private readonly conversationService: ConversationService,
+    private readonly messageService: MessageService,
   ) {}
 
   assertEnabled(): void {
@@ -424,6 +428,32 @@ export class PlaybookAssistantService {
       await this.requestService.resetMutation(request.requestId, operationId);
       throw error;
     }
+  }
+
+  async startCurrentTurnGeneration(actor: TrustedPlaybookAssistantActor, dto: StartPlaybookGenerationDto) {
+    this.assertEnabled();
+    const conversation = await this.conversationService.getConversationDocument(actor.conversationId);
+    if (conversation.createdBy.toString() !== actor.ownerId
+      || conversation.runtimePurpose !== 'platform_copilot'
+      || conversation.pinnedAgentId?.toString() !== actor.agentId) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Assistant generation conversation binding does not match');
+    }
+    const response = await this.messageService.getMessageDocument(actor.correlationId);
+    if (response.conversationId.toString() !== actor.conversationId
+      || response.conversationType !== 'ai'
+      || response.senderId?.toString() !== actor.ownerId
+      || !response.questionMessageId) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Assistant generation response binding does not match');
+    }
+    const question = await this.messageService.getMessageDocument(response.questionMessageId.toString());
+    if (question.conversationId.toString() !== actor.conversationId
+      || question.conversationType !== 'user'
+      || question.senderId?.toString() !== actor.ownerId
+      || !question.content?.trim()) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Assistant generation question binding does not match');
+    }
+    const request = await this.requestService.claimGenerationForTurn({ actor, text: question.content });
+    return this.startGeneration(request.requestId, actor, dto);
   }
 
   async startConstruction(playbookId: string, userId: string, dto: StartPlaybookAssistantConstructionDto) {

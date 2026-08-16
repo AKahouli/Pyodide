@@ -44,7 +44,6 @@ import { FlowHitlMemory, FlowHitlMemorySchema } from './schemas/playbook-flow-hi
 import { PlaybookAssistantOperation, PlaybookAssistantOperationSchema } from './schemas/playbook-assistant-operation.schema';
 import { PlaybookAssistantRevision, PlaybookAssistantRevisionSchema } from './schemas/playbook-assistant-revision.schema';
 import { FlowDynamicReasoningAttempt, FlowDynamicReasoningAttemptSchema } from './schemas/playbook-flow-dynamic-reasoning-attempt.schema';
-import { PlaybookMascotConfirmation, PlaybookMascotConfirmationSchema } from './schemas/playbook-mascot-confirmation.schema';
 import { PlaybookAssistantRequest, PlaybookAssistantRequestSchema } from './schemas/playbook-assistant-request.schema';
 import { PlaybookAssistantMessage, PlaybookAssistantMessageSchema } from './schemas/playbook-assistant-message.schema';
 import { PlaybookAssistantAttachment, PlaybookAssistantAttachmentSchema } from './schemas/playbook-assistant-attachment.schema';
@@ -65,7 +64,6 @@ import { PlaybookFlowSettingsController } from './controllers/playbook-flow-sett
 import { PlaybookFlowHitlController } from './controllers/playbook-flow-hitl.controller';
 import { PlaybookShareController } from './controllers/playbook-share.controller';
 import { PlaybookAssistantInternalController } from './controllers/playbook-assistant-internal.controller';
-import { SecondBrainController } from './controllers/second-brain.controller';
 
 import { PlaybookFlowService } from './services/playbook-flow.service';
 import { PlaybookShareService } from './services/playbook-share.service';
@@ -160,8 +158,6 @@ import { PlaybookAssistantService } from './assistant/playbook-assistant.service
 import { PlaybookAssistantOperationService } from './assistant/playbook-assistant-operation.service';
 import { PlaybookPlanValidationClientService } from './assistant/playbook-plan-validation-client.service';
 import { ConversationPlaybookBuilderService } from './services/conversation-playbook-builder.service';
-import { MascotToolExecutionPolicyService } from './assistant/mascot-tool-execution-policy.service';
-import { SecondBrainService } from './assistant/second-brain.service';
 import { PlaybookAssistantRequestService } from './assistant/playbook-assistant-request.service';
 import { PlaybookAssistantHistoryService } from './assistant/playbook-assistant-history.service';
 import { PlaybookAssistantActorGuard } from './guards/playbook-assistant-actor.guard';
@@ -192,7 +188,6 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
       { name: PlaybookAssistantOperation.name, schema: PlaybookAssistantOperationSchema },
       { name: PlaybookAssistantRevision.name, schema: PlaybookAssistantRevisionSchema },
       { name: FlowDynamicReasoningAttempt.name, schema: FlowDynamicReasoningAttemptSchema },
-      { name: PlaybookMascotConfirmation.name, schema: PlaybookMascotConfirmationSchema },
       { name: PlaybookAssistantRequest.name, schema: PlaybookAssistantRequestSchema },
       { name: PlaybookAssistantMessage.name, schema: PlaybookAssistantMessageSchema },
       { name: PlaybookAssistantAttachment.name, schema: PlaybookAssistantAttachmentSchema },
@@ -231,7 +226,6 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookFlowHitlController,
     PlaybookShareController,
     PlaybookAssistantInternalController,
-    SecondBrainController,
   ],
   providers: [
     PlaybookFlowService,
@@ -327,8 +321,6 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookAssistantOperationService,
     PlaybookPlanValidationClientService,
     ConversationPlaybookBuilderService,
-    MascotToolExecutionPolicyService,
-    SecondBrainService,
     PlaybookAssistantRequestService,
     PlaybookAssistantHistoryService,
     PlaybookAssistantActorGuard,

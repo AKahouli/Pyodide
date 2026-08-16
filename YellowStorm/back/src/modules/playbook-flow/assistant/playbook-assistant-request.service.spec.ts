@@ -114,6 +114,45 @@ describe('PlaybookAssistantRequestService', () => {
     });
   });
 
+  it('creates one server-bound generation request for a platform conversation turn', async () => {
+    const created = { toObject: jest.fn().mockReturnValue({ requestId: 'created-request' }) };
+    const model = { create: jest.fn().mockResolvedValue(created) };
+    const service = new PlaybookAssistantRequestService(model as never);
+    const actor = {
+      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-1',
+    };
+
+    await expect(service.claimGenerationForTurn({ actor, text: 'Build lead generation' }))
+      .resolves.toEqual({ requestId: 'created-request' });
+    expect(model.create).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: expect.stringMatching(/^platform-generation:/),
+      ...actor,
+      operationKind: 'generation',
+      originalText: 'Build lead generation',
+    }));
+  });
+
+  it('reuses a matching generation request after a duplicate-key race', async () => {
+    const existing = {
+      requestId: 'existing-request', ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-1', expiresAt: new Date(Date.now() + 60_000),
+    };
+    const model = {
+      create: jest.fn().mockRejectedValue({ code: 11000 }),
+      findOne: jest.fn().mockReturnValue(query(existing)),
+    };
+    const service = new PlaybookAssistantRequestService(model as never);
+    const actor = {
+      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-1',
+    };
+    const firstFingerprint = (service as any).createRequestFingerprint({ ...actor, operationKind: 'generation', text: 'Build lead generation' });
+    Object.assign(existing, { messageHash: firstFingerprint });
+
+    await expect(service.claimGenerationForTurn({ actor, text: 'Build lead generation' })).resolves.toBe(existing);
+  });
+
   it('releases only the matching mutation claim without clearing Playbook bindings', async () => {
     const exec = jest.fn().mockResolvedValue(undefined);
     const model = { updateOne: jest.fn().mockReturnValue({ exec }) };

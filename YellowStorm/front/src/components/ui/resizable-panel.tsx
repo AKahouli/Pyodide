@@ -189,7 +189,6 @@ export function ResizablePanel({
       style={{
         width,
         flex: '0 0 auto',
-        transition: dragActive.current ? 'none' : 'width 180ms ease',
         ...style,
       }}
     >

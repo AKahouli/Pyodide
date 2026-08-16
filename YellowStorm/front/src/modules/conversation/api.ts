@@ -1,5 +1,5 @@
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse } from './types';
+import type { Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload } from './types';
 
 // ===== Conversation APIs =====
 
@@ -25,7 +25,7 @@ export async function fetchConversations(params?: ConversationListParams): Promi
   };
 }
 
-export async function createConversation(data?: { title?: string; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }>; ownerJob?: string; projectId?: string }): Promise<Conversation> {
+export async function createConversation(data?: CreateConversationPayload): Promise<Conversation> {
   const response = await apiClient.post<ApiResponse<Conversation>>(API_ENDPOINTS.conversations.create, data || {});
   return response.data.data;
 }

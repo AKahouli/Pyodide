@@ -16,7 +16,7 @@ import {
   GroupConversationMeta,
 } from '../interfaces/conversation.interface';
 import { LoggerService } from '../../logger';
-import { NotFoundException, ForbiddenException, BadRequestException } from '../../exceptions';
+import { NotFoundException, ForbiddenException, BadRequestException, ServiceUnavailableException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { AgentRepository } from '../../agent/repositories/agent.repository';
 import { WorkspaceService } from '../../workspace/workspace.service';
@@ -55,6 +55,16 @@ export class ConversationService {
     userId: string,
     data: CreateConversationData,
   ): Promise<ConversationResponse> {
+
+    if (data.runtimePurpose === 'platform_copilot') {
+      return this.createOrReusePlatformCopilot(userId, data.creationRequestId);
+    }
+    if (data.creationRequestId) {
+      throw new BadRequestException(
+        undefined,
+        'creationRequestId is only supported for platform-copilot conversations',
+      );
+    }
 
     let groupMeta: GroupConversationMeta | undefined;
     const emailsToInvite = data.participants?.map(p => p.email) || data.participantEmails;
@@ -98,6 +108,61 @@ export class ConversationService {
     }
  
     return this.findById(conversation._id.toString());
+  }
+
+  async assertPlatformCopilotAgent(pinnedAgentId?: Types.ObjectId | null): Promise<string> {
+    const activeAgentId = await this.agentRepository.findActiveDefaultIdBySlugAndType(
+      'my-second-brain',
+      'platform_copilot',
+    );
+    if (!activeAgentId || (pinnedAgentId && pinnedAgentId.toString() !== activeAgentId)) {
+      throw new ServiceUnavailableException(
+        ErrorCode.AGENT_UNAVAILABLE,
+        'Yellowmind is currently unavailable',
+      );
+    }
+    return activeAgentId;
+  }
+
+  private async createOrReusePlatformCopilot(userId: string, requestedCreationId?: string): Promise<ConversationResponse> {
+    const ownerId = new Types.ObjectId(userId);
+    const creationRequestId = requestedCreationId ?? 'initial';
+    const existing = await this.conversationModel.findOne(requestedCreationId
+      ? { createdBy: ownerId, runtimePurpose: 'platform_copilot', platformCopilotCreationRequestId: creationRequestId }
+      : { createdBy: ownerId, runtimePurpose: 'platform_copilot' }).lean().exec();
+    if (existing) {
+      await this.assertPlatformCopilotAgent(existing.pinnedAgentId);
+      return this.mapToResponse(existing);
+    }
+
+    const pinnedAgentId = await this.assertPlatformCopilotAgent();
+    try {
+      const conversation = await this.conversationModel.create({
+        title: 'Yellowmind',
+        createdBy: ownerId,
+        runtimePurpose: 'platform_copilot',
+        platformCopilotCreationRequestId: creationRequestId,
+        pinnedAgentId: new Types.ObjectId(pinnedAgentId),
+        taggedAgentIds: [new Types.ObjectId(pinnedAgentId)],
+        messages: [],
+        workspaces: [],
+        selectedSkills: [],
+        messageCount: 0,
+        isArchived: false,
+        isShared: false,
+      });
+      return this.mapToResponse(conversation);
+    } catch (error: unknown) {
+      if (typeof error === 'object' && error !== null && 'code' in error && (error as { code?: number }).code === 11000) {
+        const raced = await this.conversationModel.findOne({
+          createdBy: ownerId,
+          runtimePurpose: 'platform_copilot',
+          platformCopilotCreationRequestId: creationRequestId,
+        }).lean().exec();
+        if (raced) return this.mapToResponse(raced);
+      }
+      throw error;
+    }
   }
 
   async createGoverned(userId: string, data: {
@@ -186,17 +251,26 @@ export class ConversationService {
       isArchived,
       projectId,
       searchScope,
+      runtimePurpose,
     } = params;
 
     const skip = (page - 1) * limit;
 
-    const query: Record<string, unknown> = {
-      initializationStatus: { $nin: ['pending', 'seeding', 'cleanup_pending'] },
-      $or: [
-        { createdBy: new Types.ObjectId(userId) },
-        { 'groupMeta.members.userId': new Types.ObjectId(userId) },
-      ],
-    };
+    const ownerId = new Types.ObjectId(userId);
+    const query: Record<string, unknown> = runtimePurpose === 'platform_copilot'
+      ? {
+        initializationStatus: { $nin: ['pending', 'seeding', 'cleanup_pending'] },
+        runtimePurpose: 'platform_copilot',
+        createdBy: ownerId,
+      }
+      : {
+        initializationStatus: { $nin: ['pending', 'seeding', 'cleanup_pending'] },
+        runtimePurpose: { $ne: 'platform_copilot' },
+        $or: [
+          { createdBy: ownerId },
+          { 'groupMeta.members.userId': ownerId },
+        ],
+      };
 
     if (isArchived !== undefined) {
       query.isArchived = isArchived;
@@ -989,6 +1063,8 @@ export class ConversationService {
       groupMeta,
       projectId: conversation.projectId ? toStr(conversation.projectId) : null,
       runtimeMode: conversation.runtimeMode ?? 'standard',
+      runtimePurpose: conversation.runtimePurpose ?? 'chat',
+      pinnedAgentId: conversation.pinnedAgentId ? toStr(conversation.pinnedAgentId) : null,
       governanceContext: conversation.governanceContext ? {
         programId: toStr(conversation.governanceContext.programId),
         scopeId: toStr(conversation.governanceContext.scopeId),

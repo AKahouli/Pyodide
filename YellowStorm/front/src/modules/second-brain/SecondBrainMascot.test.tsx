@@ -2,16 +2,44 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SECOND_BRAIN_PANEL_WIDTH_STORAGE_KEY, SecondBrainMascot } from './SecondBrainMascot';
-import { runSecondBrainTurn } from './api';
 
 const setDesignerOpen = vi.fn();
 let designerOpen = false;
 
-vi.mock('./api', () => ({
-  runSecondBrainTurn: vi.fn(),
-  confirmSecondBrainAction: vi.fn(),
-  rejectSecondBrainAction: vi.fn(),
+const secondBrainMock = vi.hoisted(() => ({
+  send: vi.fn().mockResolvedValue(true),
+  createNewConversation: vi.fn().mockResolvedValue(true),
+  selectConversation: vi.fn().mockResolvedValue(true),
+  refreshHistory: vi.fn().mockResolvedValue(undefined),
+  current: {} as Record<string, unknown>,
 }));
+
+vi.mock('./useSecondBrainConversation', () => ({
+  useSecondBrainConversation: () => ({ ...secondBrainMock.current,
+    send: secondBrainMock.send,
+    createNewConversation: secondBrainMock.createNewConversation,
+    selectConversation: secondBrainMock.selectConversation,
+    refreshHistory: secondBrainMock.refreshHistory,
+  }),
+}));
+
+function completedMessage() {
+  return {
+      id: 'assistant-1',
+      conversationId: 'conversation-1',
+      conversationType: 'ai',
+      webSearchEnabled: false,
+      isStreaming: false,
+      isComplete: true,
+      createdAt: new Date().toISOString(),
+      components: [
+        { id: 'text-1', type: 'text', data: { content: '**Ready.** Open the generated workflow.\n\n| Playbook | Owner | Status | Revision | Updated | Action |\n| --- | --- | --- | --- | --- | --- |\n| Lead qualification | Revenue operations | Active | 7 | Today | Open |\n\n```text\nthis-is-a-long-code-line-that-must-remain-contained-inside-the-assistant-message\n```' } },
+        { id: 'error-1', type: 'error', data: { content: 'The response could not be completed.' } },
+        { id: 'tool-1', type: 'toolInfo', data: { resultJson: { uiTarget: { surface: 'playbook.editor', params: { playbookId: 'p1' } } } } },
+        { id: 'tool-2', type: 'toolInfo', data: { resultJson: { nested: { uiTarget: { surface: 'playbook.editor', params: { playbookId: 'p1' } } } } } },
+      ],
+    };
+}
 
 vi.mock('@/modules/playbook', () => ({
   usePlaybookStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
@@ -41,12 +69,27 @@ vi.mock('@/modules/localization', () => ({
         description: 'Your Playbook assistant',
         open: 'Open Yellowmind',
         close: 'Close Yellowmind',
+        newConversation: 'Start a new Yellowmind conversation',
+        scrollLatest: 'Scroll to the latest message',
         resize: 'Resize Yellowmind panel',
         placeholder: 'Ask about your Playbooks...',
         sendLabel: 'Send to Yellowmind',
         sending: 'Working...',
         you: 'You',
         assistant: 'Yellowmind',
+        'activity.title': 'Agent activity',
+        'activity.reasoning': 'Reasoning about your request',
+        'activity.status.running': 'In progress',
+        'activity.status.completed': 'Done',
+        'activity.status.failed': 'Failed',
+        'activity.status.pending': 'Queued',
+        'history.open': 'Open Yellowmind conversation history',
+        'history.title': 'Conversation history',
+        'history.description': 'Return to an earlier Yellowmind conversation.',
+        'history.search': 'Search conversations',
+        'history.loading': 'Loading conversations...',
+        'history.empty': 'No conversations found.',
+        'history.current': 'Current conversation',
         'empty.title': 'Work with your Playbooks',
         'empty.description': 'Find and inspect a workflow.',
         'context.selectedTask': `Selected: ${String(options?.name ?? '')}`,
@@ -88,20 +131,19 @@ describe('SecondBrainMascot', () => {
     localStorage.removeItem(SECOND_BRAIN_PANEL_WIDTH_STORAGE_KEY);
     designerOpen = false;
     setViewport(1440);
+    secondBrainMock.current = {
+      conversationId: 'conversation-1',
+      loading: false,
+      historyLoading: false,
+      streamingMessageId: undefined,
+      streamingComponents: [],
+      history: [{ id: 'conversation-1', title: 'Lead qualification', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      messages: [completedMessage()],
+    };
   });
 
   it('opens as a non-modal desktop sidecar and renders deduplicated message actions', async () => {
-    vi.mocked(runSecondBrainTurn).mockResolvedValue({
-      conversationId: 'conversation-1',
-      correlationId: 'correlation-1',
-      answer: '**Ready.** Open the generated workflow.',
-      pendingAction: null,
-      toolResults: [
-        { name: 'create', status: 'completed', result: { uiTarget: { surface: 'playbook.editor', params: { playbookId: 'p1' } } } },
-        { name: 'summary', status: 'completed', result: { nested: { uiTarget: { surface: 'playbook.editor', params: { playbookId: 'p1' } } } } },
-      ],
-    });
-    renderMascot();
+    const { container } = renderMascot();
 
     fireEvent.click(screen.getByRole('button', { name: 'Open Yellowmind' }));
     expect(screen.getByRole('complementary', { name: 'Yellowmind' })).toBeInTheDocument();
@@ -110,7 +152,7 @@ describe('SecondBrainMascot', () => {
     expect(resizeHandle).toHaveAttribute('aria-valuemin', '336');
     expect(resizeHandle).toHaveAttribute('aria-valuemax', '720');
     expect(resizeHandle).toHaveAttribute('aria-valuenow', '400');
-    expect(screen.getByText('Lead qualification')).toBeInTheDocument();
+    expect(screen.getAllByText('Lead qualification')).toHaveLength(2);
     expect(screen.getByText('Selected: Score lead')).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText('Ask about your Playbooks...'), { target: { value: 'Open it' } });
@@ -119,6 +161,9 @@ describe('SecondBrainMascot', () => {
     await waitFor(() => expect(screen.getByText('Ready.')).toBeInTheDocument());
     expect(screen.getAllByRole('button', { name: /Open Playbook Canvas/ })).toHaveLength(1);
     expect(screen.queryByText('**Ready.**')).not.toBeInTheDocument();
+    expect(screen.getByText('The response could not be completed.')).toBeInTheDocument();
+    expect(container.querySelector('table')).toBeInTheDocument();
+    expect(container.querySelector('pre')).toBeInTheDocument();
   });
 
   it('uses a modal drawer on compact viewports', () => {
@@ -131,6 +176,42 @@ describe('SecondBrainMascot', () => {
     expect(screen.queryByRole('complementary')).not.toBeInTheDocument();
     expect(screen.queryByRole('separator', { name: 'Resize Yellowmind panel' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Close Yellowmind' })).toBeInTheDocument();
+  });
+
+  it('renders one assistant identity for an empty placeholder plus live activity', () => {
+    secondBrainMock.current = {
+      ...secondBrainMock.current,
+      streamingMessageId: 'assistant-live',
+      streamingComponents: [
+        { id: 'reasoning-live', type: 'reasoning', data: { content: 'private hidden reasoning' } },
+        { id: 'tool-live', type: 'toolInfo', data: { title: 'search_playbooks', status: 'running', params: '{"token":"hidden"}' } },
+      ],
+      messages: [{
+        id: 'assistant-live', conversationId: 'conversation-1', conversationType: 'ai', components: [],
+        webSearchEnabled: false, isStreaming: true, isComplete: false, createdAt: new Date().toISOString(),
+      }],
+    };
+    renderMascot();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Yellowmind' }));
+
+    expect(screen.getAllByText('Yellowmind')).toHaveLength(2);
+    expect(screen.getByText('search playbooks')).toBeInTheDocument();
+    expect(screen.queryByText('private hidden reasoning')).not.toBeInTheDocument();
+    expect(screen.queryByText(/token/)).not.toBeInTheDocument();
+  });
+
+  it('provides new-conversation and searchable history controls', async () => {
+    renderMascot();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Yellowmind' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Yellowmind conversation history' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent('Conversation history');
+    expect(screen.getByPlaceholderText('Search conversations')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start a new Yellowmind conversation' }));
+    await waitFor(() => expect(secondBrainMock.createNewConversation).toHaveBeenCalled());
   });
 
   it('replaces the open Canvas designer with the global sidecar', () => {

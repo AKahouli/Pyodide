@@ -113,6 +113,34 @@ async def test_create_playbook_allows_omitting_workspace_ids(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generation_uses_the_current_trusted_turn_without_a_request_id(monkeypatch):
+    class BackendStub:
+        async def post(self, path, user_id, payload):
+            assert path == "/api/v1/internal/playbook-assistant/generation"
+            assert user_id == "user-1"
+            assert payload == {"name": "Lead generation"}
+            return {"operationId": "operation-1", "playbookId": "playbook-1"}
+
+    monkeypatch.setattr(server, "backend", lambda: BackendStub())
+    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "ai-message-1"))
+    try:
+        async with Client(mcp) as client:
+            tools = await client.list_tools()
+            generation = next(tool for tool in tools if tool.name == "start_playbook_generation")
+            assert "request_id" not in generation.inputSchema["properties"]
+            response = await client.call_tool("start_playbook_generation", {"name": "Lead generation"})
+    finally:
+        actor_context.reset(token)
+
+    result = result_dict(response)
+    assert result["data"]["publicationStatus"] == "draft"
+    assert result["data"]["uiTarget"] == {
+        "surface": "playbook.editor.assistant",
+        "params": {"playbookId": "playbook-1", "operationId": "operation-1"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_advisor_construction_returns_canvas_owned_preview_handoff(monkeypatch):
     class BackendStub:
         async def post(self, path, user_id, payload):

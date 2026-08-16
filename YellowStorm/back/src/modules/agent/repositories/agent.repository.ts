@@ -106,6 +106,8 @@ export class AgentRepository {
 
   async upsertDefaultSystemAgent(input: CreateAgentInput): Promise<AgentRecord> {
     const id = await this.db.transaction(async (tx: Tx) => {
+      const existingBeforeInsert = await tx.select({ id: agents.id }).from(agents)
+        .where(and(eq(agents.slug, input.slug), eq(agents.isDefault, true))).limit(1);
       await tx.insert(agents).values({
         id: input.id,
         name: input.name,
@@ -136,25 +138,14 @@ export class AgentRepository {
       }
       const canonicalId = trim24(matches[0].id);
       await tx.update(agents).set({
-        name: input.name,
-        role: input.role,
-        description: input.description,
-        temperature: input.temperature,
-        llmModel: input.llmModel ?? null,
-        email: input.email ?? null,
-        instruction: input.instruction,
-        ignorePrePrompt: input.ignorePrePrompt,
         agentTypeId: input.agentType,
         agentTypeSlug: input.agentTypeSlug,
-        enableTemporaryChildAgents: input.enable_temporary_child_agents,
-        maxTemporaryChildAgents: input.max_temporary_child_agents,
-        isActive: input.isActive,
         isDefaultForType: input.isDefaultForType,
-        guardrails: input.guardrails,
-        deploymentSettings: input.deploymentSettings,
         updatedAt: new Date(),
       }).where(eq(agents.id, canonicalId));
-      await this.replaceJunction(tx, canonicalId, input);
+      if (existingBeforeInsert.length === 0) {
+        await this.replaceJunction(tx, canonicalId, input);
+      }
       return canonicalId;
     });
     const record = await this.findById(id);
@@ -240,6 +231,17 @@ export class AgentRepository {
   async findActiveDefaultIdBySlug(slug: string): Promise<string | null> {
     const rows = await this.db.select({ id: agents.id }).from(agents)
       .where(and(eq(agents.slug, slug), eq(agents.isDefault, true), eq(agents.isActive, true))).limit(1);
+    return rows.length ? trim24(rows[0].id) : null;
+  }
+
+  async findActiveDefaultIdBySlugAndType(slug: string, agentTypeSlug: string): Promise<string | null> {
+    const rows = await this.db.select({ id: agents.id }).from(agents)
+      .where(and(
+        eq(agents.slug, slug),
+        eq(agents.agentTypeSlug, agentTypeSlug),
+        eq(agents.isDefault, true),
+        eq(agents.isActive, true),
+      )).limit(1);
     return rows.length ? trim24(rows[0].id) : null;
   }
 

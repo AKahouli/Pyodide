@@ -70,6 +70,17 @@ export function executeSecondBrainUiTarget(input: {
       break;
     }
   }
+  if (target.effects?.length) {
+    const [path, rawQuery = ''] = route.split('?');
+    const query = new URLSearchParams(rawQuery);
+    for (const effect of target.effects) {
+      if (effect.type === 'selectTab') query.set('mascotTab', effect.tab);
+      if (effect.type === 'highlightTask') query.set('mascotTask', effect.taskId);
+      if (effect.type === 'focusExecutionStatus') query.set('mascotFocusStatus', '1');
+    }
+    const serialized = query.toString();
+    route = serialized ? `${path}?${serialized}` : path;
+  }
   if (input.pageContext.hasUnsavedChanges && route !== input.pageContext.route && !input.confirmNavigation()) {
     return { ok: false, reason: 'navigation_cancelled' };
   }
@@ -110,15 +121,15 @@ export function getSecondBrainUiTargetIdentity(target: SecondBrainUiTarget): str
   const { playbookId = '', executionId = '', taskId = '', operationId = '' } = target.params;
   switch (target.surface) {
     case 'playbook.list':
-      return target.surface;
+      return JSON.stringify([target.surface, target.effects ?? []]);
     case 'playbook.editor':
     case 'playbook.validation':
-      return JSON.stringify([target.surface, playbookId]);
+      return JSON.stringify([target.surface, playbookId, target.effects ?? []]);
     case 'playbook.editor.assistant':
-      return JSON.stringify([target.surface, playbookId, operationId]);
+      return JSON.stringify([target.surface, playbookId, operationId, target.effects ?? []]);
     case 'playbook.execution.details':
-      return JSON.stringify([target.surface, playbookId, executionId]);
+      return JSON.stringify([target.surface, playbookId, executionId, target.effects ?? []]);
     case 'playbook.execution.task':
-      return JSON.stringify([target.surface, playbookId, executionId, taskId]);
+      return JSON.stringify([target.surface, playbookId, executionId, taskId, target.effects ?? []]);
   }
 }

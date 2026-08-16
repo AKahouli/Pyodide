@@ -94,6 +94,12 @@ export class Message extends Document {
   @Prop({ type: Boolean, default: false })
   isComplete!: boolean;
 
+  @Prop({ type: String, default: undefined })
+  streamExecutionLeaseId?: string;
+
+  @Prop({ type: Date, default: undefined })
+  streamExecutionLeaseExpiresAt?: Date;
+
   // Token usage
   @Prop({ type: Number })
   inputTokens?: number;
@@ -146,7 +152,17 @@ MessageSchema.index({ conversationId: 1, createdAt: -1 }); // Descending sort fo
 MessageSchema.index({ conversationId: 1, conversationType: 1 });
 MessageSchema.index({ questionMessageId: 1, conversationType: 1, createdAt: 1 }); // Branch queries
 MessageSchema.index({ isStreaming: 1, updatedAt: 1 });
-MessageSchema.index({ requestId: 1 });
+MessageSchema.index(
+  { conversationId: 1, senderId: 1, conversationType: 1, requestId: 1 },
+  {
+    name: 'conversation_sender_type_request_unique',
+    unique: true,
+    partialFilterExpression: {
+      requestId: { $exists: true, $type: 'string' },
+      senderId: { $exists: true, $type: 'objectId' },
+    },
+  },
+);
 MessageSchema.index({ 'reliabilityEvaluation.status': 1, reliabilityEvaluationHeartbeatAt: 1 });
 
 // JSON transform

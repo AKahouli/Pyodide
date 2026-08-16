@@ -20,6 +20,8 @@ export function PlaybookExecutionPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const requestedTaskId = searchParams.get('taskId');
+  const requestedTab = searchParams.get('mascotTab');
+  const focusExecutionStatus = searchParams.get('mascotFocusStatus') === '1';
   const { t } = useModuleTranslation('playbook');
 
   const playbook = useCurrentPlaybook();
@@ -42,6 +44,15 @@ export function PlaybookExecutionPage() {
   useEffect(() => {
     if (requestedTaskId) selectStep(requestedTaskId);
   }, [requestedTaskId, selectStep]);
+
+  useEffect(() => {
+    if (requestedTab) setActiveDetailTab(requestedTab);
+  }, [requestedTab]);
+
+  useEffect(() => {
+    if (!focusExecutionStatus) return;
+    document.getElementById('playbook-execution-status')?.focus();
+  }, [focusExecutionStatus, execution?.status]);
 
   useEffect(() => {
     if (id) {
@@ -92,7 +103,9 @@ export function PlaybookExecutionPage() {
 
   return (
     <div className="flex flex-col h-full w-full">
-      <ExecutionHeader execution={execution} playbook={playbook} />
+      <div id="playbook-execution-status" tabIndex={-1}>
+        <ExecutionHeader execution={execution} playbook={playbook} />
+      </div>
 
       <div className="flex flex-1 min-h-0">
         <ExecutionStepList

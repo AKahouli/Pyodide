@@ -30,34 +30,5 @@ export type SecondBrainPageContext = {
   availableActions: string[];
   hasUnsavedChanges: boolean;
   locale: string;
-  contextVersion: number;
-};
-
-export type PendingSecondBrainAction = {
-  confirmationId: string;
-  toolName: string;
-  summary: {
-    playbookId?: string;
-    playbookName?: string;
-    definitionRevision?: number;
-    validationStatus?: 'valid' | 'warning' | 'invalid';
-    inputLabels?: string[];
-  };
-  expiresAt: string;
-  status: 'pending' | 'confirmed' | 'rejected' | 'expired' | 'executed';
-};
-
-export type SecondBrainToolResult = {
-  name: string;
-  status: 'completed' | 'failed';
-  result: unknown;
-};
-
-export type SecondBrainTurnResponse = {
-  requestId?: string;
-  conversationId: string;
-  correlationId: string;
-  answer: string;
-  toolResults: SecondBrainToolResult[];
-  pendingAction: PendingSecondBrainAction | null;
+  contextVersion: 1;
 };

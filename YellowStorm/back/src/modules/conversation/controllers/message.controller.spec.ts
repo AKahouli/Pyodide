@@ -11,9 +11,13 @@ describe('MessageController.sendMessage sticky routing', () => {
     createUserMessage: jest.Mock;
     createAIPlaceholder: jest.Mock;
     markStreamFailed: jest.Mock;
+    findTurnByRequestId: jest.Mock;
+    getMessageDocument: jest.Mock;
+    findById: jest.Mock;
   };
   let streamService: {
     isAvailable: jest.Mock;
+    isConversationStreaming: jest.Mock;
     startStream: jest.Mock;
     generateConversationNameAsync: jest.Mock;
   };
@@ -22,6 +26,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     updateConversationInternal: jest.Mock;
     replaceTaggedAgentIds: jest.Mock;
     ensureSystemWorkspace: jest.Mock;
+    assertPlatformCopilotAgent: jest.Mock;
   };
   let modelsService: { validateModelActive: jest.Mock };
   let teamService: { resolveAgentIds: jest.Mock };
@@ -40,6 +45,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     _id: userId,
     email: 'user@example.com',
     profile: { firstName: 'Ada', lastName: 'Lovelace' },
+    permissions: ['playbook.read'],
   } as any;
 
   beforeEach(() => {
@@ -52,9 +58,13 @@ describe('MessageController.sendMessage sticky routing', () => {
         id: new Types.ObjectId().toString(),
       }),
       markStreamFailed: jest.fn(),
+      findTurnByRequestId: jest.fn().mockResolvedValue(null),
+      getMessageDocument: jest.fn(),
+      findById: jest.fn(),
     };
     streamService = {
       isAvailable: jest.fn().mockReturnValue(true),
+      isConversationStreaming: jest.fn().mockReturnValue(false),
       startStream: jest.fn().mockResolvedValue(undefined),
       generateConversationNameAsync: jest.fn(),
     };
@@ -63,6 +73,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       updateConversationInternal: jest.fn().mockResolvedValue(undefined),
       replaceTaggedAgentIds: jest.fn().mockResolvedValue(undefined),
       ensureSystemWorkspace: jest.fn().mockResolvedValue(undefined),
+      assertPlatformCopilotAgent: jest.fn().mockResolvedValue(stickyAgentId),
     };
     modelsService = { validateModelActive: jest.fn() };
     teamService = { resolveAgentIds: jest.fn().mockResolvedValue([]) };
@@ -88,6 +99,140 @@ describe('MessageController.sendMessage sticky routing', () => {
       { resolveRuntime: jest.fn(), assertRuntimeRequestAllowed: jest.fn(), resolveEffectiveAgents: jest.fn() } as any,
       responseReliabilityService as any,
     );
+  });
+
+  it('forces a platform copilot conversation through its pinned agent', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({
+      isFirstMessage: false,
+      runtimePurpose: 'platform_copilot',
+      pinnedAgentId: new Types.ObjectId(stickyAgentId),
+      taggedAgentIds: [],
+    });
+
+    await controller.sendMessage(user, conversationId, {
+      content: 'validate this playbook',
+      requestId: 'turn-1',
+      clientContext: {
+        contextVersion: 1,
+        route: '/playbooks',
+        module: 'playbooks',
+        surface: 'playbook.list',
+        availableActions: ['search'],
+        hasUnsavedChanges: false,
+        locale: 'en',
+      },
+    } as any);
+
+    expect(conversationService.assertPlatformCopilotAgent).toHaveBeenCalledWith(expect.any(Types.ObjectId));
+    expect(messageService.createUserMessage).toHaveBeenCalledWith(expect.objectContaining({
+      agentIds: [stickyAgentId],
+      requestId: 'turn-1',
+      replayContext: expect.objectContaining({ clientContext: expect.objectContaining({ contextVersion: 1 }) }),
+    }));
+    expect(messageService.createAIPlaceholder).toHaveBeenCalledWith(expect.objectContaining({
+      senderId: userId.toString(),
+      requestId: 'turn-1',
+    }));
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(), conversationId, expect.any(String),
+      expect.objectContaining({ agentIds: [stickyAgentId], clientContext: expect.objectContaining({ contextVersion: 1 }) }),
+      'turn-1', undefined, 'Ada Lovelace', undefined,
+    );
+  });
+
+  it('rejects client routing overrides for platform copilot conversations', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({
+      isFirstMessage: false,
+      runtimePurpose: 'platform_copilot',
+      pinnedAgentId: new Types.ObjectId(stickyAgentId),
+      taggedAgentIds: [],
+    });
+
+    await expect(controller.sendMessage(user, conversationId, {
+      content: 'override',
+      agentIds: [mentionedAgentId],
+    } as any)).rejects.toThrow('cannot be overridden');
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('recovers a platform turn whose user message was persisted without an AI placeholder', async () => {
+    const userMessageId = new Types.ObjectId().toString();
+    const aiMessageId = new Types.ObjectId().toString();
+    conversationService.getConversationDocument.mockResolvedValue({
+      isFirstMessage: false,
+      runtimePurpose: 'platform_copilot',
+      pinnedAgentId: new Types.ObjectId(stickyAgentId),
+      taggedAgentIds: [],
+    });
+    messageService.findTurnByRequestId.mockResolvedValue({
+      userMessage: { id: userMessageId, content: 'Create a lead Playbook' },
+      requestFingerprint: (controller as any).fingerprintTurn({
+        content: 'Create a lead Playbook', requestId: 'turn-recovery',
+      }),
+    });
+    messageService.createAIPlaceholder.mockResolvedValue({ id: aiMessageId });
+
+    await expect(controller.sendMessage(user, conversationId, {
+      content: 'Create a lead Playbook', requestId: 'turn-recovery',
+    } as any)).resolves.toEqual({
+      userMessage: expect.objectContaining({ id: userMessageId }),
+      aiMessageId,
+    });
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+    expect(messageService.createAIPlaceholder).toHaveBeenCalledWith({
+      conversationId,
+      questionMessageId: userMessageId,
+      senderId: userId.toString(),
+      requestId: 'turn-recovery',
+    });
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(), conversationId, aiMessageId,
+      expect.objectContaining({ content: 'Create a lead Playbook', agentIds: [stickyAgentId] }),
+      'turn-recovery', undefined, 'Ada Lovelace',
+    );
+  });
+
+  it('restarts an incomplete platform placeholder after a process interruption', async () => {
+    const aiMessageId = new Types.ObjectId().toString();
+    conversationService.getConversationDocument.mockResolvedValue({
+      isFirstMessage: false,
+      runtimePurpose: 'platform_copilot',
+      pinnedAgentId: new Types.ObjectId(stickyAgentId),
+      taggedAgentIds: [],
+    });
+    messageService.findTurnByRequestId.mockResolvedValue({
+      userMessage: { id: new Types.ObjectId().toString(), content: 'Create a lead Playbook' },
+      aiMessageId,
+      requestFingerprint: (controller as any).fingerprintTurn({
+        content: 'Create a lead Playbook', requestId: 'turn-recovery',
+      }),
+    });
+    messageService.getMessageDocument.mockResolvedValue({ isComplete: false });
+
+    await controller.sendMessage(user, conversationId, {
+      content: 'Create a lead Playbook', requestId: 'turn-recovery',
+    } as any);
+
+    expect(messageService.createAIPlaceholder).not.toHaveBeenCalled();
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(), conversationId, aiMessageId,
+      expect.objectContaining({ agentIds: [stickyAgentId] }),
+      'turn-recovery', undefined, 'Ada Lovelace',
+    );
+  });
+
+  it('requires playbook read permission for platform copilot turns', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({
+      isFirstMessage: false,
+      runtimePurpose: 'platform_copilot',
+      pinnedAgentId: new Types.ObjectId(stickyAgentId),
+      taggedAgentIds: [],
+    });
+
+    await expect(controller.sendMessage({ ...user, permissions: [] }, conversationId, {
+      content: 'search',
+    } as any)).rejects.toThrow('Playbook read permission is required');
+    expect(messageService.createUserMessage).not.toHaveBeenCalled();
   });
 
   it('mention replaces sticky and streams with mentioned agents', async () => {
@@ -241,5 +386,20 @@ describe('MessageController.sendMessage sticky routing', () => {
       userId: userId.toString(),
       requestId: 'req-1',
     });
+  });
+
+  it('rechecks playbook read permission before regenerating a platform copilot turn', async () => {
+    const questionId = new Types.ObjectId();
+    messageService.getMessageDocument
+      .mockResolvedValueOnce({ questionMessageId: questionId })
+      .mockResolvedValueOnce({ content: 'original question' });
+    conversationService.getConversationDocument.mockResolvedValue({
+      runtimePurpose: 'platform_copilot',
+      pinnedAgentId: new Types.ObjectId(stickyAgentId),
+    });
+
+    await expect(controller.regenerate({ ...user, permissions: [] }, conversationId, 'ai-1'))
+      .rejects.toThrow('Playbook read permission is required to regenerate');
+    expect(messageService.createAIPlaceholder).not.toHaveBeenCalled();
   });
 });

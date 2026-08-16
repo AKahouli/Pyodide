@@ -3,14 +3,13 @@ import type { Response } from 'express';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { InternalServiceGuard } from '@modules/auth/guards/internal-service.guard';
-import { BadRequestException } from '@modules/exceptions';
+import { BadRequestException, ForbiddenException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import {
   AnalyzeTaskOptimizationDto,
   AnalyzeWorkflowOptimizationDto,
   CancelPlaybookAssistantConstructionDto,
   ContinuePlaybookClarificationDto,
-  EvaluateMascotToolDto,
   ListRecentExecutionsDto,
   OpenPlaybookAssistantContextDto,
   RunPlaybookFromStepDto,
@@ -25,8 +24,10 @@ import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execut
 import { RateLimit } from '@modules/rate-limiter';
 import { PlaybookAssistantContextService } from '../assistant/playbook-assistant-context.service';
 import { PlaybookAssistantService } from '../assistant/playbook-assistant.service';
-import { MascotToolExecutionPolicyService } from '../assistant/mascot-tool-execution-policy.service';
 import { PlaybookAssistantActorGuard } from '../guards/playbook-assistant-actor.guard';
+import { UserService } from '@modules/user';
+import { AuthorizationService } from '@modules/authorization/authorization.service';
+import { hasPermission, Permissions } from '@modules/authorization/constants/permissions';
 
 @Public()
 @ApiTags('Playbook Assistant Internal')
@@ -38,27 +39,9 @@ export class PlaybookAssistantInternalController {
   constructor(
     private readonly contextService: PlaybookAssistantContextService,
     private readonly assistantService: PlaybookAssistantService,
-    private readonly mascotToolPolicy: MascotToolExecutionPolicyService,
+    private readonly userService: UserService,
+    private readonly authorizationService: AuthorizationService,
   ) {}
-
-  @Post('mascot/tool-policy/evaluate')
-  @ApiOperation({ summary: 'Evaluate a mascot tool call in the existing runtime tool pipeline' })
-  evaluateMascotTool(
-    @Headers('x-yellowstorm-tenant-id') tenantId: string | undefined,
-    @Headers('x-yellowstorm-user-id') userId: string | undefined,
-    @Headers('x-yellowstorm-agent-id') agentId: string | undefined,
-    @Headers('x-yellowstorm-conversation-id') conversationId: string | undefined,
-    @Headers('x-correlation-id') correlationId: string | undefined,
-    @Body() dto: EvaluateMascotToolDto,
-  ) {
-    return this.mascotToolPolicy.evaluate({
-      tenantId: this.requireActorValue(tenantId, 'tenant'),
-      userId: this.requireUserId(userId),
-      agentId: this.requireActorValue(agentId, 'agent'),
-      conversationId: this.requireActorValue(conversationId, 'conversation'),
-      correlationId: this.requireActorValue(correlationId, 'correlation'),
-    }, dto);
-  }
 
   @Get('playbooks')
   @ApiOperation({ summary: 'Search accessible Playbooks for the mascot' })
@@ -131,8 +114,10 @@ export class PlaybookAssistantInternalController {
   @Post('playbooks/:id/constructions')
   @RateLimit({ limit: 10, windowMs: 60000, keyPrefix: 'playbook-assistant:construction' })
   @ApiOperation({ summary: 'Start Playbook assistant construction' })
-  startConstruction(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('id') id: string, @Body() dto: StartPlaybookAssistantConstructionDto) {
-    return this.assistantService.startConstruction(id, this.requireUserId(userId), dto);
+  async startConstruction(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('id') id: string, @Body() dto: StartPlaybookAssistantConstructionDto) {
+    const actingUserId = this.requireUserId(userId);
+    await this.assertUserPermission(actingUserId, Permissions.PLAYBOOK_UPDATE);
+    return this.assistantService.startConstruction(id, actingUserId, dto);
   }
 
   @Post('requests/:requestId/assessment')
@@ -153,22 +138,37 @@ export class PlaybookAssistantInternalController {
 
   @Post('requests/:requestId/constructions')
   @ApiOperation({ summary: 'Start one construction from a ready bound assistant request' })
-  startBoundConstruction(
+  async startBoundConstruction(
     @Headers() headers: Record<string, string | undefined>,
     @Param('requestId') requestId: string,
     @Body() dto: StartBoundPlaybookConstructionDto,
   ) {
-    return this.assistantService.startBoundConstruction(requestId, this.actor(headers), dto.contextId);
+    const actor = this.actor(headers);
+    await this.assertUserPermission(actor.ownerId, Permissions.PLAYBOOK_UPDATE);
+    return this.assistantService.startBoundConstruction(requestId, actor, dto.contextId);
   }
 
   @Post('requests/:requestId/generation')
   @ApiOperation({ summary: 'Start one operation-owned draft Playbook generation' })
-  startGeneration(
+  async startGeneration(
     @Headers() headers: Record<string, string | undefined>,
     @Param('requestId') requestId: string,
     @Body() dto: StartPlaybookGenerationDto,
   ) {
-    return this.assistantService.startGeneration(requestId, this.actor(headers), dto);
+    const actor = this.actor(headers);
+    await this.assertUserPermission(actor.ownerId, Permissions.PLAYBOOK_CREATE);
+    return this.assistantService.startGeneration(requestId, actor, dto);
+  }
+
+  @Post('generation')
+  @ApiOperation({ summary: 'Generate a draft Playbook from the current trusted Conversation turn' })
+  async startCurrentTurnGeneration(
+    @Headers() headers: Record<string, string | undefined>,
+    @Body() dto: StartPlaybookGenerationDto,
+  ) {
+    const actor = this.actor(headers);
+    await this.assertUserPermission(actor.ownerId, Permissions.PLAYBOOK_CREATE);
+    return this.assistantService.startCurrentTurnGeneration(actor, dto);
   }
 
   @Get('playbooks/:id/constructions/:operationId')
@@ -213,23 +213,27 @@ export class PlaybookAssistantInternalController {
 
   @Post('playbooks/:id/constructions/:operationId/cancel')
   @ApiOperation({ summary: 'Cancel Playbook assistant construction' })
-  cancelConstruction(
+  async cancelConstruction(
     @Headers('x-yellowstorm-user-id') userId: string | undefined,
     @Param('id') id: string,
     @Param('operationId') operationId: string,
     @Body() dto: CancelPlaybookAssistantConstructionDto,
   ) {
-    return this.assistantService.cancelConstruction(id, this.requireUserId(userId), operationId, dto.reason);
+    const actingUserId = this.requireUserId(userId);
+    await this.assertUserPermission(actingUserId, Permissions.PLAYBOOK_UPDATE);
+    return this.assistantService.cancelConstruction(id, actingUserId, operationId, dto.reason);
   }
 
   @Post('playbooks/:id/constructions/:operationId/revert')
   @RateLimit({ limit: 5, windowMs: 60000, keyPrefix: 'playbook-assistant:revert' })
-  revertConstruction(
+  async revertConstruction(
     @Headers('x-yellowstorm-user-id') userId: string | undefined,
     @Param('id') id: string,
     @Param('operationId') operationId: string,
   ) {
-    return this.assistantService.revertConstruction(id, this.requireUserId(userId), operationId);
+    const actingUserId = this.requireUserId(userId);
+    await this.assertUserPermission(actingUserId, Permissions.PLAYBOOK_UPDATE);
+    return this.assistantService.revertConstruction(id, actingUserId, operationId);
   }
 
   @Post('playbooks/:id/tasks/:taskId/optimization')
@@ -246,12 +250,14 @@ export class PlaybookAssistantInternalController {
   @Post('playbooks/:id/advisor-remediation-constructions')
   @RateLimit({ limit: 10, windowMs: 60000, keyPrefix: 'playbook-assistant:advisor' })
   @ApiOperation({ summary: 'Start streamed Advisor remediation construction preview' })
-  startAdvisorRemediationConstruction(
+  async startAdvisorRemediationConstruction(
     @Headers('x-yellowstorm-user-id') userId: string | undefined,
     @Param('id') id: string,
     @Body() dto: StartAdvisorRemediationConstructionDto,
   ) {
-    return this.assistantService.startAdvisorRemediationConstruction(id, this.requireUserId(userId), dto);
+    const actingUserId = this.requireUserId(userId);
+    await this.assertUserPermission(actingUserId, Permissions.PLAYBOOK_UPDATE);
+    return this.assistantService.startAdvisorRemediationConstruction(id, actingUserId, dto);
   }
 
   @Post('playbooks/:id/workflow-optimization')
@@ -266,25 +272,31 @@ export class PlaybookAssistantInternalController {
 
   @Post('playbooks')
   @RateLimit({ limit: 5, windowMs: 60000, keyPrefix: 'playbook-assistant:create' })
-  createPlaybook(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Body() dto: CreatePlaybookFlowDto) {
-    return this.assistantService.createPlaybook(this.requireUserId(userId), dto);
+  async createPlaybook(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Body() dto: CreatePlaybookFlowDto) {
+    const actingUserId = this.requireUserId(userId);
+    await this.assertUserPermission(actingUserId, Permissions.PLAYBOOK_CREATE);
+    return this.assistantService.createPlaybook(actingUserId, dto);
   }
 
   @Post('playbooks/:id/clone')
   @RateLimit({ limit: 5, windowMs: 60000, keyPrefix: 'playbook-assistant:clone' })
-  clonePlaybook(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('id') id: string) {
-    return this.assistantService.clonePlaybook(id, this.requireUserId(userId));
+  async clonePlaybook(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('id') id: string) {
+    const actingUserId = this.requireUserId(userId);
+    await this.assertUserPermission(actingUserId, Permissions.PLAYBOOK_CREATE);
+    return this.assistantService.clonePlaybook(id, actingUserId);
   }
 
   @Post('playbooks/:id/executions')
   @RateLimit({ limit: 10, windowMs: 60000, keyPrefix: 'playbook-assistant:execute' })
-  startExecution(
+  async startExecution(
     @Headers('x-yellowstorm-user-id') userId: string | undefined,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Param('id') id: string,
     @Body() dto: StartPlaybookFlowExecutionDto,
   ) {
-    return this.assistantService.startExecution(id, this.requireUserId(userId), dto, idempotencyKey);
+    const actingUserId = this.requireUserId(userId);
+    await this.assertUserPermission(actingUserId, Permissions.PLAYBOOK_EXECUTE);
+    return this.assistantService.startExecution(id, actingUserId, dto, idempotencyKey);
   }
 
   @Get('playbooks/:id/executions')
@@ -304,35 +316,45 @@ export class PlaybookAssistantInternalController {
 
   @Post('executions/:executionId/cancel')
   @RateLimit({ limit: 20, windowMs: 60000, keyPrefix: 'playbook-assistant:cancel-execution' })
-  cancelExecution(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('executionId') executionId: string) {
-    return this.assistantService.cancelExecution(executionId, this.requireUserId(userId));
+  async cancelExecution(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('executionId') executionId: string) {
+    const actingUserId = this.requireUserId(userId);
+    await this.assertUserPermission(actingUserId, Permissions.PLAYBOOK_EXECUTE);
+    return this.assistantService.cancelExecution(executionId, actingUserId);
   }
 
   @Post('executions/:executionId/trace-replay')
-  traceReplayExecution(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('executionId') executionId: string) {
-    return this.assistantService.traceReplayExecution(executionId, this.requireUserId(userId));
+  async traceReplayExecution(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('executionId') executionId: string) {
+    const actingUserId = this.requireUserId(userId);
+    await this.assertUserPermission(actingUserId, Permissions.PLAYBOOK_EXECUTE);
+    return this.assistantService.traceReplayExecution(executionId, actingUserId);
   }
 
   @Post('executions/:executionId/re-execute')
   @RateLimit({ limit: 10, windowMs: 60000, keyPrefix: 'playbook-assistant:reexecute' })
-  reExecute(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('executionId') executionId: string) {
-    return this.assistantService.reExecute(executionId, this.requireUserId(userId));
+  async reExecute(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('executionId') executionId: string) {
+    const actingUserId = this.requireUserId(userId);
+    await this.assertUserPermission(actingUserId, Permissions.PLAYBOOK_EXECUTE);
+    return this.assistantService.reExecute(executionId, actingUserId);
   }
 
   @Post('executions/:executionId/run-from-step')
   @RateLimit({ limit: 10, windowMs: 60000, keyPrefix: 'playbook-assistant:run-from-step' })
-  runFromStep(
+  async runFromStep(
     @Headers('x-yellowstorm-user-id') userId: string | undefined,
     @Param('executionId') executionId: string,
     @Body() dto: RunPlaybookFromStepDto,
   ) {
-    return this.assistantService.runFromStep(executionId, this.requireUserId(userId), dto);
+    const actingUserId = this.requireUserId(userId);
+    await this.assertUserPermission(actingUserId, Permissions.PLAYBOOK_EXECUTE);
+    return this.assistantService.runFromStep(executionId, actingUserId, dto);
   }
 
   @Delete('executions/:executionId')
   @RateLimit({ limit: 5, windowMs: 60000, keyPrefix: 'playbook-assistant:delete-execution' })
-  deleteExecution(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('executionId') executionId: string) {
-    return this.assistantService.deleteExecution(executionId, this.requireUserId(userId));
+  async deleteExecution(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('executionId') executionId: string) {
+    const actingUserId = this.requireUserId(userId);
+    await this.assertUserPermission(actingUserId, Permissions.PLAYBOOK_EXECUTE);
+    return this.assistantService.deleteExecution(executionId, actingUserId);
   }
 
   private requireUserId(userId: string | undefined): string {
@@ -349,6 +371,19 @@ export class PlaybookAssistantInternalController {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, `Missing or invalid trusted ${name} identity`);
     }
     return normalized;
+  }
+
+  private async assertUserPermission(userId: string, permission: string): Promise<void> {
+    const user = await this.userService.findById(userId);
+    const permissions = user
+      ? await this.authorizationService.getUserPermissions(user.roles ?? [])
+      : [];
+    if (!hasPermission(permissions, permission)) {
+      throw new ForbiddenException(
+        ErrorCode.FORBIDDEN,
+        'The authenticated user cannot perform this Playbook action',
+      );
+    }
   }
 
   private actor(headers: Record<string, string | undefined>) {

@@ -46,6 +46,8 @@ export interface Conversation {
   groupMeta?: GroupConversationMeta;
   projectId?: string | null;
   runtimeMode?: 'standard' | 'governed';
+  runtimePurpose?: 'chat' | 'platform_copilot';
+  pinnedAgentId?: string | null;
   governanceContext?: { programId: string; scopeId: string; deploymentId: string; revisionId: string; revisionNumber: number; pinnedAt: string; runtimeDefinition: { primaryAgentId: string; allowedAgentIds: string[]; workspaceIds: string[] } };
   branchProvenance?: { sourceConversationId: string; sourceTargetMessageId: string; branchedAt: string };
 }
@@ -271,6 +273,20 @@ export interface ConversationListParams {
   isArchived?: boolean;
   projectId?: string | 'none';
   searchScope?: 'title' | 'fulltext';
+  runtimePurpose?: 'chat' | 'platform_copilot';
+  sortBy?: 'lastMessageAt' | 'createdAt' | 'title';
+  sortOrder?: 'asc' | 'desc';
+}
+
+export interface CreateConversationPayload {
+  title?: string;
+  workspaces?: string[];
+  participantEmails?: string[];
+  participants?: Array<{ email: string; job?: string }>;
+  ownerJob?: string;
+  projectId?: string;
+  runtimePurpose?: 'chat' | 'platform_copilot';
+  creationRequestId?: string;
 }
 
 export interface MessageListParams {
@@ -287,6 +303,7 @@ export interface PaginatedResponse<T> {
 }
 
 export interface SendMessagePayload {
+  requestId?: string;
   content: string;
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];
@@ -301,6 +318,19 @@ export interface SendMessagePayload {
   connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string };
   skillIds?: string[];
   interaction?: ChoiceInteractionMetadata;
+  clientContext?: ConversationClientContextV1;
+}
+
+export interface ConversationClientContextV1 {
+  contextVersion: 1;
+  route: string;
+  module: 'playbooks' | 'executions' | 'other';
+  surface: string;
+  entity?: { type: 'playbook' | 'execution' | 'task'; id: string };
+  selection?: { type: 'playbook' | 'execution' | 'task'; id: string };
+  availableActions: string[];
+  hasUnsavedChanges: boolean;
+  locale: string;
 }
 
 export interface CreateReportPayload {

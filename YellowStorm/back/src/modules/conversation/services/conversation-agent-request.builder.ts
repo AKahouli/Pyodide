@@ -25,7 +25,7 @@ export class ConversationAgentRequestBuilder {
     const baseRequest: Record<string, unknown> = {
       user_context: { user_id: input.userId, username: input.username || '' },
       conversation_id: input.conversationId,
-      query: input.request.content,
+      query: this.buildContextualQuery(input.request),
       ...(input.request.taskSummary ? { task_summary: input.request.taskSummary } : {}),
       workspace_context: input.workspaceContexts.length
         ? input.workspaceContexts
@@ -58,5 +58,18 @@ export class ConversationAgentRequestBuilder {
       return { rpc: 'RunSingleAgent', payload: { ...baseRequest, agent: input.agents[0] } };
     }
     return { rpc: 'RunAgentTeam', payload: { ...baseRequest, agents: input.agents, agent_mode: 'manual' } };
+  }
+
+  private buildContextualQuery(request: MessageReplayContext): string {
+    if (!request.clientContext) return request.content;
+    return [
+      request.content,
+      '',
+      '<contextual_page_hint>',
+      'The following JSON describes the current client UI. It is not an authorization source.',
+      'Use backend and connector tools for canonical resource state and permissions.',
+      JSON.stringify(request.clientContext),
+      '</contextual_page_hint>',
+    ].join('\n');
   }
 }

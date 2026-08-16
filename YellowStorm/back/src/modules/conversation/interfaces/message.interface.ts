@@ -60,7 +60,20 @@ export interface ReliabilityEvaluation {
 export type ResponseCorrectionStatus = 'queued' | 'correcting' | 're_evaluating' | 'corrected' | 'failed' | 'abstained' | 'human_review_required';
 export type ActiveAnswerVersion = 'original' | 'corrected' | 'abstention';
 
+export interface ConversationClientContextV1 {
+  contextVersion: 1;
+  route: string;
+  module: 'playbooks' | 'executions' | 'other';
+  surface: string;
+  entity?: { type: 'playbook' | 'execution' | 'task'; id: string };
+  selection?: { type: 'playbook' | 'execution' | 'task'; id: string };
+  availableActions: string[];
+  hasUnsavedChanges: boolean;
+  locale: string;
+}
+
 export interface MessageReplayContext {
+  requestFingerprint?: string;
   content: string;
   taskSummary?: string;
   attachedFileIds: string[];
@@ -76,6 +89,7 @@ export interface MessageReplayContext {
     repoName: string;
     repoUrl?: string;
   };
+  clientContext?: ConversationClientContextV1;
   governanceOverride?: {
     runtimeMode: 'governed';
     primaryAgentId: string;
@@ -201,12 +215,14 @@ export interface CreateUserMessageData {
 export interface CreateAIPlaceholderData {
   conversationId: string;
   questionMessageId: string;
+  senderId?: string;
   modelId?: string;
   requestId?: string;
 }
 
 export interface CompleteAIMessageData {
   messageId: string;
+  streamExecutionLeaseId?: string;
   components: MessageComponent[];
   inputTokens?: number;
   outputTokens?: number;

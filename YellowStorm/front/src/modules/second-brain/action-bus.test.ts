@@ -78,12 +78,13 @@ describe('second brain action bus', () => {
       { surface: 'playbook.editor.assistant', params: { playbookId: 'p1', operationId: 'op2' } },
     ]);
 
-    expect(targets).toHaveLength(3);
+    expect(targets).toHaveLength(4);
     expect(targets[0]).toBe(editor);
     expect(targets.map(getSecondBrainUiTargetIdentity)).toEqual([
-      '["playbook.editor","p1"]',
-      '["playbook.editor.assistant","p1","op1"]',
-      '["playbook.editor.assistant","p1","op2"]',
+      '["playbook.editor","p1",[]]',
+      '["playbook.editor","p1",[{"type":"selectTab","tab":"design"}]]',
+      '["playbook.editor.assistant","p1","op1",[]]',
+      '["playbook.editor.assistant","p1","op2",[]]',
     ]);
   });
 });

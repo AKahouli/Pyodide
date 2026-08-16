@@ -510,6 +510,7 @@ export class AgentService {
     sharedAgentIds?: string[],
     groupMembers?: any[],
     selectedConnectorId?: string,
+    runtimeContext?: { tenantId: string; conversationId: string; correlationId: string },
   ): Promise<IGrpcAgent[]> {
     this.logger.log('Building agents for stream', {
       userId,
@@ -747,6 +748,18 @@ export class AgentService {
         userId,
         this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
       );
+      if (agent.agentTypeSlug === 'platform_copilot' && runtimeContext) {
+        for (const binding of connectorBindings) {
+          binding.auth_headers = {
+            ...((binding.auth_headers as Record<string, string> | undefined) ?? {}),
+            'X-YellowStorm-Tenant-Id': runtimeContext.tenantId,
+            'X-YellowStorm-User-Id': userId,
+            'X-YellowStorm-Agent-Id': agent.id,
+            'X-YellowStorm-Conversation-Id': runtimeContext.conversationId,
+            'X-Correlation-Id': runtimeContext.correlationId,
+          };
+        }
+      }
       const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
       // Build prompt using batch-resolved prompts
@@ -1001,11 +1014,6 @@ export class AgentService {
               ...(sessionId ? { session_id: sessionId } : {}),
               platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
               platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
-              ...(runtimeContext ? {
-                mascot_tenant_id: runtimeContext.tenantId || 'default',
-                mascot_conversation_id: runtimeContext.conversationId || sessionId || '',
-                mascot_correlation_id: runtimeContext.correlationId || sessionId || '',
-              } : {}),
               ...(resolvedModel?.omitTemperature
                 ? { omit_temperature: 'true' }
                 : { temperature: String(agent.temperature) }),

@@ -36,6 +36,9 @@ describe('ConnectorService Playbook MCP reconciliation', () => {
       type: 'string',
       enum: ['running', 'failed', 'completed', 'waiting', 'cancelled'],
     });
+    const generation = actions.find((action: { key: string }) => action.key === 'start_playbook_generation');
+    expect(generation.parameterSchema.required).toEqual([]);
+    expect(generation.parameterSchema.properties).not.toHaveProperty('request_id');
   });
 });
 

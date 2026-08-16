@@ -78,8 +78,14 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
     );
     expect(agentRepository.upsertDefaultSystemAgent).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ slug: 'my-second-brain', name: 'Yellowmind' }),
+      expect.objectContaining({
+        slug: 'my-second-brain',
+        name: 'Yellowmind',
+        instruction: expect.stringContaining('exactly once for the current turn'),
+      }),
     );
+    expect(agentRepository.upsertDefaultSystemAgent.mock.calls[1][0].instruction)
+      .not.toContain('trusted assistant request ID');
     const designerActions = agentRepository.upsertDefaultSystemAgent.mock.calls[0][0].connectorActionSelections[0].actionKeys;
     expect(designerActions).toContain('start_playbook_construction');
     expect(designerActions).not.toEqual(expect.arrayContaining([

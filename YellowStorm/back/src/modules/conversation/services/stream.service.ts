@@ -15,7 +15,7 @@ import * as path from 'node:path';
 import { StreamGatewayService } from './stream-gateway.service';
 import { MessageService } from './message.service';
 import { ConversationService } from './conversation.service';
-import { MessageComponent, ComponentType, type CorrectionReplayContext, type MessageReplayContext } from '../interfaces/message.interface';
+import { MessageComponent, ComponentType, type ConversationClientContextV1, type CorrectionReplayContext, type MessageReplayContext } from '../interfaces/message.interface';
 import {
   getComponentType as sharedGetComponentType,
   extractComponentData as sharedExtractComponentData,
@@ -58,6 +58,7 @@ export interface StreamRequest {
     repoUrl?: string;
   };
   skillIds?: string[];
+  clientContext?: ConversationClientContextV1;
 }
 
 export interface StreamGovernanceOverride {
@@ -86,6 +87,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   private activeStreams = new Map<string, Set<string>>(); // userId -> Set<conversationId>
   private componentBuffers = new Map<string, Map<string, MessageComponent>>(); // streamKey -> (componentId -> accumulated component)
   private activeCalls = new Map<string, grpc.ClientReadableStream<any>>(); // streamKey -> gRPC call
+  private streamExecutionLeases = new Map<string, string>(); // streamKey -> durable lease token
   private streamUsage = new Map<
     string,
     { inputTokens: number; outputTokens: number; model: string; modelId?: string }
@@ -612,6 +614,18 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         'AI service is currently unavailable',
       );
     }
+    const leaseId = randomUUID();
+    const leaseDurationMs = 90_000;
+    const claimed = await this.messageService.claimStreamExecution(messageId, leaseId, leaseDurationMs);
+    if (!claimed) {
+      throw new ConflictException(
+        ErrorCode.CHAT_ALREADY_STREAMING,
+        'This response is already streaming',
+      );
+    }
+    let leaseHeartbeat: ReturnType<typeof setInterval> | undefined;
+    let leaseLost = false;
+    try {
     // Check concurrency
     const maxStreams = this.configService.get<number>('conversation.maxConcurrentStreams', 5);
     const userStreams = this.activeStreams.get(userId);
@@ -660,6 +674,31 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     this.activeStreams.get(userId)!.add(conversationId);
 
     const streamKey = `${userId}:${conversationId}:${messageId}`;
+    this.streamExecutionLeases.set(streamKey, leaseId);
+    const assertLeaseOwned = () => {
+      if (leaseLost) {
+        throw new ConflictException(ErrorCode.CHAT_ALREADY_STREAMING, 'Stream execution lease was lost');
+      }
+    };
+    leaseHeartbeat = setInterval(() => {
+      void this.messageService.renewStreamExecution(messageId, leaseId, leaseDurationMs)
+        .then((renewed) => {
+          if (!renewed) {
+            leaseLost = true;
+            this.activeCalls.get(streamKey)?.cancel();
+          }
+        })
+        .catch((error: unknown) => {
+          leaseLost = true;
+          this.activeCalls.get(streamKey)?.cancel();
+          this.logger.error('Stream execution lease renewal failed', {
+            conversationId,
+            messageId,
+            error: error instanceof Error ? error.message : String(error),
+          }, logOpts);
+        });
+    }, 30_000);
+    leaseHeartbeat.unref?.();
     this.componentBuffers.set(streamKey, new Map());
     this.streamUsage.set(streamKey, {
       inputTokens: 0,
@@ -680,6 +719,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     // Resolve conversation members for broadcasting
     const memberIds = await this.resolveMemberIds(conversationId);
+    assertLeaseOwned();
 
     // Send stream_start event to all members
     await this.streamGateway.broadcastToConversation(
@@ -687,6 +727,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       type: 'stream_start',
       data: { conversationId, messageId },
     });
+    assertLeaseOwned();
 
     const builtRequest = await this.buildAgentExecutionRequest(
       userId,
@@ -701,12 +742,20 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         agentIds: request.agentIds ?? [],
         skillIds: request.skillIds ?? [],
         connectorRepo: request.connectorRepo,
+        clientContext: request.clientContext,
         governanceOverride,
       },
       username,
       undefined,
       logOpts,
+      conversationId,
+      messageId,
     );
+    assertLeaseOwned();
+    if (!await this.messageService.renewStreamExecution(messageId, leaseId, leaseDurationMs)) {
+      leaseLost = true;
+      assertLeaseOwned();
+    }
     const useSingleAgent = builtRequest.rpc === 'RunSingleAgent';
     const grpcRequest = builtRequest.payload;
 
@@ -743,6 +792,22 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       this.cleanupStream(userId, conversationId, streamKey);
       throw error;
     }
+    } catch (error) {
+      if ((error as { code?: ErrorCode }).code !== ErrorCode.CHAT_ALREADY_STREAMING) {
+        await this.messageService.markStreamFailed(messageId, leaseId);
+      }
+      throw error;
+    } finally {
+      if (leaseHeartbeat) clearInterval(leaseHeartbeat);
+      await this.messageService.releaseStreamExecution(messageId, leaseId);
+      for (const [streamKey, activeLeaseId] of this.streamExecutionLeases) {
+        if (activeLeaseId === leaseId) this.streamExecutionLeases.delete(streamKey);
+      }
+    }
+  }
+
+  isConversationStreaming(userId: string, conversationId: string): boolean {
+    return this.activeStreams.get(userId)?.has(conversationId) ?? false;
   }
 
   async buildAgentExecutionRequest(
@@ -753,6 +818,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     correctionReplayContext?: CorrectionReplayContext,
     logOpts: LogOptions = {},
     sessionId = conversationId,
+    runtimeCorrelationId = sessionId,
   ): Promise<BuiltAgentExecutionRequest> {
     const conversation = await this.conversationService.getConversationDocument(conversationId);
     const systemWorkspaceId = conversation.systemWorkspaceId?.toString();
@@ -777,8 +843,22 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           sharedAgentIds,
           groupMembers,
           request.connectorRepo?.connectorId,
+          conversation.runtimePurpose === 'platform_copilot' ? {
+            tenantId: 'default',
+            conversationId,
+            correlationId: runtimeCorrelationId,
+          } : undefined,
         ),
     ]);
+    if (conversation.runtimePurpose === 'platform_copilot') {
+      const pinnedAgentId = conversation.pinnedAgentId?.toString();
+      if (!pinnedAgentId || agents.length !== 1 || agents[0]?.id !== pinnedAgentId) {
+        throw new ServiceUnavailableException(
+          ErrorCode.AGENT_UNAVAILABLE,
+          'Yellowmind must resolve exactly one pinned platform copilot agent',
+        );
+      }
+    }
     const [, attachedFiles, previousAttachedFiles, skills] = await Promise.all([
       this.resolveAgentBrainContexts(agents),
       this.buildAttachedFiles(request.attachedFileIds),
@@ -914,6 +994,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       try {
         await this.messageService.completeAIMessage({
           messageId,
+          streamExecutionLeaseId: this.streamExecutionLeases.get(streamKey),
           components: Array.from(buffer.values()),
         });
       } catch (err) {
@@ -923,7 +1004,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         });
       }
     } else {
-      await this.messageService.markStreamFailed(messageId);
+      await this.messageService.markStreamFailed(messageId, this.streamExecutionLeases.get(streamKey));
     }
 
     // Record partial usage on stop
@@ -1234,6 +1315,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           // Persist the complete message
           await this.messageService.completeAIMessage({
             messageId,
+            streamExecutionLeaseId: this.streamExecutionLeases.get(streamKey),
             components,
             inputTokens: totalInputTokens,
             outputTokens: totalOutputTokens,
@@ -1423,6 +1505,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.messageService.completeAIMessage({
         messageId,
+        streamExecutionLeaseId: this.streamExecutionLeases.get(streamKey),
         components: Array.from(buffer.values()),
       });
     } catch (err) {

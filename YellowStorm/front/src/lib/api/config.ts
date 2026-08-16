@@ -449,11 +449,6 @@ export const API_ENDPOINTS = {
   skills: {
     active: '/skills/active',
   },
-  secondBrain: {
-    turns: '/second-brain/turns',
-    confirm: (confirmationId: string) => `/second-brain/confirmations/${encodeURIComponent(confirmationId)}/confirm`,
-    reject: (confirmationId: string) => `/second-brain/confirmations/${encodeURIComponent(confirmationId)}/reject`,
-  },
   playbooks: {
     list: '/playbooks',
     generate: '/playbooks/generate',

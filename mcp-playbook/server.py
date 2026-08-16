@@ -198,7 +198,6 @@ async def start_playbook_construction(
 
 @mcp.tool()
 async def start_playbook_generation(
-    request_id: str,
     name: str | None = None,
 ) -> PlaybookMcpResultV1:
     """Start one idempotent operation-owned draft and hand it off to the Playbook canvas."""
@@ -216,7 +215,7 @@ async def start_playbook_generation(
 
     return await call(
         backend().post(
-            f"/api/v1/internal/playbook-assistant/requests/{path_id(request_id)}/generation",
+            "/api/v1/internal/playbook-assistant/generation",
             require_acting_user_id(),
             {"name": name},
         ),

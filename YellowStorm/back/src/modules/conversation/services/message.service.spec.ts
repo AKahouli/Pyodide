@@ -288,4 +288,90 @@ describe('MessageService createUserMessage agent tagging', () => {
     expect(document.correctionWorkflow.attempts[0]).toMatchObject({ status: 'rejected', policyReasons: ['score_below_threshold'] });
     expect(document.correctionWorkflow.attempts[0].components[0].data).toEqual({ title: 'search' });
   });
+
+  it('atomically claims an expired or unclaimed AI stream execution lease', async () => {
+    const exec = jest.fn().mockResolvedValue({ _id: new Types.ObjectId() });
+    const lean = jest.fn().mockReturnValue({ exec });
+    messageModel.findOneAndUpdate = jest.fn().mockReturnValue({ lean });
+
+    await expect(service.claimStreamExecution(new Types.ObjectId().toString(), 'lease-1', 90_000))
+      .resolves.toBe(true);
+    expect(messageModel.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationType: 'ai',
+        isComplete: { $ne: true },
+        $or: expect.arrayContaining([
+          { streamExecutionLeaseExpiresAt: { $exists: false } },
+          { streamExecutionLeaseExpiresAt: null },
+        ]),
+      }),
+      expect.objectContaining({ $set: expect.objectContaining({ streamExecutionLeaseId: 'lease-1' }) }),
+      { new: true },
+    );
+  });
+
+  it('denies a stream execution lease while another instance owns it', async () => {
+    const exec = jest.fn().mockResolvedValue(null);
+    const lean = jest.fn().mockReturnValue({ exec });
+    messageModel.findOneAndUpdate = jest.fn().mockReturnValue({ lean });
+
+    await expect(service.claimStreamExecution(new Types.ObjectId().toString(), 'lease-2', 90_000))
+      .resolves.toBe(false);
+  });
+
+  it('allows only one simulated service instance to claim the same stream execution', async () => {
+    const results = [{ _id: new Types.ObjectId() }, null];
+    messageModel.findOneAndUpdate = jest.fn().mockImplementation(() => {
+      const exec = jest.fn().mockResolvedValue(results.shift());
+      const lean = jest.fn().mockReturnValue({ exec });
+      return { lean };
+    });
+    const otherInstance = new MessageService(
+      messageModel as any,
+      conversationService as any,
+      streamGateway as any,
+      {} as any,
+      configService as any,
+      logger as any,
+      {} as any,
+    );
+    const messageId = new Types.ObjectId().toString();
+
+    await expect(Promise.all([
+      service.claimStreamExecution(messageId, 'instance-a', 90_000),
+      otherInstance.claimStreamExecution(messageId, 'instance-b', 90_000),
+    ])).resolves.toEqual([true, false]);
+  });
+
+  it('completes a stream only while the matching durable lease still owns it', async () => {
+    const messageId = new Types.ObjectId();
+    const document: any = {
+      _id: messageId,
+      conversationId: new Types.ObjectId(conversationId),
+      conversationType: 'ai',
+      components: [{ id: 'text-1', type: 'text', data: { content: 'done' } }],
+      isStreaming: false,
+      isComplete: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const exec = jest.fn().mockResolvedValue(document);
+    messageModel.findOneAndUpdate = jest.fn().mockReturnValue({ exec });
+
+    await service.completeAIMessage({
+      messageId: messageId.toString(),
+      streamExecutionLeaseId: 'lease-1',
+      components: document.components,
+    });
+
+    expect(messageModel.findOneAndUpdate).toHaveBeenCalledWith(
+      {
+        _id: expect.any(Types.ObjectId),
+        streamExecutionLeaseId: 'lease-1',
+        isComplete: { $ne: true },
+      },
+      expect.objectContaining({ $set: expect.objectContaining({ isComplete: true, isStreaming: false }) }),
+      { new: true },
+    );
+  });
 });

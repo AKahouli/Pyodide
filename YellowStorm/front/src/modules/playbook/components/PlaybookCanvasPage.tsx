@@ -414,6 +414,15 @@ function PlaybookCanvasInner() {
 
   const isGeneratingRoute = id === 'generating';
 
+  useEffect(() => {
+    const requestedTaskId = searchParams.get('mascotTask');
+    if (!requestedTaskId) return;
+    selectStep(requestedTaskId);
+    const next = new URLSearchParams(searchParams);
+    next.delete('mascotTask');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, selectStep, setSearchParams]);
+
   const reactFlow = useReactFlow();
   const canvasChromeRef = useRef<HTMLDivElement | null>(null);
   const floatingToolbarRef = useRef<PlaybookCanvasFloatingToolbarHandle | null>(null);

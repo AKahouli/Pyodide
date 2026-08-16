@@ -57,10 +57,34 @@ describe('conversation api', () => {
     expect(result.total).toBe(1);
   });
 
+  it('forwards the platform-copilot history filter', async () => {
+    vi.mocked(apiClient.get).mockResolvedValueOnce({
+      data: { data: { conversations: [], pagination: { page: 1, limit: 50, total: 0, totalPages: 0 } } },
+    } as never);
+
+    await fetchConversations({ runtimePurpose: 'platform_copilot', page: 1, limit: 50 });
+
+    expect(apiClient.get).toHaveBeenCalledWith('/conversations', {
+      params: { runtimePurpose: 'platform_copilot', page: 1, limit: 50 },
+    });
+  });
+
   it('creates conversation and returns mapped data', async () => {
     vi.mocked(apiClient.post).mockResolvedValueOnce({ data: { data: { id: 'c2', title: 'New' } } } as never);
     const result = await createConversation({ title: 'New' });
     expect(result.id).toBe('c2');
+  });
+
+  it('forwards an idempotent platform-copilot creation identity', async () => {
+    vi.mocked(apiClient.post).mockResolvedValueOnce({ data: { data: { id: 'c3', title: 'Yellowmind' } } } as never);
+    const payload = {
+      runtimePurpose: 'platform_copilot' as const,
+      creationRequestId: '927ea1f2-5e0b-4a23-a352-b29fe8d33e0c',
+    };
+
+    await createConversation(payload);
+
+    expect(apiClient.post).toHaveBeenCalledWith('/conversations', payload);
   });
 
   it('maps paginated messages and sends message', async () => {
