@@ -5,6 +5,8 @@ import { GripVertical } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
+const KEYBOARD_RESIZE_STEP = 16;
+
 export function OverflowTooltip({ children, text, className }: { children?: ReactNode; text: string; className?: string }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [isOverflowing, setIsOverflowing] = useState(false);
@@ -70,31 +72,39 @@ export function ResizablePanel({
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
 
+  const getMaxWidth = useCallback(
+    () => Math.max(minWidth, Math.floor(window.innerWidth * maxWidthRatio)),
+    [maxWidthRatio, minWidth],
+  );
+
+  const clampWidth = useCallback(
+    (value: number) => Math.min(getMaxWidth(), Math.max(minWidth, value)),
+    [getMaxWidth, minWidth],
+  );
+
   function readStoredWidth(): number {
     try {
       const stored = localStorage.getItem(storageKey);
       if (stored) {
         const parsed = parseInt(stored, 10);
         if (!isNaN(parsed)) {
-          const max = Math.floor(window.innerWidth * maxWidthRatio);
-          return Math.min(max, Math.max(minWidth, parsed));
+          return clampWidth(parsed);
         }
       }
     } catch { /* noop */ }
-    return defaultWidth;
+    return clampWidth(defaultWidth);
   }
 
   const [width, setWidth] = useState(readStoredWidth);
 
   useEffect(() => {
     const clamp = () => {
-      const max = Math.floor(window.innerWidth * maxWidthRatio);
-      setWidth((current) => Math.min(max, Math.max(minWidth, current)));
+      setWidth((current) => clampWidth(current));
     };
     clamp();
     window.addEventListener('resize', clamp);
     return () => window.removeEventListener('resize', clamp);
-  }, [minWidth, maxWidthRatio]);
+  }, [clampWidth]);
 
   useEffect(() => {
     try {
@@ -120,11 +130,9 @@ export function ResizablePanel({
       const delta = handlePosition === 'left'
         ? dragStartX.current - event.clientX
         : event.clientX - dragStartX.current;
-      const max = Math.floor(window.innerWidth * maxWidthRatio);
-      const next = Math.min(max, Math.max(minWidth, dragStartWidth.current + delta));
-      setWidth(next);
+      setWidth(clampWidth(dragStartWidth.current + delta));
     },
-    [minWidth, maxWidthRatio, handlePosition],
+    [clampWidth, handlePosition],
   );
 
   const onResizeEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -132,6 +140,19 @@ export function ResizablePanel({
     dragActive.current = false;
     event.currentTarget.releasePointerCapture(event.pointerId);
   }, []);
+
+  const onResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    let nextWidth: number | null = null;
+    if (event.key === 'Home') nextWidth = minWidth;
+    if (event.key === 'End') nextWidth = getMaxWidth();
+    if (event.key === 'ArrowLeft') nextWidth = width + (handlePosition === 'left' ? KEYBOARD_RESIZE_STEP : -KEYBOARD_RESIZE_STEP);
+    if (event.key === 'ArrowRight') nextWidth = width + (handlePosition === 'left' ? -KEYBOARD_RESIZE_STEP : KEYBOARD_RESIZE_STEP);
+    if (nextWidth == null) return;
+    event.preventDefault();
+    setWidth(clampWidth(nextWidth));
+  }, [clampWidth, getMaxWidth, handlePosition, minWidth, width]);
+
+  const maxWidth = getMaxWidth();
 
   const handle = (
     <div
@@ -142,6 +163,11 @@ export function ResizablePanel({
       role='separator'
       aria-orientation='vertical'
       aria-label={resizeHandleLabel}
+      aria-valuemin={resizeHandleLabel ? minWidth : undefined}
+      aria-valuemax={resizeHandleLabel ? maxWidth : undefined}
+      aria-valuenow={resizeHandleLabel ? width : undefined}
+      tabIndex={resizeHandleLabel ? 0 : undefined}
+      onKeyDown={onResizeKeyDown}
       className={cn(
         'group/resize absolute top-0 bottom-0 z-20 flex cursor-ew-resize items-center justify-center transition-colors hover:bg-primary/20 active:bg-primary/30',
         withHandle ? 'w-3' : 'w-1 hover:bg-primary/30 active:bg-primary/50',

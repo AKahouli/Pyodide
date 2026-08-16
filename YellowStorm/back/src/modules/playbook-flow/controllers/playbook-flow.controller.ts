@@ -22,9 +22,10 @@ import playbookFlowConfig from '@config/playbook-flow.config';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { PlaybookAssistantService } from '../assistant/playbook-assistant.service';
-import { RunPlaybookAssistantTurnDto, StartAdvisorRemediationConstructionDto } from '../dto/playbook-assistant.dto';
+import { InitializePlaybookAssistantAttachmentDto, RunPlaybookAssistantTurnDto, StartAdvisorRemediationConstructionDto } from '../dto/playbook-assistant.dto';
 import { BuildPlaybookFromConversationDto } from '../dto/build-playbook-from-conversation.dto';
 import { ConversationPlaybookBuilderService } from '../services/conversation-playbook-builder.service';
+import { RateLimit } from '@modules/rate-limiter';
 
 @ApiTags('Playbook Flows')
 @ApiBearerAuth()
@@ -453,6 +454,41 @@ export class PlaybookFlowController {
     @Body() dto: RunPlaybookAssistantTurnDto,
   ) {
     return this.playbookAssistantService.runTurn(id, userId, dto);
+  }
+
+  @Post(':id/assistant/attachments')
+  @ApiOperation({ summary: 'Initialize a trusted Playbook assistant image upload' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  @RateLimit({ limit: 20, windowMs: 60000, keyPrefix: 'playbook-assistant:attachment-init' })
+  initializeAssistantAttachment(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: InitializePlaybookAssistantAttachmentDto,
+  ) {
+    return this.playbookAssistantService.initializeAttachment(id, userId, dto);
+  }
+
+  @Post(':id/assistant/attachments/:attachmentId/confirm')
+  @ApiOperation({ summary: 'Confirm and verify a Playbook assistant image upload' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  @RateLimit({ limit: 20, windowMs: 60000, keyPrefix: 'playbook-assistant:attachment-confirm' })
+  confirmAssistantAttachment(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Param('attachmentId') attachmentId: string,
+  ) {
+    return this.playbookAssistantService.confirmAttachment(id, userId, attachmentId);
+  }
+
+  @Get(':id/assistant/messages')
+  @ApiOperation({ summary: 'List server-owned Playbook assistant conversation messages' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  listAssistantMessages(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Query('conversationId') conversationId?: string,
+  ) {
+    return this.playbookAssistantService.listHistory(id, userId, conversationId);
   }
 
   @Post(':id/advisor-remediation-constructions')

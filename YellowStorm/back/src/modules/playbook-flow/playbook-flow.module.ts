@@ -45,6 +45,9 @@ import { PlaybookAssistantOperation, PlaybookAssistantOperationSchema } from './
 import { PlaybookAssistantRevision, PlaybookAssistantRevisionSchema } from './schemas/playbook-assistant-revision.schema';
 import { FlowDynamicReasoningAttempt, FlowDynamicReasoningAttemptSchema } from './schemas/playbook-flow-dynamic-reasoning-attempt.schema';
 import { PlaybookMascotConfirmation, PlaybookMascotConfirmationSchema } from './schemas/playbook-mascot-confirmation.schema';
+import { PlaybookAssistantRequest, PlaybookAssistantRequestSchema } from './schemas/playbook-assistant-request.schema';
+import { PlaybookAssistantMessage, PlaybookAssistantMessageSchema } from './schemas/playbook-assistant-message.schema';
+import { PlaybookAssistantAttachment, PlaybookAssistantAttachmentSchema } from './schemas/playbook-assistant-attachment.schema';
 
 import { PlaybookFlowController } from './controllers/playbook-flow.controller';
 import { PlaybookFlowExecutionController } from './controllers/playbook-flow-execution.controller';
@@ -159,6 +162,10 @@ import { PlaybookPlanValidationClientService } from './assistant/playbook-plan-v
 import { ConversationPlaybookBuilderService } from './services/conversation-playbook-builder.service';
 import { MascotToolExecutionPolicyService } from './assistant/mascot-tool-execution-policy.service';
 import { SecondBrainService } from './assistant/second-brain.service';
+import { PlaybookAssistantRequestService } from './assistant/playbook-assistant-request.service';
+import { PlaybookAssistantHistoryService } from './assistant/playbook-assistant-history.service';
+import { PlaybookAssistantActorGuard } from './guards/playbook-assistant-actor.guard';
+import { PlaybookAssistantAttachmentService } from './assistant/playbook-assistant-attachment.service';
 
 @Module({
   imports: [
@@ -186,6 +193,9 @@ import { SecondBrainService } from './assistant/second-brain.service';
       { name: PlaybookAssistantRevision.name, schema: PlaybookAssistantRevisionSchema },
       { name: FlowDynamicReasoningAttempt.name, schema: FlowDynamicReasoningAttemptSchema },
       { name: PlaybookMascotConfirmation.name, schema: PlaybookMascotConfirmationSchema },
+      { name: PlaybookAssistantRequest.name, schema: PlaybookAssistantRequestSchema },
+      { name: PlaybookAssistantMessage.name, schema: PlaybookAssistantMessageSchema },
+      { name: PlaybookAssistantAttachment.name, schema: PlaybookAssistantAttachmentSchema },
       { name: Workspace.name, schema: WorkspaceSchema },
       { name: WorkspaceSetting.name, schema: WorkspaceSettingSchema },
     ]),
@@ -319,6 +329,10 @@ import { SecondBrainService } from './assistant/second-brain.service';
     ConversationPlaybookBuilderService,
     MascotToolExecutionPolicyService,
     SecondBrainService,
+    PlaybookAssistantRequestService,
+    PlaybookAssistantHistoryService,
+    PlaybookAssistantActorGuard,
+    PlaybookAssistantAttachmentService,
   ],
   exports: [
     PlaybookFlowService,

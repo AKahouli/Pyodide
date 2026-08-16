@@ -22,7 +22,7 @@ describe('AdminConnectorController MCP inspection', () => {
     };
     const connectorAuthService = {
       resolveRuntimeAuth: jest.fn().mockResolvedValue({
-        headers: { 'X-Playbook-MCP-Token': 'server-secret' },
+        headers: { Authorization: 'Bearer server-secret' },
         env: {},
       }),
     };
@@ -61,7 +61,7 @@ describe('AdminConnectorController MCP inspection', () => {
       expect.any(Object),
       undefined,
       {
-        'X-Playbook-MCP-Token': 'server-secret',
+        Authorization: 'Bearer server-secret',
         'X-YellowStorm-Tenant-Id': 'default',
         'X-YellowStorm-User-Id': 'user-1',
         'X-YellowStorm-Agent-Id': 'admin-connector-inspector',
@@ -87,7 +87,7 @@ describe('AdminConnectorController MCP inspection', () => {
     }, user);
 
     const headers = connectorService.inspectMcp.mock.calls[0][7];
-    expect(headers).toEqual({ 'X-Playbook-MCP-Token': 'server-secret' });
+    expect(headers).toEqual({ Authorization: 'Bearer server-secret' });
     expect(headers).not.toHaveProperty('X-YellowStorm-User-Id');
   });
 });

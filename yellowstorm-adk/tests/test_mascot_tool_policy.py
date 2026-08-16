@@ -29,6 +29,36 @@ async def test_denies_tools_outside_second_brain_allowlist():
 
 
 @pytest.mark.asyncio
+async def test_allows_draft_generation_but_not_existing_playbook_construction(monkeypatch):
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"success": True, "data": {"decision": "allowed", "impact": "write"}}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, *_args, **_kwargs):
+            return Response()
+
+    monkeypatch.setattr(mascot_tool_policy.httpx, "AsyncClient", lambda **_kwargs: Client())
+    allowed = await mascot_tool_policy.evaluate_second_brain_tool(
+        config(), "playbook_mcp_start_playbook_generation", {"request_id": "request-1"}, {"action_key": "start_playbook_generation"}
+    )
+    denied = await mascot_tool_policy.evaluate_second_brain_tool(
+        config(), "playbook_mcp_start_playbook_construction", {"request_id": "request-1"}, {"action_key": "start_playbook_construction"}
+    )
+    assert allowed["decision"] == "allowed"
+    assert denied["decision"] == "denied"
+
+
+@pytest.mark.asyncio
 async def test_injects_server_idempotency_key_after_confirmation(monkeypatch):
     class Response:
         def raise_for_status(self):

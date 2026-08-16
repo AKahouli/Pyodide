@@ -104,7 +104,7 @@ import {
   createIntentSuggestionBindingId,
   createIntentSuggestionNodeId,
 } from '../utils/intent-application-key';
-import { appendDesignMessage, cancelPlaybookIntentConstruction, discardPlaybookIntentConstruction, fetchPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybookRepeatability, requestPlaybookNodeAdvisor, runPlaybookAssistantTurn, startAdvisorRemediationConstruction, startPlaybookIntentConstruction, streamPlaybookIntentConstruction } from '../api';
+import { appendDesignMessage, cancelPlaybookIntentConstruction, discardPlaybookIntentConstruction, fetchPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybookAssistantMessages, getPlaybookRepeatability, requestPlaybookNodeAdvisor, runPlaybookAssistantTurn, startAdvisorRemediationConstruction, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, uploadPlaybookAssistantAttachment } from '../api';
 import { playbookFeatures } from '../features';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
 import type {
@@ -115,7 +115,9 @@ import type {
   PlaybookExecution,
   PlaybookIntentSuggestion,
   PlaybookIntentImageInput,
+  PlaybookClarificationAnswer,
   PlaybookIntentDesignResponse,
+  PlaybookAssistantMessage,
   PlaybookIntentConstructionStatus,
   PlaybookIntentConstructionStartResponse,
   PlaybookIntentDiagnostic,
@@ -179,8 +181,37 @@ export function shouldAutoLayoutAfterConstruction(
   return previousStatus !== 'completed' && currentStatus === 'completed';
 }
 
-export function shouldUsePlaybookAgentAssistant(enabled: boolean, images?: PlaybookIntentImageInput[]): boolean {
-  return enabled && !images?.length;
+export function shouldUsePlaybookMcpAssistant(enabled: boolean): boolean {
+  return enabled;
+}
+
+export async function loadLatestPlaybookAssistantHistory<T>(
+  load: () => Promise<T>,
+  requestGeneration: { current: number },
+  apply: (history: T) => void,
+  setLoading: (loading: boolean) => void,
+): Promise<void> {
+  const generation = ++requestGeneration.current;
+  setLoading(true);
+  try {
+    const history = await load();
+    if (generation === requestGeneration.current) apply(history);
+  } finally {
+    if (generation === requestGeneration.current) setLoading(false);
+  }
+}
+
+function readLegacyIntentImage(file: File): Promise<PlaybookIntentImageInput> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      mediaType: file.type as PlaybookIntentImageInput['mediaType'],
+      data: String(reader.result || '').split(',')[1] || '',
+      name: file.name,
+    });
+    reader.onerror = () => reject(reader.error || new Error('Failed to read image'));
+    reader.readAsDataURL(file);
+  });
 }
 
 export function shouldBlockCanvasMutationShortcut(
@@ -565,7 +596,11 @@ function PlaybookCanvasInner() {
     snapshot: PlaybookUndoSnapshot;
   } | null>(null);
   const designerIntentRef = useRef('');
-  const designerIntentImagesRef = useRef<PlaybookIntentImageInput[]>([]);
+  const designerIntentImagesRef = useRef<File[]>([]);
+  const designerConversationIdRef = useRef<string>();
+  const designerHistoryRequestGenerationRef = useRef(0);
+  const [designerAssistantMessages, setDesignerAssistantMessages] = useState<PlaybookAssistantMessage[]>([]);
+  const [designerAssistantMessagesLoading, setDesignerAssistantMessagesLoading] = useState(false);
   const [designerSidebarWidth, setDesignerSidebarWidth] = useState(0);
   const [runtimeContainerExpansion, setRuntimeContainerExpansion] = useState<Record<string, boolean>>({});
   const previousConstructionStatusRef = useRef<PlaybookIntentConstructionStatus>('idle');
@@ -584,6 +619,26 @@ function PlaybookCanvasInner() {
   const [recentlyChangedEdgeIds, setRecentlyChangedEdgeIds] = useState<string[]>([]);
   const [highlightDismissArmed, setHighlightDismissArmed] = useState(false);
   const highlightTimeoutRef = useRef<number | null>(null);
+
+  const refreshDesignerAssistantHistory = useCallback(async (playbookId: string, conversationId?: string) => {
+    await loadLatestPlaybookAssistantHistory(
+      () => getPlaybookAssistantMessages(playbookId, conversationId),
+      designerHistoryRequestGenerationRef,
+      (history) => {
+        designerConversationIdRef.current = history.conversationId ?? undefined;
+        setDesignerAssistantMessages(history.messages);
+      },
+      setDesignerAssistantMessagesLoading,
+    );
+  }, []);
+
+  useEffect(() => {
+    designerHistoryRequestGenerationRef.current += 1;
+    designerConversationIdRef.current = undefined;
+    setDesignerAssistantMessages([]);
+    if (!id || !playbookFeatures.mcpAssistantEnabled) return;
+    void refreshDesignerAssistantHistory(id).catch(() => showWarning(t('designer.historyLoadFailed')));
+  }, [id, refreshDesignerAssistantHistory, t]);
 
   useEffect(() => {
     // Ensure agents are loaded so nodes can display agent names
@@ -3267,55 +3322,59 @@ function PlaybookCanvasInner() {
     });
   }, [consumePlaybookConstruction, id, playbook, searchParams, setConstructionProgress, setConstructionStatus, setSearchParams, showError, t]);
 
-  const handleSubmitIntentFromDesigner = useCallback(async (intentText: string, visibleUserQuery: string, images?: PlaybookIntentImageInput[]) => {
+  const handleSubmitIntentFromDesigner = useCallback(async (intentText: string, visibleUserQuery: string, images?: File[]) => {
     designerIntentRef.current = intentText;
     designerIntentImagesRef.current = images ?? [];
-    if (shouldUsePlaybookAgentAssistant(playbookFeatures.agentAssistantEnabled, images) && id && playbook) {
+    if (shouldUsePlaybookMcpAssistant(playbookFeatures.mcpAssistantEnabled) && id && playbook) {
       setIntentLoading(true);
       setIntentError('');
       try {
         if (isDirty) await saveNow();
+        const requestId = window.crypto.randomUUID();
+        const expectedDefinitionRevision = getCurrentDefinitionRevision();
+        const attachmentIds = images?.length
+          ? await Promise.all(images.map((file) => uploadPlaybookAssistantAttachment(
+              id,
+              requestId,
+              expectedDefinitionRevision,
+              file,
+            )))
+          : [];
         const response = await runPlaybookAssistantTurn(id, {
           message: intentText,
-          expectedDefinitionRevision: getCurrentDefinitionRevision(),
+          requestId,
+          expectedDefinitionRevision,
+          ...(designerConversationIdRef.current ? { conversationId: designerConversationIdRef.current } : {}),
+          ...(attachmentIds.length ? { attachmentIds } : {}),
           ...(selectedStepId && playbook.tasks.some((task) => task.id === selectedStepId)
             ? { selectedTaskId: selectedStepId }
             : {}),
           ...(currentExecution?.playbookId === id ? { executionId: currentExecution.id } : {}),
         });
+        designerConversationIdRef.current = response.conversationId;
+        setIntentDesign(response.assessment);
+        await refreshDesignerAssistantHistory(id, response.conversationId);
+        if (response.assessment?.status === 'needs_clarification') return;
         const constructionResult = response.operation
           ? await consumePlaybookConstruction({
               ...response.operation,
               constructionId: response.operation.constructionId ?? response.operation.operationId!,
             })
           : { status: 'completed' as const };
-        const failed = constructionResult.status === 'failed';
-        await appendDesignMessage(id, {
-          userQuery: visibleUserQuery,
-          aiSummary: failed ? (constructionResult.error || response.answer) : response.answer,
-          status: failed ? 'failed' : 'completed',
-          error: failed ? (constructionResult.error || response.answer) : null,
-        });
+        if (constructionResult.status === 'failed') {
+          setIntentError(constructionResult.error || response.answer);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : t('designer.intentFailedSummary');
         setIntentError(message);
         showError(message);
-        try {
-          await appendDesignMessage(id, {
-            userQuery: visibleUserQuery,
-            aiSummary: message,
-            status: 'failed',
-            error: message,
-          });
-        } catch (historyError) {
-          console.error('Failed to save Designer Assistant failure', historyError);
-        }
       } finally {
         setIntentLoading(false);
       }
       return;
     }
-    const result = await handleSubmitIntentText(intentText, images);
+    const legacyImages = images ? await Promise.all(images.map(readLegacyIntentImage)) : undefined;
+    const result = await handleSubmitIntentText(intentText, legacyImages);
     if (!id || result.status === 'skipped') return;
     try {
       await appendDesignMessage(id, {
@@ -3330,30 +3389,39 @@ function PlaybookCanvasInner() {
       });
       await refreshIntentTraces();
     } catch (error) {
-      console.error('Failed to save Designer Assistant chat history', error);
       showWarning(t('designer.intentSaveFailed'));
     }
-  }, [consumePlaybookConstruction, currentExecution, getCurrentDefinitionRevision, handleSubmitIntentText, id, isDirty, playbook, refreshIntentTraces, saveNow, selectedStepId, showError, t]);
+  }, [consumePlaybookConstruction, currentExecution, getCurrentDefinitionRevision, handleSubmitIntentText, id, isDirty, playbook, refreshDesignerAssistantHistory, refreshIntentTraces, saveNow, selectedStepId, showError, showWarning, t]);
 
-  const handleAnswerIntentFromDesigner = useCallback(async (answerText?: string) => {
-    const result = await handleForceGenerateIntentText(designerIntentRef.current, answerText, designerIntentImagesRef.current);
-    if (!id || !answerText || result.status === 'skipped') return;
+  const handleAnswerIntentFromDesigner = useCallback(async (answers: PlaybookClarificationAnswer[], answerText: string) => {
+    if (!id || !playbook || intentDesign?.status !== 'needs_clarification' || !intentDesign.continuationId) return;
+    setIntentLoading(true);
+    setIntentError('');
     try {
-      await appendDesignMessage(id, {
-        userQuery: answerText,
-        aiSummary: result.status === 'failed'
-          ? (result.error || t('designer.intentFailedSummary'))
-          : t('designer.intentSavedSummary'),
-        status: result.status === 'failed' ? 'failed' : 'completed',
-        error: result.status === 'failed' ? (result.error || t('designer.intentFailedSummary')) : null,
+      const response = await runPlaybookAssistantTurn(id, {
+        message: answerText || t('designer.intentClarificationSummary'),
+        expectedDefinitionRevision: getCurrentDefinitionRevision(),
+        conversationId: designerConversationIdRef.current,
+        continuationId: intentDesign.continuationId,
+        answers,
       });
-      await usePlaybookStore.getState().fetchDesignMessages(id);
-      await refreshIntentTraces();
+      designerConversationIdRef.current = response.conversationId;
+      setIntentDesign(response.assessment);
+      await refreshDesignerAssistantHistory(id, response.conversationId);
+      if (response.operation) {
+        await consumePlaybookConstruction({
+          ...response.operation,
+          constructionId: response.operation.constructionId ?? response.operation.operationId!,
+        });
+      }
     } catch (error) {
-      console.error('Failed to save Designer Assistant clarification history', error);
-      showWarning(t('designer.intentSaveFailed'));
+      const message = error instanceof Error ? error.message : t('designer.intentFailedSummary');
+      setIntentError(message);
+      showError(message);
+    } finally {
+      setIntentLoading(false);
     }
-  }, [handleForceGenerateIntentText, id, t]);
+  }, [consumePlaybookConstruction, getCurrentDefinitionRevision, id, intentDesign, playbook, refreshDesignerAssistantHistory, showError, t]);
 
   const { handleRun, handleStop } = usePlaybookCanvasExecutionHandlers({
     id,
@@ -3986,6 +4054,8 @@ function PlaybookCanvasInner() {
             )}
             <PlaybookDesignerPanel
               playbookId={id}
+              assistantMessages={playbookFeatures.mcpAssistantEnabled ? designerAssistantMessages : undefined}
+              assistantMessagesLoading={designerAssistantMessagesLoading}
               intentDesign={intentDesign}
               intentLoading={intentLoading}
               history={intentHistory}

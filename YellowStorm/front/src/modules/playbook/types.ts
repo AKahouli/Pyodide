@@ -758,9 +758,26 @@ export type PlaybookIntentDesignResponse = (
       assumptions: string[];
       riskFlags: string[];
     }
+  | {
+      status: 'ready_to_construct';
+      detectedIntent: string;
+      assumptions: string[];
+      riskFlags: string[];
+    }
 ) & {
   lastTrace?: PlaybookIntentTraceEntry;
+  requestId?: string;
+  assessmentId?: string;
+  continuationId?: string | null;
+  definitionRevision?: number;
 };
+
+export interface PlaybookClarificationAnswer {
+  questionId: string;
+  choice?: string;
+  text?: string;
+  resource?: { kind: 'workspace' | 'document'; id: string };
+}
 
 export type PlaybookIntentTraceStage = 'intent.analyze' | 'intent.design_assessment';
 
@@ -797,11 +814,38 @@ export interface PlaybookAssistantTurnRequest {
   expectedDefinitionRevision: number;
   selectedTaskId?: string;
   executionId?: string;
+  requestId?: string;
+  conversationId?: string;
+  attachmentIds?: string[];
+  continuationId?: string;
+  answers?: PlaybookClarificationAnswer[];
 }
 
 export interface PlaybookAssistantTurnResponse {
+  requestId: string;
+  conversationId: string;
   answer: string;
+  assessment: PlaybookIntentDesignResponse | null;
   operation: PlaybookIntentConstructionStartResponse | null;
+}
+
+export interface PlaybookAssistantMessage {
+  messageId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  operationId: string | null;
+  createdAt: string | null;
+}
+
+export interface PlaybookAssistantHistory {
+  conversationId: string | null;
+  messages: PlaybookAssistantMessage[];
+}
+
+export interface PlaybookAssistantAttachmentUpload {
+  attachmentId: string;
+  uploadUrl: string;
+  expiresAt: string;
 }
 
 export type PlaybookIntentConstructionStatus = 'idle' | 'starting' | 'streaming' | 'completed' | 'failed' | 'cancelled';

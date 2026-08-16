@@ -7,17 +7,63 @@ import { ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { RunSecondBrainTurnDto } from '../dto/playbook-assistant.dto';
 import type { PlaybookMascotConfirmationDocument } from '../schemas/playbook-mascot-confirmation.schema';
+import { PlaybookAssistantRequestService } from './playbook-assistant-request.service';
 
 @Injectable()
 export class SecondBrainService {
   constructor(
     private readonly agentService: AgentService,
     private readonly taskExecutionService: AgentTaskExecutionService,
+    private readonly requestService: PlaybookAssistantRequestService,
   ) {}
 
   async runTurn(userId: string, dto: RunSecondBrainTurnDto) {
     const conversationId = dto.conversationId?.trim() || `second-brain:${randomUUID()}`;
-    return this.execute(userId, conversationId, dto.message, dto.pageContext);
+    const agentId = await this.requireAgentId();
+    const claimed = await this.requestService.claimTurn({
+      requestId: dto.requestId,
+      conversationId: dto.conversationId ? conversationId : undefined,
+      ownerId: userId,
+      tenantId: 'default',
+      agentId,
+      operationKind: 'generation',
+      text: dto.message,
+      context: dto.pageContext,
+    });
+    if (claimed.replay) {
+      const response = claimed.request.responsePayload;
+      return {
+        ...(response ?? {
+          conversationId: claimed.request.conversationId,
+          correlationId: claimed.request.correlationId,
+          answer: claimed.request.assistantAnswer ?? 'Yellowmind completed the request.',
+          toolResults: [],
+          pendingAction: null,
+        }),
+        requestId: claimed.request.requestId,
+      };
+    }
+    try {
+      const result = await this.execute(
+        userId,
+        claimed.request.conversationId,
+        dto.message,
+        dto.pageContext,
+        claimed.request.correlationId,
+        agentId,
+        claimed.request.requestId,
+      );
+      await this.requestService.complete(
+        claimed.request.requestId,
+        result.answer,
+        undefined,
+        result as unknown as Record<string, unknown>,
+      );
+      return { ...result, requestId: claimed.request.requestId };
+    } catch (error) {
+      await this.requestService.fail(claimed.request.requestId);
+      throw error;
+    }
   }
 
   async continueConfirmed(userId: string, confirmation: PlaybookMascotConfirmationDocument) {
@@ -41,18 +87,17 @@ export class SecondBrainService {
     message: string,
     pageContext?: Record<string, unknown>,
     correlationId = `second-brain:${randomUUID()}`,
+    resolvedAgentId?: string,
+    requestId?: string,
   ) {
-    const agentId = await this.agentService.findActiveDefaultAgentIdBySlug(SECOND_BRAIN_AGENT_SLUG);
-    if (!agentId) {
-      throw new ServiceUnavailableException(ErrorCode.AGENT_UNAVAILABLE, 'My Second Brain is unavailable');
-    }
+    const agentId = resolvedAgentId ?? await this.requireAgentId();
     const trustedContext = pageContext
       ? `<trusted_page_context>${JSON.stringify(pageContext).slice(0, 5000)}</trusted_page_context>\n\n`
       : '';
     const result = await this.taskExecutionService.runSingleAgentTask({
       userId,
       agentId,
-      query: `${trustedContext}<user_request>${message.trim()}</user_request>`,
+      query: `${trustedContext}${requestId ? `<trusted_assistant_request_id>${requestId}</trusted_assistant_request_id>\n\n` : ''}<user_request>${message.trim()}</user_request>`,
       attachedFiles: [],
       conversationId,
       correlationId,
@@ -65,6 +110,14 @@ export class SecondBrainService {
       toolResults: result.toolResults,
       pendingAction: this.findPendingAction(result.toolResults),
     };
+  }
+
+  private async requireAgentId(): Promise<string> {
+    const agentId = await this.agentService.findActiveDefaultAgentIdBySlug(SECOND_BRAIN_AGENT_SLUG);
+    if (!agentId) {
+      throw new ServiceUnavailableException(ErrorCode.AGENT_UNAVAILABLE, 'Yellowmind is unavailable');
+    }
+    return agentId;
   }
 
   private findPendingAction(toolResults: AgentTaskToolResult[]): Record<string, unknown> | null {

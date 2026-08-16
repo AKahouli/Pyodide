@@ -10,6 +10,8 @@ import {
   getExecution,
   runAdvisorEvaluation,
   runPlaybookAssistantTurn,
+  getPlaybookAssistantMessages,
+  uploadPlaybookAssistantAttachment,
   getPlaybookRepeatability,
   getTaskRepeatability,
   sanitizePlaybookUpdate,
@@ -1251,6 +1253,72 @@ describe('design message API', () => {
       selectedTaskId: 'task-1',
     }, { timeout: 180000 });
     expect(result).toEqual({ answer: 'Two tasks.', operation: null });
+  });
+
+  it('loads server-owned assistant messages for a conversation', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: { data: { conversationId: 'conversation-1', messages: [{ messageId: 'message-1', role: 'assistant', content: 'Two tasks.' }] } },
+    });
+
+    await expect(getPlaybookAssistantMessages('playbook-1', 'conversation-1')).resolves.toEqual({
+      conversationId: 'conversation-1',
+      messages: [{ messageId: 'message-1', role: 'assistant', content: 'Two tasks.' }],
+    });
+    expect(apiClientMock.get).toHaveBeenCalledWith('/playbooks/playbook-1/assistant/messages', {
+      params: { conversationId: 'conversation-1' },
+    });
+  });
+
+  it('initializes, uploads, and confirms a trusted assistant attachment in order', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.post
+      .mockResolvedValueOnce({ data: { data: { attachmentId: 'attachment-1', uploadUrl: 'https://storage.example/upload' } } })
+      .mockResolvedValueOnce({ data: { data: { attachmentId: 'attachment-1', status: 'confirmed' } } });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    const file = new File(['image-bytes'], 'diagram.png', { type: 'image/png' });
+
+    try {
+      await expect(uploadPlaybookAssistantAttachment('playbook-1', 'request-1', 7, file))
+        .resolves.toBe('attachment-1');
+      expect(apiClientMock.post).toHaveBeenNthCalledWith(1, '/playbooks/playbook-1/assistant/attachments', {
+        requestId: 'request-1',
+        expectedDefinitionRevision: 7,
+        mediaType: 'image/png',
+        size: file.size,
+      });
+      expect(fetchMock).toHaveBeenCalledWith('https://storage.example/upload', { method: 'PUT', body: file });
+      expect(apiClientMock.post).toHaveBeenNthCalledWith(
+        2,
+        '/playbooks/playbook-1/assistant/attachments/attachment-1/confirm',
+        {},
+      );
+      expect(apiClientMock.post.mock.invocationCallOrder[0]).toBeLessThan(fetchMock.mock.invocationCallOrder[0]);
+      expect(fetchMock.mock.invocationCallOrder[0]).toBeLessThan(apiClientMock.post.mock.invocationCallOrder[1]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not confirm an assistant attachment when object upload fails', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.post.mockResolvedValueOnce({
+      data: { data: { attachmentId: 'attachment-1', uploadUrl: 'https://storage.example/upload' } },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
+
+    try {
+      await expect(uploadPlaybookAssistantAttachment(
+        'playbook-1',
+        'request-1',
+        7,
+        new File(['image-bytes'], 'diagram.png', { type: 'image/png' }),
+      )).rejects.toThrow('Assistant image upload failed');
+      expect(apiClientMock.post).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('appends a designer sidebar interaction', async () => {

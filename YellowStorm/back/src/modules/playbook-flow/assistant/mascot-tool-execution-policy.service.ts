@@ -48,8 +48,9 @@ export class MascotToolExecutionPolicyService {
       return { decision: 'denied', code: 'MASCOT_TOOL_NOT_ALLOWED', message: 'This tool is not enabled for My Second Brain.' };
     }
     if (actionKey !== 'start_playbook_execution') {
-      await this.audit(actor, 'second_brain.tool.allowed', 'success', { toolName: actionKey, impact: 'read' });
-      return { decision: 'allowed', impact: 'read' };
+      const impact = actionKey === 'start_playbook_generation' ? 'write' : 'read';
+      await this.audit(actor, 'second_brain.tool.allowed', 'success', { toolName: actionKey, impact });
+      return { decision: 'allowed', impact };
     }
 
     const canonicalArguments = this.canonicalArguments(dto.arguments);

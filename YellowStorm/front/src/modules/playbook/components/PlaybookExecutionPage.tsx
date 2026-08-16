@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { Loader2 } from 'lucide-react';
 import {
@@ -18,6 +18,8 @@ import { useModuleTranslation } from '@/modules/localization';
 export function PlaybookExecutionPage() {
   const { id, executionId } = useParams<{ id: string; executionId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedTaskId = searchParams.get('taskId');
   const { t } = useModuleTranslation('playbook');
 
   const playbook = useCurrentPlaybook();
@@ -36,6 +38,10 @@ export function PlaybookExecutionPage() {
   const fetchExecution = usePlaybookStore((s) => s.fetchExecution);
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
   const selectStep = usePlaybookStore((s) => s.selectStep);
+
+  useEffect(() => {
+    if (requestedTaskId) selectStep(requestedTaskId);
+  }, [requestedTaskId, selectStep]);
 
   useEffect(() => {
     if (id) {

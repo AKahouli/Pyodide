@@ -674,13 +674,13 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
 
     await user.type(screen.getByPlaceholderText('designer.inputPlaceholder'), 'Add a lead scoring step{Enter}');
 
-    expect(onSubmitDesignIntent).toHaveBeenCalledWith([
-      'Current user request:',
-      '- [2026-06-22 08:10:11] User: Add a lead scoring step',
-    ].join('\n'), 'Add a lead scoring step');
+    expect(onSubmitDesignIntent).toHaveBeenCalledWith(
+      'Add a lead scoring step',
+      'Add a lead scoring step',
+    );
   });
 
-  it('submits design-mode sidebar messages with timestamped chat history context', async () => {
+  it('leaves design-mode chat history to the server-owned conversation', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date('2026-06-21T22:37:05'));
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
@@ -729,16 +729,38 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
 
     await user.type(screen.getByPlaceholderText('designer.inputPlaceholder'), 'Add scoring{Enter}');
 
-    expect(onSubmitDesignIntent).toHaveBeenCalledWith([
-      'Previous Designer Assistant chat history:',
-      '- [2026-06-21 22:34:05] User: leadgen pipeline',
-      '- [2026-06-21 22:34:05] Assistant: Which Telegram source should I use?',
-      '- [2026-06-21 22:36:05] User: add exports',
-      '- [2026-06-21 22:36:05] Assistant failed: Missing output schema',
-      '',
-      'Current user request:',
-      '- [2026-06-21 22:37:05] User: Add scoring',
-    ].join('\n'), 'Add scoring');
+    expect(onSubmitDesignIntent).toHaveBeenCalledWith('Add scoring', 'Add scoring');
+  });
+
+  it('renders server-owned assistant messages without legacy history mutations', () => {
+    storeState.copilotMode = 'design';
+    storeState.designMessages = [{
+      id: 'legacy-message',
+      playbookId: 'playbook-1',
+      userQuery: 'Legacy request',
+      aiSummary: 'Legacy answer',
+      snapshotBefore: { tasks: [], edges: [] },
+      status: 'completed',
+      revertedFromMessageId: null,
+      error: null,
+      createdAt: '2026-06-21T22:34:05',
+      updatedAt: '2026-06-21T22:34:05',
+    }];
+
+    render(<PlaybookDesignerPanel
+      playbookId="playbook-1"
+      assistantMessages={[
+        { messageId: 'user-1', role: 'user', content: 'What is the title?', operationId: null, createdAt: '2026-06-21T22:35:05' },
+        { messageId: 'assistant-1', role: 'assistant', content: 'Lead generation', operationId: null, createdAt: '2026-06-21T22:35:06' },
+      ]}
+    />);
+
+    expect(screen.getByText('What is the title?')).toBeInTheDocument();
+    expect(screen.getByText('Lead generation')).toBeInTheDocument();
+    expect(screen.queryByText('Legacy request')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'designer.clearMemory' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'designer.revert' })).not.toBeInTheDocument();
+    expect(storeState.fetchDesignMessages).not.toHaveBeenCalled();
   });
 
   it('restores the design-mode draft when intent submission fails', async () => {
@@ -801,7 +823,10 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     await user.click(screen.getByRole('button', { name: /France/ }));
     await user.click(screen.getByRole('button', { name: 'intentBar.design.generate' }));
 
-    expect(onAnswerDesignIntent).toHaveBeenCalledWith('Which region should I search?: France');
+    expect(onAnswerDesignIntent).toHaveBeenCalledWith(
+      [{ questionId: 'region', choice: 'France' }],
+      'Which region should I search?: France',
+    );
   });
 
   it('renders a left-edge resize handle', () => {
@@ -893,12 +918,11 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     await user.type(input, 'Build this workflow{Enter}');
 
     await waitFor(() => expect(onSubmitDesignIntent).toHaveBeenCalled());
-    expect(onSubmitDesignIntent).toHaveBeenCalledWith([
-      'Current user request:',
-      '- [2026-06-22 08:20:21] User: Build this workflow [1 image attached]',
-    ].join('\n'), 'Build this workflow [1 image attached]', [
-      expect.objectContaining({ mediaType: 'image/png', name: 'diagram.png', data: expect.any(String) }),
-    ]);
+    expect(onSubmitDesignIntent).toHaveBeenCalledWith(
+      'Build this workflow [1 image attached]',
+      'Build this workflow [1 image attached]',
+      [image],
+    );
   });
 
   it('submits pasted images without requiring prompt text', async () => {
@@ -922,12 +946,11 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     await user.click(screen.getByRole('button', { name: 'designer.send' }));
 
     await waitFor(() => expect(onSubmitDesignIntent).toHaveBeenCalled());
-    expect(onSubmitDesignIntent).toHaveBeenCalledWith([
-      'Current user request:',
-      '- [2026-06-22 08:20:21] User: [1 image attached]',
-    ].join('\n'), '[1 image attached]', [
-      expect.objectContaining({ mediaType: 'image/png', name: 'diagram.png', data: expect.any(String) }),
-    ]);
+    expect(onSubmitDesignIntent).toHaveBeenCalledWith(
+      '[1 image attached]',
+      '[1 image attached]',
+      [image],
+    );
   });
 
   it('renders sidebar history controls without auto-apply', async () => {

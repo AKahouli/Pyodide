@@ -69,6 +69,12 @@ export class RunSecondBrainTurnDto {
   @IsOptional()
   @IsObject()
   pageContext?: Record<string, unknown>;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  requestId?: string;
 }
 
 export class EvaluateMascotToolDto {
@@ -102,6 +108,39 @@ export class RunPlaybookAssistantTurnDto {
   @IsOptional()
   @IsString()
   executionId?: string;
+
+  @ApiPropertyOptional({ description: 'Stable idempotency identifier for this assistant turn.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  requestId?: string;
+
+  @ApiPropertyOptional({ description: 'Server-issued conversation identifier from a prior turn.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  conversationId?: string;
+
+  @ApiPropertyOptional({ type: [String], description: 'Confirmed opaque assistant attachment identifiers.' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(4)
+  @IsString({ each: true })
+  attachmentIds?: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  continuationId?: string;
+
+  @ApiPropertyOptional({ type: () => [PlaybookClarificationAnswerDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => PlaybookClarificationAnswerDto)
+  answers?: PlaybookClarificationAnswerDto[];
 }
 
 export class StartPlaybookAssistantConstructionDto extends RequestPlaybookFlowIntentDto {
@@ -176,4 +215,87 @@ export class CancelPlaybookAssistantConstructionDto {
   @IsString()
   @MaxLength(500)
   reason?: string;
+}
+
+export class PlaybookClarificationResourceDto {
+  @ApiProperty({ enum: ['workspace', 'document'] })
+  @IsIn(['workspace', 'document'])
+  kind!: 'workspace' | 'document';
+
+  @ApiProperty()
+  @IsString()
+  @MaxLength(200)
+  id!: string;
+}
+
+export class PlaybookClarificationAnswerDto {
+  @ApiProperty()
+  @IsString()
+  @MaxLength(200)
+  questionId!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  choice?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  text?: string;
+
+  @ApiPropertyOptional({ type: PlaybookClarificationResourceDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PlaybookClarificationResourceDto)
+  resource?: PlaybookClarificationResourceDto;
+}
+
+export class ContinuePlaybookClarificationDto {
+  @ApiProperty({ type: [PlaybookClarificationAnswerDto] })
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => PlaybookClarificationAnswerDto)
+  answers!: PlaybookClarificationAnswerDto[];
+}
+
+export class StartBoundPlaybookConstructionDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  contextId?: string;
+}
+
+export class InitializePlaybookAssistantAttachmentDto {
+  @ApiProperty()
+  @IsString()
+  @MaxLength(200)
+  requestId!: string;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(0)
+  expectedDefinitionRevision!: number;
+
+  @ApiProperty({ enum: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] })
+  @IsIn(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+  mediaType!: string;
+
+  @ApiProperty({ maximum: 1500000 })
+  @IsInt()
+  @Min(1)
+  @Max(1500000)
+  size!: number;
+}
+
+export class StartPlaybookGenerationDto {
+  @ApiPropertyOptional({ minLength: 2, maxLength: 100 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  name?: string;
 }

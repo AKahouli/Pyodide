@@ -20,6 +20,68 @@ describe('PlaybookFlowIntentConstructionService', () => {
     expect(chunks).toEqual(['tail content']);
   });
 
+  it('aborts a local worker when another replica durably cancels its operation', async () => {
+    jest.useFakeTimers();
+    const operationService = {
+      getStatus: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+    };
+    const service = new PlaybookFlowIntentConstructionService(
+      { normalizeConstructionSuggestions: jest.fn() } as any,
+      undefined,
+      operationService as any,
+    );
+    const job = {
+      id: 'operation-1',
+      flowId: 'flow-1',
+      ownerId: 'owner-1',
+      status: 'running',
+      events: [],
+      abortController: new AbortController(),
+      waiters: new Set(),
+    };
+
+    try {
+      const timer = (service as any).watchDurableCancellation(job);
+      await jest.advanceTimersByTimeAsync(500);
+      expect(job.abortController.signal.aborted).toBe(true);
+      expect(job.status).toBe('cancelled');
+      clearInterval(timer);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not append after a durable terminal event wins on another replica', async () => {
+    const operationService = {
+      append: jest.fn().mockRejectedValue(new Error('terminal conflict')),
+      getStatus: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+    };
+    const service = new PlaybookFlowIntentConstructionService(
+      { normalizeConstructionSuggestions: jest.fn() } as any,
+      undefined,
+      operationService as any,
+    );
+    const job = {
+      id: 'operation-1',
+      flowId: 'flow-1',
+      ownerId: 'owner-1',
+      status: 'running',
+      events: [],
+      abortController: new AbortController(),
+      waiters: new Set(),
+    };
+
+    await expect((service as any).emit(job, {
+      type: 'progress',
+      constructionId: 'operation-1',
+      playbookId: 'flow-1',
+      phase: 'planning',
+      message: 'Planning',
+    })).resolves.toBeUndefined();
+    expect(job.abortController.signal.aborted).toBe(true);
+    expect(job.events).toEqual([]);
+  });
+
   it.each([
     { omitTemperature: true, expectedTemperature: undefined },
     { omitTemperature: false, expectedTemperature: 0.2 },

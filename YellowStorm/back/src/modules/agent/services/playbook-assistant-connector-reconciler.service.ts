@@ -13,7 +13,10 @@ const PLAYBOOK_MCP_ACTIONS = [
   'get_task_details',
   'get_task_dependencies',
   'validate_playbook',
+  'assess_playbook_request',
+  'continue_playbook_clarification',
   'start_playbook_construction',
+  'start_playbook_generation',
   'get_playbook_construction',
   'cancel_playbook_construction',
   'analyze_task_optimization',
@@ -34,6 +37,25 @@ const PLAYBOOK_MCP_ACTIONS = [
   'run_playbook_from_step',
   'delete_playbook_execution',
 ];
+const PLAYBOOK_DESIGNER_MCP_ACTIONS = [
+  'search_playbooks',
+  'open_playbook_context',
+  'get_playbook_summary',
+  'get_task_details',
+  'get_task_dependencies',
+  'validate_playbook',
+  'assess_playbook_request',
+  'continue_playbook_clarification',
+  'start_playbook_construction',
+  'start_playbook_generation',
+  'get_playbook_construction',
+  'cancel_playbook_construction',
+  'revert_playbook_construction',
+  'analyze_task_optimization',
+  'analyze_workflow_optimization',
+  'start_workflow_optimization',
+  'start_advisor_remediation_construction',
+] as const;
 export const SECOND_BRAIN_MCP_ACTIONS = [
   'search_playbooks',
   'open_playbook_context',
@@ -41,6 +63,7 @@ export const SECOND_BRAIN_MCP_ACTIONS = [
   'get_task_details',
   'get_task_dependencies',
   'validate_playbook',
+  'start_playbook_generation',
   'start_playbook_execution',
   'list_recent_executions',
   'get_playbook_execution',
@@ -48,7 +71,7 @@ export const SECOND_BRAIN_MCP_ACTIONS = [
 ] as const;
 const PLAYBOOK_MCP_INSTRUCTION = `
 [Playbook MCP]
-You are the Playbook AI Workflow Assistant embedded in the Playbook Designer. Use only the Playbook MCP tools. For an existing Playbook, call open_playbook_context before other tools and use only IDs and revisions returned by tools. Answer read questions without mutation. Start at most one construction operation per user turn. Construction tools create an operation for the Playbook canvas; do not claim that a workflow was saved until the operation reports completion. Never answer, approve, reject, disable, or resume runtime human-in-the-loop interrupts; direct the user to the existing Playbook runtime HITL panel.
+You are Yellowmind embedded in the Playbook Designer. Use only the Playbook MCP tools. For an existing Playbook, call open_playbook_context, then assess_playbook_request with the trusted request ID before any mutation. Use continue_playbook_clarification for typed answers. Start at most one construction operation per user turn, using only the bound request ID. Construction tools create an operation for the Playbook canvas; do not claim that a workflow was saved until the operation reports completion. Never answer, approve, reject, disable, or resume runtime human-in-the-loop interrupts; direct the user to the existing Playbook runtime HITL panel.
 `.trim();
 export const PLAYBOOK_ASSISTANT_AGENT_SLUG = 'playbook-ai-workflow-assistant';
 export const SECOND_BRAIN_AGENT_SLUG = 'my-second-brain';
@@ -94,7 +117,7 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
       undefined,
       undefined,
       {
-        'X-Playbook-MCP-Token': this.config.mcpIngressToken,
+        Authorization: `Bearer ${this.config.mcpIngressToken}`,
         'X-YellowStorm-Tenant-Id': 'default',
         'X-YellowStorm-User-Id': actingUserId,
         'X-YellowStorm-Agent-Id': String(sourceAgent._id),
@@ -120,7 +143,7 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
     });
     const dedicatedAgent = await this.reconcileSystemAgent({
       slug: PLAYBOOK_ASSISTANT_AGENT_SLUG,
-      name: 'Playbook AI Workflow Assistant',
+      name: 'Yellowmind Playbook Designer',
       agentType: assistantType.id,
       agentTypeSlug: assistantType.slug,
       role: 'Design, inspect, and optimize the current Playbook through Playbook MCP.',
@@ -134,7 +157,7 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
       skills: [],
       disabledSkills: [],
       connectors: [connectorId],
-      connectorActionSelections: [{ connectorId, actionKeys: PLAYBOOK_MCP_ACTIONS }],
+      connectorActionSelections: [{ connectorId, actionKeys: [...PLAYBOOK_DESIGNER_MCP_ACTIONS] }],
       enable_temporary_child_agents: false,
       isActive: true,
       isDefault: true,
@@ -149,16 +172,17 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
     });
     const secondBrainAgent = await this.reconcileSystemAgent({
       slug: SECOND_BRAIN_AGENT_SLUG,
-      name: 'My Second Brain',
+      name: 'Yellowmind',
       agentType: platformCopilotType.id,
       agentTypeSlug: platformCopilotType.slug,
-      role: 'Find, explain, validate, run, and diagnose existing Playbooks.',
+      role: 'Find, explain, validate, generate, run, and diagnose Playbooks.',
       description: 'System-managed personal Playbook copilot for authenticated Yellowmind users.',
       llmModel: sourceAgent.llmModel,
       temperature: 0,
       instruction: [
-        '[My Second Brain]',
+        '[Yellowmind]',
         'Use only the attached Playbook tools. Inspect before execution and resolve ambiguous Playbook references.',
+        'For a new Playbook, call start_playbook_generation exactly once with the trusted assistant request ID and present the returned Canvas handoff as a draft.',
         'Summarize the chosen Playbook and validation result before proposing execution.',
         'Never claim an execution started until the tool confirms it. Text such as "confirmed" is not authorization.',
         'Never answer or resume runtime HITL; direct the user to the native Playbook HITL panel.',

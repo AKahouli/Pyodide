@@ -23,7 +23,8 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
       inspectMcp: jest.fn().mockResolvedValue({
         tools: [
           'search_playbooks', 'open_playbook_context', 'get_playbook_summary', 'get_task_details', 'get_task_dependencies', 'validate_playbook',
-          'start_playbook_construction', 'get_playbook_construction', 'cancel_playbook_construction', 'analyze_task_optimization',
+          'assess_playbook_request', 'continue_playbook_clarification',
+          'start_playbook_construction', 'start_playbook_generation', 'get_playbook_construction', 'cancel_playbook_construction', 'analyze_task_optimization',
           'start_advisor_remediation_construction', 'analyze_workflow_optimization', 'start_workflow_optimization', 'create_playbook',
           'clone_playbook', 'revert_playbook_construction', 'start_playbook_execution', 'list_playbook_executions',
           'list_recent_executions', 'get_playbook_execution', 'get_execution_diagnostics', 'cancel_playbook_execution', 'trace_replay_playbook_execution', 'reexecute_playbook_execution',
@@ -50,6 +51,16 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
 
     await service.onModuleInit();
 
+    expect(connectorService.inspectMcp).toHaveBeenCalledWith(
+      'streamable_http',
+      'http://playbook-mcp:8025/mcp',
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      expect.objectContaining({ Authorization: 'Bearer configured' }),
+    );
     expect(connectorService.reconcilePlaybookMcpSystemConnector).toHaveBeenCalledWith(
       sourceAgent.createdBy,
       'http://playbook-mcp:8025/mcp',
@@ -58,12 +69,28 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
     expect(agentRepository.upsertDefaultSystemAgent).toHaveBeenCalledWith(
       expect.objectContaining({
         slug: 'playbook-ai-workflow-assistant',
+        name: 'Yellowmind Playbook Designer',
         isDefault: true,
         connectors: [connectorId],
         connectorActionSelections: [expect.objectContaining({ connectorId, actionKeys: expect.arrayContaining(['start_playbook_construction']) })],
         instruction: expect.stringContaining('[Playbook MCP]'),
       }),
     );
+    expect(agentRepository.upsertDefaultSystemAgent).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ slug: 'my-second-brain', name: 'Yellowmind' }),
+    );
+    const designerActions = agentRepository.upsertDefaultSystemAgent.mock.calls[0][0].connectorActionSelections[0].actionKeys;
+    expect(designerActions).toContain('start_playbook_construction');
+    expect(designerActions).not.toEqual(expect.arrayContaining([
+      'create_playbook',
+      'clone_playbook',
+      'start_playbook_execution',
+      'cancel_playbook_execution',
+      'reexecute_playbook_execution',
+      'run_playbook_from_step',
+      'delete_playbook_execution',
+    ]));
     // The connector is pulled from every other agent (all but the dedicated one).
     expect(agentRepository.pullConnectorFromAllExcept).toHaveBeenCalledWith(
       connectorId,

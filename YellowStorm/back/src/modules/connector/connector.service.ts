@@ -25,6 +25,43 @@ import { ConnectorAuthService } from './interfaces/connector-auth.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 import { ConnectorPlaybookBindingSyncService } from './services/connector-playbook-binding-sync.service';
 
+const PLAYBOOK_MCP_OUTPUT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  required: ['schemaVersion', 'ok', 'meta'],
+  properties: {
+    schemaVersion: { type: 'string', enum: ['playbook.mcp.v1'] },
+    ok: { type: 'boolean' },
+    data: { type: 'object' },
+    error: {
+      type: 'object',
+      required: ['code', 'message', 'retryable', 'category'],
+      properties: {
+        code: { type: 'string' },
+        message: { type: 'string' },
+        retryable: { type: 'boolean' },
+        category: {
+          type: 'string',
+          enum: ['validation', 'authorization', 'conflict', 'not_found', 'rate_limit', 'dependency', 'internal'],
+        },
+        details: {},
+      },
+      additionalProperties: false,
+    },
+    meta: {
+      type: 'object',
+      required: ['correlationId'],
+      properties: {
+        correlationId: { type: 'string' },
+        playbookId: { type: 'string' },
+        operationId: { type: 'string' },
+        uiTarget: { type: 'object' },
+      },
+      additionalProperties: false,
+    },
+  },
+  additionalProperties: false,
+};
+
 @Injectable()
 export class ConnectorService {
   private static readonly CONNECTOR_ACTION_KEY_MAX_LENGTH = 128;
@@ -138,13 +175,16 @@ export class ConnectorService {
       { key: 'get_task_details', label: 'Get task details', safety: ConnectorActionSafety.READ, required: ['playbook_id', 'task_id'], properties: { playbook_id: playbookId, task_id: playbookId } },
       { key: 'get_task_dependencies', label: 'Get task dependencies', safety: ConnectorActionSafety.READ, required: ['playbook_id', 'task_id'], properties: { playbook_id: playbookId, task_id: playbookId } },
       { key: 'validate_playbook', label: 'Validate Playbook', safety: ConnectorActionSafety.READ, required: ['playbook_id'], properties: { playbook_id: playbookId } },
-      { key: 'start_playbook_construction', label: 'Start Playbook construction', safety: ConnectorActionSafety.WRITE, required: ['playbook_id', 'context_id', 'request', 'expected_definition_revision'], properties: { playbook_id: playbookId, context_id: playbookId, request: { type: 'string', minLength: 3 }, expected_definition_revision: { type: 'integer', minimum: 0 }, selected_task_id: optionalId } },
+      { key: 'assess_playbook_request', label: 'Assess Playbook request', safety: ConnectorActionSafety.READ, required: ['request_id'], properties: { request_id: playbookId } },
+      { key: 'continue_playbook_clarification', label: 'Continue Playbook clarification', safety: ConnectorActionSafety.READ, required: ['continuation_id', 'answers'], properties: { continuation_id: playbookId, answers: { type: 'array', maxItems: 20, items: { type: 'object' } } } },
+      { key: 'start_playbook_construction', label: 'Start Playbook construction', safety: ConnectorActionSafety.WRITE, required: ['request_id'], properties: { request_id: playbookId, context_id: optionalId } },
+      { key: 'start_playbook_generation', label: 'Start Playbook generation', safety: ConnectorActionSafety.WRITE, required: ['request_id'], properties: { request_id: playbookId, name: optionalId } },
       { key: 'get_playbook_construction', label: 'Get Playbook construction', safety: ConnectorActionSafety.READ, required: ['playbook_id', 'operation_id'], properties: { playbook_id: playbookId, operation_id: playbookId } },
       { key: 'cancel_playbook_construction', label: 'Cancel Playbook construction', safety: ConnectorActionSafety.WRITE, required: ['playbook_id', 'operation_id'], properties: { playbook_id: playbookId, operation_id: playbookId, reason: optionalId } },
       { key: 'analyze_task_optimization', label: 'Analyze task optimization', safety: ConnectorActionSafety.READ, required: ['playbook_id', 'task_id'], properties: { playbook_id: playbookId, task_id: playbookId, execution_id: optionalId, dimensions: { type: ['array', 'null'], items: { type: 'string' } } } },
       { key: 'start_advisor_remediation_construction', label: 'Start Advisor remediation construction', safety: ConnectorActionSafety.WRITE, required: ['playbook_id', 'execution_id', 'mode', 'items', 'expected_definition_revision'], properties: { playbook_id: playbookId, execution_id: playbookId, selected_task_id: optionalId, mode: { type: 'string', enum: ['optimize-step', 'update-current', 'generate-new'] }, items: { type: 'array', items: { type: 'object' } }, expected_definition_revision: { type: 'integer', minimum: 0 } } },
       { key: 'analyze_workflow_optimization', label: 'Analyze workflow optimization', safety: ConnectorActionSafety.READ, required: ['playbook_id'], properties: { playbook_id: playbookId, execution_id: optionalId, dimensions: { type: ['array', 'null'], items: { type: 'string' } } } },
-      { key: 'start_workflow_optimization', label: 'Start workflow optimization', safety: ConnectorActionSafety.WRITE, required: ['playbook_id', 'context_id', 'request', 'expected_definition_revision'], properties: { playbook_id: playbookId, context_id: playbookId, request: { type: 'string', minLength: 3 }, expected_definition_revision: { type: 'integer', minimum: 0 }, execution_id: optionalId } },
+      { key: 'start_workflow_optimization', label: 'Start workflow optimization', safety: ConnectorActionSafety.WRITE, required: ['request_id'], properties: { request_id: playbookId, context_id: optionalId } },
       { key: 'create_playbook', label: 'Create Playbook', safety: ConnectorActionSafety.WRITE, required: ['name'], properties: { name: { type: 'string', minLength: 2, maxLength: 100 }, description: optionalId, workspace_ids: { type: ['array', 'null'], items: playbookId } } },
       { key: 'clone_playbook', label: 'Clone Playbook', safety: ConnectorActionSafety.WRITE, required: ['playbook_id'], properties: { playbook_id: playbookId } },
       { key: 'revert_playbook_construction', label: 'Revert Playbook construction', safety: ConnectorActionSafety.WRITE, required: ['playbook_id', 'operation_id'], properties: { playbook_id: playbookId, operation_id: playbookId } },
@@ -164,7 +204,7 @@ export class ConnectorService {
       label: definition.label,
       description: definition.label,
       parameterSchema: { type: 'object', properties: definition.properties, required: definition.required, additionalProperties: false },
-      outputSchema: {},
+      outputSchema: PLAYBOOK_MCP_OUTPUT_SCHEMA,
       safety: definition.safety,
       supportsBatch: false,
       supportsIteration: false,

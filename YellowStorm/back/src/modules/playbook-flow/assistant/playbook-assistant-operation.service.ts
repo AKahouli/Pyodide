@@ -92,12 +92,18 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
     origin?: 'designer' | 'mcp' | 'advisor';
     target?: 'canonical' | 'advisor_preview';
     applyTarget?: 'current_playbook' | 'new_playbook';
+    requestId?: string;
+    operationKind?: 'construction' | 'generation';
+    createdPlaybookId?: string;
   }): Promise<void> {
     await this.operationModel.create({
       ...input,
       origin: input.origin ?? 'designer',
       target: input.target ?? 'canonical',
       applyTarget: input.applyTarget ?? 'current_playbook',
+      requestId: input.requestId ?? null,
+      operationKind: input.operationKind ?? 'construction',
+      createdPlaybookId: input.createdPlaybookId ?? null,
       disposition: 'pending',
       status: 'queued',
       lastSequence: 0,

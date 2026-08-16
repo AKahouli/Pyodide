@@ -34,11 +34,11 @@ export class PlaybookFlowIntentConstructionService {
     @Optional() private readonly operationService?: PlaybookAssistantOperationService,
   ) {}
 
-  async start(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto, options?: { origin?: 'designer' | 'mcp' }): Promise<PlaybookIntentConstructionStartResult> {
+  async start(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto, options?: { origin?: 'designer' | 'mcp'; operationId?: string; requestId?: string; operationKind?: 'construction' | 'generation'; createdPlaybookId?: string }): Promise<PlaybookIntentConstructionStartResult> {
     const normalizedFlowId = String(flowId);
     const normalizedOwnerId = String(ownerId);
     const context = await this.intentService.buildIntentAnalysisContext(flowId, ownerId, dto);
-    const id = randomUUID();
+    const id = options?.operationId ?? randomUUID();
     const job: PlaybookIntentConstructionJob = {
       id,
       flowId: normalizedFlowId,
@@ -50,7 +50,16 @@ export class PlaybookFlowIntentConstructionService {
       waiters: new Set(),
     };
     this.jobs.set(id, job);
-    await this.operationService?.create({ operationId: id, playbookId: normalizedFlowId, ownerId: normalizedOwnerId, baseDefinitionRevision: job.baseDefinitionRevision, origin: options?.origin });
+    await this.operationService?.create({
+      operationId: id,
+      playbookId: normalizedFlowId,
+      ownerId: normalizedOwnerId,
+      baseDefinitionRevision: job.baseDefinitionRevision,
+      origin: options?.origin,
+      requestId: options?.requestId,
+      operationKind: options?.operationKind,
+      createdPlaybookId: options?.createdPlaybookId,
+    });
     await this.emit(job, { type: 'started', constructionId: id, playbookId: normalizedFlowId, model: context.model, baseDefinitionRevision: job.baseDefinitionRevision });
     void this.run(job, dto, context);
     return { constructionId: id, playbookId: normalizedFlowId, baseDefinitionRevision: job.baseDefinitionRevision };
@@ -151,6 +160,7 @@ export class PlaybookFlowIntentConstructionService {
 
   private async run(job: PlaybookIntentConstructionJob, dto: RequestPlaybookFlowIntentDto, context: Awaited<ReturnType<PlaybookFlowIntentService['buildIntentAnalysisContext']>>): Promise<void> {
     job.status = 'running';
+    const cancellationWatcher = this.watchDurableCancellation(job);
     try {
       await this.emit(job, { type: 'progress', constructionId: job.id, playbookId: job.flowId, phase: 'planning', message: 'Planning workflow construction' });
       const response = await context.httpClient.post('/v1/chat/completions', {
@@ -181,6 +191,8 @@ export class PlaybookFlowIntentConstructionService {
       this.logger.error(`playbook_intent_construction_failed constructionId=${job.id} playbookId=${job.flowId} message=${message}`);
       await this.emit(job, { type: 'failed', constructionId: job.id, playbookId: job.flowId, message, recoverable: true });
       this.scheduleCleanup(job);
+    } finally {
+      if (cancellationWatcher) clearInterval(cancellationWatcher);
     }
   }
 
@@ -206,12 +218,17 @@ export class PlaybookFlowIntentConstructionService {
 
   private async runPrepared(job: PlaybookIntentConstructionJob, suggestions: PlaybookIntentSuggestion[]): Promise<void> {
     job.status = 'running';
-    await this.emit(job, { type: 'progress', constructionId: job.id, playbookId: job.flowId, phase: 'planning', message: 'Preparing advisor remediation preview' });
-    await this.emitSuggestions(job, suggestions);
-    if (job.abortController.signal.aborted) return;
-    job.status = 'completed';
-    await this.emit(job, { type: 'completed', constructionId: job.id, playbookId: job.flowId, model: 'advisor-remediation', finalSuggestionCount: suggestions.length });
-    this.scheduleCleanup(job);
+    const cancellationWatcher = this.watchDurableCancellation(job);
+    try {
+      await this.emit(job, { type: 'progress', constructionId: job.id, playbookId: job.flowId, phase: 'planning', message: 'Preparing advisor remediation preview' });
+      await this.emitSuggestions(job, suggestions);
+      if (job.abortController.signal.aborted) return;
+      job.status = 'completed';
+      await this.emit(job, { type: 'completed', constructionId: job.id, playbookId: job.flowId, model: 'advisor-remediation', finalSuggestionCount: suggestions.length });
+      this.scheduleCleanup(job);
+    } finally {
+      if (cancellationWatcher) clearInterval(cancellationWatcher);
+    }
   }
 
   private buildBlueprintSuggestions(
@@ -305,12 +322,49 @@ export class PlaybookFlowIntentConstructionService {
   }
 
   private async emit(job: PlaybookIntentConstructionJob, event: Record<string, unknown> & { type: PlaybookIntentConstructionEvent['type']; constructionId: string; playbookId: string }): Promise<void> {
-    const persisted = this.operationService
-      ? await this.operationService.append(job.flowId, job.ownerId, job.id, event as PersistableConstructionEvent)
-      : ({ ...event, sequence: job.events.length + 1, createdAt: new Date().toISOString() } as PlaybookIntentConstructionEvent);
+    let persisted: PlaybookIntentConstructionEvent;
+    try {
+      persisted = this.operationService
+        ? await this.operationService.append(job.flowId, job.ownerId, job.id, event as PersistableConstructionEvent)
+        : ({ ...event, sequence: job.events.length + 1, createdAt: new Date().toISOString() } as PlaybookIntentConstructionEvent);
+    } catch (error) {
+      if (this.operationService) {
+        const status = await this.operationService.getStatus(job.flowId, job.ownerId, job.id);
+        if (['completed', 'failed', 'cancelled'].includes(status.status)) {
+          job.status = status.status;
+          job.abortController.abort();
+          return;
+        }
+      }
+      throw error;
+    }
     job.events.push(persisted);
     for (const waiter of job.waiters) waiter();
     job.waiters.clear();
+  }
+
+  private watchDurableCancellation(job: PlaybookIntentConstructionJob): NodeJS.Timeout | null {
+    if (!this.operationService) return null;
+    let checking = false;
+    const timer = setInterval(() => {
+      if (checking || job.abortController.signal.aborted) return;
+      checking = true;
+      void this.operationService!.getStatus(job.flowId, job.ownerId, job.id)
+        .then((status) => {
+          if (status.status === 'cancelled') {
+            job.status = 'cancelled';
+            job.abortController.abort();
+          }
+        })
+        .catch((error) => {
+          this.logger.warn(`playbook_intent_construction_cancel_watch_failed constructionId=${job.id} message=${error instanceof Error ? error.message : 'unknown'}`);
+        })
+        .finally(() => {
+          checking = false;
+        });
+    }, 500);
+    timer.unref?.();
+    return timer;
   }
 
   private getJob(flowId: string, ownerId: string, constructionId: string): PlaybookIntentConstructionJob {

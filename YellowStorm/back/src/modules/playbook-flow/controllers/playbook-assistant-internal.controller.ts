@@ -9,13 +9,16 @@ import {
   AnalyzeTaskOptimizationDto,
   AnalyzeWorkflowOptimizationDto,
   CancelPlaybookAssistantConstructionDto,
+  ContinuePlaybookClarificationDto,
   EvaluateMascotToolDto,
   ListRecentExecutionsDto,
   OpenPlaybookAssistantContextDto,
   RunPlaybookFromStepDto,
   SearchPlaybooksDto,
   StartAdvisorRemediationConstructionDto,
+  StartBoundPlaybookConstructionDto,
   StartPlaybookAssistantConstructionDto,
+  StartPlaybookGenerationDto,
 } from '../dto/playbook-assistant.dto';
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execution.dto';
@@ -23,11 +26,12 @@ import { RateLimit } from '@modules/rate-limiter';
 import { PlaybookAssistantContextService } from '../assistant/playbook-assistant-context.service';
 import { PlaybookAssistantService } from '../assistant/playbook-assistant.service';
 import { MascotToolExecutionPolicyService } from '../assistant/mascot-tool-execution-policy.service';
+import { PlaybookAssistantActorGuard } from '../guards/playbook-assistant-actor.guard';
 
 @Public()
 @ApiTags('Playbook Assistant Internal')
 @Controller('internal/playbook-assistant')
-@UseGuards(InternalServiceGuard)
+@UseGuards(InternalServiceGuard, PlaybookAssistantActorGuard)
 export class PlaybookAssistantInternalController {
   private readonly logger = new Logger(PlaybookAssistantInternalController.name);
 
@@ -129,6 +133,42 @@ export class PlaybookAssistantInternalController {
   @ApiOperation({ summary: 'Start Playbook assistant construction' })
   startConstruction(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('id') id: string, @Body() dto: StartPlaybookAssistantConstructionDto) {
     return this.assistantService.startConstruction(id, this.requireUserId(userId), dto);
+  }
+
+  @Post('requests/:requestId/assessment')
+  @ApiOperation({ summary: 'Assess a bound Playbook assistant request' })
+  assessRequest(@Headers() headers: Record<string, string | undefined>, @Param('requestId') requestId: string) {
+    return this.assistantService.assessRequest(requestId, this.actor(headers));
+  }
+
+  @Post('clarifications/:continuationId')
+  @ApiOperation({ summary: 'Continue a bound Playbook assistant clarification' })
+  continueClarification(
+    @Headers() headers: Record<string, string | undefined>,
+    @Param('continuationId') continuationId: string,
+    @Body() dto: ContinuePlaybookClarificationDto,
+  ) {
+    return this.assistantService.continueClarification(continuationId, this.actor(headers), dto);
+  }
+
+  @Post('requests/:requestId/constructions')
+  @ApiOperation({ summary: 'Start one construction from a ready bound assistant request' })
+  startBoundConstruction(
+    @Headers() headers: Record<string, string | undefined>,
+    @Param('requestId') requestId: string,
+    @Body() dto: StartBoundPlaybookConstructionDto,
+  ) {
+    return this.assistantService.startBoundConstruction(requestId, this.actor(headers), dto.contextId);
+  }
+
+  @Post('requests/:requestId/generation')
+  @ApiOperation({ summary: 'Start one operation-owned draft Playbook generation' })
+  startGeneration(
+    @Headers() headers: Record<string, string | undefined>,
+    @Param('requestId') requestId: string,
+    @Body() dto: StartPlaybookGenerationDto,
+  ) {
+    return this.assistantService.startGeneration(requestId, this.actor(headers), dto);
   }
 
   @Get('playbooks/:id/constructions/:operationId')
@@ -309,5 +349,15 @@ export class PlaybookAssistantInternalController {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, `Missing or invalid trusted ${name} identity`);
     }
     return normalized;
+  }
+
+  private actor(headers: Record<string, string | undefined>) {
+    return {
+      tenantId: this.requireActorValue(headers['x-yellowstorm-tenant-id'], 'tenant'),
+      ownerId: this.requireUserId(headers['x-yellowstorm-user-id']),
+      agentId: this.requireActorValue(headers['x-yellowstorm-agent-id'], 'agent'),
+      conversationId: this.requireActorValue(headers['x-yellowstorm-conversation-id'], 'conversation'),
+      correlationId: this.requireActorValue(headers['x-correlation-id'], 'correlation'),
+    };
   }
 }

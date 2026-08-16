@@ -49,6 +49,8 @@ import type {
   PlaybookIntentConstructionStartResponse,
   PlaybookAssistantTurnRequest,
   PlaybookAssistantTurnResponse,
+  PlaybookAssistantHistory,
+  PlaybookAssistantAttachmentUpload,
   RequestPlaybookNodeAdvisorData,
   PlaybookNodeAdvisorResponse,
   Flow,
@@ -1406,6 +1408,37 @@ export async function runPlaybookAssistantTurn(
     { timeout: 180000 },
   );
   return response.data.data;
+}
+
+export async function getPlaybookAssistantMessages(
+  playbookId: string,
+  conversationId?: string,
+): Promise<PlaybookAssistantHistory> {
+  const response = await apiClient.get<ApiResponse<PlaybookAssistantHistory>>(
+    API_ENDPOINTS.playbooks.assistantMessages(playbookId),
+    conversationId ? { params: { conversationId } } : undefined,
+  );
+  return response.data.data;
+}
+
+export async function uploadPlaybookAssistantAttachment(
+  playbookId: string,
+  requestId: string,
+  expectedDefinitionRevision: number,
+  file: File,
+): Promise<string> {
+  const initialized = await apiClient.post<ApiResponse<PlaybookAssistantAttachmentUpload>>(
+    API_ENDPOINTS.playbooks.assistantAttachments(playbookId),
+    { requestId, expectedDefinitionRevision, mediaType: file.type, size: file.size },
+  );
+  const { attachmentId, uploadUrl } = initialized.data.data;
+  const uploadResponse = await fetch(uploadUrl, { method: 'PUT', body: file });
+  if (!uploadResponse.ok) throw new Error('Assistant image upload failed');
+  await apiClient.post(
+    API_ENDPOINTS.playbooks.assistantAttachmentConfirm(playbookId, attachmentId),
+    {},
+  );
+  return attachmentId;
 }
 
 export async function fetchPlaybookIntentConstruction(playbookId: string, constructionId: string): Promise<PlaybookIntentConstructionStartResponse> {

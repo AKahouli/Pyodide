@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildIntentEdgeOptions, buildOverviewResultNodeIds, hydrateAssistantOperationHandoff, isTaskConfiguredForExecution, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyInitialAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldEnableCanvasNodeDragging, shouldUsePlaybookAgentAssistant } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, buildOverviewResultNodeIds, hydrateAssistantOperationHandoff, isTaskConfiguredForExecution, loadLatestPlaybookAssistantHistory, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyInitialAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldEnableCanvasNodeDragging, shouldUsePlaybookMcpAssistant } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
@@ -72,11 +72,33 @@ describe('buildOverviewResultNodeIds', () => {
   });
 });
 
-describe('shouldUsePlaybookAgentAssistant', () => {
-  it('uses the dedicated agent for flagged text turns only', () => {
-    expect(shouldUsePlaybookAgentAssistant(true)).toBe(true);
-    expect(shouldUsePlaybookAgentAssistant(false)).toBe(false);
-    expect(shouldUsePlaybookAgentAssistant(true, [{ mediaType: 'image/png', data: 'encoded' }])).toBe(false);
+describe('shouldUsePlaybookMcpAssistant', () => {
+  it('uses the MCP rollout as the sole assistant routing authority', () => {
+    expect(shouldUsePlaybookMcpAssistant(true)).toBe(true);
+    expect(shouldUsePlaybookMcpAssistant(false)).toBe(false);
+  });
+});
+
+describe('loadLatestPlaybookAssistantHistory', () => {
+  it('does not let a delayed initial load overwrite a newer conversation refresh', async () => {
+    let resolveInitial!: (value: string) => void;
+    let resolveScoped!: (value: string) => void;
+    const initial = new Promise<string>((resolve) => { resolveInitial = resolve; });
+    const scoped = new Promise<string>((resolve) => { resolveScoped = resolve; });
+    const generation = { current: 0 };
+    const apply = vi.fn();
+    const setLoading = vi.fn();
+
+    const initialLoad = loadLatestPlaybookAssistantHistory(() => initial, generation, apply, setLoading);
+    const scopedLoad = loadLatestPlaybookAssistantHistory(() => scoped, generation, apply, setLoading);
+    resolveScoped('new-conversation');
+    await scopedLoad;
+    resolveInitial('old-conversation');
+    await initialLoad;
+
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(apply).toHaveBeenCalledWith('new-conversation');
+    expect(setLoading).toHaveBeenLastCalledWith(false);
   });
 });
 

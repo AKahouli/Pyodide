@@ -10,6 +10,7 @@ SECOND_BRAIN_ALLOWED_ACTIONS = frozenset({
     "get_task_details",
     "get_task_dependencies",
     "validate_playbook",
+    "start_playbook_generation",
     "start_playbook_execution",
     "list_recent_executions",
     "get_playbook_execution",

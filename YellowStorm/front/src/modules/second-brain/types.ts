@@ -1,6 +1,7 @@
 export type SecondBrainSurface =
   | 'playbook.list'
   | 'playbook.editor'
+  | 'playbook.editor.assistant'
   | 'playbook.validation'
   | 'playbook.execution.details'
   | 'playbook.execution.task';
@@ -11,6 +12,7 @@ export type SecondBrainUiTarget = {
     playbookId?: string;
     executionId?: string;
     taskId?: string;
+    operationId?: string;
   };
   effects?: Array<
     | { type: 'selectTab'; tab: string }
@@ -52,6 +54,7 @@ export type SecondBrainToolResult = {
 };
 
 export type SecondBrainTurnResponse = {
+  requestId?: string;
   conversationId: string;
   correlationId: string;
   answer: string;

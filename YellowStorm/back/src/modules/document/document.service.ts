@@ -9,6 +9,7 @@ import {
   CopyObjectCommand,
   ListObjectsV2Command,
   ListObjectsV2CommandOutput,
+  HeadObjectCommandOutput,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHash } from 'crypto';
@@ -362,9 +363,7 @@ export class DocumentService {
     this.ensureAvailable();
 
     try {
-      const response = await this.getS3Client().send(
-        new HeadObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
-      );
+      const response = await this.headObjectWithRetry(objectKey);
 
       return {
         name: objectKey.split('/').pop() || objectKey,
@@ -504,16 +503,15 @@ export class DocumentService {
     });
   }
 
-  private async headObjectWithRetry(objectKey: string): Promise<void> {
+  private async headObjectWithRetry(objectKey: string): Promise<HeadObjectCommandOutput> {
     const maxAttempts = 3;
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        await this.getS3Client().send(
+        return await this.getS3Client().send(
           new HeadObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
         );
-        return;
       } catch (error) {
         lastError = error;
         if (!this.isTransientS3Error(error) || attempt === maxAttempts) {
