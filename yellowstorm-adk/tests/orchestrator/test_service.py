@@ -939,10 +939,15 @@ def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
             object.__setattr__(self, "_n", self._n + 1)
             n = self._n
             instr = llm_request.config.system_instruction or ""
-            is_followup = "Give the real final answer" in instr
-            seen_reply = any(
-                "APPROVED THE PILOT" in (getattr(p, "text", "") or "")
+            contents_text = "\n".join(
+                getattr(p, "text", "") or ""
                 for c in llm_request.contents for p in (c.parts or []))
+            # The step's task now rides in the user turn, not system_instruction
+            # (see nodes._inject_task_turn) — look in both so the scripted model
+            # still recognizes the follow-up step.
+            is_followup = ("Give the real final answer" in instr
+                           or "Give the real final answer" in contents_text)
+            seen_reply = "APPROVED THE PILOT" in contents_text
             if is_followup:
                 yield LlmResponse(content=types.Content(role="model", parts=[
                     types.Part(text=f"REAL FINAL ANSWER — reply seen: {seen_reply}")]))
