@@ -1068,6 +1068,22 @@ async def test_inject_steps_appends_to_live_plan_with_fresh_ids():
     rm.upsert_steps.assert_awaited()                     # projected so the card grows
 
 
+def test_amend_message_embeds_plan_results_as_context():
+    """CASE C: the amend planner is given the running plan AND its results, so it
+    can paste an existing result into a new step ('email the summary') instead of
+    asking the user what the summary is."""
+    live = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="s1", kind="execute", title="Search Bitcoin",
+             status=Status.COMPLETED, result="BTC is ~$63,000"),
+        Step(id="s2", kind="execute", title="Summarize", status=Status.RUNNING),
+    ])
+    msg = svc.OrchestratorService._amend_message(live, "email that to Firas")
+    assert "AMENDING" in msg                     # framed as an amend, not a fresh plan
+    assert "BTC is ~$63,000" in msg              # the result is embedded for reuse
+    assert "email that to Firas" in msg          # the user's request is carried
+    assert "[s1]" in msg and "[s2]" in msg       # existing steps listed as done
+
+
 async def test_drive_registers_live_plan_for_converse():
     """_drive_until_quiescent must expose the live plan in self._active while the
     drive loop runs (so converse_turn can reach it), and clear it after."""

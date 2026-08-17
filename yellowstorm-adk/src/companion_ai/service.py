@@ -1113,14 +1113,21 @@ class OrchestratorService:
         object and the drive loop runs them on its next pass (Phase 2). We never
         fall back to the destructive cancel here.
         """
-        # Ephemeral planner session: plan THIS amend message alone, with no
-        # history of the running plan's earlier requests — otherwise the planner
-        # re-plans work that's already running and we'd duplicate it.
+        # Give the planner the running plan AND its results, so an amend that
+        # needs earlier output ("email the summary") can bake that output into
+        # the new step — the results of the steps it depends on are already
+        # produced, sitting in step.result. Without this the planner has no idea
+        # what "the summary" is and asks the user instead (seen live: session
+        # 3cd66578…). Still an EPHEMERAL planner session (no accumulated history),
+        # so it never re-plans the existing work — the context is given
+        # explicitly and framed as already-done.
+        live = self._active.get(session_id)
+        amend_message = self._amend_message(live, message) if live is not None else message
         plan = await self._make_plan(
-            session_id, user_id, message,
+            session_id, user_id, amend_message,
             planner_model=planner_model, planner_prompt=planner_prompt,
             plan_session=f"{session_id}_conv_{uuid.uuid4().hex[:8]}")
-        live = self._active.get(session_id)
+        live = self._active.get(session_id)  # re-check: may have finished while planning
         logger.info("[worky] converse ◄ session=%s steps=%d live=%s",
                     session_id, len(plan.steps), live is not None)
         if not plan.steps:
@@ -1147,6 +1154,33 @@ class OrchestratorService:
                 session_id, "assistant",
                 "The plan just finished — send that again and I'll start it fresh.")
         return plan
+
+    @staticmethod
+    def _amend_message(live: Plan, message: str) -> str:
+        """Frame the user's amend as CASE-C context: the running plan and every
+        result produced so far, marked ALREADY DONE, followed by the request.
+
+        The planner then writes only the NEW step(s) and can paste an existing
+        result straight into them (e.g. the summary into an email step), instead
+        of asking the user what "the summary" is."""
+        lines = []
+        for s in live.steps:
+            label = s.title or (s.description[:60] if s.description else s.id)
+            lines.append(f"[{s.id}] {label} ({s.status.value})")
+            if s.result:
+                lines.append(f"    result: {s.result}")
+        context = "\n".join(lines)
+        return (
+            "You are AMENDING a plan that is ALREADY RUNNING for the user. The "
+            "steps below already exist and their results (where produced) are "
+            "shown — they are DONE. Do NOT recreate or restate them.\n\n"
+            f"--- running plan ---\n{context}\n--- end plan ---\n\n"
+            "The user now says the following. Return ONLY the NEW step(s) needed "
+            "for it, as a normal plan. Where a new step needs an existing result, "
+            "paste that result directly into the step's description (do not refer "
+            "to it as 'the summary' — the executor can't see other steps). Give a "
+            "short, friendly `answer`.\n\n"
+            f"USER MESSAGE: {message}")
 
     async def _inject_steps(self, session_id: str, live: Plan, new_steps: List[Step]) -> int:
         """Append planner-produced steps to a LIVE, executing plan.
