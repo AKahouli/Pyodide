@@ -12,6 +12,7 @@ import { ConversationV2StreamGatewayService } from './conversation-v2-stream-gat
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { SkillService } from '@modules/skill/skill.service';
 import { ConnectorService } from '@modules/connector/connector.service';
+import { ModelsService } from '@modules/models/models.service';
 import type { ConversationV2Event } from '../types/conversation-v2.types';
 
 const config = new Map<string, unknown>([
@@ -25,8 +26,14 @@ const flush = () => new Promise((r) => setImmediate(r));
 describe('ConversationV2StreamService', () => {
   let service: ConversationV2StreamService;
   let chat$: Subject<ConversationV2Event>;
+  let grpcClient: { chat: jest.Mock };
   let gateway: { sendToUser: jest.Mock };
   let eventStore: { append: jest.Mock; tagModel: jest.Mock };
+  let modelsService: {
+    getConversationV2DefaultModel: jest.Mock;
+    getModelIdentifier: jest.Mock;
+    getDefaultModel: jest.Mock;
+  };
   let sessions: {
     getOne: jest.Mock;
     getById: jest.Mock;
@@ -44,10 +51,16 @@ describe('ConversationV2StreamService', () => {
   beforeEach(async () => {
     chat$ = new Subject();
     let seq = 0;
+    grpcClient = { chat: jest.fn(() => chat$.asObservable()) };
     gateway = { sendToUser: jest.fn() };
     eventStore = {
       append: jest.fn().mockImplementation(async () => ({ sequence: ++seq, inserted: true })),
       tagModel: jest.fn().mockResolvedValue(undefined),
+    };
+    modelsService = {
+      getConversationV2DefaultModel: jest.fn().mockResolvedValue(null),
+      getModelIdentifier: jest.fn((m: { litellmModel?: string; id?: string } | null) => m?.litellmModel || m?.id || ''),
+      getDefaultModel: jest.fn().mockResolvedValue(null),
     };
     sessions = {
       getOne: jest.fn().mockResolvedValue(pointer),
@@ -61,7 +74,7 @@ describe('ConversationV2StreamService', () => {
       providers: [
         ConversationV2StreamService,
         { provide: ConfigService, useValue: { get: (k: string) => config.get(k) } },
-        { provide: ConversationV2GrpcClientService, useValue: { chat: jest.fn(() => chat$.asObservable()) } },
+        { provide: ConversationV2GrpcClientService, useValue: grpcClient },
         { provide: ConversationV2EventStoreService, useValue: eventStore },
         { provide: ConversationV2PointerWriterService, useValue: { apply: jest.fn().mockResolvedValue(undefined) } },
         { provide: ConversationV2NameGeneratorService, useValue: { generate: jest.fn().mockResolvedValue(null) } },
@@ -81,6 +94,7 @@ describe('ConversationV2StreamService', () => {
         { provide: WorkspaceDocumentService, useValue: { createFromAiArtifact: jest.fn() } },
         { provide: SkillService, useValue: { findByIdsForGrpc: jest.fn().mockResolvedValue([]) } },
         { provide: ConnectorService, useValue: { findByIdsForGrpc: jest.fn().mockResolvedValue([]) } },
+        { provide: ModelsService, useValue: modelsService },
       ],
     }).compile();
 
@@ -225,5 +239,65 @@ describe('ConversationV2StreamService', () => {
       }),
     ).rejects.toThrow('Invalid session id 72e7924c2cc04f5f');
     expect(eventStore.append).not.toHaveBeenCalled();
+  });
+
+  describe('conversation-v2 default model resolution', () => {
+    const chatModelArg = (): unknown => grpcClient.chat.mock.calls[0][3];
+
+    it('uses the explicit per-message model when provided', async () => {
+      await service.startStream('u1', 's1', { message: 'hi', model: 'azure/gpt-4.1' });
+
+      expect(chatModelArg()).toBe('azure/gpt-4.1');
+      expect(modelsService.getConversationV2DefaultModel).not.toHaveBeenCalled();
+      expect(modelsService.getDefaultModel).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the conversation-v2 default model identifier when no model is provided', async () => {
+      modelsService.getConversationV2DefaultModel.mockResolvedValue({
+        id: 'deepseek-v4-flash',
+        litellmModel: 'deepseek/deepseek-v4-flash',
+      });
+
+      await service.startStream('u1', 's1', { message: 'hi' });
+
+      expect(modelsService.getConversationV2DefaultModel).toHaveBeenCalled();
+      expect(chatModelArg()).toBe('deepseek/deepseek-v4-flash');
+    });
+
+    it('falls back to the global default when no conversation-v2 default is set', async () => {
+      modelsService.getConversationV2DefaultModel.mockResolvedValue(null);
+      modelsService.getDefaultModel.mockResolvedValue({
+        id: 'gpt-4o-mini',
+        litellmModel: 'openai/gpt-4o-mini',
+      });
+
+      await service.startStream('u1', 's1', { message: 'hi' });
+
+      expect(chatModelArg()).toBe('openai/gpt-4o-mini');
+    });
+
+    it('degrades to the legacy behaviour (no model) when the default lookup fails', async () => {
+      modelsService.getConversationV2DefaultModel.mockRejectedValue(new Error('mongo down'));
+
+      await service.startStream('u1', 's1', { message: 'hi' });
+
+      expect(chatModelArg()).toBeUndefined();
+    });
+
+    it('tags the first assistant message with the resolved default model', async () => {
+      modelsService.getConversationV2DefaultModel.mockResolvedValue({
+        id: 'deepseek-v4-flash',
+        litellmModel: 'deepseek/deepseek-v4-flash',
+      });
+
+      await service.startStream('u1', 's1', { message: 'hi' });
+      chat$.next({
+        type: 'message',
+        payload: { event_id: 'a1', timestamp: 1, role: 'assistant', content: 'hello', attachments: [] },
+      } as ConversationV2Event);
+      await flush();
+
+      expect(eventStore.tagModel).toHaveBeenCalledWith('s1', 'a1', 'deepseek/deepseek-v4-flash');
+    });
   });
 });

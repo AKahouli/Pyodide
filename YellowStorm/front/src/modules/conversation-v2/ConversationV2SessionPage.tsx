@@ -12,7 +12,7 @@ import { PlanPanel } from './components/PlanPanel';
 import { RightPanel } from './components/RightPanel/RightPanel';
 import { useConversationV2Translation } from './translation';
 import { FileViewerSidebar, useFileViewerStore } from '@/modules/file-viewer';
-import { useModels, useDefaultModel, useModelsStore } from '@/modules/models';
+import { useModels, useDefaultModel, useConversationV2DefaultModel, useModelsStore } from '@/modules/models';
 import type { AgentEvent } from './types';
 import {
   canWriteConversationV2Session,
@@ -98,8 +98,12 @@ export default function ConversationV2SessionPage() {
   const isReadOnlyViewer = !canWrite;
   const models = useModels();
   const defaultModel = useDefaultModel();
+  const conversationV2DefaultModel = useConversationV2DefaultModel();
   const activeModel =
-    (selectedModelId && models.find((m) => m.id === selectedModelId)) || defaultModel || null;
+    (selectedModelId && models.find((m) => m.id === selectedModelId)) ||
+    conversationV2DefaultModel ||
+    defaultModel ||
+    null;
 
   const handleSend = (text: string) => {
     void sendMessage(text, activeModel?.litellmModel || undefined);

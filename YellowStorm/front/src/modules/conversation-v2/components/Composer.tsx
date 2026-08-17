@@ -29,7 +29,7 @@ import {
   PromptInputActionMenuTrigger,
 } from '@/components/ai-elements/prompt-input';
 import { RecentConnectorsMenu, ManageConnectorsDialog, SelectedConnectorsPills } from '@/modules/connector';
-import { useChefs, useDefaultModel, useModels } from '@/modules/models';
+import { useChefs, useDefaultModel, useConversationV2DefaultModel, useModels } from '@/modules/models';
 import { useConversationV2PointersStore, useConversationV2Store } from '../store';
 import { useConversationV2Translation } from '../translation';
 import { isTurnOpen } from '../utils/session-reducer';
@@ -60,6 +60,7 @@ export function Composer({ onSend }: ComposerProps) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
+  const conversationV2DefaultModel = useConversationV2DefaultModel();
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
 
   const [connectors, setConnectors] = useState<ConnectorOption[]>([]);
@@ -94,7 +95,10 @@ export function Composer({ onSend }: ComposerProps) {
   // admin default. Both for the trigger label and for what we send on the
   // wire. (The wire payload is the LiteLLM identifier, not the modelId.)
   const activeModel =
-    (selectedModelId && models.find((m) => m.id === selectedModelId)) || defaultModel || null;
+    (selectedModelId && models.find((m) => m.id === selectedModelId)) ||
+    conversationV2DefaultModel ||
+    defaultModel ||
+    null;
 
   const status: 'ready' | 'streaming' = streaming ? 'streaming' : 'ready';
   const isPaused = !streaming && pointerStatus === 'paused';

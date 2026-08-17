@@ -132,6 +132,7 @@ vi.mock('@/modules/governance/components/consumer/GovernedScopesCarousel', () =>
 vi.mock('@/modules/models', () => ({
   useChefs: () => [],
   useDefaultModel: () => null,
+  useConversationV2DefaultModel: () => null,
   useModels: () => [],
   useModelsStore: {
     getState: () => ({

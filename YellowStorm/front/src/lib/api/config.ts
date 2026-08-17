@@ -577,6 +577,8 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/admin/models/${id}`,
     setDefault: (id: string) => `/admin/models/${id}/set-default`,
     clearDefault: (id: string) => `/admin/models/${id}/clear-default`,
+    setConversationV2Default: (id: string) => `/admin/models/${id}/set-conversation-v2-default`,
+    clearConversationV2Default: (id: string) => `/admin/models/${id}/clear-conversation-v2-default`,
     sync: '/admin/models/sync',
     default: '/admin/models/default',
   },

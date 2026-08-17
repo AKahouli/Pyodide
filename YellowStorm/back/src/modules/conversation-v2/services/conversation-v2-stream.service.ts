@@ -22,6 +22,7 @@ import { SkillService } from '@modules/skill/skill.service';
 import type { IGrpcSkill } from '@modules/skill/interfaces/skill.interface';
 import { ConnectorService } from '@modules/connector/connector.service';
 import type { IGrpcConnector } from '@modules/connector/interfaces/connector.interface';
+import { ModelsService } from '@modules/models/models.service';
 import type { ConversationV2Event } from '../types/conversation-v2.types';
 
 export interface StartStreamRequest {
@@ -78,6 +79,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     private readonly workspaceDocuments: WorkspaceDocumentService,
     private readonly skillService: SkillService,
     private readonly connectorService: ConnectorService,
+    private readonly modelsService: ModelsService,
   ) {}
 
   onModuleDestroy(): void {
@@ -137,6 +139,11 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     const eventCount = (pointer as unknown as { eventCount?: number }).eventCount ?? 0;
     const isFirstMessage = eventCount === 0;
 
+    // Resolve the model actually used by this turn: an explicit per-message
+    // model wins; otherwise the conversation-v2 default (admin-configured on an
+    // existing model, reusing its config) and then the global default.
+    const model = req.model ?? (await this.resolveConversationV2DefaultModel());
+
     // Persist + emit the user's prompt before invoking gRPC, so a reloading
     // client sees what was asked. event_id comes from the client when provided
     // so the pipe frame replaces the optimistic echo instead of duplicating it.
@@ -168,7 +175,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     this.activeStreams.get(userId)!.add(sessionId);
 
     if (isFirstMessage) {
-      void this.nameGenerator.generate(req.message, req.model).then((title) => {
+      void this.nameGenerator.generate(req.message, model).then((title) => {
         if (!title) return;
         const titleEvent = {
           type: 'title',
@@ -179,7 +186,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
           },
         } as unknown as ConversationV2Event;
         // Route through the same persistence + push path as AI events.
-        this.processEvent(userId, sessionId, titleEvent, req.model, null, {
+        this.processEvent(userId, sessionId, titleEvent, model, null, {
           done: () => undefined,
         }).catch(() => undefined);
       });
@@ -197,7 +204,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     // (mirrors v1's conversation-level `selectedSkills`). Refreshed every send.
     await this.sessions.setSelectedSkills(sessionId, req.skillIds ?? []);
     await this.sessions.setSelectedConnectors(sessionId, req.connectorIds ?? []);
-    this.runGrpc(userId, grpcUserId, sessionId, aiSessionId, systemWorkspaceId, req, skills, connectors);
+    this.runGrpc(userId, grpcUserId, sessionId, aiSessionId, systemWorkspaceId, req, model, skills, connectors);
   }
 
   /**
@@ -220,6 +227,31 @@ export class ConversationV2StreamService implements OnModuleDestroy {
 
   // ===================== internals =====================
 
+  /**
+   * Resolve the conversation-v2 default model identifier (LiteLLM model name)
+   * when the client does not send one explicitly: the admin-configured
+   * conversation-v2 default (e.g. the OpenCode-provider DeepSeek V4 Flash)
+   * wins, then the global admin default, then nothing (the AI service falls
+   * back to its own default). Never throws — a lookup failure degrades to the
+   * legacy omission behaviour.
+   */
+  private async resolveConversationV2DefaultModel(): Promise<string | undefined> {
+    try {
+      const conversationV2Default =
+        await this.modelsService.getConversationV2DefaultModel();
+      const identifier = this.modelsService.getModelIdentifier(conversationV2Default);
+      if (identifier) return identifier;
+
+      const globalDefault = await this.modelsService.getDefaultModel();
+      return this.modelsService.getModelIdentifier(globalDefault) || undefined;
+    } catch (err) {
+      this.logger.warn(
+        `Failed to resolve conversation-v2 default model: ${(err as Error).message}`,
+      );
+      return undefined;
+    }
+  }
+
 
   private runGrpc(
     actorUserId: string,
@@ -228,6 +260,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     aiSessionId: string,
     systemWorkspaceId: string | null,
     req: StartStreamRequest,
+    model: string | undefined,
     skills: IGrpcSkill[],
     connectors: IGrpcConnector[],
   ): void {
@@ -312,7 +345,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
       : req.message;
 
     const subscription = this.grpcClient
-      .chat(grpcUserId, aiSessionId, gRpcMessage, req.model, req.connectorRepo, skills, connectors)
+      .chat(grpcUserId, aiSessionId, gRpcMessage, model, req.connectorRepo, skills, connectors)
       .subscribe({
         next: (event) => {
           resetIdle();
@@ -324,7 +357,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
             terminalReceived = true;
           }
           pending = pending.then(() =>
-            this.processEvent(actorUserId, sessionId, event, req.model, systemWorkspaceId, {
+            this.processEvent(actorUserId, sessionId, event, model, systemWorkspaceId, {
               done: () => undefined,
               setFirstAssistantId: (id) => {
                 firstAssistantMessageEventId = id;
