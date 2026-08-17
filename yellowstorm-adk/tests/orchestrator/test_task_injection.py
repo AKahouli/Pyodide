@@ -1,9 +1,9 @@
 """The task is delivered as a user turn, not baked into the system prompt.
 
-Covers nodes._inject_task_turn: splice the step's task in right after the shared
-kickoff (index 1) — early, not last, so it never out-shouts terminal flow
-signals — while preserving every existing turn, including (on a resume) the
-email reply that itself arrives as a user turn.
+Covers nodes._inject_task_turn: the task goes in EARLY (never last, so it can't
+out-shout terminal flow signals). The shared filler kickoff ("run the plan") is
+replaced by the task; a real front turn (a resume's email reply) is kept, with
+the task spliced right after it.
 """
 import asyncio
 from types import SimpleNamespace as NS
@@ -28,36 +28,37 @@ def _user_texts(req):
             if c.role == "user" and c.parts[0].text is not None]
 
 
-def test_task_spliced_after_kickoff_not_last():
+def test_kickoff_sentinel_replaced_by_task():
     cb = nodes._inject_task_turn("DO THE TASK")
     req = NS(contents=[_text("run the plan"), _model_call("send_email"),
                        _tool_response({"ok": 1})])
     asyncio.run(cb(None, req))
-    # task sits right after the kickoff — NOT last, so tool history (and any
-    # terminal "end your turn" message) stays more recent than it.
-    assert req.contents[0].parts[0].text == "run the plan"
-    assert req.contents[1].parts[0].text == "DO THE TASK"
+    # filler kickoff gone; task takes its place at the front — and is NOT last,
+    # so tool history (and any terminal "end your turn") stays more recent.
+    assert _user_texts(req) == ["DO THE TASK"]
+    assert req.contents[0].parts[0].text == "DO THE TASK"
     assert req.contents[-1].parts[0].function_response == {"ok": 1}
 
 
 def test_resume_reply_is_not_clobbered():
-    # On resume the email reply arrives as a user turn at the front — it must
-    # survive, with the task spliced after it, never replacing it.
+    # On resume the email reply arrives as a user turn at the front — it isn't a
+    # sentinel, so it must survive, with the task spliced right after it.
     cb = nodes._inject_task_turn("DO THE TASK")
     req = NS(contents=[_text("Hamdi says: APPROVED.")])
     asyncio.run(cb(None, req))
     assert _user_texts(req) == ["Hamdi says: APPROVED.", "DO THE TASK"]
 
 
-def test_idempotent_when_task_already_present():
+def test_idempotent_on_resume_branch():
+    # A real front turn already followed by the task must not gain a second copy.
     cb = nodes._inject_task_turn("DO THE TASK")
-    req = NS(contents=[_text("run the plan"), _text("DO THE TASK")])
+    req = NS(contents=[_text("Hamdi says: APPROVED."), _text("DO THE TASK")])
     asyncio.run(cb(None, req))
-    assert _user_texts(req) == ["run the plan", "DO THE TASK"]  # not doubled
+    assert _user_texts(req) == ["Hamdi says: APPROVED.", "DO THE TASK"]  # not doubled
 
 
 if __name__ == "__main__":
-    test_task_spliced_after_kickoff_not_last()
+    test_kickoff_sentinel_replaced_by_task()
     test_resume_reply_is_not_clobbered()
-    test_idempotent_when_task_already_present()
+    test_idempotent_on_resume_branch()
     print("ok")

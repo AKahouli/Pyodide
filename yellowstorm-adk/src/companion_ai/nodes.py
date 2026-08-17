@@ -147,36 +147,52 @@ def _stop_after_n_calls(limit: int, model_name: str, *,
     return _cb
 
 
+# The filler messages the backend passes as the workflow's shared new_message
+# (see service.py _drive/resume). They carry no task — the real per-step task is
+# injected below — so a step-agent is better off never seeing them. Kept exact so
+# a real email reply (which a resumed step gets as its front user turn) is never
+# mistaken for one.
+_KICKOFF_SENTINELS = frozenset({"run the plan", "continue"})
+
+
 def _inject_task_turn(task_text: str):
     """Deliver the step's task as a USER turn instead of baking it into the
     system prompt.
 
     ADK hands the whole workflow ONE shared kickoff message ("run the plan"), so
     a step's own task can normally only reach it through system_instruction. We
-    splice it in right after that kickoff (index 1) — a distinct user turn, which
-    lets the big rules block stay identical across every step (cacheable) — but
-    NOT at the end. A task pinned last is re-read as the most-recent instruction
-    every round, so it out-shouts terminal flow signals: seen live, a persona
-    step that had already sent its mail and created its await_reply step (whose
-    tool result says "end your turn now") kept polling the mailbox for a reply
-    because the appended task ("confirm availability and propose a time") stayed
+    put it in as a distinct user turn — which lets the big rules block stay
+    identical across every step (cacheable) — placed EARLY, never last. A task
+    pinned last is re-read as the most-recent instruction every round and
+    out-shouts terminal flow signals: seen live, a persona step that had already
+    sent its mail and created its await_reply step (whose tool result says "end
+    your turn now") kept polling the mailbox because the appended task stayed
     more recent than that stop. Kept early, the growing tool history — including
     those stop messages — stays more recent than the task.
 
-    Inserted, never substituted: on a resume the incoming email reply is itself a
-    user turn at the front, so replacing "the kickoff" would destroy the reply.
-    Re-applied every model call (the splice lives only on the transient request,
-    never in session state), and idempotent — skipped when it is already there.
+    If the front turn is the shared filler kickoff, we REPLACE it (no reason to
+    keep noise the model has to reconcile). Otherwise the front turn is real —
+    on a resume it's the incoming email reply — so we keep it and splice the task
+    in right after. Re-applied every model call (the splice lives only on the
+    transient request, never in session state) and idempotent.
     """
     async def _cb(callback_context, llm_request):
         contents = list(llm_request.contents or [])
-        second = contents[1] if len(contents) > 1 else None
-        already = (second is not None and getattr(second, "role", None) == "user"
-                   and second.parts and getattr(second.parts[0], "text", None) == task_text)
-        if not already:
-            contents.insert(1, genai_types.Content(
-                role="user", parts=[genai_types.Part(text=task_text)]))
-            llm_request.contents = contents
+        task = genai_types.Content(
+            role="user", parts=[genai_types.Part(text=task_text)])
+
+        def user_text(c):
+            return (c.parts[0].text if getattr(c, "role", None) == "user"
+                    and c.parts and getattr(c.parts[0], "text", None) is not None else None)
+
+        first_txt = user_text(contents[0]) if contents else None
+        if first_txt in _KICKOFF_SENTINELS:
+            contents[0] = task                       # drop the filler, task takes its place
+        elif not (len(contents) > 1 and user_text(contents[1]) == task_text):
+            contents.insert(1, task)                 # keep the real front turn, task right after
+        else:
+            return None                              # already spliced
+        llm_request.contents = contents
         return None
     return _cb
 
@@ -198,7 +214,7 @@ EXECUTOR_INSTRUCTION = """{identity}
 {description}
 
 You are not told the plan's wider goal or its other steps, on purpose — the
-planner already wrote your task above as a complete, standalone instruction,
+planner already wrote your task as a complete, standalone instruction,
 and every other step in this plan has the SAME toolset you do (including
 things like sending email). Reaching for one of those tools because it looks
 useful for the overall task is another step's job, not yours.
@@ -536,11 +552,13 @@ def make_llm_node_factory(
             )
         elif step.is_persona:
             persona_preamble = (
-                f"You represent {step.assignee_name} — a real person at this company."
-                + (f" {step.assignee_role}" if step.assignee_role else "")
+                f"You are an assistant acting for {step.assignee_name} — a real "
+                "person at this company. You never answer in their place; your "
+                "job is to reach them and get their real words."
+                + (f" Their role: {step.assignee_role}" if step.assignee_role else "")
                 + "\n\n"
-                f"Your task below is addressed TO {step.assignee_name}, and is for "
-                f"them to answer — not something you answer as them. That holds "
+                f"The task below is addressed to {step.assignee_name} and is theirs "
+                f"to answer — not something you answer as them. That holds "
                 "however easy the answer looks: if it reads as a question about "
                 "what they want, have, or plan, you do not know that, and "
                 "\"nothing\" or \"none\" is still THEIR answer to give, never "
