@@ -28,10 +28,6 @@ function normalizeStatus(value: unknown): ActivityItem['status'] {
 function getActivityItems(components: readonly MessageComponent[]): ActivityItem[] {
   const items: ActivityItem[] = [];
   let hasReasoning = false;
-  const toolLabels = new Set(components
-    .filter((component) => component.type === 'toolInfo')
-    .map((component) => safeSummary(component.data.title)?.toLocaleLowerCase())
-    .filter((label): label is string => Boolean(label)));
 
   components.forEach((component, componentIndex) => {
     if (component.type === 'reasoning') {
@@ -43,11 +39,10 @@ function getActivityItems(components: readonly MessageComponent[]): ActivityItem
     }
 
     if (component.type === 'chainOfThought') {
-      const steps = Array.isArray(component.data.steps) ? component.data.steps : [];
-      steps.forEach((step, stepIndex) => {
-        const label = safeSummary(step);
-        if (label && !toolLabels.has(label.toLocaleLowerCase())) items.push({ key: `thought-${componentIndex}-${stepIndex}`, kind: 'reasoning', label, status: 'completed' });
-      });
+      if (!hasReasoning) {
+        items.push({ key: 'reasoning', kind: 'reasoning', label: '', status: 'running' });
+        hasReasoning = true;
+      }
       return;
     }
 

@@ -24,6 +24,31 @@ describe('PlaybookIntentBlueprintRepairService', () => {
       outputPorts: [{ id: 'fallback', name: 'Fallback', artifactKind: 'data', required: true }],
       routerConfig: { outputLabels: ['fallback'], defaultLabel: 'fallback' },
     },
+    {
+      key: 'iterator-template',
+      nodeType: 'iterator',
+      enabled: true,
+      recommendedAgentTypeSlug: null,
+      iteratorConfig: { source: 'items', mode: 'item' },
+      inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: true }],
+      outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
+    },
+    {
+      key: 'generic-step',
+      nodeType: 'agent',
+      enabled: true,
+      recommendedAgentTypeSlug: null,
+      inputPorts: [],
+      outputPorts: [],
+    },
+    {
+      key: 'context-step',
+      nodeType: 'agent',
+      enabled: true,
+      recommendedAgentTypeSlug: null,
+      inputPorts: [{ id: 'context', name: 'Context', artifactKind: 'data', required: true }],
+      outputPorts: [],
+    },
   ];
 
   function repair(blueprint: PlaybookIntentBlueprint) {
@@ -135,5 +160,150 @@ describe('PlaybookIntentBlueprintRepairService', () => {
     });
 
     expect(result.blueprint.nodes[0].inputPorts).toEqual([{ id: 'input-data', name: 'A', artifactKind: 'data', required: true }]);
+  });
+
+  it('binds a unique required blueprint port on an iterator body entry step to the current item', () => {
+    const result = repair({
+      title: 'Iterate',
+      summary: 'Iterate',
+      nodes: [{
+        ref: 'iterator',
+        label: 'Iterator',
+        purpose: 'Iterate',
+        nodeTemplateKey: 'iterator-template',
+        inputPorts: [{ id: 'items', artifactKind: 'data', required: true }],
+        iteratorBody: {
+          steps: [{
+            ref: 'extract',
+            title: 'Extract',
+            nodeTemplateKey: 'generic-step',
+            inputPorts: [{ id: 'current-cv', name: 'CV courant', artifactKind: 'data', required: true }],
+          }],
+          edges: [],
+        },
+      }],
+      links: [],
+    });
+
+    expect(result.blueprint.bindings).toContainEqual({
+      sourceKind: 'state',
+      statePath: 'inputs._item',
+      targetIteratorRef: 'iterator',
+      targetRef: 'extract',
+      targetPort: 'current-cv',
+    });
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'repair_iterator_current_item_binding_added',
+      itemId: 'extract',
+      severity: 'info',
+    }));
+    expect(result.repairSummary).toContain('Bound iterator current item to extract.current-cv.');
+  });
+
+  it('preserves explicit bindings and port-aware links targeting iterator entry inputs', () => {
+    const result = repair({
+      title: 'Iterate',
+      summary: 'Iterate',
+      nodes: [{
+        ref: 'iterator',
+        label: 'Iterator',
+        purpose: 'Iterate',
+        nodeTemplateKey: 'iterator-template',
+        inputPorts: [{ id: 'items', artifactKind: 'data', required: true }],
+        iteratorBody: {
+          steps: [
+            { ref: 'bound', title: 'Bound', nodeTemplateKey: 'generic-step', inputPorts: [{ id: 'item', artifactKind: 'data', required: true }] },
+            { ref: 'linked', title: 'Linked', nodeTemplateKey: 'generic-step', inputPorts: [{ id: 'item', artifactKind: 'data', required: true }] },
+          ],
+          edges: [],
+        },
+      }, {
+        ref: 'source',
+        label: 'Source',
+        purpose: 'Source',
+        nodeTemplateKey: 'generic-step',
+        outputPorts: [{ id: 'data', artifactKind: 'data' }],
+      }],
+      links: [{ sourceRef: 'source', targetIteratorRef: 'iterator', targetRef: 'linked', sourceOutputPortId: 'data', targetInputPortId: 'item' }],
+      bindings: [{ sourceKind: 'constant', constantValue: { id: 1 }, targetIteratorRef: 'iterator', targetRef: 'bound', targetPort: 'item' }],
+    });
+
+    expect(result.blueprint.bindings).toHaveLength(1);
+    expect(result.blueprint.bindings?.[0]).toEqual(expect.objectContaining({ sourceKind: 'constant', targetRef: 'bound' }));
+    expect(result.diagnostics).not.toContainEqual(expect.objectContaining({ code: 'repair_iterator_current_item_binding_added' }));
+  });
+
+  it('does not guess when current-item targets are ambiguous or incompatible', () => {
+    const result = repair({
+      title: 'Iterate',
+      summary: 'Iterate',
+      nodes: [{
+        ref: 'iterator',
+        label: 'Iterator',
+        purpose: 'Iterate',
+        nodeTemplateKey: 'iterator-template',
+        inputPorts: [{ id: 'items', artifactKind: 'data', required: true }],
+        iteratorBody: {
+          steps: [
+            {
+              ref: 'ambiguous',
+              title: 'Ambiguous',
+              nodeTemplateKey: 'generic-step',
+              inputPorts: [
+                { id: 'first', artifactKind: 'data', required: true },
+                { id: 'second', artifactKind: 'data', required: true },
+              ],
+            },
+            {
+              ref: 'incompatible',
+              title: 'Incompatible',
+              nodeTemplateKey: 'generic-step',
+              inputPorts: [{ id: 'image', artifactKind: 'image', required: true }],
+            },
+          ],
+          edges: [],
+        },
+      }],
+      links: [],
+    });
+
+    expect(result.blueprint.bindings).toBeUndefined();
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'repair_iterator_current_item_target_ambiguous',
+        metadata: expect.objectContaining({ candidatePortIds: ['first', 'second'] }),
+      }),
+      expect.objectContaining({
+        code: 'repair_iterator_current_item_target_incompatible',
+        metadata: expect.objectContaining({ candidatePortIds: ['image'] }),
+      }),
+    ]));
+  });
+
+  it('does not bind optional, template-owned, or non-entry inputs', () => {
+    const result = repair({
+      title: 'Iterate',
+      summary: 'Iterate',
+      nodes: [{
+        ref: 'iterator',
+        label: 'Iterator',
+        purpose: 'Iterate',
+        nodeTemplateKey: 'iterator-template',
+        inputPorts: [{ id: 'items', artifactKind: 'data', required: true }],
+        iteratorBody: {
+          steps: [
+            { ref: 'optional', title: 'Optional', nodeTemplateKey: 'generic-step', inputPorts: [{ id: 'item', artifactKind: 'data' }] },
+            { ref: 'template-owned', title: 'Context', nodeTemplateKey: 'context-step', inputPorts: [{ id: 'context', artifactKind: 'data', required: true }] },
+            { ref: 'entry', title: 'Entry', nodeTemplateKey: 'generic-step' },
+            { ref: 'downstream', title: 'Downstream', nodeTemplateKey: 'generic-step', inputPorts: [{ id: 'item', artifactKind: 'data', required: true }] },
+          ],
+          edges: [{ sourceRef: 'entry', targetRef: 'downstream' }],
+        },
+      }],
+      links: [],
+    });
+
+    expect(result.blueprint.bindings).toBeUndefined();
+    expect(result.diagnostics).not.toContainEqual(expect.objectContaining({ code: 'repair_iterator_current_item_binding_added' }));
   });
 });

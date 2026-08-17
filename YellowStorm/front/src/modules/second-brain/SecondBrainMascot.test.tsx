@@ -1,10 +1,12 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SECOND_BRAIN_PANEL_WIDTH_STORAGE_KEY, SecondBrainMascot } from './SecondBrainMascot';
+import { SECOND_BRAIN_PANEL_WIDTH_STORAGE_KEY, SecondBrainMascot, shouldShowSecondBrainMascot } from './SecondBrainMascot';
 
 const setDesignerOpen = vi.fn();
 let designerOpen = false;
+let pageMode: 'design' | 'run' = 'design';
+let currentExecution: { playbookId: string; status: string } | null = null;
 
 const secondBrainMock = vi.hoisted(() => ({
   send: vi.fn().mockResolvedValue(true),
@@ -44,17 +46,19 @@ function completedMessage() {
 vi.mock('@/modules/playbook', () => ({
   usePlaybookStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
     isDirty: false,
-    currentPlaybook: {
-      id: 'p1',
-      name: 'Lead qualification',
-      tasks: [{ id: 'task-1', title: 'Score lead' }],
-      nodes: [],
-    },
-  }),
+      currentPlaybook: {
+        id: 'p1',
+        name: 'Lead qualification',
+        tasks: [{ id: 'task-1', title: 'Score lead' }],
+        nodes: [],
+      },
+      currentExecution,
+    }),
   usePlaybookUiStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
-    selectedStepId: 'task-1',
-    designerOpen,
-    setDesignerOpen,
+      selectedStepId: 'task-1',
+      designerOpen,
+      setDesignerOpen,
+      pageMode,
   }),
 }));
 
@@ -130,6 +134,8 @@ describe('SecondBrainMascot', () => {
     vi.clearAllMocks();
     localStorage.removeItem(SECOND_BRAIN_PANEL_WIDTH_STORAGE_KEY);
     designerOpen = false;
+    pageMode = 'design';
+    currentExecution = null;
     setViewport(1440);
     secondBrainMock.current = {
       conversationId: 'conversation-1',
@@ -222,5 +228,16 @@ describe('SecondBrainMascot', () => {
 
     expect(setDesignerOpen).toHaveBeenCalledWith(false);
     expect(screen.getByRole('complementary', { name: 'Yellowmind' })).toBeInTheDocument();
+  });
+
+  it('hides the launcher on a playbook monitor or active run', () => {
+    expect(shouldShowSecondBrainMascot(true, 'run', undefined)).toBe(false);
+    expect(shouldShowSecondBrainMascot(true, 'design', 'running')).toBe(false);
+    expect(shouldShowSecondBrainMascot(true, 'design', undefined)).toBe(true);
+    expect(shouldShowSecondBrainMascot(false, 'run', 'running')).toBe(true);
+
+    pageMode = 'run';
+    renderMascot();
+    expect(screen.queryByRole('button', { name: 'Open Yellowmind' })).not.toBeInTheDocument();
   });
 });

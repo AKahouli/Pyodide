@@ -41,6 +41,17 @@ function makeContext(): PlaybookIntentAnalysisContext {
       outputPorts: [],
       recommendedAgentTypeSlug: null,
       enabled: true,
+    }, {
+      id: 'tpl-iterator',
+      key: 'iterator',
+      nodeType: 'iterator',
+      title: 'Iterator',
+      category: 'control',
+      inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: true }],
+      outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
+      recommendedAgentTypeSlug: null,
+      iteratorConfig: { source: 'items', mode: 'item' },
+      enabled: true,
     }],
   };
 }
@@ -87,5 +98,56 @@ describe('PlaybookIntentBlueprintCompilerService', () => {
     expect(streamed).toEqual(immediate);
     expect(immediate).toHaveLength(1);
     expect(immediate[0]).toEqual(expect.objectContaining({ kind: 'workflow_plan' }));
+  });
+
+  it('repairs a malformed iterator current-item binding into a scoped state binding', () => {
+    const compiler = new PlaybookIntentBlueprintCompilerService();
+    jest.spyOn((compiler as any).logger, 'warn').mockImplementation(() => undefined);
+    const context = makeContext();
+    const raw = JSON.stringify({
+      blueprint: {
+        version: 2,
+        title: 'CV scoring',
+        summary: 'Score each CV',
+        nodes: [{
+          ref: 'iterate-cvs',
+          label: 'Iterate CVs',
+          purpose: 'Process each CV',
+          nodeTemplateKey: 'iterator',
+          inputPorts: [{ id: 'items', artifactKind: 'data', required: true }],
+          iteratorBody: {
+            steps: [{
+              ref: 'extract-cv',
+              title: 'Extract CV',
+              nodeTemplateKey: 'generic.agent_step',
+              inputPorts: [{ id: 'current-cv', name: 'CV courant', artifactKind: 'data', required: true }],
+            }],
+            edges: [],
+            bindings: [{
+              sourceKind: 'expression',
+              expression: '',
+              targetRef: 'extract-cv',
+              targetPort: 'current-cv',
+            }],
+          },
+        }],
+        links: [],
+      },
+    });
+
+    const suggestions = compiler.compile({ raw, context });
+    const workflowPlan = suggestions[0];
+
+    expect(workflowPlan).toEqual(expect.objectContaining({ kind: 'workflow_plan' }));
+    if (!workflowPlan || workflowPlan.kind !== 'workflow_plan') throw new Error('Expected workflow plan');
+    expect(workflowPlan.changes).toContainEqual(expect.objectContaining({
+      type: 'create_data_binding',
+      sourceKind: 'state',
+      statePath: 'inputs._item',
+      targetIteratorNodeRef: 'iterate-cvs',
+      targetNodeRef: 'extract-cv',
+      targetPort: 'current-cv',
+    }));
+    expect(workflowPlan.repairSummary).toContain('Bound iterator current item to extract-cv.current-cv.');
   });
 });

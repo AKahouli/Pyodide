@@ -26,15 +26,26 @@ const SECOND_BRAIN_PANEL_DEFAULT_WIDTH = 400;
 const SECOND_BRAIN_PANEL_MIN_WIDTH = 336;
 const SECOND_BRAIN_PANEL_MAX_WIDTH_RATIO = 0.5;
 
+export function shouldShowSecondBrainMascot(
+  isPlaybookRoute: boolean,
+  pageMode: 'design' | 'run',
+  executionStatus: string | undefined,
+): boolean {
+  if (!isPlaybookRoute) return true;
+  return pageMode !== 'run' && !['queued', 'running'].includes(executionStatus ?? '');
+}
+
 export function SecondBrainMascot() {
   const { t, language } = useModuleTranslation('second-brain');
   const location = useLocation();
   const navigate = useNavigate();
   const isDirty = usePlaybookStore((state) => state.isDirty);
   const currentPlaybook = usePlaybookStore((state) => state.currentPlaybook);
+  const currentExecution = usePlaybookStore((state) => state.currentExecution);
   const selectedTaskId = usePlaybookUiStore((state) => state.selectedStepId);
   const designerOpen = usePlaybookUiStore((state) => state.designerOpen);
   const setDesignerOpen = usePlaybookUiStore((state) => state.setDesignerOpen);
+  const pageMode = usePlaybookUiStore((state) => state.pageMode);
   const useDrawer = useCompactAssistantLayout();
   const [open, setOpen] = React.useState(false);
   const [input, setInput] = React.useState('');
@@ -119,6 +130,11 @@ export function SecondBrainMascot() {
 
   const routePlaybookId = pageContext.entity?.type === 'playbook' ? pageContext.entity.id : undefined;
   const contextPlaybook = currentPlaybook?.id === routePlaybookId ? currentPlaybook : null;
+  const showMascot = shouldShowSecondBrainMascot(
+    Boolean(routePlaybookId),
+    pageMode,
+    currentExecution?.playbookId === routePlaybookId ? currentExecution?.status : undefined,
+  );
   const selectedTask = contextPlaybook?.tasks.find((task) => task.id === selectedTaskId)
     ?? contextPlaybook?.nodes?.find((node) => node.id === selectedTaskId);
 
@@ -220,6 +236,8 @@ export function SecondBrainMascot() {
       </footer>
     </>
   );
+
+  if (!showMascot) return null;
 
   return (
     <>

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildIntentEdgeOptions, buildOverviewResultNodeIds, hydrateAssistantOperationHandoff, isTaskConfiguredForExecution, loadLatestPlaybookAssistantHistory, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyInitialAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldEnableCanvasNodeDragging, shouldUsePlaybookMcpAssistant } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, buildOverviewResultNodeIds, getScopedConstructionDiagnostics, hydrateAssistantOperationHandoff, isPlaybookRouteCurrent, isTaskConfiguredForExecution, loadLatestPlaybookAssistantHistory, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyInitialAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldClearConstructionDiagnostics, shouldEnableCanvasNodeDragging, shouldRenderPlaybookAssistant, shouldUsePlaybookMcpAssistant, updateScopedConstructionDiagnostics } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
@@ -55,6 +55,18 @@ describe('shouldEnableCanvasNodeDragging', () => {
     expect(shouldEnableCanvasNodeDragging(true, false, 'full')).toBe(false);
     expect(shouldEnableCanvasNodeDragging(false, true, 'full')).toBe(false);
     expect(shouldEnableCanvasNodeDragging(false, false, 'focus')).toBe(false);
+  });
+});
+
+describe('shouldRenderPlaybookAssistant', () => {
+  it('hides the design assistant in monitor view and while an execution is live', () => {
+    expect(shouldRenderPlaybookAssistant('design', false, false)).toBe(true);
+    expect(shouldRenderPlaybookAssistant('run', false, false)).toBe(false);
+    expect(shouldRenderPlaybookAssistant('design', true, false)).toBe(false);
+  });
+
+  it('keeps the human response surface available for an interrupted execution', () => {
+    expect(shouldRenderPlaybookAssistant('run', true, true)).toBe(true);
   });
 });
 
@@ -288,6 +300,51 @@ describe('shouldAutoLayoutAfterConstruction', () => {
 
   it('returns false for repeated completed status updates', () => {
     expect(shouldAutoLayoutAfterConstruction('completed', 'completed')).toBe(false);
+  });
+});
+
+describe('construction diagnostics lifecycle', () => {
+  const diagnostics = [{ code: 'validator_rule_2' }] as any;
+
+  it('never exposes diagnostics from another playbook', () => {
+    expect(getScopedConstructionDiagnostics('playbook-1', 'playbook-2', diagnostics)).toEqual([]);
+    expect(getScopedConstructionDiagnostics('playbook-1', 'playbook-1', diagnostics)).toBe(diagnostics);
+  });
+
+  it('ignores a late diagnostic event from the previous playbook', () => {
+    const playbookBDiagnostics = [{ code: 'validator_rule_7' }] as any;
+    const stateForPlaybookB = updateScopedConstructionDiagnostics(
+      { ownerPlaybookId: 'playbook-2', diagnostics: [] },
+      'playbook-2',
+      playbookBDiagnostics,
+    );
+
+    expect(updateScopedConstructionDiagnostics(
+      stateForPlaybookB,
+      'playbook-1',
+      diagnostics,
+    )).toBe(stateForPlaybookB);
+    expect(stateForPlaybookB.diagnostics).toBe(playbookBDiagnostics);
+  });
+
+  it('rejects advisor preview completion after navigation to another playbook', () => {
+    expect(isPlaybookRouteCurrent('playbook-1', 'playbook-2')).toBe(false);
+    expect(isPlaybookRouteCurrent('playbook-2', 'playbook-2')).toBe(true);
+  });
+
+  it('clears settled diagnostics after a later local edit', () => {
+    expect(shouldClearConstructionDiagnostics('completed', true, 'idle')).toBe(true);
+    expect(shouldClearConstructionDiagnostics('completed', false, 'idle')).toBe(false);
+  });
+
+  it('keeps diagnostics while an advisor preview awaits a decision', () => {
+    expect(shouldClearConstructionDiagnostics('completed', true, 'ready')).toBe(false);
+    expect(shouldClearConstructionDiagnostics('streaming', true, 'streaming')).toBe(false);
+  });
+
+  it('clears diagnostics from failed and cancelled constructions', () => {
+    expect(shouldClearConstructionDiagnostics('failed', false, 'idle')).toBe(true);
+    expect(shouldClearConstructionDiagnostics('cancelled', false, 'idle')).toBe(true);
   });
 });
 

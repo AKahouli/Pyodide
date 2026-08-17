@@ -843,6 +843,15 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     expect(panel.style.maxWidth).toBe('100vw');
   });
 
+  it('clears the canvas sidebar width when unmounted', () => {
+    const onWidthChange = vi.fn();
+    const { unmount } = render(<PlaybookDesignerPanel playbookId="playbook-1" onWidthChange={onWidthChange} />);
+
+    unmount();
+
+    expect(onWidthChange).toHaveBeenLastCalledWith(0);
+  });
+
   it('contains keyboard interaction in the mobile Designer dialog', async () => {
     const matchMediaSpy = vi.spyOn(window, 'matchMedia').mockImplementation(() => ({
       matches: true,

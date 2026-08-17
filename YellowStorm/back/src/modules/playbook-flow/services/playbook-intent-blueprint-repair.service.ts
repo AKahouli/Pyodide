@@ -50,7 +50,104 @@ export class PlaybookIntentBlueprintRepairService {
       this.repairLink(link, `links.${index}`, diagnostics, repairSummary);
     });
 
+    this.repairIteratorCurrentItemBindings(blueprint, templates, diagnostics, repairSummary);
+
     return { blueprint, diagnostics, repairSummary };
+  }
+
+  private repairIteratorCurrentItemBindings(
+    blueprint: PlaybookIntentBlueprint,
+    templates: Map<string, BuilderNodeTemplate>,
+    diagnostics: PlaybookIntentDiagnostic[],
+    repairSummary: string[],
+  ): void {
+    const occupiedTargets = new Set<string>();
+    for (const binding of blueprint.bindings || []) {
+      occupiedTargets.add(this.scopedTargetKey(binding.targetIteratorRef, binding.targetRef, binding.targetPort));
+    }
+    for (const link of blueprint.links) {
+      if (!link.targetInputPortId) continue;
+      occupiedTargets.add(this.scopedTargetKey(link.targetIteratorRef, link.targetRef, link.targetInputPortId));
+    }
+
+    for (const [nodeIndex, iterator] of blueprint.nodes.entries()) {
+      const iteratorTemplate = templates.get(iterator.nodeTemplateKey);
+      if (!iterator.iteratorBody || !iteratorTemplate?.iteratorConfig) continue;
+
+      const itemsPort = iterator.inputPorts?.find((port) => port.id === 'items');
+      if (!itemsPort) continue;
+
+      const nonEntryRefs = new Set(iterator.iteratorBody.edges.map((edge) => edge.targetRef));
+      for (const [stepIndex, step] of iterator.iteratorBody.steps.entries()) {
+        if (nonEntryRefs.has(step.ref)) continue;
+
+        const stepTemplatePortIds = new Set(
+          (templates.get(step.nodeTemplateKey)?.inputPorts || []).map((port) => port.id),
+        );
+        const unboundRequiredPorts = (step.inputPorts || []).filter((port) =>
+          port.required === true
+          && !stepTemplatePortIds.has(port.id)
+          && !occupiedTargets.has(this.scopedTargetKey(iterator.ref, step.ref, port.id)),
+        );
+        if (unboundRequiredPorts.length === 0) continue;
+
+        const candidates = unboundRequiredPorts.filter(
+          (port) => port.artifactKind === itemsPort.artifactKind,
+        );
+        const path = `nodes.${nodeIndex}.iteratorBody.steps.${stepIndex}.inputPorts`;
+        if (candidates.length > 1) {
+          this.recordWarning(
+            diagnostics,
+            'repair_iterator_current_item_target_ambiguous',
+            path,
+            step.ref,
+            `Could not infer the current-item input for ${step.ref}: multiple compatible required ports are unbound.`,
+            { iteratorRef: iterator.ref, candidatePortIds: candidates.map((port) => port.id) },
+          );
+          continue;
+        }
+        if (candidates.length === 0) {
+          this.recordWarning(
+            diagnostics,
+            'repair_iterator_current_item_target_incompatible',
+            path,
+            step.ref,
+            `Could not infer the current-item input for ${step.ref}: no unbound required port matches the iterator items artifact kind.`,
+            {
+              iteratorRef: iterator.ref,
+              iteratorArtifactKind: itemsPort.artifactKind,
+              candidatePortIds: unboundRequiredPorts.map((port) => port.id),
+            },
+          );
+          continue;
+        }
+
+        const targetPort = candidates[0].id;
+        blueprint.bindings = [
+          ...(blueprint.bindings || []),
+          {
+            targetRef: step.ref,
+            targetIteratorRef: iterator.ref,
+            targetPort,
+            sourceKind: 'state',
+            statePath: 'inputs._item',
+          },
+        ];
+        occupiedTargets.add(this.scopedTargetKey(iterator.ref, step.ref, targetPort));
+        this.recordRepair(
+          diagnostics,
+          repairSummary,
+          'repair_iterator_current_item_binding_added',
+          `${path}.${targetPort}`,
+          step.ref,
+          `Bound iterator current item to ${step.ref}.${targetPort}.`,
+        );
+      }
+    }
+  }
+
+  private scopedTargetKey(iteratorRef: string | null | undefined, targetRef: string, targetPort: string): string {
+    return `${iteratorRef || ''}::${targetRef}::${targetPort}`;
   }
 
   private repairNode(
@@ -199,5 +296,16 @@ export class PlaybookIntentBlueprintRepairService {
   ): void {
     repairSummary.push(message);
     diagnostics.push({ severity: 'info', stage: 'repair', code, path, itemId, message, repairable: false });
+  }
+
+  private recordWarning(
+    diagnostics: PlaybookIntentDiagnostic[],
+    code: string,
+    path: string,
+    itemId: string,
+    message: string,
+    metadata: Record<string, unknown>,
+  ): void {
+    diagnostics.push({ severity: 'warning', stage: 'repair', code, path, itemId, message, repairable: true, metadata });
   }
 }

@@ -14,7 +14,7 @@ describe('SecondBrainActivity', () => {
       { id: 'tool', type: 'toolInfo', data: { title: 'validate_playbook', status: 'completed', params: '{"password":"hidden"}', resultJson: '{"secret":"hidden"}' } },
     ]} />);
 
-    expect(screen.getByText('Review Playbook structure')).toBeInTheDocument();
+    expect(screen.queryByText('Review Playbook structure')).not.toBeInTheDocument();
     expect(screen.getAllByText('validate playbook')).toHaveLength(1);
     expect(screen.queryByText(/private chain of thought/)).not.toBeInTheDocument();
     expect(screen.queryByText(/token=|password|resultJson|secret/)).not.toBeInTheDocument();

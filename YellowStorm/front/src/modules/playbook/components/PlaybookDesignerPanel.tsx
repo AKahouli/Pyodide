@@ -618,6 +618,10 @@ export function PlaybookDesignerPanel({
     onWidthChange?.(designerOpen ? sidebarWidth : 0);
   }, [designerOpen, onWidthChange, sidebarWidth]);
 
+  useEffect(() => () => {
+    onWidthChange?.(0);
+  }, [onWidthChange]);
+
   const getCurrentDesignAnswer = useCallback(() => {
     if (selectedDesignChoice === '__resource__' && selectedDesignResource) return getResourceAnswer(selectedDesignResource);
     if (selectedDesignChoice === '__custom__') return designAnswer.trim();
