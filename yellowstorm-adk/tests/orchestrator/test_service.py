@@ -1042,6 +1042,52 @@ def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
         assert followup_final.result == "REAL FINAL ANSWER — reply seen: True"
 
 
+async def test_inject_steps_appends_to_live_plan_with_fresh_ids():
+    """converse_turn amends a running plan by appending the planner's steps to
+    the live Plan object; the drive loop then runs them (same path create_task
+    uses). Fresh ids so they can't collide with running steps; the batch's own
+    depends_on is remapped to those ids; the executor is stamped."""
+    rm = MagicMock(upsert_steps=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    live = Plan(id="p", title="t", goal="g", executor_id="exec1", executor_name="Worky",
+                steps=[Step(id="s1", kind="execute", description="orig", status=Status.RUNNING)])
+    new = [Step(id="s1", kind="execute", description="added A", depends_on=[]),
+           Step(id="s2", kind="execute", description="added B", depends_on=["s1"])]
+
+    n = await service._inject_steps("sess", live, new)
+
+    assert n == 2 and len(live.steps) == 3
+    added = live.steps[1:]
+    assert all(s.id != "s1" for s in added)              # no collision with the running step
+    # A batch-root hangs off the frontier (the existing s1) so it lands in a NEW
+    # wave — not wave 0 alongside the completed step, which would re-run it.
+    assert added[0].depends_on == ["s1"]
+    assert added[1].depends_on == [added[0].id]          # internal dep remapped
+    assert all(s.assignee == "exec1" for s in added)     # executor stamped
+    assert all(s.status is Status.PENDING for s in added)
+    rm.upsert_steps.assert_awaited()                     # projected so the card grows
+
+
+async def test_drive_registers_live_plan_for_converse():
+    """_drive_until_quiescent must expose the live plan in self._active while the
+    drive loop runs (so converse_turn can reach it), and clear it after."""
+    service = svc.OrchestratorService(MagicMock(), None, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[])
+
+    seen = {}
+
+    async def fake_loop(*a, **k):
+        seen["active"] = service._active.get("sess") is plan
+        return []
+
+    service._drive_loop = fake_loop
+    await service._drive_until_quiescent(
+        None, "sess", "u", plan, {}, None,
+        model="m", connectors=None, executor_prompt=None)
+    assert seen["active"] is True                         # live during the loop
+    assert "sess" not in service._active                  # cleared after
+
+
 def test_create_task_after_builds_a_join_not_just_a_fan_out():
     """A reply can ask for two things AND for something once both are in --
     "search new MCPs + search the new ADK version, then tell me what we can
