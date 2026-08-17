@@ -28,6 +28,7 @@ import type {
   WorkyStreamQueryParams,
   WorkyTask,
   WorkyTaskResult,
+  WorkyTaskResultContent,
   WorkyWhatsAppConnectResponse,
   WorkyWhatsAppIntegration,
   WorkyWhatsAppPairingResponse,
@@ -272,6 +273,13 @@ export async function getTaskResults(taskId: string): Promise<WorkyTaskResult[]>
   return unwrap(response);
 }
 
+export async function getTaskResultContent(taskId: string): Promise<WorkyTaskResultContent> {
+  const response = await apiClient.get<ApiResponse<WorkyTaskResultContent>>(
+    API_ENDPOINTS.worky.taskResultContent(taskId),
+  );
+  return unwrap(response);
+}
+
 export async function getGovernancePolicy(workspaceId: string): Promise<WorkyGovernancePolicy> {
   const response = await apiClient.get<ApiResponse<WorkyGovernancePolicy>>(
     API_ENDPOINTS.worky.governancePolicy,
@@ -469,6 +477,61 @@ export async function voiceStatus(streamId: string): Promise<{ status: string; t
   const res = await apiClient.post<ApiResponse<{ status: string; title: string; plan: unknown }>>(
     API_ENDPOINTS.worky.voiceStatus,
     { streamId },
+  );
+  return unwrap(res);
+}
+
+/** Voice tool: stop the whole worky run (terminal StopSession RPC, server-side). */
+export async function voiceStop(streamId: string): Promise<{ stopped: boolean }> {
+  const res = await apiClient.post<ApiResponse<{ stopped: boolean }>>(
+    API_ENDPOINTS.worky.voiceStop,
+    { streamId },
+  );
+  return unwrap(res);
+}
+
+/** Compact per-task summary the concierge orients with (via list_tasks). */
+export interface VoiceTaskSummary {
+  id: string;
+  title: string;
+  lane: string;
+  executionState: string;
+  blocked: boolean;
+}
+
+/** Voice-friendly per-task detail the concierge describes tasks with (via get_task_details). */
+export interface VoiceTaskDetails {
+  id: string;
+  title: string;
+  description: string;
+  lane: string;
+  executionState: string;
+  result: string | null;
+  resultTruncated: boolean;
+  blockedReason: string | null;
+  acceptanceCriteria: string[];
+  assigneeKey: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  budget: { estimateUsd: number; actualUsd: number } | null;
+  artifacts: Array<{ filename: string; kind: string | null }>;
+}
+
+/** Voice tool: list the stream's tasks as compact summaries. */
+export async function voiceListTasks(streamId: string): Promise<{ tasks: VoiceTaskSummary[] }> {
+  const res = await apiClient.post<ApiResponse<{ tasks: VoiceTaskSummary[] }>>(
+    API_ENDPOINTS.worky.voiceListTasks,
+    { streamId },
+  );
+  return unwrap(res);
+}
+
+/** Voice tool: get full detail for one task. */
+export async function voiceTaskDetails(streamId: string, taskId: string): Promise<VoiceTaskDetails> {
+  const res = await apiClient.post<ApiResponse<VoiceTaskDetails>>(
+    API_ENDPOINTS.worky.voiceTaskDetails,
+    { streamId, taskId },
   );
   return unwrap(res);
 }

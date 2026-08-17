@@ -4,6 +4,7 @@ import '@xyflow/react/dist/style.css';
 import { useModuleTranslation } from '@/modules/localization';
 import { Controls } from '@/components/ai-elements/controls';
 import { useWorkyBoard, useWorkyBoardLoading, useWorkyBoardError } from '../store';
+import { useStreamAgents } from '../agents/useStreamAgents';
 import { layoutCompactCanvasNodes } from '@/modules/playbook/utils/compact-canvas-layout';
 import { buildWorkyGraph } from '../worky-graph';
 import { WorkyGraphNode } from './WorkyGraphNode';
@@ -34,12 +35,35 @@ export function WorkyGraphBoard({ onTaskClick }: WorkyGraphBoardProps): JSX.Elem
     [board],
   );
 
+  // Resolve each executor `assigneeKey` to its display name via the same agent
+  // roster the agents tab uses, so the graph shows friendly names, not raw keys.
+  const { agents } = useStreamAgents();
+  const nameByKey = useMemo(() => new Map(agents.map((a) => [a.key, a.name])), [agents]);
+
   const { nodes, edges, taskById } = useMemo(() => {
     const byId = new Map(tasks.map((task) => [task.id, task]));
     const { nodes: rawNodes, edges: rawEdges } = buildWorkyGraph(tasks);
-    const { nodes, edges } = layoutCompactCanvasNodes(rawNodes, rawEdges);
+    const { nodes: laidOut, edges } = layoutCompactCanvasNodes(rawNodes, rawEdges);
+    // Enrich each node with its task's timestamp fields (for the "x ago" label)
+    // and the resolved executor agent name.
+    const nodes = laidOut.map((node) => {
+      const task = byId.get(node.id);
+      if (!task) return node;
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          lane: task.lane,
+          createdAt: task.createdAt ?? null,
+          updatedAt: task.updatedAt ?? null,
+          startedAt: task.startedAt,
+          completedAt: task.completedAt,
+          assigneeName: task.assigneeKey ? nameByKey.get(task.assigneeKey) ?? task.assigneeKey : null,
+        },
+      };
+    });
     return { nodes, edges, taskById: byId };
-  }, [tasks]);
+  }, [tasks, nameByKey]);
 
   if (loading && !board) {
     return (

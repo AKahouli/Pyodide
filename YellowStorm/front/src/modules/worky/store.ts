@@ -106,7 +106,16 @@ export const useWorkyStore = create<WorkyState>()(
       setBoard: (board) => set({ board: board?.lanes ?? null, boardError: null }),
       setBoardLoading: (boardLoading) => set({ boardLoading }),
       setBoardError: (boardError) => set({ boardError }),
-      setMessages: (messages) => set({ messages }),
+      // Dedup by id on replace. The messages React Query cache can transiently
+      // hold the just-sent owner message twice (a racing refetch lands it, then
+      // useSendMessage.onSuccess appends the same id again). This store is the
+      // render source, so it must be duplicate-proof — keep the first occurrence
+      // and preserve order. See useWorkyStore.appendMessage for the SSE path.
+      setMessages: (messages) => {
+        const seen = new Set<string>();
+        const deduped = messages.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)));
+        set({ messages: deduped });
+      },
       // Idempotent by id: the backend both returns the saved owner message
       // (which `useSendMessage` writes into the React Query cache, and the
       // messages effect mirrors into this store) and emits the same message

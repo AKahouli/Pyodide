@@ -1,13 +1,27 @@
 import { useModuleTranslation } from '@/modules/localization';
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
+import type { MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useTaskResults } from '../query/hooks';
-import type { WorkyTask, WorkyTaskResult } from '../types';
+import { mapComponentsToContentParts } from '@/modules/conversation/utils';
+import { useTaskResultContent, useTaskResults } from '../query/hooks';
+import type { WorkyTask, WorkyTaskResult, WorkyTaskResultContent } from '../types';
 
 interface TaskDetailDrawerProps {
   task: WorkyTask | null;
   onClose: () => void;
+}
+
+/** Flattens step result-content into renderable parts: components first, then
+ *  artifacts as downloadable `artifact` parts (rendered by ArtifactPartRenderer). */
+export function buildResultParts(content: WorkyTaskResultContent): MessageContentPart[] {
+  const componentParts = mapComponentsToContentParts(content.components);
+  const artifactParts: MessageContentPart[] = content.artifacts.map((a) => ({
+    type: 'artifact',
+    filePath: a.filePath,
+    filename: a.filename,
+  }));
+  return [...componentParts, ...artifactParts];
 }
 
 /**
@@ -20,14 +34,16 @@ interface TaskDetailDrawerProps {
 export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps): JSX.Element | null {
   const { t: tWorky } = useModuleTranslation('worky');
   const results = useTaskResults(task?.id);
+  const resultContent = useTaskResultContent(task?.id);
 
   if (!task) return null;
   const latestResult = results.data?.[0] ?? null;
+  const richParts = resultContent.data ? buildResultParts(resultContent.data) : [];
 
   return (
     <div
-      className='fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-border bg-card shadow-lg'
-      role='dialog'
+      className='flex w-full flex-col border-border bg-card shadow-lg lg:h-full lg:min-h-0 lg:w-[380px] lg:shrink-0 lg:border-l'
+      role='region'
       aria-label={tWorky('taskDetail.title')}
       data-testid='task-detail-drawer'
     >
@@ -67,13 +83,19 @@ export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps): JSX.
             ) : null}
           </TabsContent>
           <TabsContent value='results' className='space-y-3'>
-            {task.result ? (
+            {richParts.length > 0 ? (
               <div className='rounded-md border border-border bg-background px-3 py-2'>
-                <MessageProvider>
+                <MessageProvider fileViewerDisplayMode='floating'>
+                  <AIMessageContent parts={richParts} />
+                </MessageProvider>
+              </div>
+            ) : task.result ? (
+              <div className='rounded-md border border-border bg-background px-3 py-2'>
+                <MessageProvider fileViewerDisplayMode='floating'>
                   <AIMessageContent parts={[{ type: 'text', content: task.result }]} />
                 </MessageProvider>
               </div>
-            ) : results.isLoading ? (
+            ) : results.isLoading || resultContent.isLoading ? (
               <p className='text-xs text-muted-foreground'>{tWorky('taskDetail.results.loading')}</p>
             ) : latestResult ? (
               <TaskResultPanel result={latestResult} />
@@ -97,7 +119,7 @@ function TaskResultPanel({ result }: { result: WorkyTaskResult }): JSX.Element {
       </div>
       {text ? (
         <div className='rounded-md border border-border bg-background px-3 py-2'>
-          <MessageProvider>
+          <MessageProvider fileViewerDisplayMode='floating'>
             <AIMessageContent parts={[{ type: 'text', content: text }]} />
           </MessageProvider>
         </div>

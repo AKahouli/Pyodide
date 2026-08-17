@@ -43,6 +43,7 @@ export {
   usePauseStream,
   useResumeStream,
   useStopStream,
+  useStopTurn,
   useTaskOps,
   useGovernancePolicy,
   useUpdateGovernancePolicy,
@@ -56,6 +57,7 @@ export {
   useConfirmMemoryProposal,
   useRejectMemoryProposal,
 } from './query/hooks';
+export { useStopSession } from './hooks/useStopSession';
 export { subscribeToStreamEvents } from './stream/sse';
 export * from './api';
 export * from './types';

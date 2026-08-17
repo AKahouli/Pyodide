@@ -11,8 +11,11 @@ import { CONCIERGE_SYSTEM_PROMPT } from './voice-concierge.config';
 import {
   CreateVoiceSessionDto,
   VoiceDispatchDto,
+  VoiceListTasksDto,
   VoicePromptDto,
   VoiceStatusDto,
+  VoiceStopDto,
+  VoiceTaskDetailsDto,
   VoiceTranscriptDto,
 } from './dto/voice.dto';
 
@@ -79,6 +82,30 @@ export class WorkyVoiceController {
   @ApiOperation({ summary: 'Voice tool: query the current worky task status' })
   async status(@CurrentUser() user: UserDocument, @Body() dto: VoiceStatusDto) {
     return this.tools.queryStatus(user._id.toString(), dto.streamId);
+  }
+
+  @Post('tool/stop')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Voice tool: stop the whole worky run (StopSession RPC, terminal)' })
+  async stop(@CurrentUser() user: UserDocument, @Body() dto: VoiceStopDto) {
+    return this.tools.stopSession(user._id.toString(), dto.streamId);
+  }
+
+  @Post('tool/list-tasks')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Voice tool: list the stream tasks as compact summaries' })
+  async listTasks(@CurrentUser() user: UserDocument, @Body() dto: VoiceListTasksDto) {
+    return this.tools.listTasks(user._id.toString(), dto.streamId);
+  }
+
+  @Post('tool/task-details')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Voice tool: get full detail for one task' })
+  async taskDetails(@CurrentUser() user: UserDocument, @Body() dto: VoiceTaskDetailsDto) {
+    return this.tools.getTaskDetails(user._id.toString(), dto.streamId, dto.taskId);
   }
 
   @Post('tool/transcript')
