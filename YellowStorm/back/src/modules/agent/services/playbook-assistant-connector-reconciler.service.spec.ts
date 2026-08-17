@@ -14,19 +14,19 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
       findBySlug: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue(undefined),
       updateById: jest.fn().mockResolvedValue(undefined),
-      pullConnectorFromAllExcept: jest.fn().mockResolvedValue(undefined),
+      pullConnectorFromAgentsExcept: jest.fn().mockResolvedValue(undefined),
       findIdsByInstructionLike: jest.fn().mockResolvedValue([]),
     };
     const connectorService = {
       reconcilePlaybookMcpSystemConnector: jest.fn().mockResolvedValue({ id: connectorId }),
       inspectMcp: jest.fn().mockResolvedValue({
         tools: [
-          'open_playbook_context', 'get_playbook_summary', 'get_task_details', 'get_task_dependencies', 'validate_playbook',
+          'search_playbooks', 'open_playbook_context', 'get_playbook_summary', 'get_task_details', 'get_task_dependencies', 'validate_playbook',
           'start_playbook_construction', 'get_playbook_construction', 'cancel_playbook_construction', 'analyze_task_optimization',
           'start_advisor_remediation_construction', 'analyze_workflow_optimization', 'start_workflow_optimization', 'create_playbook',
           'clone_playbook', 'revert_playbook_construction', 'start_playbook_execution', 'list_playbook_executions',
-          'get_playbook_execution', 'cancel_playbook_execution', 'trace_replay_playbook_execution', 'reexecute_playbook_execution',
-          'run_playbook_from_step', 'delete_playbook_execution',
+          'list_recent_executions', 'get_playbook_execution', 'get_execution_diagnostics', 'cancel_playbook_execution',
+          'trace_replay_playbook_execution', 'reexecute_playbook_execution', 'run_playbook_from_step', 'delete_playbook_execution',
         ].map((name) => ({ name })),
       }),
     };
@@ -40,7 +40,10 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
       agentRepository as any,
       {
         findAllActive: jest.fn().mockResolvedValue([{ id: new Types.ObjectId().toString(), slug: 'mono-agent' }]),
-        findOrCreateBySlug: jest.fn().mockResolvedValue({ id: new Types.ObjectId().toString(), slug: 'playbook_assistant' }),
+        findOrCreateBySlug: jest.fn().mockImplementation(async (slug: string) => ({
+          id: new Types.ObjectId().toString(),
+          slug,
+        })),
       } as any,
       connectorService as any,
     );
@@ -61,8 +64,18 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
         instruction: expect.stringContaining('[Playbook MCP]'),
       }),
     );
-    // The connector is pulled from every other agent (all but the dedicated one).
-    expect(agentRepository.pullConnectorFromAllExcept).toHaveBeenCalledWith(connectorId, expect.any(String));
+    expect(agentRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        slug: 'my-second-brain',
+        connectors: [connectorId],
+        connectorActionSelections: [expect.objectContaining({ connectorId, actionKeys: expect.arrayContaining(['search_playbooks']) })],
+      }),
+    );
+    // The connector is pulled from every other agent (all but the dedicated system agents).
+    expect(agentRepository.pullConnectorFromAgentsExcept).toHaveBeenCalledWith(
+      connectorId,
+      expect.arrayContaining([expect.any(String)]),
+    );
   });
 
   it('fails closed when more than one default mono-agent exists', async () => {

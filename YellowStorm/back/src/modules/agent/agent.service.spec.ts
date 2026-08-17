@@ -119,6 +119,7 @@ describe('AgentService connector skill inheritance', () => {
       resolvePromptsInBatch: jest.fn().mockResolvedValue(new Map()),
       findAllActive: jest.fn().mockResolvedValue([]),
       getManyForHydration: jest.fn().mockResolvedValue(new Map()),
+      findBySlug: jest.fn().mockResolvedValue(null),
     };
     const modelsService = {
       findById: jest.fn(),
@@ -482,7 +483,7 @@ describe('AgentService connector skill inheritance', () => {
   });
 
   it('injects connector skills into playbook agent runtime', async () => {
-    const { service, agentRepository, skillService, connectorService, agentTypeService } = createService();
+    const { service, agentRepository, skillService, connectorService, agentTypeService, modelsService } = createService();
     const objectId = new Types.ObjectId();
     agentRepository.findByIds.mockResolvedValue([
       makeRecord({
@@ -758,25 +759,26 @@ describe('AgentService connector skill inheritance', () => {
   });
 
   it('resolves the explicitly selected active playbook planner', async () => {
-    const { service, agentModel } = createService();
+    const { service, agentRepository, agentTypeService } = createService();
     const agentId = new Types.ObjectId();
     const agentTypeId = new Types.ObjectId();
-    agentModel.findOne.mockReturnValue({
-      select: () => ({
-        populate: () => ({
-          lean: () => ({
-            exec: async () => ({
-              _id: agentId,
-              agentType: { _id: agentTypeId, slug: 'playbook_planner', isActive: true },
-              llmModel: 'planner-model',
-              temperature: 0.2,
-              instruction: 'Plan safely',
-              updatedAt: new Date('2026-08-06T00:00:00.000Z'),
-            }),
-          }),
-        }),
-      }),
+    agentTypeService.findBySlug.mockResolvedValue({
+      id: agentTypeId.toString(),
+      slug: 'playbook_planner',
+      isActive: true,
     });
+    agentRepository.findByIdDefault.mockResolvedValue(
+      makeRecord({
+        _id: agentId.toString(),
+        agentType: agentTypeId.toString(),
+        agentTypeSlug: 'playbook_planner',
+        isActive: true,
+        llmModel: 'planner-model',
+        temperature: 0.2,
+        instruction: 'Plan safely',
+        updatedAt: new Date('2026-08-06T00:00:00.000Z'),
+      }),
+    );
 
     await expect(service.findPlaybookPlannerById(agentId.toString())).resolves.toEqual({
       agentTypeId: agentTypeId.toString(),
@@ -790,29 +792,21 @@ describe('AgentService connector skill inheritance', () => {
   });
 
   it('lists only active playbook planner agents with a configured model', async () => {
-    const { service, agentModel } = createService();
-    agentModel.find.mockReturnValue({
-      select: () => ({
-        populate: () => ({
-          sort: () => ({
-            lean: () => ({
-              exec: async () => [{
-                _id: new Types.ObjectId(),
-                name: 'Planner',
-                description: 'Plans generated tasks',
-                llmModel: ' planner-model ',
-                agentType: { slug: 'playbook_planner', isActive: true },
-              }, {
-                _id: new Types.ObjectId(),
-                name: 'Other',
-                llmModel: 'other-model',
-                agentType: { slug: 'simple', isActive: true },
-              }],
-            }),
-          }),
-        }),
+    const { service, agentRepository, agentTypeService } = createService();
+    agentTypeService.findBySlug.mockResolvedValue({ id: 'type-planner', slug: 'playbook_planner', isActive: true });
+    agentRepository.findActiveDefaults.mockResolvedValue([
+      makeRecord({
+        name: 'Planner',
+        description: 'Plans generated tasks',
+        llmModel: ' planner-model ',
+        agentTypeSlug: 'playbook_planner',
       }),
-    });
+      makeRecord({
+        name: 'Other',
+        llmModel: 'other-model',
+        agentTypeSlug: 'simple',
+      }),
+    ]);
 
     await expect(service.listPlaybookPlannerAgentOptions()).resolves.toEqual([
       expect.objectContaining({ name: 'Planner', model: 'planner-model' }),
@@ -820,32 +814,28 @@ describe('AgentService connector skill inheritance', () => {
   });
 
   it('rejects an invalid explicit playbook planner id', async () => {
-    const { service, agentModel } = createService();
+    const { service, agentRepository } = createService();
 
     await expect(service.findPlaybookPlannerById('invalid')).rejects.toThrow('selected Playbook Planner agent is invalid');
-    expect(agentModel.findOne).not.toHaveBeenCalled();
+    expect(agentRepository.findByIdDefault).not.toHaveBeenCalled();
   });
 
   it('resolves the explicitly selected active playbook suggestor', async () => {
-    const { service, agentModel } = createService();
+    const { service, agentRepository } = createService();
     const agentId = new Types.ObjectId();
     const agentTypeId = new Types.ObjectId();
-    agentModel.findOne.mockReturnValue({
-      select: () => ({
-        populate: () => ({
-          lean: () => ({
-            exec: async () => ({
-              _id: agentId,
-              agentType: { _id: agentTypeId, slug: 'general_assistant', isActive: true },
-              llmModel: 'suggestor-model',
-              temperature: 0.1,
-              instruction: 'Find the workflow use case',
-              updatedAt: new Date('2026-08-06T00:00:00.000Z'),
-            }),
-          }),
-        }),
+    agentRepository.findByIdDefault.mockResolvedValue(
+      makeRecord({
+        _id: agentId.toString(),
+        agentType: agentTypeId.toString(),
+        agentTypeSlug: 'general_assistant',
+        isActive: true,
+        llmModel: 'suggestor-model',
+        temperature: 0.1,
+        instruction: 'Find the workflow use case',
+        updatedAt: new Date('2026-08-06T00:00:00.000Z'),
       }),
-    });
+    );
 
     await expect(service.findPlaybookSuggestorById(agentId.toString())).resolves.toEqual({
       agentTypeId: agentTypeId.toString(),
@@ -859,30 +849,12 @@ describe('AgentService connector skill inheritance', () => {
   });
 
   it('lists active default agents with a configured model regardless of agent type', async () => {
-    const { service, agentModel } = createService();
-    agentModel.find.mockReturnValue({
-      populate: () => ({
-        sort: () => ({
-          lean: () => ({
-            exec: async () => [{
-              _id: new Types.ObjectId(),
-              name: 'General Assistant',
-              llmModel: ' general-model ',
-              agentType: { name: 'General' },
-            }, {
-              _id: new Types.ObjectId(),
-              name: 'Planner',
-              llmModel: 'planner-model',
-              agentType: { name: 'Planner' },
-            }, {
-              _id: new Types.ObjectId(),
-              name: 'No Model',
-              agentType: { name: 'General' },
-            }],
-          }),
-        }),
-      }),
-    });
+    const { service, agentRepository } = createService();
+    agentRepository.findActiveDefaults.mockResolvedValue([
+      makeRecord({ name: 'General Assistant', llmModel: ' general-model ' }),
+      makeRecord({ name: 'Planner', llmModel: 'planner-model' }),
+      makeRecord({ name: 'No Model', llmModel: undefined }),
+    ]);
 
     await expect(service.listPlaybookSuggestorAgentOptions()).resolves.toEqual([
       expect.objectContaining({ name: 'General Assistant', model: 'general-model' }),
