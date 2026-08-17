@@ -1,4 +1,4 @@
-import { voiceDispatch, voiceStatus, voiceListTasks, voiceTaskDetails } from '../api';
+import { voiceDispatch, voiceStatus, voiceStop, voiceListTasks, voiceTaskDetails } from '../api';
 
 /**
  * Relays a Gemini tool call to the worky BFF and shapes the tool response.
@@ -18,6 +18,10 @@ export async function handleToolCall(
     if (call.name === 'query_status') {
       const s = await voiceStatus(streamId);
       return wrap({ status: s.status, title: s.title });
+    }
+    if (call.name === 'stop_session') {
+      const r = await voiceStop(streamId);
+      return wrap({ stopped: r.stopped });
     }
     if (call.name === 'list_tasks') {
       const r = await voiceListTasks(streamId);

@@ -66,6 +66,12 @@ export function RootGuard() {
   // Fully authenticated - show app layout
   const isIndexRoute = location.pathname === '/';
 
+  // Hide the floating Second Brain mascot inside a Worky stream workspace
+  // (`/worky/:streamId`): it floats over the stream chat. It stays visible on
+  // the Worky dashboard (`/worky`), the stream report (`/worky/:id/report`) and
+  // everywhere else.
+  const isWorkyStreamRoute = /^\/worky\/[^/]+$/.test(location.pathname);
+
   return (
     <SidebarProvider>
       <AppSidebar />
@@ -75,7 +81,7 @@ export function RootGuard() {
         </header>
         <div className='flex flex-1 min-h-0 flex-col items-center  overflow-hidden'>{isIndexRoute ? <NewConversationPage /> : <Outlet />}</div>
       </SidebarInset>
-      {secondBrainFeatures.enabled && <SecondBrainMascot />}
+      {secondBrainFeatures.enabled && !isWorkyStreamRoute && <SecondBrainMascot />}
     </SidebarProvider>
   );
 }

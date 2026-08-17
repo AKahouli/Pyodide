@@ -14,6 +14,7 @@ import {
   VoiceListTasksDto,
   VoicePromptDto,
   VoiceStatusDto,
+  VoiceStopDto,
   VoiceTaskDetailsDto,
   VoiceTranscriptDto,
 } from './dto/voice.dto';
@@ -81,6 +82,14 @@ export class WorkyVoiceController {
   @ApiOperation({ summary: 'Voice tool: query the current worky task status' })
   async status(@CurrentUser() user: UserDocument, @Body() dto: VoiceStatusDto) {
     return this.tools.queryStatus(user._id.toString(), dto.streamId);
+  }
+
+  @Post('tool/stop')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Voice tool: stop the whole worky run (StopSession RPC, terminal)' })
+  async stop(@CurrentUser() user: UserDocument, @Body() dto: VoiceStopDto) {
+    return this.tools.stopSession(user._id.toString(), dto.streamId);
   }
 
   @Post('tool/list-tasks')
