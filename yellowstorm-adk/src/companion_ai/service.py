@@ -1086,6 +1086,37 @@ class OrchestratorService:
         await self._finalize(session_id, plan, interrupt)
         return plan
 
+    async def converse_turn(self, *, session_id: str, user_id: str, message: str,
+                            planner_model: Optional[str] = None,
+                            planner_prompt: Optional[str] = None) -> Plan:
+        """A message that arrives WHILE a plan is executing.
+
+        This is deliberately NOT the old supersede (cancel the running turn and
+        replan): that destroyed the plan the user was watching, and cancelling a
+        mid-LLM-call turn is both slow and noisy (litellm wraps the aborted call
+        as an APIError). Instead the planner runs conversationally ALONGSIDE the
+        still-executing plan, on its own separate planner session — the two
+        interleave on the event loop, neither cancels the other.
+
+        Phase 1 handles chit-chat only: a CASE A reply (no steps) is answered in
+        place. A CASE B message (a real task / a plan change) is acknowledged but
+        NOT applied — editing a live plan is a later phase; we never fall back to
+        the destructive cancel here.
+        """
+        plan = await self._make_plan(session_id, user_id, message,
+                                     planner_model=planner_model, planner_prompt=planner_prompt)
+        logger.info("[worky] converse ◄ session=%s steps=%d (plan still running)",
+                    session_id, len(plan.steps))
+        if not plan.steps:
+            await self._add_message(session_id, "assistant", plan.answer or "")
+        else:
+            await self._add_message(
+                session_id, "assistant",
+                "The current plan is still running — I can talk about it, but "
+                "changing or replacing a plan that's already executing isn't "
+                "supported yet.")
+        return plan
+
     async def resume_turn(self, *, session_id: str, user_id: str, answer: str,
                           model: str, connectors: Optional[List[dict]] = None,
                           interrupt_id: Optional[str] = None,

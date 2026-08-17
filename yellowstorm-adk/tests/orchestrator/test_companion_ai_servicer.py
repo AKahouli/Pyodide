@@ -61,6 +61,30 @@ async def test_runtask_accepts_and_runs_plan():
     service.resume_turn.assert_not_awaited()
 
 
+async def test_runtask_converses_alongside_an_executing_plan():
+    """A message that arrives while a plan is executing (running, steps present,
+    not parked on input) talks to the planner concurrently — it must NOT
+    supersede/replan, and must NOT take over the _running slot Stop relies on."""
+    rm = MagicMock(snapshot=AsyncMock(return_value={
+        "session": {"status": "running", "interrupt_id": None},
+        "plan": {"id": "p1"},
+        "steps": [{"step_id": "s1", "status": "running"}]}))
+    service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock(),
+                        converse_turn=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+    running = asyncio.create_task(asyncio.sleep(60))  # the executing plan turn
+    s._running["s1"] = running
+    resp = await s.RunTask(pb.RunRequest(
+        user_id="u", session_id="s1", message="how's it going?", agents=_AGENTS), _ctx())
+    assert resp.accepted is True
+    await _drain(s)
+    service.converse_turn.assert_awaited_once()
+    service.plan_turn.assert_not_awaited()          # no replan
+    assert s._running["s1"] is running               # not superseded
+    assert not running.cancelled()                   # the plan keeps running
+    running.cancel()
+
+
 async def test_runtask_falls_back_to_default_model_when_no_agents_sent():
     """A client not yet updated to send `agents` still works — DEFAULT_MODEL
     and the hardcoded planner/executor prompts (None override) kick in."""
