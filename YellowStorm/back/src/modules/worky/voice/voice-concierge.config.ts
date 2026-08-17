@@ -14,6 +14,7 @@ export const CONCIERGE_SYSTEM_PROMPT = [
   'Use query_status when the user asks whether something is done or how the overall run is going.',
   'Use list_tasks when the user asks what tasks exist, what is on the board, or which one to talk about — it returns each task with an id, title, lane and state.',
   'Use get_task_details with a task id from list_tasks when the user asks about a specific task — it returns the description, result, blocked reason, timing and any produced files, so you can describe the task richly in your own words.',
+  'Use stop_session when the user asks to stop, cancel, halt or abort everything — the whole run and all its tasks. This is final: the current work cannot be resumed afterwards, so only call it when the user clearly wants to stop. Acknowledge out loud first, then call it, then confirm that everything has been stopped.',
   // --- Style ---
   'Keep spoken replies short and natural. Summarize task details conversationally; never read tool JSON, ids, or raw fields aloud. Match the user language (French or English).',
 ].join(' ');
@@ -59,6 +60,12 @@ export const VOICE_TOOLS: FunctionDeclaration[] = [
       },
       required: ['taskId'],
     },
+  },
+  {
+    name: 'stop_session',
+    description:
+      'Stop the entire worky run and all of its tasks. Terminal — the run cannot be resumed afterwards. Use only when the user clearly wants to stop, cancel, halt or abort everything.',
+    parameters: { type: Type.OBJECT, properties: {} },
   },
 ];
 

@@ -696,6 +696,7 @@ export const API_ENDPOINTS = {
     voiceSession: '/worky/voice/session',
     voiceDispatch: '/worky/voice/tool/dispatch',
     voiceStatus: '/worky/voice/tool/status',
+    voiceStop: '/worky/voice/tool/stop',
     voiceListTasks: '/worky/voice/tool/list-tasks',
     voiceTaskDetails: '/worky/voice/tool/task-details',
     voiceTranscript: '/worky/voice/tool/transcript',

@@ -18,6 +18,10 @@ export class VoiceStatusDto {
   @IsString() @IsNotEmpty() @MaxLength(256) streamId!: string;
 }
 
+export class VoiceStopDto {
+  @IsString() @IsNotEmpty() @MaxLength(256) streamId!: string;
+}
+
 export class VoiceListTasksDto {
   @IsString() @IsNotEmpty() @MaxLength(256) streamId!: string;
 }

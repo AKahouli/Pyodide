@@ -69,6 +69,24 @@ export class VoiceToolService {
     return { runId: res.runId, sessionId: res.sessionId, accepted: res.accepted };
   }
 
+  /**
+   * Stop the whole run for this stream via the terminal StopSession RPC —
+   * cancels the in-flight turn and every task under it; the session cannot be
+   * resumed afterwards. Ownership-checked. When no orchestrator session was ever
+   * started (no `aiSessionId`) there is nothing to stop, so we return
+   * `stopped: false` rather than error — same non-terminal shape the REST
+   * `:id/stop` endpoint uses.
+   */
+  async stopSession(userId: string, streamId: string): Promise<{ stopped: boolean }> {
+    await this.streamService.findById(userId, streamId);
+    const stream = await this.streamService.findByIdInternal(streamId);
+    const aiSessionId = stream?.aiSessionId;
+    if (!aiSessionId) return { stopped: false };
+    const res = await this.orchestrator.stopSession(userId, aiSessionId);
+    this.logger.log(`[voice] stopped session=${aiSessionId} stream=${streamId} stopped=${res.stopped}`);
+    return res;
+  }
+
   async queryStatus(userId: string, streamId: string): Promise<{ status: string; title: string; plan: unknown }> {
     const ctx = await this.streamService.ensureKickoffContext(streamId, userId);
     const s = await this.orchestrator.getSession(userId, ctx.aiSessionId);
