@@ -481,6 +481,15 @@ export async function voiceStatus(streamId: string): Promise<{ status: string; t
   return unwrap(res);
 }
 
+/** Voice tool: stop the whole worky run (terminal StopSession RPC, server-side). */
+export async function voiceStop(streamId: string): Promise<{ stopped: boolean }> {
+  const res = await apiClient.post<ApiResponse<{ stopped: boolean }>>(
+    API_ENDPOINTS.worky.voiceStop,
+    { streamId },
+  );
+  return unwrap(res);
+}
+
 /** Compact per-task summary the concierge orients with (via list_tasks). */
 export interface VoiceTaskSummary {
   id: string;

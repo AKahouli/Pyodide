@@ -19,6 +19,10 @@ interface SendCallbacks {
 const sendCalls: SendInput[] = [];
 let nextError: Error | null = null;
 let lastMutate: ((input: SendInput, callbacks?: SendCallbacks) => void) | null = null;
+// The composer swaps the send button for a stop button while a run streams.
+// Tests flip this to render/exercise that path.
+let streamingValue = false;
+const stopMutateMock = vi.fn();
 
 vi.mock('../query/hooks', () => ({
   useSendMessage: () => ({
@@ -37,14 +41,13 @@ vi.mock('../query/hooks', () => ({
     },
     isPending: false,
   }),
-  useTranscribeAudio: () => ({
-    mutateAsync: async () => ({ text: '' }),
-    isPending: false,
-  }),
+  // Consumed by useStopSession (via PromptBar). Capture the stop request.
+  useStopTurn: () => ({ mutate: stopMutateMock, isPending: false }),
+  useStream: () => ({ data: undefined }),
 }));
 
 vi.mock('../store', () => ({
-  useWorkyStreaming: () => false,
+  useWorkyStreaming: () => streamingValue,
   useWorkyStore: (selector: (s: {
     setStreamError: (v: string | null) => void;
     setStreaming: (v: boolean) => void;
@@ -71,6 +74,8 @@ describe('PromptBar composer', () => {
     sendCalls.length = 0;
     lastMutate = null;
     nextError = null;
+    streamingValue = false;
+    stopMutateMock.mockClear();
     setStreamErrorMock.mockClear();
     setStreamingMock.mockClear();
     useWorkyUiStore.getState().reset();
@@ -176,6 +181,31 @@ describe('PromptBar composer', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('worky-send-error')).not.toBeInTheDocument();
     });
+  });
+
+  it('swaps the send button for a stop button while streaming and stops the run', () => {
+    streamingValue = true;
+    render(
+      <TestProviders>
+        <PromptBar streamId={STREAM_ID} status='active' />
+      </TestProviders>,
+    );
+
+    // Send is replaced by stop while a run is in flight.
+    expect(screen.queryByTestId('worky-prompt-send')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('worky-prompt-stop'));
+
+    expect(stopMutateMock).toHaveBeenCalledTimes(1);
+    expect(stopMutateMock.mock.calls[0][0]).toEqual({ streamId: STREAM_ID });
+  });
+
+  it('does not render the removed in-composer dictation mic', () => {
+    render(
+      <TestProviders>
+        <PromptBar streamId={STREAM_ID} status='active' />
+      </TestProviders>,
+    );
+    expect(screen.queryByTestId('worky-prompt-mic')).not.toBeInTheDocument();
   });
 
   it('shows WhatsApp button and calls onWhatsAppClick', () => {

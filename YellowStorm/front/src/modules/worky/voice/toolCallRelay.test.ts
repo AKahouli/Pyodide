@@ -20,6 +20,13 @@ describe('handleToolCall', () => {
     expect(res.response).toEqual({ status: 'running', title: 'T' });
   });
 
+  it('routes stop_session to voiceStop', async () => {
+    (api.voiceStop as any).mockResolvedValue({ stopped: true });
+    const res = await handleToolCall('s1', { id: 'c7', name: 'stop_session', args: {} });
+    expect(api.voiceStop).toHaveBeenCalledWith('s1');
+    expect(res).toEqual({ id: 'c7', name: 'stop_session', response: { stopped: true } });
+  });
+
   it('routes list_tasks to voiceListTasks', async () => {
     (api.voiceListTasks as any).mockResolvedValue({ tasks: [{ id: 't1', title: 'A', lane: 'running', executionState: 'running', blocked: false }] });
     const res = await handleToolCall('s1', { id: 'c5', name: 'list_tasks', args: {} });
