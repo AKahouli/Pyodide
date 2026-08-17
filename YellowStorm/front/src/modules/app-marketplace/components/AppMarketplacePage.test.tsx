@@ -174,4 +174,15 @@ describe('AppMarketplacePage', () => {
     expect(await screen.findByText('Shared app')).toBeInTheDocument();
     expect(screen.queryByText('Generated app')).not.toBeInTheDocument();
   });
+
+  it('shows the untitled fallback for shared apps without a title', async () => {
+    listDeployedAppsMock.mockResolvedValueOnce(
+      sharedApps.map((app) => ({ ...app, title: '' })),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('card.untitled')).toBeInTheDocument();
+    expect(screen.queryByText('Shared app')).not.toBeInTheDocument();
+  });
 });
