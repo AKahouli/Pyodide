@@ -145,11 +145,29 @@ async def test_stop_session_cancels_running_turn():
     s._running["s1"] = task
     resp = await s.StopSession(pb.StopSessionRequest(user_id="u", session_id="s1"), _ctx())
     assert resp.stopped is True
-    assert task.cancelled() or task.cancelling()
-    rm.set_session_status.assert_awaited_once()
+    # Cancellation is requested but not awaited (a mid-LLM-call turn is slow to
+    # unwind and must not block the RPC), so the task is cancelling, not yet done.
+    assert task.cancelling() or task.cancelled()
+    # A user Stop is a deliberate termination — the session goes 'cancelled',
+    # not 'completed'.
+    rm.set_session_status.assert_awaited_once_with("s1", "cancelled")
+    # Claimed out of _running so a repeat Stop can't double-act.
+    assert "s1" not in s._running
     # A stopped session waits on nothing: left behind, the wait would renew its
     # mailbox subscription forever and a late reply would resume a dead plan.
     rm.cancel_mail_waits.assert_awaited_once_with("s1")
+
+
+async def test_stop_session_with_no_running_turn_reports_not_stopped():
+    """A repeat Stop (or a Stop after the turn already finished) has no live task
+    to cancel, so stopped=False — while still driving the read-model cleanup, so
+    a DB left 'running' by a lost/restarted turn is still terminated."""
+    rm = MagicMock(stop_incomplete=AsyncMock(), cancel_mail_waits=AsyncMock(),
+                   set_session_status=AsyncMock())
+    s = _servicer(rm=rm)
+    resp = await s.StopSession(pb.StopSessionRequest(user_id="u", session_id="s1"), _ctx())
+    assert resp.stopped is False
+    rm.set_session_status.assert_awaited_once_with("s1", "cancelled")
 
 
 # --- DeliverMailReply -------------------------------------------------------

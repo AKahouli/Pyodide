@@ -18,9 +18,10 @@ class Status(str, Enum):
     BLOCKED = "blocked"      # suspended: awaiting user input or a long-running task
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"  # terminated by a user StopSession — not an error
 
     def is_terminal(self) -> bool:
-        return self in (Status.COMPLETED, Status.FAILED)
+        return self in (Status.COMPLETED, Status.FAILED, Status.CANCELLED)
 
 
 class Step(BaseModel):

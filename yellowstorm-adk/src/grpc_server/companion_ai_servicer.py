@@ -261,7 +261,14 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         return resp
 
     async def StopSession(self, request: pb.StopSessionRequest, context) -> pb.StopSessionResponse:
-        task = self._running.get(request.session_id)
+        # Claim the task out of _running so a repeat Stop can't double-act. We do
+        # NOT await its cancellation: a turn mid–LLM-call takes tens of seconds to
+        # unwind (the call runs in a thread cancel() can't interrupt), and blocking
+        # the RPC on that hung Stop past the client deadline. cancel() is
+        # fire-and-forget; the read-model projection below marks the session
+        # terminal right now, so the board is correct immediately regardless of
+        # when the cancelled turn actually finishes dying.
+        task = self._running.pop(request.session_id, None)
         stopped = False
         if task and not task.done():
             task.cancel()
@@ -274,7 +281,9 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 # forever for work nobody is doing — and a late reply would try
                 # to resume a stopped plan.
                 await self._rm.cancel_mail_waits(request.session_id)
-                await self._rm.set_session_status(request.session_id, "completed")
+                # 'cancelled', not 'completed': a user Stop is a deliberate
+                # termination, distinct from a plan that ran to the end.
+                await self._rm.set_session_status(request.session_id, "cancelled")
             except Exception as e:
                 logger.warning("StopSession projection failed: %s", e)
         return pb.StopSessionResponse(stopped=stopped)
