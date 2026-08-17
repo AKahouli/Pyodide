@@ -528,6 +528,98 @@ describe('RuntimeToolDispatcherService', () => {
       expect(update.$set.argumentsHash).toMatch(/^[0-9a-f]{64}$/);
       expect(options).toEqual({ upsert: true });
     });
+
+    it('attaches a retry of the same toolCallId to the in-flight call', async () => {
+      connect();
+      socket.emit.mockImplementation((event: string, payload: { toolCallId: string }) => {
+        if (event !== 'tool.invoke') return;
+        setTimeout(
+          () =>
+            dispatcher.handleCompleted('sess_1', {
+              toolCallId: payload.toolCallId,
+              result: { path: 'a.ts' },
+            }),
+          30,
+        );
+      });
+
+      const [first, retry] = await Promise.all([
+        dispatcher.invoke({
+          workspaceId: 'sess_1',
+          toolCallId: 'tc_1',
+          tool: 'write',
+          arguments: { path: 'a.ts', content: 'x' },
+        }),
+        dispatcher.invoke({
+          workspaceId: 'sess_1',
+          toolCallId: 'tc_1',
+          tool: 'write',
+          arguments: { path: 'a.ts', content: 'x' },
+        }),
+      ]);
+
+      expect(first).toEqual(retry);
+      expect(first).toMatchObject({ ok: true, toolCallId: 'tc_1', result: { path: 'a.ts' } });
+      expect(socket.emit.mock.calls.filter(([event]) => event === 'tool.invoke')).toHaveLength(1);
+    });
+
+    it('does not re-dispatch a running record left by another owner', async () => {
+      connect();
+      findOne.mockReturnValue({
+        lean: () => ({
+          exec: () => Promise.resolve({ status: 'running' }),
+        }),
+      });
+
+      const envelope = await dispatcher.invoke({
+        workspaceId: 'sess_1',
+        toolCallId: 'tc_1',
+        tool: 'write',
+        arguments: { path: 'a.ts', content: 'x' },
+        timeoutMs: 40,
+      });
+
+      expect(asFailure(envelope).code).toBe(AppRuntimeErrorCodes.TOOL_TIMEOUT);
+      expect(socket.emit).not.toHaveBeenCalled();
+    });
+
+    it('replays once a running record settles without dispatching', async () => {
+      connect();
+      let status: 'running' | 'succeeded' = 'running';
+      findOne.mockReturnValue({
+        lean: () => ({
+          exec: () =>
+            Promise.resolve(
+              status === 'succeeded'
+                ? {
+                    status: 'succeeded',
+                    result: { path: 'a.ts' },
+                    resultingRevisionId: 'rev_2',
+                  }
+                : { status: 'running' },
+            ),
+        }),
+      });
+      setTimeout(() => {
+        status = 'succeeded';
+      }, 20);
+
+      const envelope = await dispatcher.invoke({
+        workspaceId: 'sess_1',
+        toolCallId: 'tc_1',
+        tool: 'write',
+        arguments: { path: 'a.ts' },
+        timeoutMs: 200,
+      });
+
+      expect(envelope).toEqual({
+        ok: true,
+        toolCallId: 'tc_1',
+        result: { path: 'a.ts' },
+        revisionId: 'rev_2',
+      });
+      expect(socket.emit).not.toHaveBeenCalled();
+    });
   });
 
   describe('timeouts', () => {

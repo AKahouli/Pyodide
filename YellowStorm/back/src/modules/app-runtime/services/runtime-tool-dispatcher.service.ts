@@ -67,6 +67,8 @@ function failure(toolCallId: string, error: RuntimeToolError): ToolInvokeEnvelop
 export class RuntimeToolDispatcherService {
   private readonly logger = new Logger(RuntimeToolDispatcherService.name);
   private readonly pending = new Map<string, PendingCall>();
+  /** In-process coalescing so a retry never starts a second dispatch. */
+  private readonly inFlight = new Map<string, Promise<ToolInvokeEnvelope>>();
 
   constructor(
     @InjectModel(AppRuntimeToolCall.name)
@@ -78,10 +80,28 @@ export class RuntimeToolDispatcherService {
   ) {}
 
   async invoke(params: InvokeToolParams): Promise<ToolInvokeEnvelope> {
+    const existing = this.inFlight.get(params.toolCallId);
+    if (existing) {
+      this.logger.debug(
+        `Attaching to in-flight tool call toolCallId=${params.toolCallId}`,
+      );
+      return existing;
+    }
+
+    const flight = this.invokeOwned(params).finally(() => {
+      if (this.inFlight.get(params.toolCallId) === flight) {
+        this.inFlight.delete(params.toolCallId);
+      }
+    });
+    this.inFlight.set(params.toolCallId, flight);
+    return flight;
+  }
+
+  private async invokeOwned(params: InvokeToolParams): Promise<ToolInvokeEnvelope> {
     const { workspaceId, toolCallId, tool } = params;
     const args = params.arguments ?? {};
 
-    const replay = await this.replayIfSettled(toolCallId);
+    const replay = await this.replayIfSettled(toolCallId, params.timeoutMs);
     if (replay) return replay;
 
     const binding = await this.bindings.findByWorkspaceId(workspaceId);
@@ -354,10 +374,33 @@ export class RuntimeToolDispatcherService {
 
   private async replayIfSettled(
     toolCallId: string,
+    timeoutMs?: number,
   ): Promise<ToolInvokeEnvelope | null> {
     const existing = await this.toolCalls.findOne({ toolCallId }).lean().exec();
     if (!existing) return null;
 
+    const terminal = this.envelopeFromTerminal(toolCallId, existing);
+    if (terminal) return terminal;
+
+    if (existing.status === 'pending' || existing.status === 'running') {
+      this.logger.debug(
+        `Waiting for in-flight tool call toolCallId=${toolCallId} status=${existing.status}`,
+      );
+      return this.waitForTerminalRecord(toolCallId, timeoutMs);
+    }
+
+    return null;
+  }
+
+  private envelopeFromTerminal(
+    toolCallId: string,
+    existing: {
+      status?: string;
+      result?: Record<string, unknown> | null;
+      resultingRevisionId?: string | null;
+      error?: Record<string, unknown> | null;
+    },
+  ): ToolInvokeEnvelope | null {
     if (existing.status === 'succeeded') {
       this.logger.debug(`Replaying settled tool call toolCallId=${toolCallId}`);
       return {
@@ -377,6 +420,43 @@ export class RuntimeToolDispatcherService {
     }
 
     return null;
+  }
+
+  /**
+   * A pending/running record must not start a second browser dispatch. Wait
+   * until the owner persists a terminal status, then replay that outcome.
+   */
+  private async waitForTerminalRecord(
+    toolCallId: string,
+    timeoutMs?: number,
+  ): Promise<ToolInvokeEnvelope> {
+    const waitMs =
+      timeoutMs ?? this.config.get<number>('appRuntime.toolTimeoutMs', 180_000);
+    const deadline = Date.now() + waitMs;
+
+    while (true) {
+      const existing = await this.toolCalls.findOne({ toolCallId }).lean().exec();
+      const terminal = existing
+        ? this.envelopeFromTerminal(toolCallId, existing)
+        : null;
+      if (terminal) return terminal;
+
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        return failure(
+          toolCallId,
+          runtimeError(
+            AppRuntimeErrorCodes.TOOL_TIMEOUT,
+            'Timed out waiting for an in-flight tool call with the same toolCallId',
+            { toolCallId, timeoutMs: waitMs },
+          ),
+        );
+      }
+
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, Math.min(50, remaining)),
+      );
+    }
   }
 
   private async recordRunning(
