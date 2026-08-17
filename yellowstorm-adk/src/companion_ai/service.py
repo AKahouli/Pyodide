@@ -94,7 +94,7 @@ CASE B — a real task that needs work or several actions. Return a plan:
 {{
   "title": "<short plan title>",
   "goal": "<one-sentence goal>",
-  "answer": "",
+  "answer": "<one short, friendly sentence to the user about what you're setting up>",
   "steps": [
     {{"id": "s1", "kind": "execute", "title": "<short label>", "description": "<full instruction>", "depends_on": []}},
     {{"id": "s2", "kind": "ask", "title": "<short label>", "question": "<question for the user>", "description": "", "depends_on": ["s1"]}},
@@ -105,6 +105,10 @@ CASE B — a real task that needs work or several actions. Return a plan:
 Rules:
 - Prefer CASE A whenever one message answers the user. Most chit-chat and simple
   questions do NOT need a plan — only plan when there is genuine multi-step work.
+- answer: ALWAYS write a short one-line reply to the user here, in BOTH cases —
+  a full reply in CASE A; in CASE B a brief, natural acknowledgement of what
+  you're about to do (e.g. "Sure — I'll pull the latest Ethereum price and add
+  it."). Never leave it empty.
 - title: a SHORT, user-facing label (max ~6 words) shown on the UI card so a
   person understands the step at a glance — e.g. "Search Bitcoin price", "Ask
   which option to run", "Write the introduction". EVERY step needs a title,
@@ -208,7 +212,7 @@ normal execute + await_reply pattern above).
 Example — "search bitcoin news, then send it to Rabeb and ask if we should
 invest today" — find_human_agents(name="Rabeb") found her, so this is
 CORRECT (one assignee step, no email/Teams anywhere):
-{{"title": "Bitcoin investment check", "goal": "Get Rabeb's investment call on Bitcoin", "answer": "",
+{{"title": "Bitcoin investment check", "goal": "Get Rabeb's investment call on Bitcoin", "answer": "On it — I'll pull the latest Bitcoin news and get Rabeb's call.",
   "steps": [
     {{"id": "s1", "kind": "execute", "title": "Search Bitcoin news", "description": "Search for the latest Bitcoin price and news; summarize price, drivers, and risks.", "depends_on": []}},
     {{"id": "s2", "kind": "execute", "title": "Ask Rabeb", "assignee": "Rabeb", "description": "Given the latest Bitcoin price/news research, should we invest in Bitcoin today? Give your recommendation and reasoning.", "depends_on": ["s1"]}}
@@ -220,7 +224,7 @@ the executor to email her or message her on Teams. The user never said
 literal message to compose, instead of checking find_human_agents first.
 
 Example — "email x asking which company she works for, then report on it":
-{{"title": "Company report", "goal": "Report on the company x works for", "answer": "",
+{{"title": "Company report", "goal": "Report on the company x works for", "answer": "Sure — I'll email x, wait for her reply, then research the company.",
   "steps": [
     {{"id": "s1", "kind": "execute", "title": "Email x", "description": "Send an email to x@example.com asking which company she works for.", "depends_on": []}},
     {{"id": "s2", "kind": "await_reply", "title": "Await her reply", "question": "Awaiting a reply from x@example.com naming her company", "description": "", "depends_on": ["s1"]}},
@@ -288,6 +292,11 @@ class OrchestratorService:
         self._pool = pool
         self._schema = schema
         self._mail_wait_timeout_hours = mail_wait_timeout_hours
+        # Live handle to each session's executing Plan, kept only while its drive
+        # loop is running (_drive_until_quiescent sets/clears it). converse_turn
+        # uses it to append steps to a plan mid-flight — the drive loop then runs
+        # them on its next pass, exactly as create_task grows a plan.
+        self._active: Dict[str, Plan] = {}
 
     async def expire_mail_waits(self) -> int:
         """Let down every step whose reply never came: the wait becomes an
@@ -1086,6 +1095,138 @@ class OrchestratorService:
         await self._finalize(session_id, plan, interrupt)
         return plan
 
+    async def converse_turn(self, *, session_id: str, user_id: str, message: str,
+                            planner_model: Optional[str] = None,
+                            planner_prompt: Optional[str] = None) -> Plan:
+        """A message that arrives WHILE a plan is executing.
+
+        This is deliberately NOT the old supersede (cancel the running turn and
+        replan): that destroyed the plan the user was watching, and cancelling a
+        mid-LLM-call turn is both slow and noisy (litellm wraps the aborted call
+        as an APIError). Instead the planner runs conversationally ALONGSIDE the
+        still-executing plan, on its own separate planner session — the two
+        interleave on the event loop, neither cancels the other.
+
+        A CASE A reply (no steps) is answered in place — chit-chat, plan
+        untouched. A CASE B reply (the planner produced steps for a real task)
+        is ADDED to the running plan: its steps are appended to the live plan
+        object and the drive loop runs them on its next pass (Phase 2). We never
+        fall back to the destructive cancel here.
+        """
+        # Give the planner the running plan AND its results, so an amend that
+        # needs earlier output ("email the summary") can bake that output into
+        # the new step — the results of the steps it depends on are already
+        # produced, sitting in step.result. Without this the planner has no idea
+        # what "the summary" is and asks the user instead (seen live: session
+        # 3cd66578…). Still an EPHEMERAL planner session (no accumulated history),
+        # so it never re-plans the existing work — the context is given
+        # explicitly and framed as already-done.
+        live = self._active.get(session_id)
+        amend_message = self._amend_message(live, message) if live is not None else message
+        plan = await self._make_plan(
+            session_id, user_id, amend_message,
+            planner_model=planner_model, planner_prompt=planner_prompt,
+            plan_session=f"{session_id}_conv_{uuid.uuid4().hex[:8]}")
+        live = self._active.get(session_id)  # re-check: may have finished while planning
+        logger.info("[worky] converse ◄ session=%s steps=%d live=%s",
+                    session_id, len(plan.steps), live is not None)
+        if not plan.steps:
+            await self._add_message(session_id, "assistant", plan.answer or "")
+        elif live is not None:
+            # Grab titles BEFORE injecting (ids/deps are rewritten in place, but
+            # titles are stable) so the reply names what was added.
+            titles = [s.title or (s.description[:50] + "…" if len(s.description) > 50
+                                  else s.description) for s in plan.steps]
+            n = await self._inject_steps(session_id, live, plan.steps)
+            # Prefer the planner's own words if it wrote any; otherwise a
+            # content-aware line naming the added work — not a fixed "Added N
+            # steps" every time.
+            reply = (plan.answer or "").strip()
+            if not reply:
+                joined = "; ".join(t for t in titles if t)
+                reply = (f"Got it — added to the running plan: {joined}." if joined
+                         else f"Got it — added {n} step{'s' if n != 1 else ''} to the running plan.")
+            await self._add_message(session_id, "assistant", reply)
+        else:
+            # The plan finished between the routing check and now — nothing live
+            # to amend. Don't silently drop the request.
+            await self._add_message(
+                session_id, "assistant",
+                "The plan just finished — send that again and I'll start it fresh.")
+        return plan
+
+    @staticmethod
+    def _amend_message(live: Plan, message: str) -> str:
+        """Frame the user's amend as CASE-C context: the running plan and every
+        result produced so far, marked ALREADY DONE, followed by the request.
+
+        The planner then writes only the NEW step(s) and can paste an existing
+        result straight into them (e.g. the summary into an email step), instead
+        of asking the user what "the summary" is."""
+        lines = []
+        for s in live.steps:
+            label = s.title or (s.description[:60] if s.description else s.id)
+            lines.append(f"[{s.id}] {label} ({s.status.value})")
+            if s.result:
+                lines.append(f"    result: {s.result}")
+        context = "\n".join(lines)
+        return (
+            "You are AMENDING a plan that is ALREADY RUNNING for the user. The "
+            "steps below already exist and their results (where produced) are "
+            "shown — they are DONE. Do NOT recreate or restate them.\n\n"
+            f"--- running plan ---\n{context}\n--- end plan ---\n\n"
+            "The user now says the following. Return ONLY the NEW step(s) needed "
+            "for it, as a normal plan. Where a new step needs an existing result, "
+            "paste that result directly into the step's description (do not refer "
+            "to it as 'the summary' — the executor can't see other steps). Give a "
+            "short, friendly `answer`.\n\n"
+            f"USER MESSAGE: {message}")
+
+    async def _inject_steps(self, session_id: str, live: Plan, new_steps: List[Step]) -> int:
+        """Append planner-produced steps to a LIVE, executing plan.
+
+        The drive loop (_drive_until_quiescent) rebuilds the workflow each pass
+        and runs any PENDING step that wasn't in the graph it just ran — the same
+        path create_task uses — so appending here is all it takes for the new
+        steps to execute.
+
+        The planner built these standalone (ids 's1'…, not knowing the running
+        plan), so: give each a fresh id that can't collide with a live step,
+        remap the batch's internal depends_on to those ids, and drop any
+        depends_on that isn't in the batch (they don't depend on existing running
+        steps — a first cut; "insert after step X" is a later refinement). Each
+        runs as soon as its own deps (if any) are met.
+        """
+        if not new_steps:
+            return 0
+        # The plan's frontier: steps nothing currently depends on. Injected steps
+        # hang off it so they schedule in a NEW wave AFTER all existing work.
+        # Without this, an independent step (no deps) lands in wave 0 alongside
+        # already-completed steps, and the re-drive re-RUNS that whole wave
+        # instead of replaying it — seen live: adding "search Ethereum" re-ran the
+        # finished Bitcoin step. create_task never hits this because its spawned
+        # steps always depend on their caller, i.e. a later wave.
+        frontier = [s.id for s in live.steps
+                    if not any(s.id in o.depends_on for o in live.steps)]
+        id_map = {s.id: uuid.uuid4().hex[:12] for s in new_steps}
+        for s in new_steps:
+            s.id = id_map[s.id]
+            # Keep the batch's own ordering; a batch-root (no in-batch dep) hangs
+            # off the frontier so no completed wave is disturbed.
+            s.depends_on = [id_map[d] for d in s.depends_on if d in id_map] or list(frontier)
+            s.status = Status.PENDING
+            if not s.is_persona:
+                s.assignee = live.executor_id
+                s.assignee_name = live.executor_name or DEFAULT_EXECUTOR_LABEL
+        live.steps.extend(new_steps)
+        scheduler.validate(live)
+        scheduler.assign_waves(live)
+        for s in new_steps:
+            await self._project_step(session_id, live, s)
+        logger.info("[worky] converse injected %d step(s) into live plan session=%s: %s",
+                    len(new_steps), session_id, [s.id for s in new_steps])
+        return len(new_steps)
+
     async def resume_turn(self, *, session_id: str, user_id: str, answer: str,
                           model: str, connectors: Optional[List[dict]] = None,
                           interrupt_id: Optional[str] = None,
@@ -1236,6 +1377,19 @@ class OrchestratorService:
         Bounded by progress — if a pass runs nothing, stop rather than spin —
         and by MAX_PLAN_STEPS, which caps how far a plan can grow at all.
         """
+        # Expose the live plan so converse_turn can append steps mid-flight; the
+        # loop below already re-runs any PENDING step that appears after a pass.
+        self._active[session_id] = plan
+        try:
+            return await self._drive_loop(runner, session_id, user_id, plan, name_to_step,
+                                          new_message, model=model, connectors=connectors,
+                                          executor_prompt=executor_prompt)
+        finally:
+            if self._active.get(session_id) is plan:
+                self._active.pop(session_id, None)
+
+    async def _drive_loop(self, runner, session_id, user_id, plan, name_to_step,
+                          new_message, *, model, connectors, executor_prompt):
         in_graph = {s.id for s in plan.steps}
         interrupts = await self._drive(
             runner, session_id, user_id, plan, name_to_step, new_message)
@@ -1367,7 +1521,15 @@ class OrchestratorService:
 
     async def _make_plan(self, session_id: str, user_id: str, message: str, *,
                          planner_model: Optional[str] = None,
-                         planner_prompt: Optional[str] = None) -> Plan:
+                         planner_prompt: Optional[str] = None,
+                         plan_session: Optional[str] = None) -> Plan:
+        # The planner's ADK session accumulates history across calls. The main
+        # flow shares one ("<id>_plan") on purpose, so the planner keeps context
+        # across a user's turns. converse passes an EPHEMERAL session instead:
+        # otherwise an amend like "also search Ethereum" would see the earlier
+        # "search Bitcoin" in history and re-plan BOTH, and _inject_steps would
+        # append a duplicate of the step already running.
+        plan_session = plan_session or (session_id + "_plan")
         planner = LlmAgent(
             name="planner",
             model=self._build_planner_model(planner_model),
@@ -1382,10 +1544,10 @@ class OrchestratorService:
             output_schema=_PlannerOutput,
         )
         runner = self._runner_factory(planner, f"planner_{session_id}")
-        await _ensure_session(runner, f"planner_{session_id}", user_id, session_id + "_plan")
+        await _ensure_session(runner, f"planner_{session_id}", user_id, plan_session)
         text = ""
         async for ev in runner.run_async(
-            user_id=user_id, session_id=session_id + "_plan",
+            user_id=user_id, session_id=plan_session,
             new_message=types.Content(role="user", parts=[types.Part(text=message)])):
             if ev.content and ev.content.parts:
                 for p in ev.content.parts:

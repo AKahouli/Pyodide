@@ -172,18 +172,20 @@ class ReadModel:
                 session_id, status)
 
     async def stop_incomplete(self, session_id: str) -> None:
-        """On StopSession, move any non-terminal step + the plan to a terminal
-        state so a stopped session shows no work stuck 'running' on the board.
-        The session status itself is set to 'completed' by the caller."""
+        """On StopSession, move any non-terminal step + the plan to 'cancelled'
+        so a stopped session shows no work stuck 'running' on the board — and is
+        distinguishable from work that genuinely 'failed' (an error) or
+        'completed'. Already-terminal steps keep their real outcome. The session
+        status itself is set to 'cancelled' by the caller."""
         async with self._pool.acquire() as con:
             await con.execute(
                 f"UPDATE {_q(self._schema,'plan_steps')} "
-                f"SET status='failed', blocked_reason='stopped by user', updated_at=now() "
-                f"WHERE session_id=$1 AND status NOT IN ('completed','failed')",
+                f"SET status='cancelled', blocked_reason='stopped by user', updated_at=now() "
+                f"WHERE session_id=$1 AND status NOT IN ('completed','failed','cancelled')",
                 session_id)
             await con.execute(
-                f"UPDATE {_q(self._schema,'plans')} SET status='completed', updated_at=now() "
-                f"WHERE session_id=$1 AND status NOT IN ('completed','failed')",
+                f"UPDATE {_q(self._schema,'plans')} SET status='cancelled', updated_at=now() "
+                f"WHERE session_id=$1 AND status NOT IN ('completed','failed','cancelled')",
                 session_id)
 
     async def pause_running_steps(self, session_id: str) -> None:

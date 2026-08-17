@@ -10,6 +10,7 @@ Reuses the project's LLMFactory so model/proxy config stays in one place.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Awaitable, Callable, List, Optional
 
 from google.adk.agents import LlmAgent
@@ -145,13 +146,75 @@ def _stop_after_n_calls(limit: int, model_name: str, *,
 
     return _cb
 
+
+# The filler messages the backend passes as the workflow's shared new_message
+# (see service.py _drive/resume). They carry no task — the real per-step task is
+# injected below — so a step-agent is better off never seeing them. Kept exact so
+# a real email reply (which a resumed step gets as its front user turn) is never
+# mistaken for one.
+_KICKOFF_SENTINELS = frozenset({"run the plan", "continue"})
+
+
+def _inject_task_turn(task_text: str):
+    """Deliver the step's task as a USER turn instead of baking it into the
+    system prompt.
+
+    ADK hands the whole workflow ONE shared kickoff message ("run the plan"), so
+    a step's own task can normally only reach it through system_instruction. We
+    put it in as a distinct user turn — which lets the big rules block stay
+    identical across every step (cacheable) — placed EARLY, never last. A task
+    pinned last is re-read as the most-recent instruction every round and
+    out-shouts terminal flow signals: seen live, a persona step that had already
+    sent its mail and created its await_reply step (whose tool result says "end
+    your turn now") kept polling the mailbox because the appended task stayed
+    more recent than that stop. Kept early, the growing tool history — including
+    those stop messages — stays more recent than the task.
+
+    If the front turn is the shared filler kickoff, we REPLACE it (no reason to
+    keep noise the model has to reconcile). Otherwise the front turn is real —
+    on a resume it's the incoming email reply — so we keep it and splice the task
+    in right after. Re-applied every model call (the splice lives only on the
+    transient request, never in session state) and idempotent.
+    """
+    async def _cb(callback_context, llm_request):
+        contents = list(llm_request.contents or [])
+        task = genai_types.Content(
+            role="user", parts=[genai_types.Part(text=task_text)])
+
+        def user_text(c):
+            return (c.parts[0].text if getattr(c, "role", None) == "user"
+                    and c.parts and getattr(c.parts[0], "text", None) is not None else None)
+
+        first_txt = user_text(contents[0]) if contents else None
+        if first_txt in _KICKOFF_SENTINELS:
+            contents[0] = task                       # drop the filler, task takes its place
+        elif not (len(contents) > 1 and user_text(contents[1]) == task_text):
+            contents.insert(1, task)                 # keep the real front turn, task right after
+        else:
+            return None                              # already spliced
+        llm_request.contents = contents
+        return None
+    return _cb
+
+
+def _compose_before_model(*cbs):
+    """Chain before_model callbacks; the first to return a response wins."""
+    async def _run(callback_context, llm_request):
+        for cb in cbs:
+            resp = await cb(callback_context, llm_request)
+            if resp is not None:
+                return resp
+        return None
+    return _run
+
+
 EXECUTOR_INSTRUCTION = """{identity}
 
 {do_this_line}
 {description}
 
 You are not told the plan's wider goal or its other steps, on purpose — the
-planner already wrote your task above as a complete, standalone instruction,
+planner already wrote your task as a complete, standalone instruction,
 and every other step in this plan has the SAME toolset you do (including
 things like sending email). Reaching for one of those tools because it looks
 useful for the overall task is another step's job, not yours.
@@ -437,8 +500,14 @@ def make_llm_node_factory(
             "Do exactly this — using whatever consultation your role above requires — "
             "and nothing else:" if step.is_persona else
             "Do exactly this and nothing else:")
-        base_instruction = EXECUTOR_INSTRUCTION.format(
-            identity=identity, do_this_line=do_this_line, description=step.description)
+        # The task ({do_this_line}+{description}) no longer lives in the system
+        # prompt: it is delivered as a user turn (see _inject_task_turn), where
+        # attention is highest and the shared "run the plan" kickoff otherwise
+        # competes with it. So the built-in instruction is resolved with the task
+        # placeholders emptied, leaving identity + the invariant rules.
+        base_instruction = re.sub(r"\n{3,}", "\n\n", EXECUTOR_INSTRUCTION.format(
+            identity=identity, do_this_line="", description="")).strip()
+        task_text = f"{do_this_line}\n{step.description}"
         # A dynamic delegate's description is ALREADY the message to relay to
         # assignee_name (composed by the caller, typically second-person:
         # "Hi Firas — ... Do you confirm?") — not an open question this step
@@ -483,11 +552,13 @@ def make_llm_node_factory(
             )
         elif step.is_persona:
             persona_preamble = (
-                f"You represent {step.assignee_name} — a real person at this company."
-                + (f" {step.assignee_role}" if step.assignee_role else "")
+                f"You are an assistant acting for {step.assignee_name} — a real "
+                "person at this company. You never answer in their place; your "
+                "job is to reach them and get their real words."
+                + (f" Their role: {step.assignee_role}" if step.assignee_role else "")
                 + "\n\n"
-                f"Your task below is addressed TO {step.assignee_name}, and is for "
-                f"them to answer — not something you answer as them. That holds "
+                f"The task below is addressed to {step.assignee_name} and is theirs "
+                f"to answer — not something you answer as them. That holds "
                 "however easy the answer looks: if it reads as a question about "
                 "what they want, have, or plan, you do not know that, and "
                 "\"nothing\" or \"none\" is still THEIR answer to give, never "
@@ -565,27 +636,40 @@ def make_llm_node_factory(
                         .replace("{do_this_line}", do_this_line)
                         .replace("{description}", step.description))
 
+        # A full instruction carries the task itself ({description}); strip that
+        # task out to the user turn exactly as the built-in path does — otherwise
+        # the agentstore executor prompt (a byte-copy of EXECUTOR_INSTRUCTION,
+        # {description} and all) would bake the task back into system and the
+        # injection would never fire in production.
+        def _resolve_full(text: str) -> str:
+            return re.sub(r"\n{3,}", "\n\n",
+                          text.replace("{identity}", identity)
+                              .replace("{do_this_line}", "")
+                              .replace("{description}", "")).strip()
+
         custom_is_full_instruction = bool(
             custom_instruction and "{description}" in custom_instruction)
-        body = _resolve(custom_instruction) if custom_is_full_instruction else base_instruction
+        body = _resolve_full(custom_instruction) if custom_is_full_instruction else base_instruction
         mail_reply_instruction = instruction_for_step(step) if instruction_for_step else None
         extra_preamble = None if custom_is_full_instruction or not custom_instruction \
             else _resolve(custom_instruction)
         preambles = [p for p in (extra_preamble, persona_preamble, mail_reply_instruction) if p]
         instruction = "\n\n".join(preambles + [body]) if preambles else body
         step_tools = tools_for_step(step, shared_tools) if tools_for_step else shared_tools
-        tool_names = [getattr(getattr(t, "func", None), "__name__", "?") for t in step_tools]
-        logger.info("[worky] 8. step=%s executor context:\n--- instruction ---\n%s\n"
-                    "--- tools (%d) ---\n%s", step.id, instruction, len(tool_names), tool_names)
+        stop_cb = _stop_after_n_calls(
+            MAX_PERSONA_STEP_MODEL_CALLS if step.is_persona else MAX_STEP_MODEL_CALLS,
+            model_name, is_persona=step.is_persona, assignee_name=step.assignee_name)
         return LlmAgent(
             name=name,
             model=build_llm(model_name, with_tools=bool(step_tools), temperature=temperature),
             instruction=instruction,
             tools=step_tools,
             output_key=name,  # step result lands in session state under this key
-            before_model_callback=_stop_after_n_calls(
-                MAX_PERSONA_STEP_MODEL_CALLS if step.is_persona else MAX_STEP_MODEL_CALLS,
-                model_name, is_persona=step.is_persona, assignee_name=step.assignee_name),
+            # Inject the task as the user turn first, then run the call-budget
+            # guard on the resulting contents (so its forced-answer fallback also
+            # carries the task).
+            before_model_callback=_compose_before_model(
+                _inject_task_turn(task_text), stop_cb),
         )
 
     return factory

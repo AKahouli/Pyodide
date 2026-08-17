@@ -142,6 +142,21 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         run_id = uuid.uuid4().hex
         logger.info("[worky] 1. RunTask ◄ incoming request: %s", _describe_request(request))
 
+        # A message that arrives WHILE a plan is executing is NOT a supersede.
+        # The old behaviour cancelled the running turn and replanned — which
+        # destroyed the plan the user was watching, and cancelling a mid-LLM-call
+        # turn is slow and noisy (litellm wraps the aborted call as an APIError).
+        # Instead run it as a concurrent conversation with the planner, alongside
+        # the still-executing plan. Tracked in _bg only (NOT _running): the
+        # executing turn keeps ownership of _running, so Stop still targets it.
+        if await self._plan_is_executing(request.session_id):
+            task = asyncio.create_task(self._run_converse(request, run_id))
+            self._bg.add(task)
+            task.add_done_callback(self._bg.discard)
+            logger.info("[worky] 3. RunTask accepted → concurrent converse "
+                        "(session=%s run=%s)", request.session_id, run_id)
+            return pb.RunResponse(session_id=request.session_id, accepted=True, run_id=run_id)
+
         # STEP 3 — ack now, run the turn in the background. The client watches
         # progress arrive in the read model, not on this call. Last-answer-wins:
         # hand the in-flight turn (if any) to the new one so it supersedes it.
@@ -156,6 +171,40 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         logger.info("[worky] 3. RunTask accepted → background turn (session=%s run=%s)",
                     request.session_id, run_id)
         return pb.RunResponse(session_id=request.session_id, accepted=True, run_id=run_id)
+
+    async def _plan_is_executing(self, session_id: str) -> bool:
+        """True when a plan is mid-execution — running, with steps projected, and
+        NOT parked on user input. A message then talks WITH the planner alongside
+        the plan instead of superseding it. False during the initial planning
+        phase (no steps yet) and while blocked on an ask/await_reply (that message
+        is the awaited answer → the normal resume path handles it)."""
+        if self._rm is None:
+            return False
+        try:
+            snap = await self._rm.snapshot(session_id)
+        except Exception:
+            return False
+        if not snap:
+            return False
+        sess = snap.get("session") or {}
+        return (sess.get("status") == "running" and not sess.get("interrupt_id")
+                and bool(snap.get("steps")))
+
+    async def _run_converse(self, request: pb.RunRequest, run_id: str) -> None:
+        try:
+            planner = _agent_by_type(request.agents, PLANNER_AGENT_TYPE)
+            await self._svc.converse_turn(
+                session_id=request.session_id, user_id=request.user_id,
+                message=request.message,
+                planner_model=planner.chatbot.model if planner else None,
+                planner_prompt=planner.prompt if planner else None)
+            logger.info("[worky] converse turn done (session=%s run=%s)",
+                        request.session_id, run_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("[worky] converse turn failed (session=%s run=%s)",
+                             request.session_id, run_id)
 
     def _forget_running(self, session_id: str):
         """Done-callback that drops the session's task ref only if it's still the
@@ -261,7 +310,14 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         return resp
 
     async def StopSession(self, request: pb.StopSessionRequest, context) -> pb.StopSessionResponse:
-        task = self._running.get(request.session_id)
+        # Claim the task out of _running so a repeat Stop can't double-act. We do
+        # NOT await its cancellation: a turn mid–LLM-call takes tens of seconds to
+        # unwind (the call runs in a thread cancel() can't interrupt), and blocking
+        # the RPC on that hung Stop past the client deadline. cancel() is
+        # fire-and-forget; the read-model projection below marks the session
+        # terminal right now, so the board is correct immediately regardless of
+        # when the cancelled turn actually finishes dying.
+        task = self._running.pop(request.session_id, None)
         stopped = False
         if task and not task.done():
             task.cancel()
@@ -274,7 +330,9 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 # forever for work nobody is doing — and a late reply would try
                 # to resume a stopped plan.
                 await self._rm.cancel_mail_waits(request.session_id)
-                await self._rm.set_session_status(request.session_id, "completed")
+                # 'cancelled', not 'completed': a user Stop is a deliberate
+                # termination, distinct from a plan that ran to the end.
+                await self._rm.set_session_status(request.session_id, "cancelled")
             except Exception as e:
                 logger.warning("StopSession projection failed: %s", e)
         return pb.StopSessionResponse(stopped=stopped)

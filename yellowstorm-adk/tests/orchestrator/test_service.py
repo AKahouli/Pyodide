@@ -939,10 +939,15 @@ def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
             object.__setattr__(self, "_n", self._n + 1)
             n = self._n
             instr = llm_request.config.system_instruction or ""
-            is_followup = "Give the real final answer" in instr
-            seen_reply = any(
-                "APPROVED THE PILOT" in (getattr(p, "text", "") or "")
+            contents_text = "\n".join(
+                getattr(p, "text", "") or ""
                 for c in llm_request.contents for p in (c.parts or []))
+            # The step's task now rides in the user turn, not system_instruction
+            # (see nodes._inject_task_turn) — look in both so the scripted model
+            # still recognizes the follow-up step.
+            is_followup = ("Give the real final answer" in instr
+                           or "Give the real final answer" in contents_text)
+            seen_reply = "APPROVED THE PILOT" in contents_text
             if is_followup:
                 yield LlmResponse(content=types.Content(role="model", parts=[
                     types.Part(text=f"REAL FINAL ANSWER — reply seen: {seen_reply}")]))
@@ -1035,6 +1040,68 @@ def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
         followup_final = plan2.step(followup_step.id)
         assert followup_final.status is Status.COMPLETED
         assert followup_final.result == "REAL FINAL ANSWER — reply seen: True"
+
+
+async def test_inject_steps_appends_to_live_plan_with_fresh_ids():
+    """converse_turn amends a running plan by appending the planner's steps to
+    the live Plan object; the drive loop then runs them (same path create_task
+    uses). Fresh ids so they can't collide with running steps; the batch's own
+    depends_on is remapped to those ids; the executor is stamped."""
+    rm = MagicMock(upsert_steps=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    live = Plan(id="p", title="t", goal="g", executor_id="exec1", executor_name="Worky",
+                steps=[Step(id="s1", kind="execute", description="orig", status=Status.RUNNING)])
+    new = [Step(id="s1", kind="execute", description="added A", depends_on=[]),
+           Step(id="s2", kind="execute", description="added B", depends_on=["s1"])]
+
+    n = await service._inject_steps("sess", live, new)
+
+    assert n == 2 and len(live.steps) == 3
+    added = live.steps[1:]
+    assert all(s.id != "s1" for s in added)              # no collision with the running step
+    # A batch-root hangs off the frontier (the existing s1) so it lands in a NEW
+    # wave — not wave 0 alongside the completed step, which would re-run it.
+    assert added[0].depends_on == ["s1"]
+    assert added[1].depends_on == [added[0].id]          # internal dep remapped
+    assert all(s.assignee == "exec1" for s in added)     # executor stamped
+    assert all(s.status is Status.PENDING for s in added)
+    rm.upsert_steps.assert_awaited()                     # projected so the card grows
+
+
+def test_amend_message_embeds_plan_results_as_context():
+    """CASE C: the amend planner is given the running plan AND its results, so it
+    can paste an existing result into a new step ('email the summary') instead of
+    asking the user what the summary is."""
+    live = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="s1", kind="execute", title="Search Bitcoin",
+             status=Status.COMPLETED, result="BTC is ~$63,000"),
+        Step(id="s2", kind="execute", title="Summarize", status=Status.RUNNING),
+    ])
+    msg = svc.OrchestratorService._amend_message(live, "email that to Firas")
+    assert "AMENDING" in msg                     # framed as an amend, not a fresh plan
+    assert "BTC is ~$63,000" in msg              # the result is embedded for reuse
+    assert "email that to Firas" in msg          # the user's request is carried
+    assert "[s1]" in msg and "[s2]" in msg       # existing steps listed as done
+
+
+async def test_drive_registers_live_plan_for_converse():
+    """_drive_until_quiescent must expose the live plan in self._active while the
+    drive loop runs (so converse_turn can reach it), and clear it after."""
+    service = svc.OrchestratorService(MagicMock(), None, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[])
+
+    seen = {}
+
+    async def fake_loop(*a, **k):
+        seen["active"] = service._active.get("sess") is plan
+        return []
+
+    service._drive_loop = fake_loop
+    await service._drive_until_quiescent(
+        None, "sess", "u", plan, {}, None,
+        model="m", connectors=None, executor_prompt=None)
+    assert seen["active"] is True                         # live during the loop
+    assert "sess" not in service._active                  # cleared after
 
 
 def test_create_task_after_builds_a_join_not_just_a_fan_out():

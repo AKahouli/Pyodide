@@ -25,6 +25,19 @@ from src.companion_ai.plan import Plan, Status, Step
 from src.companion_ai.service import OrchestratorService
 
 
+def _task_turn(agent) -> str:
+    """The task the injector delivers as the USER turn — it moved out of the
+    system instruction (see nodes._inject_task_turn), replacing the plan's
+    shared "run the plan" kickoff. Tests that used to look for the step's task
+    in agent.instruction look here instead."""
+    from types import SimpleNamespace as NS
+    req = NS(contents=[NS(role="user", parts=[NS(
+        text="run the plan", function_response=None, function_call=None)])])
+    asyncio.run(agent.before_model_callback(callback_context=None, llm_request=req))
+    return "\n".join(p.text for c in req.contents if c.role == "user"
+                     for p in (c.parts or []) if getattr(p, "text", None))
+
+
 # --- the node primitive, on the real ADK engine -----------------------------
 
 async def _roundtrip():
@@ -142,10 +155,11 @@ def test_an_executor_never_sees_the_plan_wide_goal_or_another_steps_task():
 
     for step in plan.steps:
         agent = factory(step, step.id)
-        assert step.description in agent.instruction
-        assert plan.goal not in agent.instruction
+        rendered = agent.instruction + "\n" + _task_turn(agent)
+        assert step.description in rendered
+        assert plan.goal not in rendered
         other = next(s for s in plan.steps if s.id != step.id)
-        assert other.description not in agent.instruction
+        assert other.description not in rendered
 
 
 def test_a_client_prompts_literal_description_token_gets_substituted():
@@ -160,10 +174,13 @@ def test_a_client_prompts_literal_description_token_gets_substituted():
         model_name="x", tools=[],
         custom_instruction="Do this step:\n{description}\nReturn concisely.")
 
-    instruction = factory(step, "a").instruction
+    agent = factory(step, "a")
 
-    assert "{description}" not in instruction
-    assert "Search Bitcoin price." in instruction
+    # No unresolved token in what ADK templates (the system instruction) — that
+    # was the KeyError. The task itself now rides in the user turn.
+    assert "{description}" not in agent.instruction
+    assert "{description}" not in _task_turn(agent)
+    assert "Search Bitcoin price." in _task_turn(agent)
 
 
 def test_a_persona_step_never_gets_a_competing_execution_agent_identity():
@@ -177,7 +194,7 @@ def test_a_persona_step_never_gets_a_competing_execution_agent_identity():
     plain_step = Step(id="b", kind="execute", description="Search the web for Tesla news.")
 
     assert "You are an execution agent" not in factory(persona_step, "a").instruction
-    assert "You represent Rabeb" in factory(persona_step, "a").instruction
+    assert "You are an assistant acting for Rabeb" in factory(persona_step, "a").instruction
     assert "You are an execution agent" in factory(plain_step, "b").instruction
 
 
@@ -200,9 +217,13 @@ def test_a_client_prompt_carrying_the_description_replaces_the_builtin_one():
 
     step = Step(id="a", kind="execute", description="Should we migrate to Databricks?",
                 is_persona=True, assignee_name="Hamdi Imed", assignee_role="data lead")
-    instruction = factory(step, "a").instruction
+    agent = factory(step, "a")
+    instruction = agent.instruction
 
-    assert instruction.count("Should we migrate to Databricks?") == 1, instruction
+    # Task lives in the user turn exactly once; the built-in rules block appears
+    # exactly once in system (replaced, not stacked).
+    assert _task_turn(agent).count("Should we migrate to Databricks?") == 1
+    assert instruction.count("Should we migrate to Databricks?") == 0
     assert instruction.count("You are not told the plan's wider goal") == 1
     assert "{description}" not in instruction
 
@@ -214,10 +235,12 @@ def test_a_client_prompt_without_the_description_still_prepends():
     factory = nodes.make_llm_node_factory(
         model_name="x", tools=[], custom_instruction="Always answer in French.")
     step = Step(id="a", kind="execute", description="Search the web for Tesla news.")
-    instruction = factory(step, "a").instruction
+    agent = factory(step, "a")
+    instruction = agent.instruction
 
     assert "Always answer in French." in instruction
-    assert instruction.count("Search the web for Tesla news.") == 1
+    assert _task_turn(agent).count("Search the web for Tesla news.") == 1
+    assert instruction.count("Search the web for Tesla news.") == 0
     assert "You are not told the plan's wider goal" in instruction
 
 
@@ -258,9 +281,10 @@ def test_a_persona_step_is_never_told_and_nothing_else():
                         is_persona=True, assignee_name="Rabeb", assignee_role="Investment analyst.")
     plain_step = Step(id="b", kind="execute", description="Search the web for Tesla news.")
 
-    assert "Do exactly this and nothing else:" not in factory(persona_step, "a").instruction
-    assert "using whatever consultation your role above requires" in factory(persona_step, "a").instruction
-    assert "Do exactly this and nothing else:" in factory(plain_step, "b").instruction
+    # do_this_line rides in the task's user turn now, not the system instruction.
+    assert "Do exactly this and nothing else:" not in _task_turn(factory(persona_step, "a"))
+    assert "using whatever consultation your role above requires" in _task_turn(factory(persona_step, "a"))
+    assert "Do exactly this and nothing else:" in _task_turn(factory(plain_step, "b"))
 
 
 def test_a_persona_step_is_told_to_act_on_a_reply_already_in_context_not_just_note_it():
