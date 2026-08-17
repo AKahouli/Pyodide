@@ -1,25 +1,42 @@
 # Conversation V2 — Backend
 
-NestJS module that bridges YellowStorm to the Manus (APImanus) gRPC
+NestJS module that bridges YellowStorm to the APImanus gRPC
 `ConversationV2` service: sessions, streaming chat, event persistence, SSE
-fan-out, deploy, and in-browser app preview metadata for Nodepod.
+fan-out, deploy, in-browser app preview, **Runtime MCP broker**, **source
+revision management**, and **Nodepod browser runtime** orchestration.
 
 Related docs in this folder:
 
 - [`SKILLS.md`](SKILLS.md) — skill selection → gRPC
 - [`CONNECTORS.md`](CONNECTORS.md) — connector bindings → gRPC
-- [`NODEPOD_INTEGRATION.md`](NODEPOD_INTEGRATION.md) — historical design notes (implementation landed; prefer this README)
+
+The App Builder runtime lives in the sibling module
+[`../app-runtime/`](../app-runtime/README.md); conversation-v2 is the
+**session & streaming** layer that consumes its services.
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Architecture](#architecture)
-- [Application component / Nodepod](#application-component--nodepod)
-- [gRPC contract](#grpc-contract)
-- [SSE payload](#sse-payload)
-- [App source signed URLs](#app-source-signed-urls)
+- [Session lifecycle](#session-lifecycle)
+- [Streaming chat](#streaming-chat)
+- [Event persistence](#event-persistence)
+- [SSE fan-out](#sse-fan-out)
+- [Application preview / Nodepod](#application-preview--nodepod)
+- [App Builder runtime integration](#app-builder-runtime-integration)
+  - [Runtime ticket](#runtime-ticket)
+  - [Runtime MCP endpoint](#runtime-mcp-endpoint)
+  - [Socket.IO protocol](#socketio-protocol)
+  - [Runtime MCP tools](#runtime-mcp-tools)
+  - [Capabilities](#capabilities)
+  - [Consistency guarantees](#consistency-guarantees)
+- [Source revisions](#source-revisions)
 - [Deploy](#deploy)
+- [App sharing / Marketplace](#app-sharing--marketplace)
+- [RBAC / guards](#rbac--guards)
+- [API reference](#api-reference)
 - [Key files](#key-files)
+- [Environment variables](#environment-variables)
 
 ---
 
@@ -31,41 +48,130 @@ Related docs in this folder:
 | Chat | Background gRPC `Chat` stream → persist events → SSE to the user |
 | Tools / plan / steps | Forwarded as typed SSE events |
 | App preview | `application_component` carries preview URL **and** Ceph source metadata for Nodepod |
+| **Runtime MCP** | **Streamable HTTP JSON-RPC endpoint serving 12 tools (list, read, search, write, apply_patch, delete, diff, run, dev_server, preview_inspect, preview_action, finalize)** |
+| **Browser runtime** | **Socket.IO `/app-runtime` — dispatch tool calls to browser Nodepod, handle heartbeats, revision guards, mutation locks** |
+| **Source revisions** | **Commit immutable revision manifests to Ceph, presign file reads, hydrate revisions** |
 | Deploy | HTTP App Builder (`POST …/sessions/:id/deploy`), independent of Nodepod |
+| **App sharing** | **Email-based share with notification, App Marketplace with owned + shared apps** |
+| **RBAC** | **Owner / viewer roles with granular permissions (session.read, events.read, workspace_documents.read, session.write)** |
 
 ## Architecture
 
 ```
-Frontend SSE
-     ▲
-ConversationV2StreamGateway  (fan-out per user)
-     ▲
-ConversationV2StreamService  (persist + push; drop heartbeats)
-     ▲
-ConversationV2GrpcClientService  (dial Manus, normaliseEvent)
-     ▲
-Manus gRPC ConversationV2.Chat (server-stream Event)
+┌─────────────────────────────────────────────────────────────────┐
+│  Frontend (React)                                               │
+│    ↕ SSE (GET /stream)        ↕ Socket.IO (/app-runtime)       │
+├─────────────────────────────────────────────────────────────────┤
+│  conversation-v2 module                                         │
+│    StreamController ──→ StreamService ──→ GrpcClientService     │
+│    Controller (REST) ──→ SessionService, EventStore, Deploy     │
+│    StreamGateway (SSE fan-out per user)                         │
+├─────────────────────────────────────────────────────────────────┤
+│  app-runtime module                                             │
+│    McpController (Streamable HTTP JSON-RPC)                     │
+│    RuntimeBrokerService → RuntimeToolDispatcherService          │
+│    AppRuntimeGateway (Socket.IO /app-runtime)                   │
+│    RuntimeBindingService, RuntimeRevisionService                │
+│    RuntimeTicketService, RuntimeTokenService                    │
+└──────────────┬──────────────────────────────────┬───────────────┘
+               │                                  │
+    OpenCode (APImanus)                 Browser Nodepod (VFS)
+    POST /api/v1/mcp/app-runtime       Socket.IO tool.invoke
 ```
 
-Manus side (APImanus), when the React app build is ready (files under
-`/opt/react-project`, plus optional npm install/build):
+### APImanus side
 
-1. Emits `app_build_progress` phases while coding/building.
-2. Resolves public preview via Sandbox Manager `POST /app/preview` (+ status poll).
-3. Triggers / polls `POST /app/code` until ready (every ~10s, timeout configurable).
-4. Emits `ApplicationComponentEvent` with `url`, `title`, `ceph_path`,
-   `files_tree_json`, `file_count`.
+APImanus hosts the OpenCode gateway and calls `POST /internal/app-runtime/bind`
+to obtain `mcpUrl` + `mcpToken`. It passes these to OpenCode, which invokes
+Runtime MCP tools over Streamable HTTP. APImanus does **not** host Runtime MCP
+on its own path (unless `APP_RUNTIME_MCP_LOCATION=apimanus` for legacy rollback).
 
-No agent tool is required — YellowStorm only consumes the streamed events.
+### YellowStorm side
 
-## Application component / Nodepod
+YellowStorm serves the Runtime MCP endpoint, brokers tool calls to the browser
+via Socket.IO, manages source revisions in Ceph, and handles deploy/sharing.
+
+## Session lifecycle
+
+```
+POST /conversation-v2/sessions
+  → 1. Create session pointer in Mongo (status: active)
+  → 2. Create system workspace (50MB default)
+  → 3. Create gRPC session in ADK (with workspace paths)
+  → 4. Attach aiSessionId + systemWorkspaceId to pointer
+  → Return { sessionId, workspaceIds, systemWorkspaceId }
+```
+
+Cleanup on partial failure: if step 2/3/4 fails, earlier artifacts are
+rolled back (system workspace deleted, gRPC session stopped, draft removed).
+
+## Streaming chat
+
+The stream is **fully decoupled** from any HTTP request:
+
+1. `POST …/message` persists the user event and kicks off a background gRPC
+   subscription.
+2. Every AI event is persisted to the event store AND pushed to all of the
+   user's open SSE pipes via the gateway.
+3. A single SSE pipe carries events for **all** of the user's conversations
+   (each frame tagged with `sessionId`), so switching tabs never tears down a
+   running stream.
+4. Title generation fires on the first user message (async, via `NameGeneratorService`).
+5. Model resolution: per-message `model` → conversation-v2 default → global
+   admin default → ADK fallback.
+6. Concurrency: max `conversationV2.maxConcurrentStreams` (default 5) concurrent
+   streams per user; re-sending on the same session returns `CONVERSATION_ALREADY_STREAMING`.
+
+### Skills & connectors
+
+Each message can include `skillIds` and `connectorIds`. The stream service
+resolves them into full gRPC payloads (including per-user OAuth tokens for
+connectors) and forwards to ADK. Selection is persisted on the session so
+reload re-hydrates the composer.
+
+## Event persistence
+
+Events are stored in `conversation_v2_events` with an auto-incrementing
+`sequence` per session. The sequence is atomically incremented via
+`findOneAndUpdate` on the session pointer (`$inc: { eventSequence: 1 }`).
+
+Idempotence: events carry an `eventId` (client-provided or UUID). Duplicate
+`eventId` appends are silently deduplicated (the sequence slot is wasted but
+the event is not duplicated).
+
+Key fields: `sessionId`, `sequence`, `eventId`, `type`, `emittedAt`, `payload`,
+`modelId` (tagged on first assistant message).
+
+## SSE fan-out
+
+`ConversationV2StreamGatewayService` maintains per-user SSE connection sets
+(max `conversationV2.maxSseConnections`, default 5). Every pushed event is
+written to all live pipes. A write failure on one connection removes just that
+connection; others are unaffected.
+
+The global SSE endpoint (`GET /conversation-v2/stream`) is authenticated via
+`@StreamAuth()` and uses a 2KB padding frame to avoid initial buffering.
+
+The per-session live-tail endpoint (`GET …/stream/live`) polls the event store
+every `conversationV2.liveTailPollMs` (default 1000ms) and terminates on
+session completion/error.
+
+## Application preview / Nodepod
+
+When ADK emits `application_component`, the frontend:
+
+1. Opens the right panel in **Preview** mode.
+2. Shows a read-only file tree from `files_tree`.
+3. Downloads sources via batch signed URLs (revision-based or `ceph_path`).
+4. Boots `@scelar/nodepod` in the browser, runs `npm install` + `npm run dev`.
+5. Embeds the local Nodepod preview URL in an iframe.
 
 YellowStorm does **not** boot Nodepod on the server. It:
 
 1. Maps the gRPC event into a typed payload (including parsed `files_tree`).
 2. Persists and SSE-pushes that payload to the frontend.
 3. Exposes batch Ceph **presigned read URLs** so the browser can download
-   sources and hydrate `@scelar/nodepod`.
+   sources and hydrate Nodepod's virtual filesystem.
 
 ### Proto (`proto/conversation.proto`)
 
@@ -73,44 +179,172 @@ YellowStorm does **not** boot Nodepod on the server. It:
 message ApplicationComponentEvent {
   string url = 1;
   string title = 2;
-  string ceph_path = 3;         // Ceph prefix of the generated project
-  string files_tree_json = 4;   // JSON nested tree { name, type, path?, size?, children? }
+  string ceph_path = 3;
+  string files_tree_json = 4;
   int32  file_count = 5;
+  string revision_id = 6;
 }
 ```
 
-Keep this file in sync with
-`APImanus/backend/app/interfaces/grpc/conversation.proto`.
+## App Builder runtime integration
 
-### Mapping (`services/conversation-v2.grpc-client.service.ts`)
+The runtime layer lives in `../app-runtime/` and is consumed by conversation-v2
+via three integration points:
 
-- Parses `files_tree_json` with `parseFilesTree()` → `FilesTreeNode | null`.
-- Invalid / missing JSON → `files_tree: null` (frontend shows waiting / empty tree).
-
-Types: [`types/conversation-v2.types.ts`](types/conversation-v2.types.ts)
-(`ApplicationComponentEventPayload`, `FilesTreeNode`).
-
-## SSE payload
-
-```
-event: application_component
-data: {
-  "event_id": "...",
-  "timestamp": 1710000000,
-  "sequence": 42,
-  "url": "https://{conversation}.yellowsys.org",
-  "title": "My app",
-  "ceph_path": "yellowstorm/user/appbuilder/conversation/projectSRC",
-  "files_tree": { "name": "", "type": "directory", "children": [ ... ] },
-  "file_count": 23
-}
-```
-
-## App source signed URLs
+### Runtime ticket
 
 ```http
-POST /api/v1/conversation-v2/sessions/:id/app-source/urls
+POST /conversation-v2/sessions/:id/runtime-ticket
+```
+
+Issues a one-shot, short-lived ticket for the browser to authenticate on the
+`/app-runtime` Socket.IO namespace. The browser never sees the `mcpToken`.
+
+Keyed on `aiSessionId` (workspace id), not the pointer `_id`, because APImanus
+binds the runtime with its own session id.
+
+### Runtime MCP endpoint
+
+```http
+POST /api/v1/mcp/app-runtime
+Content-Type: application/json
+Authorization: Bearer <mcpToken>
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "yellowruntime_write",
+    "arguments": { "path": "src/App.tsx", "content": "..." }
+  }
+}
+```
+
+Streamable HTTP — supports both regular POST and SSE streaming for
+`tools/list`. Authenticated via `RuntimeMcpAuthService` (bearer token →
+binding lookup).
+
+### Socket.IO protocol
+
+Namespace: `/app-runtime`
+
+| Direction | Event | Payload |
+|---|---|---|
+| Browser → Server | `runtime.register` | `{ runtimeSessionId, workspaceId, revisionId, capabilities, browserRuntimeId? }` |
+| Browser → Server | `runtime.heartbeat` | `{ workspaceId, revisionId? }` |
+| Browser → Server | `tool.progress` | `{ toolCallId, phase?, message? }` |
+| Browser → Server | `tool.completed` | `{ toolCallId, result }` |
+| Browser → Server | `tool.failed` | `{ toolCallId, error: { code, message, data? } }` |
+| Server → Browser | `tool.invoke` | `{ toolCallId, workspaceId, tool, arguments, baseRevisionId, timeoutMs }` |
+| Server → Browser | `runtime.rehydrate` | `{ workspaceId, expectedRevisionId, actualRevisionId }` |
+
+### Runtime MCP tools
+
+12 tools mirroring the APImanus schemas:
+
+| Tool | Description | Capability | Mutating |
+|---|---|---|---|
+| `list` | List files/directories in workspace | filesystem | No |
+| `read` | Read file content with SHA-256 hash | filesystem | No |
+| `search` | Regex search across workspace files | filesystem | No |
+| `write` | Write/create file (commits revision) | filesystem | **Yes** |
+| `apply_patch` | Apply unified diff (commits revision) | filesystem | **Yes** |
+| `delete` | Delete file (commits revision) | filesystem | **Yes** |
+| `diff` | Diff between revisions | filesystem | No |
+| `run` | Spawn binary (npm install, etc.) | npm | No |
+| `dev_server` | Report/restart managed Vite preview | npm | No |
+| `preview_inspect` | Inspect rendered preview DOM/console | previewInspection | No |
+| `preview_action` | Interact with preview (click, input, scroll) | previewInspection | No |
+| `finalize` | Finalize revision as completed app | filesystem | No |
+
+### Capabilities
+
+The browser runtime advertises capabilities on `runtime.register`:
+
+```ts
+interface RuntimeCapabilities {
+  filesystem: boolean;    // Nodepod VFS
+  npm: boolean;           // npm install/run
+  previewInspection: boolean; // DOM inspection
+  nativeBinaries: boolean;    // Always false in Nodepod
+}
+```
+
+A tool whose required capability is missing fails with `UNSUPPORTED_CAPABILITY`
+(`-32001`). MicroVM fallback is planned for phase 5.
+
+### Consistency guarantees
+
+- **Idempotence**: `toolCallId` is unique in `app_runtime_tool_calls`. A settled
+  call replays its stored outcome instead of mutating twice.
+- **One mutation at a time**: `write`, `apply_patch` and `delete` serialize on a
+  per-workspace lock (`APP_RUNTIME_MUTATION_WAIT_MS`, default 30s).
+- **Revision guard**: mutations are refused when the browser revision differs
+  from the binding revision. `runtime.rehydrate` is emitted first.
+
+### Error codes
+
+| Code | Constant | Meaning |
+|---|---|---|
+| `-32001` | `UNSUPPORTED_CAPABILITY` | Tool requires a capability the browser doesn't have |
+| `-32002` | `RUNTIME_OFFLINE` | No socket connected, or heartbeat timed out |
+| `-32003` | `REVISION_CONFLICT` | Browser filesystem is stale, needs rehydrate |
+| `-32005` | `TOOL_TIMEOUT` | Tool execution or mutation lock timeout |
+
+## Source revisions
+
+### Commit a workspace revision
+
+```http
+POST /conversation-v2/sessions/:id/revisions/commit
 Authorization: Bearer <jwt>
+Content-Type: application/json
+
+{
+  "revisionId": "rev_17",
+  "parentRevisionId": "rev_16",
+  "files": [
+    { "path": "src/App.tsx", "sha256": "abc...", "size": 1234, "objectKey": "..." }
+  ],
+  "toolCallId": "tc_..."
+}
+```
+
+Response:
+```json
+{
+  "revisionId": "rev_17",
+  "parentRevisionId": "rev_16",
+  "manifestObjectKey": "revisions/rev_17/manifest.json",
+  "fileCount": 1
+}
+```
+
+### List revision files
+
+```http
+GET /conversation-v2/sessions/:id/revisions/:revisionId/files
+```
+
+Returns the file manifest (path, sha256, size) for an authorized revision.
+
+### Presign revision files
+
+```http
+POST /conversation-v2/sessions/:id/revisions/:revisionId/presign
+Content-Type: application/json
+
+{ "paths": ["src/App.tsx", "package.json"] }
+```
+
+Returns batch presigned URLs resolved from the revision manifest only
+(authorization is workspace-scoped).
+
+### Legacy: app-source/urls
+
+```http
+POST /conversation-v2/sessions/:id/app-source/urls
 Content-Type: application/json
 
 {
@@ -119,57 +353,233 @@ Content-Type: application/json
 }
 ```
 
-Response:
-
-```json
-{
-  "success": true,
-  "data": {
-    "items": [
-      { "path": "package.json", "url": "https://…presigned…" },
-      { "path": "app/page.tsx", "url": "https://…presigned…" }
-    ]
-  }
-}
-```
-
-- Guard: session access + `session.read`.
-- Object key = `{cephPath}/{relativePath}` (rejects `..` / absolute / empty paths).
-- DTO: [`dto/get-app-source-urls.dto.ts`](dto/get-app-source-urls.dto.ts).
-- Signing: `WorkspaceDocumentService.generateReadUrl` (same Ceph/S3 stack as
-  message attachments).
-
-Single-file attachments still use `POST /conversation-v2/files/signed-url`.
+Deprecated — prefer revision-based `…/revisions/:revisionId/presign`.
 
 ## Deploy
 
-`POST /conversation-v2/sessions/:id/deploy` launches the finalized revision:
+```http
+POST /conversation-v2/sessions/:id/deploy
+Content-Type: application/json
 
-```json
-POST https://app-deployer.yellowsys.org/app/deploy
-{ "aiSessionId": "<pointer.aiSessionId>", "revisionId": "rev_15" }
+{ "revisionId": "rev_15", "title": "My App" }
 ```
 
-Then polls every 15s:
+Flow:
+1. Resolve revision (explicit `revisionId` or `binding.latestRevisionId`).
+2. `POST https://app-deployer.yellowsys.org/app/deploy` with `{ aiSessionId, revisionId }`.
+3. Poll `POST …/app/deploy/status` every 15s until `ready`.
+4. Store `deployedUrl`, `deployedAppTitle`, `lastDeployedAt` on the session.
+5. Sync metadata to app-share rows (recipients see the updated URL).
 
-```json
-POST https://app-deployer.yellowsys.org/app/deploy/status
-{ "aiSessionId": "<pointer.aiSessionId>" }
+Status values: `idle` → `deploying` → `deployed` | `error`.
+
+## App sharing / Marketplace
+
+### Share deployed app by email
+
+```http
+POST /conversation-v2/sessions/:id/share-deploy
+Content-Type: application/json
+
+{ "emails": ["alice@example.com", "bob@example.com"] }
 ```
 
-When status is `ready`, YellowStorm stores `url` / `preview_url` and the frontend
-switches the right-panel iframe from Nodepod to the live app.
+For each recipient:
+1. Look up user by email (404 → `notFound` list).
+2. Skip self-shares (→ `skippedSelf` list).
+3. Send invite email with app URL + conversation link + marketplace link.
+4. Upsert `ConversationV2AppShare` document (grants full conversation access).
+5. Send in-app notification.
+
+### List deployed apps (Marketplace)
+
+```http
+GET /conversation-v2/apps
+```
+
+Returns owned + shared-with-user apps, deduplicated by sessionId.
+
+### Share via token (read-only)
+
+```http
+PATCH /conversation-v2/sessions/:id
+Content-Type: application/json
+
+{ "isShared": true }
+```
+
+Returns a `shareToken` for public read-only access via `GET /share/v2/:token`.
+
+## RBAC / guards
+
+| Guard | Scope | Checks |
+|---|---|---|
+| `ConversationV2OwnerGuard` | Write operations | `session.ownerId === currentUser.id` |
+| `ConversationV2SessionAccessGuard` | Read operations | Owner → full access; shared → via app-share or token share |
+
+Permissions (via `@RequireConversationSessionPermission`):
+- `session.read` — read session metadata
+- `session.write` — send messages, issue runtime tickets
+- `events.read` — read event history
+- `workspace_documents.read` — read workspace documents
+
+## API reference
+
+### Sessions
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/conversation-v2/sessions` | JWT | Create session (auto-assigns all user workspaces if none specified) |
+| `GET` | `/conversation-v2/sessions` | JWT | List sessions (cursor-paginated, search by title) |
+| `GET` | `/conversation-v2/sessions/:id` | Access guard | Get session detail (status, deploy, permissions) |
+| `PATCH` | `/conversation-v2/sessions/:id` | Owner | Rename or toggle share |
+| `DELETE` | `/conversation-v2/sessions/:id` | Owner | Soft-delete + cleanup system workspace |
+
+### Chat & streaming
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/conversation-v2/sessions/:id/message` | Owner | Send message (fire-and-forget, 202) |
+| `GET` | `/conversation-v2/stream` | StreamAuth | Global SSE pipe (all conversations) |
+| `GET` | `/conversation-v2/sessions/:id/stream/live` | StreamAuth | Per-session live-tail SSE |
+| `POST` | `/conversation-v2/sessions/:id/stop` | Owner | Stop gRPC stream |
+| `POST` | `/conversation-v2/sessions/:id/pause` | Owner | Pause gRPC session |
+| `POST` | `/conversation-v2/sessions/:id/resume` | Owner | Resume gRPC session |
+
+### Events
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/conversation-v2/sessions/:id/events` | Access guard | List events (sequence-based pagination) |
+
+### App Builder runtime
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/conversation-v2/sessions/:id/runtime-ticket` | Access guard | Issue one-shot browser runtime ticket |
+| `POST` | `/api/v1/mcp/app-runtime` | Bearer (mcpToken) | Runtime MCP Streamable HTTP endpoint |
+
+### Source revisions
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/conversation-v2/sessions/:id/revisions/:revisionId/files` | Access guard | List files in a revision |
+| `POST` | `/conversation-v2/sessions/:id/revisions/:revisionId/presign` | Access guard | Batch-presign revision file URLs |
+| `POST` | `/conversation-v2/sessions/:id/revisions/commit` | Access guard | Commit workspace revision to Ceph |
+| `POST` | `/conversation-v2/sessions/:id/app-source/urls` | Access guard | Legacy batch-presign (deprecated) |
+| `POST` | `/conversation-v2/files/signed-url` | JWT | Single file presign |
+
+### Deploy & share
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/conversation-v2/sessions/:id/deploy` | Owner | Deploy finalized revision |
+| `POST` | `/conversation-v2/sessions/:id/share-deploy` | Owner | Share deployed app by email |
+| `GET` | `/conversation-v2/apps` | JWT | List deployed apps (owned + shared) |
+| `DELETE` | `/conversation-v2/apps/:id` | JWT | Remove deployed app |
+| `GET` | `/conversation-v2/share/v2/:token` | Public | Get shared session + events |
+
+### Workspace documents
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/conversation-v2/sessions/:id/workspace-documents` | Access guard | List workspace documents |
+| `GET` | `/conversation-v2/sessions/:id/vnc/signed-url` | Owner | VNC signed URL for sandbox desktop |
 
 ## Key files
 
+### conversation-v2 module
+
 | Path | Role |
 |---|---|
-| `proto/conversation.proto` | gRPC contract (sync with Manus) |
-| `services/conversation-v2.grpc-client.service.ts` | Dial + `normaliseEvent` + `parseFilesTree` |
-| `services/conversation-v2-stream.service.ts` | Persist + SSE push |
-| `services/conversation-v2-stream-gateway.service.ts` | Per-user SSE fan-out |
-| `conversation-v2-stream.controller.ts` | `GET /conversation-v2/stream` |
-| `conversation-v2.controller.ts` | REST sessions, deploy, `app-source/urls` |
-| `types/conversation-v2.types.ts` | Event / payload TS types |
-| `dto/get-app-source-urls.dto.ts` | Batch presign body |
-| `services/conversation-v2-deploy.service.ts` | App Builder deploy |
+| `conversation-v2.controller.ts` | REST endpoints: sessions, deploy, revisions, share, VNC |
+| `conversation-v2-stream.controller.ts` | SSE endpoints: global pipe, per-session live-tail, send message |
+| `conversation-v2.module.ts` | NestJS module definition |
+| `services/conversation-v2-session.service.ts` | CRUD for session pointers in Mongo |
+| `services/conversation-v2-session-access.service.ts` | RBAC resolution (owner/viewer, permissions) |
+| `services/conversation-v2-stream.service.ts` | Background gRPC consumption, persist + SSE push |
+| `services/conversation-v2-stream-gateway.service.ts` | Per-user SSE connection registry + fan-out |
+| `services/conversation-v2.grpc-client.service.ts` | gRPC client: create/stop/pause/resume session, chat stream |
+| `services/conversation-v2-event-store.service.ts` | Event append with sequence, listSince, tagModel |
+| `services/conversation-v2-pointer-writer.service.ts` | Update session status/title from events |
+| `services/conversation-v2-share.service.ts` | Token generation, hash, timing-safe verify |
+| `services/conversation-v2-deploy.service.ts` | Deploy via app-deployer, polling, timeout |
+| `services/conversation-v2-app-share.service.ts` | Email share, notification, conversation access |
+| `services/conversation-v2-name-generator.service.ts` | Auto-title from first message |
+| `proto/conversation.proto` | gRPC contract (sync with APImanus) |
+| `types/conversation-v2.types.ts` | Event / payload TypeScript types |
+| `utils/event-mapper.ts` | Wire event → SSE frame conversion |
+| `utils/normalize-app-source-ceph-prefix.ts` | Ceph path normalization |
+| `guards/conversation-v2-session-access.guard.ts` | Session access guard (owner + shared) |
+| `guards/conversation-v2-owner.guard.ts` | Owner-only guard |
+| `decorators/require-conversation-session-permission.decorator.ts` | Permission decorator |
+| `decorators/current-conversation-session.decorator.ts` | Session injection decorator |
+| `constants/conversation-v2-session-permissions.ts` | Permission constants |
+| `exceptions/vm-unavailable.exception.ts` | VNC unavailable error |
+| `dto/*.ts` | Request DTOs (create, send, list, update, deploy, share, revisions) |
+
+### app-runtime module (sibling)
+
+| Path | Role |
+|---|---|
+| `app-runtime/README.md` | Full runtime module documentation |
+| `app-runtime/controllers/app-runtime-mcp.controller.ts` | Streamable HTTP MCP endpoint |
+| `app-runtime/controllers/app-runtime-internal.controller.ts` | Internal bind + legacy tool-invoke |
+| `app-runtime/gateways/app-runtime.gateway.ts` | Socket.IO `/app-runtime` namespace |
+| `app-runtime/services/runtime-broker.service.ts` | Tool dispatch orchestration |
+| `app-runtime/services/runtime-tool-dispatcher.service.ts` | Dispatch to browser via gateway |
+| `app-runtime/services/runtime-binding.service.ts` | Binding CRUD in Mongo |
+| `app-runtime/services/runtime-revision.service.ts` | Revision commit, list, presign |
+| `app-runtime/services/runtime-ticket.service.ts` | One-shot ticket generation |
+| `app-runtime/services/runtime-token.service.ts` | MCP token validation |
+| `app-runtime/services/runtime-mcp-auth.service.ts` | MCP bearer auth |
+| `app-runtime/services/runtime-mcp-dispatcher.service.ts` | MCP JSON-RPC dispatch |
+| `app-runtime/services/runtime-connection.registry.ts` | Socket.IO connection registry |
+| `app-runtime/services/app-runtime-conversation-notifier.service.ts` | Publish events to conversation-v2 |
+| `app-runtime/mcp/runtime-mcp.tools.ts` | Tool names, descriptions, JSON schemas |
+| `app-runtime/mcp/runtime-mcp.jsonrpc.ts` | JSON-RPC request parsing |
+| `app-runtime/mcp/runtime-mcp.errors.ts` | MCP error codes |
+| `app-runtime/mcp/runtime-mcp-validation.ts` | Tool argument validation |
+| `app-runtime/constants/app-runtime-capabilities.ts` | RuntimeCapabilities, tool→capability map |
+| `app-runtime/constants/app-runtime-error-codes.ts` | Error code constants |
+| `app-runtime/constants/starter-react-vite-v1.ts` | Starter template revision |
+| `app-runtime/schemas/app-runtime-binding.schema.ts` | Mongoose binding schema |
+| `app-runtime/schemas/app-runtime-tool-call.schema.ts` | Mongoose tool call idempotence schema |
+| `app-runtime/schemas/app-runtime-ticket.schema.ts` | Mongoose ticket schema |
+| `app-runtime/schemas/app-source-revision.schema.ts` | Mongoose source revision schema |
+| `app-runtime/dto/bind-app-runtime.dto.ts` | Bind request DTO |
+| `app-runtime/dto/invoke-app-runtime-tool.dto.ts` | Legacy tool-invoke DTO |
+| `app-runtime/types/app-runtime-protocol.ts` | Socket.IO event types, ticket result |
+| `app-runtime/app-runtime.module.ts` | NestJS module definition |
+
+## Environment variables
+
+### conversation-v2
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `conversationV2.maxMessageLength` | `16384` | Max chars per message |
+| `conversationV2.maxConcurrentStreams` | `5` | Max concurrent streams per user |
+| `conversationV2.maxSseConnections` | `5` | Max SSE connections per user |
+| `conversationV2.sseHeartbeatMs` | `15000` | SSE heartbeat interval |
+| `conversationV2.liveTailPollMs` | `1000` | Per-session SSE poll interval |
+| `conversationV2.grpcIdleTimeoutMs` | `120000` | Stream idle timeout |
+| `conversation.systemWorkspaceStorageBytes` | `52428800` | System workspace size (50MB) |
+| `conversationV2.appBuilderDeployBaseUrl` | `https://app-deployer.yellowsys.org/` | Deploy service URL |
+| `conversationV2.appBuilderDeployToken` | — | Deploy service auth token |
+| `conversationV2.appBuilderDeployTimeoutMs` | — | Deploy timeout |
+| `conversationV2.appBuilderDeployInitialStatusDelayMs` | — | First poll delay |
+| `conversationV2.appBuilderDeployStatusPollIntervalMs` | — | Poll interval |
+
+### app-runtime
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `APP_RUNTIME_MCP_ENABLED` | `true` | Enable/disable MCP endpoint |
+| `APP_RUNTIME_MCP_URL` | — | Public MCP URL returned on bind |
+| `APP_RUNTIME_PUBLIC_BASE_URL` | — | Derive MCP URL if MCP_URL unset |
+| `APP_RUNTIME_LEGACY_TOOL_INVOKE` | `true` | Legacy HTTP bridge to dispatcher |
+| `APP_RUNTIME_TICKET_TTL_MS` | `60000` | Browser ticket lifetime |
+| `APP_RUNTIME_HEARTBEAT_TIMEOUT_MS` | `45000` | Offline detection timeout |
+| `APP_RUNTIME_TOOL_TIMEOUT_MS` | `180000` | Default tool execution timeout |
+| `APP_RUNTIME_MUTATION_WAIT_MS` | `30000` | Per-workspace mutation lock wait |
