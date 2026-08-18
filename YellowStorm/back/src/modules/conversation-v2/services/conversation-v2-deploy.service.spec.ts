@@ -4,10 +4,10 @@ import { ConversationV2DeployService } from './conversation-v2-deploy.service';
 
 describe('ConversationV2DeployService', () => {
   const configValues: Record<string, string | number | undefined> = {
-    'conversationV2.appBuilderDeployBaseUrl': 'https://builder.example/',
-    'conversationV2.appBuilderDeployToken': 'deploy-token',
+    'conversationV2.appBuilderDeployBaseUrl': 'https://app-deployer.yellowsys.org/',
+    'conversationV2.appBuilderDeployToken': undefined,
     'conversationV2.appBuilderDeployTimeoutMs': 600_000,
-    'conversationV2.appBuilderDeployInitialStatusDelayMs': 20_000,
+    'conversationV2.appBuilderDeployInitialStatusDelayMs': 15_000,
     'conversationV2.appBuilderDeployStatusPollIntervalMs': 15_000,
   };
   const config = {
@@ -18,10 +18,10 @@ describe('ConversationV2DeployService', () => {
   beforeEach(() => {
     jest.restoreAllMocks();
     config.get.mockClear();
-    configValues['conversationV2.appBuilderDeployBaseUrl'] = 'https://builder.example/';
-    configValues['conversationV2.appBuilderDeployToken'] = 'deploy-token';
+    configValues['conversationV2.appBuilderDeployBaseUrl'] = 'https://app-deployer.yellowsys.org/';
+    configValues['conversationV2.appBuilderDeployToken'] = undefined;
     configValues['conversationV2.appBuilderDeployTimeoutMs'] = 600_000;
-    configValues['conversationV2.appBuilderDeployInitialStatusDelayMs'] = 20_000;
+    configValues['conversationV2.appBuilderDeployInitialStatusDelayMs'] = 15_000;
     configValues['conversationV2.appBuilderDeployStatusPollIntervalMs'] = 15_000;
     service = new ConversationV2DeployService(config as unknown as ConfigService);
   });
@@ -30,70 +30,88 @@ describe('ConversationV2DeployService', () => {
     jest.useRealTimers();
   });
 
-  it('starts deployment, waits 20 seconds, then returns the deployed app status', async () => {
+  it('starts deployment, polls /app/deploy/status, then returns the ready URL', async () => {
     jest.useFakeTimers();
     const fetchMock = jest
       .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(jsonResponse({ status: 'deploying', app_id: 'conversation-1' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'deploying', app_id: '2e65d5fa87a0499f' }))
       .mockResolvedValueOnce(
         jsonResponse({
-          status: 'deployed',
-          app_id: 'conversation-1',
-          url: 'https://apps.example/app-1',
+          status: 'ready',
+          app_id: '2e65d5fa87a0499f',
+          revision_id: 'rev_15',
+          url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+          preview_url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
         }),
       );
 
-    const deployment = service.deploy('user-1', 'conversation-1');
-    await jest.advanceTimersByTimeAsync(20_000);
+    const deployment = service.deploy('2e65d5fa87a0499f', 'rev_15');
+    await jest.advanceTimersByTimeAsync(15_000);
 
     await expect(deployment).resolves.toEqual({
-      appId: 'conversation-1',
-      url: 'https://apps.example/app-1',
+      appId: '2e65d5fa87a0499f',
+      url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      revisionId: 'rev_15',
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      new URL('https://builder.example/app/deploy'),
+      new URL('https://app-deployer.yellowsys.org/app/deploy'),
       expect.objectContaining({
         method: 'POST',
-        headers: {
-          Authorization: 'Bearer deploy-token',
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: 'user-1',
-          conversation_id: 'conversation-1',
+          aiSessionId: '2e65d5fa87a0499f',
+          revisionId: 'rev_15',
         }),
       }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      new URL('https://builder.example/app/status'),
+      new URL('https://app-deployer.yellowsys.org/app/deploy/status'),
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ conversation_id: 'conversation-1' }),
+        body: JSON.stringify({ aiSessionId: '2e65d5fa87a0499f' }),
       }),
     );
+  });
+
+  it('prefers preview_url over url for the frontend iframe', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+      jsonResponse({
+        status: 'ready',
+        app_id: '2e65d5fa87a0499f',
+        url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+        preview_url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/preview/',
+      }),
+    );
+
+    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).resolves.toEqual({
+      appId: '2e65d5fa87a0499f',
+      url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/preview/',
+      revisionId: undefined,
+    });
   });
 
   it('polls again after 15 seconds while deployment remains in progress', async () => {
     jest.useFakeTimers();
     const fetchMock = jest
       .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(jsonResponse({ status: 'deploying', app_id: 'conversation-1' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'deploying', app_id: '2e65d5fa87a0499f' }))
       .mockResolvedValueOnce(jsonResponse({ status: 'deploying' }))
       .mockResolvedValueOnce(
         jsonResponse({
-          status: 'deployed',
-          app_id: 'conversation-1',
-          url: 'https://apps.example/app-1',
+          status: 'ready',
+          app_id: '2e65d5fa87a0499f',
+          url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
         }),
       );
 
-    const deployment = service.deploy('user-1', 'conversation-1');
-    await jest.advanceTimersByTimeAsync(35_000);
+    const deployment = service.deploy('2e65d5fa87a0499f', 'rev_15');
+    await jest.advanceTimersByTimeAsync(30_000);
 
     await expect(deployment).resolves.toEqual({
-      appId: 'conversation-1',
-      url: 'https://apps.example/app-1',
+      appId: '2e65d5fa87a0499f',
+      url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      revisionId: undefined,
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
@@ -102,25 +120,25 @@ describe('ConversationV2DeployService', () => {
     jest.useFakeTimers();
     jest
       .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(jsonResponse({ status: 'deploying', app_id: 'conversation-1' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'deploying', app_id: '2e65d5fa87a0499f' }))
       .mockResolvedValueOnce(jsonResponse({ status: 'failed' }));
 
-    const deployment = service.deploy('user-1', 'conversation-1');
+    const deployment = service.deploy('2e65d5fa87a0499f', 'rev_15');
     const rejection = expect(deployment).rejects.toThrow(
       'Deployment failed with an invalid status',
     );
-    await jest.advanceTimersByTimeAsync(20_000);
+    await jest.advanceTimersByTimeAsync(15_000);
 
     await rejection;
   });
 
   it('surfaces an upstream error reported inside an HTTP 200 body', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValueOnce(
-      jsonResponse({ error: 'package.json not found at /workspaces/app/projectSRC' }),
+      jsonResponse({ error: 'revision manifest not found' }),
     );
 
-    await expect(service.deploy('user-1', 'conversation-1')).rejects.toThrow(
-      'Deployment failed: package.json not found at /workspaces/app/projectSRC',
+    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toThrow(
+      'Deployment failed: revision manifest not found',
     );
   });
 
@@ -129,7 +147,7 @@ describe('ConversationV2DeployService', () => {
       .spyOn(global, 'fetch')
       .mockRejectedValueOnce(new DOMException('The operation timed out.', 'TimeoutError'));
 
-    await expect(service.deploy('user-1', 'conversation-1')).rejects.toThrow(
+    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toThrow(
       'Deployment service timed out',
     );
   });
@@ -139,10 +157,10 @@ describe('ConversationV2DeployService', () => {
     jest.useFakeTimers();
     const fetchMock = jest
       .spyOn(global, 'fetch')
-      .mockResolvedValueOnce(jsonResponse({ status: 'deploying', app_id: 'conversation-1' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'deploying', app_id: '2e65d5fa87a0499f' }))
       .mockImplementation(() => Promise.resolve(jsonResponse({ status: 'deploying' })));
 
-    const deployment = service.deploy('user-1', 'conversation-1');
+    const deployment = service.deploy('2e65d5fa87a0499f', 'rev_15');
     const rejection = expect(deployment).rejects.toThrow('Deployment service timed out');
     await jest.advanceTimersByTimeAsync(180_000);
 
@@ -153,7 +171,7 @@ describe('ConversationV2DeployService', () => {
   it('fails immediately on a network error without waiting for the timeout', async () => {
     jest.spyOn(global, 'fetch').mockRejectedValueOnce(new TypeError('fetch failed'));
 
-    await expect(service.deploy('user-1', 'conversation-1')).rejects.toThrow(
+    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toThrow(
       'Deployment service is unavailable',
     );
   });
@@ -161,17 +179,31 @@ describe('ConversationV2DeployService', () => {
   it('rejects an unsuccessful app-builder response', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValueOnce(new Response(null, { status: 502 }));
 
-    await expect(service.deploy('user-1', 'conversation-1')).rejects.toBeInstanceOf(
+    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
   });
 
-  it('rejects when deployment configuration is missing', async () => {
-    configValues['conversationV2.appBuilderDeployBaseUrl'] = undefined;
-    configValues['conversationV2.appBuilderDeployToken'] = undefined;
+  it('sends a bearer token when configured', async () => {
+    configValues['conversationV2.appBuilderDeployToken'] = 'deploy-token';
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+      jsonResponse({
+        status: 'ready',
+        app_id: '2e65d5fa87a0499f',
+        url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      }),
+    );
 
-    await expect(service.deploy('user-1', 'conversation-1')).rejects.toThrow(
-      'Deployment service is not configured',
+    await service.deploy('2e65d5fa87a0499f', 'rev_15');
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.any(URL),
+      expect.objectContaining({
+        headers: {
+          Authorization: 'Bearer deploy-token',
+          'Content-Type': 'application/json',
+        },
+      }),
     );
   });
 });

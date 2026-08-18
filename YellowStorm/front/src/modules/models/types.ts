@@ -16,6 +16,7 @@ export interface Model {
   types: string[];
   isActive: boolean;
   isDefault: boolean;
+  isConversationV2Default: boolean;
   omitTemperature: boolean;
   inputModalities: Array<'text' | 'image'>;
 }

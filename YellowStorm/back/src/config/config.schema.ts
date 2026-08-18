@@ -236,8 +236,20 @@ export const configValidationSchema = Joi.object({
   APP_BUILDER_DEPLOY_BASE_URL: Joi.string().uri().optional(),
   APP_BUILDER_DEPLOY_TOKEN: Joi.string().min(1).optional(),
   APP_BUILDER_DEPLOY_TIMEOUT_MS: Joi.number().min(30_000).default(600_000),
-  APP_BUILDER_DEPLOY_INITIAL_STATUS_DELAY_MS: Joi.number().min(0).default(20_000),
+  APP_BUILDER_DEPLOY_INITIAL_STATUS_DELAY_MS: Joi.number().min(0).default(15_000),
   APP_BUILDER_DEPLOY_STATUS_POLL_INTERVAL_MS: Joi.number().min(1_000).default(15_000),
+
+  // App Builder runtime — MCP + Broker on YellowStorm (see app-runtime/README.md).
+  APP_RUNTIME_MCP_ENABLED: Joi.boolean().default(true),
+  APP_RUNTIME_MCP_URL: Joi.string().uri().optional(),
+  APP_RUNTIME_PUBLIC_BASE_URL: Joi.string().uri().optional(),
+  APP_RUNTIME_LEGACY_TOOL_INVOKE: Joi.boolean().default(true),
+  APP_RUNTIME_TICKET_TTL_MS: Joi.number().min(1_000).default(60_000),
+  APP_RUNTIME_HEARTBEAT_TIMEOUT_MS: Joi.number().min(5_000).default(45_000),
+  APP_RUNTIME_TOOL_TIMEOUT_MS: Joi.number().min(1_000).max(600_000).default(180_000),
+  APP_RUNTIME_MUTATION_WAIT_MS: Joi.number().min(1_000).default(30_000),
+  APP_BUILDER_STARTER_REVISION_ID: Joi.string().optional(),
+  APP_BUILDER_STARTER_MANIFEST_KEY: Joi.string().optional(),
 
   // LiteLLM
   LITELLM_API_URL: Joi.string().uri().optional(),

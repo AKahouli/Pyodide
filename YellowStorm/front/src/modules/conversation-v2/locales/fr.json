@@ -20,6 +20,9 @@
       "empty": "Aucun modèle trouvé."
     }
   },
+  "questionChoices": {
+    "fallbackTitle": "Choisissez une option pour continuer"
+  },
   "conversation": {
     "emptyTitle": "Envoyez un message pour démarrer",
     "emptyDescription": "L'agent vous répondra et pourra utiliser des outils et une machine virtuelle pour accomplir votre tâche.",
@@ -141,8 +144,8 @@
     }
   },
   "deploy": {
-    "publish": "Publier",
-    "publishing": "Publication…",
+    "publish": "Déployer",
+    "publishing": "Déploiement…",
     "update": "Mettre à jour",
     "liveUrl": "URL en ligne",
     "copy": "Copier le lien",
@@ -210,7 +213,7 @@
       "loadDocumentsError": "Impossible de charger les documents"
     },
     "deploy": {
-      "success": "Application déployée",
+      "success": "L'application a été déployée avec succès",
       "error": "Échec du déploiement",
       "copied": "Lien copié",
       "copyError": "Impossible de copier le lien"

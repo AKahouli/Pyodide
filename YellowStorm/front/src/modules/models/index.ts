@@ -20,4 +20,5 @@ export {
   useModelsByChef,
   useChefs,
   useDefaultModel,
+  useConversationV2DefaultModel,
 } from './store';

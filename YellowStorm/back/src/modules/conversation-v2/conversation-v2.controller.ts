@@ -34,6 +34,8 @@ import type { ConversationV2ResolvedSession } from './services/conversation-v2-s
 import { CreateSessionDto } from './dto/create-session.dto';
 import { GetFileSignedUrlDto } from './dto/get-file-signed-url.dto';
 import { GetAppSourceUrlsDto } from './dto/get-app-source-urls.dto';
+import { PresignRevisionDto } from './dto/presign-revision.dto';
+import { CommitWorkspaceRevisionDto } from './dto/commit-workspace-revision.dto';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
@@ -48,6 +50,10 @@ import { ConversationV2EventStoreService, PersistedEventRow } from './services/c
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 import { normalizeAppSourceCephPrefix } from './utils/normalize-app-source-ceph-prefix';
+import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
+import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
+import { RuntimeBindingService } from '@modules/app-runtime/services/runtime-binding.service';
+import type { RuntimeTicketResult } from '@modules/app-runtime/types/app-runtime-protocol';
 
 interface AuthUser { id: string; }
 
@@ -73,6 +79,9 @@ export class ConversationV2Controller {
     private readonly config: ConfigService,
     private readonly deployment: ConversationV2DeployService,
     private readonly appShares: ConversationV2AppShareService,
+    private readonly runtimeTickets: RuntimeTicketService,
+    private readonly runtimeRevisions: RuntimeRevisionService,
+    private readonly runtimeBindings: RuntimeBindingService,
   ) {}
 
   @Post('sessions')
@@ -266,6 +275,29 @@ export class ConversationV2Controller {
     return { items, nextSince };
   }
 
+  /**
+   * Hands the browser a one-shot credential for the `/app-runtime` socket. The
+   * MCP token stays server-side: the browser only ever sees this ticket.
+   *
+   * Keyed on `aiSessionId`, not the pointer `_id`: APImanus binds the runtime
+   * with its own session id, and `workspaceId === conversationSessionId`. Using
+   * `_id` here would register the browser socket under a workspace no
+   * `tool-invoke` ever targets, so every tool call fails with RUNTIME_OFFLINE.
+   * The binding is owner-scoped so a collaborator's ticket can't reassign it.
+   */
+  @Post('sessions/:id/runtime-ticket')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_WRITE)
+  issueRuntimeTicket(
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
+  ): Promise<RuntimeTicketResult> {
+    return this.runtimeTickets.issue({
+      conversationSessionId: this.requireWorkspaceId(session),
+      userId: session.ownerId,
+    });
+  }
+
   @Get('sessions/:id/workspace-documents')
   @UseGuards(ConversationV2SessionAccessGuard)
   @RequireConversationSessionPermission(ConversationV2SessionPermissions.WORKSPACE_DOCUMENTS_READ)
@@ -420,7 +452,13 @@ export class ConversationV2Controller {
 
     let deployedUrl: string;
     try {
-      const result = await this.deployment.deploy(ownerId, pointer.aiSessionId);
+      const revisionId = await this.resolveDeployRevisionId(pointer.aiSessionId, body.revisionId);
+      if (!revisionId) {
+        throw new BadRequestException(
+          'No finalized revision is available to deploy. Wait until the app is ready.',
+        );
+      }
+      const result = await this.deployment.deploy(pointer.aiSessionId, revisionId);
       deployedUrl = result.url;
     } catch (err) {
       await this.sessions
@@ -537,8 +575,96 @@ export class ConversationV2Controller {
   }
 
   /**
+   * List files for an authorized source revision (starter or workspace-owned).
+   * Prefer this over legacy `app-source/urls` + client `cephPath`.
+   */
+  @Get('sessions/:id/revisions/:revisionId/files')
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_READ)
+  async getRevisionFiles(
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
+    @Param('revisionId') revisionId: string,
+  ): Promise<{
+    revisionId: string;
+    files: Array<{ path: string; sha256: string; size: number }>;
+  }> {
+    const { revisionId: id, files } = await this.runtimeRevisions.listFiles(
+      this.requireWorkspaceId(session),
+      revisionId,
+    );
+    return {
+      revisionId: id,
+      files: files.map(({ path, sha256, size }) => ({ path, sha256, size })),
+    };
+  }
+
+  /**
+   * Batch-presign blob read URLs for paths listed in an authorized revision.
+   * Object keys are resolved from the revision manifest only.
+   */
+  @Post('sessions/:id/revisions/:revisionId/presign')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_READ)
+  async presignRevisionFiles(
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
+    @Param('revisionId') revisionId: string,
+    @Body() body: PresignRevisionDto,
+  ): Promise<{ items: Array<{ path: string; url: string }> }> {
+    const revision = await this.runtimeRevisions.getAuthorizedRevision(
+      this.requireWorkspaceId(session),
+      revisionId,
+    );
+    const resolved = this.runtimeRevisions.resolveObjectKeys(revision, body.paths);
+    const items: Array<{ path: string; url: string }> = [];
+
+    for (const file of resolved) {
+      const url = await this.workspaceDocuments.generateReadUrl(file.objectKey, {
+        allowExtensionless: true,
+      });
+      items.push({ path: file.path, url });
+    }
+
+    return { items };
+  }
+
+  /**
+   * Persist a workspace revision snapshot to Ceph after a browser runtime mutation.
+   * The browser is the only writer; object keys are server-assigned from content hashes.
+   */
+  @Post('sessions/:id/revisions/commit')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ConversationV2SessionAccessGuard)
+  @RequireConversationSessionPermission(ConversationV2SessionPermissions.SESSION_WRITE)
+  async commitWorkspaceRevision(
+    @CurrentConversationSession() session: ConversationV2ResolvedSession,
+    @Body() body: CommitWorkspaceRevisionDto,
+  ): Promise<{
+    revisionId: string;
+    parentRevisionId: string | null;
+    manifestObjectKey: string;
+    fileCount: number;
+  }> {
+    const manifest = await this.runtimeRevisions.commitWorkspaceRevision({
+      workspaceId: this.requireWorkspaceId(session),
+      revisionId: body.revisionId,
+      parentRevisionId: body.parentRevisionId ?? null,
+      files: body.files,
+      toolCallId: body.toolCallId ?? null,
+    });
+    return {
+      revisionId: manifest.revisionId,
+      parentRevisionId: manifest.parentRevisionId,
+      manifestObjectKey: manifest.manifestObjectKey,
+      fileCount: manifest.files.length,
+    };
+  }
+
+  /**
    * Batch-presign read URLs for generated app sources under a Ceph prefix.
    * Used by the frontend to hydrate Nodepod's virtual filesystem.
+   *
+   * @deprecated Prefer revision-based `…/revisions/:revisionId/presign`.
    */
   @Post('sessions/:id/app-source/urls')
   @HttpCode(HttpStatus.OK)
@@ -592,6 +718,34 @@ export class ConversationV2Controller {
     const r = await this.grpcClient.getVncSignedUrl(session.ownerId, pointer.aiSessionId);
     if (!r) throw new VmUnavailableException();
     return r;
+  }
+
+  /**
+   * App-runtime workspace id for a session. `workspaceId === conversationSessionId`
+   * on the binding, and APImanus binds with its own session id, so the pointer
+   * `_id` is never a valid workspace key.
+   */
+  private requireWorkspaceId(session: ConversationV2ResolvedSession): string {
+    const { aiSessionId } = session.pointer;
+    if (!aiSessionId) {
+      throw new NotFoundException('Session not found');
+    }
+    return aiSessionId;
+  }
+
+  private async resolveDeployRevisionId(
+    aiSessionId: string,
+    requestedRevisionId?: string,
+  ): Promise<string | undefined> {
+    const trimmed = requestedRevisionId?.trim();
+    if (trimmed) return trimmed;
+
+    const binding = await this.runtimeBindings.findByWorkspaceId(aiSessionId);
+    const latest = binding?.latestRevisionId?.trim();
+    if (!latest || latest === 'starter_react_vite_v1') {
+      return undefined;
+    }
+    return latest;
   }
 
   private translateGrpcError(err: unknown): never {

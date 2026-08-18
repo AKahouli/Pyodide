@@ -64,7 +64,15 @@ describe('ConversationV2PointerWriterService', () => {
     );
   });
 
-  it('MessageEvent only bumps lastEventAt', async () => {
+  it('user MessageEvent sets status active', async () => {
+    await svc.apply(SESSION_HEX, ev('message', { role: 'user', content: 'hi' } as any));
+    expect(updateOne).toHaveBeenCalledWith(
+      { _id: new Types.ObjectId(SESSION_HEX) },
+      { $set: expect.objectContaining({ status: 'active', lastEventAt: expect.any(Date) }) },
+    );
+  });
+
+  it('assistant MessageEvent only bumps lastEventAt', async () => {
     await svc.apply(SESSION_HEX, ev('message', { role: 'assistant', content: 'hi' } as any));
     expect(updateOne).toHaveBeenCalledWith(
       { _id: new Types.ObjectId(SESSION_HEX) },

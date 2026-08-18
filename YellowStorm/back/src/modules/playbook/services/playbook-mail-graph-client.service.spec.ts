@@ -208,9 +208,13 @@ describe('PlaybookMailGraphClientService', () => {
 
   it('throws when all fetch strategies fail', async () => {
     const fetchMock = jest.spyOn(global, 'fetch' as any);
+    const emptyTranslation = { ok: true, json: async () => ({ value: [] }) };
     fetchMock
       .mockResolvedValueOnce({ ok: false, status: 404, text: async () => 'Not found' })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ value: [] }) })
+      .mockResolvedValueOnce(emptyTranslation)
+      .mockResolvedValueOnce(emptyTranslation)
+      .mockResolvedValueOnce(emptyTranslation)
+      .mockResolvedValueOnce(emptyTranslation)
       .mockResolvedValueOnce({ ok: false, status: 404, text: async () => 'No recent' });
 
     await expect(

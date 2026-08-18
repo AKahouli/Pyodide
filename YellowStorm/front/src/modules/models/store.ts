@@ -182,3 +182,9 @@ export const useChefs = () => {
  */
 export const useDefaultModel = () =>
   useModelsStore(useShallow((state) => state.models.find((m) => m.isDefault)));
+
+/**
+ * Get the conversation-v2 default model (the one with isConversationV2Default: true)
+ */
+export const useConversationV2DefaultModel = () =>
+  useModelsStore(useShallow((state) => state.models.find((m) => m.isConversationV2Default)));

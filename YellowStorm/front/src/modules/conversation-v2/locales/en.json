@@ -20,6 +20,9 @@
       "empty": "No models found."
     }
   },
+  "questionChoices": {
+    "fallbackTitle": "Choose an option to continue"
+  },
   "conversation": {
     "emptyTitle": "Send a message to start",
     "emptyDescription": "The agent will respond and may use tools and a virtual machine to complete your task.",
@@ -141,8 +144,8 @@
     }
   },
   "deploy": {
-    "publish": "Publish",
-    "publishing": "Publishing…",
+    "publish": "Deploy",
+    "publishing": "Deploying…",
     "update": "Update",
     "liveUrl": "Live URL",
     "copy": "Copy link",

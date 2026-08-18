@@ -7,4 +7,12 @@ export class DeployAppDto {
   @IsString()
   @MaxLength(200)
   title?: string;
+
+  @ApiPropertyOptional({
+    description: 'Final workspace revision to deploy (e.g. rev_15). Defaults to the runtime latest revision.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  revisionId?: string;
 }

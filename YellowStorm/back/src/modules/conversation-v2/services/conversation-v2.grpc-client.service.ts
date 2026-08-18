@@ -73,7 +73,11 @@ interface RawProtoEvent {
   plan?: { steps: Array<{ id: string; status: string; description: string }> };
   title?: { title: string };
   done?: Record<string, never>;
-  wait?: Record<string, never>;
+  wait?: {
+    question_id?: string;
+    question_text?: string;
+    options?: Array<{ label: string; description?: string }>;
+  };
   error?: { error: string };
   application_component?: {
     url: string;
@@ -81,6 +85,7 @@ interface RawProtoEvent {
     ceph_path?: string;
     files_tree_json?: string;
     file_count?: number;
+    revision_id?: string;
   };
   heartbeat?: Record<string, never>;
   app_build_progress?: { phase: string; message: string };
@@ -503,8 +508,26 @@ export class ConversationV2GrpcClientService
         return { type: 'title', payload: { ...base, title: raw.title!.title } };
       case 'done':
         return { type: 'done', payload: base };
-      case 'wait':
-        return { type: 'wait', payload: base };
+      case 'wait': {
+        const w = raw.wait ?? {};
+        const options = Array.isArray(w.options)
+          ? w.options
+              .filter((opt) => opt && typeof opt.label === 'string' && opt.label.length > 0)
+              .map((opt) => ({
+                label: opt.label,
+                ...(opt.description ? { description: opt.description } : {}),
+              }))
+          : undefined;
+        return {
+          type: 'wait',
+          payload: {
+            ...base,
+            ...(w.question_id ? { question_id: w.question_id } : {}),
+            ...(w.question_text ? { question_text: w.question_text } : {}),
+            ...(options?.length ? { options } : {}),
+          },
+        };
+      }
       case 'heartbeat':
         return { type: 'heartbeat', payload: base };
       case 'app_build_progress': {
@@ -539,6 +562,7 @@ export class ConversationV2GrpcClientService
             ceph_path: rawApp.ceph_path || undefined,
             files_tree: filesTree,
             file_count: rawApp.file_count || undefined,
+            revision_id: rawApp.revision_id || undefined,
           },
         };
       }

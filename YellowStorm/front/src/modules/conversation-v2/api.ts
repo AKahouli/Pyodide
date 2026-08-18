@@ -12,6 +12,7 @@ import type {
   CreateSessionResponse,
   SessionPointer,
 } from './interfaces';
+import type { RuntimeTicketResponse } from './runtime/runtime.types';
 
 export type {
   ListSessionsParams,
@@ -109,11 +110,17 @@ export const conversationV2Api = {
   async deleteSession(sessionId: string): Promise<void> {
     await apiClient.delete(`/conversation-v2/sessions/${sessionId}`);
   },
-  async deploySession(sessionId: string, title?: string): Promise<DeployState> {
+  async deploySession(
+    sessionId: string,
+    options?: { title?: string; revisionId?: string },
+  ): Promise<DeployState> {
     const res = await apiClient.post<ApiResponse<DeployState>>(
       `/conversation-v2/sessions/${sessionId}/deploy`,
-      { title: title || undefined },
-      { timeout: 200_000 },
+      {
+        title: options?.title || undefined,
+        revisionId: options?.revisionId || undefined,
+      },
+      { timeout: 630_000 },
     );
     return res.data.data;
   },
@@ -200,5 +207,65 @@ export const conversationV2Api = {
       console.error('[Nodepod] [api:getAppSourceUrls:error]', err);
       throw err;
     }
+  },
+  /** List files for an authorized App Builder revision (starter or workspace). */
+  async getRevisionFiles(
+    sessionId: string,
+    revisionId: string,
+  ): Promise<{
+    revisionId: string;
+    files: Array<{ path: string; sha256: string; size: number }>;
+  }> {
+    const res = await apiClient.get<
+      ApiResponse<{
+        revisionId: string;
+        files: Array<{ path: string; sha256: string; size: number }>;
+      }>
+    >(`/conversation-v2/sessions/${sessionId}/revisions/${encodeURIComponent(revisionId)}/files`);
+    return res.data.data;
+  },
+  /** Presign blob reads for paths listed in an authorized revision manifest. */
+  async presignRevisionFiles(
+    sessionId: string,
+    revisionId: string,
+    paths: string[],
+  ): Promise<{ items: Array<{ path: string; url: string }> }> {
+    const res = await apiClient.post<
+      ApiResponse<{ items: Array<{ path: string; url: string }> }>
+    >(`/conversation-v2/sessions/${sessionId}/revisions/${encodeURIComponent(revisionId)}/presign`, {
+      paths,
+    });
+    return res.data.data;
+  },
+  /** Persist a workspace revision snapshot to Ceph after a browser mutation. */
+  async commitWorkspaceRevision(
+    sessionId: string,
+    body: {
+      revisionId: string;
+      parentRevisionId: string | null;
+      files: Array<{ path: string; content: string }>;
+      toolCallId?: string | null;
+    },
+  ): Promise<{
+    revisionId: string;
+    parentRevisionId: string | null;
+    manifestObjectKey: string;
+    fileCount: number;
+  }> {
+    const res = await apiClient.post<
+      ApiResponse<{
+        revisionId: string;
+        parentRevisionId: string | null;
+        manifestObjectKey: string;
+        fileCount: number;
+      }>
+    >(`/conversation-v2/sessions/${sessionId}/revisions/commit`, body);
+    return res.data.data;
+  },
+  async createRuntimeTicket(sessionId: string): Promise<RuntimeTicketResponse> {
+    const res = await apiClient.post<ApiResponse<RuntimeTicketResponse>>(
+      `/conversation-v2/sessions/${sessionId}/runtime-ticket`,
+    );
+    return res.data.data;
   },
 };

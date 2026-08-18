@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import type { AgentEvent, ConversationV2PointerSummary, FilesTreeNode, AppBuildProgress } from './types';
+import type { AgentEvent, ConversationV2PointerSummary, FilesTreeNode, AppBuildProgress, PendingQuestion } from './types';
 import { conversationV2Api } from './api';
 import type { DeployStatus } from './api';
+import type { AppRuntimeUiStatus } from './runtime/runtime.types';
+import { isRuntimePreviewVisible } from './runtime/runtime.types';
 import {
   readSelectedModelForSession,
   writeSelectedModelForSession,
@@ -13,10 +15,16 @@ import {
   deriveTitle,
   deriveApplicationComponent,
   deriveAppBuildProgress,
+  derivePendingQuestion,
   dedupeReplayEvents,
+  completePendingToolsInTurn,
   currentTurnStartIndex,
   findIndexFrom,
+  isTurnOpen,
+  shouldApplyTerminalEvent,
 } from './utils/session-reducer';
+import { normalizeFilesTree } from './utils/files-tree';
+import { syncHostRevisionSources } from './runtime/BrowserRuntimeHost';
 
 export interface ApplicationComponentState {
   url: string;
@@ -24,7 +32,10 @@ export interface ApplicationComponentState {
   cephPath?: string;
   filesTree?: FilesTreeNode | null;
   fileCount?: number;
+  /** SSE event id (dedupe / replay). */
   revision: string;
+  /** Workspace revision id from finalize (e.g. rev_13). */
+  workspaceRevisionId?: string;
 }
 
 export interface SelectedConnectorRepoState {
@@ -47,6 +58,11 @@ interface State {
   applicationComponent: ApplicationComponentState | null;
   /** Latest agent-reported build phase before sources / preview are ready. */
   appBuildProgress: AppBuildProgress | null;
+  /**
+   * Browser runtime lifecycle for the current session (Vague 5).
+   * Never stores ticket / mcpToken / lease / sandbox IDs.
+   */
+  runtimeStatus: AppRuntimeUiStatus;
   /** Files-in-this-conversation sheet open state. Independent of the right
    *  panel so the user can keep the tool detail open while browsing files. */
   filesSheetOpen: boolean;
@@ -87,6 +103,8 @@ interface State {
   selectedSkillIds: string[];
   /** Connector IDs selected for the conversation; sent with every message. */
   selectedConnectorIds: string[];
+  /** Active clarification choices from the latest wait event (clickable A/B/C). */
+  pendingQuestion: PendingQuestion | null;
   /**
    * Live state for conversations that are streaming in the BACKGROUND (i.e. not
    * the one currently on screen). Events arriving on the per-user pipe for a
@@ -113,6 +131,7 @@ export interface SessionSlice {
   rightPanelMode: State['rightPanelMode'];
   applicationComponent: State['applicationComponent'];
   appBuildProgress: State['appBuildProgress'];
+  runtimeStatus: State['runtimeStatus'];
   filesSheetOpen: boolean;
   systemWorkspaceId: string | null;
   workspaceIds: string[];
@@ -124,6 +143,7 @@ export interface SessionSlice {
   selectedConnectorRepo: State['selectedConnectorRepo'];
   selectedSkillIds: string[];
   selectedConnectorIds: string[];
+  pendingQuestion: PendingQuestion | null;
 }
 
 interface Actions {
@@ -155,6 +175,11 @@ interface Actions {
   setRightPanelView: (view: 'code' | 'preview') => void;
   jumpToLive: () => void;
   closeRightPanel: () => void;
+  /**
+   * Mirror BrowserRuntimeHost status into the UI store. Opens the app panel when
+   * the runtime becomes active and the panel was closed — never overrides `tool`.
+   */
+  setRuntimeStatus: (status: AppRuntimeUiStatus) => void;
   stop: () => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
@@ -211,6 +236,7 @@ const initial: State = {
   rightPanelMode: 'closed',
   applicationComponent: null,
   appBuildProgress: null,
+  runtimeStatus: 'idle',
   filesSheetOpen: false,
   selectedToolCallId: null,
   liveToolCallId: null,
@@ -228,6 +254,7 @@ const initial: State = {
       selectedConnectorRepo: null,
       selectedSkillIds: [],
       selectedConnectorIds: [],
+      pendingQuestion: null,
   streamingStateCache: new Map<string, SessionSlice>(),
 };
 
@@ -246,6 +273,7 @@ function createSessionViewDefaults(): Pick<
   | 'rightPanelMode'
   | 'applicationComponent'
   | 'appBuildProgress'
+  | 'runtimeStatus'
   | 'filesSheetOpen'
   | 'systemWorkspaceId'
   | 'workspaceIds'
@@ -256,6 +284,7 @@ function createSessionViewDefaults(): Pick<
   | 'selectedConnectorRepo'
   | 'selectedSkillIds'
   | 'selectedConnectorIds'
+  | 'pendingQuestion'
 > {
   return {
     events: [],
@@ -269,6 +298,7 @@ function createSessionViewDefaults(): Pick<
     rightPanelMode: 'closed',
     applicationComponent: null,
     appBuildProgress: null,
+    runtimeStatus: 'idle',
     filesSheetOpen: false,
     systemWorkspaceId: null,
     workspaceIds: [],
@@ -279,6 +309,7 @@ function createSessionViewDefaults(): Pick<
     selectedConnectorRepo: null,
     selectedSkillIds: [],
     selectedConnectorIds: [],
+    pendingQuestion: null,
   };
 }
 
@@ -294,6 +325,8 @@ function sliceFromState(s: State): SessionSlice {
     rightPanelMode: s.rightPanelMode,
     applicationComponent: s.applicationComponent,
     appBuildProgress: s.appBuildProgress,
+    // Host is destroyed on session leave; never hydrate a stale browser status.
+    runtimeStatus: 'idle',
     filesSheetOpen: s.filesSheetOpen,
     systemWorkspaceId: s.systemWorkspaceId,
     workspaceIds: s.workspaceIds,
@@ -305,6 +338,7 @@ function sliceFromState(s: State): SessionSlice {
     selectedConnectorRepo: s.selectedConnectorRepo,
     selectedSkillIds: s.selectedSkillIds,
     selectedConnectorIds: s.selectedConnectorIds,
+    pendingQuestion: s.pendingQuestion,
   };
 }
 
@@ -354,6 +388,7 @@ export const useConversationV2Store = create<State & Actions>()(
               rightPanelMode: cached.rightPanelMode,
               applicationComponent: cached.applicationComponent,
               appBuildProgress: cached.appBuildProgress,
+              runtimeStatus: 'idle',
               filesSheetOpen: cached.filesSheetOpen,
               systemWorkspaceId: cached.systemWorkspaceId,
               workspaceIds: cached.workspaceIds,
@@ -416,7 +451,16 @@ export const useConversationV2Store = create<State & Actions>()(
           content: message,
           attachments: [],
         } as AgentEvent);
-        set({ streaming: true, streamError: null }, false, 'sendMessage/optimistic');
+        set({ streaming: true, streamError: null, pendingQuestion: null }, false, 'sendMessage/optimistic');
+        useConversationV2PointersStore.setState(
+          (p) => ({
+            items: p.items.map((row) =>
+              row.sessionId === sessionId ? { ...row, status: 'active' as const } : row,
+            ),
+          }),
+          false,
+          'pointers/active-on-send',
+        );
 
         const repo = get().selectedConnectorRepo;
         const skillIds = get().selectedSkillIds;
@@ -521,9 +565,11 @@ export const useConversationV2Store = create<State & Actions>()(
               if (get().sessionId !== sessionId) return;
               get().handleEvent(event);
             }
-            if (items.length < 200 || nextSince <= cursor) return;
+            if (!get().streaming) return;
+            if (items.length < 200 || nextSince <= cursor) break;
             cursor = nextSince;
           }
+          if (get().sessionId !== sessionId || !get().streaming) return;
         })().catch((err) => {
           console.error('[ConversationV2Store] session reconciliation failed:', err);
         }).finally(() => {
@@ -556,6 +602,19 @@ export const useConversationV2Store = create<State & Actions>()(
         ),
       closeRightPanel: () =>
         set({ rightPanelMode: 'closed', selectedToolCallId: null }, false, 'closeRightPanel'),
+      setRuntimeStatus: (status) =>
+        set(
+          (s) => ({
+            runtimeStatus: status,
+            // Auto-open preview when the runtime becomes active — never clobber tool view.
+            ...((status === 'hydrating' || status === 'browser_active') &&
+            s.rightPanelMode === 'closed'
+              ? { rightPanelMode: 'app' as const }
+              : {}),
+          }),
+          false,
+          'setRuntimeStatus',
+        ),
       setSystemWorkspaceId: (id) =>
         set({ systemWorkspaceId: id }, false, 'setSystemWorkspaceId'),
       setWorkspaceIds: (ids) => set({ workspaceIds: ids }, false, 'setWorkspaceIds'),
@@ -583,10 +642,10 @@ export const useConversationV2Store = create<State & Actions>()(
         if (!id) return;
         set({ deployStatus: 'deploying' }, false, 'deploy/start');
         try {
-          const r = await conversationV2Api.deploySession(
-            id,
-            get().applicationComponent?.title,
-          );
+          const r = await conversationV2Api.deploySession(id, {
+            title: get().applicationComponent?.title,
+            revisionId: get().applicationComponent?.workspaceRevisionId,
+          });
           set(
             {
               deployStatus: r.deployStatus,
@@ -672,6 +731,7 @@ export const useConversationV2Store = create<State & Actions>()(
           {
             events: dedupeReplayEvents(events),
             title: deriveTitle(events) ?? null,
+            pendingQuestion: derivePendingQuestion(events),
             liveToolCallId: null,
             liveAssistantIds: new Set<string>(),
             applicationComponent,
@@ -764,13 +824,33 @@ export const useConversationV2Store = create<State & Actions>()(
                     : {}),
                 });
               }
-              case 'done':
-                return withSeq({ streaming: false, liveToolCallId: null });
-              case 'error':
+              case 'done': {
+                if (!shouldApplyTerminalEvent(state.events, event)) {
+                  return withSeq({ events: [...state.events, event] });
+                }
+                const showRuntimePreview =
+                  isRuntimePreviewVisible(state.runtimeStatus) ||
+                  !!state.applicationComponent;
+                const events = completePendingToolsInTurn(state.events);
                 return withSeq({
+                  events: [...events, event],
+                  streaming: false,
+                  liveToolCallId: null,
+                  liveAssistantIds: new Set<string>(),
+                  pendingQuestion: null,
+                  ...(showRuntimePreview ? { rightPanelMode: 'app' as const } : {}),
+                });
+              }
+              case 'error':
+                if (!shouldApplyTerminalEvent(state.events, event)) {
+                  return withSeq({ events: [...state.events, event] });
+                }
+                return withSeq({
+                  events: [...state.events, event],
                   streamError: event.error,
                   streaming: false,
                   liveToolCallId: null,
+                  pendingQuestion: null,
                 });
               case 'tool': {
                 const turnStart = currentTurnStartIndex(state.events);
@@ -833,9 +913,20 @@ export const useConversationV2Store = create<State & Actions>()(
                 const filtered = state.events.filter((e) => e.type !== 'plan');
                 return withSeq({ events: [...filtered, event] });
               }
-              case 'wait':
-                // Agent paused for the user's reply — re-enable the composer.
-                return withSeq({ streaming: false, liveToolCallId: null });
+              case 'wait': {
+                if (!shouldApplyTerminalEvent(state.events, event)) {
+                  return withSeq({ events: [...state.events, event] });
+                }
+                const pendingQuestion =
+                  event.options?.length
+                    ? {
+                        questionId: event.question_id,
+                        questionText: event.question_text,
+                        options: event.options,
+                      }
+                    : null;
+                return withSeq({ streaming: false, liveToolCallId: null, pendingQuestion, events: [...state.events, event] });
+              }
               case 'app_build_progress': {
                 const progress: AppBuildProgress = {
                   phase: event.phase,
@@ -856,18 +947,24 @@ export const useConversationV2Store = create<State & Actions>()(
                   url: event.url,
                   title: event.title,
                   ceph_path: event.ceph_path,
+                  revision_id: event.revision_id,
                   file_count: event.file_count,
                   hasFilesTree: !!event.files_tree,
                 });
+                if (state.sessionId && event.revision_id) {
+                  syncHostRevisionSources(state.sessionId, event.revision_id);
+                }
                 return withSeq({
                   events: [...state.events, event],
                   applicationComponent: {
                     url: event.url,
                     title: event.title ?? '',
                     cephPath: event.ceph_path,
-                    filesTree: event.files_tree ?? null,
+                    filesTree: normalizeFilesTree(event.files_tree) ?? event.files_tree ?? null,
                     fileCount: event.file_count,
                     revision: event.event_id,
+                    workspaceRevisionId:
+                      event.revision_id ?? state.applicationComponent?.workspaceRevisionId,
                   },
                   appBuildProgress: null,
                   rightPanelMode: 'app',

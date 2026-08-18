@@ -26,6 +26,7 @@ The models module provides:
 - **Model Management**: CRUD operations for model configuration
 - **Model Classification**: Each model carries a `type` (chat, embedding, image_generation, …) initialised from LiteLLM and editable by an admin
 - **Default Model Selection**: Admin ability to set a default model for new conversations
+- **Conversation-V2 Default**: Admin ability to set a dedicated default model for the conversation-v2 flow (falls back to the global default, then to no model)
 - **Provider Organization**: Models grouped by provider (chef) for easy filtering
 - **Connection Resilience**: Automatic reconnection with exponential backoff
 - **Health Monitoring**: Periodic health checks to detect LiteLLM availability
@@ -148,6 +149,9 @@ export class AiModel {
 
   @Prop({ default: false })
   isDefault: boolean;       // Only one model can be default
+
+  @Prop({ default: false })
+  isConversationV2Default: boolean; // Only one model can be the conversation-v2 default
 }
 ```
 
@@ -160,6 +164,7 @@ export class AiModel {
 | Type filter | `type, isActive` | Filter active models by classification (e.g. chat-only public list) |
 | Active filter | `isActive` | List active models only |
 | Default lookup | `isDefault` | Find default model |
+| Conversation-v2 default lookup | `isConversationV2Default` | Find conversation-v2 default model |
 
 ### Response Interfaces
 
@@ -174,6 +179,7 @@ interface ModelResponse {
   type: string;         // Classification ("chat", "embedding", ...; "" if unclassified)
   isActive: boolean;    // Availability status
   isDefault: boolean;   // Whether this is the default model
+  isConversationV2Default: boolean; // Whether this is the conversation-v2 default model
 }
 
 interface ModelsListResponse {
@@ -372,6 +378,8 @@ Admin endpoints require specific permissions via `PermissionsGuard`.
 | `PATCH` | `/admin/models/:id` | `MODELS_UPDATE` | Update model properties |
 | `POST` | `/admin/models/:id/set-default` | `MODELS_SET_DEFAULT` | Set model as default |
 | `POST` | `/admin/models/:id/clear-default` | `MODELS_SET_DEFAULT` | Clear default status |
+| `POST` | `/admin/models/:id/set-conversation-v2-default` | `MODELS_SET_DEFAULT` | Set model as conversation-v2 default |
+| `POST` | `/admin/models/:id/clear-conversation-v2-default` | `MODELS_SET_DEFAULT` | Clear conversation-v2 default status |
 | `POST` | `/admin/models/sync` | `MODELS_UPDATE` | Trigger manual sync from LiteLLM |
 
 ### Request/Response Examples
@@ -389,7 +397,8 @@ Admin endpoints require specific permissions via `PermissionsGuard`.
       "providers": ["azure"],
       "type": "chat",
       "isActive": true,
-      "isDefault": true
+      "isDefault": true,
+      "isConversationV2Default": false
     },
     {
       "id": "claude-3-opus",
@@ -686,6 +695,28 @@ if (defaultModel) {
   console.log(`Default model: ${defaultModel.name}`);
 }
 ```
+
+### Getting the Conversation-V2 Default Model
+
+```typescript
+// Returns the model flagged isConversationV2Default (active), or null.
+const defaultModel = await this.modelsService.getConversationV2DefaultModel();
+if (defaultModel) {
+  console.log(`Conversation-v2 default: ${defaultModel.name}`);
+}
+```
+
+### Conversation-V2 Default Resolution
+
+The conversation-v2 stream service resolves its model in this order:
+
+1. Model explicitly selected for the conversation (or passed in the request).
+2. The model flagged `isConversationV2Default`.
+3. The global default model (`getDefaultModel()`).
+4. No model (`undefined`) — the agent runtime falls back to its own default.
+
+This keeps the conversation-v2 flag distinct from the global `isDefault`; setting a
+conversation-v2 default never affects the v1/worky/playbook flows.
 
 ### Checking LiteLLM Health
 

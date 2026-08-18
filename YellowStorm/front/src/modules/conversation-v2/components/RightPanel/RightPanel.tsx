@@ -5,6 +5,7 @@ import { ResizablePanel } from '@/components/ui/resizable-panel';
 import { cn } from '@/lib/utils';
 import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
+import { isRuntimePreviewVisible } from '../../runtime/runtime.types';
 import { ToolDetailDispatch } from './tool-views/ToolDetailDispatch';
 import { ApplicationComponentView } from './ApplicationComponentView';
 import { AppBuildProgressPanel } from './AppBuildProgressPanel';
@@ -26,6 +27,7 @@ export function RightPanel() {
     streaming,
     applicationComponent,
     appBuildProgress,
+    runtimeStatus,
     setRightPanelView,
   } = useConversationV2Store(
     useShallow((s) => ({
@@ -37,18 +39,24 @@ export function RightPanel() {
       streaming: s.streaming,
       applicationComponent: s.applicationComponent,
       appBuildProgress: s.appBuildProgress,
+      runtimeStatus: s.runtimeStatus,
       setRightPanelView: s.setRightPanelView,
     })),
   );
 
   if (mode === 'closed') return null;
 
+  const runtimePreview = isRuntimePreviewVisible(runtimeStatus);
   const hasCode = !!selectedToolCallId;
-  const hasPreview = !!applicationComponent || !!appBuildProgress;
+  // Vague 5: show preview as soon as the browser runtime is active — do not
+  // wait for the SSE application_component event.
+  const hasPreview =
+    !!applicationComponent || !!appBuildProgress || runtimePreview;
   if (!hasCode && !hasPreview) return null;
 
-  const showBuildProgress = !!appBuildProgress && !applicationComponent;
-  const showNodepod = !!applicationComponent;
+  const showBuildProgress =
+    !!appBuildProgress && !applicationComponent && !runtimePreview;
+  const showNodepod = !!applicationComponent || runtimePreview;
 
   // Which tab is active, clamped to what's actually available: prefer the
   // preview when we're in 'app' mode (or when there's no code to show).
@@ -66,6 +74,10 @@ export function RightPanel() {
         ? 'bg-background text-foreground shadow-sm'
         : 'text-muted-foreground hover:text-foreground',
     );
+
+  const previewTitle =
+    applicationComponent?.title ||
+    (showBuildProgress ? t('nodepod.previewTitle') : t('nodepod.previewTitle'));
 
   return (
     <ResizablePanel
@@ -93,14 +105,11 @@ export function RightPanel() {
             </div>
           ) : (
             <span className='truncate text-sm font-semibold'>
-              {showPreview
-                ? applicationComponent?.title ||
-                  (showBuildProgress ? t('nodepod.previewTitle') : t('rightPanel.title'))
-                : t('rightPanel.title')}
+              {showPreview ? previewTitle : t('rightPanel.title')}
             </span>
           )}
           <div className='flex shrink-0 items-center gap-1'>
-            {hasPreview && showNodepod && <DeployControls />}
+            {hasPreview && showNodepod && applicationComponent && <DeployControls />}
             <Button variant='ghost' size='icon-sm' aria-label={t('rightPanel.close')} onClick={close}>
               <XIcon className='size-4' />
             </Button>
@@ -110,12 +119,9 @@ export function RightPanel() {
           {showPreview ? (
             showNodepod ? (
               <ApplicationComponentView
-                key={applicationComponent!.revision}
-                title={applicationComponent!.title}
-                cephPath={applicationComponent!.cephPath}
-                filesTree={applicationComponent!.filesTree}
-                fileCount={applicationComponent!.fileCount}
-                revision={applicationComponent!.revision}
+                title={applicationComponent?.title}
+                filesTree={applicationComponent?.filesTree}
+                fileCount={applicationComponent?.fileCount}
                 buildProgress={appBuildProgress}
               />
             ) : (

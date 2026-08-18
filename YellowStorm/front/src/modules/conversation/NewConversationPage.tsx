@@ -48,7 +48,7 @@ import { GovernedScopesCarousel } from '@/modules/governance/components/consumer
 import { conversationV2Api } from '@/modules/conversation-v2/api';
 import { useConversationV2PointersStore, useConversationV2Store } from '@/modules/conversation-v2/store';
 import { writeSelectedModelForSession } from '@/modules/conversation-v2/selectedModelStorage';
-import { useChefs, useDefaultModel, useModels, useModelsStore } from '@/modules/models';
+import { useChefs, useDefaultModel, useConversationV2DefaultModel, useModels, useModelsStore } from '@/modules/models';
 import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect';
 import { RecentSkillsMenu, ManageSkillsDialog, SelectedSkillsPills } from '@/modules/skill';
 import { RecentConnectorsMenu, ManageConnectorsDialog, SelectedConnectorsPills } from '@/modules/connector';
@@ -403,6 +403,7 @@ function AgentInput({ onSubmit, disabled }: AgentInputProps) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
+  const conversationV2DefaultModel = useConversationV2DefaultModel();
   // New conversations always start at the admin default — the user can
   // override before submitting. We keep modelId null when it matches the
   // default so we don't write a stale snapshot if the admin rotates the
@@ -415,7 +416,11 @@ function AgentInput({ onSubmit, disabled }: AgentInputProps) {
     void useModelsStore.getState().fetchModels().catch(() => undefined);
   }, []);
 
-  const activeModel = (pickedModelId && models.find((m) => m.id === pickedModelId)) || defaultModel || null;
+  const activeModel =
+    (pickedModelId && models.find((m) => m.id === pickedModelId)) ||
+    conversationV2DefaultModel ||
+    defaultModel ||
+    null;
 
   const handleSubmit = (message: PromptInputMessage) => {
     // Persist the actual model id we want to remember — either the user's

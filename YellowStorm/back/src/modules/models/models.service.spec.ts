@@ -289,4 +289,76 @@ describe('ModelsService', () => {
       });
     });
   });
+
+  describe('conversation-v2 default', () => {
+    it('queries the flagged active chat model only', async () => {
+      const sort = jest.fn().mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(null) }) });
+      findOne.mockReturnValue({ sort, lean: () => ({ exec: () => Promise.resolve(null) }) });
+
+      await svc.getConversationV2DefaultModel();
+
+      expect(findOne).toHaveBeenCalledWith({
+        isConversationV2Default: true,
+        isActive: true,
+        $or: [{ types: 'chat' }, { type: 'chat' }],
+      });
+    });
+
+    it('allows an active chat model as the conversation-v2 default and clears the previous one', async () => {
+      findOne.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve({ modelId: 'chat' }) }) });
+      findOneAndUpdate.mockReturnValue({
+        lean: () => ({ exec: () => Promise.resolve({
+          modelId: 'chat', name: 'Chat', chef: 'OpenAI', chefSlug: 'openai',
+          litellmModel: 'openai/chat', providers: ['openai'], type: 'chat', types: ['chat'],
+          isActive: true, isDefault: false, isConversationV2Default: true,
+        }) }),
+      });
+
+      const result = await svc.setConversationV2DefaultModel('chat');
+
+      expect(findOne).toHaveBeenCalledWith(expect.objectContaining({
+        modelId: 'chat',
+        isActive: true,
+        $or: [{ types: 'chat' }, { type: 'chat' }],
+      }));
+      expect(updateMany).toHaveBeenCalledWith(
+        { isConversationV2Default: true },
+        { $set: { isConversationV2Default: false } },
+      );
+      expect(findOneAndUpdate).toHaveBeenCalledWith(
+        { modelId: 'chat' },
+        { $set: { isConversationV2Default: true } },
+        { new: true },
+      );
+      expect(result?.isConversationV2Default).toBe(true);
+    });
+
+    it('does not touch the conversation-v2 default for a non-chat or inactive model', async () => {
+      findOne.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(null) }) });
+
+      await expect(svc.setConversationV2DefaultModel('embedding')).resolves.toBeNull();
+
+      expect(updateMany).not.toHaveBeenCalled();
+      expect(findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('clears the flag and surfaces it in the response', async () => {
+      findOneAndUpdate.mockReturnValue({
+        lean: () => ({ exec: () => Promise.resolve({
+          modelId: 'chat', name: 'Chat', chef: 'OpenAI', chefSlug: 'openai',
+          litellmModel: 'openai/chat', providers: ['openai'], type: 'chat', types: ['chat'],
+          isActive: true, isDefault: false, isConversationV2Default: false,
+        }) }),
+      });
+
+      const result = await svc.clearConversationV2DefaultModel('chat');
+
+      expect(findOneAndUpdate).toHaveBeenCalledWith(
+        { modelId: 'chat' },
+        { $set: { isConversationV2Default: false } },
+        { new: true },
+      );
+      expect(result?.isConversationV2Default).toBe(false);
+    });
+  });
 });

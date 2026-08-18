@@ -25,6 +25,12 @@ export class ConversationV2PointerWriterService {
       if (event.type === 'title') {
         patch.title = (event.payload as { title: string }).title;
       }
+      if (event.type === 'message') {
+        const role = (event.payload as { role?: string }).role;
+        if (role === 'user') {
+          patch.status = 'active';
+        }
+      }
       const statusForType: Record<string, ConversationV2SessionStatus | undefined> = {
         done: 'completed',
         wait: 'waiting',

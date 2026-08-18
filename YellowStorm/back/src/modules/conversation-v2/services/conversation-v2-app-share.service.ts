@@ -16,6 +16,10 @@ import {
   ConversationV2AppShare,
   ConversationV2AppShareDocument,
 } from '../schemas/conversation-v2-app-share.schema';
+import {
+  ConversationV2Session,
+  ConversationV2SessionDocument,
+} from '../schemas/conversation-v2-session.schema';
 import type { DeployedAppSummary } from './conversation-v2-session.service';
 
 export interface ShareAppsBatchResult {
@@ -36,6 +40,8 @@ export class ConversationV2AppShareService {
   constructor(
     @InjectModel(ConversationV2AppShare.name)
     private readonly model: Model<ConversationV2AppShareDocument>,
+    @InjectModel(ConversationV2Session.name)
+    private readonly sessionModel: Model<ConversationV2SessionDocument>,
     private readonly users: UserService,
     private readonly email: EmailService,
     private readonly notifications: NotificationsService,
@@ -87,9 +93,30 @@ export class ConversationV2AppShareService {
       .sort({ updatedAt: -1 })
       .lean()
       .exec();
+
+    // The share rows snapshot the title at share time, which goes stale when the
+    // owner renames the session or the app title is only set after sharing. Resolve
+    // the live title from the session pointer so owner and recipient stay in sync.
+    const sessionIds = docs.map((doc) => doc.sessionId);
+    const pointers = sessionIds.length
+      ? await this.sessionModel
+          .find({ _id: { $in: sessionIds } })
+          .select('title deployedAppTitle')
+          .lean()
+          .exec()
+      : [];
+    const liveTitleBySession = new Map(
+      pointers.map((pointer) => [
+        (pointer._id as Types.ObjectId).toString(),
+        (pointer as unknown as { deployedAppTitle?: string | null }).deployedAppTitle ??
+          (pointer as unknown as { title?: string | null }).title ??
+          '',
+      ]),
+    );
+
     return docs.map((doc) => ({
       sessionId: doc.sessionId.toString(),
-      title: doc.title,
+      title: liveTitleBySession.get(doc.sessionId.toString()) || doc.title || '',
       deployedUrl: doc.deployedUrl,
       lastDeployedAt: doc.lastDeployedAt
         ? new Date(doc.lastDeployedAt).toISOString()

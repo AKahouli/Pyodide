@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useConversationV2Store } from './store';
 import { conversationV2Api } from './api';
+import type { AgentEvent } from './types';
 
 describe('useConversationV2Store', () => {
   beforeEach(() => {
@@ -46,6 +47,57 @@ describe('useConversationV2Store', () => {
     setStreaming(true);
     handleEvent({ type: 'done', event_id: 'e1', timestamp: 1 });
     expect(useConversationV2Store.getState().streaming).toBe(false);
+  });
+
+  it('handleEvent("done") marks in-flight tools as called', () => {
+    const { handleEvent, setStreaming } = useConversationV2Store.getState();
+    handleEvent({
+      type: 'message',
+      event_id: 'u1',
+      timestamp: 1,
+      role: 'user',
+      content: 'build',
+    });
+    handleEvent({
+      type: 'tool',
+      event_id: 't1',
+      timestamp: 2,
+      tool_call_id: 'tc1',
+      name: 'mcp',
+      status: 'calling',
+      function: 'yellowruntime_write',
+      args: {},
+    });
+    setStreaming(true);
+    handleEvent({ type: 'done', event_id: 'd1', timestamp: 3 });
+    const tool = useConversationV2Store
+      .getState()
+      .events.find((e) => e.type === 'tool' && e.tool_call_id === 'tc1');
+    expect(tool?.type === 'tool' ? tool.status : null).toBe('called');
+  });
+
+  it('ignores stale done events that predate the latest user message sequence', () => {
+    const { handleEvent, setStreaming } = useConversationV2Store.getState();
+    handleEvent({
+      type: 'message',
+      event_id: 'u1',
+      timestamp: 1,
+      role: 'user',
+      content: 'first',
+      sequence: 10,
+    } as AgentEvent);
+    handleEvent({ type: 'done', event_id: 'd1', timestamp: 2, sequence: 20 } as AgentEvent);
+    handleEvent({
+      type: 'message',
+      event_id: 'u2',
+      timestamp: 3,
+      role: 'user',
+      content: 'modify',
+      sequence: 30,
+    } as AgentEvent);
+    setStreaming(true);
+    handleEvent({ type: 'done', event_id: 'd-stale', timestamp: 4, sequence: 25 } as AgentEvent);
+    expect(useConversationV2Store.getState().streaming).toBe(true);
   });
 
   it('reconciles a missed final event after reconnect', async () => {
@@ -445,11 +497,42 @@ describe('useConversationV2Store', () => {
 
     await useConversationV2Store.getState().deploy();
 
-    expect(deploySpy).toHaveBeenCalledWith('session-1', 'Generated app');
+    expect(deploySpy).toHaveBeenCalledWith('session-1', {
+      title: 'Generated app',
+      revisionId: undefined,
+    });
     expect(useConversationV2Store.getState().lastDeployedAt).toBe(
       '2026-07-17T10:00:00.000Z',
     );
     expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
+  });
+
+  it('deploy sends the finalized workspace revision id', async () => {
+    const deploySpy = vi.spyOn(conversationV2Api, 'deploySession').mockResolvedValueOnce({
+      deployStatus: 'deployed',
+      deployedUrl: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      lastDeployedAt: '2026-08-14T10:00:00.000Z',
+    });
+    useConversationV2Store.setState({
+      sessionId: 'session-1',
+      applicationComponent: {
+        title: 'Generated app',
+        url: 'nodepod://preview',
+        revision: 'evt-1',
+        workspaceRevisionId: 'rev_15',
+      },
+    });
+
+    await useConversationV2Store.getState().deploy();
+
+    expect(deploySpy).toHaveBeenCalledWith('session-1', {
+      title: 'Generated app',
+      revisionId: 'rev_15',
+    });
+    expect(useConversationV2Store.getState().appViewMode).toBe('deployed');
+    expect(useConversationV2Store.getState().deployedUrl).toBe(
+      'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+    );
   });
 
   it('replayEvents restores application sources without overwriting with deployed URL', () => {
@@ -476,6 +559,29 @@ describe('useConversationV2Store', () => {
       filesTree: null,
       fileCount: undefined,
       revision: 'app-1',
+      workspaceRevisionId: undefined,
     });
+  });
+
+  it('keeps workspaceRevisionId when a later application_component omits revision_id', () => {
+    const { handleEvent } = useConversationV2Store.getState();
+    handleEvent({
+      type: 'application_component',
+      event_id: 'app-1',
+      timestamp: 1,
+      title: 'App',
+      url: 'nodepod://preview',
+      revision_id: 'rev_15',
+    });
+    handleEvent({
+      type: 'application_component',
+      event_id: 'app-2',
+      timestamp: 2,
+      title: 'App',
+      url: 'nodepod://preview',
+    });
+    expect(useConversationV2Store.getState().applicationComponent?.workspaceRevisionId).toBe(
+      'rev_15',
+    );
   });
 });
