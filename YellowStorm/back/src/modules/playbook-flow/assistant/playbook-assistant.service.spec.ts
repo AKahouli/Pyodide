@@ -2,13 +2,13 @@ import { PlaybookAssistantService } from './playbook-assistant.service';
 
 describe('PlaybookAssistantService.runTurn', () => {
   const createService = (overrides: {
-    taskResult?: { text: string; toolResults: Array<{ name: string; status: 'completed' | 'failed'; result: unknown }> };
     constructionStatus?: Record<string, unknown>;
+    assessment?: Record<string, unknown>;
   } = {}) => {
     const accessService = { findAccessibleFlow: jest.fn().mockResolvedValue({ definitionRevision: 7 }) };
     const constructionService = {
       start: jest.fn().mockResolvedValue({
-        operationId: 'operation-1',
+        constructionId: 'operation-1',
         playbookId: 'playbook-1',
         baseDefinitionRevision: 7,
       }),
@@ -21,9 +21,6 @@ describe('PlaybookAssistantService.runTurn', () => {
       }),
     };
     const agentService = { findActiveDefaultAgentIdBySlug: jest.fn().mockResolvedValue('507f1f77bcf86cd799439011') };
-    const taskExecutionService = {
-      runSingleAgentTask: jest.fn().mockResolvedValue(overrides.taskResult ?? { text: 'This workflow has two tasks.', toolResults: [] }),
-    };
     const requestService = {
       claimTurn: jest.fn().mockResolvedValue({
         replay: false,
@@ -34,12 +31,34 @@ describe('PlaybookAssistantService.runTurn', () => {
           tenantId: 'default',
           agentId: '507f1f77bcf86cd799439011',
           contextId: 'context-1',
+          ownerId: 'user-1',
+          playbookId: 'playbook-1',
+          expectedDefinitionRevision: 7,
+          operationKind: 'existing_construction',
+          status: 'processing',
           originalText: 'request',
+          answers: [],
           mutationOperationId: null,
         },
       }),
       claimGenerationForTurn: jest.fn().mockResolvedValue({ requestId: 'generation-request-1' }),
-      getContinuationForUser: jest.fn(),
+      getContinuationForUser: jest.fn().mockResolvedValue({
+        requestId: 'request-1',
+        conversationId: 'conversation-1',
+        correlationId: 'playbook-assistant:correlation-1',
+        tenantId: 'default',
+        agentId: '507f1f77bcf86cd799439011',
+        contextId: 'context-1',
+        ownerId: 'user-1',
+        playbookId: 'playbook-1',
+        expectedDefinitionRevision: 7,
+        operationKind: 'existing_construction',
+        status: 'awaiting_clarification',
+        originalText: 'Add export',
+        assessment: { status: 'needs_clarification', questions: [{ id: 'region', required: true }] },
+        answers: [],
+        attachmentIds: [],
+      }),
       getByContinuation: jest.fn().mockResolvedValue({
         requestId: 'request-1',
         ownerId: 'user-1',
@@ -60,6 +79,8 @@ describe('PlaybookAssistantService.runTurn', () => {
         operationKind: 'existing_construction',
         status: 'ready',
         originalText: 'Add scoring',
+        assessment: { status: 'ready_to_construct', detectedIntent: 'Add scoring export' },
+        answers: [{ questionId: 'source', choice: 'Iterator results' }],
         selectedTaskId: null,
         attachmentIds: [],
         contextId: 'context-1',
@@ -71,7 +92,7 @@ describe('PlaybookAssistantService.runTurn', () => {
       claimAssessment: jest.fn().mockResolvedValue(1),
       claimContinuation: jest.fn().mockResolvedValue(2),
       restoreContinuation: jest.fn().mockResolvedValue(undefined),
-      saveAssessment: jest.fn(),
+      saveAssessment: jest.fn().mockResolvedValue({ continuationId: null }),
       complete: jest.fn().mockResolvedValue(undefined),
       fail: jest.fn().mockResolvedValue(undefined),
     };
@@ -85,7 +106,13 @@ describe('PlaybookAssistantService.runTurn', () => {
       findByAssistantOperationId: jest.fn(),
       removeAssistantDraftIfUnchanged: jest.fn().mockResolvedValue(true),
     };
-    const intentService = { assessDesign: jest.fn() };
+    const intentService = { assessDesign: jest.fn().mockResolvedValue(overrides.assessment ?? {
+      status: 'ready_for_review',
+      detectedIntent: 'Add a review task',
+      brief: { goal: 'Review', trigger: 'Existing flow', datasources: [], steps: ['Review'], outputs: [], hitlRules: [] },
+      assumptions: [],
+      riskFlags: [],
+    }) };
     const conversationService = { getConversationDocument: jest.fn().mockResolvedValue({
       createdBy: 'user-1', runtimePurpose: 'platform_copilot', pinnedAgentId: 'agent-1',
     }) };
@@ -106,7 +133,6 @@ describe('PlaybookAssistantService.runTurn', () => {
       {} as any,
       {} as any,
       agentService as any,
-      taskExecutionService as any,
       requestService as any,
       historyService as any,
       intentService as any,
@@ -114,29 +140,25 @@ describe('PlaybookAssistantService.runTurn', () => {
       conversationService as any,
       messageService as any,
     );
-    return { service, accessService, constructionService, flowService, agentService, taskExecutionService, requestService, historyService, intentService, attachmentService, conversationService, messageService };
+    return { service, accessService, constructionService, flowService, agentService, requestService, historyService, intentService, attachmentService, conversationService, messageService };
   };
 
-  it('returns a read-only assistant answer without creating an operation', async () => {
-    const { service, taskExecutionService } = createService();
+  it('routes a design turn directly through assessment and construction', async () => {
+    const { service, intentService, constructionService } = createService();
 
     await expect(service.runTurn('playbook-1', 'user-1', {
-      message: 'How many tasks are there?',
+      message: 'Add a review task',
       expectedDefinitionRevision: 7,
       selectedTaskId: 'task-1',
     })).resolves.toEqual({
       requestId: 'request-1',
       conversationId: 'conversation-1',
-      answer: 'This workflow has two tasks.',
-      assessment: null,
-      operation: null,
+      answer: 'The requested Playbook construction is ready in the canvas.',
+      assessment: expect.objectContaining({ status: 'ready_for_review' }),
+      operation: expect.objectContaining({ operationId: 'operation-1' }),
     });
-    expect(taskExecutionService.runSingleAgentTask).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: '507f1f77bcf86cd799439011',
-      query: expect.stringContaining('Current Playbook ID: playbook-1'),
-      conversationId: 'conversation-1',
-      correlationId: 'playbook-assistant:correlation-1',
-    }));
+    expect(intentService.assessDesign).toHaveBeenCalledTimes(1);
+    expect(constructionService.start).toHaveBeenCalledTimes(1);
   });
 
   it('authorizes read access before returning server-owned history', async () => {
@@ -147,46 +169,29 @@ describe('PlaybookAssistantService.runTurn', () => {
     expect(historyService.list).toHaveBeenCalledWith('user-1', 'playbook-1', undefined);
   });
 
-  it('accepts an operation id only from a completed construction tool result and validates ownership', async () => {
+  it('returns clarification without starting construction', async () => {
     const { service, constructionService } = createService({
-      taskResult: {
-        text: 'I started the requested update.',
-        toolResults: [{
-          name: 'playbook-mcp_start_playbook_construction',
-          status: 'completed',
-          result: { result: { operationId: 'operation-1' } },
-        }],
+      assessment: {
+        status: 'needs_clarification',
+        detectedIntent: 'Add export',
+        questions: [{ id: 'source', question: 'Which source?', reason: 'Required', category: 'datasource', required: true, choices: ['Results'] }],
+        missingRequirements: ['source'],
+        riskFlags: [],
       },
     });
 
     const result = await service.runTurn('playbook-1', 'user-1', {
-      message: 'Add a review task.',
+      message: 'Add an export.',
       expectedDefinitionRevision: 7,
     });
 
-    expect(constructionService.getStatus).toHaveBeenCalledWith('playbook-1', 'user-1', 'operation-1');
-    expect(result.operation).toEqual(expect.objectContaining({ operationId: 'operation-1', playbookId: 'playbook-1' }));
-  });
-
-  it('rejects multiple construction mutations in one assistant turn', async () => {
-    const { service } = createService({
-      taskResult: {
-        text: 'Started two operations.',
-        toolResults: [
-          { name: 'playbook-mcp_start_playbook_construction', status: 'completed', result: { operationId: 'operation-1' } },
-          { name: 'playbook-mcp_start_workflow_optimization', status: 'completed', result: { operationId: 'operation-2' } },
-        ],
-      },
-    });
-
-    await expect(service.runTurn('playbook-1', 'user-1', {
-      message: 'Rewrite everything twice.',
-      expectedDefinitionRevision: 7,
-    })).rejects.toThrow('more than one construction operation');
+    expect(result.assessment).toEqual(expect.objectContaining({ status: 'needs_clarification' }));
+    expect(result.operation).toBeNull();
+    expect(constructionService.start).not.toHaveBeenCalled();
   });
 
   it('requires the server-issued conversation when continuing clarification', async () => {
-    const { service, requestService, taskExecutionService } = createService();
+    const { service, requestService, intentService } = createService();
 
     await expect(service.runTurn('playbook-1', 'user-1', {
       message: 'region: France',
@@ -195,7 +200,44 @@ describe('PlaybookAssistantService.runTurn', () => {
       answers: [{ questionId: 'region', choice: 'France' }],
     })).rejects.toThrow('requires its conversation identifier');
     expect(requestService.getContinuationForUser).not.toHaveBeenCalled();
-    expect(taskExecutionService.runSingleAgentTask).not.toHaveBeenCalled();
+    expect(intentService.assessDesign).not.toHaveBeenCalled();
+  });
+
+  it('continues typed clarification without a second assessment call', async () => {
+    const { service, intentService, requestService, constructionService } = createService();
+
+    const result = await service.runTurn('playbook-1', 'user-1', {
+      message: 'France',
+      expectedDefinitionRevision: 7,
+      conversationId: 'conversation-1',
+      continuationId: 'continuation-1',
+      answers: [{ questionId: 'region', choice: 'France' }],
+    });
+
+    expect(intentService.assessDesign).not.toHaveBeenCalled();
+    expect(requestService.claimContinuation).toHaveBeenCalledWith(expect.objectContaining({
+      answers: [{ questionId: 'region', choice: 'France' }],
+      assessment: expect.objectContaining({ status: 'ready_to_construct' }),
+    }));
+    expect(constructionService.start).toHaveBeenCalledTimes(1);
+    expect(result.operation).toEqual(expect.objectContaining({ operationId: 'operation-1' }));
+  });
+
+  it('passes the persisted assessment and typed answers into construction', async () => {
+    const { service, constructionService } = createService();
+
+    await service.startBoundConstruction('request-1', {
+      ownerId: 'user-1',
+      tenantId: 'default',
+      agentId: 'agent-1',
+      conversationId: 'conversation-1',
+      correlationId: 'correlation-1',
+    }, 'context-1');
+
+    const constructionIntent = constructionService.start.mock.calls[0][2].intent;
+    expect(constructionIntent).toContain('Add scoring export');
+    expect(constructionIntent).toContain('Iterator results');
+    expect(constructionIntent).toContain('Treat the resolved design context as binding');
   });
 
   it('releases a newly claimed mutation if construction startup fails', async () => {

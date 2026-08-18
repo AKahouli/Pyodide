@@ -214,8 +214,8 @@ export class PlaybookAssistantRequestService {
     continuationId: string;
     actor: { ownerId: string; tenantId: string; agentId: string; conversationId: string; correlationId: string };
     answers: Record<string, unknown>[];
-    text: string;
-  }): Promise<number> {
+    assessment: Record<string, unknown>;
+  }): Promise<void> {
     const claimed = await this.requestModel.findOneAndUpdate(
       {
         requestId: input.requestId,
@@ -231,18 +231,16 @@ export class PlaybookAssistantRequestService {
       {
         $set: {
           answers: input.answers,
-          originalText: input.text,
+          assessment: input.assessment,
           continuationId: null,
-          status: 'processing',
+          status: 'ready',
         },
-        $inc: { assessmentVersion: 1 },
       },
       { new: true },
     ).lean().exec();
     if (!claimed) {
       throw new ConflictException(ErrorCode.CONFLICT, 'Assistant clarification was already continued');
     }
-    return claimed.assessmentVersion;
   }
 
   async restoreContinuation(requestId: string, continuationId: string): Promise<void> {

@@ -109,6 +109,9 @@ import type {
   ConversationSettingsResponse,
   UpdateConversationSettingsRequest,
   ConversationSettingsAgentOption,
+  CopilotAssistantSettingsResponse,
+  UpdateCopilotAssistantSettingsRequest,
+  CopilotAssistantAgentOption,
   CatalogExportRequest,
   CatalogConflictPolicy,
   CatalogImportResult,
@@ -1277,6 +1280,21 @@ export async function getAdminConversationSettingsAgents(): Promise<Conversation
 
 export async function updateAdminConversationSettings(data: UpdateConversationSettingsRequest): Promise<ConversationSettingsResponse> {
   const response = await apiClient.put<ApiResponse<ConversationSettingsResponse>>(API_ENDPOINTS.adminConversationSettings.base, data);
+  return response.data.data;
+}
+
+export async function getCopilotAssistantSettings(): Promise<CopilotAssistantSettingsResponse> {
+  const response = await apiClient.get<ApiResponse<CopilotAssistantSettingsResponse>>(API_ENDPOINTS.adminCopilotAssistant.base);
+  return response.data.data;
+}
+
+export async function getCopilotAssistantAgents(): Promise<CopilotAssistantAgentOption[]> {
+  const response = await apiClient.get<ApiResponse<CopilotAssistantAgentOption[]>>(API_ENDPOINTS.adminCopilotAssistant.agents);
+  return response.data.data;
+}
+
+export async function updateCopilotAssistantSettings(data: UpdateCopilotAssistantSettingsRequest): Promise<CopilotAssistantSettingsResponse> {
+  const response = await apiClient.put<ApiResponse<CopilotAssistantSettingsResponse>>(API_ENDPOINTS.adminCopilotAssistant.base, data);
   return response.data.data;
 }
 

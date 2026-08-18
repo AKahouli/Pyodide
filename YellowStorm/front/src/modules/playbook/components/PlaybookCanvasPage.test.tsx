@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildIntentEdgeOptions, buildOverviewResultNodeIds, getScopedConstructionDiagnostics, hydrateAssistantOperationHandoff, isPlaybookRouteCurrent, isTaskConfiguredForExecution, loadLatestPlaybookAssistantHistory, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyInitialAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldClearConstructionDiagnostics, shouldEnableCanvasNodeDragging, shouldRenderPlaybookAssistant, shouldUsePlaybookMcpAssistant, updateScopedConstructionDiagnostics } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, buildOverviewResultNodeIds, canAppendIntentEdge, getInitialPlaybookPageMode, getScopedConstructionDiagnostics, hydrateAssistantOperationHandoff, isPlaybookRouteCurrent, isTaskConfiguredForExecution, loadLatestPlaybookAssistantHistory, pruneUnreachableDataBindings, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyInitialAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldClearConstructionDiagnostics, shouldConsumeAssistantOperationHandoff, shouldEnableCanvasNodeDragging, shouldRenderPlaybookAssistant, shouldUsePlaybookMcpAssistant, updateScopedConstructionDiagnostics } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
@@ -67,6 +67,68 @@ describe('shouldRenderPlaybookAssistant', () => {
 
   it('keeps the human response surface available for an interrupted execution', () => {
     expect(shouldRenderPlaybookAssistant('run', true, true)).toBe(true);
+  });
+});
+
+describe('shouldConsumeAssistantOperationHandoff', () => {
+  it('waits for the route playbook to load instead of consuming onto a stale one', () => {
+    expect(shouldConsumeAssistantOperationHandoff('playbook-b', 'playbook-a', 'operation-1', null)).toBe(false);
+    expect(shouldConsumeAssistantOperationHandoff('playbook-b', undefined, 'operation-1', null)).toBe(false);
+    expect(shouldConsumeAssistantOperationHandoff('playbook-b', 'playbook-b', 'operation-1', null)).toBe(true);
+  });
+
+  it('ignores handoffs without a route, operation, or already consumed', () => {
+    expect(shouldConsumeAssistantOperationHandoff(undefined, 'playbook-a', 'operation-1', null)).toBe(false);
+    expect(shouldConsumeAssistantOperationHandoff('playbook-b', 'playbook-b', null, null)).toBe(false);
+    expect(shouldConsumeAssistantOperationHandoff('playbook-b', 'playbook-b', 'operation-1', 'operation-1')).toBe(false);
+  });
+});
+
+describe('pruneUnreachableDataBindings', () => {
+  const tasks = [
+    { id: 'a', inputPorts: [], outputPorts: [{ id: 'o', artifactKind: 'text' }] },
+    { id: 'b', inputPorts: [{ id: 'i', artifactKind: 'text', required: true }], outputPorts: [] },
+    { id: 'c', inputPorts: [{ id: 'i', artifactKind: 'text' }], outputPorts: [] },
+  ] as any;
+  const edge = (source: string, target: string) => ({ id: `${source}->${target}`, source, target }) as any;
+
+  it('keeps bindings whose source can reach the target and drops the rest', () => {
+    const { bindings, dropped } = pruneUnreachableDataBindings(tasks, [edge('a', 'b'), edge('b', 'c')], [
+      { sourceKind: 'node-output', sourceNode: 'a', sourcePort: 'o', targetNode: 'b', targetPort: 'i' },
+      { sourceKind: 'node-output', sourceNode: 'a', sourcePort: 'o', targetNode: 'c', targetPort: 'i' },
+      { sourceKind: 'node-output', sourceNode: 'b', sourcePort: 'o', targetNode: 'a', targetPort: 'i' },
+      { sourceKind: 'constant', constantValue: 'x', targetNode: 'c', targetPort: 'i' },
+    ] as any);
+
+    expect(bindings.map((b) => b.sourceKind === 'node-output' ? `${b.sourceNode}->${b.targetNode}` : b.sourceKind)).toEqual(['a->b', 'a->c', 'constant']);
+    expect(dropped).toEqual(['b.o->a.i']);
+  });
+
+  it('keeps reachable bindings after an after-anchor re-route severs a direct edge', () => {
+    // zqw95x -> export -> s2l9bl keeps the zqw95x -> s2l9bl binding reachable transitively.
+    const { bindings } = pruneUnreachableDataBindings(tasks, [edge('a', 'b'), edge('b', 'c')], [
+      { sourceKind: 'node-output', sourceNode: 'a', sourcePort: 'o', targetNode: 'c', targetPort: 'i' },
+    ] as any);
+    expect(bindings).toHaveLength(1);
+  });
+});
+
+describe('getInitialPlaybookPageMode', () => {
+  it('opens completed Playbooks in Monitor and all others in Design', () => {
+    expect(getInitialPlaybookPageMode('completed')).toBe('run');
+    expect(getInitialPlaybookPageMode('running')).toBe('design');
+    expect(getInitialPlaybookPageMode('failed')).toBe('design');
+    expect(getInitialPlaybookPageMode()).toBe('design');
+  });
+});
+
+describe('canAppendIntentEdge', () => {
+  it('blocks Canvas fallback edges with incompatible explicit artifact kinds', () => {
+    const source = makeTask({ outputPorts: [{ id: 'output-document', name: 'Report', artifactKind: 'document' }] });
+    const target = makeTask({ id: 'export', inputPorts: [{ id: 'scores_data', name: 'Scores', artifactKind: 'data', required: true }] });
+
+    expect(canAppendIntentEdge(source, target, 'output-document', 'scores_data')).toBe(false);
+    expect(canAppendIntentEdge(source, target, 'default', 'default')).toBe(true);
   });
 });
 

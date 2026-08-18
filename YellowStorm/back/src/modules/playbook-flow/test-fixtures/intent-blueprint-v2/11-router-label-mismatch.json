@@ -1,0 +1,33 @@
+{
+  "inputBlueprint": {
+    "version": 2,
+    "title": "Router label mismatch recovery",
+    "summary": "Router conditions and links use labels missing from outputLabels; deterministic repair must adopt them instead of dropping branches.",
+    "nodes": [
+      { "ref": "score_leads", "label": "Score Leads", "purpose": "Score inbound leads", "nodeTemplateKey": "generic.agent_step", "inputPorts": [], "outputPorts": [{ "id": "score", "name": "Lead score", "artifactKind": "data" }] },
+      { "ref": "route_leads", "label": "Route Leads", "purpose": "Route leads by score", "nodeTemplateKey": "router.basic", "primitive": { "kind": "router", "router": { "outputLabels": ["escalate_manual_review"], "defaultLabel": "escalate_manual_review", "conditions": [
+        { "label": "review_qualified_leads", "sourceRef": "score_leads", "sourcePort": "score", "operator": "gte", "value": 0.8 },
+        { "label": "draft_nurture_plan", "sourceRef": "score_leads", "sourcePort": "score", "operator": "lt", "value": 0.8 }
+      ] } }, "inputPorts": [{ "id": "leads", "artifactKind": "data", "required": true }] },
+      { "ref": "review_qualified_leads", "label": "Review Qualified Leads", "purpose": "Review qualified leads", "nodeTemplateKey": "generic.agent_step", "inputPorts": [{ "id": "input", "artifactKind": "data" }] },
+      { "ref": "draft_nurture_plan", "label": "Draft Nurture Plan", "purpose": "Draft a nurture plan", "nodeTemplateKey": "generic.agent_step", "inputPorts": [{ "id": "input", "artifactKind": "data" }] },
+      { "ref": "notify_slack", "label": "Notify Slack", "purpose": "Post escalations", "nodeTemplateKey": "generic.agent_step", "inputPorts": [{ "id": "input", "artifactKind": "data" }] }
+    ],
+    "links": [
+      { "sourceRef": "score_leads", "targetRef": "route_leads", "sourceOutputPortId": "score", "targetInputPortId": "leads" },
+      { "sourceRef": "route_leads", "targetRef": "review_qualified_leads", "routerLabel": "review_qualified_leads", "targetInputPortId": "input" },
+      { "sourceRef": "route_leads", "targetRef": "draft_nurture_plan", "routerLabel": "draft_nurture_plan", "targetInputPortId": "input" },
+      { "sourceRef": "route_leads", "targetRef": "notify_slack", "routerLabel": "notify_on_slack", "targetInputPortId": "input" }
+    ]
+  },
+  "expected": {
+    "minNodes": 5,
+    "minEdges": 4,
+    "routerNodeRef": "route_leads",
+    "routerLabels": ["review_qualified_leads", "draft_nurture_plan", "notify_on_slack", "escalate_manual_review"],
+    "edgeRouterLabels": ["review_qualified_leads", "draft_nurture_plan", "notify_on_slack"],
+    "repairCodes": ["repair_router_label_adopted", "repair_router_output_port_added", "repair_router_link_source_port_set"],
+    "forbiddenDiagnosticCodes": ["blueprint_router_condition_invalid", "builder_conditional_edge_invalid_router_label", "validator_rule_4"],
+    "validationStatus": "valid_with_warnings"
+  }
+}

@@ -32,7 +32,7 @@ export function shouldShowSecondBrainMascot(
   executionStatus: string | undefined,
 ): boolean {
   if (!isPlaybookRoute) return true;
-  return pageMode !== 'run' && !['queued', 'running'].includes(executionStatus ?? '');
+  return pageMode !== 'run' && !['queued', 'running', 'interrupted', 'pending_approval'].includes(executionStatus ?? '');
 }
 
 export function SecondBrainMascot() {
@@ -42,9 +42,12 @@ export function SecondBrainMascot() {
   const isDirty = usePlaybookStore((state) => state.isDirty);
   const currentPlaybook = usePlaybookStore((state) => state.currentPlaybook);
   const currentExecution = usePlaybookStore((state) => state.currentExecution);
+  const executionHistoryByPlaybook = usePlaybookStore((state) => state.executionHistoryByPlaybook);
+  const legacyDesignerOpen = usePlaybookStore((state) => state.designerOpen);
+  const setDesignerOpen = usePlaybookStore((state) => state.setDesignerOpen);
   const selectedTaskId = usePlaybookUiStore((state) => state.selectedStepId);
   const designerOpen = usePlaybookUiStore((state) => state.designerOpen);
-  const setDesignerOpen = usePlaybookUiStore((state) => state.setDesignerOpen);
+  const setCopilotMode = usePlaybookUiStore((state) => state.setCopilotMode);
   const pageMode = usePlaybookUiStore((state) => state.pageMode);
   const useDrawer = useCompactAssistantLayout();
   const [open, setOpen] = React.useState(false);
@@ -92,7 +95,8 @@ export function SecondBrainMascot() {
     };
   }, [isDirty, language, location.pathname, location.search, selectedTaskId]);
 
-  const secondBrain = useSecondBrainConversation(open, pageContext);
+  const routePlaybookId = pageContext.entity?.type === 'playbook' ? pageContext.entity.id : undefined;
+  const secondBrain = useSecondBrainConversation(open && !routePlaybookId, pageContext);
   React.useEffect(() => {
     if (secondBrain.error) handleApiError(secondBrain.error);
   }, [secondBrain.error]);
@@ -128,12 +132,15 @@ export function SecondBrainMascot() {
     if (await secondBrain.send(message)) setInput('');
   };
 
-  const routePlaybookId = pageContext.entity?.type === 'playbook' ? pageContext.entity.id : undefined;
   const contextPlaybook = currentPlaybook?.id === routePlaybookId ? currentPlaybook : null;
   const showMascot = shouldShowSecondBrainMascot(
     Boolean(routePlaybookId),
     pageMode,
-    currentExecution?.playbookId === routePlaybookId ? currentExecution?.status : undefined,
+    currentExecution && currentExecution.playbookId === routePlaybookId
+      ? currentExecution.status
+      : routePlaybookId
+        ? executionHistoryByPlaybook[routePlaybookId]?.[0]?.status
+        : undefined,
   );
   const selectedTask = contextPlaybook?.tasks.find((task) => task.id === selectedTaskId)
     ?? contextPlaybook?.nodes?.find((node) => node.id === selectedTaskId);
@@ -237,12 +244,22 @@ export function SecondBrainMascot() {
     </>
   );
 
-  if (!showMascot) return null;
+  if (!showMascot || (routePlaybookId && (designerOpen || legacyDesignerOpen))) return null;
 
   return (
     <>
       {!open && (
-        <Button ref={launcherRef} type='button' className='pointer-events-auto fixed bottom-5 right-5 z-[120] h-14 touch-manipulation rounded-full border border-primary-foreground/20 px-5 shadow-xl shadow-primary/20' aria-label={t('open')} onClick={(event) => { event.preventDefault(); event.stopPropagation(); hasOpenedRef.current = true; if (designerOpen) setDesignerOpen(false); setOpen(true); }}>
+        <Button ref={launcherRef} type='button' className='pointer-events-auto fixed bottom-5 right-5 z-[120] h-14 touch-manipulation rounded-full border border-primary-foreground/20 px-5 shadow-xl shadow-primary/20' aria-label={t('open')} onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          hasOpenedRef.current = true;
+          if (routePlaybookId) {
+            setCopilotMode('design');
+            setDesignerOpen(true);
+            return;
+          }
+          setOpen(true);
+        }}>
           <Sparkles className='mr-2 h-5 w-5' />
           {t('title')}
         </Button>

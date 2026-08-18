@@ -7,6 +7,7 @@ import type { PlaybookIntentConstructionEvent, PlaybookIntentConstructionStartRe
 import { PlaybookFlowIntentService, type PlaybookIntentSuggestion } from './playbook-flow-intent.service';
 import { PlaybookIntentBlueprintCompilerService } from './playbook-intent-blueprint-compiler.service';
 import type { PreparedConstructionInput } from '../interfaces/playbook-assistant.interface';
+import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
 import { PlaybookAssistantOperationService, type PersistableConstructionEvent } from '../assistant/playbook-assistant-operation.service';
 import type { UpdatePlaybookFlowDto } from '../dto/update-playbook-flow.dto';
 
@@ -161,34 +162,36 @@ export class PlaybookFlowIntentConstructionService {
   private async run(job: PlaybookIntentConstructionJob, dto: RequestPlaybookFlowIntentDto, context: Awaited<ReturnType<PlaybookFlowIntentService['buildIntentAnalysisContext']>>): Promise<void> {
     job.status = 'running';
     const cancellationWatcher = this.watchDurableCancellation(job);
+    const startedAt = Date.now();
+    let llmCalls = 0;
     try {
       await this.emit(job, { type: 'progress', constructionId: job.id, playbookId: job.flowId, phase: 'planning', message: 'Planning workflow construction' });
-      const response = await context.httpClient.post('/v1/chat/completions', {
-        model: context.model,
-        ...(context.omitTemperature ? {} : { temperature: 0.2 }),
-        stream: true,
-        response_format: { type: 'json_object' },
-        messages: [{ role: 'system', content: context.systemPrompt }, { role: 'user', content: context.userMessageContent }],
-      }, { timeout: 180000, signal: job.abortController.signal, responseType: 'stream' });
-      if (job.abortController.signal.aborted) return;
-
-      let raw = '';
-      for await (const content of this.readChatCompletionStream(response.data)) {
-        if (job.abortController.signal.aborted) return;
-        raw += content;
+      let raw = await this.requestBlueprint(job, context);
+      llmCalls += 1;
+      let suggestions = this.buildBlueprintSuggestions(raw, context);
+      if (this.isBlockedConstruction(suggestions)) {
+        await this.emit(job, { type: 'progress', constructionId: job.id, playbookId: job.flowId, phase: 'planning', message: 'Repairing invalid workflow construction' });
+        raw = await this.requestBlueprint(job, context, {
+          raw,
+          diagnostics: this.blockingDiagnostics(suggestions),
+        });
+        llmCalls += 1;
+        suggestions = this.buildBlueprintSuggestions(raw, context);
       }
-
-      const suggestions = this.buildBlueprintSuggestions(raw, context);
+      if (this.isBlockedConstruction(suggestions)) {
+        throw new Error(`Workflow construction failed strict validation after one repair attempt: ${this.formatBlockingDiagnostics(this.blockingDiagnostics(suggestions))}`);
+      }
       await this.emitSuggestions(job, suggestions);
       if (job.abortController.signal.aborted) return;
       job.status = 'completed';
       await this.emit(job, { type: 'completed', constructionId: job.id, playbookId: job.flowId, model: context.model, finalSuggestionCount: suggestions.length });
+      this.logger.log(`playbook_intent_construction_completed constructionId=${job.id} playbookId=${job.flowId} llmCalls=${llmCalls} catalogChars=${String(context.promptVariables.available_design_catalog ?? '').length} durationMs=${Date.now() - startedAt}`);
       this.scheduleCleanup(job);
     } catch (error) {
       if (job.abortController.signal.aborted) return;
       job.status = 'failed';
       const message = error instanceof Error ? error.message : 'Intent construction failed';
-      this.logger.error(`playbook_intent_construction_failed constructionId=${job.id} playbookId=${job.flowId} message=${message}`);
+      this.logger.error(`playbook_intent_construction_failed constructionId=${job.id} playbookId=${job.flowId} llmCalls=${llmCalls} durationMs=${Date.now() - startedAt} message=${message}`);
       await this.emit(job, { type: 'failed', constructionId: job.id, playbookId: job.flowId, message, recoverable: true });
       this.scheduleCleanup(job);
     } finally {
@@ -236,6 +239,77 @@ export class PlaybookFlowIntentConstructionService {
     context: Awaited<ReturnType<PlaybookFlowIntentService['buildIntentAnalysisContext']>>,
   ): PlaybookIntentSuggestion[] {
     return this.blueprintCompiler.compile({ raw, context });
+  }
+
+  private async requestBlueprint(
+    job: PlaybookIntentConstructionJob,
+    context: Awaited<ReturnType<PlaybookFlowIntentService['buildIntentAnalysisContext']>>,
+    repair?: { raw: string; diagnostics: PlaybookIntentDiagnostic[] },
+  ): Promise<string> {
+    const messages = repair
+      ? [
+          { role: 'system', content: context.systemPrompt },
+          { role: 'user', content: context.userMessageContent },
+          { role: 'assistant', content: repair.raw.slice(0, 50_000) },
+          {
+            role: 'user',
+            content: `Return one corrected blueprint JSON object. The previous blueprint failed strict validation for: ${this.formatBlockingDiagnostics(repair.diagnostics)}. Fix every listed failure exactly as described in its message. When source and target artifactKind differ, retarget one endpoint to a port with the exact same artifactKind, or remove that link/binding entirely. Preserve the resolved request decisions and use exact artifact-kind matches for every direct edge and binding.`,
+          },
+        ]
+      : [
+          { role: 'system', content: context.systemPrompt },
+          { role: 'user', content: context.userMessageContent },
+        ];
+    const response = await context.httpClient.post('/v1/chat/completions', {
+      model: context.model,
+      ...(context.omitTemperature ? {} : { temperature: 0.2 }),
+      stream: true,
+      response_format: { type: 'json_object' },
+      messages,
+    }, { timeout: 180000, signal: job.abortController.signal, responseType: 'stream' });
+    if (job.abortController.signal.aborted) return '';
+
+    let raw = '';
+    for await (const content of this.readChatCompletionStream(response.data)) {
+      if (job.abortController.signal.aborted) return '';
+      raw += content;
+    }
+    return raw;
+  }
+
+  private isBlockedConstruction(suggestions: PlaybookIntentSuggestion[]): boolean {
+    if (suggestions.length === 0) return true;
+    return suggestions.some((suggestion) => suggestion.kind === 'workflow_plan'
+      && (suggestion.validationStatus === 'blocked'
+        || suggestion.diagnostics?.some((diagnostic) => diagnostic.severity === 'error') === true));
+  }
+
+  private blockingDiagnostics(suggestions: PlaybookIntentSuggestion[]): PlaybookIntentDiagnostic[] {
+    const seen = new Set<string>();
+    const deduped: PlaybookIntentDiagnostic[] = [];
+    for (const suggestion of suggestions) {
+      if (suggestion.kind !== 'workflow_plan') continue;
+      for (const diagnostic of suggestion.diagnostics ?? []) {
+        if (diagnostic.severity !== 'error') continue;
+        const identity = `${diagnostic.code}|${diagnostic.itemId ?? ''}`;
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+        deduped.push(diagnostic);
+      }
+    }
+    return deduped.slice(0, 20);
+  }
+
+  private formatBlockingDiagnostics(diagnostics: PlaybookIntentDiagnostic[]): string {
+    if (diagnostics.length === 0) return 'missing_blueprint';
+    return diagnostics
+      .slice(0, 10)
+      .map((diagnostic) => {
+        const item = diagnostic.itemId ? ` (${diagnostic.itemId.slice(0, 120)})` : '';
+        const message = diagnostic.message ? `: ${diagnostic.message.slice(0, 160)}` : '';
+        return `${diagnostic.code}${item}${message}`;
+      })
+      .join('; ');
   }
 
   private async emitSuggestions(job: PlaybookIntentConstructionJob, suggestions: PlaybookIntentSuggestion[], emittedDeltaCount = 0): Promise<number> {

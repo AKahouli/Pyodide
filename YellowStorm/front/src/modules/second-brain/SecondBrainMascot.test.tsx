@@ -4,9 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SECOND_BRAIN_PANEL_WIDTH_STORAGE_KEY, SecondBrainMascot, shouldShowSecondBrainMascot } from './SecondBrainMascot';
 
 const setDesignerOpen = vi.fn();
+const setCopilotMode = vi.fn();
 let designerOpen = false;
 let pageMode: 'design' | 'run' = 'design';
 let currentExecution: { playbookId: string; status: string } | null = null;
+let executionHistoryByPlaybook: Record<string, Array<{ status: string }>> = {};
 
 const secondBrainMock = vi.hoisted(() => ({
   send: vi.fn().mockResolvedValue(true),
@@ -53,11 +55,15 @@ vi.mock('@/modules/playbook', () => ({
         nodes: [],
       },
       currentExecution,
+      executionHistoryByPlaybook,
+      designerOpen,
+      setDesignerOpen,
     }),
   usePlaybookUiStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
       selectedStepId: 'task-1',
       designerOpen,
       setDesignerOpen,
+      setCopilotMode,
       pageMode,
   }),
 }));
@@ -125,8 +131,8 @@ function setViewport(width: number) {
   });
 }
 
-function renderMascot() {
-  return render(<MemoryRouter initialEntries={['/playbooks/p1']}><SecondBrainMascot /></MemoryRouter>);
+function renderMascot(path = '/playbooks') {
+  return render(<MemoryRouter initialEntries={[path]}><SecondBrainMascot /></MemoryRouter>);
 }
 
 describe('SecondBrainMascot', () => {
@@ -136,6 +142,7 @@ describe('SecondBrainMascot', () => {
     designerOpen = false;
     pageMode = 'design';
     currentExecution = null;
+    executionHistoryByPlaybook = {};
     setViewport(1440);
     secondBrainMock.current = {
       conversationId: 'conversation-1',
@@ -158,8 +165,7 @@ describe('SecondBrainMascot', () => {
     expect(resizeHandle).toHaveAttribute('aria-valuemin', '336');
     expect(resizeHandle).toHaveAttribute('aria-valuemax', '720');
     expect(resizeHandle).toHaveAttribute('aria-valuenow', '400');
-    expect(screen.getAllByText('Lead qualification')).toHaveLength(2);
-    expect(screen.getByText('Selected: Score lead')).toBeInTheDocument();
+    expect(screen.getByText('Lead qualification')).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText('Ask about your Playbooks...'), { target: { value: 'Open it' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send to Yellowmind' }));
@@ -220,24 +226,42 @@ describe('SecondBrainMascot', () => {
     await waitFor(() => expect(secondBrainMock.createNewConversation).toHaveBeenCalled());
   });
 
-  it('replaces the open Canvas designer with the global sidecar', () => {
-    designerOpen = true;
-    renderMascot();
+  it('opens the contextual Yellowmind panel instead of the generic agent on a Playbook', () => {
+    renderMascot('/playbooks/p1');
 
     fireEvent.click(screen.getByRole('button', { name: 'Open Yellowmind' }));
 
-    expect(setDesignerOpen).toHaveBeenCalledWith(false);
-    expect(screen.getByRole('complementary', { name: 'Yellowmind' })).toBeInTheDocument();
+    expect(setCopilotMode).toHaveBeenCalledWith('design');
+    expect(setDesignerOpen).toHaveBeenCalledWith(true);
+    expect(screen.queryByRole('complementary', { name: 'Yellowmind' })).not.toBeInTheDocument();
+    expect(secondBrainMock.send).not.toHaveBeenCalled();
+  });
+
+  it('does not render a duplicate launcher while contextual Yellowmind is open', () => {
+    designerOpen = true;
+    renderMascot('/playbooks/p1');
+
+    expect(screen.queryByRole('button', { name: 'Open Yellowmind' })).not.toBeInTheDocument();
   });
 
   it('hides the launcher on a playbook monitor or active run', () => {
     expect(shouldShowSecondBrainMascot(true, 'run', undefined)).toBe(false);
     expect(shouldShowSecondBrainMascot(true, 'design', 'running')).toBe(false);
+    expect(shouldShowSecondBrainMascot(true, 'design', 'interrupted')).toBe(false);
+    expect(shouldShowSecondBrainMascot(true, 'design', 'pending_approval')).toBe(false);
     expect(shouldShowSecondBrainMascot(true, 'design', undefined)).toBe(true);
     expect(shouldShowSecondBrainMascot(false, 'run', 'running')).toBe(true);
 
     pageMode = 'run';
-    renderMascot();
+    renderMascot('/playbooks/p1');
+    expect(screen.queryByRole('button', { name: 'Open Yellowmind' })).not.toBeInTheDocument();
+  });
+
+  it('hides the launcher when the latest execution summary is active', () => {
+    executionHistoryByPlaybook = { p1: [{ status: 'running' }] };
+
+    renderMascot('/playbooks/p1');
+
     expect(screen.queryByRole('button', { name: 'Open Yellowmind' })).not.toBeInTheDocument();
   });
 });

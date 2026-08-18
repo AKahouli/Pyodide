@@ -1742,6 +1742,12 @@ export interface ConversationSettingsResponse { composerSuggestions: ComposerSug
 export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'>;
 export interface ConversationSettingsAgentOption { id: string; name: string; description?: string; agentTypeName?: string; model?: string; }
 
+// ===== Copilot Assistant =====
+
+export interface CopilotAssistantSettingsResponse { agentId: string | null; updatedAt?: string; }
+export type UpdateCopilotAssistantSettingsRequest = Pick<CopilotAssistantSettingsResponse, 'agentId'>;
+export interface CopilotAssistantAgentOption { id: string; name: string; description?: string; agentTypeName?: string; model?: string; }
+
 // ===== Team Auto-Builder =====
 
 export interface TeamAutoBuilderConfigResponse {

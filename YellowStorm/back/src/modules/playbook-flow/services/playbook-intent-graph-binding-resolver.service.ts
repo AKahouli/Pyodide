@@ -7,7 +7,6 @@ import type {
 import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
 
 type ArtifactKind = 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
-const TEXT_SERIALIZABLE_ARTIFACT_KINDS = new Set<ArtifactKind>(['text', 'data', 'code', 'document']);
 type CreateEdgeChange = Extract<PlaybookIntentWorkflowChange, { type: 'create_edge' | 'delete_edge' }> & { type: 'create_edge' };
 type CreateBindingChange = Extract<PlaybookIntentWorkflowChange, { type: 'create_data_binding' }>;
 
@@ -41,7 +40,7 @@ export class PlaybookIntentGraphBindingResolverService {
 
     for (const change of params.changes) {
       if (change.type === 'create_edge') {
-        const edge = this.resolveEdge(change as CreateEdgeChange, catalog, params.deletedTaskIds, diagnostics);
+        const edge = this.resolveEdge(change as CreateEdgeChange, catalog, params.deletedTaskIds, params.context.existingTaskIds, diagnostics);
         if (edge) this.setUnique(edges, this.edgeKey(edge), edge, 'duplicate_edge', diagnostics);
         continue;
       }
@@ -94,10 +93,11 @@ export class PlaybookIntentGraphBindingResolverService {
     edge: CreateEdgeChange,
     catalog: PortCatalog,
     deletedTaskIds: Set<string>,
+    existingTaskIds: Set<string>,
     diagnostics: PlaybookIntentDiagnostic[],
   ): PlaybookIntentWorkflowChange | null {
-    const sourceId = this.resolveTaskId(edge.sourceTaskId, edge.sourceNodeRef, edge.sourceIteratorNodeRef || null, catalog);
-    const targetId = this.resolveTaskId(edge.targetTaskId, edge.targetNodeRef, edge.targetIteratorNodeRef || null, catalog);
+    const sourceId = this.resolveTaskId(edge.sourceTaskId, edge.sourceNodeRef, edge.sourceIteratorNodeRef || null, catalog, existingTaskIds);
+    const targetId = this.resolveTaskId(edge.targetTaskId, edge.targetNodeRef, edge.targetIteratorNodeRef || null, catalog, existingTaskIds);
     if (!sourceId || !targetId || deletedTaskIds.has(sourceId) || deletedTaskIds.has(targetId)) {
       this.recordDiagnostic(diagnostics, 'edge_unresolved_task', `${edge.sourceTaskId || edge.sourceNodeRef || '?'}->${edge.targetTaskId || edge.targetNodeRef || '?'}`);
       return null;
@@ -157,7 +157,7 @@ export class PlaybookIntentGraphBindingResolverService {
     deletedTaskIds: Set<string>,
     diagnostics: PlaybookIntentDiagnostic[],
   ): PlaybookIntentWorkflowChange | null {
-    const targetId = this.resolveTaskId(binding.targetTaskId, binding.targetNodeRef, binding.targetIteratorNodeRef || null, catalog);
+    const targetId = this.resolveTaskId(binding.targetTaskId, binding.targetNodeRef, binding.targetIteratorNodeRef || null, catalog, context.existingTaskIds);
     if (!targetId || deletedTaskIds.has(targetId)) {
       this.recordDiagnostic(diagnostics, 'binding_unresolved_target', `${binding.targetTaskId || binding.targetNodeRef || '?'}.${binding.targetPort}`);
       return null;
@@ -177,7 +177,7 @@ export class PlaybookIntentGraphBindingResolverService {
       return { ...binding, targetPort: targetPort.id };
     }
 
-    const sourceId = this.resolveTaskId(binding.sourceTaskId, binding.sourceNodeRef, binding.sourceIteratorNodeRef || null, catalog);
+    const sourceId = this.resolveTaskId(binding.sourceTaskId, binding.sourceNodeRef, binding.sourceIteratorNodeRef || null, catalog, context.existingTaskIds);
     if (!sourceId || deletedTaskIds.has(sourceId)) {
       this.recordDiagnostic(diagnostics, 'binding_unresolved_source', `${binding.sourceTaskId || binding.sourceNodeRef || '?'}->${targetId}.${targetPort.id}`);
       return null;
@@ -201,8 +201,8 @@ export class PlaybookIntentGraphBindingResolverService {
     context: IntentWorkflowValidationContext,
   ): PlaybookIntentWorkflowChange | null {
     if (edge.edgeKind === 'conditional' || edge.routerLabel) return null;
-    const sourceId = this.resolveTaskId(edge.sourceTaskId, edge.sourceNodeRef, edge.sourceIteratorNodeRef || null, catalog);
-    const targetId = this.resolveTaskId(edge.targetTaskId, edge.targetNodeRef, edge.targetIteratorNodeRef || null, catalog);
+    const sourceId = this.resolveTaskId(edge.sourceTaskId, edge.sourceNodeRef, edge.sourceIteratorNodeRef || null, catalog, context.existingTaskIds);
+    const targetId = this.resolveTaskId(edge.targetTaskId, edge.targetNodeRef, edge.targetIteratorNodeRef || null, catalog, context.existingTaskIds);
     if (!sourceId || !targetId || !edge.sourceOutputPortId || !edge.targetInputPortId) return null;
     if (context.existingBindingTargets.has(`${targetId}:${edge.targetInputPortId}`)) return null;
 
@@ -237,27 +237,22 @@ export class PlaybookIntentGraphBindingResolverService {
     if (requested && !allowRequestedFallback) return { id: null, kind: null };
     if (!requiredKind) return { id: null, kind: null };
 
-    // Prefer exact kind match; only fall back to compatible kinds when no exact match exists.
+    // Port inference must preserve the runtime artifact contract.
     const exactCandidates = [...ports.entries()].filter(([, kind]) => kind === requiredKind);
     if (exactCandidates.length === 1) return { id: exactCandidates[0][0], kind: exactCandidates[0][1] };
-    if (exactCandidates.length > 1) return { id: null, kind: null };
-
-    const compatibleCandidates = [...ports.entries()].filter(([, kind]) => kind !== requiredKind && this.areArtifactKindsCompatible(kind, requiredKind));
-    // Ambiguous inference is intentionally rejected because wrong ports corrupt runtime data flow.
-    return compatibleCandidates.length === 1 ? { id: compatibleCandidates[0][0], kind: compatibleCandidates[0][1] } : { id: null, kind: null };
+    return { id: null, kind: null };
   }
 
-  private resolveTaskId(taskId: string | null, nodeRef: string | null, iteratorNodeRef: string | null, catalog: PortCatalog): string | null {
+  private resolveTaskId(taskId: string | null, nodeRef: string | null, iteratorNodeRef: string | null, catalog: PortCatalog, existingTaskIds: Set<string>): string | null {
     if (taskId) return taskId;
     if (iteratorNodeRef && nodeRef) return catalog.nodeRefToTaskId.get(this.scopedRef(iteratorNodeRef, nodeRef)) || null;
-    if (nodeRef) return catalog.nodeRefToTaskId.get(nodeRef) || nodeRef;
+    if (nodeRef) return catalog.nodeRefToTaskId.get(nodeRef) || (existingTaskIds.has(nodeRef) ? nodeRef : null);
     return null;
   }
 
   private areArtifactKindsCompatible(sourceKind: ArtifactKind | null, targetKind: ArtifactKind | null): boolean {
     if (!sourceKind || !targetKind) return true;
-    if (sourceKind === targetKind) return true;
-    return TEXT_SERIALIZABLE_ARTIFACT_KINDS.has(sourceKind) && TEXT_SERIALIZABLE_ARTIFACT_KINDS.has(targetKind);
+    return sourceKind === targetKind;
   }
 
   private edgeKey(edge: PlaybookIntentWorkflowChange): string {

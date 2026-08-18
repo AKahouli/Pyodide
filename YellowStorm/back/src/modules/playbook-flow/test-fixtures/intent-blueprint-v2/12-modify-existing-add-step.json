@@ -1,0 +1,35 @@
+{
+  "inputBlueprint": {
+    "version": 2,
+    "title": "Add export step to existing audit playbook",
+    "summary": "The LLM references already-committed tasks by their real node ids when adding a new step; links and bindings to those tasks must survive parsing.",
+    "nodes": [
+      { "ref": "export_audit_excel", "label": "Export Audit Excel", "purpose": "Export the audit findings to an Excel workbook", "nodeTemplateKey": "generic.agent_step", "inputPorts": [
+        { "id": "scorecard_data", "artifactKind": "data", "required": true },
+        { "id": "findings_summary", "artifactKind": "text", "required": true },
+        { "id": "export_config", "artifactKind": "text", "required": true }
+      ], "outputPorts": [{ "id": "export_result", "artifactKind": "data" }] }
+    ],
+    "links": [
+      { "sourceRef": "intent-node-1hrnkzq", "targetRef": "export_audit_excel", "sourceOutputPortId": "scorecard_data", "targetInputPortId": "scorecard_data" },
+      { "sourceRef": "export_audit_excel", "targetRef": "intent-node-l3ar91", "sourceOutputPortId": "export_result", "targetInputPortId": "incoming" }
+    ],
+    "bindings": [
+      { "sourceKind": "node-output", "sourceRef": "intent-node-1hrnkzq", "sourcePort": "scorecard_data", "targetRef": "export_audit_excel", "targetPort": "scorecard_data" },
+      { "sourceKind": "node-output", "sourceRef": "intent-node-1hrnkzq", "sourcePort": "findings_summary", "targetRef": "export_audit_excel", "targetPort": "findings_summary" },
+      { "sourceKind": "constant", "constantValue": "default", "targetRef": "export_audit_excel", "targetPort": "export_config" }
+    ]
+  },
+  "existing": [
+    { "id": "intent-node-1hrnkzq", "outputPorts": [["scorecard_data", "data"], ["findings_summary", "text"]] },
+    { "id": "intent-node-l3ar91", "inputPorts": [["incoming", "data"]] },
+    { "id": "intent-node-s2l9bl" }
+  ],
+  "expected": {
+    "minNodes": 1,
+    "minEdges": 2,
+    "minBindings": 3,
+    "minConstantBindings": 1,
+    "forbiddenDiagnosticCodes": ["blueprint_link_unknown_ref", "blueprint_binding_unknown_source_ref", "blueprint_binding_unknown_target_ref", "validator_rule_8"]
+  }
+}

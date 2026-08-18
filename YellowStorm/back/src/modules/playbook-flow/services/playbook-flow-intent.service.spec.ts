@@ -459,27 +459,33 @@ describe('PlaybookFlowIntentService normalization', () => {
     const context = await service.buildIntentAnalysisContext('flow-1', 'owner-1', { intent: 'Build workflow' });
     const catalog = JSON.parse(context.promptVariables.available_design_catalog as string);
     const nodeTemplates = JSON.parse(context.promptVariables.node_templates as string);
+    const assessmentContext = await service.buildIntentAnalysisContext('flow-1', 'owner-1', { intent: 'Build workflow' }, 'assessment');
+    const assessmentCatalog = JSON.parse(assessmentContext.promptVariables.available_design_catalog as string);
 
     expect(context).toMatchObject({ model: 'model-1', omitTemperature: true });
 
     expect(catalog).toEqual({
-      availableConnectors: [{ id: 'connector-1', connectorSlug: 'google-drive', name: 'Google Drive', description: 'Drive access', category: 'Storage' }],
+      availableConnectors: [{ id: 'connector-1', connectorSlug: 'google-drive', name: 'Google Drive', category: 'Storage' }],
       availableConnectorActions: [{
         connectorId: 'connector-1',
         connectorSlug: 'google-drive',
-        connectorName: 'Google Drive',
         actionKey: 'search',
         label: 'Search files',
-        description: 'Find files',
       }],
       availableWorkspaces: [{
         id: 'workspace-1',
         name: 'Finance',
-        description: 'Finance docs',
         folders: [{ id: 'folder-1', name: 'Invoices', parentId: null }],
       }],
     });
     expect(catalog.availableSkills).toBeUndefined();
+    expect(assessmentCatalog).toEqual({
+      availableConnectors: [{ id: 'connector-1', connectorSlug: 'google-drive', name: 'Google Drive', category: 'Storage' }],
+      availableConnectorActions: [],
+      availableWorkspaces: [{ id: 'workspace-1', name: 'Finance' }],
+    });
+    expect((assessmentContext.promptVariables.available_design_catalog as string).length)
+      .toBeLessThan((context.promptVariables.available_design_catalog as string).length);
     expect(nodeTemplates[0]).toEqual(expect.objectContaining({
       key: 'generic.agent_step',
       semanticNodeType: 'agent',

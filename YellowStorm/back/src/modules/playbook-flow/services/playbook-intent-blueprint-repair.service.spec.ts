@@ -142,6 +142,213 @@ describe('PlaybookIntentBlueprintRepairService', () => {
     expect(edge).toEqual(expect.objectContaining({ kind: 'conditional', sourceOutputPortId: 'word_file' }));
   });
 
+  it('adopts router labels used by links but missing from routerConfig outputLabels', () => {
+    const result = repair({
+      title: 'Test',
+      summary: 'Test',
+      nodes: [{
+        ref: 'route_leads',
+        label: 'Route',
+        purpose: 'Route',
+        nodeTemplateKey: 'router-template',
+        routerConfig: { outputLabels: ['fallback'] },
+        outputPorts: [{ id: 'fallback', name: 'Fallback', artifactKind: 'data' }],
+      }],
+      links: [{ sourceRef: 'route_leads', targetRef: 'review', routerLabel: 'review_qualified_leads' }],
+    });
+
+    const node = result.blueprint.nodes[0];
+    expect(node.routerConfig?.outputLabels).toContain('review_qualified_leads');
+    expect(node.outputPorts).toContainEqual({ id: 'review_qualified_leads', name: 'review_qualified_leads', artifactKind: 'data' });
+    expect(result.blueprint.links[0]).toEqual(expect.objectContaining({
+      kind: 'conditional',
+      sourceOutputPortId: 'review_qualified_leads',
+    }));
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'repair_router_label_adopted', itemId: 'route_leads->review', severity: 'info' }),
+      expect.objectContaining({ code: 'repair_router_output_port_added', severity: 'info' }),
+    ]));
+  });
+
+  it('materializes router config from the template when links use custom labels on a template-only router step', () => {
+    const result = repair({
+      title: 'Test',
+      summary: 'Test',
+      nodes: [{
+        ref: 'loop',
+        label: 'Loop',
+        purpose: 'Loop',
+        nodeTemplateKey: 'iterator-template',
+        inputPorts: [{ id: 'items', artifactKind: 'data', required: true }],
+        iteratorBody: {
+          steps: [{ ref: 'route_ticket', title: 'Route Ticket', nodeTemplateKey: 'router-template' }],
+          edges: [{ sourceRef: 'route_ticket', targetRef: 'escalate', routerLabel: 'escalate_urgent' }],
+        },
+      }],
+      links: [],
+    });
+
+    const step = result.blueprint.nodes[0].iteratorBody?.steps[0];
+    expect(step?.primitive?.router?.outputLabels).toEqual(['fallback', 'escalate_urgent']);
+    expect(step?.primitive?.router?.defaultLabel).toBe('fallback');
+    expect(step?.outputPorts).toContainEqual({ id: 'escalate_urgent', name: 'escalate_urgent', artifactKind: 'data' });
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'repair_router_config_materialized', itemId: 'route_ticket', severity: 'info' }),
+      expect.objectContaining({ code: 'repair_router_label_adopted', itemId: 'loop.route_ticket->escalate', severity: 'info' }),
+    ]));
+  });
+
+  it('infers a missing router label from a matching sourceOutputPortId', () => {
+    const result = repair({
+      title: 'Test',
+      summary: 'Test',
+      nodes: [{
+        ref: 'route_invoice',
+        label: 'Route',
+        purpose: 'Route',
+        nodeTemplateKey: 'router-template',
+        routerConfig: { outputLabels: ['approve_invoice', 'reject_invoice'] },
+      }],
+      links: [
+        { sourceRef: 'route_invoice', targetRef: 'approve', sourceOutputPortId: 'approve_invoice' },
+        { sourceRef: 'route_invoice', targetRef: 'reject', sourceOutputPortId: 'reject_invoice' },
+      ],
+    });
+
+    expect(result.blueprint.links[0].routerLabel).toBe('approve_invoice');
+    expect(result.blueprint.links[1].routerLabel).toBe('reject_invoice');
+    expect(result.blueprint.links[0]).toEqual(expect.objectContaining({ kind: 'conditional', sourceOutputPortId: 'approve_invoice' }));
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'repair_router_link_label_inferred',
+      itemId: 'route_invoice->approve',
+      severity: 'info',
+    }));
+  });
+
+  it('infers the label on a single-label router and leaves multi-label routers alone', () => {
+    const single = repair({
+      title: 'Test',
+      summary: 'Test',
+      nodes: [{
+        ref: 'route',
+        label: 'Route',
+        purpose: 'Route',
+        nodeTemplateKey: 'router-template',
+        routerConfig: { outputLabels: ['only_branch'] },
+      }],
+      links: [{ sourceRef: 'route', targetRef: 'next' }],
+    });
+    expect(single.blueprint.links[0].routerLabel).toBe('only_branch');
+
+    const multi = repair({
+      title: 'Test',
+      summary: 'Test',
+      nodes: [{
+        ref: 'route',
+        label: 'Route',
+        purpose: 'Route',
+        nodeTemplateKey: 'router-template',
+        routerConfig: { outputLabels: ['a', 'b'] },
+      }],
+      links: [{ sourceRef: 'route', targetRef: 'next' }],
+    });
+    expect(multi.blueprint.links[0].routerLabel).toBeUndefined();
+    expect(multi.diagnostics.some((diagnostic) => diagnostic.code === 'repair_router_link_label_inferred')).toBe(false);
+  });
+
+  it('does not adopt router labels when the link source has no router config', () => {
+    const result = repair({
+      title: 'Test',
+      summary: 'Test',
+      nodes: [{ ref: 'agent', label: 'Agent', purpose: 'Agent', nodeTemplateKey: 'generic-step' }],
+      links: [{ sourceRef: 'agent', targetRef: 'next', routerLabel: 'stray_label' }],
+    });
+
+    expect(result.diagnostics.some((diagnostic) => diagnostic.code === 'repair_router_label_adopted')).toBe(false);
+    expect(result.blueprint.links[0].sourceOutputPortId).toBe('stray_label');
+  });
+
+  it('adopts router labels used by iterator body edges', () => {
+    const result = repair({
+      title: 'Test',
+      summary: 'Test',
+      nodes: [{
+        ref: 'loop',
+        label: 'Loop',
+        purpose: 'Loop',
+        nodeTemplateKey: 'iterator-template',
+        inputPorts: [{ id: 'items', artifactKind: 'data', required: true }],
+        iteratorBody: {
+          steps: [{
+            ref: 'classify',
+            title: 'Classify',
+            nodeTemplateKey: 'router-template',
+            primitive: { kind: 'router', router: { outputLabels: ['word_file'] } },
+          }],
+          edges: [{ sourceRef: 'classify', targetRef: 'pdf_step', routerLabel: 'pdf_file' }],
+        },
+      }],
+      links: [],
+    });
+
+    const step = result.blueprint.nodes[0].iteratorBody?.steps[0];
+    expect(step?.primitive?.router?.outputLabels).toEqual(['word_file', 'pdf_file']);
+    expect(step?.outputPorts).toContainEqual({ id: 'pdf_file', name: 'pdf_file', artifactKind: 'data' });
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'repair_router_label_adopted',
+      itemId: 'loop.classify->pdf_step',
+      severity: 'info',
+    }));
+  });
+
+  it('infers the default label when exactly one branch lacks a deterministic condition', () => {
+    const result = repair({
+      title: 'Test',
+      summary: 'Test',
+      nodes: [{
+        ref: 'route',
+        label: 'Route',
+        purpose: 'Route',
+        nodeTemplateKey: 'router-template',
+        routerConfig: {
+          outputLabels: ['qualified', 'nurture'],
+          conditions: [{ label: 'qualified', sourceRef: 'score', sourcePort: 'score', operator: 'gte', value: 0.8 }],
+        },
+        outputPorts: [],
+      }],
+      links: [],
+    });
+
+    expect(result.blueprint.nodes[0].routerConfig?.defaultLabel).toBe('nurture');
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'repair_router_default_label_inferred',
+      itemId: 'route',
+      severity: 'info',
+    }));
+  });
+
+  it('does not infer a default label when multiple branches lack conditions', () => {
+    const result = repair({
+      title: 'Test',
+      summary: 'Test',
+      nodes: [{
+        ref: 'route',
+        label: 'Route',
+        purpose: 'Route',
+        nodeTemplateKey: 'router-template',
+        routerConfig: {
+          outputLabels: ['qualified', 'nurture', 'escalate'],
+          conditions: [{ label: 'qualified', sourceRef: 'score', sourcePort: 'score', operator: 'gte', value: 0.8 }],
+        },
+        outputPorts: [],
+      }],
+      links: [],
+    });
+
+    expect(result.blueprint.nodes[0].routerConfig?.defaultLabel).toBeUndefined();
+    expect(result.diagnostics.some((diagnostic) => diagnostic.code === 'repair_router_default_label_inferred')).toBe(false);
+  });
+
   it('deduplicates ports by id while preserving required=true', () => {
     const result = repair({
       title: 'Test',
@@ -305,5 +512,66 @@ describe('PlaybookIntentBlueprintRepairService', () => {
 
     expect(result.blueprint.bindings).toBeUndefined();
     expect(result.diagnostics).not.toContainEqual(expect.objectContaining({ code: 'repair_iterator_current_item_binding_added' }));
+  });
+
+  it('binds an unbound required input from the unique kind-matching sequential link source', () => {
+    const result = repair({
+      title: 'Flow',
+      summary: 'Flow',
+      nodes: [
+        { ref: 'collect', label: 'Collect', purpose: 'Collect', nodeTemplateKey: 'generic-step', outputPorts: [{ id: 'records', artifactKind: 'data' }] },
+        { ref: 'analyze', label: 'Analyze', purpose: 'Analyze', nodeTemplateKey: 'generic-step', inputPorts: [{ id: 'context', artifactKind: 'data', required: true }] },
+      ],
+      links: [{ sourceRef: 'collect', targetRef: 'analyze', sourceOutputPortId: 'records', targetInputPortId: 'other' }],
+    });
+
+    expect(result.blueprint.bindings).toContainEqual({
+      targetRef: 'analyze',
+      targetPort: 'context',
+      sourceKind: 'node-output',
+      sourceRef: 'collect',
+      sourcePort: 'records',
+    });
+    expect(result.repairSummary).toContain('Bound required input analyze.context to collect.records.');
+  });
+
+  it('binds an unbound required input from a unique same-named same-kind output port', () => {
+    const result = repair({
+      title: 'Flow',
+      summary: 'Flow',
+      nodes: [
+        { ref: 'score', label: 'Score', purpose: 'Score', nodeTemplateKey: 'generic-step', outputPorts: [{ id: 'scored_leads', artifactKind: 'data' }] },
+        { ref: 'nurture', label: 'Nurture', purpose: 'Nurture', nodeTemplateKey: 'generic-step', inputPorts: [{ id: 'scored_leads', artifactKind: 'data', required: true }] },
+      ],
+      links: [],
+    });
+
+    expect(result.blueprint.bindings).toContainEqual({
+      targetRef: 'nurture',
+      targetPort: 'scored_leads',
+      sourceKind: 'node-output',
+      sourceRef: 'score',
+      sourcePort: 'scored_leads',
+    });
+  });
+
+  it('warns instead of guessing when no unique source can bind a required input', () => {
+    const result = repair({
+      title: 'Flow',
+      summary: 'Flow',
+      nodes: [
+        { ref: 'score_a', label: 'Score A', purpose: 'Score', nodeTemplateKey: 'generic-step', outputPorts: [{ id: 'scored_leads', artifactKind: 'data' }] },
+        { ref: 'score_b', label: 'Score B', purpose: 'Score', nodeTemplateKey: 'generic-step', outputPorts: [{ id: 'scored_leads', artifactKind: 'data' }] },
+        { ref: 'nurture', label: 'Nurture', purpose: 'Nurture', nodeTemplateKey: 'generic-step', inputPorts: [{ id: 'scored_leads', artifactKind: 'data', required: true }] },
+      ],
+      links: [],
+    });
+
+    expect(result.blueprint.bindings).toBeUndefined();
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'repair_required_port_binding_unresolved',
+      path: 'nurture.scored_leads',
+      severity: 'warning',
+    }));
   });
 });

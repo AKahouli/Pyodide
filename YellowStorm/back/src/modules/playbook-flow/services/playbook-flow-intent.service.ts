@@ -91,7 +91,25 @@ export interface AvailableDesignCatalog {
   }>;
 }
 
-type PromptAvailableDesignCatalog = Omit<AvailableDesignCatalog, 'availableSkills'>;
+interface PromptAvailableDesignCatalog {
+  availableConnectors: Array<{
+    id: string;
+    connectorSlug: string;
+    name: string;
+    category?: string | null;
+  }>;
+  availableConnectorActions: Array<{
+    connectorId: string;
+    connectorSlug: string;
+    actionKey: string;
+    label: string;
+  }>;
+  availableWorkspaces: Array<{
+    id: string;
+    name: string;
+    folders?: Array<{ id: string; name: string; parentId: string | null }>;
+  }>;
+}
 
 type PlaybookIntentOperationType =
   | 'create_node'
@@ -413,7 +431,8 @@ export class PlaybookFlowIntentService {
   }
 
   async assessDesign(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentDesignResponse> {
-    const context = await this.buildIntentAnalysisContext(flowId, ownerId, dto);
+    const startedAt = Date.now();
+    const context = await this.buildIntentAnalysisContext(flowId, ownerId, dto, 'assessment');
     const prompt = await this.promptService.findByKey('intent.design_assessment');
     const userPrompt = prompt?.userTemplate?.trim()
       ? this.promptRenderer.render(prompt.userTemplate, this.withClarificationTemplateFallback(context.promptVariables, prompt.userTemplate))
@@ -429,6 +448,7 @@ export class PlaybookFlowIntentService {
       ],
     });
     const rawOutput = this.extractChatCompletionText(responseData);
+    this.logger.log(`playbook_intent_assessment_completed playbookId=${flowId} model=${context.model} llmCalls=1 catalogChars=${String(context.promptVariables.available_design_catalog ?? '').length} durationMs=${Date.now() - startedAt}`);
     const lastTrace = this.recordTrace(flowId, ownerId, 'intent.design_assessment', context, rawOutput, {
       systemPromptOverride: systemPrompt,
       userPromptOverride: userPrompt,
@@ -474,7 +494,12 @@ export class PlaybookFlowIntentService {
       .join('\n\n');
   }
 
-  async buildIntentAnalysisContext(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentAnalysisContext> {
+  async buildIntentAnalysisContext(
+    flowId: string,
+    ownerId: string,
+    dto: RequestPlaybookFlowIntentDto,
+    catalogPhase: 'assessment' | 'construction' = 'construction',
+  ): Promise<PlaybookIntentAnalysisContext> {
     const httpClient = this.liteLLMConnectionService.getHttpClient();
     if (!httpClient) {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
@@ -554,7 +579,7 @@ export class PlaybookFlowIntentService {
       intent_text: intentParts.intentText,
       captured_clarifications: intentParts.capturedClarifications || NO_CAPTURED_CLARIFICATIONS,
       resolved_design_resources: JSON.stringify(resolvedDesignResources, null, 2),
-      available_design_catalog: JSON.stringify(this.buildPromptAvailableDesignCatalog(availableDesignCatalog), null, 2),
+      available_design_catalog: JSON.stringify(this.buildPromptAvailableDesignCatalog(availableDesignCatalog, catalogPhase), null, 2),
       selected_task_title: selectedNode?.label || '',
       selected_task_description: selectedNode?.description || (selectedNode?.metadata as Record<string, unknown> | undefined)?.description as string || '',
       selected_task_id: selectedNode?.id || '',
@@ -675,11 +700,30 @@ export class PlaybookFlowIntentService {
     };
   }
 
-  private buildPromptAvailableDesignCatalog(catalog: AvailableDesignCatalog): PromptAvailableDesignCatalog {
+  private buildPromptAvailableDesignCatalog(
+    catalog: AvailableDesignCatalog,
+    phase: 'assessment' | 'construction',
+  ): PromptAvailableDesignCatalog {
     return {
-      availableConnectors: catalog.availableConnectors,
-      availableConnectorActions: catalog.availableConnectorActions,
-      availableWorkspaces: catalog.availableWorkspaces,
+      availableConnectors: catalog.availableConnectors.map((connector) => ({
+        id: connector.id,
+        connectorSlug: connector.connectorSlug,
+        name: connector.name,
+        category: connector.category,
+      })),
+      availableConnectorActions: phase === 'assessment'
+        ? []
+        : catalog.availableConnectorActions.map((action) => ({
+            connectorId: action.connectorId,
+            connectorSlug: action.connectorSlug,
+            actionKey: action.actionKey,
+            label: action.label,
+          })),
+      availableWorkspaces: catalog.availableWorkspaces.map((workspace) => ({
+        id: workspace.id,
+        name: workspace.name,
+        ...(phase === 'construction' ? { folders: workspace.folders } : {}),
+      })),
     };
   }
 

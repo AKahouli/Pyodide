@@ -161,8 +161,6 @@ export function flowEdgesToControlEdges(edges: Edge[]): ControlEdge[] {
 
 // ---- Intent Edge Port Resolution ----
 
-const TEXT_SERIALIZABLE_ARTIFACT_KINDS = new Set(['text', 'data', 'code', 'document']);
-
 export interface ResolvedIntentEdgePorts {
   sourceOutputPortId: string;
   targetInputPortId: string;
@@ -173,8 +171,7 @@ function artifactKindsCompatible(
   targetKind?: string | null,
 ): boolean {
   if (!sourceKind || !targetKind) return true;
-  if (sourceKind === targetKind) return true;
-  return TEXT_SERIALIZABLE_ARTIFACT_KINDS.has(sourceKind) && TEXT_SERIALIZABLE_ARTIFACT_KINDS.has(targetKind);
+  return sourceKind === targetKind;
 }
 
 function getPreferredIntentInputPortId(task: PlaybookTask, index = 0): string {
@@ -197,8 +194,9 @@ export function resolveIntentEdgePorts(
   const suggestedInput = inputPorts.find((p) => p.id === suggestedInputPortId) || null;
 
   if (suggestedOutput && suggestedInput) {
-    // Preserve exact LLM topology even when kinds differ; runtime data bindings remain kind-gated elsewhere.
-    return { sourceOutputPortId: suggestedOutput.id, targetInputPortId: suggestedInput.id };
+    return artifactKindsCompatible(suggestedOutput.artifactKind, suggestedInput.artifactKind)
+      ? { sourceOutputPortId: suggestedOutput.id, targetInputPortId: suggestedInput.id }
+      : null;
   }
 
   if (suggestedOutput) {

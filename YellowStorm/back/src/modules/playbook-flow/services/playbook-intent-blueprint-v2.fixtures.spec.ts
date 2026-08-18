@@ -38,6 +38,11 @@ interface FixtureExpectation {
 interface GoldenFixture {
   inputBlueprint: PlaybookIntentBlueprint;
   expected: FixtureExpectation;
+  existing?: Array<{
+    id: string;
+    inputPorts?: Array<[string, string]>;
+    outputPorts?: Array<[string, string]>;
+  }>;
 }
 
 const DEFAULT_LIMITS = {
@@ -48,13 +53,21 @@ const DEFAULT_LIMITS = {
   maxIteratorBodyEdges: 80,
 };
 
-function makeContext(): IntentWorkflowValidationContext {
+function makeContext(existing?: GoldenFixture['existing']): IntentWorkflowValidationContext {
+  const existingTaskIds = new Set<string>();
+  const inputPortsByTaskId = new Map<string, Map<string, string>>();
+  const outputPortsByTaskId = new Map<string, Map<string, string>>();
+  for (const task of existing || []) {
+    existingTaskIds.add(task.id);
+    inputPortsByTaskId.set(task.id, new Map(task.inputPorts || []));
+    outputPortsByTaskId.set(task.id, new Map(task.outputPorts || []));
+  }
   return {
-    existingTaskIds: new Set<string>(),
-    existingTaskTitles: new Map(),
-    existingTaskAgents: new Map(),
-    inputPortsByTaskId: new Map(),
-    outputPortsByTaskId: new Map(),
+    existingTaskIds,
+    existingTaskTitles: new Map<string, string>(),
+    existingTaskAgents: new Map<string, string | null>(),
+    inputPortsByTaskId,
+    outputPortsByTaskId,
     existingBindingTargets: new Set<string>(),
   };
 }
@@ -114,8 +127,8 @@ describe('Playbook intent blueprint v2 golden fixtures', () => {
   });
 
   it.each(loadFixtures())('$name compiles through parser, repair, builder, resolver, and diagnostics', ({ fixture }) => {
-    const context = makeContext();
-    const parsed = parser.parse(JSON.stringify({ blueprint: fixture.inputBlueprint }));
+    const context = makeContext(fixture.existing);
+    const parsed = parser.parse(JSON.stringify({ blueprint: fixture.inputBlueprint }), context);
     expect(parsed).not.toBeNull();
 
     const repaired = repairService.repair({
@@ -133,7 +146,18 @@ describe('Playbook intent blueprint v2 golden fixtures', () => {
       selectedNodeId: null,
     });
     const diagnostics = [...parsed!.diagnostics, ...repaired.diagnostics, ...built.diagnostics];
-    const enriched = diagnosticsService.enrichWorkflowPlan(built.suggestion, {}, diagnostics, repaired.repairSummary);
+    const existingFlow = {
+      nodes: (fixture.existing || []).map((task) => ({
+        id: task.id,
+        kind: 'step',
+        label: task.id,
+        input: { ports: (task.inputPorts || []).map(([id, type]) => ({ id, label: id, type, required: false })) },
+        output: { ports: (task.outputPorts || []).map(([id, type]) => ({ id, label: id, type })) },
+      })),
+      controlEdges: [],
+      dataBindings: [],
+    };
+    const enriched = diagnosticsService.enrichWorkflowPlan(built.suggestion, existingFlow, diagnostics, repaired.repairSummary);
 
     assertExpectedShape(enriched, diagnostics, fixture.expected);
   });

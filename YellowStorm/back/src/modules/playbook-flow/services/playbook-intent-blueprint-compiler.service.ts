@@ -25,7 +25,7 @@ export class PlaybookIntentBlueprintCompilerService {
       return [];
     }
 
-    const parsed = this.blueprintParser.parse(args.raw);
+    const parsed = this.blueprintParser.parse(args.raw, args.context.validationContext);
     if (!parsed) {
       this.logger.warn('playbook_intent_invalid_blueprint_output rule=parse_failed');
       return [];
@@ -51,7 +51,22 @@ export class PlaybookIntentBlueprintCompilerService {
       if (diagnostics.length) {
         this.logger.warn(`playbook_intent_builder_diagnostics items=${diagnostics.map((diagnostic) => `${diagnostic.code}:${diagnostic.itemId || ''}`).join(',')}`);
       }
-      return [this.suggestionDiagnostics.enrichWorkflowPlan(built.suggestion, args.context.flow, diagnostics, repaired.repairSummary)];
+      const suggestion = this.suggestionDiagnostics.enrichWorkflowPlan(built.suggestion, args.context.flow, diagnostics, repaired.repairSummary);
+      if (suggestion.validationStatus === 'blocked') {
+        const createdRefs = suggestion.changes.flatMap((change) => change.type === 'create_node' ? [change.nodeRef] : []).join(',');
+        const edgeRefs = suggestion.changes.flatMap((change) => {
+          if (change.type !== 'create_edge') return [];
+          const edge = change as unknown as { sourceTaskId?: string | null; sourceNodeRef?: string | null; targetTaskId?: string | null; targetNodeRef?: string | null };
+          return [`${edge.sourceTaskId || edge.sourceNodeRef}->${edge.targetTaskId || edge.targetNodeRef}`];
+        }).join(',');
+        const bindingRefs = suggestion.changes.flatMap((change) => {
+          if (change.type !== 'create_data_binding') return [];
+          const binding = change as unknown as { sourceTaskId?: string | null; sourceNodeRef?: string | null; sourceKind?: string; targetTaskId?: string | null; targetNodeRef?: string | null; targetPort?: string };
+          return [`${binding.sourceTaskId || binding.sourceNodeRef || binding.sourceKind}=>${binding.targetTaskId || binding.targetNodeRef}.${binding.targetPort ?? '?'}`];
+        }).join(',');
+        this.logger.warn(`playbook_intent_blueprint_blocked nodes=[${createdRefs}] edges=[${edgeRefs}] bindings=[${bindingRefs}] rules=[${(suggestion.diagnostics ?? []).filter((diagnostic) => diagnostic.severity === 'error').map((diagnostic) => `${diagnostic.code}:${diagnostic.message}`).join(' | ')}]`);
+      }
+      return [suggestion];
     } catch (error) {
       this.logger.error(`playbook_intent_builder_failed message=${error instanceof Error ? error.message : 'unknown'}`);
       this.logger.warn('playbook_intent_invalid_blueprint_output rule=build_failed');

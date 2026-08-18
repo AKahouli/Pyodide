@@ -129,7 +129,7 @@ export class MessageController {
           'Platform copilot routing and capabilities cannot be overridden by the client',
         );
       }
-      await this.conversationService.assertPlatformCopilotAgent(conversation.pinnedAgentId);
+      await this.conversationService.resolvePlatformCopilotAgent(conversation);
     }
 
     if (dto.requestId) {
@@ -589,7 +589,7 @@ export class MessageController {
       }
     }
     const pinnedAgentId = platformCopilot
-      ? await this.conversationService.assertPlatformCopilotAgent(conversation.pinnedAgentId)
+      ? await this.conversationService.resolvePlatformCopilotAgent(conversation)
       : undefined;
 
     // Create new AI placeholder

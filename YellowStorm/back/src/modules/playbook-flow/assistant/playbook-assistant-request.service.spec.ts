@@ -183,7 +183,7 @@ describe('PlaybookAssistantRequestService', () => {
         correlationId: 'correlation-1',
       },
       answers: [{ questionId: 'region', choice: 'France' }],
-      text: 'region: France',
+      assessment: { status: 'ready_to_construct' },
     })).rejects.toThrow('already continued');
     expect(model.findOneAndUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -193,7 +193,11 @@ describe('PlaybookAssistantRequestService', () => {
         correlationId: 'correlation-1',
       }),
       expect.objectContaining({
-        $set: expect.objectContaining({ continuationId: null, status: 'processing' }),
+        $set: expect.objectContaining({
+          continuationId: null,
+          status: 'ready',
+          assessment: { status: 'ready_to_construct' },
+        }),
       }),
       { new: true },
     );

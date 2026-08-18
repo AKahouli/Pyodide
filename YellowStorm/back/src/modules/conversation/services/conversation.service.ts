@@ -19,6 +19,7 @@ import { LoggerService } from '../../logger';
 import { NotFoundException, ForbiddenException, BadRequestException, ServiceUnavailableException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { AgentRepository } from '../../agent/repositories/agent.repository';
+import { CopilotAssistantSettingsService } from '../../system/copilot-assistant-settings.service';
 import { WorkspaceService } from '../../workspace/workspace.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { MessageService } from './message.service';
@@ -47,6 +48,7 @@ export class ConversationService {
     private readonly messageService: MessageService,
     private readonly emailService: EmailService,
     private readonly agentRepository: AgentRepository,
+    private readonly copilotSettings: CopilotAssistantSettingsService,
   ) {
     this.logger.setContext('ConversationService');
   }
@@ -111,15 +113,57 @@ export class ConversationService {
   }
 
   async assertPlatformCopilotAgent(pinnedAgentId?: Types.ObjectId | null): Promise<string> {
-    const activeAgentId = await this.agentRepository.findActiveDefaultIdBySlugAndType(
-      'my-second-brain',
-      'platform_copilot',
-    );
+    const configured = await this.copilotSettings.getSettings();
+    const configuredAgentId = configured.agentId?.trim() || null;
+    let activeAgentId: string | null = null;
+    if (configuredAgentId) {
+      // An admin may map the Copilot assistant to any active default agent; only fall back to the
+      // historical Yellowmind heuristic when the configured agent is no longer an active default.
+      const stillActive = await this.agentRepository.existsActiveDefault(configuredAgentId);
+      if (stillActive) activeAgentId = configuredAgentId;
+    }
+    if (!activeAgentId) {
+      activeAgentId = await this.agentRepository.findActiveDefaultIdBySlugAndType(
+        'my-second-brain',
+        'platform_copilot',
+      );
+    }
     if (!activeAgentId || (pinnedAgentId && pinnedAgentId.toString() !== activeAgentId)) {
       throw new ServiceUnavailableException(
         ErrorCode.AGENT_UNAVAILABLE,
         'Yellowmind is currently unavailable',
       );
+    }
+    return activeAgentId;
+  }
+
+  /**
+   * Resolve the active Yellowmind agent for a platform-copilot conversation and,
+   * when the stored pin is stale, repoint the conversation (and its in-memory doc)
+   * to the active agent. Unlike assertPlatformCopilotAgent this self-heals instead
+   * of failing closed, so orphaned conversations recover when the agent is recreated.
+   */
+  async resolvePlatformCopilotAgent(conversation: {
+    _id: Types.ObjectId;
+    pinnedAgentId?: Types.ObjectId | null;
+    taggedAgentIds?: Types.ObjectId[];
+  }): Promise<string> {
+    const activeAgentId = await this.assertPlatformCopilotAgent();
+    if (conversation.pinnedAgentId?.toString() !== activeAgentId) {
+      const previousAgentId = conversation.pinnedAgentId?.toString() ?? null;
+      conversation.pinnedAgentId = new Types.ObjectId(activeAgentId);
+      conversation.taggedAgentIds = [new Types.ObjectId(activeAgentId)];
+      await this.conversationModel.findByIdAndUpdate(conversation._id, {
+        $set: {
+          pinnedAgentId: conversation.pinnedAgentId,
+          taggedAgentIds: conversation.taggedAgentIds,
+        },
+      });
+      this.logger.log('Repointed stale platform-copilot conversation to the active agent', {
+        conversationId: conversation._id.toString(),
+        previousAgentId,
+        activeAgentId,
+      });
     }
     return activeAgentId;
   }
@@ -131,7 +175,7 @@ export class ConversationService {
       ? { createdBy: ownerId, runtimePurpose: 'platform_copilot', platformCopilotCreationRequestId: creationRequestId }
       : { createdBy: ownerId, runtimePurpose: 'platform_copilot' }).lean().exec();
     if (existing) {
-      await this.assertPlatformCopilotAgent(existing.pinnedAgentId);
+      await this.resolvePlatformCopilotAgent(existing);
       return this.mapToResponse(existing);
     }
 

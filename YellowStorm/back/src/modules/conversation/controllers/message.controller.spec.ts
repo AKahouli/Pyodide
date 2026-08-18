@@ -27,6 +27,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     replaceTaggedAgentIds: jest.Mock;
     ensureSystemWorkspace: jest.Mock;
     assertPlatformCopilotAgent: jest.Mock;
+    resolvePlatformCopilotAgent: jest.Mock;
   };
   let modelsService: { validateModelActive: jest.Mock };
   let teamService: { resolveAgentIds: jest.Mock };
@@ -74,6 +75,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       replaceTaggedAgentIds: jest.fn().mockResolvedValue(undefined),
       ensureSystemWorkspace: jest.fn().mockResolvedValue(undefined),
       assertPlatformCopilotAgent: jest.fn().mockResolvedValue(stickyAgentId),
+      resolvePlatformCopilotAgent: jest.fn().mockResolvedValue(stickyAgentId),
     };
     modelsService = { validateModelActive: jest.fn() };
     teamService = { resolveAgentIds: jest.fn().mockResolvedValue([]) };
@@ -123,7 +125,9 @@ describe('MessageController.sendMessage sticky routing', () => {
       },
     } as any);
 
-    expect(conversationService.assertPlatformCopilotAgent).toHaveBeenCalledWith(expect.any(Types.ObjectId));
+    expect(conversationService.resolvePlatformCopilotAgent).toHaveBeenCalledWith(expect.objectContaining({
+      pinnedAgentId: expect.any(Types.ObjectId),
+    }));
     expect(messageService.createUserMessage).toHaveBeenCalledWith(expect.objectContaining({
       agentIds: [stickyAgentId],
       requestId: 'turn-1',

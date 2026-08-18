@@ -32,9 +32,17 @@ type PortListName = 'inputPorts' | 'outputPorts';
 export class PlaybookIntentBlueprintRepairService {
   repair(args: RepairArgs): BlueprintRepairResult {
     const blueprint = JSON.parse(JSON.stringify(args.blueprint)) as PlaybookIntentBlueprint;
+    // JSON round-trip splits the parser's shared reference between node.routerConfig and
+    // node.primitive.router; the builder reads primitive.router first, so re-alias to keep
+    // router repairs visible downstream.
+    for (const node of blueprint.nodes) {
+      if (node.routerConfig && node.primitive) node.primitive.router = node.routerConfig;
+    }
     const templates = new Map(args.templates.filter((template) => template.enabled).map((template) => [template.key, template]));
     const diagnostics: PlaybookIntentDiagnostic[] = [];
     const repairSummary: string[] = [];
+
+    this.adoptRouterLabelsFromLinks(blueprint, templates, diagnostics, repairSummary);
 
     blueprint.nodes.forEach((node, index) => {
       this.repairNode(node, templates.get(node.nodeTemplateKey), `nodes.${index}`, diagnostics, repairSummary);
@@ -51,6 +59,7 @@ export class PlaybookIntentBlueprintRepairService {
     });
 
     this.repairIteratorCurrentItemBindings(blueprint, templates, diagnostics, repairSummary);
+    this.repairUnboundRequiredInputBindings(blueprint, diagnostics, repairSummary);
 
     return { blueprint, diagnostics, repairSummary };
   }
@@ -150,6 +159,184 @@ export class PlaybookIntentBlueprintRepairService {
     return `${iteratorRef || ''}::${targetRef}::${targetPort}`;
   }
 
+  private adoptRouterLabelsFromLinks(
+    blueprint: PlaybookIntentBlueprint,
+    templates: Map<string, BuilderNodeTemplate>,
+    diagnostics: PlaybookIntentDiagnostic[],
+    repairSummary: string[],
+  ): void {
+    const resolveOwner = (iteratorRef: string | null | undefined, ref: string): RepairableNode | null => (iteratorRef
+      ? blueprint.nodes.find((node) => node.ref === iteratorRef)?.iteratorBody?.steps?.find((step) => step.ref === ref) || null
+      : blueprint.nodes.find((node) => node.ref === ref) || null);
+
+    for (const link of blueprint.links) {
+      const owner = resolveOwner(link.sourceIteratorRef, link.sourceRef);
+      if (!owner) continue;
+      const routerConfig = this.ensureRouterConfig(owner, templates.get(owner.nodeTemplateKey), diagnostics, repairSummary);
+      if (!routerConfig) continue;
+      const itemId = `${link.sourceRef}->${link.targetRef}`;
+      if (!link.routerLabel && link.kind !== 'sequential') {
+        const inferred = this.inferRouterLabel(link.sourceOutputPortId, routerConfig);
+        if (!inferred) continue;
+        link.routerLabel = inferred;
+        this.recordRepair(diagnostics, repairSummary, 'repair_router_link_label_inferred', `links.${itemId}.routerLabel`, itemId, `Inferred router label ${inferred} for link ${itemId}.`);
+      }
+      if (link.routerLabel) this.adoptRouterLabel(routerConfig, owner.ref, link.routerLabel, itemId, diagnostics, repairSummary);
+    }
+    for (const node of blueprint.nodes) {
+      for (const edge of node.iteratorBody?.edges || []) {
+        const owner = node.iteratorBody?.steps?.find((step) => step.ref === edge.sourceRef) || null;
+        if (!owner) continue;
+        const routerConfig = this.ensureRouterConfig(owner, templates.get(owner.nodeTemplateKey), diagnostics, repairSummary);
+        if (!routerConfig) continue;
+        const itemId = `${node.ref}.${edge.sourceRef}->${edge.targetRef}`;
+        if (!edge.routerLabel && edge.kind !== 'sequential') {
+          const inferred = this.inferRouterLabel(edge.sourceOutputPortId, routerConfig);
+          if (!inferred) continue;
+          edge.routerLabel = inferred;
+          this.recordRepair(diagnostics, repairSummary, 'repair_router_link_label_inferred', `nodes.${node.ref}.iteratorBody.edges.${itemId}.routerLabel`, itemId, `Inferred router label ${inferred} for link ${itemId}.`);
+        }
+        if (edge.routerLabel) this.adoptRouterLabel(routerConfig, owner.ref, edge.routerLabel, itemId, diagnostics, repairSummary);
+      }
+    }
+  }
+
+  private ensureRouterConfig(
+    owner: RepairableNode,
+    template: BuilderNodeTemplate | undefined,
+    diagnostics: PlaybookIntentDiagnostic[],
+    repairSummary: string[],
+  ): PlaybookIntentBlueprintRouterConfig | null {
+    const existing = this.getRouterConfig(owner);
+    if (existing) return existing;
+    if (!template?.routerConfig?.outputLabels?.length) return null;
+    // The LLM wired labeled branches on a router-template step without declaring its own
+    // config; materialize one from the template so the labels can be adopted.
+    const routerConfig: PlaybookIntentBlueprintRouterConfig = {
+      outputLabels: [...template.routerConfig.outputLabels],
+      ...(template.routerConfig.defaultLabel ? { defaultLabel: template.routerConfig.defaultLabel } : {}),
+      ...(template.routerConfig.maxIterations != null ? { maxIterations: template.routerConfig.maxIterations } : {}),
+    };
+    if ('routerConfig' in owner) {
+      owner.routerConfig = routerConfig;
+      if (owner.primitive) owner.primitive.router = routerConfig;
+    } else {
+      owner.primitive = { ...(owner.primitive || { kind: 'router' }), router: routerConfig };
+    }
+    this.recordRepair(
+      diagnostics,
+      repairSummary,
+      'repair_router_config_materialized',
+      `${owner.ref}.routerConfig`,
+      owner.ref,
+      `Materialized router config for ${owner.ref} from template ${template.key}.`,
+    );
+    return routerConfig;
+  }
+
+  private inferRouterLabel(sourceOutputPortId: string | null | undefined, routerConfig: PlaybookIntentBlueprintRouterConfig): string | null {
+    if (sourceOutputPortId && routerConfig.outputLabels.includes(sourceOutputPortId)) return sourceOutputPortId;
+    if (routerConfig.outputLabels.length === 1) return routerConfig.outputLabels[0];
+    return null;
+  }
+
+  private adoptRouterLabel(
+    routerConfig: PlaybookIntentBlueprintRouterConfig,
+    ownerRef: string,
+    label: string,
+    itemId: string,
+    diagnostics: PlaybookIntentDiagnostic[],
+    repairSummary: string[],
+  ): void {
+    if (!label.trim()) return;
+    routerConfig.outputLabels = routerConfig.outputLabels || [];
+    if (routerConfig.outputLabels.includes(label)) return;
+    routerConfig.outputLabels.push(label);
+    this.recordRepair(
+      diagnostics,
+      repairSummary,
+      'repair_router_label_adopted',
+      `routerConfig.outputLabels.${label}`,
+      itemId,
+      `Adopted router branch label ${label} used by link ${itemId}.`,
+    );
+  }
+
+  private repairUnboundRequiredInputBindings(
+    blueprint: PlaybookIntentBlueprint,
+    diagnostics: PlaybookIntentDiagnostic[],
+    repairSummary: string[],
+  ): void {
+    const occupiedTargets = new Set<string>();
+    for (const binding of blueprint.bindings || []) {
+      occupiedTargets.add(this.scopedTargetKey(binding.targetIteratorRef ?? null, binding.targetRef, binding.targetPort));
+    }
+    for (const link of blueprint.links) {
+      if (!link.targetInputPortId) continue;
+      occupiedTargets.add(this.scopedTargetKey(link.targetIteratorRef ?? null, link.targetRef, link.targetInputPortId));
+    }
+
+    const nodesByRef = new Map(blueprint.nodes.map((node) => [node.ref, node]));
+    const outputKindByRef = (ref: string, portId: string | null | undefined): string | null => {
+      if (!portId) return null;
+      return nodesByRef.get(ref)?.outputPorts?.find((port) => port.id === portId)?.artifactKind ?? null;
+    };
+
+    for (const node of blueprint.nodes) {
+      for (const port of node.inputPorts || []) {
+        if (port.required !== true) continue;
+        if (occupiedTargets.has(this.scopedTargetKey(null, node.ref, port.id))) continue;
+
+        const sequentialSources = new Map<string, { ref: string; portId: string }>();
+        for (const link of blueprint.links) {
+          if (link.targetRef !== node.ref || link.targetIteratorRef || link.sourceIteratorRef || link.routerLabel) continue;
+          if (outputKindByRef(link.sourceRef, link.sourceOutputPortId) !== port.artifactKind) continue;
+          if (!link.sourceOutputPortId) continue;
+          sequentialSources.set(`${link.sourceRef} ${link.sourceOutputPortId}`, { ref: link.sourceRef, portId: link.sourceOutputPortId });
+        }
+
+        let source: { ref: string; portId: string } | null = null;
+        if (sequentialSources.size === 1) {
+          source = [...sequentialSources.values()][0];
+        } else if (sequentialSources.size === 0) {
+          // Fall back to a unique same-named output port with the same artifact kind (common multi-fan-out pattern).
+          const namedMatches = blueprint.nodes
+            .filter((candidate) => candidate.ref !== node.ref)
+            .filter((candidate) => candidate.outputPorts?.some((output) => output.id === port.id && output.artifactKind === port.artifactKind));
+          if (namedMatches.length === 1 && namedMatches[0].outputPorts?.some((output) => output.id === port.id)) {
+            source = { ref: namedMatches[0].ref, portId: port.id };
+          }
+        }
+
+        if (!source) {
+          this.recordWarning(
+            diagnostics,
+            'repair_required_port_binding_unresolved',
+            `${node.ref}.${port.id}`,
+            node.ref,
+            `Could not infer a data binding for the required input ${node.ref}.${port.id}.`,
+            { requiredArtifactKind: port.artifactKind },
+          );
+          continue;
+        }
+
+        blueprint.bindings = [
+          ...(blueprint.bindings || []),
+          { targetRef: node.ref, targetPort: port.id, sourceKind: 'node-output' as const, sourceRef: source.ref, sourcePort: source.portId },
+        ];
+        occupiedTargets.add(this.scopedTargetKey(null, node.ref, port.id));
+        this.recordRepair(
+          diagnostics,
+          repairSummary,
+          'repair_required_port_binding_added',
+          `bindings.${node.ref}.${port.id}`,
+          node.ref,
+          `Bound required input ${node.ref}.${port.id} to ${source.ref}.${source.portId}.`,
+        );
+      }
+    }
+  }
+
   private repairNode(
     node: RepairableNode,
     template: BuilderNodeTemplate | undefined,
@@ -209,6 +396,22 @@ export class PlaybookIntentBlueprintRepairService {
     if (outputLabels.length !== originalLabels.length) {
       routerConfig.outputLabels = outputLabels;
       this.recordRepair(diagnostics, repairSummary, 'repair_router_labels_deduplicated', `${path}.routerConfig.outputLabels`, node.ref, `Deduplicated router output labels for ${node.ref}.`);
+    }
+
+    if (!routerConfig.defaultLabel && (routerConfig.conditions || []).length > 0) {
+      const conditionedLabels = new Set((routerConfig.conditions || []).map((condition) => condition.label));
+      const unconditionedLabels = (routerConfig.outputLabels || []).filter((label) => !conditionedLabels.has(label));
+      if (unconditionedLabels.length === 1) {
+        routerConfig.defaultLabel = unconditionedLabels[0];
+        this.recordRepair(
+          diagnostics,
+          repairSummary,
+          'repair_router_default_label_inferred',
+          `${path}.routerConfig.defaultLabel`,
+          node.ref,
+          `Inferred router default label ${unconditionedLabels[0]} as the only branch without a deterministic condition.`,
+        );
+      }
     }
 
     const outputPorts = node.outputPorts || [];

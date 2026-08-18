@@ -371,9 +371,6 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
       ...dto,
       expectedDefinitionRevision: operation.baseDefinitionRevision,
       clientMutationId: `assistant-operation-${operationId}`,
-    }, {
-      allowUnboundRequiredPorts: true,
-      allowIncompleteNodeOutputBindings: true,
     });
     await this.operationModel.updateOne(
       { operationId, playbookId, ownerId, status: 'completed' },

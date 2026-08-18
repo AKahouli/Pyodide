@@ -90,7 +90,7 @@ import { ReferenceModePromptDialog, type ReferenceModePromptState, type StepRepl
 import { PlaybookIntentGhostNode } from './PlaybookIntentGhostNode';
 import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
 import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
-import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
+import { PlaybookSecondBrainPanel } from './PlaybookSecondBrainPanel';
 import { PlaybookNodeAdvisorDialog } from './PlaybookNodeAdvisorDialog';
 import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
 import { SharePlaybookDialog } from './SharePlaybookDialog';
@@ -215,6 +215,69 @@ export function isPlaybookRouteCurrent(
   return operationPlaybookId === currentPlaybookId;
 }
 
+export function shouldConsumeAssistantOperationHandoff(
+  routePlaybookId: string | undefined,
+  loadedPlaybookId: string | undefined,
+  operationId: string | null,
+  consumedOperationId: string | null,
+): boolean {
+  // currentPlaybook is a store singleton: right after navigating to a different playbook,
+  // it still holds the previously opened one until the route playbook fetch resolves.
+  // Consuming a handoff onto that stale graph commits the union of both playbooks.
+  if (!routePlaybookId || !operationId) return false;
+  if (consumedOperationId === operationId) return false;
+  return isPlaybookRouteCurrent(loadedPlaybookId, routePlaybookId);
+}
+
+export function pruneUnreachableDataBindings(
+  tasks: PlaybookTask[],
+  flowEdges: Edge[],
+  dataBindings: DataBinding[],
+): { bindings: DataBinding[]; dropped: string[] } {
+  const taskIds = new Set(tasks.map((task) => task.id));
+  const adjacency = new Map<string, string[]>();
+  for (const edge of flowEdges) {
+    if (!edge.source || !edge.target || edge.source === edge.target) continue;
+    const targets = adjacency.get(edge.source) || [];
+    targets.push(edge.target);
+    adjacency.set(edge.source, targets);
+  }
+  const canReach = (source: string, target: string): boolean => {
+    if (source === target) return true;
+    const queue = [source];
+    const seen = new Set<string>([source]);
+    while (queue.length > 0) {
+      const current = queue.shift() as string;
+      for (const next of adjacency.get(current) || []) {
+        if (next === target) return true;
+        if (!seen.has(next)) {
+          seen.add(next);
+          queue.push(next);
+        }
+      }
+    }
+    return false;
+  };
+  const dropped: string[] = [];
+  const bindings: DataBinding[] = [];
+  for (const binding of dataBindings) {
+    if (binding.sourceKind !== 'node-output' || !binding.sourceNode || !binding.targetNode) {
+      bindings.push(binding);
+      continue;
+    }
+    if (!taskIds.has(binding.sourceNode) || !taskIds.has(binding.targetNode)) {
+      bindings.push(binding);
+      continue;
+    }
+    if (canReach(binding.sourceNode, binding.targetNode)) {
+      bindings.push(binding);
+      continue;
+    }
+    dropped.push(`${binding.sourceNode}.${binding.sourcePort}->${binding.targetNode}.${binding.targetPort}`);
+  }
+  return { bindings, dropped };
+}
+
 export function shouldClearConstructionDiagnostics(
   constructionStatus: PlaybookIntentConstructionStatus,
   isDirty: boolean,
@@ -276,6 +339,21 @@ export function shouldRenderPlaybookAssistant(
 ): boolean {
   // Human approval and clarification use this surface to unblock an interrupted run.
   return hasPendingHumanInput || (pageMode === 'design' && !hasLiveExecution);
+}
+
+export function getInitialPlaybookPageMode(latestExecutionStatus?: string): PlaybookPageMode {
+  return latestExecutionStatus === 'completed' ? 'run' : 'design';
+}
+
+export function canAppendIntentEdge(
+  sourceTask: PlaybookTask,
+  targetTask: PlaybookTask,
+  sourceOutputPortId: string,
+  targetInputPortId: string,
+): boolean {
+  const sourcePort = sourceTask.outputPorts?.find((port) => port.id === sourceOutputPortId);
+  const targetPort = targetTask.inputPorts?.find((port) => port.id === targetInputPortId);
+  return !sourcePort || !targetPort || sourcePort.artifactKind === targetPort.artifactKind;
 }
 
 export async function hydrateAssistantOperationHandoff(
@@ -737,7 +815,7 @@ function PlaybookCanvasInner() {
       setCanvasViewMode('expanded');
       const hasExecutionParam = searchParams.has('execution');
 
-      // A normal playbook open always starts in the design view. Execution links restore the pane below.
+      // Keep the canvas neutral until Playbook and execution history resolve.
       const workspaceExplorerPref = (() => { try { return localStorage.getItem('ys_workspace_explorer_open') === '1'; } catch { return false; } })();
       usePlaybookUiStore.setState({
         selectedStepId: null,
@@ -746,7 +824,7 @@ function PlaybookCanvasInner() {
         workspaceExplorerOpen: workspaceExplorerPref,
         connectorSidebarOpen: false,
         nodeEditorOpen: false,
-        designerOpen: true,
+        designerOpen: false,
         copilotMode: 'design',
         pageMode: 'design',
       });
@@ -756,7 +834,7 @@ function PlaybookCanvasInner() {
         executionPanelOpen: false,
         workspaceExplorerOpen: workspaceExplorerPref,
         executionHistory: [],
-        designerOpen: true,
+        designerOpen: false,
         copilotMode: 'design',
         pageMode: 'design',
       });
@@ -777,11 +855,16 @@ function PlaybookCanvasInner() {
           return;
         }
 
-        setPageMode('design');
-        setDesignerOpen(true);
+        const latestExecution = usePlaybookStore.getState().executionHistoryByPlaybook[id]?.[0];
+        const initialMode = getInitialPlaybookPageMode(latestExecution?.status);
+        setPageMode(initialMode);
         setCopilotMode('design');
-        setExecutionPanelOpen(false);
-        setExecutionPanelCollapsed(true);
+        setDesignerOpen(initialMode === 'design');
+        setExecutionPanelOpen(initialMode === 'run');
+        setExecutionPanelCollapsed(initialMode !== 'run');
+        if (initialMode === 'run' && latestExecution) {
+          viewExecutionInPanel(latestExecution.id);
+        }
         selectStep(null);
       })();
 
@@ -2158,13 +2241,16 @@ function PlaybookCanvasInner() {
     };
 
     const commitGraph = (nextTasks: PlaybookTask[], nextEdges: Edge[], nextDataBindings: DataBinding[]) => {
+      // The backend rejects bindings whose source cannot reach the target on the control graph
+      // (rule 9); prune them here so an assistant apply never commits a graph the backend refuses.
+      const prunedBindings = pruneUnreachableDataBindings(nextTasks, nextEdges, nextDataBindings);
       const layoutedTasks = autoLayoutTasks(nextTasks, flowEdgesToPlaybookEdges(nextEdges));
       if (shouldCaptureHistory) captureSnapshot();
       setNodes(tasksToNodes(layoutedTasks));
       setEdges(nextEdges);
       updateTasks(layoutedTasks);
       updateEdges(flowEdgesToPlaybookEdges(nextEdges));
-      updateDataBindings(nextDataBindings);
+      updateDataBindings(prunedBindings.bindings);
       setIntentSuggestions([]);
       const changedIds = layoutedTasks.filter((task) => changedNodeIds.has(task.id)).map((task) => task.id);
       setRecentlyChangedNodeIds(changedIds);
@@ -2432,49 +2518,82 @@ function PlaybookCanvasInner() {
         const incomingEdges = nextEdges.filter((edge) => edge.target === anchorTask.id);
         const untouchedEdges = nextEdges.filter((edge) => edge.target !== anchorTask.id);
         nextEdges = untouchedEdges;
+        // Data bindings that flowed severed source -> anchor must follow the new control flow.
+        // Re-point them into the new task when it accepts the same artifact kind, else drop.
+        const severedSources = new Set(incomingEdges.map((edge) => edge.source));
+        nextDataBindings = nextDataBindings.flatMap((binding) => {
+          if (binding.sourceKind !== 'node-output' || !binding.sourceNode) return [binding];
+          if (binding.targetNode !== anchorTask.id || !severedSources.has(binding.sourceNode)) return [binding];
+          const anchorPortKind = anchorTask.inputPorts?.find((port) => port.id === binding.targetPort)?.artifactKind;
+          const newInputPort = newTask.inputPorts?.find((port) => port.artifactKind === anchorPortKind);
+          if (newInputPort) {
+            applicationWarnings.push(`Re-routed data binding ${binding.sourceNode}.${binding.sourcePort}->${anchorTask.id}.${binding.targetPort} through ${newTask.id}.${newInputPort.id}.`);
+            return [{ ...binding, targetNode: newTask.id, targetPort: newInputPort.id }];
+          }
+          applicationWarnings.push(`Dropped data binding ${binding.sourceNode}.${binding.sourcePort}->${anchorTask.id}.${binding.targetPort}: ${newTask.id} cannot accept ${anchorPortKind || 'unknown'} data.`);
+          return [];
+        });
         incomingEdges.forEach((edge) => {
           const data = (edge.data || {}) as { sourceOutputPortId?: string };
-          const edgeTargetInputPortId = ((edge.data || {}) as { targetInputPortId?: string }).targetInputPortId || edge.targetHandle || 'default';
-          const rewrittenTargetInputPortId = newTask.inputPorts?.some((port) => port.id === edgeTargetInputPortId)
-            ? edgeTargetInputPortId
-            : getPreferredIntentInputPortId(newTask);
-          appendIntentEdge(
-            edge.source,
-            newTask.id,
-            data.sourceOutputPortId || edge.sourceHandle || 'default',
-            rewrittenTargetInputPortId,
-          );
+          const sourceTask = nextTasks.find((task) => task.id === edge.source) || null;
+          const reBridgedPorts = sourceTask
+            ? resolveIntentEdgePorts(sourceTask, newTask, data.sourceOutputPortId || edge.sourceHandle || undefined, undefined)
+            : null;
+          if (reBridgedPorts) {
+            appendIntentEdge(edge.source, newTask.id, reBridgedPorts.sourceOutputPortId, reBridgedPorts.targetInputPortId);
+          }
         });
-        appendIntentEdge(newTask.id, anchorTask.id, getPreferredIntentOutputPortId(newTask), getPreferredIntentInputPortId(anchorTask));
-          return true;
-        }
-
-        if (mode === 'after') {
-          const outgoingEdges = nextEdges.filter((edge) => edge.source === anchorTask.id);
-          const untouchedEdges = nextEdges.filter((edge) => edge.source !== anchorTask.id);
-          nextEdges = untouchedEdges;
-          const resolvedPorts = resolveIntentEdgePorts(anchorTask, newTask, anchorSourceOutputPortId, anchorTargetInputPortId)
-            || { sourceOutputPortId: getPreferredIntentOutputPortId(anchorTask), targetInputPortId: getPreferredIntentInputPortId(newTask) };
-          appendIntentEdge(anchorTask.id, newTask.id, resolvedPorts.sourceOutputPortId, resolvedPorts.targetInputPortId);
-          outgoingEdges.forEach((edge) => {
-            const data = (edge.data || {}) as { targetInputPortId?: string };
-            appendIntentEdge(
-              newTask.id,
-              edge.target,
-              getPreferredIntentOutputPortId(newTask),
-              data.targetInputPortId || edge.targetHandle || 'default',
-            );
-          });
-          return true;
-        }
-
-        {
-          const resolvedPorts = resolveIntentEdgePorts(anchorTask, newTask, anchorSourceOutputPortId, anchorTargetInputPortId)
-            || { sourceOutputPortId: getPreferredIntentOutputPortId(anchorTask), targetInputPortId: getPreferredIntentInputPortId(newTask) };
-          appendIntentEdge(anchorTask.id, newTask.id, resolvedPorts.sourceOutputPortId, resolvedPorts.targetInputPortId);
+        const anchorPorts = resolveIntentEdgePorts(newTask, anchorTask, undefined, undefined);
+        if (anchorPorts) {
+          appendIntentEdge(newTask.id, anchorTask.id, anchorPorts.sourceOutputPortId, anchorPorts.targetInputPortId);
         }
         return true;
-      };
+      }
+
+      if (mode === 'after') {
+        const outgoingEdges = nextEdges.filter((edge) => edge.source === anchorTask.id);
+        const untouchedEdges = nextEdges.filter((edge) => edge.source !== anchorTask.id);
+        nextEdges = untouchedEdges;
+        // Data bindings that flowed anchor -> severed target must follow the new control flow.
+        // Re-point them to the new task when it can supply the same artifact kind, else drop.
+        const severedTargets = new Set(outgoingEdges.map((edge) => edge.target));
+        nextDataBindings = nextDataBindings.flatMap((binding) => {
+          if (binding.sourceKind !== 'node-output') return [binding];
+          if (binding.sourceNode !== anchorTask.id || !severedTargets.has(binding.targetNode)) return [binding];
+          const anchorPortKind = anchorTask.outputPorts?.find((port) => port.id === binding.sourcePort)?.artifactKind;
+          const newOutputPort = newTask.outputPorts?.find((port) => port.artifactKind === anchorPortKind);
+          if (newOutputPort) {
+            applicationWarnings.push(`Re-routed data binding ${anchorTask.id}.${binding.sourcePort}->${binding.targetNode}.${binding.targetPort} through ${newTask.id}.${newOutputPort.id}.`);
+            return [{ ...binding, sourceNode: newTask.id, sourcePort: newOutputPort.id }];
+          }
+          applicationWarnings.push(`Dropped data binding ${anchorTask.id}.${binding.sourcePort}->${binding.targetNode}.${binding.targetPort}: ${newTask.id} cannot supply ${anchorPortKind || 'unknown'} data.`);
+          return [];
+        });
+        const anchorPorts = resolveIntentEdgePorts(anchorTask, newTask, anchorSourceOutputPortId, anchorTargetInputPortId);
+        if (anchorPorts) {
+          appendIntentEdge(anchorTask.id, newTask.id, anchorPorts.sourceOutputPortId, anchorPorts.targetInputPortId);
+        }
+        outgoingEdges.forEach((edge) => {
+          const data = (edge.data || {}) as { targetInputPortId?: string };
+          const targetTask = nextTasks.find((task) => task.id === edge.target) || null;
+          const reBridgedPorts = targetTask
+            ? resolveIntentEdgePorts(newTask, targetTask, undefined, data.targetInputPortId || edge.targetHandle || undefined)
+            : null;
+          if (reBridgedPorts) {
+            appendIntentEdge(newTask.id, edge.target, reBridgedPorts.sourceOutputPortId, reBridgedPorts.targetInputPortId);
+          }
+        });
+        return true;
+      }
+
+      {
+        const resolvedPorts = resolveIntentEdgePorts(anchorTask, newTask, anchorSourceOutputPortId, anchorTargetInputPortId);
+        if (resolvedPorts) {
+          appendIntentEdge(anchorTask.id, newTask.id, resolvedPorts.sourceOutputPortId, resolvedPorts.targetInputPortId);
+        }
+      }
+      return true;
+    };
 
     const deleteTaskAndBridgeEdges = (taskId: string) => {
       const deletedTask = nextTasks.find((task) => task.id === taskId) || null;
@@ -2709,7 +2828,11 @@ function PlaybookCanvasInner() {
       options?: { kind?: 'sequential' | 'conditional'; routerLabel?: string | null; priority?: number | null; autoBind?: boolean },
     ) => {
       const isConditional = options?.kind === 'conditional' || Boolean(options?.routerLabel);
+      const sourceTask = nextTasks.find((task) => task.id === sourceId);
       const targetTask = nextTasks.find((task) => task.id === targetId);
+      if (sourceTask && targetTask && !canAppendIntentEdge(sourceTask, targetTask, sourceOutputPortId, targetInputPortId)) {
+        return;
+      }
       const targetInputPort = targetTask?.inputPorts?.find((port) => port.id === targetInputPortId);
       if (targetInputPort?.required && !isConditional) {
         nextEdges = nextEdges.filter((edge) => {
@@ -3396,7 +3519,7 @@ function PlaybookCanvasInner() {
 
   useEffect(() => {
     const operationId = searchParams.get('assistantOperation');
-    if (!id || !playbook || !operationId || consumedAssistantOperationRef.current === operationId) return;
+    if (!id || !operationId || !shouldConsumeAssistantOperationHandoff(id, playbook?.id, operationId, consumedAssistantOperationRef.current)) return;
     consumedAssistantOperationRef.current = operationId;
     void hydrateAssistantOperationHandoff(id, operationId, fetchPlaybookIntentConstruction, consumePlaybookConstruction).then(() => {
       setSearchParams((current) => {
@@ -3417,6 +3540,9 @@ function PlaybookCanvasInner() {
     designerIntentRef.current = intentText;
     designerIntentImagesRef.current = images ?? [];
     if (shouldUsePlaybookMcpAssistant(playbookFeatures.mcpAssistantEnabled) && id && playbook) {
+      // currentPlaybook is a store singleton; applying suggestions while it still holds the
+      // previously opened playbook would commit both graphs merged into this route.
+      if (playbook.id !== id) return;
       setIntentLoading(true);
       setIntentError('');
       try {
@@ -3485,7 +3611,7 @@ function PlaybookCanvasInner() {
   }, [consumePlaybookConstruction, currentExecution, getCurrentDefinitionRevision, handleSubmitIntentText, id, isDirty, playbook, refreshDesignerAssistantHistory, refreshIntentTraces, saveNow, selectedStepId, showError, showWarning, t]);
 
   const handleAnswerIntentFromDesigner = useCallback(async (answers: PlaybookClarificationAnswer[], answerText: string) => {
-    if (!id || !playbook || intentDesign?.status !== 'needs_clarification' || !intentDesign.continuationId) return;
+    if (!id || playbook?.id !== id || intentDesign?.status !== 'needs_clarification' || !intentDesign.continuationId) return;
     setIntentLoading(true);
     setIntentError('');
     try {
@@ -4149,7 +4275,7 @@ function PlaybookCanvasInner() {
               />
             )}
             {shouldShowAssistant && (
-              <PlaybookDesignerPanel
+              <PlaybookSecondBrainPanel
                 playbookId={id}
                 assistantMessages={playbookFeatures.mcpAssistantEnabled ? designerAssistantMessages : undefined}
                 assistantMessagesLoading={designerAssistantMessagesLoading}

@@ -400,6 +400,30 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(result.diagnostics.find((d) => d.code === 'blueprint_binding_invalid_constant')).toMatchObject({ stage: 'parser', severity: 'warning' });
   });
 
+  it('stringifies plain object constants bound to text ports instead of dropping them', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 't',
+        nodes: [
+          { ref: 'brief', label: 'Brief', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'campaign_brief', artifactKind: 'text', required: true }] },
+        ],
+        bindings: [
+          { sourceKind: 'constant', targetRef: 'brief', targetPort: 'campaign_brief',
+            constantValue: { audience: 'Fintech CFOs', tone: 'formal' } },
+        ],
+      },
+    });
+    const result = service.parse(raw)!;
+    expect(result.blueprint.bindings).toHaveLength(1);
+    expect(result.blueprint.bindings?.[0]).toEqual(expect.objectContaining({
+      sourceKind: 'constant',
+      targetRef: 'brief',
+      targetPort: 'campaign_brief',
+      constantValue: JSON.stringify({ audience: 'Fintech CFOs', tone: 'formal' }),
+    }));
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain('blueprint_binding_invalid_constant');
+  });
+
   it('accepts typed literal constants and maps iterator items to the current child item', () => {
     const raw = JSON.stringify({
       blueprint: {
@@ -521,6 +545,68 @@ describe('PlaybookIntentBlueprintParserService', () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  it('adopts router condition labels missing from outputLabels instead of dropping the condition', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Route leads',
+        nodes: [
+          {
+            ref: 'route_leads',
+            label: 'Route',
+            nodeTemplateKey: 'router.basic',
+            primitive: {
+              kind: 'router',
+              router: {
+                outputLabels: ['escalate'],
+                conditions: [
+                  { label: 'review_qualified_leads', sourceRef: 'score', sourcePort: 'score', operator: 'gte', value: 0.8 },
+                ],
+              },
+            },
+          },
+        ],
+        links: [],
+      },
+    });
+
+    const result = service.parse(raw)!;
+
+    expect(result.blueprint.nodes[0].routerConfig?.outputLabels).toEqual(['escalate', 'review_qualified_leads']);
+    expect(result.blueprint.nodes[0].routerConfig?.conditions?.[0]).toEqual(expect.objectContaining({ label: 'review_qualified_leads', operator: 'gte' }));
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain('blueprint_router_condition_invalid');
+  });
+
+  it('still drops router conditions with invalid operators', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Route work',
+        nodes: [
+          {
+            ref: 'classify',
+            label: 'Classify',
+            nodeTemplateKey: 'router.basic',
+            primitive: {
+              kind: 'router',
+              router: {
+                outputLabels: ['approved'],
+                conditions: [
+                  { label: 'approved', sourceRef: 'classify', sourcePort: 'score', operator: 'matches', value: 'x' },
+                ],
+              },
+            },
+          },
+        ],
+        links: [],
+      },
+    });
+
+    const result = service.parse(raw)!;
+
+    expect(result.blueprint.nodes[0].routerConfig?.conditions).toBeUndefined();
+    expect(result.blueprint.nodes[0].routerConfig?.outputLabels).toEqual(['approved']);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain('blueprint_router_condition_invalid');
+  });
+
   it('requires labels on conditional links', () => {
     const raw = JSON.stringify({
       blueprint: {
@@ -607,6 +693,66 @@ describe('PlaybookIntentBlueprintParserService', () => {
     const result = service.parse(raw)!;
     expect(result.blueprint.bindings).toHaveLength(0);
     expect(result.diagnostics.find((d) => d.code === 'blueprint_binding_artifact_mismatch')).toMatchObject({ stage: 'parser', severity: 'warning' });
+  });
+
+  it('accepts links and bindings referencing existing playbook tasks when context is provided', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Add export step',
+        nodes: [{
+          ref: 'export_audit_excel',
+          label: 'Export Audit Excel',
+          purpose: 'Export the audit to Excel',
+          nodeTemplateKey: 'generic.agent_step',
+          inputPorts: [
+            { id: 'scorecard_data', artifactKind: 'data', required: true },
+            { id: 'findings_summary', artifactKind: 'text', required: true },
+          ],
+          outputPorts: [{ id: 'export_result', artifactKind: 'data' }],
+        }],
+        links: [
+          { sourceRef: 'intent-node-1hrnkzq', targetRef: 'export_audit_excel', sourceOutputPortId: 'scorecard_data', targetInputPortId: 'scorecard_data' },
+          { sourceRef: 'export_audit_excel', targetRef: 'intent-node-l3ar91', sourceOutputPortId: 'export_result', targetInputPortId: 'incoming' },
+        ],
+        bindings: [
+          { sourceKind: 'node-output', sourceRef: 'intent-node-1hrnkzq', sourcePort: 'scorecard_data', targetRef: 'export_audit_excel', targetPort: 'scorecard_data' },
+          { sourceKind: 'node-output', sourceRef: 'intent-node-1hrnkzq', sourcePort: 'findings_summary', targetRef: 'export_audit_excel', targetPort: 'findings_summary' },
+        ],
+      },
+    });
+    const existingContext = {
+      existingTaskIds: new Set(['intent-node-1hrnkzq', 'intent-node-l3ar91', 'intent-node-s2l9bl']),
+      existingTaskTitles: new Map(),
+      existingTaskAgents: new Map(),
+      inputPortsByTaskId: new Map([['intent-node-l3ar91', new Map([['incoming', 'data']])]]),
+      outputPortsByTaskId: new Map([
+        ['intent-node-1hrnkzq', new Map([['scorecard_data', 'data'], ['findings_summary', 'text']])],
+      ]),
+      existingBindingTargets: new Set<string>(),
+    };
+
+    const result = service.parse(raw, existingContext as any)!;
+
+    expect(result.blueprint.links).toHaveLength(2);
+    expect(result.blueprint.bindings).toHaveLength(2);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(expect.not.arrayContaining([
+      'blueprint_link_unknown_ref',
+      'blueprint_binding_unknown_source_ref',
+      'blueprint_binding_unknown_target_ref',
+    ]));
+  });
+
+  it('still drops refs to unknown existing tasks without context', () => {
+    const raw = JSON.stringify({
+      blueprint: {
+        title: 'Add export step',
+        nodes: [{ ref: 'export_audit_excel', label: 'Export', purpose: 'Export', nodeTemplateKey: 'generic.agent_step', inputPorts: [{ id: 'scorecard_data', artifactKind: 'data', required: true }] }],
+        links: [{ sourceRef: 'intent-node-1hrnkzq', targetRef: 'export_audit_excel' }],
+      },
+    });
+    const result = service.parse(raw)!;
+    expect(result.blueprint.links).toHaveLength(0);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain('blueprint_link_unknown_ref');
   });
 
   it('hasBlueprintShape returns true only when blueprint key is present', () => {
