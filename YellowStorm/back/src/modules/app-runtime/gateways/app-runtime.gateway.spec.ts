@@ -267,6 +267,7 @@ describe('AppRuntimeGateway', () => {
 
       await gateway.handleDisconnect(client);
 
+      expect(failPendingForWorkspace).not.toHaveBeenCalled();
       expect(markWaitingForBrowser).not.toHaveBeenCalled();
     });
 

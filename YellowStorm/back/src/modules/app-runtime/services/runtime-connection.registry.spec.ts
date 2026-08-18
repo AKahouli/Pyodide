@@ -51,6 +51,20 @@ describe('RuntimeConnectionRegistry', () => {
     expect(registry.get('sess_1')?.socket.id).toBe('s2');
   });
 
+  it('updates the existing entry in place when the same socket re-registers', () => {
+    const socket = socketOf('s1');
+    registry.register(registerParams(socket));
+    const original = registry.get('sess_1')!;
+    const lock = original.mutationLock;
+
+    expect(registry.register(registerParams(socket, { revisionId: 'rev_1' }))).toBeNull();
+
+    const current = registry.get('sess_1')!;
+    expect(current).toBe(original);
+    expect(current.revisionId).toBe('rev_1');
+    expect(current.mutationLock).toBe(lock);
+  });
+
   it('ignores an unregister coming from a socket that was already replaced', () => {
     registry.register(registerParams(socketOf('s1')));
     registry.register(registerParams(socketOf('s2')));
@@ -139,6 +153,28 @@ describe('RuntimeConnectionRegistry', () => {
 
       await expect(blocked).resolves.toBe('timed-out');
       await expect(holder).resolves.toBe('held');
+    });
+
+    it('keeps the mutation queue across a same-socket re-register', async () => {
+      const socket = socketOf('s1');
+      registry.register(registerParams(socket));
+      const order: string[] = [];
+
+      const first = registry.withMutationLock('sess_1', onTimeout, async () => {
+        order.push('first:start');
+        registry.register(registerParams(socket, { revisionId: 'rev_1' }));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        order.push('first:end');
+        return 'first';
+      });
+      const second = registry.withMutationLock('sess_1', onTimeout, async () => {
+        order.push('second:start');
+        return 'second';
+      });
+
+      await expect(Promise.all([first, second])).resolves.toEqual(['first', 'second']);
+      expect(order).toEqual(['first:start', 'first:end', 'second:start']);
+      expect(registry.get('sess_1')?.revisionId).toBe('rev_1');
     });
 
     it('keeps later waiters queued when one of them times out', async () => {

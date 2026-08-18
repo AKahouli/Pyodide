@@ -378,15 +378,28 @@ describe('BrowserRuntimeHost', () => {
     await host.start('sess_1');
 
     expect(listener).toHaveBeenCalled();
-    const callCount = listener.mock.calls.length;
-
     unsub();
-    // Triggering another state change shouldn't notify
+    listener.mockClear();
     host.retry();
-    // Give it time to potentially fire
     await new Promise((r) => setTimeout(r, 50));
-    // At most same or +1 if retry synchronously fires before unsubscribe effect
-    // But unsubscribe should prevent new calls
+    expect(listener).not.toHaveBeenCalled();
+    host.destroy();
+  });
+
+  it('keeps subscribers attached across retry', async () => {
+    const host = new BrowserRuntimeHost();
+    const states: string[] = [];
+    host.subscribe((s) => states.push(s.status));
+
+    await host.start('sess_1');
+    expect(states.at(-1)).toBe('ready');
+
+    host.retry();
+    await vi.waitFor(() => {
+      expect(states.filter((status) => status === 'ready').length).toBeGreaterThanOrEqual(2);
+    });
+    expect(states).toContain('idle');
+    expect(states).toContain('connecting');
     host.destroy();
   });
 });

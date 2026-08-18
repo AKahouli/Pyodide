@@ -49,10 +49,28 @@ export class RuntimeConnectionRegistry {
    * Register a browser runtime, replacing any previous connection for the same
    * workspace (second tab, or a reconnect the server has not noticed yet).
    * Returns the evicted connection so the caller can disconnect it.
+   *
+   * A same-socket re-register (browser reporting a new revision before
+   * `tool.completed`) must keep the mutation queue. Resetting it would let a
+   * second write run while the first is still settling.
    */
   register(params: RegisterConnectionParams): RuntimeConnection | null {
     const previous = this.byWorkspace.get(params.workspaceId) ?? null;
     const now = Date.now();
+    const sameSocket = previous?.socket.id === params.socket.id;
+
+    if (previous && sameSocket) {
+      previous.runtimeSessionId = params.runtimeSessionId;
+      previous.bindingId = params.bindingId;
+      previous.userId = params.userId;
+      previous.capabilities = normalizeCapabilities(params.capabilities);
+      previous.revisionId = params.revisionId;
+      previous.lastHeartbeatAt = now;
+      this.logger.debug(
+        `Runtime re-registered workspaceId=${params.workspaceId} runtimeSessionId=${params.runtimeSessionId}`,
+      );
+      return null;
+    }
 
     this.byWorkspace.set(params.workspaceId, {
       socket: params.socket,
@@ -63,7 +81,9 @@ export class RuntimeConnectionRegistry {
       capabilities: normalizeCapabilities(params.capabilities),
       revisionId: params.revisionId,
       lastHeartbeatAt: now,
-      mutationLock: Promise.resolve(),
+      // Keep the per-workspace queue across tab replacement too: the lock is
+      // not socket-scoped, and the previous holder may still be settling.
+      mutationLock: previous?.mutationLock ?? Promise.resolve(),
       lastHeartbeatFlushAt: now,
     });
 
@@ -71,7 +91,7 @@ export class RuntimeConnectionRegistry {
       `Runtime registered workspaceId=${params.workspaceId} runtimeSessionId=${params.runtimeSessionId}`,
     );
 
-    return previous && previous.socket.id !== params.socket.id ? previous : null;
+    return previous;
   }
 
   get(workspaceId: string): RuntimeConnection | null {

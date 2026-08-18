@@ -604,12 +604,24 @@ export class BrowserRuntimeHost {
   retry(): void {
     if (!this.sessionId) return;
     const sid = this.sessionId;
-    this.destroy();
+    this.teardownRuntime({ clearListeners: false, clearSession: false });
     this._destroyed = false;
+    this.emit();
     void this.start(sid);
   }
 
   destroy(): void {
+    this.teardownRuntime({ clearListeners: true, clearSession: true });
+  }
+
+  /**
+   * Tear down sockets, preview, and pod state. Retry keeps React subscribers
+   * so connecting/ready/error still reach the mounted preview hook.
+   */
+  private teardownRuntime(options: {
+    clearListeners: boolean;
+    clearSession: boolean;
+  }): void {
     this._destroyed = true;
     this.client.disconnect();
     this.removeHiddenPreviewIframe();
@@ -617,14 +629,17 @@ export class BrowserRuntimeHost {
     this.previewCtrl.reset();
     this.pendingIframe = null;
     if (this.sessionId) invalidateSession(this.sessionId);
-    this.sessionId = null;
+    if (options.clearSession) this.sessionId = null;
     this.workspaceId = null;
     this.ticket = null;
     this.legacyMode = false;
     this.rehydrating = false;
+    this.reconnectAttempts = 0;
+    this.mutationLock = Promise.resolve();
+    this.revisionId = 'rev_0';
     this._status = 'idle';
     this._error = null;
-    this.listeners.clear();
+    if (options.clearListeners) this.listeners.clear();
   }
 }
 

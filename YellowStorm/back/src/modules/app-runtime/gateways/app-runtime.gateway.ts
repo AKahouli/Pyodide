@@ -84,14 +84,13 @@ export class AppRuntimeGateway implements OnGatewayConnection, OnGatewayDisconne
     if (!workspaceId) return;
 
     const wasCurrent = this.registry.unregister(workspaceId, client.id);
+    if (!wasCurrent) return;
+
     this.dispatcher.failPendingForWorkspace(
       workspaceId,
       'Browser runtime disconnected',
     );
-
-    if (wasCurrent) {
-      await this.bindings.markWaitingForBrowser(workspaceId);
-    }
+    await this.bindings.markWaitingForBrowser(workspaceId);
   }
 
   @SubscribeMessage(AppRuntimeEvents.REGISTER)
