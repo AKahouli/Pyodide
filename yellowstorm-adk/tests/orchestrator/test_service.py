@@ -1047,14 +1047,14 @@ async def test_inject_steps_appends_to_live_plan_with_fresh_ids():
     the live Plan object; the drive loop then runs them (same path create_task
     uses). Fresh ids so they can't collide with running steps; the batch's own
     depends_on is remapped to those ids; the executor is stamped."""
-    rm = MagicMock(upsert_steps=AsyncMock())
+    rm = MagicMock(upsert_steps=AsyncMock(), register_mail_wait=AsyncMock())
     service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
     live = Plan(id="p", title="t", goal="g", executor_id="exec1", executor_name="Worky",
                 steps=[Step(id="s1", kind="execute", description="orig", status=Status.RUNNING)])
     new = [Step(id="s1", kind="execute", description="added A", depends_on=[]),
            Step(id="s2", kind="execute", description="added B", depends_on=["s1"])]
 
-    n = await service._inject_steps("sess", live, new)
+    n = await service._inject_steps("sess", "u", live, new)
 
     assert n == 2 and len(live.steps) == 3
     added = live.steps[1:]
@@ -1066,6 +1066,58 @@ async def test_inject_steps_appends_to_live_plan_with_fresh_ids():
     assert all(s.assignee == "exec1" for s in added)     # executor stamped
     assert all(s.status is Status.PENDING for s in added)
     rm.upsert_steps.assert_awaited()                     # projected so the card grows
+    rm.register_mail_wait.assert_not_awaited()           # no await_reply in this batch
+
+
+async def test_inject_steps_registers_a_mail_wait_for_injected_await_reply():
+    """An await_reply step ADDED by an amend must get its own routing token, or
+    the reply it waits on can never match and the step hangs forever (seen live:
+    session 1e8d0f72 — 'Attendre Firas' blocked with an empty mail_waits)."""
+    rm = MagicMock(upsert_steps=AsyncMock(), register_mail_wait=AsyncMock(),
+                   cancel_mail_waits=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    live = Plan(id="p", title="t", executor_id="e", executor_name="W",
+                steps=[Step(id="s1", kind="execute", status=Status.RUNNING)])
+    new = [Step(id="w", kind="await_reply", description="wait for the reply")]
+
+    await service._inject_steps("sess", "u", live, new)
+
+    rm.register_mail_wait.assert_awaited_once()          # token minted for the new wait
+    rm.cancel_mail_waits.assert_not_awaited()            # existing waits NOT dropped
+    _, kw = rm.register_mail_wait.await_args
+    assert kw["session_id"] == "sess" and kw["step_id"] == live.steps[-1].id
+
+
+async def test_apply_ops_cancel_persists_status_via_set_step_status():
+    """A cancel op must persist through set_step_status — upsert_steps (what
+    _project_step uses) does NOT touch `status` on conflict, so projecting a
+    cancel that way leaves the read-model row 'pending' while memory says
+    canceled (seen live: session e9adde, s2 stuck 'pending')."""
+    rm = MagicMock(set_step_status=AsyncMock(), upsert_steps=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    live = Plan(id="p", steps=[Step(id="s2", kind="execute", title="Transmettre",
+                                    status=Status.PENDING)])
+
+    notes = await service._apply_ops("sess", live, [{"op": "cancel", "step_id": "s2"}])
+
+    assert live.step("s2").status is Status.CANCELLED
+    rm.set_step_status.assert_awaited_once_with("sess", "s2", "canceled")
+    assert any("cancelled" in n for n in notes)
+
+
+async def test_apply_ops_refuses_a_non_pending_step():
+    """Only a still-pending step can be safely amended; a running/completed one
+    is already in ADK's replay history."""
+    rm = MagicMock(set_step_status=AsyncMock(), upsert_steps=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    live = Plan(id="p", steps=[Step(id="s1", kind="execute", title="Analyser",
+                                    status=Status.COMPLETED, result="done")])
+
+    notes = await service._apply_ops("sess", live, [{"op": "cancel", "step_id": "s1"}])
+
+    assert live.step("s1").status is Status.COMPLETED          # untouched
+    rm.set_step_status.assert_not_awaited()
+    assert any("already completed" in n for n in notes)
 
 
 def test_amend_message_embeds_plan_results_as_context():

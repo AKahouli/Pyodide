@@ -330,9 +330,10 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 # forever for work nobody is doing — and a late reply would try
                 # to resume a stopped plan.
                 await self._rm.cancel_mail_waits(request.session_id)
-                # 'cancelled', not 'completed': a user Stop is a deliberate
-                # termination, distinct from a plan that ran to the end.
-                await self._rm.set_session_status(request.session_id, "cancelled")
+                # 'canceled' (one L, the client board spelling), not 'completed':
+                # a user Stop is a deliberate termination, distinct from a plan
+                # that ran to the end.
+                await self._rm.set_session_status(request.session_id, "canceled")
             except Exception as e:
                 logger.warning("StopSession projection failed: %s", e)
         return pb.StopSessionResponse(stopped=stopped)
