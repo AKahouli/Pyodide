@@ -28,6 +28,7 @@ const STATUS_BORDER: Record<OrchStepStatus, string> = {
   blocked: 'border-amber-500/70',
   completed: 'border-green-600/60',
   failed: 'border-destructive/70',
+  canceled: 'border-muted-foreground/50',
 };
 
 export function WorkyGraphNode({ data }: NodeProps): JSX.Element {
