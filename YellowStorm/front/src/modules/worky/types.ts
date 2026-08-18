@@ -40,7 +40,8 @@ export type WorkyBoardLane =
   | 'review'
   | 'blocked'
   | 'failed'
-  | 'done';
+  | 'done'
+  | 'canceled';
 
 export type WorkyAssigneeType = 'ephemeral_ai_agent' | 'human_agent' | 'unassigned';
 
