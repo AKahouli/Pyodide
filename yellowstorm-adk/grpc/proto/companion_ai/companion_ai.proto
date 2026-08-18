@@ -77,7 +77,7 @@ message GetSessionResponse {
   string session_id = 1;
   string title      = 2;
   // Session status: "pending" | "running" | "waiting" | "completed" | "failed"
-  // | "cancelled" (terminated by a user StopSession).
+  // | "canceled" (terminated by a user StopSession).
   string status     = 3;
   Plan   plan       = 4;  // current plan snapshot (may be empty before planning)
 }
