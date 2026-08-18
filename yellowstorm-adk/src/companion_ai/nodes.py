@@ -155,9 +155,35 @@ def _stop_after_n_calls(limit: int, model_name: str, *,
 _KICKOFF_SENTINELS = frozenset({"run the plan", "continue"})
 
 
-def _inject_task_turn(task_text: str):
+def _skip_if_cancelled(step: Step):
+    """Short-circuit a step the user cancelled mid-run (a converse amend).
+
+    The factory closes over the LIVE step object, and this callback runs at
+    model-call time — AFTER an amend may have set status=CANCELLED — so a step
+    still PENDING when its wave arrives is caught here and does NO real work
+    (no tool calls, no email). The node still emits, but _apply_event ignores a
+    CANCELLED step's events, so its status stays cancelled. Topology is
+    unchanged (same node, same edges), so ADK's replay barrier is unaffected —
+    this is the only kind of cancel that's safe on a running plan (see the
+    _SilentJoinNode docstring in graph.py for why touching topology is not)."""
+    async def _cb(callback_context, llm_request):
+        if step.status == Status.CANCELLED:
+            from google.adk.models.llm_response import LlmResponse
+            return LlmResponse(content=genai_types.Content(
+                role="model",
+                parts=[genai_types.Part(text="This step was cancelled by the user.")]))
+        return None
+    return _cb
+
+
+def _inject_task_turn(task_text):
     """Deliver the step's task as a USER turn instead of baking it into the
     system prompt.
+
+    `task_text` may be a str or a zero-arg callable returning one. The callable
+    form is read fresh on every model call, so an amend that rewrites a still-
+    pending step's `description` (a converse "modify") takes effect when the
+    node fires, with no workflow rebuild — same lever as _skip_if_cancelled.
 
     ADK hands the whole workflow ONE shared kickoff message ("run the plan"), so
     a step's own task can normally only reach it through system_instruction. We
@@ -177,9 +203,10 @@ def _inject_task_turn(task_text: str):
     transient request, never in session state) and idempotent.
     """
     async def _cb(callback_context, llm_request):
+        text = task_text() if callable(task_text) else task_text
         contents = list(llm_request.contents or [])
         task = genai_types.Content(
-            role="user", parts=[genai_types.Part(text=task_text)])
+            role="user", parts=[genai_types.Part(text=text)])
 
         def user_text(c):
             return (c.parts[0].text if getattr(c, "role", None) == "user"
@@ -188,11 +215,26 @@ def _inject_task_turn(task_text: str):
         first_txt = user_text(contents[0]) if contents else None
         if first_txt in _KICKOFF_SENTINELS:
             contents[0] = task                       # drop the filler, task takes its place
-        elif not (len(contents) > 1 and user_text(contents[1]) == task_text):
+        elif not (len(contents) > 1 and user_text(contents[1]) == text):
             contents.insert(1, task)                 # keep the real front turn, task right after
         else:
             return None                              # already spliced
         llm_request.contents = contents
+        return None
+    return _cb
+
+
+def _trace_execution(step: Step, name: str):
+    """DIAGNOSTIC (remove once replay-vs-rerun is confirmed): fires ONLY on a
+    real model call for this step. ADK replays an already-completed node from
+    recorded history WITHOUT invoking the model, so this callback never runs on
+    a replay. Therefore: if a step a previous pass already COMPLETED logs this
+    on a later (add/modify amend) pass, the plan is genuinely RE-EXECUTING it
+    from scratch, not replaying it — that's the bug the user suspects."""
+    async def _cb(callback_context, llm_request):
+        logger.info("[worky] ⚡ REAL MODEL CALL node=%s status=%s task=%r",
+                    name, step.status.value,
+                    (step.description or step.id)[:50])
         return None
     return _cb
 
@@ -418,6 +460,22 @@ def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Option
     return SearchToolADK(stamped, {"function": tool.custom_schema})
 
 
+def _stored_result_node(name: str, text: str):
+    """A FunctionNode that just re-emits a step's already-produced result.
+
+    Must return types.Content, not a plain string: _function_node.py's
+    _to_event() only populates ev.content (what _apply_event reads the result
+    text from) for a Content return — a bare string becomes ev.output, which
+    _apply_event never looks at, so the read model would silently get "" for a
+    step that already has a real answer."""
+    from google.adk.workflow import FunctionNode
+
+    async def _replay():
+        return genai_types.Content(role="model", parts=[genai_types.Part(text=text)])
+
+    return FunctionNode(func=_replay, name=name)
+
+
 def make_llm_node_factory(
     *,
     model_name: str,
@@ -426,6 +484,7 @@ def make_llm_node_factory(
     custom_instruction: Optional[str] = None,
     tools_for_step: Optional[Callable[[Step, List], List]] = None,
     instruction_for_step: Optional[Callable[[Step], Optional[str]]] = None,
+    replay_completed: bool = False,
 ) -> NodeFactory:
     """Build a NodeFactory that creates one LlmAgent per step.
 
@@ -467,19 +526,17 @@ def make_llm_node_factory(
         # interrupt id, discarding the real answer that's already sitting
         # in step.result. Short-circuit with the stored result instead.
         if step.is_dynamic_delegate and step.status == Status.COMPLETED:
-            from google.adk.workflow import FunctionNode
-            stored_result = step.result or ""
-
-            # Must return types.Content, not a plain string: _function_node.py's
-            # _to_event() only populates ev.content (what _apply_event reads
-            # the result text from, below) for a Content return — a bare
-            # string instead becomes ev.output, which _apply_event never
-            # looks at, so the read model would silently get "" for a step
-            # that actually already has a real answer.
-            async def _replay_stored_result():
-                return genai_types.Content(role="model", parts=[genai_types.Part(text=stored_result)])
-
-            return FunctionNode(func=_replay_stored_result, name=name)
+            return _stored_result_node(name, step.result or "")
+        # Any already-COMPLETED step, on a re-drive that does NOT use ADK's replay
+        # barrier (the continuation loop / continue_turn pass a plain "run the
+        # plan"/"continue" message, which ADK treats as a fresh invocation and
+        # re-runs the whole graph — confirmed at the event level: a completed s1
+        # re-ran its entire GitHub backlog pull on the second pass). Rebuild it as
+        # its stored result so it emits instantly and re-executes NOTHING. NOT set
+        # on resume_turn, where resume_part genuinely replays completed nodes from
+        # history and a FunctionNode swap would diverge from that recorded shape.
+        if replay_completed and step.status == Status.COMPLETED:
+            return _stored_result_node(name, step.result or "")
         # An "ask" step blocks deterministically asking the user (FunctionNode:
         # its interrupt id is stable across replays, so resume matches — unlike an
         # LLM tool call whose id is random each rerun).
@@ -507,7 +564,9 @@ def make_llm_node_factory(
         # placeholders emptied, leaving identity + the invariant rules.
         base_instruction = re.sub(r"\n{3,}", "\n\n", EXECUTOR_INSTRUCTION.format(
             identity=identity, do_this_line="", description="")).strip()
-        task_text = f"{do_this_line}\n{step.description}"
+        # Read lazily off the live step so a converse "modify" of a still-pending
+        # step's description is picked up when the node fires, no rebuild needed.
+        task_text = lambda: f"{do_this_line}\n{step.description}"
         # A dynamic delegate's description is ALREADY the message to relay to
         # assignee_name (composed by the caller, typically second-person:
         # "Hi Firas — ... Do you confirm?") — not an open question this step
@@ -665,10 +724,13 @@ def make_llm_node_factory(
             instruction=instruction,
             tools=step_tools,
             output_key=name,  # step result lands in session state under this key
-            # Inject the task as the user turn first, then run the call-budget
-            # guard on the resulting contents (so its forced-answer fallback also
-            # carries the task).
+            # Cancel check first (a cancelled step must do nothing at all — and
+            # short-circuiting before the trace keeps "⚡ REAL MODEL CALL" honest,
+            # firing only when a real call actually follows), then inject the task
+            # as the user turn, then the call-budget guard on the resulting
+            # contents (so its forced-answer fallback carries the task).
             before_model_callback=_compose_before_model(
+                _skip_if_cancelled(step), _trace_execution(step, name),
                 _inject_task_turn(task_text), stop_cb),
         )
 

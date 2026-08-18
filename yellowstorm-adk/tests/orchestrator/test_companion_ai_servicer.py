@@ -172,9 +172,9 @@ async def test_stop_session_cancels_running_turn():
     # Cancellation is requested but not awaited (a mid-LLM-call turn is slow to
     # unwind and must not block the RPC), so the task is cancelling, not yet done.
     assert task.cancelling() or task.cancelled()
-    # A user Stop is a deliberate termination — the session goes 'cancelled',
-    # not 'completed'.
-    rm.set_session_status.assert_awaited_once_with("s1", "cancelled")
+    # A user Stop is a deliberate termination — the session goes 'canceled'
+    # (one L, the client board spelling), not 'completed'.
+    rm.set_session_status.assert_awaited_once_with("s1", "canceled")
     # Claimed out of _running so a repeat Stop can't double-act.
     assert "s1" not in s._running
     # A stopped session waits on nothing: left behind, the wait would renew its
@@ -191,7 +191,7 @@ async def test_stop_session_with_no_running_turn_reports_not_stopped():
     s = _servicer(rm=rm)
     resp = await s.StopSession(pb.StopSessionRequest(user_id="u", session_id="s1"), _ctx())
     assert resp.stopped is False
-    rm.set_session_status.assert_awaited_once_with("s1", "cancelled")
+    rm.set_session_status.assert_awaited_once_with("s1", "canceled")
 
 
 # --- DeliverMailReply -------------------------------------------------------

@@ -178,14 +178,16 @@ class ReadModel:
         'completed'. Already-terminal steps keep their real outcome. The session
         status itself is set to 'cancelled' by the caller."""
         async with self._pool.acquire() as con:
+            # 'canceled' (one L) matches the client's board contract; the NOT IN
+            # guard lists both spellings so legacy 'cancelled' rows stay terminal.
             await con.execute(
                 f"UPDATE {_q(self._schema,'plan_steps')} "
-                f"SET status='cancelled', blocked_reason='stopped by user', updated_at=now() "
-                f"WHERE session_id=$1 AND status NOT IN ('completed','failed','cancelled')",
+                f"SET status='canceled', blocked_reason='stopped by user', updated_at=now() "
+                f"WHERE session_id=$1 AND status NOT IN ('completed','failed','cancelled','canceled')",
                 session_id)
             await con.execute(
-                f"UPDATE {_q(self._schema,'plans')} SET status='cancelled', updated_at=now() "
-                f"WHERE session_id=$1 AND status NOT IN ('completed','failed','cancelled')",
+                f"UPDATE {_q(self._schema,'plans')} SET status='canceled', updated_at=now() "
+                f"WHERE session_id=$1 AND status NOT IN ('completed','failed','cancelled','canceled')",
                 session_id)
 
     async def pause_running_steps(self, session_id: str) -> None:
