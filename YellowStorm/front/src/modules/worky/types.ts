@@ -112,8 +112,51 @@ export interface WorkyStream {
   lastActivityAt: string;
 }
 
+/**
+ * Live per-stream task rollup returned on each streams-list row (aggregated
+ * from tasks by lane). `progress` is `done / totalTasks` in the range 0..1.
+ */
+export interface WorkyStreamStats {
+  totalTasks: number;
+  running: number;
+  done: number;
+  blocked: number;
+  failed: number;
+  progress: number;
+}
+
+/** A stream list row: the canonical stream plus its live task stats. */
+export interface WorkyStreamListItem extends WorkyStream {
+  stats: WorkyStreamStats;
+}
+
+export type WorkyStreamSortField = 'lastActivity' | 'created' | 'title';
+export type WorkyStreamSortDirection = 'asc' | 'desc';
+
 export interface WorkyStreamQueryParams {
   search?: string;
+  page?: number;
+  limit?: number;
+  /** Filter by one or more stream statuses (empty/omitted = all). */
+  status?: WorkyStreamStatus[];
+  sort?: WorkyStreamSortField;
+  sortDir?: WorkyStreamSortDirection;
+  /** ISO date lower/upper bounds on the stream's createdAt. */
+  createdFrom?: string;
+  createdTo?: string;
+}
+
+/** Paginated envelope for `GET /worky/streams`. */
+export interface PaginatedStreams {
+  data: WorkyStreamListItem[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+    /** status → count within the current search/date scope, ignoring the status filter. */
+    statusCounts: Record<string, number>;
+  };
 }
 
 export interface CreateWorkyStreamData {
