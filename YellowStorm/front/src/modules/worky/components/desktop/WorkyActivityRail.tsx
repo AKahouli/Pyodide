@@ -3,8 +3,11 @@ import { Check, Play, ShieldAlert, GitBranch, User, CircleDot } from 'lucide-rea
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { useWorkyUiStore } from '../../uiStore';
+import { useResizableSidebar } from '../../useResizableSidebar';
 import { ChatMessageThread } from '../ChatMessageThread';
 import { PromptBar } from '../PromptBar';
+
+const SIDEBAR_WIDTH_STORAGE_KEY = 'worky:chat-sidebar-width';
 
 const ICONS: Record<string, ComponentType<{ className?: string }>> = {
   check: Check,
@@ -43,9 +46,33 @@ export function WorkyActivityRail({
   const { t } = useModuleTranslation('worky');
   const [tab, setTab] = useState<'chat' | 'activity'>('chat');
   const activity = useWorkyUiStore((s) => s.recentActivity);
+  const { width, isResizing, separatorProps } = useResizableSidebar(SIDEBAR_WIDTH_STORAGE_KEY);
 
   return (
-    <aside className="hidden w-[344px] shrink-0 flex-col border-l border-border bg-card lg:flex">
+    <aside
+      data-testid="worky-chat-sidebar"
+      style={{ width }}
+      className="relative hidden shrink-0 flex-col border-l border-border bg-card lg:flex"
+    >
+      {/* Drag (or ArrowLeft/ArrowRight, double-click to reset) to resize. */}
+      <div
+        {...separatorProps}
+        data-testid="worky-rail-resize"
+        aria-label={t('orchestrator.resize')}
+        className={cn(
+          'group absolute left-0 top-0 z-10 h-full w-1.5 -translate-x-1/2 cursor-col-resize touch-none',
+          'focus-visible:outline-none',
+        )}
+      >
+        <span
+          className={cn(
+            'absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors',
+            'group-hover:bg-primary group-focus-visible:bg-primary',
+            isResizing && 'bg-primary',
+          )}
+        />
+      </div>
+
       <div className="flex shrink-0 gap-1 rounded-lg border border-border bg-muted p-0.5 m-3 mb-2">
         {(['chat', 'activity'] as const).map((v) => (
           <button

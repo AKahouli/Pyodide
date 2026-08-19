@@ -168,6 +168,7 @@
   "orchestrator.open": "Ouvrir CoS",
   "orchestrator.close": "Fermer",
   "orchestrator.tabs.chat": "Chat",
+  "orchestrator.resize": "Redimensionner la barre de chat",
   "orchestrator.config.title": "Configuration",
   "orchestrator.config.count": "{{count}} sections",
   "orchestrator.status.idle": "Inactif",
