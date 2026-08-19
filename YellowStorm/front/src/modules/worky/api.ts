@@ -23,6 +23,7 @@ import type {
   WorkyMemoryEntry,
   WorkyMemoryProposal,
   WorkyMessage,
+  PaginatedStreams,
   WorkyStartValidation,
   WorkyStream,
   WorkyStreamQueryParams,
@@ -38,10 +39,13 @@ function unwrap<T>(response: { data: ApiResponse<T> }): T {
   return response.data.data;
 }
 
-export async function getStreams(params: WorkyStreamQueryParams = {}): Promise<WorkyStream[]> {
-  const response = await apiClient.get<ApiResponse<WorkyStream[]>>(API_ENDPOINTS.worky.streams, {
-    params,
-  });
+export async function getStreams(
+  params: WorkyStreamQueryParams = {},
+): Promise<PaginatedStreams> {
+  const response = await apiClient.get<ApiResponse<PaginatedStreams>>(
+    API_ENDPOINTS.worky.streams,
+    { params },
+  );
   return unwrap(response);
 }
 

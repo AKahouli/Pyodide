@@ -361,6 +361,188 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
 
 });
 
+describe('WorkyStreamService.findAllForUser', () => {
+  const userObjectId = new Types.ObjectId();
+  const userId = userObjectId.toString();
+  const streamAId = new Types.ObjectId();
+  const streamBId = new Types.ObjectId();
+
+  const buildStreamDoc = (id: Types.ObjectId, overrides: Record<string, unknown> = {}) => ({
+    _id: id,
+    ownerUserId: userObjectId,
+    workspaceId: new Types.ObjectId(),
+    artifactWorkspaceId: null,
+    managerAgentId: null,
+    managerModelId: null,
+    workerModelId: null,
+    governancePolicyRef: null,
+    title: 'Stream',
+    status: 'active',
+    controlState: 'active',
+    schedulerEnabled: false,
+    currentPlanVersion: 1,
+    executionPlanVersion: null,
+    budget: { limitUsd: 10, limitTokens: 0, spendUsd: 4, tokensUsed: 0, enforcement: 'hard_stop' },
+    startedAt: new Date('2026-01-01T00:00:00Z'),
+    completedAt: null,
+    activeDurationMinutes: 134,
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    updatedAt: new Date('2026-01-02T00:00:00Z'),
+    lastActivityAt: new Date('2026-01-02T00:00:00Z'),
+    ...overrides,
+  });
+
+  const makeService = (opts: {
+    streams?: unknown[];
+    total?: number;
+    statusAgg?: unknown[];
+    laneAgg?: unknown[];
+  } = {}) => {
+    const streams = opts.streams ?? [buildStreamDoc(streamAId), buildStreamDoc(streamBId)];
+    const findChain = {
+      sort: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue(streams),
+    };
+    const streamModel = {
+      create: jest.fn(),
+      findById: jest.fn(),
+      findOne: jest.fn(),
+      find: jest.fn(() => findChain),
+      countDocuments: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(opts.total ?? streams.length) })),
+      aggregate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(opts.statusAgg ?? []) })),
+    };
+    const taskAggregate = jest.fn(() => ({ exec: jest.fn().mockResolvedValue(opts.laneAgg ?? []) }));
+    const connection = { model: jest.fn(() => ({ aggregate: taskAggregate })) };
+    const workspaceModel = { create: jest.fn(), findOne: jest.fn() };
+    const agentRepository = { create: jest.fn(), findByNameAndOwner: jest.fn(), deleteByIdAndOwner: jest.fn() };
+    const agentTypeService = { findBySlug: jest.fn() };
+    const workspaceService = { delete: jest.fn() };
+    const workspaceDocuments = { deleteAllByWorkspace: jest.fn() };
+    const config = { get: jest.fn((_k: string, fb?: number) => fb ?? 0) } as unknown as ConfigService;
+    const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
+    const grpcClient = { createSession: jest.fn() };
+    const service = new WorkyStreamService(
+      streamModel as any,
+      workspaceModel as any,
+      agentRepository as any,
+      connection as any,
+      agentTypeService as any,
+      workspaceService as any,
+      workspaceDocuments as any,
+      config,
+      logger as any,
+      grpcClient as any,
+    );
+    return { service, streamModel, findChain, connection, taskAggregate };
+  };
+
+  it('returns a paginated envelope with meta (total, page, limit, totalPages)', async () => {
+    const { service } = makeService({ total: 25 });
+
+    const result = await service.findAllForUser(userId, { page: 2, limit: 12 } as any);
+
+    expect(result.meta).toMatchObject({ total: 25, page: 2, limit: 12, totalPages: 3 });
+    expect(Array.isArray(result.data)).toBe(true);
+    expect(result.data).toHaveLength(2);
+  });
+
+  it('paginates with the correct skip/limit and default sort', async () => {
+    const { service, findChain, streamModel } = makeService();
+
+    await service.findAllForUser(userId, { page: 3, limit: 10 } as any);
+
+    expect(findChain.skip).toHaveBeenCalledWith(20);
+    expect(findChain.limit).toHaveBeenCalledWith(10);
+    expect(findChain.sort).toHaveBeenCalledWith(expect.objectContaining({ lastActivityAt: -1 }));
+    // owner scoping is always applied
+    expect(streamModel.find).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerUserId: expect.anything() }),
+    );
+  });
+
+  it('merges per-stream lane counts into stats with progress = done/total', async () => {
+    const laneAgg = [
+      { _id: { streamId: streamAId, lane: 'done' }, count: 3 },
+      { _id: { streamId: streamAId, lane: 'running' }, count: 2 },
+      { _id: { streamId: streamAId, lane: 'blocked' }, count: 1 },
+    ];
+    const { service } = makeService({ laneAgg });
+
+    const result = await service.findAllForUser(userId, {} as any);
+    const a = result.data.find((s) => s.id === streamAId.toString());
+
+    expect(a?.stats).toEqual({
+      totalTasks: 6,
+      running: 2,
+      done: 3,
+      blocked: 1,
+      failed: 0,
+      progress: 0.5,
+    });
+  });
+
+  it('gives streams with no tasks a zeroed stats block', async () => {
+    const { service } = makeService({ laneAgg: [] });
+
+    const result = await service.findAllForUser(userId, {} as any);
+
+    expect(result.data[0].stats).toEqual({
+      totalTasks: 0,
+      running: 0,
+      done: 0,
+      blocked: 0,
+      failed: 0,
+      progress: 0,
+    });
+  });
+
+  it('applies the status filter to the list query but not to statusCounts', async () => {
+    const { service, streamModel } = makeService({
+      statusAgg: [
+        { _id: 'active', count: 5 },
+        { _id: 'paused', count: 2 },
+      ],
+    });
+
+    const result = await service.findAllForUser(userId, { status: ['active'] } as any);
+
+    // The data/count query is filtered by status...
+    expect(streamModel.find).toHaveBeenCalledWith(
+      expect.objectContaining({ status: { $in: ['active'] } }),
+    );
+    // ...but statusCounts reflects the full (status-unfiltered) scope.
+    expect(result.meta.statusCounts).toEqual({ active: 5, paused: 2 });
+    const statusAggMatch = (streamModel.aggregate.mock.calls as any[])[0][0][0].$match;
+    expect(statusAggMatch.status).toBeUndefined();
+  });
+
+  it('applies search and created-date bounds to the filter', async () => {
+    const { service, streamModel } = makeService();
+
+    await service.findAllForUser(userId, {
+      search: 'report',
+      createdFrom: '2026-01-01T00:00:00.000Z',
+      createdTo: '2026-02-01T00:00:00.000Z',
+    } as any);
+
+    const filter = (streamModel.find.mock.calls as any[])[0][0];
+    expect(filter.title.$regex).toContain('report');
+    expect(filter.createdAt.$gte).toBeInstanceOf(Date);
+    expect(filter.createdAt.$lte).toBeInstanceOf(Date);
+  });
+
+  it('sorts by created ascending when requested', async () => {
+    const { service, findChain } = makeService();
+
+    await service.findAllForUser(userId, { sort: 'created', sortDir: 'asc' } as any);
+
+    expect(findChain.sort).toHaveBeenCalledWith({ createdAt: 1 });
+  });
+});
+
 describe('WorkyStreamService.delete', () => {
   const userObjectId = new Types.ObjectId();
   const streamObjectId = new Types.ObjectId();

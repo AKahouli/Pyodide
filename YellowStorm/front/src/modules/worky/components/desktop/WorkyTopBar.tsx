@@ -27,7 +27,10 @@ export function WorkyTopBar({ streamId }: { streamId: string }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const navigate = useNavigate();
   const { data: stream } = useStream(streamId);
-  const { data: streams = [] } = useStreams();
+  // The switcher is a quick-jump list; pull a generous page rather than the
+  // default so most of the owner's streams remain reachable here.
+  const { data: streamsPage } = useStreams({ limit: 100 });
+  const streams = streamsPage?.data ?? [];
   const { stop, canStop, isStopping } = useStopSession(streamId);
   const [createOpen, setCreateOpen] = useState(false);
 
