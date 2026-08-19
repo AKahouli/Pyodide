@@ -92,7 +92,18 @@ def to_workflow(
             edges.append((nodes[deps[0]], target))
         else:
             # Fan-in: AND-join so the step runs exactly once, after all deps.
-            join = JoinNode(name=f"join_{node_name(step.id)}")
+            # _SilentJoinNode, not a stock JoinNode, for the SAME reason the sink
+            # is (see its docstring): a stock JoinNode yields Event(output=...),
+            # which is a terminal event pinned to a fixed slot in ADK's replay
+            # barrier. As the plan GROWS mid-session (create_task / delegate /
+            # converse add), this fan-in join's structural position shifts, but
+            # history still expects its sequence key at the old slot — so a later
+            # resume times out ("Replay divergence detected: … sequence key
+            # 'join_<id>@1' …", seen live). Emitting no output takes the join out
+            # of the barrier so its position can float. Nothing reads its output:
+            # the downstream step triggers on the join's COMPLETION, and worky
+            # executors get their task from description injection, not node input.
+            join = _SilentJoinNode(name=f"join_{node_name(step.id)}")
             for dep in deps:
                 edges.append((nodes[dep], join))
             edges.append((join, target))
