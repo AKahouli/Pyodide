@@ -199,6 +199,51 @@ def test_plan_done_never_enters_the_replay_barrier():
     assert dict(runs) == {"a": 1, "b": 1}, dict(runs)
 
 
+def test_intermediate_fanin_join_never_enters_the_replay_barrier():
+    """A fan-in join for a step with >=2 deps must ALSO emit no terminal event,
+    for the same reason as the sink.
+
+    Root cause of a live crash (session with 'Écrire à Firas' / 'Attendre
+    Firas'): a step with two deps got a STOCK JoinNode, which yields
+    Event(output=...) and so got pinned in the replay barrier. As the plan
+    grew via converse amends, the join's structural position shifted, and a
+    later mail-reply resume timed out: RuntimeError("Replay divergence
+    detected: Timed out waiting for sequence key 'join_<id>@1' to be
+    unblocked."). Making the intermediate join silent (like the sink) keeps it
+    out of the barrier while it still fires exactly once after all deps.
+    """
+    from google.adk.workflow.utils._rehydration_utils import is_terminal_event
+
+    runs, when, t0 = Counter(), {}, [time.monotonic()]
+    # a -> (b, c) -> d ; d has TWO deps, so it goes through join_d.
+    plan = Plan(title="t", goal="g", steps=[
+        Step(id="a"), Step(id="b", depends_on=["a"]),
+        Step(id="c", depends_on=["a"]), Step(id="d", depends_on=["b", "c"]),
+    ])
+    wf = graph.to_workflow(plan, _fn_factory(runs, when, t0, 0.0),
+                           name="test_plan", max_concurrency=8)
+
+    async def go():
+        runner = InMemoryRunner(node=wf, app_name="t")
+        await runner.session_service.create_session(app_name="t", user_id="u", session_id="s")
+        async for _ in runner.run_async(
+            user_id="u", session_id="s",
+            new_message=types.Content(role="user", parts=[types.Part(text="go")])):
+            pass
+        return await runner.session_service.get_session(
+            app_name="t", user_id="u", session_id="s")
+
+    session = asyncio.run(go())
+    pinned = [e.node_info.path for e in session.events
+              if is_terminal_event(e) and e.node_info and e.node_info.path]
+
+    assert not any("join_d" in p for p in pinned), \
+        f"the fan-in join must not be pinned in the replay barrier, got {pinned}"
+    # d still ran exactly once after both deps — the join fired despite being silent.
+    assert dict(runs) == {"a": 1, "b": 1, "c": 1, "d": 1}, dict(runs)
+    assert any(p.endswith("d@1") for p in pinned), pinned
+
+
 if __name__ == "__main__":
     test_node_name_sanitizes_digit_leading_ids(); print("ok  node_name sanitize")
     test_independent_steps_all_start_together(); print("ok  independent parallel")
