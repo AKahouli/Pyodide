@@ -244,6 +244,7 @@
   "mode.run": "Run",
   "mode.monitor": "Monitor",
   "toolbar.designer": "Designer",
+  "toolbar.yellowmind": "Yellowmind",
   "toolbar.noTemplatesAvailable": "No templates available",
   "toolbar.removeAllTasks": "Remove all tasks",
   "toolbar.confirmRemoveAllTitle": "Remove all tasks?",

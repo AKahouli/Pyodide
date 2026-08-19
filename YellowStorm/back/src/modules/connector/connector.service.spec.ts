@@ -7,8 +7,13 @@ const createPlaybookBindingSyncServiceMock = () => ({
 });
 
 describe('ConnectorService Playbook MCP reconciliation', () => {
-  it('persists Google ADK-compatible string enums', async () => {
+  it('persists Google ADK-compatible string enums derived from the inspected MCP tools', async () => {
     const connectorId = new Types.ObjectId();
+    const findOne = jest.fn().mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue(null),
+      }),
+    });
     const findOneAndUpdate = jest.fn().mockImplementation((_filter, update) => ({
       exec: jest.fn().mockResolvedValue({
         _id: connectorId,
@@ -20,7 +25,7 @@ describe('ConnectorService Playbook MCP reconciliation', () => {
       }),
     }));
     const service = new ConnectorService(
-      { findOneAndUpdate } as any,
+      { findOne, findOneAndUpdate } as any,
       { find: jest.fn() } as any,
       { setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() } as any,
       null as any,
@@ -28,7 +33,22 @@ describe('ConnectorService Playbook MCP reconciliation', () => {
       createPlaybookBindingSyncServiceMock() as any,
     );
 
-    await service.reconcilePlaybookMcpSystemConnector(new Types.ObjectId().toString(), 'http://localhost:8025/mcp');
+    const tools = [
+      {
+        name: 'list_recent_executions',
+        description: 'List recent executions',
+        inputSchema: {
+          type: 'object',
+          properties: { status: { type: 'string', enum: ['running', 'failed', 'completed', 'waiting', 'cancelled'] } },
+        },
+      },
+      {
+        name: 'start_playbook_generation',
+        description: 'Start a draft Playbook generation',
+        inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: [] },
+      },
+    ];
+    await service.reconcilePlaybookMcpSystemConnector(new Types.ObjectId().toString(), 'http://localhost:8025/mcp', tools);
 
     const actions = findOneAndUpdate.mock.calls[0][1].$set.actions;
     const recent = actions.find((action: { key: string }) => action.key === 'list_recent_executions');
@@ -39,6 +59,45 @@ describe('ConnectorService Playbook MCP reconciliation', () => {
     const generation = actions.find((action: { key: string }) => action.key === 'start_playbook_generation');
     expect(generation.parameterSchema.required).toEqual([]);
     expect(generation.parameterSchema.properties).not.toHaveProperty('request_id');
+    expect(actions.find((action: { key: string }) => action.key === 'modify_playbook')).toBeUndefined();
+  });
+
+  it('keeps actions enabled by the connector UI when a tool survives reconciliation', async () => {
+    const connectorId = new Types.ObjectId();
+    const findOne = jest.fn().mockReturnValue({
+      lean: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({
+          actions: [{ key: 'start_playbook_generation', isEnabled: false }],
+        }),
+      }),
+    });
+    const findOneAndUpdate = jest.fn().mockImplementation((_filter, update) => ({
+      exec: jest.fn().mockResolvedValue({
+        _id: connectorId,
+        slug: 'playbook-mcp',
+        ...update.$setOnInsert,
+        ...update.$set,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    }));
+    const service = new ConnectorService(
+      { findOne, findOneAndUpdate } as any,
+      { find: jest.fn() } as any,
+      { setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() } as any,
+      null as any,
+      null as any,
+      createPlaybookBindingSyncServiceMock() as any,
+    );
+
+    await service.reconcilePlaybookMcpSystemConnector(
+      new Types.ObjectId().toString(),
+      'http://localhost:8025/mcp',
+      [{ name: 'start_playbook_generation', description: '', inputSchema: {} }],
+    );
+
+    const actions = findOneAndUpdate.mock.calls[0][1].$set.actions;
+    expect(actions.find((action: { key: string }) => action.key === 'start_playbook_generation').isEnabled).toBe(false);
   });
 });
 

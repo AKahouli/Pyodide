@@ -106,6 +106,7 @@ export class MessageService {
       isComplete: true,
       requestId: data.requestId,
       interaction: data.interaction,
+      interactions: data.interactions,
       replayContext: data.replayContext,
     });
 
@@ -1032,6 +1033,7 @@ export class MessageService {
       requestId: message.requestId,
       guardrailDecision: message.guardrailDecision as any,
       interaction: message.interaction as Record<string, unknown> | undefined,
+      interactions: message.interactions as Record<string, unknown>[] | undefined,
       reliabilityEvaluation: message.reliabilityEvaluation as ReliabilityEvaluation | undefined,
       correctionWorkflow: message.correctionWorkflow ? {
         ...message.correctionWorkflow,

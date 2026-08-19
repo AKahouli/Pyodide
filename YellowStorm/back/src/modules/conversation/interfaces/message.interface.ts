@@ -209,6 +209,7 @@ export interface CreateUserMessageData {
   requestId?: string;
   parentMessageId?: string;
   interaction?: Record<string, unknown>;
+  interactions?: Record<string, unknown>[];
   replayContext?: MessageReplayContext;
 }
 
@@ -277,6 +278,7 @@ export interface MessageResponse {
   memberIds?: string[];
   guardrailDecision?: GuardrailDecisionMetadata;
   interaction?: Record<string, unknown>;
+  interactions?: Record<string, unknown>[];
   reliabilityEvaluation?: ReliabilityEvaluation;
   correctionWorkflow?: ResponseCorrectionWorkflow;
   createdAt: string;

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { createConversation, fetchConversation, fetchConversations, fetchMessages, sendMessage } from '@/modules/conversation/api';
 import { conversationStreamService } from '@/modules/conversation/stream';
-import type { Conversation, Message, StreamingComponent, StreamSSEEvent } from '@/modules/conversation/types';
+import type { ChoiceInteractionMetadata, Conversation, Message, StreamingComponent, StreamSSEEvent } from '@/modules/conversation/types';
 import type { SecondBrainPageContext } from './types';
 
 export const SECOND_BRAIN_CONVERSATION_STORAGE_KEY = 'ys_second_brain_conversation_id';
@@ -147,11 +147,11 @@ export function useSecondBrainConversation(open: boolean, clientContext: SecondB
     }
   }), [conversationId, hydrate, loadHistory]);
 
-  const send = async (content: string) => {
+  const send = async (content: string, interaction?: ChoiceInteractionMetadata, interactions?: ChoiceInteractionMetadata[]) => {
     if (!conversationId || loading) return false;
     setLoading(true);
     setError(undefined);
-    const fingerprint = JSON.stringify({ content, clientContext });
+    const fingerprint = JSON.stringify({ content, interaction, interactions, clientContext });
     const requestId = retryRef.current?.fingerprint === fingerprint
       ? retryRef.current.requestId
       : crypto.randomUUID();
@@ -163,6 +163,8 @@ export function useSecondBrainConversation(open: boolean, clientContext: SecondB
         content,
         requestId,
         clientContext,
+        interaction,
+        interactions,
       });
       setMessages((current) => upsertMessage(current, response.userMessage));
       if (response.aiMessageId) {

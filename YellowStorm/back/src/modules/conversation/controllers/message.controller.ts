@@ -250,9 +250,21 @@ export class MessageController {
       );
     }
 
-    const canonicalChoice = dto.interaction
-      ? await this.choiceInteractionService.canonicalize(conversationId, dto.interaction)
-      : undefined;
+    let canonicalInteraction: Record<string, unknown> | undefined;
+    let canonicalInteractions: Record<string, unknown>[] | undefined;
+    let canonicalContent = dto.content;
+    let canonicalTaskSummary: string | undefined;
+    if (dto.interaction) {
+      const canonicalChoice = await this.choiceInteractionService.canonicalize(conversationId, dto.interaction);
+      canonicalInteraction = canonicalChoice.interaction;
+      canonicalContent = canonicalChoice.content;
+      canonicalTaskSummary = canonicalChoice.taskSummary;
+    } else if (dto.interactions?.length) {
+      const canonicalMulti = await this.choiceInteractionService.canonicalizeMany(conversationId, dto.interactions);
+      canonicalInteractions = canonicalMulti.interactions;
+      canonicalContent = canonicalMulti.content;
+      canonicalTaskSummary = canonicalMulti.taskSummary;
+    }
 
     // Create user message
     let userMessage: Awaited<ReturnType<MessageService['createUserMessage']>>;
@@ -260,7 +272,7 @@ export class MessageController {
       userMessage = await this.messageService.createUserMessage({
         conversationId,
         senderId: user._id.toString(),
-        content: canonicalChoice?.content ?? dto.content,
+        content: canonicalContent,
         attachedFileIds: dto.attachedFileIds,
         webSearchEnabled: dto.webSearchEnabled,
         modelId: dto.modelId,
@@ -268,11 +280,12 @@ export class MessageController {
         memberIds: dto.memberIds,
         requestId,
         parentMessageId: dto.parentMessageId,
-        interaction: canonicalChoice?.interaction,
+        interaction: canonicalInteraction,
+        interactions: canonicalInteractions,
         replayContext: {
           requestFingerprint,
-          content: canonicalChoice?.content ?? dto.content,
-          taskSummary: canonicalChoice?.taskSummary,
+          content: canonicalContent,
+          taskSummary: canonicalTaskSummary,
           attachedFileIds: dto.attachedFileIds ?? [],
           webSearchEnabled: dto.webSearchEnabled ?? false,
           deepSearchEnabled: dto.deepSearchEnabled ?? false,
@@ -315,7 +328,7 @@ export class MessageController {
       this.streamService.generateConversationNameAsync(
         user._id.toString(),
         conversationId,
-        canonicalChoice?.content ?? dto.content,
+        canonicalContent,
         dto.modelId,
         user.email,
       );
@@ -353,8 +366,8 @@ export class MessageController {
       // Start streaming (non-blocking)
       this.streamService
         .startStream(user._id.toString(), conversationId, aiMessage.id, {
-          content: canonicalChoice?.content ?? dto.content,
-          taskSummary: canonicalChoice?.taskSummary,
+          content: canonicalContent,
+          taskSummary: canonicalTaskSummary,
           attachedFileIds: dto.attachedFileIds,
           webSearchEnabled: dto.webSearchEnabled,
           deepSearchEnabled: dto.deepSearchEnabled,
@@ -468,6 +481,7 @@ export class MessageController {
       connectorRepo: dto.connectorRepo ?? null,
       skillIds: dto.skillIds ?? [],
       interaction: dto.interaction ?? null,
+      interactions: dto.interactions ?? null,
       clientContext: dto.clientContext ?? null,
     };
     return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');

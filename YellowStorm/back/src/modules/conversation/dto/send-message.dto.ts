@@ -135,6 +135,14 @@ export class SendMessageDto {
   @Type(() => ChoiceInteractionDto)
   interaction?: ChoiceInteractionDto;
 
+  @ApiPropertyOptional({ description: 'Multiple choice answers submitted together in a single turn', type: [ChoiceInteractionDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => ChoiceInteractionDto)
+  interactions?: ChoiceInteractionDto[];
+
   @ApiPropertyOptional({ type: ConversationClientContextDto })
   @IsOptional()
   @ValidateNested()

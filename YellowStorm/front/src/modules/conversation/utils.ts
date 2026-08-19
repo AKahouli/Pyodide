@@ -100,14 +100,27 @@ export function formatTimingMs(ms: number | undefined): string {
 }
 
 /**
+ * Builds the readable display text for a user message. Choice answers prefer
+ * the canonical per-interaction displayText (readable) over the raw canonical
+ * JSON that is persisted as message.content.
+ */
+export function getUserMessageDisplayText(msg: Message): string {
+  if (msg.interactions?.length) {
+    const displayTexts = msg.interactions.map((interaction) => interaction.displayText).filter(Boolean);
+    return displayTexts.length ? displayTexts.join(', ') : msg.content || '';
+  }
+  return msg.interaction?.type === 'choice' && msg.interaction.displayText
+    ? msg.interaction.displayText
+    : msg.content || '';
+}
+
+/**
  * Maps a backend Message to the frontend ChatMessage format
  */
 export function messageToChat(msg: Message): ChatMessage {
   let content: string | MessageContentPart[];
   if (msg.conversationType === 'user') {
-    content = msg.interaction?.type === 'choice' && msg.interaction.displayText
-      ? msg.interaction.displayText
-      : msg.content || '';
+    content = getUserMessageDisplayText(msg);
   } else {
     content = mapConversationComponentsToContentParts(msg.components || []);
   }

@@ -4,16 +4,22 @@ import type { ChoiceInteractionMetadata, Message } from './types';
 export function buildChoiceInteractionIndex(messages: Message[]): Map<string, ChoiceInteractionMetadata> {
   const interactions = new Map<string, ChoiceInteractionMetadata>();
   for (const message of messages) {
-    const interaction = message.interaction;
-    if (
-      message.conversationType !== 'user' ||
-      interaction?.type !== 'choice' ||
-      !interaction.componentId ||
-      !Array.isArray(interaction.selectedOptions)
-    ) {
-      continue;
+    if (message.conversationType !== 'user') continue;
+    const candidates = message.interactions?.length
+      ? message.interactions
+      : message.interaction
+        ? [message.interaction]
+        : [];
+    for (const interaction of candidates) {
+      if (
+        interaction?.type !== 'choice' ||
+        !interaction.componentId ||
+        !Array.isArray(interaction.selectedOptions)
+      ) {
+        continue;
+      }
+      interactions.set(interaction.componentId, interaction);
     }
-    interactions.set(interaction.componentId, interaction);
   }
   return interactions;
 }

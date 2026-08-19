@@ -88,14 +88,20 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   const handleComponentAction = useCallback(async (action: ChoiceComponentAction) => {
     await sendMessage(conversationId, { content: action.submitText, interaction: { ...action.interaction, sourceMessageId: message.id } });
   }, [conversationId, message.id, sendMessage]);
+  const handleSubmitQuestions = useCallback(async (actions: ChoiceComponentAction[]) => {
+    await sendMessage(conversationId, {
+      content: actions.map((action) => action.submitText).join(' '),
+      interactions: actions.map((action) => ({ ...action.interaction, sourceMessageId: message.id })),
+    });
+  }, [conversationId, message.id, sendMessage]);
   const chatMessage = useMemo(() => {
     const chatMsg = messageToChat(message);
     // Force the role to 'assistant' for other members' messages so ChatMessageBubble renders them on the left
     if (message.conversationType === 'user' && message.senderId && currentUserId && message.senderId !== currentUserId) {
-      return { ...chatMsg, role: 'assistant', onComponentAction: handleComponentAction, choiceInteractions } as const;
+      return { ...chatMsg, role: 'assistant', onComponentAction: handleComponentAction, onSubmitQuestions: handleSubmitQuestions, choiceInteractions } as const;
     }
-    return { ...chatMsg, onComponentAction: handleComponentAction, choiceInteractions } as const;
-  }, [message, currentUserId, handleComponentAction, choiceInteractions]);
+    return { ...chatMsg, onComponentAction: handleComponentAction, onSubmitQuestions: handleSubmitQuestions, choiceInteractions } as const;
+  }, [message, currentUserId, handleComponentAction, handleSubmitQuestions, choiceInteractions]);
   const branchCache = useBranchCache();
   const activeBranches = useActiveBranches();
   const editingMessageId = useEditingMessageId();
@@ -333,6 +339,13 @@ export function GroupConversationContent() {
       onComponentAction: async (action: ChoiceComponentAction) => {
         if (!currentConversationId) throw new Error('No active conversation');
         await sendMessage(currentConversationId, { content: action.submitText, interaction: { ...action.interaction, ...(streamingMessageId ? { sourceMessageId: streamingMessageId } : {}) } });
+      },
+      onSubmitQuestions: async (actions: ChoiceComponentAction[]) => {
+        if (!currentConversationId) throw new Error('No active conversation');
+        await sendMessage(currentConversationId, {
+          content: actions.map((action) => action.submitText).join(' '),
+          interactions: actions.map((action) => ({ ...action.interaction, ...(streamingMessageId ? { sourceMessageId: streamingMessageId } : {}) })),
+        });
       },
     } as const;
   }, [isActiveStream, streamingComponents, currentConversationId, streamingMessageId, sendMessage]);

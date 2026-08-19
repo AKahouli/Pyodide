@@ -110,4 +110,49 @@ describe('PlaybookAssistantInternalController', () => {
       conversationId: 'conversation-1', correlationId: 'ai-message-1',
     }, { name: 'Lead generation' });
   });
+
+  it('starts current-turn modification only after resolving playbook.update', async () => {
+    const assistantService = { runCurrentTurnModification: jest.fn().mockResolvedValue({ status: 'ready' }) };
+    const controller = new PlaybookAssistantInternalController(
+      {} as never,
+      assistantService as never,
+      { findById: jest.fn().mockResolvedValue({ roles: ['creator'] }) } as never,
+      { getUserPermissions: jest.fn().mockResolvedValue(['playbook.update']) } as never,
+    );
+    const headers = {
+      'x-yellowstorm-tenant-id': 'default',
+      'x-yellowstorm-user-id': 'user-1',
+      'x-yellowstorm-agent-id': 'agent-1',
+      'x-yellowstorm-conversation-id': 'conversation-1',
+      'x-correlation-id': 'ai-message-1',
+    };
+
+    await expect(controller.runCurrentTurnModification(headers, 'playbook-1', {}))
+      .resolves.toEqual({ status: 'ready' });
+    expect(assistantService.runCurrentTurnModification).toHaveBeenCalledWith('playbook-1', {
+      tenantId: 'default', ownerId: 'user-1', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-1',
+    }, {});
+  });
+
+  it('blocks current-turn modification when the trusted user lacks playbook.update', async () => {
+    const assistantService = { runCurrentTurnModification: jest.fn() };
+    const controller = new PlaybookAssistantInternalController(
+      {} as never,
+      assistantService as never,
+      { findById: jest.fn().mockResolvedValue({ roles: [] }) } as never,
+      { getUserPermissions: jest.fn().mockResolvedValue(['playbook.read']) } as never,
+    );
+    const headers = {
+      'x-yellowstorm-tenant-id': 'default',
+      'x-yellowstorm-user-id': 'user-1',
+      'x-yellowstorm-agent-id': 'agent-1',
+      'x-yellowstorm-conversation-id': 'conversation-1',
+      'x-correlation-id': 'ai-message-1',
+    };
+
+    await expect(controller.runCurrentTurnModification(headers, 'playbook-1', {}))
+      .rejects.toThrow('cannot perform this Playbook action');
+    expect(assistantService.runCurrentTurnModification).not.toHaveBeenCalled();
+  });
 });

@@ -32,7 +32,7 @@ describe('MessageController.sendMessage sticky routing', () => {
   let modelsService: { validateModelActive: jest.Mock };
   let teamService: { resolveAgentIds: jest.Mock };
   let requestContext: { getRequestId: jest.Mock };
-  let choiceInteractionService: { canonicalize: jest.Mock };
+  let choiceInteractionService: { canonicalize: jest.Mock; canonicalizeMany: jest.Mock };
   let responseReliabilityService: { rerun: jest.Mock };
   let logger: {
     setContext: jest.Mock;
@@ -80,7 +80,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     modelsService = { validateModelActive: jest.fn() };
     teamService = { resolveAgentIds: jest.fn().mockResolvedValue([]) };
     requestContext = { getRequestId: jest.fn().mockReturnValue('req-1') };
-    choiceInteractionService = { canonicalize: jest.fn() };
+    choiceInteractionService = { canonicalize: jest.fn(), canonicalizeMany: jest.fn() };
     responseReliabilityService = { rerun: jest.fn().mockResolvedValue({ messageId: 'ai-1', reliabilityEvaluation: { status: 'pending' } }) };
     logger = {
       setContext: jest.fn(),
@@ -371,6 +371,53 @@ describe('MessageController.sendMessage sticky routing', () => {
       expect.objectContaining({
         content: '{"selectedChoices":[{"submitText":"Analyze profitability","description":"Review margins"}]}',
         taskSummary: 'Profitability',
+      }),
+      'req-1',
+      undefined,
+      'Ada Lovelace',
+      undefined,
+    );
+  });
+
+  it('canonicalizes multiple choice interactions into one persisted turn', async () => {
+    conversationService.getConversationDocument.mockResolvedValue({
+      isFirstMessage: false,
+      taggedAgentIds: [],
+    });
+    choiceInteractionService.canonicalizeMany.mockResolvedValue({
+      content: '[{"selectedChoices":[{"submitText":"Use France"}]},{"selectedChoices":[{"submitText":"Use Germany"}]}]',
+      taskSummary: 'France, Germany',
+      interactions: [
+        { type: 'choice', componentId: 'choice-1', questionId: 'region', sourceMessageId: new Types.ObjectId().toString(), selectionMode: 'single', selectedOptions: [{ optionId: 'france', label: 'France' }] },
+        { type: 'choice', componentId: 'choice-2', questionId: 'scope', sourceMessageId: new Types.ObjectId().toString(), selectionMode: 'single', selectedOptions: [{ optionId: 'germany', label: 'Germany' }] },
+      ],
+    });
+
+    await controller.sendMessage(user, conversationId, {
+      content: 'browser-controlled content',
+      interactions: [
+        { type: 'choice', componentId: 'choice-1', questionId: 'region', sourceMessageId: new Types.ObjectId().toString(), selectionMode: 'single', selectedOptions: [{ optionId: 'france', label: 'France' }] },
+        { type: 'choice', componentId: 'choice-2', questionId: 'scope', sourceMessageId: new Types.ObjectId().toString(), selectionMode: 'single', selectedOptions: [{ optionId: 'germany', label: 'Germany' }] },
+      ],
+    } as any);
+
+    expect(choiceInteractionService.canonicalizeMany).toHaveBeenCalledTimes(1);
+    expect(messageService.createUserMessage).toHaveBeenCalledWith(expect.objectContaining({
+      content: '[{"selectedChoices":[{"submitText":"Use France"}]},{"selectedChoices":[{"submitText":"Use Germany"}]}]',
+      interaction: undefined,
+      interactions: expect.any(Array),
+      replayContext: expect.objectContaining({
+        content: '[{"selectedChoices":[{"submitText":"Use France"}]},{"selectedChoices":[{"submitText":"Use Germany"}]}]',
+        taskSummary: 'France, Germany',
+      }),
+    }));
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(),
+      conversationId,
+      expect.any(String),
+      expect.objectContaining({
+        content: '[{"selectedChoices":[{"submitText":"Use France"}]},{"selectedChoices":[{"submitText":"Use Germany"}]}]',
+        taskSummary: 'France, Germany',
       }),
       'req-1',
       undefined,

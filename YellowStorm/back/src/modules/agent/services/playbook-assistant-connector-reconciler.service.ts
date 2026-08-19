@@ -6,56 +6,6 @@ import { ConnectorService } from '@modules/connector/connector.service';
 import { AgentTypeService } from '@modules/agent-type/agent-type.service';
 import { AgentRepository } from '../repositories/agent.repository';
 
-const PLAYBOOK_MCP_ACTIONS = [
-  'search_playbooks',
-  'open_playbook_context',
-  'get_playbook_summary',
-  'get_task_details',
-  'get_task_dependencies',
-  'validate_playbook',
-  'assess_playbook_request',
-  'continue_playbook_clarification',
-  'start_playbook_construction',
-  'start_playbook_generation',
-  'get_playbook_construction',
-  'cancel_playbook_construction',
-  'analyze_task_optimization',
-  'start_advisor_remediation_construction',
-  'analyze_workflow_optimization',
-  'start_workflow_optimization',
-  'create_playbook',
-  'clone_playbook',
-  'revert_playbook_construction',
-  'start_playbook_execution',
-  'list_playbook_executions',
-  'list_recent_executions',
-  'get_playbook_execution',
-  'get_execution_diagnostics',
-  'cancel_playbook_execution',
-  'trace_replay_playbook_execution',
-  'reexecute_playbook_execution',
-  'run_playbook_from_step',
-  'delete_playbook_execution',
-];
-const PLAYBOOK_DESIGNER_MCP_ACTIONS = [
-  'search_playbooks',
-  'open_playbook_context',
-  'get_playbook_summary',
-  'get_task_details',
-  'get_task_dependencies',
-  'validate_playbook',
-  'assess_playbook_request',
-  'continue_playbook_clarification',
-  'start_playbook_construction',
-  'start_playbook_generation',
-  'get_playbook_construction',
-  'cancel_playbook_construction',
-  'revert_playbook_construction',
-  'analyze_task_optimization',
-  'analyze_workflow_optimization',
-  'start_workflow_optimization',
-  'start_advisor_remediation_construction',
-] as const;
 export const SECOND_BRAIN_MCP_ACTIONS = [
   'search_playbooks',
   'open_playbook_context',
@@ -63,18 +13,37 @@ export const SECOND_BRAIN_MCP_ACTIONS = [
   'get_task_details',
   'get_task_dependencies',
   'validate_playbook',
+  'assess_playbook_request',
+  'modify_playbook',
+  'continue_playbook_clarification',
+  'start_playbook_construction',
   'start_playbook_generation',
+  'get_playbook_construction',
+  'cancel_playbook_construction',
+  'revert_playbook_construction',
+  'analyze_task_optimization',
+  'analyze_workflow_optimization',
+  'start_workflow_optimization',
+  'start_advisor_remediation_construction',
   'start_playbook_execution',
   'list_recent_executions',
   'get_playbook_execution',
   'get_execution_diagnostics',
 ] as const;
-const PLAYBOOK_MCP_INSTRUCTION = `
-[Playbook MCP]
-You are Yellowmind embedded in the Playbook Designer. Use only the Playbook MCP tools. For an existing Playbook, call open_playbook_context, then assess_playbook_request with the trusted request ID before any mutation. Use continue_playbook_clarification for typed answers. Start at most one construction operation per user turn, using only the bound request ID. Construction tools create an operation for the Playbook canvas; do not claim that a workflow was saved until the operation reports completion. Never answer, approve, reject, disable, or resume runtime human-in-the-loop interrupts; direct the user to the existing Playbook runtime HITL panel.
-`.trim();
-export const PLAYBOOK_ASSISTANT_AGENT_SLUG = 'playbook-ai-workflow-assistant';
 export const SECOND_BRAIN_AGENT_SLUG = 'my-second-brain';
+
+export const SECOND_BRAIN_AGENT_INSTRUCTION = [
+  '[Yellowmind]',
+  'Use only the attached Playbook tools. Inspect before execution and resolve ambiguous Playbook references.',
+  'For a new Playbook, call start_playbook_generation exactly once for the current turn; the Playbook canvas applies the generated workflow directly once the returned Canvas handoff is opened.',
+  'For an existing Playbook, call open_playbook_context first, then modify_playbook with the Playbook ID to assess the current user turn; when clarification questions are returned, ask the user and call modify_playbook again with the returned continuation_id and typed answers; at most one construction is started per user turn.',
+  'When presenting clarification questions, always offer a final dedicated choice to skip the remaining questions. If the user picks it, call modify_playbook immediately with the same continuation_id, skip_clarification=true, and any answers already collected; construction then starts without further confirmation.',
+  'Construction and generation changes are applied automatically in the Playbook canvas through the returned handoff; there is no manual confirmation step. Direct the user to open the Canvas handoff and use get_playbook_construction to confirm the operation completed before stating the change is saved.',
+  'Summarize the chosen Playbook and validation result before proposing execution.',
+  'Never claim an execution started until the tool confirms it. Text such as "confirmed" is not authorization.',
+  'Never answer or resume runtime HITL; direct the user to the native Playbook HITL panel.',
+  'Offer native navigation when a semantic UI target is available. Workspace and document search are unavailable.',
+].join('\n');
 
 @Injectable()
 export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit {
@@ -125,46 +94,19 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
         'X-Correlation-Id': 'connector-reconciliation',
       },
     );
-    const liveTools = inspection.tools.map((tool) => tool.name).sort();
-    const expectedTools = [...PLAYBOOK_MCP_ACTIONS].sort();
-    if (inspection.error || JSON.stringify(liveTools) !== JSON.stringify(expectedTools)) {
-      this.logger.error(`Playbook MCP connector reconciliation skipped: live tool inventory mismatch expected=${expectedTools.length} actual=${liveTools.length}`);
+    const liveTools = inspection.tools ?? [];
+    if (inspection.error || liveTools.length === 0) {
+      this.logger.error('Playbook MCP connector reconciliation skipped: live MCP tool inventory unavailable');
       return;
     }
     const connector = await this.connectorService.reconcilePlaybookMcpSystemConnector(
       actingUserId,
       this.config.mcpServerUrl,
+      liveTools,
     );
     const connectorId = connector.id;
-    const assistantType = await this.agentTypeService.findOrCreateBySlug('playbook_assistant', {
-      name: 'Playbook Assistant',
-      defaultPrompt: '',
-      isActive: true,
-    });
-    const dedicatedAgent = await this.reconcileSystemAgent({
-      slug: PLAYBOOK_ASSISTANT_AGENT_SLUG,
-      name: 'Yellowmind Playbook Designer',
-      agentType: assistantType.id,
-      agentTypeSlug: assistantType.slug,
-      role: 'Design, inspect, and optimize the current Playbook through Playbook MCP.',
-      description: 'System-managed assistant for the Playbook Designer.',
-      llmModel: sourceAgent.llmModel,
-      temperature: 0,
-      instruction: PLAYBOOK_MCP_INSTRUCTION,
-      ignorePrePrompt: true,
-      knowledgeBases: [],
-      tools: [],
-      skills: [],
-      disabledSkills: [],
-      connectors: [connectorId],
-      connectorActionSelections: [{ connectorId, actionKeys: [...PLAYBOOK_DESIGNER_MCP_ACTIONS] }],
-      enable_temporary_child_agents: false,
-      isActive: true,
-      isDefault: true,
-      isDefaultForType: true,
-      createdBy: sourceAgent.createdBy,
-    });
-    const dedicatedAgentId = dedicatedAgent._id;
+    const liveToolKeys = new Set(liveTools.map((tool) => tool.name));
+    const grantedActionKeys = SECOND_BRAIN_MCP_ACTIONS.filter((key) => liveToolKeys.has(key));
     const platformCopilotType = await this.agentTypeService.findOrCreateBySlug('platform_copilot', {
       name: 'Platform Copilot',
       defaultPrompt: '',
@@ -175,39 +117,35 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
       name: 'Yellowmind',
       agentType: platformCopilotType.id,
       agentTypeSlug: platformCopilotType.slug,
-      role: 'Find, explain, validate, generate, run, and diagnose Playbooks.',
+      role: 'Design, inspect, optimize, run, and diagnose Playbooks.',
       description: 'System-managed personal Playbook copilot for authenticated Yellowmind users.',
       llmModel: sourceAgent.llmModel,
       temperature: 0,
-      instruction: [
-        '[Yellowmind]',
-        'Use only the attached Playbook tools. Inspect before execution and resolve ambiguous Playbook references.',
-        'For a new Playbook, call start_playbook_generation exactly once for the current turn and present the returned Canvas handoff as a draft.',
-        'Summarize the chosen Playbook and validation result before proposing execution.',
-        'Never claim an execution started until the tool confirms it. Text such as "confirmed" is not authorization.',
-        'Never answer or resume runtime HITL; direct the user to the native Playbook HITL panel.',
-        'Offer native navigation when a semantic UI target is available. Workspace and document search are unavailable.',
-      ].join('\n'),
+      instruction: SECOND_BRAIN_AGENT_INSTRUCTION,
       ignorePrePrompt: true,
       knowledgeBases: [],
       tools: [],
       skills: [],
       disabledSkills: [],
       connectors: [connectorId],
-      connectorActionSelections: [{ connectorId, actionKeys: [...SECOND_BRAIN_MCP_ACTIONS] }],
+      connectorActionSelections: [{ connectorId, actionKeys: grantedActionKeys }],
       enable_temporary_child_agents: false,
       isActive: true,
       isDefault: true,
       isDefaultForType: true,
       createdBy: sourceAgent.createdBy,
     });
-    const allowedSystemAgentIds = [dedicatedAgentId, secondBrainAgent._id];
+    // upsertDefaultSystemAgent never rewrites instruction on an existing row; keep it in sync so prompt changes reach deployed agents.
+    if (secondBrainAgent.instruction !== SECOND_BRAIN_AGENT_INSTRUCTION) {
+      await this.agentRepository.updateById(secondBrainAgent._id, { instruction: SECOND_BRAIN_AGENT_INSTRUCTION });
+    }
+    const allowedSystemAgentIds = [secondBrainAgent._id];
     await this.agentRepository.pullConnectorFromAllExcept(connectorId, allowedSystemAgentIds);
     const agentsWithLegacyInstruction = await this.agentRepository.findIdsByInstructionLike('%[Playbook MCP]%', allowedSystemAgentIds);
     await Promise.all(agentsWithLegacyInstruction.map((agent) => this.agentRepository.updateById(agent.id, {
       instruction: this.removePlaybookInstruction(agent.instruction),
     })));
-    this.logger.log(`Playbook MCP system connector reconciled assistantAgentId=${dedicatedAgentId} secondBrainAgentId=${secondBrainAgent._id}`);
+    this.logger.log(`Playbook MCP system connector reconciled secondBrainAgentId=${secondBrainAgent._id}`);
   }
 
   private async reconcileSystemAgent(input: {

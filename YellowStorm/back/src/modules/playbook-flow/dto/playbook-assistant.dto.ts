@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsIn, IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { RequestPlaybookFlowIntentDto } from './request-playbook-flow-intent.dto';
 import { PreviewAdvisorRemediationItemDto } from './preview-advisor-remediation.dto';
 
@@ -225,6 +225,11 @@ export class ContinuePlaybookClarificationDto {
   @ValidateNested({ each: true })
   @Type(() => PlaybookClarificationAnswerDto)
   answers!: PlaybookClarificationAnswerDto[];
+
+  @ApiPropertyOptional({ description: 'Skip the remaining clarification questions and build with the collected answers only.' })
+  @IsOptional()
+  @IsBoolean()
+  skip?: boolean;
 }
 
 export class StartBoundPlaybookConstructionDto {
@@ -263,4 +268,25 @@ export class StartPlaybookGenerationDto {
   @IsString()
   @MaxLength(100)
   name?: string;
+}
+
+export class RunCurrentTurnPlaybookModificationDto {
+  @ApiPropertyOptional({ maxLength: 200 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  continuationId?: string;
+
+  @ApiPropertyOptional({ type: [PlaybookClarificationAnswerDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => PlaybookClarificationAnswerDto)
+  answers?: PlaybookClarificationAnswerDto[];
+
+  @ApiPropertyOptional({ description: 'Skip the remaining clarification questions and build with the collected answers only.' })
+  @IsOptional()
+  @IsBoolean()
+  skip?: boolean;
 }

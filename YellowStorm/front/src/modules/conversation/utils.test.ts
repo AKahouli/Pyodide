@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, mapComponentsToContentParts, mapConversationComponentsToContentParts, messageToChat, normalizeChoiceComponentData } from './utils';
+import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, getUserMessageDisplayText, mapComponentsToContentParts, mapConversationComponentsToContentParts, messageToChat, normalizeChoiceComponentData } from './utils';
 
 describe('conversation utils', () => {
   it('formats timing values', () => {
@@ -28,6 +28,37 @@ describe('conversation utils', () => {
     });
 
     expect(message.content).toBe('Profitability');
+  });
+
+  it('joins display texts for multi-interaction user messages instead of raw JSON content', () => {
+    const text = getUserMessageDisplayText({
+      id: 'message-1',
+      conversationId: 'conversation-1',
+      conversationType: 'user',
+      content: '[{\n  "question": { "prompt": "Pick a region" },\n  "selectedChoices": [ { "optionId": "germany", "submitText": "Use Germany" } ]\n}]',
+      interactions: [
+        { type: 'choice', componentId: 'choice-1', questionId: 'region', selectionMode: 'single', selectedOptions: [{ optionId: 'germany', label: 'Germany' }], displayText: 'Germany' },
+        { type: 'choice', componentId: 'choice-2', questionId: 'scope', selectionMode: 'single', selectedOptions: [{ optionId: 'sales', label: 'Sales' }], displayText: 'Sales' },
+      ],
+      createdAt: '2026-07-22T00:00:00.000Z',
+    });
+
+    expect(text).toBe('Germany, Sales');
+  });
+
+  it('falls back to raw content when multi-interaction display texts are missing', () => {
+    const text = getUserMessageDisplayText({
+      id: 'message-1',
+      conversationId: 'conversation-1',
+      conversationType: 'user',
+      content: 'raw content',
+      interactions: [
+        { type: 'choice', componentId: 'choice-1', questionId: 'region', selectionMode: 'single', selectedOptions: [{ optionId: 'germany', label: 'Germany' }] },
+      ],
+      createdAt: '2026-07-22T00:00:00.000Z',
+    });
+
+    expect(text).toBe('raw content');
   });
 
   it('maps components and attaches citation to parent text', () => {

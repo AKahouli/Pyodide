@@ -30,6 +30,7 @@ import type { ChartConfig } from '@/components/ui/chart';
 import type { ChartComponentData } from '@/modules/conversation/types';
 import type { ChoiceComponentData, ChoiceInteractionMetadata } from '@/modules/conversation/types';
 import { ChoicePartRenderer, type ChoiceComponentAction } from './choice/ChoicePartRenderer';
+import { ChoiceTabsQuestions } from './choice/ChoiceTabsQuestions';
 import { useModuleTranslation } from '@/modules/localization';
 import { isViewableFilename } from '@/modules/file-viewer/renderers';
 import { Separator } from '../ui/separator';
@@ -204,6 +205,7 @@ export type AIMessageContentProps = HTMLAttributes<HTMLDivElement> & {
   /** Whether the message is currently streaming. Affects default open state of collapsible components. */
   isStreaming?: boolean;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
+  onSubmitQuestions?: (actions: ChoiceComponentAction[]) => Promise<void>;
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
   taskDisplay?: 'raw' | 'activity';
   showTaskDiagnostics?: boolean;
@@ -226,7 +228,7 @@ function redactDiagnosticText(value: string): string {
 /**
  * AIMessageContent - Renders structured AI message content using ai-sdk components
  */
-export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', showTaskDiagnostics = true, ...props }: AIMessageContentProps) => {
+export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, onSubmitQuestions, choiceInteractions, taskDisplay = 'raw', showTaskDiagnostics = true, ...props }: AIMessageContentProps) => {
   const choicePrompts = new Set(parts.filter((part): part is ChoicePart => part.type === 'choice' && part.status === 'ready').map((part) => part.prompt.trim()).filter(Boolean));
   const hasTask = parts.some((part) => part.type === 'task');
   const taskActivity: TaskActivityStep[] = [];
@@ -235,11 +237,28 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, onComp
     return !(taskDisplay === 'activity' && hasTask && (part.type === 'chainOfThought' || part.type === 'toolInfo'));
   });
 
+  const pendingChoiceParts = visibleParts.filter(
+    (part): part is ChoicePart => part.type === 'choice' && part.status === 'ready' && !choiceInteractions?.has(part.componentId),
+  );
+  const renderPendingAsTabs = onSubmitQuestions && pendingChoiceParts.length > 1;
+  const groupedChoiceIds = renderPendingAsTabs ? new Set(pendingChoiceParts.map((part) => part.componentId)) : new Set<string>();
+
   return (
     <div className={cn('space-y-4', className)} {...props}>
-      {visibleParts.map((part, index) => (
-        <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} />
-      ))}
+      {renderPendingAsTabs && (
+        <ChoiceTabsQuestions
+          questions={pendingChoiceParts.map((part) => ({ componentId: part.componentId, choice: part }))}
+          onSubmitAll={onSubmitQuestions}
+          submittedInteractions={choiceInteractions}
+          externallyDisabled={isStreaming}
+        />
+      )}
+      {visibleParts.map((part, index) => {
+        if (part.type === 'choice' && groupedChoiceIds.has(part.componentId)) return null;
+        return (
+          <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} />
+        );
+      })}
     </div>
   );
 };

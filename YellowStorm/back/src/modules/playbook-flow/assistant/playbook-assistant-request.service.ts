@@ -159,6 +159,83 @@ export class PlaybookAssistantRequestService {
     }
   }
 
+  async claimCurrentTurnModification(input: {
+    actor: { ownerId: string; tenantId: string; agentId: string; conversationId: string; correlationId: string };
+    playbookId: string;
+    expectedDefinitionRevision: number;
+    text: string;
+  }): Promise<PlaybookAssistantRequest> {
+    const text = input.text.trim();
+    const requestId = `platform-modification:${createHash('sha256')
+      .update(JSON.stringify(this.canonicalize({ ...input.actor, playbookId: input.playbookId })))
+      .digest('hex')}`;
+    const messageHash = this.createRequestFingerprint({
+      ...input.actor,
+      operationKind: 'existing_construction',
+      playbookId: input.playbookId,
+      expectedDefinitionRevision: input.expectedDefinitionRevision,
+      text,
+    });
+    try {
+      const created = await this.requestModel.create({
+        requestId,
+        ...input.actor,
+        operationKind: 'existing_construction',
+        playbookId: input.playbookId,
+        expectedDefinitionRevision: input.expectedDefinitionRevision,
+        contextId: randomUUID(),
+        messageHash,
+        originalText: text,
+        selectedTaskId: null,
+        executionId: null,
+        attachmentIds: [],
+        answers: [],
+        status: 'processing',
+        expiresAt: new Date(Date.now() + REQUEST_RETENTION_MS),
+      });
+      return created.toObject();
+    } catch (error) {
+      if ((error as { code?: number }).code !== 11000) throw error;
+      const existing = await this.requestModel.findOne({ requestId }).lean().exec();
+      if (!existing || existing.expiresAt.getTime() <= Date.now()) {
+        throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant request not found or expired');
+      }
+      if (existing.messageHash !== messageHash
+        || existing.ownerId !== input.actor.ownerId
+        || existing.tenantId !== input.actor.tenantId
+        || existing.agentId !== input.actor.agentId
+        || existing.conversationId !== input.actor.conversationId
+        || existing.correlationId !== input.actor.correlationId
+        || existing.playbookId !== input.playbookId) {
+        throw new ConflictException(ErrorCode.IDEMPOTENCY_MISMATCH, 'Assistant request identity was reused with different content');
+      }
+      return existing;
+    }
+  }
+
+  async rebindCorrelationForContinuation(input: {
+    continuationId: string;
+    playbookId?: string | null;
+    actor: { ownerId: string; tenantId: string; agentId: string; conversationId: string; correlationId: string };
+  }): Promise<void> {
+    const result = await this.requestModel.updateOne(
+      {
+        continuationId: input.continuationId,
+        ...(input.playbookId ? { playbookId: input.playbookId } : {}),
+        ownerId: input.actor.ownerId,
+        tenantId: input.actor.tenantId,
+        agentId: input.actor.agentId,
+        conversationId: input.actor.conversationId,
+        status: 'awaiting_clarification',
+        expiresAt: { $gt: new Date() },
+      },
+      { $set: { correlationId: input.actor.correlationId } },
+    ).exec();
+    if (result.matchedCount === 0) {
+      throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant clarification not found or expired');
+    }
+  }
+
   async claimAssessment(requestId: string): Promise<number> {
     const claimed = await this.requestModel.findOneAndUpdate(
       { requestId, status: 'processing' },

@@ -244,6 +244,7 @@
   "mode.run": "Ex\u00e9cution",
   "mode.monitor": "Suivi",
   "toolbar.designer": "Designer",
+  "toolbar.yellowmind": "Yellowmind",
   "toolbar.noTemplatesAvailable": "Aucun modèle disponible",
   "toolbar.removeAllTasks": "Supprimer toutes les étapes",
   "toolbar.confirmRemoveAllTitle": "Supprimer toutes les étapes ?",

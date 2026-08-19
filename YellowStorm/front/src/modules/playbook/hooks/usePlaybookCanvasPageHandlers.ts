@@ -4,6 +4,7 @@ import type { Edge, Node } from '@xyflow/react';
 import { autoLayoutTasks } from '../utils/auto-layout';
 import { readPlaybookDefinitionFile, PlaybookImportError } from '../utils/playbookImport';
 import { tasksToNodes } from '../hooks/helpers/node-serializer';
+import { useSecondBrainPanelStore } from '../../second-brain/secondBrainPanelStore';
 import type {
   DataBinding,
   Playbook,
@@ -22,6 +23,7 @@ export interface UsePlaybookCanvasPageHandlersParams {
   advisorAutopilotEnabled: boolean;
   pageMode: PlaybookPageMode;
   designerOpen: boolean;
+  waitingForHumanInput: boolean;
   confirmRemoveAllMessage: string;
   workspaceRequiredError: string;
   importReadErrorMessage: string;
@@ -85,8 +87,8 @@ export function usePlaybookCanvasPageHandlers({
   nodeReflectionEnabled,
   advisorScoringMode,
   advisorAutopilotEnabled,
-  pageMode,
   designerOpen,
+  waitingForHumanInput,
   confirmRemoveAllMessage,
   workspaceRequiredError,
   importReadErrorMessage,
@@ -103,7 +105,6 @@ export function usePlaybookCanvasPageHandlers({
   setExecutionPanelOpen,
   setExecutionPanelCollapsed,
   setDesignerOpen,
-  setEditorOpen,
   setPageMode,
   setCopilotMode,
   importFileInputRef,
@@ -227,35 +228,31 @@ export function usePlaybookCanvasPageHandlers({
   }, [confirmRemoveAllMessage, clearAllTasks, playbook]);
 
   const handleToggleCopilot = useCallback(() => {
-    const nextOpen = !designerOpen;
-    if (nextOpen) {
-      setCopilotMode('design');
-      if (pageMode === 'run') {
-        setPageMode('design');
-      }
-      setExecutionPanelCollapsed(true);
-      setExecutionPanelOpen(false);
-    }
-    setDesignerOpen(nextOpen);
-    if (nextOpen) {
-      setEditorOpen(false);
-    }
-  }, [designerOpen, pageMode, setCopilotMode, setDesignerOpen, setEditorOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setPageMode]);
-
-  const handlePageModeChange = useCallback((mode: PlaybookPageMode) => {
-    setPageMode(mode);
-    if (mode === 'design') {
-      setCopilotMode('design');
+    // Runtime HITL keeps its native surface: when an interrupt is pending, open the decision panel.
+    if (waitingForHumanInput) {
+      setCopilotMode('interrupt');
       setDesignerOpen(true);
       setExecutionPanelCollapsed(true);
       setExecutionPanelOpen(false);
       return;
     }
+    // Design-time assistance moved to the global Yellowmind assistant: the toolbar button opens
+    // the Yellowmind panel (playbook context is carried by the route) instead of the local designer.
+    if (designerOpen) setDesignerOpen(false);
+    useSecondBrainPanelStore.getState().openPanel();
+  }, [designerOpen, setCopilotMode, setDesignerOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, waitingForHumanInput]);
 
-    setDesignerOpen(false);
+  const handlePageModeChange = useCallback((mode: PlaybookPageMode) => {
+    setPageMode(mode);
+    if (mode === 'design') {
+      setExecutionPanelCollapsed(true);
+      setExecutionPanelOpen(false);
+      return;
+    }
+
     setExecutionPanelCollapsed(false);
     setExecutionPanelOpen(true);
-  }, [setCopilotMode, setDesignerOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setPageMode]);
+  }, [setExecutionPanelCollapsed, setExecutionPanelOpen, setPageMode]);
 
   const handleNameBlur = useCallback(() => {
     setEditingName(false);

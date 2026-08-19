@@ -87,7 +87,14 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
   const handleComponentAction = useCallback(async (action: ChoiceComponentAction) => {
     await sendMessage(conversationId, { content: action.submitText, interaction: { ...action.interaction, sourceMessageId: message.id } });
   }, [conversationId, message.id, sendMessage]);
+  const handleSubmitQuestions = useCallback(async (actions: ChoiceComponentAction[]) => {
+    await sendMessage(conversationId, {
+      content: actions.map((action) => action.submitText).join(' '),
+      interactions: actions.map((action) => ({ ...action.interaction, sourceMessageId: message.id })),
+    });
+  }, [conversationId, message.id, sendMessage]);
   chatMessage.onComponentAction = handleComponentAction;
+  chatMessage.onSubmitQuestions = handleSubmitQuestions;
   chatMessage.choiceInteractions = choiceInteractions;
 
   // Branch nav for AI messages
@@ -225,6 +232,13 @@ export function ConversationContent() {
       onComponentAction: async (action: ChoiceComponentAction) => {
         if (!currentConversationId) throw new Error('No active conversation');
         await sendMessage(currentConversationId, { content: action.submitText, interaction: { ...action.interaction, ...(streamingMessageId ? { sourceMessageId: streamingMessageId } : {}) } });
+      },
+      onSubmitQuestions: async (actions: ChoiceComponentAction[]) => {
+        if (!currentConversationId) throw new Error('No active conversation');
+        await sendMessage(currentConversationId, {
+          content: actions.map((action) => action.submitText).join(' '),
+          interactions: actions.map((action) => ({ ...action.interaction, ...(streamingMessageId ? { sourceMessageId: streamingMessageId } : {}) })),
+        });
       },
     } as const;
   }, [isActiveStream, streamingComponents, currentConversationId, streamingMessageId, sendMessage]);

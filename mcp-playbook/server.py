@@ -1,3 +1,4 @@
+import json
 import os
 from collections.abc import Callable
 from typing import Any, Literal
@@ -58,6 +59,21 @@ async def mascot_call(operation) -> PlaybookMcpResultV1:
 
 def path_id(value: str) -> str:
     return quote(value, safe="")
+
+
+def coerce_answers(value: list[dict[str, Any]] | str | None) -> list[dict[str, Any]]:
+    # Models routinely serialize list arguments as a JSON string; accept it at the tool boundary.
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("answers must be a list of objects or a JSON-encoded list") from exc
+    if not isinstance(parsed, list) or not all(isinstance(item, dict) for item in parsed):
+        raise ValueError("answers must be a JSON-encoded list of objects")
+    return parsed
 
 
 @mcp.custom_route("/health/live", methods=["GET"])
@@ -162,13 +178,14 @@ async def assess_playbook_request(request_id: str) -> PlaybookMcpResultV1:
 @mcp.tool()
 async def continue_playbook_clarification(
     continuation_id: str,
-    answers: list[dict[str, Any]],
+    answers: list[dict[str, Any]] | str,
+    skip_clarification: bool = False,
 ) -> PlaybookMcpResultV1:
     """Submit typed answers to the active trusted clarification continuation."""
     return await call(backend().post(
         f"/api/v1/internal/playbook-assistant/clarifications/{path_id(continuation_id)}",
         require_acting_user_id(),
-        {"answers": answers},
+        {"answers": coerce_answers(answers), "skip": skip_clarification},
     ))
 
 
@@ -177,7 +194,7 @@ async def start_playbook_construction(
     request_id: str,
     context_id: str | None = None,
 ) -> PlaybookMcpResultV1:
-    """Start incremental workflow construction. This returns a preview operation and never applies it."""
+    """Start incremental workflow construction. The Playbook canvas applies the operation automatically once the returned handoff is opened."""
     payload = {"contextId": context_id}
     def add_canvas_handoff(result: dict[str, Any]) -> dict[str, Any]:
         operation_id = result.get("operationId")
@@ -200,7 +217,7 @@ async def start_playbook_construction(
 async def start_playbook_generation(
     name: str | None = None,
 ) -> PlaybookMcpResultV1:
-    """Start one idempotent operation-owned draft and hand it off to the Playbook canvas."""
+    """Start one idempotent operation-owned draft; the Playbook canvas applies it automatically once the returned handoff is opened."""
     def add_canvas_handoff(result: dict[str, Any]) -> dict[str, Any]:
         operation_id = result.get("operationId")
         playbook_id = result.get("playbookId")
@@ -218,6 +235,45 @@ async def start_playbook_generation(
             "/api/v1/internal/playbook-assistant/generation",
             require_acting_user_id(),
             {"name": name},
+        ),
+        add_canvas_handoff,
+    )
+
+
+@mcp.tool()
+async def modify_playbook(
+    playbook_id: str,
+    continuation_id: str | None = None,
+    answers: list[dict[str, Any]] | str | None = None,
+    skip_clarification: bool = False,
+) -> PlaybookMcpResultV1:
+    """Modify an existing Playbook from the current trusted conversation turn.
+
+    First call (playbook_id only): assesses the user request and returns typed clarification questions
+    (status needs_clarification with a continuation_id) or a preview construction (status ready).
+    Follow-up call: pass continuation_id plus answers to submit typed clarifications. Each answer MUST be
+    an object {"questionId": string, "choice": string} or {"questionId": string, "text": string} using the
+    question ids and choices returned by the assessment. When the user asks to skip the remaining
+    questions, pass skip_clarification=true together with any answers already collected; the modification
+    then starts immediately using sensible defaults for the skipped questions. Never applies changes
+    directly; committed changes happen only through the returned Playbook canvas operation.
+    """
+    payload = {"continuationId": continuation_id, "answers": coerce_answers(answers), "skip": skip_clarification}
+    def add_canvas_handoff(result: dict[str, Any]) -> dict[str, Any]:
+        operation = result.get("operation")
+        if isinstance(operation, dict) and isinstance(operation.get("operationId"), str):
+            result["uiTarget"] = {
+                "surface": "playbook.editor.assistant",
+                "params": {"playbookId": operation.get("playbookId") or playbook_id, "operationId": operation["operationId"]},
+            }
+            result["eventStreamOwner"] = "playbook_canvas"
+        return result
+
+    return await call(
+        backend().post(
+            f"/api/v1/internal/playbook-assistant/playbooks/{path_id(playbook_id)}/current-turn/modification",
+            require_acting_user_id(),
+            payload,
         ),
         add_canvas_handoff,
     )

@@ -12,12 +12,18 @@ import { ChatConversation, ChatConversationContent, ChatScrollButton } from '@/c
 import { handleApiError } from '@/lib/api-error';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePlaybookStore, usePlaybookUiStore } from '@/modules/playbook';
+import { buildChoiceInteractionIndex } from '@/modules/conversation/choice-interactions';
+import { getUserMessageDisplayText, normalizeChoiceComponentData } from '@/modules/conversation/utils';
+import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
+import { ChoicePartRenderer } from '@/components/ai-elements/choice/ChoicePartRenderer';
+import { ChoiceTabsQuestions } from '@/components/ai-elements/choice/ChoiceTabsQuestions';
 import type { Message as ConversationMessage, MessageComponent } from '@/modules/conversation/types';
 import { dedupeSecondBrainUiTargets, executeSecondBrainUiTarget, findUiTargets, getSecondBrainUiTargetIdentity } from './action-bus';
 import type { SecondBrainPageContext, SecondBrainUiTarget } from './types';
 import { SecondBrainActivity } from './SecondBrainActivity';
 import { SecondBrainHistoryDialog } from './SecondBrainHistoryDialog';
 import { useSecondBrainConversation } from './useSecondBrainConversation';
+import { useSecondBrainPanelStore } from './secondBrainPanelStore';
 
 type Message = { id: string; role: 'user' | 'assistant'; text: string; components: MessageComponent[]; isStreaming: boolean; targets?: SecondBrainUiTarget[] };
 
@@ -44,13 +50,15 @@ export function SecondBrainMascot() {
   const currentExecution = usePlaybookStore((state) => state.currentExecution);
   const executionHistoryByPlaybook = usePlaybookStore((state) => state.executionHistoryByPlaybook);
   const legacyDesignerOpen = usePlaybookStore((state) => state.designerOpen);
-  const setDesignerOpen = usePlaybookStore((state) => state.setDesignerOpen);
   const selectedTaskId = usePlaybookUiStore((state) => state.selectedStepId);
   const designerOpen = usePlaybookUiStore((state) => state.designerOpen);
-  const setCopilotMode = usePlaybookUiStore((state) => state.setCopilotMode);
   const pageMode = usePlaybookUiStore((state) => state.pageMode);
   const useDrawer = useCompactAssistantLayout();
-  const [open, setOpen] = React.useState(false);
+  const panelOpen = useSecondBrainPanelStore((s) => s.open);
+  const openPanel = useSecondBrainPanelStore((s) => s.openPanel);
+  const closePanel = useSecondBrainPanelStore((s) => s.closePanel);
+  const consumePendingPrompt = useSecondBrainPanelStore((s) => s.consumePendingPrompt);
+  const [open, setOpen] = React.useState(panelOpen);
   const [input, setInput] = React.useState('');
   const [historyOpen, setHistoryOpen] = React.useState(false);
   const [scrollRequest, setScrollRequest] = React.useState(0);
@@ -59,24 +67,34 @@ export function SecondBrainMascot() {
   const previousDesignerOpenRef = React.useRef(designerOpen);
 
   React.useEffect(() => {
+    setOpen(panelOpen);
+  }, [panelOpen]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const pendingPrompt = consumePendingPrompt();
+    if (pendingPrompt) setInput(pendingPrompt);
+  }, [consumePendingPrompt, open]);
+
+  React.useEffect(() => {
     if (open || !hasOpenedRef.current) return;
     const frame = window.requestAnimationFrame(() => launcherRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [open]);
 
   React.useEffect(() => {
-    if (designerOpen && !previousDesignerOpenRef.current && open) setOpen(false);
+    if (designerOpen && !previousDesignerOpenRef.current && open) closePanel();
     previousDesignerOpenRef.current = designerOpen;
-  }, [designerOpen, open]);
+  }, [designerOpen, open, closePanel]);
 
   React.useEffect(() => {
     if (!open || useDrawer) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape') closePanel();
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [open, useDrawer]);
+  }, [open, useDrawer, closePanel]);
 
   const pageContext = React.useMemo<SecondBrainPageContext>(() => {
     const match = location.pathname.match(/^\/playbooks\/([^/]+)(?:\/executions\/([^/]+))?/);
@@ -96,7 +114,7 @@ export function SecondBrainMascot() {
   }, [isDirty, language, location.pathname, location.search, selectedTaskId]);
 
   const routePlaybookId = pageContext.entity?.type === 'playbook' ? pageContext.entity.id : undefined;
-  const secondBrain = useSecondBrainConversation(open && !routePlaybookId, pageContext);
+  const secondBrain = useSecondBrainConversation(open, pageContext);
   React.useEffect(() => {
     if (secondBrain.error) handleApiError(secondBrain.error);
   }, [secondBrain.error]);
@@ -132,6 +150,30 @@ export function SecondBrainMascot() {
     if (await secondBrain.send(message)) setInput('');
   };
 
+  const choiceInteractions = React.useMemo(
+    () => buildChoiceInteractionIndex(secondBrain.messages),
+    [secondBrain.messages],
+  );
+
+  const handleChoiceAction = React.useCallback(async (sourceMessageId: string, action: ChoiceComponentAction) => {
+    if (!secondBrain.conversationId) throw new Error('No active conversation');
+    const ok = await secondBrain.send(action.submitText, {
+      ...action.interaction,
+      sourceMessageId,
+    });
+    if (!ok) throw new Error('Failed to submit the answer');
+  }, [secondBrain.conversationId, secondBrain.send]);
+
+  const handleSubmitQuestions = React.useCallback((sourceMessageId: string) => async (actions: ChoiceComponentAction[]) => {
+    if (!secondBrain.conversationId) throw new Error('No active conversation');
+    const ok = await secondBrain.send(
+      actions.map((action) => action.submitText).join(' '),
+      undefined,
+      actions.map((action) => ({ ...action.interaction, sourceMessageId })),
+    );
+    if (!ok) throw new Error('Failed to submit the answers');
+  }, [secondBrain.conversationId, secondBrain.send]);
+
   const contextPlaybook = currentPlaybook?.id === routePlaybookId ? currentPlaybook : null;
   const showMascot = shouldShowSecondBrainMascot(
     Boolean(routePlaybookId),
@@ -144,6 +186,20 @@ export function SecondBrainMascot() {
   );
   const selectedTask = contextPlaybook?.tasks.find((task) => task.id === selectedTaskId)
     ?? contextPlaybook?.nodes?.find((node) => node.id === selectedTaskId);
+
+  const autoConsumedHandoffsRef = React.useRef<Set<string>>(new Set());
+  React.useEffect(() => {
+    if (!open || !routePlaybookId) return;
+    for (const target of messages.flatMap((message) => message.targets ?? [])) {
+      if (!target.params.operationId) continue;
+      if (!shouldAutoConsumeCanvasHandoff(target, routePlaybookId, Boolean(pageContext.hasUnsavedChanges))) continue;
+      const identity = getSecondBrainUiTargetIdentity(target);
+      if (autoConsumedHandoffsRef.current.has(identity)) continue;
+      autoConsumedHandoffsRef.current.add(identity);
+      // The impacted canvas is already open: consume the operation in place instead of showing a button.
+      executeSecondBrainUiTarget({ target, pageContext, navigate, confirmNavigation: () => window.confirm(t('navigation.unsaved')) });
+    }
+  }, [messages, open, pageContext, routePlaybookId, navigate, t]);
 
   const renderAction = (target: SecondBrainUiTarget) => {
     const presentation = getTargetPresentation(target.surface);
@@ -183,7 +239,7 @@ export function SecondBrainMascot() {
             <Button type='button' variant='ghost' size='icon' className='size-9' title={t('history.open')} aria-label={t('history.open')} disabled={loading} onClick={() => { setHistoryOpen(true); void secondBrain.refreshHistory(); }}>
               <History className='size-4' />
             </Button>
-            {!useDrawer && <Button type='button' variant='ghost' size='icon' className='size-9' aria-label={t('close')} onClick={() => setOpen(false)}>
+            {!useDrawer && <Button type='button' variant='ghost' size='icon' className='size-9' aria-label={t('close')} onClick={closePanel}>
               <X className='size-4' />
             </Button>}
           </div>
@@ -220,15 +276,51 @@ export function SecondBrainMascot() {
                   <>
                     <SecondBrainActivity components={message.components} isStreaming={message.isStreaming} />
                     {message.text && <Streamdown className='min-w-0 w-full max-w-full overflow-hidden break-words [&_code]:[overflow-wrap:anywhere] [&_ol]:my-2 [&_ol]:pl-5 [&_p]:my-2 [&_p]:[overflow-wrap:anywhere] [&_pre]:w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre_code]:break-normal [&_pre_code]:[overflow-wrap:normal] [&_table]:my-3 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:whitespace-nowrap [&_ul]:my-2 [&_ul]:pl-5'>{message.text}</Streamdown>}
+                    {(() => {
+                      const pendingChoices = message.components
+                        .filter((component) => component.type === 'choice')
+                        .map((component) => ({ component, choice: normalizeChoiceComponentData(component.data) }))
+                        .filter((entry): entry is { component: MessageComponent & { type: 'choice' }; choice: NonNullable<ReturnType<typeof normalizeChoiceComponentData>> } => entry.choice !== null);
+                      const answered = (component: MessageComponent) => component.id ? Boolean(choiceInteractions.get(component.id)) : false;
+                      const pendingUnanswered = pendingChoices.filter((entry) => !answered(entry.component));
+                      if (pendingUnanswered.length > 1) {
+                        return (
+                          <div className='mt-3'>
+                            <ChoiceTabsQuestions
+                              questions={pendingUnanswered.map(({ component, choice }) => ({ componentId: component.id || '', choice }))}
+                              onSubmitAll={handleSubmitQuestions(message.id)}
+                              submittedInteractions={choiceInteractions}
+                              externallyDisabled={message.isStreaming}
+                            />
+                          </div>
+                        );
+                      }
+                      return pendingChoices.map(({ component, choice }) => (
+                        <div key={component.id || `choice-${choice.questionId}`} className='mt-3'>
+                          <ChoicePartRenderer
+                            componentId={component.id || ''}
+                            {...choice}
+                            onAction={(action) => handleChoiceAction(message.id, action)}
+                            submittedInteraction={component.id ? choiceInteractions.get(component.id) : undefined}
+                            externallyDisabled={message.isStreaming}
+                          />
+                        </div>
+                      ));
+                    })()}
                   </>
                 ) : <p className='whitespace-pre-wrap break-words'>{message.text}</p>}
               </div>
-              {message.targets && message.targets.length > 0 && (
-                <div className='mt-3 space-y-2'>
-                  <p className='text-[11px] font-medium text-muted-foreground'>{t('navigation.related')}</p>
-                  {message.targets.map(renderAction)}
-                </div>
-              )}
+              {(() => {
+                const visibleTargets = (message.targets ?? []).filter(
+                  (target) => !shouldAutoConsumeCanvasHandoff(target, routePlaybookId, Boolean(pageContext.hasUnsavedChanges)),
+                );
+                return visibleTargets.length > 0 ? (
+                  <div className='mt-3 space-y-2'>
+                    <p className='text-[11px] font-medium text-muted-foreground'>{t('navigation.related')}</p>
+                    {visibleTargets.map(renderAction)}
+                  </div>
+                ) : null;
+              })()}
             </article>
           ))}
         </ChatConversationContent>
@@ -253,12 +345,7 @@ export function SecondBrainMascot() {
           event.preventDefault();
           event.stopPropagation();
           hasOpenedRef.current = true;
-          if (routePlaybookId) {
-            setCopilotMode('design');
-            setDesignerOpen(true);
-            return;
-          }
-          setOpen(true);
+          openPanel();
         }}>
           <Sparkles className='mr-2 h-5 w-5' />
           {t('title')}
@@ -339,12 +426,24 @@ function getTargetPresentation(surface: SecondBrainUiTarget['surface']) {
   return presentations[surface];
 }
 
+// Canvas handoff buttons are only useful when the impacted Playbook canvas is not already open.
+const CANVAS_TARGET_SURFACES: ReadonlySet<SecondBrainUiTarget['surface']> = new Set(['playbook.editor', 'playbook.editor.assistant']);
+
+export function shouldAutoConsumeCanvasHandoff(
+  target: SecondBrainUiTarget,
+  routePlaybookId: string | undefined,
+  canvasDirty: boolean,
+): boolean {
+  return !canvasDirty && CANVAS_TARGET_SURFACES.has(target.surface)
+    && Boolean(routePlaybookId) && target.params.playbookId === routePlaybookId;
+}
+
 function toDisplayMessage(message: ConversationMessage, isStreaming = false): Message | null {
   const components = message.components ?? [];
   const displayMessage: Message = {
     id: message.id,
     role: message.conversationType === 'user' ? 'user' : 'assistant',
-    text: message.conversationType === 'user' ? message.content ?? '' : getAssistantText(components),
+    text: message.conversationType === 'user' ? getUserMessageDisplayText(message) : getAssistantText(components),
     components,
     isStreaming,
     targets: dedupeSecondBrainUiTargets(components.flatMap((component) => findUiTargets(getToolResult(component)))),
@@ -353,7 +452,7 @@ function toDisplayMessage(message: ConversationMessage, isStreaming = false): Me
     && !displayMessage.text
     && !displayMessage.targets?.length
     && !isStreaming
-    && !components.some((component) => ['reasoning', 'chainOfThought', 'toolInfo', 'plan', 'queue', 'checkpoint', 'task'].includes(component.type))) {
+    && !components.some((component) => ['reasoning', 'chainOfThought', 'toolInfo', 'plan', 'queue', 'checkpoint', 'task', 'choice'].includes(component.type))) {
     return null;
   }
   return displayMessage;

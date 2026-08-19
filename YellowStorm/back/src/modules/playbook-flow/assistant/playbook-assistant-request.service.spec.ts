@@ -153,6 +153,106 @@ describe('PlaybookAssistantRequestService', () => {
     await expect(service.claimGenerationForTurn({ actor, text: 'Build lead generation' })).resolves.toBe(existing);
   });
 
+  it('creates one server-bound modification request for a platform conversation turn', async () => {
+    const created = { toObject: jest.fn().mockReturnValue({ requestId: 'created-request' }) };
+    const model = { create: jest.fn().mockResolvedValue(created) };
+    const service = new PlaybookAssistantRequestService(model as never);
+    const actor = {
+      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-1',
+    };
+
+    await expect(service.claimCurrentTurnModification({
+      actor,
+      playbookId: 'playbook-1',
+      expectedDefinitionRevision: 7,
+      text: 'Add a scoring export task',
+    })).resolves.toEqual({ requestId: 'created-request' });
+    expect(model.create).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: expect.stringMatching(/^platform-modification:/),
+      ...actor,
+      operationKind: 'existing_construction',
+      playbookId: 'playbook-1',
+      expectedDefinitionRevision: 7,
+      originalText: 'Add a scoring export task',
+    }));
+  });
+
+  it('reuses a matching current-turn modification request after a duplicate-key race', async () => {
+    const existing = {
+      requestId: 'existing-request', ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-1', playbookId: 'playbook-1',
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+    const model = {
+      create: jest.fn().mockRejectedValue({ code: 11000 }),
+      findOne: jest.fn().mockReturnValue(query(existing)),
+    };
+    const service = new PlaybookAssistantRequestService(model as never);
+    const actor = {
+      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-1',
+    };
+    const firstFingerprint = (service as any).createRequestFingerprint({
+      ...actor,
+      operationKind: 'existing_construction',
+      playbookId: 'playbook-1',
+      expectedDefinitionRevision: 7,
+      text: 'Add a scoring export task',
+    });
+    Object.assign(existing, { messageHash: firstFingerprint });
+
+    await expect(service.claimCurrentTurnModification({
+      actor,
+      playbookId: 'playbook-1',
+      expectedDefinitionRevision: 7,
+      text: 'Add a scoring export task',
+    })).resolves.toBe(existing);
+  });
+
+  it('rebinds a clarification correlation only inside the same trusted conversation', async () => {
+    const exec = jest.fn().mockResolvedValue({ matchedCount: 1 });
+    const model = { updateOne: jest.fn().mockReturnValue({ exec }) };
+    const service = new PlaybookAssistantRequestService(model as never);
+    const actor = {
+      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-2',
+    };
+
+    await expect(service.rebindCorrelationForContinuation({
+      continuationId: 'continuation-1',
+      playbookId: 'playbook-1',
+      actor,
+    })).resolves.toBeUndefined();
+    expect(model.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({
+        continuationId: 'continuation-1',
+        playbookId: 'playbook-1',
+        ownerId: 'user-1',
+        tenantId: 'default',
+        agentId: 'agent-1',
+        conversationId: 'conversation-1',
+        status: 'awaiting_clarification',
+      }),
+      { $set: { correlationId: 'ai-message-2' } },
+    );
+  });
+
+  it('fails closed when no clarification matches the trusted conversation for a correlation rebind', async () => {
+    const exec = jest.fn().mockResolvedValue({ matchedCount: 0 });
+    const model = { updateOne: jest.fn().mockReturnValue({ exec }) };
+    const service = new PlaybookAssistantRequestService(model as never);
+
+    await expect(service.rebindCorrelationForContinuation({
+      continuationId: 'continuation-1',
+      playbookId: 'playbook-1',
+      actor: {
+        ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+        conversationId: 'conversation-1', correlationId: 'ai-message-2',
+      },
+    })).rejects.toThrow('clarification not found or expired');
+  });
+
   it('releases only the matching mutation claim without clearing Playbook bindings', async () => {
     const exec = jest.fn().mockResolvedValue(undefined);
     const model = { updateOne: jest.fn().mockReturnValue({ exec }) };

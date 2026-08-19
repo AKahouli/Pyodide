@@ -13,12 +13,17 @@ export interface CanonicalChoiceSubmission {
   interaction: Record<string, unknown>;
 }
 
+export interface CanonicalMultiChoiceSubmission {
+  content: string;
+  taskSummary: string;
+  interactions: Record<string, unknown>[];
+}
+
 @Injectable()
 export class ChoiceInteractionService {
   constructor(@InjectModel(Message.name) private readonly messageModel: Model<MessageDocument>) {}
 
-  async canonicalize(conversationId: string, interaction: ChoiceInteractionDto): Promise<CanonicalChoiceSubmission> {
-    const source = await this.messageModel.findOne({
+  async canonicalize(conversationId: string, interaction: ChoiceInteractionDto): Promise<CanonicalChoiceSubmission> {    const source = await this.messageModel.findOne({
       _id: interaction.sourceMessageId,
       conversationId: new Types.ObjectId(conversationId),
       conversationType: 'ai',
@@ -84,6 +89,33 @@ export class ChoiceInteractionService {
         selectedOptions: canonicalSelected.map((option) => ({ optionId: option.id, label: option.label, ...(option.value ? { value: option.value } : {}) })),
         ...(customAnswer ? { customAnswer } : {}), displayText: displayParts.join(', '),
       },
+    };
+  }
+
+  /**
+   * Canonicalizes multiple choice answers in one turn. Each answer is validated
+   * against its own source choice component; the combined payload preserves each
+   * question/answer pair so the agent can resolve all clarifications at once.
+   */
+  async canonicalizeMany(
+    conversationId: string,
+    interactions: ChoiceInteractionDto[],
+  ): Promise<CanonicalMultiChoiceSubmission> {
+    const submissions: CanonicalChoiceSubmission[] = [];
+    for (const interaction of interactions) {
+      submissions.push(await this.canonicalize(conversationId, interaction));
+    }
+    const contents = submissions.map((submission) => {
+      try {
+        return JSON.parse(submission.content) as unknown;
+      } catch {
+        return submission.content;
+      }
+    });
+    return {
+      content: JSON.stringify(contents, null, 2),
+      taskSummary: submissions.map((submission) => submission.taskSummary).join(', '),
+      interactions: submissions.map((submission) => submission.interaction),
     };
   }
 

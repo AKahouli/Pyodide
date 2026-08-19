@@ -42,6 +42,14 @@ describe('PlaybookAssistantService.runTurn', () => {
         },
       }),
       claimGenerationForTurn: jest.fn().mockResolvedValue({ requestId: 'generation-request-1' }),
+      claimCurrentTurnModification: jest.fn().mockResolvedValue({
+        requestId: 'request-1',
+        status: 'processing',
+        playbookId: 'playbook-1',
+        expectedDefinitionRevision: 7,
+        contextId: 'context-1',
+      }),
+      rebindCorrelationForContinuation: jest.fn().mockResolvedValue(undefined),
       getContinuationForUser: jest.fn().mockResolvedValue({
         requestId: 'request-1',
         conversationId: 'conversation-1',
@@ -343,6 +351,88 @@ describe('PlaybookAssistantService.runTurn', () => {
     expect(requestService.claimGenerationForTurn).not.toHaveBeenCalled();
   });
 
+  it('modifies an existing Playbook from the current platform turn through assessment and construction', async () => {
+    const { service, requestService, intentService, constructionService } = createService();
+    const actor = {
+      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-1',
+    };
+
+    await expect(service.runCurrentTurnModification('playbook-1', actor, {}))
+      .resolves.toEqual(expect.objectContaining({
+        requestId: 'request-1',
+        status: 'ready',
+        operation: expect.objectContaining({ operationId: 'operation-1' }),
+      }));
+    expect(requestService.claimCurrentTurnModification).toHaveBeenCalledWith({
+      actor,
+      playbookId: 'playbook-1',
+      expectedDefinitionRevision: 7,
+      text: 'Build lead generation',
+    });
+    expect(intentService.assessDesign).toHaveBeenCalledTimes(1);
+    expect(constructionService.start).toHaveBeenCalledTimes(1);
+    expect(requestService.complete).toHaveBeenCalledWith('request-1', expect.any(String), 'operation-1');
+  });
+
+  it('returns typed clarification from the current turn without constructing', async () => {
+    const { service, constructionService, requestService } = createService({
+      assessment: {
+        status: 'needs_clarification',
+        detectedIntent: 'Add export task',
+        questions: [{ id: 'source', question: 'Which source?', reason: 'Required', category: 'datasource', required: true, choices: ['Results'] }],
+        missingRequirements: ['source'],
+        riskFlags: [],
+      },
+    });
+    requestService.saveAssessment.mockResolvedValueOnce({ continuationId: 'continuation-1' });
+
+    const result = await service.runCurrentTurnModification('playbook-1', {
+      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-1',
+    }, {});
+
+    expect(result.status).toBe('needs_clarification');
+    expect(result.continuationId).toBe('continuation-1');
+    expect(constructionService.start).not.toHaveBeenCalled();
+  });
+
+  it('continues a clarification from a later turn after rebinding its correlation', async () => {
+    const { service, requestService, intentService, constructionService } = createService();
+    const actor = {
+      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-2',
+    };
+
+    await expect(service.runCurrentTurnModification('playbook-1', actor, {
+      continuationId: 'continuation-1',
+      answers: [{ questionId: 'region', choice: 'France' }],
+    })).resolves.toEqual(expect.objectContaining({
+      requestId: 'request-1',
+      status: 'ready',
+    }));
+    expect(requestService.rebindCorrelationForContinuation).toHaveBeenCalledWith({
+      continuationId: 'continuation-1',
+      playbookId: 'playbook-1',
+      actor,
+    });
+    expect(intentService.assessDesign).not.toHaveBeenCalled();
+    expect(constructionService.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a platform modification turn whose pinned agent does not match', async () => {
+    const { service, conversationService, requestService } = createService();
+    conversationService.getConversationDocument.mockResolvedValueOnce({
+      createdBy: 'user-1', runtimePurpose: 'platform_copilot', pinnedAgentId: 'other-agent',
+    });
+
+    await expect(service.runCurrentTurnModification('playbook-1', {
+      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-1',
+    }, {})).rejects.toThrow('conversation binding does not match');
+    expect(requestService.claimCurrentTurnModification).not.toHaveBeenCalled();
+  });
+
   it('rejects duplicate clarification answers before changing durable state', async () => {
     const { service, requestService, intentService } = createService();
 
@@ -360,6 +450,70 @@ describe('PlaybookAssistantService.runTurn', () => {
     })).rejects.toThrow('duplicate answers');
     expect(requestService.claimContinuation).not.toHaveBeenCalled();
     expect(intentService.assessDesign).not.toHaveBeenCalled();
+  });
+
+  it('rebinds the clarification correlation before binding a later-turn answer', async () => {
+    const { service, requestService } = createService();
+    const actor = {
+      ownerId: 'user-1',
+      tenantId: 'default',
+      agentId: 'agent-1',
+      conversationId: 'conversation-1',
+      correlationId: 'ai-message-2',
+    };
+
+    await service.continueClarification('continuation-1', actor, {
+      answers: [{ questionId: 'region', choice: 'France' }],
+    });
+
+    expect(requestService.rebindCorrelationForContinuation).toHaveBeenCalledWith({
+      continuationId: 'continuation-1',
+      actor,
+    });
+    expect(requestService.getByContinuation).toHaveBeenCalledWith('continuation-1', actor);
+  });
+
+  it('skips missing required answers when the user explicitly skips clarifications', async () => {
+    const { service, requestService } = createService();
+
+    const result = await service.continueClarification('continuation-1', {
+      ownerId: 'user-1',
+      tenantId: 'default',
+      agentId: 'agent-1',
+      conversationId: 'conversation-1',
+      correlationId: 'correlation-1',
+    }, {
+      answers: [],
+      skip: true,
+    });
+
+    expect(result.status).toBe('ready_to_construct');
+    expect(result.clarificationsSkipped).toBe(true);
+    expect(result.unansweredQuestionIds).toEqual(['region']);
+    expect(requestService.claimContinuation).toHaveBeenCalledWith(expect.objectContaining({
+      assessment: expect.objectContaining({
+        clarificationsSkipped: true,
+        unansweredQuestionIds: ['region'],
+      }),
+    }));
+  });
+
+  it('records only unanswered questions when skipping with partial answers', async () => {
+    const { service } = createService();
+
+    const result = await service.continueClarification('continuation-1', {
+      ownerId: 'user-1',
+      tenantId: 'default',
+      agentId: 'agent-1',
+      conversationId: 'conversation-1',
+      correlationId: 'correlation-1',
+    }, {
+      answers: [{ questionId: 'region', choice: 'France' }],
+      skip: true,
+    });
+
+    expect(result.clarificationsSkipped).toBe(true);
+    expect(result.unansweredQuestionIds).toEqual([]);
   });
 
   it('rejects an empty answer to a required clarification question', async () => {

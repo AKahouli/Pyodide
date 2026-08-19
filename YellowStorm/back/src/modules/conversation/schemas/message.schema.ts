@@ -126,6 +126,9 @@ export class Message extends Document {
   @Prop({ type: Object, default: undefined })
   interaction?: Record<string, unknown>;
 
+  @Prop({ type: [Object], default: undefined })
+  interactions?: Record<string, unknown>[];
+
   // Internal reproducible execution inputs. Never included in MessageResponse.
   @Prop({ type: Object, default: undefined })
   replayContext?: MessageReplayContext;

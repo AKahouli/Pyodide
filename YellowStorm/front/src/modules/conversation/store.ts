@@ -964,6 +964,7 @@ export const useConversationStore = create<ConversationState>()(
           conversationType: 'user',
           content: payload.content,
           interaction: payload.interaction,
+          interactions: payload.interactions,
           attachedFileIds: payload.attachedFileIds,
           attachedFiles: payload.attachedFiles,
           createdAt: new Date().toISOString(),

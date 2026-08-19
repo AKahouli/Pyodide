@@ -2,7 +2,7 @@ import { Types } from 'mongoose';
 import { PlaybookAssistantConnectorReconcilerService } from './playbook-assistant-connector-reconciler.service';
 
 describe('PlaybookAssistantConnectorReconcilerService', () => {
-  it('attaches the hidden system connector only to the dedicated Playbook assistant', async () => {
+  it('attaches the hidden system connector exclusively to the Yellowmind second-brain agent', async () => {
     const connectorId = new Types.ObjectId().toString();
     const sourceAgent = {
       _id: new Types.ObjectId().toString(),
@@ -12,7 +12,6 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
     const agentRepository = {
       findActiveDefaultsByType: jest.fn().mockResolvedValue([sourceAgent]),
       upsertDefaultSystemAgent: jest.fn()
-        .mockImplementationOnce(async (input) => ({ _id: input.id }))
         .mockImplementationOnce(async (input) => ({ _id: input.id })),
       updateById: jest.fn().mockResolvedValue(undefined),
       pullConnectorFromAllExcept: jest.fn().mockResolvedValue(undefined),
@@ -23,13 +22,13 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
       inspectMcp: jest.fn().mockResolvedValue({
         tools: [
           'search_playbooks', 'open_playbook_context', 'get_playbook_summary', 'get_task_details', 'get_task_dependencies', 'validate_playbook',
-          'assess_playbook_request', 'continue_playbook_clarification',
+          'assess_playbook_request', 'modify_playbook', 'continue_playbook_clarification',
           'start_playbook_construction', 'start_playbook_generation', 'get_playbook_construction', 'cancel_playbook_construction', 'analyze_task_optimization',
           'start_advisor_remediation_construction', 'analyze_workflow_optimization', 'start_workflow_optimization', 'create_playbook',
           'clone_playbook', 'revert_playbook_construction', 'start_playbook_execution', 'list_playbook_executions',
           'list_recent_executions', 'get_playbook_execution', 'get_execution_diagnostics', 'cancel_playbook_execution', 'trace_replay_playbook_execution', 'reexecute_playbook_execution',
           'run_playbook_from_step', 'delete_playbook_execution',
-        ].map((name) => ({ name })),
+        ].map((name) => ({ name, description: '', inputSchema: {} })),
       }),
     };
     const service = new PlaybookAssistantConnectorReconcilerService(
@@ -43,7 +42,6 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
       {
         findAllActive: jest.fn().mockResolvedValue([{ id: new Types.ObjectId().toString(), slug: 'mono-agent' }]),
         findOrCreateBySlug: jest.fn()
-          .mockResolvedValueOnce({ id: new Types.ObjectId().toString(), slug: 'playbook_assistant' })
           .mockResolvedValueOnce({ id: new Types.ObjectId().toString(), slug: 'platform_copilot' }),
       } as any,
       connectorService as any,
@@ -64,43 +62,46 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
     expect(connectorService.reconcilePlaybookMcpSystemConnector).toHaveBeenCalledWith(
       sourceAgent.createdBy,
       'http://playbook-mcp:8025/mcp',
+      expect.arrayContaining([expect.objectContaining({ name: 'modify_playbook' })]),
     );
-    // No existing dedicated agent -> created fresh with the system connector attached exclusively.
+    // The dedicated designer agent is retired: only the Yellowmind second-brain agent is reconciled.
+    expect(agentRepository.upsertDefaultSystemAgent).toHaveBeenCalledTimes(1);
     expect(agentRepository.upsertDefaultSystemAgent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        slug: 'playbook-ai-workflow-assistant',
-        name: 'Yellowmind Playbook Designer',
-        isDefault: true,
-        connectors: [connectorId],
-        connectorActionSelections: [expect.objectContaining({ connectorId, actionKeys: expect.arrayContaining(['start_playbook_construction']) })],
-        instruction: expect.stringContaining('[Playbook MCP]'),
-      }),
-    );
-    expect(agentRepository.upsertDefaultSystemAgent).toHaveBeenNthCalledWith(
-      2,
       expect.objectContaining({
         slug: 'my-second-brain',
         name: 'Yellowmind',
+        isDefault: true,
+        connectors: [connectorId],
+        connectorActionSelections: [expect.objectContaining({
+          connectorId,
+          actionKeys: expect.arrayContaining([
+            'start_playbook_construction',
+            'assess_playbook_request',
+            'continue_playbook_clarification',
+            'start_advisor_remediation_construction',
+            'start_playbook_execution',
+          ]),
+        })],
         instruction: expect.stringContaining('exactly once for the current turn'),
       }),
     );
-    expect(agentRepository.upsertDefaultSystemAgent.mock.calls[1][0].instruction)
-      .not.toContain('trusted assistant request ID');
-    const designerActions = agentRepository.upsertDefaultSystemAgent.mock.calls[0][0].connectorActionSelections[0].actionKeys;
-    expect(designerActions).toContain('start_playbook_construction');
-    expect(designerActions).not.toEqual(expect.arrayContaining([
-      'create_playbook',
-      'clone_playbook',
-      'start_playbook_execution',
-      'cancel_playbook_execution',
-      'reexecute_playbook_execution',
-      'run_playbook_from_step',
-      'delete_playbook_execution',
-    ]));
-    // The connector is pulled from every other agent (all but the dedicated one).
+    const secondBrainInstruction = agentRepository.upsertDefaultSystemAgent.mock.calls[0][0].instruction;
+    expect(secondBrainInstruction).toContain('open_playbook_context');
+    expect(secondBrainInstruction).toContain('modify_playbook');
+    expect(secondBrainInstruction).toContain('runtime HITL');
+    expect(secondBrainInstruction).toContain('no manual confirmation step');
+    const actionKeys = agentRepository.upsertDefaultSystemAgent.mock.calls[0][0].connectorActionSelections[0].actionKeys;
+    expect(actionKeys).toContain('start_playbook_construction');
+    expect(actionKeys).toContain('modify_playbook');
+    // Existing agents keep their stored instruction on upsert; the reconciler must resync it.
+    expect(agentRepository.updateById).toHaveBeenCalledWith(
+      expect.any(String),
+      { instruction: secondBrainInstruction },
+    );
+    // The connector is pulled from every other agent (only the second brain keeps it).
     expect(agentRepository.pullConnectorFromAllExcept).toHaveBeenCalledWith(
       connectorId,
-      expect.arrayContaining([expect.any(String), expect.any(String)]),
+      expect.arrayContaining([expect.any(String)]),
     );
   });
 

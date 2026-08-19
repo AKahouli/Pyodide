@@ -30,6 +30,7 @@ async def test_registers_approved_tools_without_runtime_hitl_controls():
         "get_task_dependencies",
         "validate_playbook",
         "assess_playbook_request",
+        "modify_playbook",
         "continue_playbook_clarification",
         "start_playbook_construction",
         "start_playbook_generation",
@@ -138,6 +139,138 @@ async def test_generation_uses_the_current_trusted_turn_without_a_request_id(mon
         "surface": "playbook.editor.assistant",
         "params": {"playbookId": "playbook-1", "operationId": "operation-1"},
     }
+
+
+@pytest.mark.asyncio
+async def test_modify_playbook_uses_the_current_trusted_turn_and_hands_off_to_canvas(monkeypatch):
+    class BackendStub:
+        async def post(self, path, user_id, payload):
+            assert path == "/api/v1/internal/playbook-assistant/playbooks/playbook%2F1/current-turn/modification"
+            assert user_id == "user-1"
+            assert payload == {"continuationId": None, "answers": [], "skip": False}
+            return {
+                "requestId": "request-1",
+                "status": "ready",
+                "operation": {"operationId": "operation/1", "playbookId": "playbook/1"},
+            }
+
+    monkeypatch.setattr(server, "backend", lambda: BackendStub())
+    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "ai-message-1"))
+    try:
+        async with Client(mcp) as client:
+            tools = await client.list_tools()
+            modification = next(tool for tool in tools if tool.name == "modify_playbook")
+            assert "request_id" not in modification.inputSchema["properties"]
+            response = await client.call_tool("modify_playbook", {"playbook_id": "playbook/1"})
+    finally:
+        actor_context.reset(token)
+
+    result = result_dict(response)
+    assert result["data"]["status"] == "ready"
+    assert result["data"]["uiTarget"] == {
+        "surface": "playbook.editor.assistant",
+        "params": {"playbookId": "playbook/1", "operationId": "operation/1"},
+    }
+    assert result["data"]["eventStreamOwner"] == "playbook_canvas"
+
+
+@pytest.mark.asyncio
+async def test_modify_playbook_accepts_json_encoded_string_answers(monkeypatch):
+    received = {}
+
+    class BackendStub:
+        async def post(self, path, user_id, payload):
+            received["payload"] = payload
+            return {"requestId": "request-1", "status": "ready"}
+
+    monkeypatch.setattr(server, "backend", lambda: BackendStub())
+    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "ai-message-1"))
+    try:
+        async with Client(mcp) as client:
+            await client.call_tool("modify_playbook", {
+                "playbook_id": "playbook/1",
+                "continuation_id": "continuation-1",
+                "answers": '[{"choice": "Uniquement le plan de nurture", "questionId": "q1"}]',
+            })
+    finally:
+        actor_context.reset(token)
+
+    assert received["payload"] == {
+        "continuationId": "continuation-1",
+        "answers": [{"choice": "Uniquement le plan de nurture", "questionId": "q1"}],
+        "skip": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_modify_playbook_forwards_skip_clarification(monkeypatch):
+    received = {}
+
+    class BackendStub:
+        async def post(self, path, user_id, payload):
+            received["payload"] = payload
+            return {"requestId": "request-1", "status": "ready"}
+
+    monkeypatch.setattr(server, "backend", lambda: BackendStub())
+    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "ai-message-1"))
+    try:
+        async with Client(mcp) as client:
+            await client.call_tool("modify_playbook", {
+                "playbook_id": "playbook/1",
+                "continuation_id": "continuation-1",
+                "answers": [],
+                "skip_clarification": True,
+            })
+    finally:
+        actor_context.reset(token)
+
+    assert received["payload"]["skip"] is True
+
+
+@pytest.mark.asyncio
+async def test_continue_clarification_forwards_skip_clarification(monkeypatch):
+    received = {}
+
+    class BackendStub:
+        async def post(self, path, user_id, payload):
+            received["payload"] = payload
+            return {"requestId": "request-1", "status": "ready_to_construct"}
+
+    monkeypatch.setattr(server, "backend", lambda: BackendStub())
+    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "ai-message-1"))
+    try:
+        async with Client(mcp) as client:
+            await client.call_tool("continue_playbook_clarification", {
+                "continuation_id": "continuation-1",
+                "answers": [{"questionId": "q1", "choice": "France"}],
+                "skip_clarification": True,
+            })
+    finally:
+        actor_context.reset(token)
+
+    assert received["payload"] == {
+        "answers": [{"questionId": "q1", "choice": "France"}],
+        "skip": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_continue_clarification_rejects_malformed_string_answers(monkeypatch):
+    class BackendStub:
+        async def post(self, path, user_id, payload):
+            raise AssertionError("backend must not be called for malformed answers")
+
+    monkeypatch.setattr(server, "backend", lambda: BackendStub())
+    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "ai-message-1"))
+    try:
+        async with Client(mcp) as client:
+            with pytest.raises(Exception, match="answers"):
+                await client.call_tool("continue_playbook_clarification", {
+                    "continuation_id": "continuation-1",
+                    "answers": "not-json",
+                })
+    finally:
+        actor_context.reset(token)
 
 
 @pytest.mark.asyncio

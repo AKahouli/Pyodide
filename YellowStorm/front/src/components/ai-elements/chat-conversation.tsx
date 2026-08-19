@@ -44,6 +44,7 @@ export interface ChatMessage {
   timestamp?: Date;
   isEdited?: boolean;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
+  onSubmitQuestions?: (actions: ChoiceComponentAction[]) => Promise<void>;
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
 }
 
@@ -114,14 +115,14 @@ export const ChatMessageBubble = ({ message, className, showAvatar = true, userA
               <>
                 {reasoningParts.length > 0 && (
                   <div className='px-1'>
-                    <AIMessageContent parts={reasoningParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} taskDisplay='activity' showTaskDiagnostics={showTaskDiagnostics} />
+                    <AIMessageContent parts={reasoningParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} onSubmitQuestions={message.onSubmitQuestions} choiceInteractions={message.choiceInteractions} taskDisplay='activity' showTaskDiagnostics={showTaskDiagnostics} />
                   </div>
                 )}
 
                 {/* Only render bubble if there are other parts */}
                 {otherParts.length > 0 && (
                   <div className={assistantBubbleClass}>
-                    <AIMessageContent parts={otherParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} taskDisplay='activity' showTaskDiagnostics={showTaskDiagnostics} />
+                    <AIMessageContent parts={otherParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} onSubmitQuestions={message.onSubmitQuestions} choiceInteractions={message.choiceInteractions} taskDisplay='activity' showTaskDiagnostics={showTaskDiagnostics} />
                     {message.timestamp && <time className='mt-2 block text-xs text-muted-foreground'>{formatMessageTimestamp(message.timestamp, language)}</time>}
                   </div>
                 )}

@@ -15,6 +15,7 @@ import { useModuleTranslation } from '@/modules/localization';
 
 import { PORT_COLORS } from '../utils/port-colors';
 import { usePlaybookStore } from '../store';
+import { useSecondBrainPanelStore } from '../../second-brain/secondBrainPanelStore';
 import type { InterruptType, TaskTemplate } from '../types';
 
 interface Props {
@@ -114,6 +115,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
   onToggleDeepSearch,
 }: Props, ref) {
   const { t } = useModuleTranslation('playbook');
+  const yellowmindOpen = useSecondBrainPanelStore((s) => s.open);
   const flowNodeTemplates = usePlaybookStore((s) => s.flowNodeTemplates);
   const flowNodeTemplatesLoading = usePlaybookStore((s) => s.flowNodeTemplatesLoading);
   const fetchFlowNodeTemplates = usePlaybookStore((s) => s.fetchFlowNodeTemplates);
@@ -316,7 +318,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       : interruptType === 'clarification'
         ? t('interrupt.clarificationTitle')
         : t('interrupt.approvalTitle')
-    : t('toolbar.designer');
+    : t('toolbar.yellowmind');
 
   const actionButtons = [
     {
@@ -387,7 +389,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       icon: Wand2,
       onClick: onToggleDesigner,
       disabled: false,
-      active: designerOpen,
+      active: designerOpen || yellowmindOpen,
       hidden: !onToggleDesigner,
     },
     {

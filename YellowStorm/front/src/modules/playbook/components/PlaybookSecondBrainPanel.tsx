@@ -28,6 +28,7 @@ import { IntentTraceModal } from './IntentTraceModal';
 
 interface Props {
   playbookId: string | undefined;
+  designChatEnabled?: boolean;
   assistantMessages?: PlaybookAssistantMessage[];
   assistantMessagesLoading?: boolean;
   intentDesign?: PlaybookIntentDesignResponse | null;
@@ -234,6 +235,7 @@ function releasePromptImagePreview(previewUrl: string) {
 
 export function PlaybookSecondBrainPanel({
   playbookId,
+  designChatEnabled = true,
   assistantMessages,
   assistantMessagesLoading = false,
   intentDesign = null,
@@ -529,7 +531,8 @@ export function PlaybookSecondBrainPanel({
   const currentDesignQuestion = designQuestions[Math.min(designStepIndex, Math.max(0, designQuestions.length - 1))] ?? null;
   const isLastDesignQuestion = currentDesignQuestion ? designStepIndex >= designQuestions.length - 1 : true;
   const designIntentBusy = intentLoading;
-  const isAwaitingDesignAnswer = effectiveCopilotMode === 'design' && intentDesign?.status === 'needs_clarification' && Boolean(currentDesignQuestion);
+  const renderDesignChat = effectiveCopilotMode === 'design' && designChatEnabled;
+  const isAwaitingDesignAnswer = renderDesignChat && intentDesign?.status === 'needs_clarification' && Boolean(currentDesignQuestion);
   const assistantHistoryEnabled = assistantMessages !== undefined;
   const designMessageCount = assistantHistoryEnabled ? assistantMessages.length : messages.length;
   const designMessagesLoading = assistantHistoryEnabled ? assistantMessagesLoading : messagesLoading;
@@ -1114,7 +1117,7 @@ export function PlaybookSecondBrainPanel({
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
-        {effectiveCopilotMode === 'design' ? (
+        {effectiveCopilotMode === 'design' ? (designChatEnabled ? (
           <>
             {designMessageCount === 0 && !designMessagesLoading && (
               <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground px-4">
@@ -1290,7 +1293,7 @@ export function PlaybookSecondBrainPanel({
               </div>
             )}
           </>
-        ) : (
+        ) : null) : (
           <>
             {interruptThread.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground px-4">
@@ -1449,9 +1452,10 @@ export function PlaybookSecondBrainPanel({
               )}
             </div>
           )}
-          <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
-            <div className="flex items-center gap-2">
-              {!assistantHistoryEnabled && <Button
+          {designChatEnabled && (<>
+            <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+              <div className="flex items-center gap-2">
+                {!assistantHistoryEnabled && <Button
                 type="button"
                 variant="outline"
                 size="sm"
@@ -1542,6 +1546,7 @@ export function PlaybookSecondBrainPanel({
             </div>
           )}
           {promptImageError ? <p className="text-xs text-destructive">{promptImageError}</p> : null}
+          </>)}
         </form>
       ) : composerInterruptEntry ? (
         <div className="border-t px-3 py-3 shrink-0 space-y-3">

@@ -179,6 +179,7 @@ export interface Message {
   content?: string;
   components?: MessageComponent[];
   interaction?: ChoiceInteractionMetadata;
+  interactions?: ChoiceInteractionMetadata[];
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];
   modelId?: string;
@@ -318,6 +319,7 @@ export interface SendMessagePayload {
   connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string };
   skillIds?: string[];
   interaction?: ChoiceInteractionMetadata;
+  interactions?: ChoiceInteractionMetadata[];
   clientContext?: ConversationClientContextV1;
 }
 

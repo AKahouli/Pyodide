@@ -12,6 +12,7 @@ import {
   ContinuePlaybookClarificationDto,
   ListRecentExecutionsDto,
   OpenPlaybookAssistantContextDto,
+  RunCurrentTurnPlaybookModificationDto,
   RunPlaybookFromStepDto,
   SearchPlaybooksDto,
   StartAdvisorRemediationConstructionDto,
@@ -169,6 +170,19 @@ export class PlaybookAssistantInternalController {
     const actor = this.actor(headers);
     await this.assertUserPermission(actor.ownerId, Permissions.PLAYBOOK_CREATE);
     return this.assistantService.startCurrentTurnGeneration(actor, dto);
+  }
+
+  @Post('playbooks/:id/current-turn/modification')
+  @RateLimit({ limit: 10, windowMs: 60000, keyPrefix: 'playbook-assistant:current-turn-modification' })
+  @ApiOperation({ summary: 'Modify an existing Playbook from the current trusted Conversation turn' })
+  async runCurrentTurnModification(
+    @Headers() headers: Record<string, string | undefined>,
+    @Param('id') id: string,
+    @Body() dto: RunCurrentTurnPlaybookModificationDto,
+  ) {
+    const actor = this.actor(headers);
+    await this.assertUserPermission(actor.ownerId, Permissions.PLAYBOOK_UPDATE);
+    return this.assistantService.runCurrentTurnModification(id, actor, dto);
   }
 
   @Get('playbooks/:id/constructions/:operationId')

@@ -3,7 +3,7 @@ import { ConfigType } from '@nestjs/config';
 import playbookFlowConfig from '@config/playbook-flow.config';
 import { ConflictException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { AnalyzeTaskOptimizationDto, AnalyzeWorkflowOptimizationDto, ContinuePlaybookClarificationDto, ListRecentExecutionsDto, RunPlaybookAssistantTurnDto, RunPlaybookFromStepDto, SearchPlaybooksDto, StartAdvisorRemediationConstructionDto, StartPlaybookAssistantConstructionDto, StartPlaybookGenerationDto } from '../dto/playbook-assistant.dto';
+import { AnalyzeTaskOptimizationDto, AnalyzeWorkflowOptimizationDto, ContinuePlaybookClarificationDto, ListRecentExecutionsDto, RunCurrentTurnPlaybookModificationDto, RunPlaybookAssistantTurnDto, RunPlaybookFromStepDto, SearchPlaybooksDto, StartAdvisorRemediationConstructionDto, StartPlaybookAssistantConstructionDto, StartPlaybookGenerationDto } from '../dto/playbook-assistant.dto';
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execution.dto';
 import type { PlaybookTaskOptimizationResult } from '../interfaces/playbook-assistant.interface';
@@ -216,6 +216,9 @@ export class PlaybookAssistantService {
 
   async continueClarification(continuationId: string, actor: TrustedPlaybookAssistantActor, dto: ContinuePlaybookClarificationDto) {
     this.assertEnabled();
+    // The answer can arrive in a later conversation turn with a new correlation id; rebind it to the
+    // trusted conversation before validating the actor binding, mirroring runCurrentTurnModification.
+    await this.requestService.rebindCorrelationForContinuation({ continuationId, actor });
     const request = await this.requestService.getByContinuation(continuationId, actor);
     if (!request.playbookId || request.expectedDefinitionRevision == null) {
       throw new ConflictException(ErrorCode.CONFLICT, 'Clarification requires a bound Playbook revision');
@@ -236,12 +239,19 @@ export class PlaybookAssistantService {
     const meaningfulAnswerIds = new Set(dto.answers
       .filter((answer) => Boolean(answer.resource || answer.choice?.trim() || answer.text?.trim()))
       .map((answer) => answer.questionId));
-    if (questions.some((question) => question.required && question.id && !meaningfulAnswerIds.has(question.id))) {
+    if (!dto.skip && questions.some((question) => question.required && question.id && !meaningfulAnswerIds.has(question.id))) {
       throw new ConflictException(ErrorCode.CONFLICT, 'A required clarification answer is missing');
     }
     const normalized = {
       ...(request.assessment ?? {}),
       status: 'ready_to_construct',
+      ...(dto.skip ? {
+        clarificationsSkipped: true,
+        unansweredQuestionIds: questions
+          .map((question) => question.id)
+          .filter((id): id is string => Boolean(id))
+          .filter((id) => !meaningfulAnswerIds.has(id)),
+      } : {}),
     };
     await this.requestService.claimContinuation({
       requestId: request.requestId,
@@ -388,28 +398,89 @@ export class PlaybookAssistantService {
 
   async startCurrentTurnGeneration(actor: TrustedPlaybookAssistantActor, dto: StartPlaybookGenerationDto) {
     this.assertEnabled();
+    const text = await this.resolveCurrentTurnQuestion(actor, 'generation');
+    const request = await this.requestService.claimGenerationForTurn({ actor, text });
+    return this.startGeneration(request.requestId, actor, dto);
+  }
+
+  async runCurrentTurnModification(playbookId: string, actor: TrustedPlaybookAssistantActor, dto: RunCurrentTurnPlaybookModificationDto) {
+    this.assertEnabled();
+    const flow = await this.accessService.findAccessibleFlow(playbookId, actor.ownerId, 'write');
+    const continuationId = dto.continuationId?.trim();
+    let requestId: string;
+    let assessment: Record<string, unknown> & { status?: string; continuationId?: string | null };
+    if (continuationId) {
+      await this.requestService.rebindCorrelationForContinuation({ continuationId, playbookId, actor });
+      const request = await this.requestService.getByContinuation(continuationId, actor);
+      requestId = request.requestId;
+      assessment = (await this.continueClarification(continuationId, actor, { answers: dto.answers ?? [], skip: dto.skip })) as Record<string, unknown> & { status?: string };
+    } else {
+      const text = await this.resolveCurrentTurnQuestion(actor, 'modification');
+      const request = await this.requestService.claimCurrentTurnModification({
+        actor,
+        playbookId,
+        expectedDefinitionRevision: flow.definitionRevision ?? 0,
+        text,
+      });
+      requestId = request.requestId;
+      if (request.status === 'processing') {
+        assessment = (await this.assessRequest(requestId, actor)) as Record<string, unknown> & { status?: string };
+      } else {
+        assessment = {
+          requestId,
+          assessmentId: requestId,
+          continuationId: request.continuationId ?? null,
+          definitionRevision: request.expectedDefinitionRevision,
+          ...(request.assessment ?? {}),
+        };
+      }
+    }
+    if (assessment.status === 'needs_clarification') {
+      return {
+        requestId,
+        status: 'needs_clarification' as const,
+        continuationId: assessment.continuationId ?? null,
+        definitionRevision: assessment.definitionRevision ?? null,
+        questions: assessment.questions ?? [],
+        assessment,
+      };
+    }
+    const request = await this.requestService.getBound(requestId, actor);
+    const construction = await this.startBoundConstruction(requestId, actor, request.contextId);
+    const answer = 'The requested Playbook construction is ready in the canvas.';
+    await this.requestService.complete(requestId, answer, construction.operationId);
+    return {
+      requestId,
+      status: 'ready' as const,
+      continuationId: null,
+      definitionRevision: construction.baseDefinitionRevision,
+      operation: construction,
+      assessment,
+    };
+  }
+
+  private async resolveCurrentTurnQuestion(actor: TrustedPlaybookAssistantActor, purpose: 'generation' | 'modification'): Promise<string> {
     const conversation = await this.conversationService.getConversationDocument(actor.conversationId);
     if (conversation.createdBy.toString() !== actor.ownerId
       || conversation.runtimePurpose !== 'platform_copilot'
       || conversation.pinnedAgentId?.toString() !== actor.agentId) {
-      throw new ConflictException(ErrorCode.CONFLICT, 'Assistant generation conversation binding does not match');
+      throw new ConflictException(ErrorCode.CONFLICT, `Assistant ${purpose} conversation binding does not match`);
     }
     const response = await this.messageService.getMessageDocument(actor.correlationId);
     if (response.conversationId.toString() !== actor.conversationId
       || response.conversationType !== 'ai'
       || response.senderId?.toString() !== actor.ownerId
       || !response.questionMessageId) {
-      throw new ConflictException(ErrorCode.CONFLICT, 'Assistant generation response binding does not match');
+      throw new ConflictException(ErrorCode.CONFLICT, `Assistant ${purpose} response binding does not match`);
     }
     const question = await this.messageService.getMessageDocument(response.questionMessageId.toString());
     if (question.conversationId.toString() !== actor.conversationId
       || question.conversationType !== 'user'
       || question.senderId?.toString() !== actor.ownerId
       || !question.content?.trim()) {
-      throw new ConflictException(ErrorCode.CONFLICT, 'Assistant generation question binding does not match');
+      throw new ConflictException(ErrorCode.CONFLICT, `Assistant ${purpose} question binding does not match`);
     }
-    const request = await this.requestService.claimGenerationForTurn({ actor, text: question.content });
-    return this.startGeneration(request.requestId, actor, dto);
+    return question.content.trim();
   }
 
   async startConstruction(playbookId: string, userId: string, dto: StartPlaybookAssistantConstructionDto) {
@@ -810,17 +881,24 @@ export class PlaybookAssistantService {
     assessment?: Record<string, unknown> | null;
     answers: Record<string, unknown>[];
   }): string {
+    const assessment = request.assessment ?? null;
+    const skipped = Array.isArray(assessment?.unansweredQuestionIds)
+      ? assessment.unansweredQuestionIds as string[]
+      : [];
     return [
       '<original_request>',
       request.originalText,
       '</original_request>',
       '<resolved_design_context>',
       JSON.stringify({
-        assessment: request.assessment ?? null,
+        assessment,
         clarificationAnswers: request.answers ?? [],
       }),
       '</resolved_design_context>',
       'Treat the resolved design context as binding. Do not replace selected sources, outputs, resources, or branching decisions.',
+      ...(assessment?.clarificationsSkipped === true && skipped.length > 0 ? [
+        'The user explicitly skipped the remaining clarification questions. For those questions choose sensible defaults, record them as assumptions, and proceed without asking again.',
+      ] : []),
     ].join('\n');
   }
 }

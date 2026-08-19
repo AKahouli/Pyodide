@@ -858,8 +858,6 @@ function PlaybookCanvasInner() {
         const latestExecution = usePlaybookStore.getState().executionHistoryByPlaybook[id]?.[0];
         const initialMode = getInitialPlaybookPageMode(latestExecution?.status);
         setPageMode(initialMode);
-        setCopilotMode('design');
-        setDesignerOpen(initialMode === 'design');
         setExecutionPanelOpen(initialMode === 'run');
         setExecutionPanelCollapsed(initialMode !== 'run');
         if (initialMode === 'run' && latestExecution) {
@@ -3703,6 +3701,7 @@ function PlaybookCanvasInner() {
     advisorAutopilotEnabled,
     pageMode,
     designerOpen,
+    waitingForHumanInput: Boolean(waitingForHumanInput),
     confirmRemoveAllMessage: `${t('toolbar.confirmRemoveAllTitle')}\n${t('toolbar.confirmRemoveAllDescription')}`,
     workspaceRequiredError: t('errors.workspaceRequired'),
     importReadErrorMessage: t('import.readError'),
@@ -4277,6 +4276,7 @@ function PlaybookCanvasInner() {
             {shouldShowAssistant && (
               <PlaybookSecondBrainPanel
                 playbookId={id}
+                designChatEnabled={false}
                 assistantMessages={playbookFeatures.mcpAssistantEnabled ? designerAssistantMessages : undefined}
                 assistantMessagesLoading={designerAssistantMessagesLoading}
                 intentDesign={intentDesign}
