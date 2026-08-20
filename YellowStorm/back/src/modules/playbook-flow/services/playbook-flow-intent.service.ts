@@ -126,6 +126,7 @@ type PlaybookIntentOperationType =
 export interface IntentWorkflowValidationContext {
   existingTaskIds: Set<string>;
   existingTaskTitles: Map<string, string>;
+  existingTaskDescriptions: Map<string, string>;
   existingTaskAgents: Map<string, string | null>;
   inputPortsByTaskId: Map<string, Map<string, string>>;
   outputPortsByTaskId: Map<string, Map<string, string>>;
@@ -996,11 +997,12 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
   }
 
   private buildValidationContext(flow: any): IntentWorkflowValidationContext {
-    const nodes: Array<{ id: string; label?: string; metadata?: { agentSlug?: string }; input?: { ports?: Array<{ id: string; type?: string }> }; output?: { ports?: Array<{ id: string; type?: string }> } }> = flow.nodes || [];
+    const nodes: Array<{ id: string; label?: string; description?: string; metadata?: { agentSlug?: string; description?: string }; input?: { ports?: Array<{ id: string; type?: string }> }; output?: { ports?: Array<{ id: string; type?: string }> } }> = flow.nodes || [];
     const bindings: Array<{ targetNode: string; targetPort: string }> = flow.dataBindings || [];
 
     const existingTaskIds = new Set<string>();
     const existingTaskTitles = new Map<string, string>();
+    const existingTaskDescriptions = new Map<string, string>();
     const existingTaskAgents = new Map<string, string | null>();
     const inputPortsByTaskId = new Map<string, Map<string, string>>();
     const outputPortsByTaskId = new Map<string, Map<string, string>>();
@@ -1009,6 +1011,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     for (const node of nodes) {
       existingTaskIds.add(node.id);
       existingTaskTitles.set(node.id, (node.label || '').trim().toLowerCase().replace(/\s+/g, ' '));
+      existingTaskDescriptions.set(node.id, this.normalizeComparableTitle(node.description || node.metadata?.description || ''));
       existingTaskAgents.set(node.id, node.metadata?.agentSlug || null);
 
       const inputMap = new Map<string, string>();
@@ -1028,7 +1031,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       existingBindingTargets.add(`${b.targetNode}:${b.targetPort}`);
     }
 
-    return { existingTaskIds, existingTaskTitles, existingTaskAgents, inputPortsByTaskId, outputPortsByTaskId, existingBindingTargets };
+    return { existingTaskIds, existingTaskTitles, existingTaskDescriptions, existingTaskAgents, inputPortsByTaskId, outputPortsByTaskId, existingBindingTargets };
   }
 
   private buildWorkflowSummary(flow: any, selectedNodeId: string | null) {
@@ -1270,11 +1273,16 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       }
 
       const newTitle = this.normalizeComparableTitle(change.task.title);
+      const newDescription = this.normalizeComparableTitle(change.task.description || '');
       const newAgent = change.task.agentSlug || null;
       for (const [taskId, existingTitle] of ctx.existingTaskTitles) {
         if (existingTitle === newTitle) {
           const existingAgent = ctx.existingTaskAgents.get(taskId);
           if (existingAgent === newAgent) {
+            return null;
+          }
+          const existingDescription = ctx.existingTaskDescriptions.get(taskId) ?? '';
+          if (existingDescription === newDescription) {
             return null;
           }
         }

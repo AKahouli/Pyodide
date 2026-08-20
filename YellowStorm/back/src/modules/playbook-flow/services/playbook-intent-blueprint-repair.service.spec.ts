@@ -8,6 +8,7 @@ describe('PlaybookIntentBlueprintRepairService', () => {
   const context: IntentWorkflowValidationContext = {
     existingTaskIds: new Set(),
     existingTaskTitles: new Map(),
+    existingTaskDescriptions: new Map(),
     existingTaskAgents: new Map(),
     inputPortsByTaskId: new Map(),
     outputPortsByTaskId: new Map(),

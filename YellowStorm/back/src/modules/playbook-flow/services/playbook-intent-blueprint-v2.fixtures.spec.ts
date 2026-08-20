@@ -65,6 +65,7 @@ function makeContext(existing?: GoldenFixture['existing']): IntentWorkflowValida
   return {
     existingTaskIds,
     existingTaskTitles: new Map<string, string>(),
+    existingTaskDescriptions: new Map<string, string>(),
     existingTaskAgents: new Map<string, string | null>(),
     inputPortsByTaskId,
     outputPortsByTaskId,

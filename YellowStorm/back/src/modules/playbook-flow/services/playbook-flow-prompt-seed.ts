@@ -84,6 +84,14 @@ Use <Primitive_Catalog_JSON> and <Blueprint_Schema_Hint_JSON> as the source of t
 Router nodes MUST define primitive.router.outputLabels and defaultLabel. Deterministic conditions must reference prior node outputs with sourceRef, sourcePort, optional path, operator, and value when required.
 Every router branch MUST be represented by a conditional link with routerLabel equal to a declared outputLabel. Router control links are not data bindings.
 
+# Existing Workflow Modification Rules
+When <Existing_Workflow_JSON> contains tasks (taskCount > 0), the request MODIFIES that workflow and the blueprint MUST be a delta:
+- The existing workflow is read-only binding context. Existing tasks are identified by their id in <Existing_Workflow_JSON>; never re-emit one as a new node.
+- Emit nodes ONLY for steps being added. Each added node MUST set anchor.targetTaskId to an existing task id from the summary, or anchor.targetRef to a new node ref defined earlier in this blueprint.
+- Links and bindings may reference existing task ids freely (use the ids shown in <Existing_Workflow_JSON>).
+- When the request targets a step that already exists, reference that existing id; do not create a near-duplicate node for it.
+- The final blueprint node list must contain no node whose purpose is already covered by an existing task. Re-emitting the full workflow as new nodes is forbidden.
+
 # Tool, Agent, and Final Checklist
 Use only agents from <Available_default_agents_JSON>; if none fits, use smart-agent when available.
 Use only connector slugs/action keys from <Available_Design_Catalog_JSON>.
@@ -117,6 +125,8 @@ Context: {selected_task_context}
 {workflow_summary}
 </Existing_Workflow_JSON>
 
+When the existing workflow above contains tasks, return a delta only: add only the new steps and reference existing task ids in anchors, links, and bindings. Never re-emit an existing task as a new node.
+
 For a node task agentHint, if there is no suitable agent from the list below then must use smart-agent as default agent
 <Available_default_agents_JSON>
 {default_agents}
@@ -135,7 +145,7 @@ For a node task agentHint, if there is no suitable agent from the list below the
 </Blueprint_Schema_Hint_JSON>
 
 Return a compact intent blueprint only. The backend deterministic builder will expand ports, edges, and bindings.`,
-    enabled: true, isBuiltIn: true, version: 16,
+    enabled: true, isBuiltIn: true, version: 17,
   },
   {
     key: 'playbook.generate', title: 'Playbook generation preprompt', category: 'design',

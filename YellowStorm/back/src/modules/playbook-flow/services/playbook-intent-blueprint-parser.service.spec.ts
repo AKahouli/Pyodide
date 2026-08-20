@@ -723,6 +723,7 @@ describe('PlaybookIntentBlueprintParserService', () => {
     const existingContext = {
       existingTaskIds: new Set(['intent-node-1hrnkzq', 'intent-node-l3ar91', 'intent-node-s2l9bl']),
       existingTaskTitles: new Map(),
+      existingTaskDescriptions: new Map(),
       existingTaskAgents: new Map(),
       inputPortsByTaskId: new Map([['intent-node-l3ar91', new Map([['incoming', 'data']])]]),
       outputPortsByTaskId: new Map([

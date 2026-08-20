@@ -90,6 +90,8 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
     expect(secondBrainInstruction).toContain('modify_playbook');
     expect(secondBrainInstruction).toContain('runtime HITL');
     expect(secondBrainInstruction).toContain('no manual confirmation step');
+    expect(secondBrainInstruction).toContain('do not call present_choices');
+    expect(secondBrainInstruction).toContain('skip the remaining questions');
     const actionKeys = agentRepository.upsertDefaultSystemAgent.mock.calls[0][0].connectorActionSelections[0].actionKeys;
     expect(actionKeys).toContain('start_playbook_construction');
     expect(actionKeys).toContain('modify_playbook');

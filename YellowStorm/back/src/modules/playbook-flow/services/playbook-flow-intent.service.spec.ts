@@ -65,12 +65,14 @@ function createService(overrides: Partial<{
 function makeContext(overrides: Partial<{
   existingTaskIds: string[];
   existingTaskTitles: Array<[string, string]>;
+  existingTaskDescriptions: Array<[string, string]>;
   existingTaskAgents: Array<[string, string | null]>;
   inputPortsByTaskId: Array<[string, Array<[string, string]>]>;
   outputPortsByTaskId: Array<[string, Array<[string, string]>]>;
 }> = {}) {
   const existingTaskIds = new Set(overrides.existingTaskIds || []);
   const existingTaskTitles = new Map(overrides.existingTaskTitles || []);
+  const existingTaskDescriptions = new Map(overrides.existingTaskDescriptions || []);
   const existingTaskAgents = new Map(overrides.existingTaskAgents || []);
   const inputPortsByTaskId = new Map(
     (overrides.inputPortsByTaskId || []).map(([k, v]) => [k, new Map(v)]),
@@ -81,6 +83,7 @@ function makeContext(overrides: Partial<{
   return {
     existingTaskIds,
     existingTaskTitles,
+    existingTaskDescriptions,
     existingTaskAgents,
     inputPortsByTaskId,
     outputPortsByTaskId,
@@ -794,7 +797,8 @@ it('falls back to clarification questions when design JSON is malformed', () => 
     expect(prompt?.systemTemplate).toContain('node-output|constant');
     expect(prompt?.systemTemplate).toContain('nodeTemplateKey');
     expect(prompt?.systemTemplate).toContain('primitive.kind="router"');
-    expect(prompt?.version).toBe(16);
+    expect(prompt?.systemTemplate).toContain('Existing Workflow Modification Rules');
+    expect(prompt?.version).toBe(17);
   });
 
   it('keeps the design assessment prompt distinct from intent analyze', () => {
@@ -1176,6 +1180,30 @@ it('falls back to clarification questions when design JSON is malformed', () => 
     const plan = result.find((s: any) => s.kind === 'workflow_plan');
     expect(plan).toBeDefined();
     expect(plan.changes.length).toBe(1);
+  });
+
+  it('drops a re-emitted create_node with matching title + description even when the agent differs', () => {
+    const ctx = makeContext({
+      existingTaskIds: ['task-1'],
+      existingTaskTitles: [['task-1', 'research competitors']],
+      existingTaskDescriptions: [['task-1', 'do it']],
+      existingTaskAgents: [['task-1', 'analyst']],
+    });
+    const raw = JSON.stringify({
+      suggestions: [{
+        kind: 'workflow_plan',
+        label: 'Plan',
+        changes: [{
+          type: 'create_node',
+          nodeRef: 'node-new',
+          task: { title: 'Research Competitors', description: 'Do it', agentSlug: 'writer' },
+        }],
+      }],
+    });
+
+    const result = callNormalize(raw, ctx);
+    const plan = result.find((s: any) => s.kind === 'workflow_plan');
+    expect(plan).toBeUndefined();
   });
 
   it('allows valid create_edge referencing previously created nodeRef', () => {

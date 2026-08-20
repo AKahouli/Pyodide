@@ -24,6 +24,7 @@ function makeContext(): PlaybookIntentAnalysisContext {
     validationContext: {
       existingTaskIds: new Set<string>(),
       existingTaskTitles: new Map<string, string>(),
+      existingTaskDescriptions: new Map<string, string>(),
       existingTaskAgents: new Map<string, string | null>(),
       inputPortsByTaskId: new Map<string, Map<string, string>>(),
       outputPortsByTaskId: new Map<string, Map<string, string>>(),
