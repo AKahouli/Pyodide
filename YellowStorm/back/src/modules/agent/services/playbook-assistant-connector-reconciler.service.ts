@@ -86,10 +86,9 @@ export class PlaybookAssistantConnectorReconcilerService implements OnModuleInit
       undefined,
       undefined,
       undefined,
-      {
-        Authorization: `Bearer ${this.config.mcpIngressToken}`,
-        'X-YellowStorm-Tenant-Id': 'default',
-        'X-YellowStorm-User-Id': actingUserId,
+        {
+          Authorization: `Bearer ${this.config.mcpIngressToken}`,
+          'X-YellowStorm-User-Id': actingUserId,
         'X-YellowStorm-Agent-Id': String(sourceAgent._id),
         'X-YellowStorm-Conversation-Id': 'connector-reconciliation',
         'X-Correlation-Id': 'connector-reconciliation',

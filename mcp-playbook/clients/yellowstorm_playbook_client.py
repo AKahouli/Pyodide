@@ -107,7 +107,6 @@ class YellowStormPlaybookClient:
     def _actor_headers() -> dict[str, str]:
         context = require_actor_context()
         return {
-            "X-YellowStorm-Tenant-Id": context.tenant_id,
             "X-YellowStorm-User-Id": context.user_id,
             "X-YellowStorm-Agent-Id": context.agent_id,
             "X-YellowStorm-Conversation-Id": context.conversation_id,

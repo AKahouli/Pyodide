@@ -225,7 +225,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     );
   });
 
-  it('requires playbook read permission for platform copilot turns', async () => {
+  it('allows a generic platform copilot turn without playbook permission', async () => {
     conversationService.getConversationDocument.mockResolvedValue({
       isFirstMessage: false,
       runtimePurpose: 'platform_copilot',
@@ -234,9 +234,10 @@ describe('MessageController.sendMessage sticky routing', () => {
     });
 
     await expect(controller.sendMessage({ ...user, permissions: [] }, conversationId, {
-      content: 'search',
-    } as any)).rejects.toThrow('Playbook read permission is required');
-    expect(messageService.createUserMessage).not.toHaveBeenCalled();
+      content: 'What can you help me with?',
+    } as any)).resolves.toEqual(expect.objectContaining({ aiMessageId: expect.any(String) }));
+    expect(conversationService.resolvePlatformCopilotAgent).toHaveBeenCalled();
+    expect(messageService.createUserMessage).toHaveBeenCalled();
   });
 
   it('mention replaces sticky and streams with mentioned agents', async () => {
@@ -439,7 +440,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     });
   });
 
-  it('rechecks playbook read permission before regenerating a platform copilot turn', async () => {
+  it('regenerates a platform copilot turn without a conversation-level playbook permission gate', async () => {
     const questionId = new Types.ObjectId();
     messageService.getMessageDocument
       .mockResolvedValueOnce({ questionMessageId: questionId })
@@ -450,7 +451,8 @@ describe('MessageController.sendMessage sticky routing', () => {
     });
 
     await expect(controller.regenerate({ ...user, permissions: [] }, conversationId, 'ai-1'))
-      .rejects.toThrow('Playbook read permission is required to regenerate');
-    expect(messageService.createAIPlaceholder).not.toHaveBeenCalled();
+      .resolves.toEqual({ aiMessage: undefined });
+    expect(conversationService.resolvePlatformCopilotAgent).toHaveBeenCalled();
+    expect(messageService.createAIPlaceholder).toHaveBeenCalled();
   });
 });

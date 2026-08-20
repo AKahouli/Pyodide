@@ -228,6 +228,27 @@ export class AgentRepository {
     return rows.length > 0;
   }
 
+  async existsActiveDefaultByTypeSlug(id: string, agentTypeSlug: string): Promise<boolean> {
+    const rows = await this.db.select({ id: agents.id }).from(agents)
+      .where(and(
+        eq(agents.id, id),
+        eq(agents.agentTypeSlug, agentTypeSlug),
+        eq(agents.isDefault, true),
+        eq(agents.isActive, true),
+      )).limit(1);
+    return rows.length > 0;
+  }
+
+  async findActiveDefaultsByTypeSlug(agentTypeSlug: string): Promise<AgentRecord[]> {
+    const rows = await this.db.select().from(agents)
+      .where(and(
+        eq(agents.agentTypeSlug, agentTypeSlug),
+        eq(agents.isDefault, true),
+        eq(agents.isActive, true),
+      )).orderBy(asc(agents.name));
+    return this.assemble(rows);
+  }
+
   async findActiveDefaultIdBySlug(slug: string): Promise<string | null> {
     const rows = await this.db.select({ id: agents.id }).from(agents)
       .where(and(eq(agents.slug, slug), eq(agents.isDefault, true), eq(agents.isActive, true))).limit(1);

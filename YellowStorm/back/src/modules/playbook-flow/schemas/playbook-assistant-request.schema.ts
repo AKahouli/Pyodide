@@ -12,9 +12,6 @@ export class PlaybookAssistantRequest {
   @Prop({ required: true, type: String, index: true })
   ownerId!: string;
 
-  @Prop({ required: true, type: String, default: 'default' })
-  tenantId!: string;
-
   @Prop({ required: true, type: String })
   agentId!: string;
 

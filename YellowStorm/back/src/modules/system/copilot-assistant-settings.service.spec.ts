@@ -5,8 +5,8 @@ describe('CopilotAssistantSettingsService', () => {
   const findOne = jest.fn();
   const findOneAndUpdate = jest.fn();
   const agents = {
-    assertActiveDefaultAgent: jest.fn(),
-    listActiveDefaultAgentOptions: jest.fn(),
+    assertActivePlatformCopilotAgent: jest.fn(),
+    listActivePlatformCopilotAgentOptions: jest.fn(),
   };
   const model = { findOne, findOneAndUpdate };
 
@@ -28,7 +28,7 @@ describe('CopilotAssistantSettingsService', () => {
 
   it('lists active default agents eligible for the Copilot assistant', async () => {
     const options = [{ id: 'agent-1', name: 'Agent 1', model: 'model-1' }];
-    agents.listActiveDefaultAgentOptions.mockResolvedValue(options);
+    agents.listActivePlatformCopilotAgentOptions.mockResolvedValue(options);
     const service = new CopilotAssistantSettingsService(model as any, agents as any);
 
     await expect(service.listActiveAgentOptions()).resolves.toEqual(options);
@@ -36,12 +36,12 @@ describe('CopilotAssistantSettingsService', () => {
 
   it('validates and persists a mapped active default agent', async () => {
     const value = { agentId: '507f1f77bcf86cd799439011' };
-    agents.assertActiveDefaultAgent.mockResolvedValue(undefined);
+    agents.assertActivePlatformCopilotAgent.mockResolvedValue(undefined);
     findOneAndUpdate.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue({ updatedAt: new Date('2026-07-20T00:00:00Z') }) }) });
     const service = new CopilotAssistantSettingsService(model as any, agents as any);
 
     await expect(service.updateSettings(value)).resolves.toMatchObject(value);
-    expect(agents.assertActiveDefaultAgent).toHaveBeenCalledWith(value.agentId);
+    expect(agents.assertActivePlatformCopilotAgent).toHaveBeenCalledWith(value.agentId);
     expect(findOneAndUpdate).toHaveBeenCalledWith(
       { key: 'copilot_assistant_settings' },
       { key: 'copilot_assistant_settings', value },
@@ -55,6 +55,6 @@ describe('CopilotAssistantSettingsService', () => {
     const service = new CopilotAssistantSettingsService(model as any, agents as any);
 
     await expect(service.updateSettings(value)).resolves.toMatchObject({ agentId: null });
-    expect(agents.assertActiveDefaultAgent).not.toHaveBeenCalled();
+    expect(agents.assertActivePlatformCopilotAgent).not.toHaveBeenCalled();
   });
 });

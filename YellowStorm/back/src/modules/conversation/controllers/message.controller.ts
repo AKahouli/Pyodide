@@ -35,7 +35,6 @@ import { GovernedConversationRuntimeService } from '../../governance/services/go
 import { ResponseReliabilityService } from '../services/response-reliability.service';
 import { createHash } from 'node:crypto';
 import { ConflictException } from '../../exceptions';
-import { hasPermission, Permissions } from '../../authorization/constants/permissions';
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -108,13 +107,6 @@ export class MessageController {
     const conversation = await this.conversationService.getConversationDocument(conversationId);
     const platformCopilot = conversation.runtimePurpose === 'platform_copilot';
     if (platformCopilot) {
-      const permissions = (user as unknown as { permissions?: string[] }).permissions ?? [];
-      if (!hasPermission(permissions, Permissions.PLAYBOOK_READ)) {
-        throw new ForbiddenException(
-          ErrorCode.FORBIDDEN,
-          'Playbook read permission is required to use Yellowmind',
-        );
-      }
       const hasRuntimeOverride = [
         dto.agentIds,
         dto.teamIds,
@@ -593,15 +585,6 @@ export class MessageController {
     const userMessage = await this.messageService.getMessageDocument(questionId);
     const conversation = await this.conversationService.getConversationDocument(conversationId);
     const platformCopilot = conversation.runtimePurpose === 'platform_copilot';
-    if (platformCopilot) {
-      const permissions = (user as unknown as { permissions?: string[] }).permissions ?? [];
-      if (!hasPermission(permissions, Permissions.PLAYBOOK_READ)) {
-        throw new ForbiddenException(
-          ErrorCode.FORBIDDEN,
-          'Playbook read permission is required to regenerate a Yellowmind response',
-        );
-      }
-    }
     const pinnedAgentId = platformCopilot
       ? await this.conversationService.resolvePlatformCopilotAgent(conversation)
       : undefined;

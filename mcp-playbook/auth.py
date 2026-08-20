@@ -11,7 +11,6 @@ _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$")
 
 @dataclass(frozen=True)
 class PlatformActorContext:
-    tenant_id: str
     user_id: str
     agent_id: str
     conversation_id: str
@@ -67,7 +66,6 @@ class TrustedIdentityMiddleware:
             return
         headers = {key.lower(): value for key, value in raw_headers}
         values = {
-            "tenant_id": headers.get(b"x-yellowstorm-tenant-id", b"").decode("utf-8", errors="replace").strip(),
             "user_id": headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip(),
             "agent_id": headers.get(b"x-yellowstorm-agent-id", b"").decode("utf-8", errors="replace").strip(),
             "conversation_id": headers.get(b"x-yellowstorm-conversation-id", b"").decode("utf-8", errors="replace").strip(),
@@ -87,14 +85,12 @@ class TrustedIdentityMiddleware:
             return
 
         complete_actor = all(values[key] for key in (
-            "tenant_id",
             "user_id",
             "agent_id",
             "conversation_id",
             "correlation_id",
         ))
         context = PlatformActorContext(
-            tenant_id=values["tenant_id"],
             user_id=values["user_id"],
             agent_id=values["agent_id"],
             conversation_id=values["conversation_id"],

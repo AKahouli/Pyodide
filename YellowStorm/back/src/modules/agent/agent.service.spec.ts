@@ -95,7 +95,9 @@ describe('AgentService connector skill inheritance', () => {
       findDefaultByType: jest.fn().mockResolvedValue(null),
       findDefaultByNameActive: jest.fn().mockResolvedValue(null),
       findActiveDefaults: jest.fn().mockResolvedValue([]),
+      findActiveDefaultsByTypeSlug: jest.fn().mockResolvedValue([]),
       existsActiveDefault: jest.fn().mockResolvedValue(false),
+      existsActiveDefaultByTypeSlug: jest.fn().mockResolvedValue(false),
       findActiveDefaultIdBySlug: jest.fn().mockResolvedValue(null),
       countByAgentType: jest.fn().mockResolvedValue(0),
       findByNameAndOwner: jest.fn().mockResolvedValue(null),
@@ -326,17 +328,35 @@ describe('AgentService connector skill inheritance', () => {
       undefined,
       undefined,
       undefined,
-      { tenantId: 'default', conversationId: 'conversation-1', correlationId: 'message-1' },
+      { conversationId: 'conversation-1', correlationId: 'message-1' },
     );
 
     const [binding] = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string);
     expect(binding.auth_headers).toEqual(expect.objectContaining({
-      'X-YellowStorm-Tenant-Id': 'default',
       'X-YellowStorm-User-Id': userId,
       'X-YellowStorm-Agent-Id': 'platform-agent',
       'X-YellowStorm-Conversation-Id': 'conversation-1',
       'X-Correlation-Id': 'message-1',
     }));
+    expect(binding.auth_headers).not.toHaveProperty('X-YellowStorm-Tenant-Id');
+  });
+
+  it('accepts only active default platform-copilot agents for global copilot settings', async () => {
+    const { service, agentRepository } = createService();
+    const agentId = new Types.ObjectId().toString();
+    agentRepository.existsActiveDefaultByTypeSlug.mockResolvedValue(true);
+
+    await expect(service.assertActivePlatformCopilotAgent(agentId)).resolves.toBeUndefined();
+    expect(agentRepository.existsActiveDefaultByTypeSlug).toHaveBeenCalledWith(agentId, 'platform_copilot');
+  });
+
+  it('rejects a normal active default agent as the global copilot', async () => {
+    const { service, agentRepository } = createService();
+    const agentId = new Types.ObjectId().toString();
+    agentRepository.existsActiveDefaultByTypeSlug.mockResolvedValue(false);
+
+    await expect(service.assertActivePlatformCopilotAgent(agentId))
+      .rejects.toThrow('must be an active platform copilot');
   });
 
   it('resolves the mono-agent directly from the DB even though it is not part of the user\'s roster', async () => {

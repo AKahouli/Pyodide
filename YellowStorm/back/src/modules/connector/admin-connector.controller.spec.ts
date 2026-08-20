@@ -62,7 +62,6 @@ describe('AdminConnectorController MCP inspection', () => {
       undefined,
       {
         Authorization: 'Bearer server-secret',
-        'X-YellowStorm-Tenant-Id': 'default',
         'X-YellowStorm-User-Id': 'user-1',
         'X-YellowStorm-Agent-Id': 'admin-connector-inspector',
         'X-YellowStorm-Conversation-Id': 'admin-connector-inspection',

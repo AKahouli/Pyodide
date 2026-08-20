@@ -119,7 +119,7 @@ describe('useSecondBrainConversation', () => {
     expect(result.current.streamingComponents[0]?.data.content).toBe('Hello world');
   });
 
-  it('creates and selects a distinct idempotent Yellowmind conversation', async () => {
+  it('creates a distinct idempotent conversation without deleting prior history', async () => {
     mocks.createConversation
       .mockResolvedValueOnce({ id: 'conversation-1', runtimePurpose: 'platform_copilot' })
       .mockResolvedValueOnce({ id: 'conversation-2', title: 'Yellowmind', runtimePurpose: 'platform_copilot' });
@@ -134,6 +134,21 @@ describe('useSecondBrainConversation', () => {
     });
     expect(result.current.conversationId).toBe('conversation-2');
     expect(localStorage.getItem(SECOND_BRAIN_CONVERSATION_STORAGE_KEY)).toBe('conversation-2');
+    expect(result.current.history.map((conversation) => conversation.id)).toEqual([
+      'conversation-2',
+      'conversation-1',
+    ]);
+
+    mocks.fetchConversation.mockResolvedValue({ id: 'conversation-1', runtimePurpose: 'platform_copilot' });
+    mocks.fetchMessages.mockResolvedValue({
+      items: [{ id: 'old-message', conversationId: 'conversation-1', content: 'Remember this' }],
+      total: 1,
+      page: 1,
+      limit: 100,
+      totalPages: 1,
+    });
+    await act(async () => { expect(await result.current.selectConversation('conversation-1')).toBe(true); });
+    expect(result.current.messages).toEqual([expect.objectContaining({ id: 'old-message' })]);
   });
 
   it('loads and selects an owned platform-copilot history item', async () => {

@@ -46,69 +46,69 @@ export class PlaybookAssistantInternalController {
 
   @Get('playbooks')
   @ApiOperation({ summary: 'Search accessible Playbooks for the mascot' })
-  searchPlaybooks(
+  async searchPlaybooks(
     @Headers('x-yellowstorm-user-id') userId: string | undefined,
     @Query() dto: SearchPlaybooksDto,
   ) {
-    return this.assistantService.searchPlaybooks(this.requireUserId(userId), dto);
+    return this.assistantService.searchPlaybooks(await this.requireReadUser(userId), dto);
   }
 
   @Get('executions')
   @ApiOperation({ summary: 'List recent accessible Playbook executions for the mascot' })
-  listRecentExecutions(
+  async listRecentExecutions(
     @Headers('x-yellowstorm-user-id') userId: string | undefined,
     @Query() dto: ListRecentExecutionsDto,
   ) {
-    return this.assistantService.listRecentExecutions(this.requireUserId(userId), dto);
+    return this.assistantService.listRecentExecutions(await this.requireReadUser(userId), dto);
   }
 
   @Get('executions/:executionId/diagnostics')
   @ApiOperation({ summary: 'Get redacted deterministic execution diagnostics for the mascot' })
-  getExecutionDiagnostics(
+  async getExecutionDiagnostics(
     @Headers('x-yellowstorm-user-id') userId: string | undefined,
     @Param('executionId') executionId: string,
   ) {
-    return this.assistantService.getExecutionDiagnostics(executionId, this.requireUserId(userId));
+    return this.assistantService.getExecutionDiagnostics(executionId, await this.requireReadUser(userId));
   }
 
   @Post('playbooks/:id/context')
   @ApiOperation({ summary: 'Open canonical Playbook assistant context' })
-  openContext(
+  async openContext(
     @Headers('x-yellowstorm-user-id') userId: string | undefined,
     @Param('id') id: string,
     @Body() dto: OpenPlaybookAssistantContextDto,
   ) {
     this.assistantService.assertEnabled();
-    return this.contextService.open(id, this.requireUserId(userId), dto);
+    return this.contextService.open(id, await this.requireReadUser(userId), dto);
   }
 
   @Get('playbooks/:id/summary')
   @ApiOperation({ summary: 'Get canonical Playbook summary' })
   async getSummary(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('id') id: string) {
     this.assistantService.assertEnabled();
-    const context = await this.contextService.open(id, this.requireUserId(userId));
+    const context = await this.contextService.open(id, await this.requireReadUser(userId));
     return { playbookId: id, definitionRevision: context.definitionRevision, workflow: context.workflow, validation: context.validation, execution: context.execution };
   }
 
   @Get('playbooks/:id/tasks/:taskId')
   @ApiOperation({ summary: 'Get canonical Playbook task details' })
-  getTask(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('id') id: string, @Param('taskId') taskId: string) {
+  async getTask(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('id') id: string, @Param('taskId') taskId: string) {
     this.assistantService.assertEnabled();
-    return this.contextService.getTask(id, this.requireUserId(userId), taskId);
+    return this.contextService.getTask(id, await this.requireReadUser(userId), taskId);
   }
 
   @Get('playbooks/:id/tasks/:taskId/dependencies')
   @ApiOperation({ summary: 'Get canonical Playbook task dependencies' })
-  getTaskDependencies(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('id') id: string, @Param('taskId') taskId: string) {
+  async getTaskDependencies(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('id') id: string, @Param('taskId') taskId: string) {
     this.assistantService.assertEnabled();
-    return this.contextService.getDependencies(id, this.requireUserId(userId), taskId);
+    return this.contextService.getDependencies(id, await this.requireReadUser(userId), taskId);
   }
 
   @Get('playbooks/:id/validation')
   @ApiOperation({ summary: 'Validate canonical Playbook definition' })
   async validate(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('id') id: string) {
     this.assistantService.assertEnabled();
-    const context = await this.contextService.open(id, this.requireUserId(userId));
+    const context = await this.contextService.open(id, await this.requireReadUser(userId));
     return { playbookId: id, definitionRevision: context.definitionRevision, ...context.validation };
   }
 
@@ -187,8 +187,8 @@ export class PlaybookAssistantInternalController {
 
   @Get('playbooks/:id/constructions/:operationId')
   @ApiOperation({ summary: 'Get Playbook assistant construction status' })
-  getConstruction(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('id') id: string, @Param('operationId') operationId: string) {
-    return this.assistantService.getConstruction(id, this.requireUserId(userId), operationId);
+  async getConstruction(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('id') id: string, @Param('operationId') operationId: string) {
+    return this.assistantService.getConstruction(id, await this.requireReadUser(userId), operationId);
   }
 
   @Get('playbooks/:id/constructions/:operationId/events')
@@ -202,6 +202,7 @@ export class PlaybookAssistantInternalController {
     @Res() res: Response,
   ): Promise<void> {
     this.assistantService.assertEnabled();
+    const actingUserId = await this.requireReadUser(userId);
     const afterSequence = Math.max(
       Number.isFinite(Number(after)) ? Number(after) : 0,
       Number.isFinite(Number(lastEventId)) ? Number(lastEventId) : 0,
@@ -212,7 +213,7 @@ export class PlaybookAssistantInternalController {
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
     try {
-      for await (const event of this.assistantService.streamConstruction(id, this.requireUserId(userId), operationId, afterSequence)) {
+      for await (const event of this.assistantService.streamConstruction(id, actingUserId, operationId, afterSequence)) {
         res.write(`id: ${event.sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
       }
     } catch (error) {
@@ -252,13 +253,13 @@ export class PlaybookAssistantInternalController {
 
   @Post('playbooks/:id/tasks/:taskId/optimization')
   @ApiOperation({ summary: 'Analyze a Playbook task without mutation' })
-  analyzeTaskOptimization(
+  async analyzeTaskOptimization(
     @Headers('x-yellowstorm-user-id') userId: string | undefined,
     @Param('id') id: string,
     @Param('taskId') taskId: string,
     @Body() dto: AnalyzeTaskOptimizationDto,
   ) {
-    return this.assistantService.analyzeTaskOptimization(id, taskId, this.requireUserId(userId), dto);
+    return this.assistantService.analyzeTaskOptimization(id, taskId, await this.requireReadUser(userId), dto);
   }
 
   @Post('playbooks/:id/advisor-remediation-constructions')
@@ -276,12 +277,12 @@ export class PlaybookAssistantInternalController {
 
   @Post('playbooks/:id/workflow-optimization')
   @RateLimit({ limit: 20, windowMs: 60000, keyPrefix: 'playbook-assistant:optimization' })
-  analyzeWorkflowOptimization(
+  async analyzeWorkflowOptimization(
     @Headers('x-yellowstorm-user-id') userId: string | undefined,
     @Param('id') id: string,
     @Body() dto: AnalyzeWorkflowOptimizationDto,
   ) {
-    return this.assistantService.analyzeWorkflowOptimization(id, this.requireUserId(userId), dto);
+    return this.assistantService.analyzeWorkflowOptimization(id, await this.requireReadUser(userId), dto);
   }
 
   @Post('playbooks')
@@ -314,18 +315,18 @@ export class PlaybookAssistantInternalController {
   }
 
   @Get('playbooks/:id/executions')
-  listExecutions(
+  async listExecutions(
     @Headers('x-yellowstorm-user-id') userId: string | undefined,
     @Param('id') id: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.assistantService.listExecutions(id, this.requireUserId(userId), Number(page) || 1, Number(limit) || 10);
+    return this.assistantService.listExecutions(id, await this.requireReadUser(userId), Number(page) || 1, Number(limit) || 10);
   }
 
   @Get('executions/:executionId')
-  getExecution(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('executionId') executionId: string) {
-    return this.assistantService.getExecution(executionId, this.requireUserId(userId));
+  async getExecution(@Headers('x-yellowstorm-user-id') userId: string | undefined, @Param('executionId') executionId: string) {
+    return this.assistantService.getExecution(executionId, await this.requireReadUser(userId));
   }
 
   @Post('executions/:executionId/cancel')
@@ -400,9 +401,14 @@ export class PlaybookAssistantInternalController {
     }
   }
 
+  private async requireReadUser(userId: string | undefined): Promise<string> {
+    const actingUserId = this.requireUserId(userId);
+    await this.assertUserPermission(actingUserId, Permissions.PLAYBOOK_READ);
+    return actingUserId;
+  }
+
   private actor(headers: Record<string, string | undefined>) {
     return {
-      tenantId: this.requireActorValue(headers['x-yellowstorm-tenant-id'], 'tenant'),
       ownerId: this.requireUserId(headers['x-yellowstorm-user-id']),
       agentId: this.requireActorValue(headers['x-yellowstorm-agent-id'], 'agent'),
       conversationId: this.requireActorValue(headers['x-yellowstorm-conversation-id'], 'conversation'),

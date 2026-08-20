@@ -21,7 +21,7 @@ describe('second brain action bus', () => {
       navigate,
       confirmNavigation: () => true,
     })).toEqual({ ok: true });
-    expect(navigate).toHaveBeenCalledWith('/playbooks/p%2F1/executions/e%2F1?taskId=t%2F1&mascotHighlight=1');
+    expect(navigate).toHaveBeenCalledWith('/playbooks/p%2F1/executions/e%2F1?taskId=t%2F1');
   });
 
   it('rejects unknown surfaces and arbitrary route fields', () => {
@@ -73,7 +73,7 @@ describe('second brain action bus', () => {
     const editor = { surface: 'playbook.editor' as const, params: { playbookId: 'p1' } };
     const targets = dedupeSecondBrainUiTargets([
       editor,
-      { ...editor, effects: [{ type: 'selectTab', tab: 'design' }] },
+      { ...editor, effects: [{ type: 'highlightTask', taskId: 'task-1' }] },
       { surface: 'playbook.editor.assistant', params: { playbookId: 'p1', operationId: 'op1' } },
       { surface: 'playbook.editor.assistant', params: { playbookId: 'p1', operationId: 'op2' } },
     ]);
@@ -82,9 +82,24 @@ describe('second brain action bus', () => {
     expect(targets[0]).toBe(editor);
     expect(targets.map(getSecondBrainUiTargetIdentity)).toEqual([
       '["playbook.editor","p1",[]]',
-      '["playbook.editor","p1",[{"type":"selectTab","tab":"design"}]]',
+      '["playbook.editor","p1",[{"type":"highlightTask","taskId":"task-1"}]]',
       '["playbook.editor.assistant","p1","op1",[]]',
       '["playbook.editor.assistant","p1","op2",[]]',
     ]);
+  });
+
+  it('rejects the removed selectTab effect instead of silently dropping it', () => {
+    const navigate = vi.fn();
+    expect(executeSecondBrainUiTarget({
+      target: {
+        surface: 'playbook.execution.details',
+        params: { playbookId: 'p1', executionId: 'e1' },
+        effects: [{ type: 'selectTab', tab: 'arbitrary' }],
+      } as never,
+      pageContext: context,
+      navigate,
+      confirmNavigation: () => true,
+    })).toEqual({ ok: false, reason: 'invalid_target' });
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

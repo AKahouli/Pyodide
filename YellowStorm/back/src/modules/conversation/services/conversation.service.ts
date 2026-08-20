@@ -117,12 +117,18 @@ export class ConversationService {
     const configuredAgentId = configured.agentId?.trim() || null;
     let activeAgentId: string | null = null;
     if (configuredAgentId) {
-      // An admin may map the Copilot assistant to any active default agent; only fall back to the
-      // historical Yellowmind heuristic when the configured agent is no longer an active default.
-      const stillActive = await this.agentRepository.existsActiveDefault(configuredAgentId);
+      const stillActive = await this.agentRepository.existsActiveDefaultByTypeSlug(
+        configuredAgentId,
+        'platform_copilot',
+      );
       if (stillActive) activeAgentId = configuredAgentId;
-    }
-    if (!activeAgentId) {
+      else {
+        throw new ServiceUnavailableException(
+          ErrorCode.AGENT_UNAVAILABLE,
+          'The configured platform copilot agent is unavailable',
+        );
+      }
+    } else {
       activeAgentId = await this.agentRepository.findActiveDefaultIdBySlugAndType(
         'my-second-brain',
         'platform_copilot',
@@ -137,35 +143,12 @@ export class ConversationService {
     return activeAgentId;
   }
 
-  /**
-   * Resolve the active Yellowmind agent for a platform-copilot conversation and,
-   * when the stored pin is stale, repoint the conversation (and its in-memory doc)
-   * to the active agent. Unlike assertPlatformCopilotAgent this self-heals instead
-   * of failing closed, so orphaned conversations recover when the agent is recreated.
-   */
   async resolvePlatformCopilotAgent(conversation: {
     _id: Types.ObjectId;
     pinnedAgentId?: Types.ObjectId | null;
     taggedAgentIds?: Types.ObjectId[];
   }): Promise<string> {
-    const activeAgentId = await this.assertPlatformCopilotAgent();
-    if (conversation.pinnedAgentId?.toString() !== activeAgentId) {
-      const previousAgentId = conversation.pinnedAgentId?.toString() ?? null;
-      conversation.pinnedAgentId = new Types.ObjectId(activeAgentId);
-      conversation.taggedAgentIds = [new Types.ObjectId(activeAgentId)];
-      await this.conversationModel.findByIdAndUpdate(conversation._id, {
-        $set: {
-          pinnedAgentId: conversation.pinnedAgentId,
-          taggedAgentIds: conversation.taggedAgentIds,
-        },
-      });
-      this.logger.log('Repointed stale platform-copilot conversation to the active agent', {
-        conversationId: conversation._id.toString(),
-        previousAgentId,
-        activeAgentId,
-      });
-    }
-    return activeAgentId;
+    return this.assertPlatformCopilotAgent(conversation.pinnedAgentId);
   }
 
   private async createOrReusePlatformCopilot(userId: string, requestedCreationId?: string): Promise<ConversationResponse> {

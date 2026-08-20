@@ -18,9 +18,9 @@ import { useModuleTranslation } from '@/modules/localization';
 export function PlaybookExecutionPage() {
   const { id, executionId } = useParams<{ id: string; executionId: string }>();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const requestedTaskId = searchParams.get('taskId');
-  const requestedTab = searchParams.get('mascotTab');
+  const highlightedTaskId = searchParams.get('mascotTask');
   const focusExecutionStatus = searchParams.get('mascotFocusStatus') === '1';
   const { t } = useModuleTranslation('playbook');
 
@@ -46,13 +46,23 @@ export function PlaybookExecutionPage() {
   }, [requestedTaskId, selectStep]);
 
   useEffect(() => {
-    if (requestedTab) setActiveDetailTab(requestedTab);
-  }, [requestedTab]);
-
-  useEffect(() => {
-    if (!focusExecutionStatus) return;
-    document.getElementById('playbook-execution-status')?.focus();
-  }, [focusExecutionStatus, execution?.status]);
+    const next = new URLSearchParams(searchParams);
+    let consumed = false;
+    if (highlightedTaskId) {
+      selectStep(highlightedTaskId);
+      next.delete('mascotTask');
+      consumed = true;
+    }
+    if (focusExecutionStatus) {
+      const status = document.getElementById('playbook-execution-status');
+      if (status) {
+        status.focus();
+        next.delete('mascotFocusStatus');
+        consumed = true;
+      }
+    }
+    if (consumed) setSearchParams(next, { replace: true });
+  }, [execution?.status, focusExecutionStatus, highlightedTaskId, searchParams, selectStep, setSearchParams]);
 
   useEffect(() => {
     if (id) {

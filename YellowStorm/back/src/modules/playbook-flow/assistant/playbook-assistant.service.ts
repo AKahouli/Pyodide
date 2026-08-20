@@ -30,7 +30,6 @@ const DEFAULT_OPTIMIZATION_DIMENSIONS = ['clarity', 'agent', 'tools', 'inputs', 
 
 export interface TrustedPlaybookAssistantActor {
   ownerId: string;
-  tenantId: string;
   agentId: string;
   conversationId: string;
   correlationId: string;
@@ -93,7 +92,6 @@ export class PlaybookAssistantService {
             requestId,
             conversationId: dto.conversationId,
             ownerId: userId,
-            tenantId: 'default',
             agentId,
             operationKind: 'existing_construction',
             playbookId,
@@ -862,14 +860,12 @@ export class PlaybookAssistantService {
   }
 
   private actorFromRequest(request: {
-    tenantId: string;
     agentId: string;
     conversationId: string;
     correlationId: string;
   }, ownerId: string): TrustedPlaybookAssistantActor {
     return {
       ownerId,
-      tenantId: request.tenantId,
       agentId: request.agentId,
       conversationId: request.conversationId,
       correlationId: request.correlationId,

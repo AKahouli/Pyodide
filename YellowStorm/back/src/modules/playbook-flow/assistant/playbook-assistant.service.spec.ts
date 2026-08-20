@@ -28,7 +28,6 @@ describe('PlaybookAssistantService.runTurn', () => {
           requestId: 'request-1',
           conversationId: 'conversation-1',
           correlationId: 'playbook-assistant:correlation-1',
-          tenantId: 'default',
           agentId: '507f1f77bcf86cd799439011',
           contextId: 'context-1',
           ownerId: 'user-1',
@@ -54,7 +53,6 @@ describe('PlaybookAssistantService.runTurn', () => {
         requestId: 'request-1',
         conversationId: 'conversation-1',
         correlationId: 'playbook-assistant:correlation-1',
-        tenantId: 'default',
         agentId: '507f1f77bcf86cd799439011',
         contextId: 'context-1',
         ownerId: 'user-1',
@@ -236,7 +234,6 @@ describe('PlaybookAssistantService.runTurn', () => {
 
     await service.startBoundConstruction('request-1', {
       ownerId: 'user-1',
-      tenantId: 'default',
       agentId: 'agent-1',
       conversationId: 'conversation-1',
       correlationId: 'correlation-1',
@@ -254,7 +251,6 @@ describe('PlaybookAssistantService.runTurn', () => {
 
     await expect(service.startBoundConstruction('request-1', {
       ownerId: 'user-1',
-      tenantId: 'default',
       agentId: 'agent-1',
       conversationId: 'conversation-1',
       correlationId: 'correlation-1',
@@ -279,7 +275,6 @@ describe('PlaybookAssistantService.runTurn', () => {
 
     await expect(service.startBoundConstruction('request-1', {
       ownerId: 'user-1',
-      tenantId: 'default',
       agentId: 'agent-1',
       conversationId: 'conversation-1',
       correlationId: 'correlation-1',
@@ -300,7 +295,6 @@ describe('PlaybookAssistantService.runTurn', () => {
 
     await expect(service.startGeneration('request-1', {
       ownerId: 'user-1',
-      tenantId: 'default',
       agentId: 'agent-1',
       conversationId: 'conversation-1',
       correlationId: 'correlation-1',
@@ -322,7 +316,7 @@ describe('PlaybookAssistantService.runTurn', () => {
       requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation', originalText: 'Build lead generation',
     });
     const actor = {
-      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-1',
     };
 
@@ -345,7 +339,7 @@ describe('PlaybookAssistantService.runTurn', () => {
     });
 
     await expect(service.startCurrentTurnGeneration({
-      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-1',
     }, {})).rejects.toThrow('conversation binding does not match');
     expect(requestService.claimGenerationForTurn).not.toHaveBeenCalled();
@@ -354,7 +348,7 @@ describe('PlaybookAssistantService.runTurn', () => {
   it('modifies an existing Playbook from the current platform turn through assessment and construction', async () => {
     const { service, requestService, intentService, constructionService } = createService();
     const actor = {
-      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-1',
     };
 
@@ -388,7 +382,7 @@ describe('PlaybookAssistantService.runTurn', () => {
     requestService.saveAssessment.mockResolvedValueOnce({ continuationId: 'continuation-1' });
 
     const result = await service.runCurrentTurnModification('playbook-1', {
-      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-1',
     }, {});
 
@@ -400,7 +394,7 @@ describe('PlaybookAssistantService.runTurn', () => {
   it('continues a clarification from a later turn after rebinding its correlation', async () => {
     const { service, requestService, intentService, constructionService } = createService();
     const actor = {
-      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-2',
     };
 
@@ -427,7 +421,7 @@ describe('PlaybookAssistantService.runTurn', () => {
     });
 
     await expect(service.runCurrentTurnModification('playbook-1', {
-      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-1',
     }, {})).rejects.toThrow('conversation binding does not match');
     expect(requestService.claimCurrentTurnModification).not.toHaveBeenCalled();
@@ -438,7 +432,6 @@ describe('PlaybookAssistantService.runTurn', () => {
 
     await expect(service.continueClarification('continuation-1', {
       ownerId: 'user-1',
-      tenantId: 'default',
       agentId: 'agent-1',
       conversationId: 'conversation-1',
       correlationId: 'correlation-1',
@@ -456,7 +449,6 @@ describe('PlaybookAssistantService.runTurn', () => {
     const { service, requestService } = createService();
     const actor = {
       ownerId: 'user-1',
-      tenantId: 'default',
       agentId: 'agent-1',
       conversationId: 'conversation-1',
       correlationId: 'ai-message-2',
@@ -478,7 +470,6 @@ describe('PlaybookAssistantService.runTurn', () => {
 
     const result = await service.continueClarification('continuation-1', {
       ownerId: 'user-1',
-      tenantId: 'default',
       agentId: 'agent-1',
       conversationId: 'conversation-1',
       correlationId: 'correlation-1',
@@ -503,7 +494,6 @@ describe('PlaybookAssistantService.runTurn', () => {
 
     const result = await service.continueClarification('continuation-1', {
       ownerId: 'user-1',
-      tenantId: 'default',
       agentId: 'agent-1',
       conversationId: 'conversation-1',
       correlationId: 'correlation-1',
@@ -521,7 +511,6 @@ describe('PlaybookAssistantService.runTurn', () => {
 
     await expect(service.continueClarification('continuation-1', {
       ownerId: 'user-1',
-      tenantId: 'default',
       agentId: 'agent-1',
       conversationId: 'conversation-1',
       correlationId: 'correlation-1',
@@ -559,7 +548,6 @@ describe('PlaybookAssistantService.runTurn', () => {
 
     const result = await service.startGeneration('request-1', {
       ownerId: 'user-1',
-      tenantId: 'default',
       agentId: 'agent-1',
       conversationId: 'conversation-1',
       correlationId: 'correlation-1',
@@ -597,7 +585,6 @@ describe('PlaybookAssistantService.runTurn', () => {
 
     await expect(service.startGeneration('request-1', {
       ownerId: 'user-1',
-      tenantId: 'default',
       agentId: 'agent-1',
       conversationId: 'conversation-1',
       correlationId: 'correlation-1',

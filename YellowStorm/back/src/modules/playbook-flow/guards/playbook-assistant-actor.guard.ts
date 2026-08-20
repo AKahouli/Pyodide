@@ -7,7 +7,6 @@ export class PlaybookAssistantActorGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const headers = context.switchToHttp().getRequest<{ headers: Record<string, string | string[] | undefined> }>().headers;
     const required = [
-      'x-yellowstorm-tenant-id',
       'x-yellowstorm-user-id',
       'x-yellowstorm-agent-id',
       'x-yellowstorm-conversation-id',

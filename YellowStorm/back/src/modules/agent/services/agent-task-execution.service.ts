@@ -15,7 +15,7 @@ export class AgentTaskExecutionService {
   private readonly logger = new Logger(AgentTaskExecutionService.name);
   constructor(private readonly config: ConfigService, @Inject(forwardRef(() => StreamService)) private readonly stream: StreamService, private readonly agents: AgentService, private readonly usageService: UsageService) {}
 
-  async runSingleAgentTask(input: { userId: string; username?: string; agentId: string; query: string; attachedFiles: GrpcAttachedFile[]; correlationId: string; conversationId?: string; tenantId?: string; timeoutMs?: number }): Promise<{ text: string; toolResults: AgentTaskToolResult[]; usage?: { inputTokens: number; outputTokens: number; model?: string } }> {
+  async runSingleAgentTask(input: { userId: string; username?: string; agentId: string; query: string; attachedFiles: GrpcAttachedFile[]; correlationId: string; conversationId?: string; timeoutMs?: number }): Promise<{ text: string; toolResults: AgentTaskToolResult[]; usage?: { inputTokens: number; outputTokens: number; model?: string } }> {
     await this.agents.assertActiveDefaultAgent(input.agentId);
     if (!(await this.stream.waitForGrpcReady(5_000))) throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'The AI runtime is unavailable');
     const client = this.stream.getChatbotClient();
@@ -27,7 +27,6 @@ export class AgentTaskExecutionService {
       undefined,
       conversationId,
       {
-        tenantId: input.tenantId,
         conversationId,
         correlationId: input.correlationId,
       },

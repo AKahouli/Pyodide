@@ -38,12 +38,12 @@ export class CopilotAssistantSettingsService {
   }
 
   listActiveAgentOptions(): Promise<CopilotAssistantAgentOption[]> {
-    return this.agents.listActiveDefaultAgentOptions();
+    return this.agents.listActivePlatformCopilotAgentOptions();
   }
 
   async updateSettings(value: { agentId?: string | null }): Promise<CopilotAssistantSettings> {
     if (value.agentId) {
-      await this.agents.assertActiveDefaultAgent(value.agentId);
+      await this.agents.assertActivePlatformCopilotAgent(value.agentId);
     }
     const persisted: CopilotAssistantSettingsValue = {
       agentId: value.agentId?.trim() || null,

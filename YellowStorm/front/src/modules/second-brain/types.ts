@@ -15,7 +15,6 @@ export type SecondBrainUiTarget = {
     operationId?: string;
   };
   effects?: Array<
-    | { type: 'selectTab'; tab: string }
     | { type: 'highlightTask'; taskId: string }
     | { type: 'focusExecutionStatus' }
   >;

@@ -844,7 +844,6 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           groupMembers,
           request.connectorRepo?.connectorId,
           conversation.runtimePurpose === 'platform_copilot' ? {
-            tenantId: 'default',
             conversationId,
             correlationId: runtimeCorrelationId,
           } : undefined,

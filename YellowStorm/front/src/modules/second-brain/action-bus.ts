@@ -20,7 +20,6 @@ const targetSchema = z.object({
   ]),
   params: paramsSchema,
   effects: z.array(z.discriminatedUnion('type', [
-    z.object({ type: z.literal('selectTab'), tab: z.string().min(1).max(100) }).strict(),
     z.object({ type: z.literal('highlightTask'), taskId: z.string().min(1).max(200) }).strict(),
     z.object({ type: z.literal('focusExecutionStatus') }).strict(),
   ])).max(5).optional(),
@@ -64,7 +63,7 @@ export function executeSecondBrainUiTarget(input: {
       if (!playbookId || !executionId) return { ok: false, reason: 'missing_parameter' };
       const taskId = target.params.taskId;
       const suffix = target.surface === 'playbook.execution.task' && taskId
-        ? `?taskId=${encodeURIComponent(taskId)}&mascotHighlight=1`
+        ? `?taskId=${encodeURIComponent(taskId)}`
         : '';
       route = `/playbooks/${encodeURIComponent(playbookId)}/executions/${encodeURIComponent(executionId)}${suffix}`;
       break;
@@ -74,7 +73,6 @@ export function executeSecondBrainUiTarget(input: {
     const [path, rawQuery = ''] = route.split('?');
     const query = new URLSearchParams(rawQuery);
     for (const effect of target.effects) {
-      if (effect.type === 'selectTab') query.set('mascotTab', effect.tab);
       if (effect.type === 'highlightTask') query.set('mascotTask', effect.taskId);
       if (effect.type === 'focusExecutionStatus') query.set('mascotFocusStatus', '1');
     }

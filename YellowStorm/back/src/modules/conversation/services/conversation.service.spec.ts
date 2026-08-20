@@ -11,7 +11,7 @@ describe('ConversationService sticky / tagged agents', () => {
     countDocuments: jest.Mock;
   };
   let logger: { setContext: jest.Mock; log: jest.Mock };
-  let agentRepository: { findActiveDefaultIdBySlugAndType: jest.Mock; existsActiveDefault: jest.Mock };
+  let agentRepository: { findActiveDefaultIdBySlugAndType: jest.Mock; existsActiveDefaultByTypeSlug: jest.Mock };
   let copilotSettings: { getSettings: jest.Mock };
   let service: ConversationService;
 
@@ -27,7 +27,7 @@ describe('ConversationService sticky / tagged agents', () => {
     logger = { setContext: jest.fn(), log: jest.fn() };
     agentRepository = {
       findActiveDefaultIdBySlugAndType: jest.fn(),
-      existsActiveDefault: jest.fn().mockResolvedValue(false),
+      existsActiveDefaultByTypeSlug: jest.fn().mockResolvedValue(false),
     };
     copilotSettings = { getSettings: jest.fn().mockResolvedValue({ agentId: null }) };
 
@@ -61,27 +61,26 @@ describe('ConversationService sticky / tagged agents', () => {
       await expect(service.assertPlatformCopilotAgent(new Types.ObjectId())).rejects.toThrow('Yellowmind is currently unavailable');
     });
 
-    it('resolves the admin-mapped copilot assistant agent when it is an active default', async () => {
+    it('resolves the admin-mapped copilot assistant agent when it is an active platform copilot', async () => {
       const configuredAgentId = new Types.ObjectId().toString();
       copilotSettings.getSettings.mockResolvedValue({ agentId: configuredAgentId });
-      agentRepository.existsActiveDefault.mockResolvedValue(true);
+      agentRepository.existsActiveDefaultByTypeSlug.mockResolvedValue(true);
 
       await expect(service.assertPlatformCopilotAgent(new Types.ObjectId(configuredAgentId))).resolves.toBe(configuredAgentId);
+      expect(agentRepository.existsActiveDefaultByTypeSlug).toHaveBeenCalledWith(configuredAgentId, 'platform_copilot');
       expect(agentRepository.findActiveDefaultIdBySlugAndType).not.toHaveBeenCalled();
     });
 
-    it('falls back to the active Yellowmind heuristic when the mapped agent is no longer an active default', async () => {
+    it('fails explicitly when the configured copilot agent is no longer eligible', async () => {
       const configuredAgentId = new Types.ObjectId().toString();
-      const heuristicAgentId = new Types.ObjectId().toString();
       copilotSettings.getSettings.mockResolvedValue({ agentId: configuredAgentId });
-      agentRepository.existsActiveDefault.mockResolvedValue(false);
-      agentRepository.findActiveDefaultIdBySlugAndType.mockResolvedValue(heuristicAgentId);
+      agentRepository.existsActiveDefaultByTypeSlug.mockResolvedValue(false);
 
-      await expect(service.assertPlatformCopilotAgent(new Types.ObjectId(heuristicAgentId))).resolves.toBe(heuristicAgentId);
-      expect(agentRepository.findActiveDefaultIdBySlugAndType).toHaveBeenCalledWith('my-second-brain', 'platform_copilot');
+      await expect(service.assertPlatformCopilotAgent()).rejects.toThrow('configured platform copilot agent is unavailable');
+      expect(agentRepository.findActiveDefaultIdBySlugAndType).not.toHaveBeenCalled();
     });
 
-    it('repairs a stale pin when the mapped copilot assistant agent changes', async () => {
+    it('fails explicitly when an existing conversation has a stale pin', async () => {
       const configuredAgentId = new Types.ObjectId().toString();
       const stalePin = new Types.ObjectId();
       const conversation = {
@@ -90,16 +89,11 @@ describe('ConversationService sticky / tagged agents', () => {
         taggedAgentIds: [stalePin],
       };
       copilotSettings.getSettings.mockResolvedValue({ agentId: configuredAgentId });
-      agentRepository.existsActiveDefault.mockResolvedValue(true);
+      agentRepository.existsActiveDefaultByTypeSlug.mockResolvedValue(true);
 
-      await expect(service.resolvePlatformCopilotAgent(conversation)).resolves.toBe(configuredAgentId);
-      expect(conversation.pinnedAgentId.toString()).toBe(configuredAgentId);
-      expect(conversationModel.findByIdAndUpdate).toHaveBeenCalledWith(conversation._id, {
-        $set: {
-          pinnedAgentId: expect.any(Types.ObjectId),
-          taggedAgentIds: [expect.any(Types.ObjectId)],
-        },
-      });
+      await expect(service.resolvePlatformCopilotAgent(conversation)).rejects.toThrow('Yellowmind is currently unavailable');
+      expect(conversation.pinnedAgentId).toBe(stalePin);
+      expect(conversationModel.findByIdAndUpdate).not.toHaveBeenCalled();
     });
 
     it('creates distinct conversations idempotently by creation request', async () => {
@@ -153,7 +147,7 @@ describe('ConversationService sticky / tagged agents', () => {
       expect(conversationModel.findByIdAndUpdate).not.toHaveBeenCalled();
     });
 
-    it('repairs a stale pin when an existing conversation still points at a retired agent', async () => {
+    it('does not silently repin an existing conversation that points at a retired agent', async () => {
       const ownerId = new Types.ObjectId();
       const staleAgentId = new Types.ObjectId();
       const activeAgentId = new Types.ObjectId();
@@ -171,20 +165,9 @@ describe('ConversationService sticky / tagged agents', () => {
       conversationModel.findByIdAndUpdate.mockResolvedValue({});
       agentRepository.findActiveDefaultIdBySlugAndType.mockResolvedValue(activeAgentId.toString());
 
-      const result = await service.create(ownerId.toString(), { runtimePurpose: 'platform_copilot' });
-
-      expect(conversationModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        existing._id,
-        {
-          $set: {
-            pinnedAgentId: activeAgentId,
-            taggedAgentIds: [activeAgentId],
-          },
-        },
-      );
-      expect(result.id).toBe(existing._id.toString());
-      expect(result.pinnedAgentId).toBe(activeAgentId.toString());
-      expect(result.taggedAgentIds).toEqual([activeAgentId.toString()]);
+      await expect(service.create(ownerId.toString(), { runtimePurpose: 'platform_copilot' }))
+        .rejects.toThrow('Yellowmind is currently unavailable');
+      expect(conversationModel.findByIdAndUpdate).not.toHaveBeenCalled();
       expect(conversationModel.create).not.toHaveBeenCalled();
     });
 
@@ -210,7 +193,7 @@ describe('ConversationService sticky / tagged agents', () => {
       expect(result.pinnedAgentId).toBe(agentId.toString());
     });
 
-    it('resolvePlatformCopilotAgent repoints a stale pin in place', async () => {
+    it('resolvePlatformCopilotAgent rejects a stale pin without mutating it', async () => {
       const conversationId = new Types.ObjectId();
       const staleAgentId = new Types.ObjectId();
       const activeAgentId = new Types.ObjectId();
@@ -222,15 +205,10 @@ describe('ConversationService sticky / tagged agents', () => {
       conversationModel.findByIdAndUpdate.mockResolvedValue({});
       agentRepository.findActiveDefaultIdBySlugAndType.mockResolvedValue(activeAgentId.toString());
 
-      const resolved = await service.resolvePlatformCopilotAgent(conversation);
-
-      expect(resolved).toBe(activeAgentId.toString());
-      expect(conversation.pinnedAgentId.toString()).toBe(activeAgentId.toString());
-      expect(conversation.taggedAgentIds.map((id: Types.ObjectId) => id.toString())).toEqual([activeAgentId.toString()]);
-      expect(conversationModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        conversationId,
-        { $set: { pinnedAgentId: activeAgentId, taggedAgentIds: [activeAgentId] } },
-      );
+      await expect(service.resolvePlatformCopilotAgent(conversation))
+        .rejects.toThrow('Yellowmind is currently unavailable');
+      expect(conversation.pinnedAgentId).toBe(staleAgentId);
+      expect(conversationModel.findByIdAndUpdate).not.toHaveBeenCalled();
     });
 
     it('lists platform-copilot history for its owner only', async () => {

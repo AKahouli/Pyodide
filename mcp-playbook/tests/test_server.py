@@ -99,7 +99,7 @@ async def test_create_playbook_allows_omitting_workspace_ids(monkeypatch):
             return {"id": "playbook-1", "workspaces": []}
 
     monkeypatch.setattr(server, "backend", lambda: BackendStub())
-    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "correlation-1"))
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
     try:
         async with Client(mcp) as client:
             response = await client.call_tool("create_playbook", {
@@ -123,7 +123,7 @@ async def test_generation_uses_the_current_trusted_turn_without_a_request_id(mon
             return {"operationId": "operation-1", "playbookId": "playbook-1"}
 
     monkeypatch.setattr(server, "backend", lambda: BackendStub())
-    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "ai-message-1"))
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "ai-message-1"))
     try:
         async with Client(mcp) as client:
             tools = await client.list_tools()
@@ -155,7 +155,7 @@ async def test_modify_playbook_uses_the_current_trusted_turn_and_hands_off_to_ca
             }
 
     monkeypatch.setattr(server, "backend", lambda: BackendStub())
-    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "ai-message-1"))
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "ai-message-1"))
     try:
         async with Client(mcp) as client:
             tools = await client.list_tools()
@@ -184,7 +184,7 @@ async def test_modify_playbook_accepts_json_encoded_string_answers(monkeypatch):
             return {"requestId": "request-1", "status": "ready"}
 
     monkeypatch.setattr(server, "backend", lambda: BackendStub())
-    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "ai-message-1"))
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "ai-message-1"))
     try:
         async with Client(mcp) as client:
             await client.call_tool("modify_playbook", {
@@ -212,7 +212,7 @@ async def test_modify_playbook_forwards_skip_clarification(monkeypatch):
             return {"requestId": "request-1", "status": "ready"}
 
     monkeypatch.setattr(server, "backend", lambda: BackendStub())
-    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "ai-message-1"))
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "ai-message-1"))
     try:
         async with Client(mcp) as client:
             await client.call_tool("modify_playbook", {
@@ -237,7 +237,7 @@ async def test_continue_clarification_forwards_skip_clarification(monkeypatch):
             return {"requestId": "request-1", "status": "ready_to_construct"}
 
     monkeypatch.setattr(server, "backend", lambda: BackendStub())
-    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "ai-message-1"))
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "ai-message-1"))
     try:
         async with Client(mcp) as client:
             await client.call_tool("continue_playbook_clarification", {
@@ -261,7 +261,7 @@ async def test_continue_clarification_rejects_malformed_string_answers(monkeypat
             raise AssertionError("backend must not be called for malformed answers")
 
     monkeypatch.setattr(server, "backend", lambda: BackendStub())
-    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "ai-message-1"))
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "ai-message-1"))
     try:
         async with Client(mcp) as client:
             with pytest.raises(Exception, match="answers"):
@@ -283,7 +283,7 @@ async def test_advisor_construction_returns_canvas_owned_preview_handoff(monkeyp
             return {"operationId": "operation/1"}
 
     monkeypatch.setattr(server, "backend", lambda: BackendStub())
-    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "correlation-1"))
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
     try:
         async with Client(mcp) as client:
             response = await client.call_tool("start_advisor_remediation_construction", {
@@ -315,7 +315,7 @@ async def test_playbook_construction_returns_browser_safe_canvas_handoff(monkeyp
             return {"operationId": "operation/1", "playbookId": "playbook/1"}
 
     monkeypatch.setattr(server, "backend", lambda: BackendStub())
-    token = actor_context.set(PlatformActorContext("tenant-1", "user-1", "agent-1", "conversation-1", "correlation-1"))
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
     try:
         async with Client(mcp) as client:
             response = await client.call_tool("start_playbook_construction", {

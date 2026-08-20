@@ -11,6 +11,7 @@ import {
 } from '../schemas/playbook-assistant-request.schema';
 
 const REQUEST_RETENTION_MS = 24 * 60 * 60 * 1000;
+const LEGACY_DEFAULT_TENANT = 'default';
 
 @Injectable()
 export class PlaybookAssistantRequestService {
@@ -23,7 +24,6 @@ export class PlaybookAssistantRequestService {
     requestId?: string;
     conversationId?: string;
     ownerId: string;
-    tenantId: string;
     agentId: string;
     operationKind: PlaybookAssistantOperationKind;
     playbookId?: string;
@@ -37,9 +37,8 @@ export class PlaybookAssistantRequestService {
     const requestId = input.requestId?.trim() || randomUUID();
     const conversationId = input.conversationId?.trim() || randomUUID();
     const text = input.text.trim();
-    const messageHash = this.createRequestFingerprint({
+    const fingerprintInput = {
       ownerId: input.ownerId,
-      tenantId: input.tenantId,
       agentId: input.agentId,
       conversationId: input.conversationId?.trim() || null,
       operationKind: input.operationKind,
@@ -50,6 +49,11 @@ export class PlaybookAssistantRequestService {
       executionId: input.executionId ?? null,
       attachmentIds: input.attachmentIds ?? [],
       context: input.context ?? null,
+    };
+    const messageHash = this.createRequestFingerprint(fingerprintInput);
+    const legacyMessageHash = this.createRequestFingerprint({
+      ...fingerprintInput,
+      tenantId: LEGACY_DEFAULT_TENANT,
     });
 
     if (input.conversationId) {
@@ -67,7 +71,6 @@ export class PlaybookAssistantRequestService {
       const created = await this.requestModel.create({
         requestId,
         ownerId: input.ownerId,
-        tenantId: input.tenantId,
         agentId: input.agentId,
         conversationId,
         correlationId: `playbook-assistant:${randomUUID()}`,
@@ -88,7 +91,7 @@ export class PlaybookAssistantRequestService {
     } catch (error) {
       if ((error as { code?: number }).code !== 11000) throw error;
       const existing = await this.requestModel.findOne({ requestId }).lean().exec();
-      if (!existing || existing.messageHash !== messageHash) {
+      if (!existing || ![messageHash, legacyMessageHash].includes(existing.messageHash)) {
         throw new ConflictException(ErrorCode.IDEMPOTENCY_MISMATCH, 'Assistant request ID was reused with different content');
       }
       if (existing.status !== 'completed') {
@@ -98,12 +101,12 @@ export class PlaybookAssistantRequestService {
     }
   }
 
-  async getBound(requestId: string, actor: { ownerId: string; tenantId: string; agentId: string; conversationId: string; correlationId: string }): Promise<PlaybookAssistantRequest> {
+  async getBound(requestId: string, actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string }): Promise<PlaybookAssistantRequest> {
     const request = await this.requestModel.findOne({ requestId, ownerId: actor.ownerId }).lean().exec();
     if (!request || request.expiresAt.getTime() <= Date.now()) {
       throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant request not found or expired');
     }
-    if (request.tenantId !== actor.tenantId || request.agentId !== actor.agentId
+    if (request.agentId !== actor.agentId
       || request.conversationId !== actor.conversationId || request.correlationId !== actor.correlationId) {
       throw new ConflictException(ErrorCode.CONFLICT, 'Assistant request actor binding does not match');
     }
@@ -111,18 +114,36 @@ export class PlaybookAssistantRequestService {
   }
 
   async claimGenerationForTurn(input: {
-    actor: { ownerId: string; tenantId: string; agentId: string; conversationId: string; correlationId: string };
+    actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string };
     text: string;
   }): Promise<PlaybookAssistantRequest> {
     const text = input.text.trim();
     const requestId = `platform-generation:${createHash('sha256')
       .update(JSON.stringify(this.canonicalize(input.actor)))
       .digest('hex')}`;
-    const messageHash = this.createRequestFingerprint({
+    const legacyRequestId = `platform-generation:${createHash('sha256')
+      .update(JSON.stringify(this.canonicalize({ ...input.actor, tenantId: LEGACY_DEFAULT_TENANT })))
+      .digest('hex')}`;
+    const fingerprintInput = {
       ...input.actor,
       operationKind: 'generation',
       text,
+    };
+    const messageHash = this.createRequestFingerprint(fingerprintInput);
+    const legacyMessageHash = this.createRequestFingerprint({
+      ...fingerprintInput,
+      tenantId: LEGACY_DEFAULT_TENANT,
     });
+    const existingBeforeInsert = await this.requestModel.findOne({
+      requestId: { $in: [requestId, legacyRequestId] },
+    }).lean().exec();
+    if (existingBeforeInsert) {
+      return this.assertMatchingCurrentTurnRequest(
+        existingBeforeInsert,
+        input.actor,
+        [messageHash, legacyMessageHash],
+      );
+    }
     try {
       const created = await this.requestModel.create({
         requestId,
@@ -143,24 +164,15 @@ export class PlaybookAssistantRequestService {
       return created.toObject();
     } catch (error) {
       if ((error as { code?: number }).code !== 11000) throw error;
-      const existing = await this.requestModel.findOne({ requestId }).lean().exec();
-      if (!existing || existing.expiresAt.getTime() <= Date.now()) {
-        throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant request not found or expired');
-      }
-      if (existing.messageHash !== messageHash
-        || existing.ownerId !== input.actor.ownerId
-        || existing.tenantId !== input.actor.tenantId
-        || existing.agentId !== input.actor.agentId
-        || existing.conversationId !== input.actor.conversationId
-        || existing.correlationId !== input.actor.correlationId) {
-        throw new ConflictException(ErrorCode.IDEMPOTENCY_MISMATCH, 'Assistant request identity was reused with different content');
-      }
-      return existing;
+      const existing = await this.requestModel.findOne({
+        requestId: { $in: [requestId, legacyRequestId] },
+      }).lean().exec();
+      return this.assertMatchingCurrentTurnRequest(existing, input.actor, [messageHash, legacyMessageHash]);
     }
   }
 
   async claimCurrentTurnModification(input: {
-    actor: { ownerId: string; tenantId: string; agentId: string; conversationId: string; correlationId: string };
+    actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string };
     playbookId: string;
     expectedDefinitionRevision: number;
     text: string;
@@ -169,13 +181,36 @@ export class PlaybookAssistantRequestService {
     const requestId = `platform-modification:${createHash('sha256')
       .update(JSON.stringify(this.canonicalize({ ...input.actor, playbookId: input.playbookId })))
       .digest('hex')}`;
-    const messageHash = this.createRequestFingerprint({
+    const legacyRequestId = `platform-modification:${createHash('sha256')
+      .update(JSON.stringify(this.canonicalize({
+        ...input.actor,
+        tenantId: LEGACY_DEFAULT_TENANT,
+        playbookId: input.playbookId,
+      })))
+      .digest('hex')}`;
+    const fingerprintInput = {
       ...input.actor,
       operationKind: 'existing_construction',
       playbookId: input.playbookId,
       expectedDefinitionRevision: input.expectedDefinitionRevision,
       text,
+    };
+    const messageHash = this.createRequestFingerprint(fingerprintInput);
+    const legacyMessageHash = this.createRequestFingerprint({
+      ...fingerprintInput,
+      tenantId: LEGACY_DEFAULT_TENANT,
     });
+    const existingBeforeInsert = await this.requestModel.findOne({
+      requestId: { $in: [requestId, legacyRequestId] },
+    }).lean().exec();
+    if (existingBeforeInsert) {
+      return this.assertMatchingCurrentTurnRequest(
+        existingBeforeInsert,
+        input.actor,
+        [messageHash, legacyMessageHash],
+        input.playbookId,
+      );
+    }
     try {
       const created = await this.requestModel.create({
         requestId,
@@ -196,34 +231,28 @@ export class PlaybookAssistantRequestService {
       return created.toObject();
     } catch (error) {
       if ((error as { code?: number }).code !== 11000) throw error;
-      const existing = await this.requestModel.findOne({ requestId }).lean().exec();
-      if (!existing || existing.expiresAt.getTime() <= Date.now()) {
-        throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant request not found or expired');
-      }
-      if (existing.messageHash !== messageHash
-        || existing.ownerId !== input.actor.ownerId
-        || existing.tenantId !== input.actor.tenantId
-        || existing.agentId !== input.actor.agentId
-        || existing.conversationId !== input.actor.conversationId
-        || existing.correlationId !== input.actor.correlationId
-        || existing.playbookId !== input.playbookId) {
-        throw new ConflictException(ErrorCode.IDEMPOTENCY_MISMATCH, 'Assistant request identity was reused with different content');
-      }
-      return existing;
+      const existing = await this.requestModel.findOne({
+        requestId: { $in: [requestId, legacyRequestId] },
+      }).lean().exec();
+      return this.assertMatchingCurrentTurnRequest(
+        existing,
+        input.actor,
+        [messageHash, legacyMessageHash],
+        input.playbookId,
+      );
     }
   }
 
   async rebindCorrelationForContinuation(input: {
     continuationId: string;
     playbookId?: string | null;
-    actor: { ownerId: string; tenantId: string; agentId: string; conversationId: string; correlationId: string };
+    actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string };
   }): Promise<void> {
     const result = await this.requestModel.updateOne(
       {
         continuationId: input.continuationId,
         ...(input.playbookId ? { playbookId: input.playbookId } : {}),
         ownerId: input.actor.ownerId,
-        tenantId: input.actor.tenantId,
         agentId: input.actor.agentId,
         conversationId: input.actor.conversationId,
         status: 'awaiting_clarification',
@@ -267,7 +296,7 @@ export class PlaybookAssistantRequestService {
     return updated;
   }
 
-  async getByContinuation(continuationId: string, actor: { ownerId: string; tenantId: string; agentId: string; conversationId: string; correlationId: string }): Promise<PlaybookAssistantRequest> {
+  async getByContinuation(continuationId: string, actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string }): Promise<PlaybookAssistantRequest> {
     const request = await this.requestModel.findOne({
       continuationId,
       ownerId: actor.ownerId,
@@ -289,7 +318,7 @@ export class PlaybookAssistantRequestService {
   async claimContinuation(input: {
     requestId: string;
     continuationId: string;
-    actor: { ownerId: string; tenantId: string; agentId: string; conversationId: string; correlationId: string };
+    actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string };
     answers: Record<string, unknown>[];
     assessment: Record<string, unknown>;
   }): Promise<void> {
@@ -299,7 +328,6 @@ export class PlaybookAssistantRequestService {
         continuationId: input.continuationId,
         status: 'awaiting_clarification',
         ownerId: input.actor.ownerId,
-        tenantId: input.actor.tenantId,
         agentId: input.actor.agentId,
         conversationId: input.actor.conversationId,
         correlationId: input.actor.correlationId,
@@ -382,6 +410,26 @@ export class PlaybookAssistantRequestService {
 
   private createRequestFingerprint(input: Record<string, unknown>): string {
     return createHash('sha256').update(JSON.stringify(this.canonicalize(input))).digest('hex');
+  }
+
+  private assertMatchingCurrentTurnRequest(
+    existing: PlaybookAssistantRequest | null,
+    actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string },
+    acceptedMessageHashes: string[],
+    playbookId?: string,
+  ): PlaybookAssistantRequest {
+    if (!existing || existing.expiresAt.getTime() <= Date.now()) {
+      throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant request not found or expired');
+    }
+    if (!acceptedMessageHashes.includes(existing.messageHash)
+      || existing.ownerId !== actor.ownerId
+      || existing.agentId !== actor.agentId
+      || existing.conversationId !== actor.conversationId
+      || existing.correlationId !== actor.correlationId
+      || (playbookId !== undefined && existing.playbookId !== playbookId)) {
+      throw new ConflictException(ErrorCode.IDEMPOTENCY_MISMATCH, 'Assistant request identity was reused with different content');
+    }
+    return existing;
   }
 
   private canonicalize(value: unknown): unknown {

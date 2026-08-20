@@ -59,6 +59,7 @@ describe('PlaybookAssistantConnectorReconcilerService', () => {
       undefined,
       expect.objectContaining({ Authorization: 'Bearer configured' }),
     );
+    expect(connectorService.inspectMcp.mock.calls[0][7]).not.toHaveProperty('X-YellowStorm-Tenant-Id');
     expect(connectorService.reconcilePlaybookMcpSystemConnector).toHaveBeenCalledWith(
       sourceAgent.createdBy,
       'http://playbook-mcp:8025/mcp',

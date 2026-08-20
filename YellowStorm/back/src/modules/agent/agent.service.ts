@@ -510,7 +510,7 @@ export class AgentService {
     sharedAgentIds?: string[],
     groupMembers?: any[],
     selectedConnectorId?: string,
-    runtimeContext?: { tenantId: string; conversationId: string; correlationId: string },
+    runtimeContext?: { conversationId: string; correlationId: string },
   ): Promise<IGrpcAgent[]> {
     this.logger.log('Building agents for stream', {
       userId,
@@ -752,7 +752,6 @@ export class AgentService {
         for (const binding of connectorBindings) {
           binding.auth_headers = {
             ...((binding.auth_headers as Record<string, string> | undefined) ?? {}),
-            'X-YellowStorm-Tenant-Id': runtimeContext.tenantId,
             'X-YellowStorm-User-Id': userId,
             'X-YellowStorm-Agent-Id': agent.id,
             'X-YellowStorm-Conversation-Id': runtimeContext.conversationId,
@@ -864,7 +863,7 @@ export class AgentService {
     agentIds: string[],
     fallbackModelId?: string,
     sessionId?: string,
-    runtimeContext?: { tenantId?: string; conversationId?: string; correlationId?: string },
+    runtimeContext?: { conversationId?: string; correlationId?: string },
   ): Promise<IGrpcAgent[]> {
     if (agentIds.length === 0) return [];
 
@@ -957,7 +956,6 @@ export class AgentService {
           if (String(binding.connector_slug || '').toLowerCase() !== 'playbook-mcp') continue;
           binding.auth_headers = {
             ...((binding.auth_headers as Record<string, string>) || {}),
-            'X-YellowStorm-Tenant-Id': runtimeContext?.tenantId || 'default',
             'X-YellowStorm-Agent-Id': agent.id,
             'X-YellowStorm-Conversation-Id': runtimeContext?.conversationId || sessionId || 'playbook-runtime',
             'X-Correlation-Id': runtimeContext?.correlationId || sessionId || 'playbook-runtime',
@@ -1463,6 +1461,25 @@ export class AgentService {
     const exists = await this.agentRepository.existsActiveDefault(agentId);
     if (!exists) {
       throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected decision-flow agent must be an active default agent');
+    }
+  }
+
+  async listActivePlatformCopilotAgentOptions(): Promise<Array<{ id: string; name: string; description?: string; agentTypeName?: string; model?: string }>> {
+    const agents = await this.agentRepository.findActiveDefaultsByTypeSlug('platform_copilot');
+    const hydrated = await this.hydrate(agents);
+    return hydrated.map((agent) => {
+      const agentType = agent.agentType as unknown as { name?: string } | undefined;
+      return { id: agent._id as string, name: agent.name as string, description: (agent.description as string) || undefined, agentTypeName: agentType?.name, model: agent.llmModel as string | undefined };
+    });
+  }
+
+  async assertActivePlatformCopilotAgent(agentId: string): Promise<void> {
+    if (!Types.ObjectId.isValid(agentId)) {
+      throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected platform copilot agent is invalid');
+    }
+    const exists = await this.agentRepository.existsActiveDefaultByTypeSlug(agentId, 'platform_copilot');
+    if (!exists) {
+      throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected agent must be an active platform copilot');
     }
   }
 

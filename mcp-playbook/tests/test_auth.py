@@ -35,7 +35,6 @@ async def test_accepts_bearer_authentication_without_identity_context():
 async def test_exposes_acting_user_only_with_complete_actor_context():
     messages = await invoke([
         (b"authorization", b"Bearer ingress-secret"),
-        (b"x-yellowstorm-tenant-id", b"tenant-1"),
         (b"x-yellowstorm-user-id", b"user-1"),
         (b"x-yellowstorm-agent-id", b"agent-1"),
         (b"x-yellowstorm-conversation-id", b"conversation-1"),
@@ -60,6 +59,7 @@ async def test_accepts_complete_optional_actor_context():
     middleware = TrustedIdentityMiddleware(context_app, "ingress-secret")
     await middleware({"type": "http", "path": "/mcp", "headers": [
         (b"authorization", b"Bearer ingress-secret"),
+        # A legacy tenant header is tolerated but is not part of actor identity.
         (b"x-yellowstorm-tenant-id", b"tenant-1"),
         (b"x-yellowstorm-user-id", b"user-1"),
         (b"x-yellowstorm-agent-id", b"agent-1"),
@@ -73,7 +73,6 @@ async def test_accepts_complete_optional_actor_context():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("missing_header", [
-    b"x-yellowstorm-tenant-id",
     b"x-yellowstorm-user-id",
     b"x-yellowstorm-agent-id",
     b"x-yellowstorm-conversation-id",
@@ -89,7 +88,6 @@ async def test_does_not_establish_actor_context_when_any_identity_field_is_missi
 
     headers = [
         (b"authorization", b"Bearer ingress-secret"),
-        (b"x-yellowstorm-tenant-id", b"tenant-1"),
         (b"x-yellowstorm-user-id", b"user-1"),
         (b"x-yellowstorm-agent-id", b"agent-1"),
         (b"x-yellowstorm-conversation-id", b"conversation-1"),

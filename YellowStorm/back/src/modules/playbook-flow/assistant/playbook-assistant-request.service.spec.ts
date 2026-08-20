@@ -18,7 +18,6 @@ const canonicalize = (value: unknown): unknown => {
 
 const fingerprint = (overrides: Record<string, unknown> = {}) => createHash('sha256').update(JSON.stringify(canonicalize({
   ownerId: 'user-1',
-  tenantId: 'default',
   agentId: 'agent-1',
   conversationId: null,
   operationKind: 'existing_construction',
@@ -36,7 +35,6 @@ describe('PlaybookAssistantRequestService', () => {
   const baseInput = {
     requestId: 'request-1',
     ownerId: 'user-1',
-    tenantId: 'default',
     agentId: 'agent-1',
     operationKind: 'existing_construction' as const,
     playbookId: 'playbook-1',
@@ -67,7 +65,6 @@ describe('PlaybookAssistantRequestService', () => {
     ['attachments', { attachmentIds: ['attachment-2'] }],
     ['selected task', { selectedTaskId: 'task-2' }],
     ['execution', { executionId: 'execution-2' }],
-    ['tenant', { tenantId: 'tenant-2' }],
     ['agent', { agentId: 'agent-2' }],
     ['operation kind', { operationKind: 'inspect' as const }],
     ['page context', { context: { route: '/playbooks/other' } }],
@@ -116,10 +113,13 @@ describe('PlaybookAssistantRequestService', () => {
 
   it('creates one server-bound generation request for a platform conversation turn', async () => {
     const created = { toObject: jest.fn().mockReturnValue({ requestId: 'created-request' }) };
-    const model = { create: jest.fn().mockResolvedValue(created) };
+    const model = {
+      create: jest.fn().mockResolvedValue(created),
+      findOne: jest.fn().mockReturnValue(query(null)),
+    };
     const service = new PlaybookAssistantRequestService(model as never);
     const actor = {
-      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-1',
     };
 
@@ -135,7 +135,7 @@ describe('PlaybookAssistantRequestService', () => {
 
   it('reuses a matching generation request after a duplicate-key race', async () => {
     const existing = {
-      requestId: 'existing-request', ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      requestId: 'existing-request', ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-1', expiresAt: new Date(Date.now() + 60_000),
     };
     const model = {
@@ -144,7 +144,7 @@ describe('PlaybookAssistantRequestService', () => {
     };
     const service = new PlaybookAssistantRequestService(model as never);
     const actor = {
-      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-1',
     };
     const firstFingerprint = (service as any).createRequestFingerprint({ ...actor, operationKind: 'generation', text: 'Build lead generation' });
@@ -155,10 +155,13 @@ describe('PlaybookAssistantRequestService', () => {
 
   it('creates one server-bound modification request for a platform conversation turn', async () => {
     const created = { toObject: jest.fn().mockReturnValue({ requestId: 'created-request' }) };
-    const model = { create: jest.fn().mockResolvedValue(created) };
+    const model = {
+      create: jest.fn().mockResolvedValue(created),
+      findOne: jest.fn().mockReturnValue(query(null)),
+    };
     const service = new PlaybookAssistantRequestService(model as never);
     const actor = {
-      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-1',
     };
 
@@ -180,7 +183,7 @@ describe('PlaybookAssistantRequestService', () => {
 
   it('reuses a matching current-turn modification request after a duplicate-key race', async () => {
     const existing = {
-      requestId: 'existing-request', ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      requestId: 'existing-request', ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-1', playbookId: 'playbook-1',
       expiresAt: new Date(Date.now() + 60_000),
     };
@@ -190,7 +193,7 @@ describe('PlaybookAssistantRequestService', () => {
     };
     const service = new PlaybookAssistantRequestService(model as never);
     const actor = {
-      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-1',
     };
     const firstFingerprint = (service as any).createRequestFingerprint({
@@ -210,12 +213,42 @@ describe('PlaybookAssistantRequestService', () => {
     })).resolves.toBe(existing);
   });
 
+  it('reuses a generation request created with the legacy tenant-scoped idempotency key', async () => {
+    const service = new PlaybookAssistantRequestService({} as never);
+    const actor = {
+      ownerId: 'user-1', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-1',
+    };
+    const legacyActor = { ...actor, tenantId: 'default' };
+    const existing = {
+      requestId: `platform-generation:${createHash('sha256')
+        .update(JSON.stringify(canonicalize(legacyActor)))
+        .digest('hex')}`,
+      ...actor,
+      messageHash: (service as any).createRequestFingerprint({
+        ...legacyActor,
+        operationKind: 'generation',
+        text: 'Build lead generation',
+      }),
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+    const model = {
+      create: jest.fn(),
+      findOne: jest.fn().mockReturnValue(query(existing)),
+    };
+    const compatibleService = new PlaybookAssistantRequestService(model as never);
+
+    await expect(compatibleService.claimGenerationForTurn({ actor, text: 'Build lead generation' }))
+      .resolves.toBe(existing);
+    expect(model.create).not.toHaveBeenCalled();
+  });
+
   it('rebinds a clarification correlation only inside the same trusted conversation', async () => {
     const exec = jest.fn().mockResolvedValue({ matchedCount: 1 });
     const model = { updateOne: jest.fn().mockReturnValue({ exec }) };
     const service = new PlaybookAssistantRequestService(model as never);
     const actor = {
-      ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+      ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-2',
     };
 
@@ -229,7 +262,6 @@ describe('PlaybookAssistantRequestService', () => {
         continuationId: 'continuation-1',
         playbookId: 'playbook-1',
         ownerId: 'user-1',
-        tenantId: 'default',
         agentId: 'agent-1',
         conversationId: 'conversation-1',
         status: 'awaiting_clarification',
@@ -247,7 +279,7 @@ describe('PlaybookAssistantRequestService', () => {
       continuationId: 'continuation-1',
       playbookId: 'playbook-1',
       actor: {
-        ownerId: 'user-1', tenantId: 'default', agentId: 'agent-1',
+        ownerId: 'user-1', agentId: 'agent-1',
         conversationId: 'conversation-1', correlationId: 'ai-message-2',
       },
     })).rejects.toThrow('clarification not found or expired');
@@ -277,7 +309,6 @@ describe('PlaybookAssistantRequestService', () => {
       continuationId: 'continuation-1',
       actor: {
         ownerId: 'user-1',
-        tenantId: 'default',
         agentId: 'agent-1',
         conversationId: 'conversation-1',
         correlationId: 'correlation-1',
