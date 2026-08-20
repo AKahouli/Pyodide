@@ -435,6 +435,10 @@ export async function synthesizeSpeech(
 export interface VoiceSessionEnvelope {
   wsUrl: string;
   setup: Record<string, unknown>;
+  /** tool name -> the MCP URL that executes it (the browser relay routes by this). */
+  toolEndpoints?: Record<string, string>;
+  /** tools that take the session streamId as an argument; others must not get it. */
+  streamIdTools?: string[];
   expiresAt: string;
 }
 
