@@ -37,4 +37,20 @@ describe('useWorkyVoiceSession', () => {
     expect(realtimeApi.start).not.toHaveBeenCalled();
     expect(legacyApi.start).not.toHaveBeenCalled();
   });
+
+  it('restarts the session when the stream changes while active', () => {
+    realtimeApi.start.mockClear();
+    realtimeApi.stop.mockClear();
+    const { rerender } = renderHook(({ id }) => useWorkyVoiceSession(id, true), {
+      initialProps: { id: 's1' },
+    });
+    expect(realtimeApi.start).toHaveBeenCalledTimes(1);
+
+    rerender({ id: 's2' });
+
+    // Switching streams must tear down the old Gemini session and start a fresh
+    // one, otherwise the previous stream's conversation context leaks over.
+    expect(realtimeApi.stop).toHaveBeenCalledTimes(1);
+    expect(realtimeApi.start).toHaveBeenCalledTimes(2);
+  });
 });

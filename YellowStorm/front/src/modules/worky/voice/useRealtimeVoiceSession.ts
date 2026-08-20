@@ -124,6 +124,14 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
       },
       onClose: (ev) => {
         if (import.meta.env?.DEV) console.warn('[voice] ws closed', ev.code, ev.reason);
+        // Ignore closes from a connection that is no longer the active one:
+        // a stream switch (or hang-up) tears this socket down and opens a fresh
+        // session, so `connRef` already points elsewhere (or is null). The
+        // shared `closingRef` flag alone is unsafe here — the new session's
+        // connect() resets it to false before this old socket's async close
+        // fires, which would otherwise reconnect and resurrect the previous
+        // stream's conversation context.
+        if (connRef.current !== conn) return;
         // Intentional teardown (hang-up / unmount) — do not reconnect.
         if (closingRef.current) {
           setState('idle');
