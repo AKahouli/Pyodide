@@ -90,6 +90,7 @@ export class AppDataCatalogService {
         appDataId: null,
         workspaceId,
         lifecycleState: null,
+        endUserAuthEnabled: false,
         dev: { provisioned: false, schemaName: null, currentVersion: null },
         prod: { provisioned: false, schemaName: null, currentVersion: null },
       };
@@ -101,6 +102,7 @@ export class AppDataCatalogService {
       appDataId: app.appDataId,
       workspaceId,
       lifecycleState: app.lifecycleState,
+      endUserAuthEnabled: app.endUserAuthEnabled,
       dev: {
         provisioned: !!dev?.provisionedAt,
         schemaName: dev?.schemaName ?? tenantSchemaName(app.appDataId, 'dev'),

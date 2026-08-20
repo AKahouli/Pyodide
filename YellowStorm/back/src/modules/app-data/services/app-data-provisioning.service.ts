@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { eq } from 'drizzle-orm';
@@ -79,6 +80,8 @@ export class AppDataProvisioningService {
     const appDataId = this.identifiers.generate();
     const devSchema = tenantSchemaName(appDataId, 'dev');
     const prodSchema = tenantSchemaName(appDataId, 'prod');
+    const jwtSecret = randomBytes(32).toString('hex');
+    const endUserAuthEnabled = this.config.get<boolean>('appData.endUserAuthEnabled', true);
 
     const [app] = await this.db
       .insert(appDataApps)
@@ -87,6 +90,8 @@ export class AppDataProvisioningService {
         workspaceId: params.workspaceId,
         ownerUserId: params.ownerUserId,
         lifecycleState: 'active',
+        jwtSecret,
+        endUserAuthEnabled,
       })
       .returning();
 

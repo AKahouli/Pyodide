@@ -10,11 +10,12 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { DocumentService } from '@modules/document/document.service';
 import {
-  STARTER_REACT_VITE_V1_FILES,
-  STARTER_REACT_VITE_V1_MANIFEST_KEY,
-  STARTER_REACT_VITE_V1_REVISION_ID,
+  DEFAULT_STARTER_MANIFEST_KEY,
+  DEFAULT_STARTER_REVISION_ID,
+  resolveEmbeddedStarter,
   type StarterManifestFile,
-} from '../constants/starter-react-vite-v1';
+} from '../constants/starter-revisions';
+import { STARTER_REACT_VITE_V1_REVISION_ID } from '../constants/starter-react-vite-v1';
 import {
   AppSourceRevision,
   AppSourceRevisionDocument,
@@ -56,14 +57,14 @@ export class RuntimeRevisionService {
   get starterRevisionId(): string {
     return (
       this.config.get<string>('appRuntime.starterRevisionId') ||
-      STARTER_REACT_VITE_V1_REVISION_ID
+      DEFAULT_STARTER_REVISION_ID
     );
   }
 
   get starterManifestKey(): string {
     return (
       this.config.get<string>('appRuntime.starterManifestKey') ||
-      STARTER_REACT_VITE_V1_MANIFEST_KEY
+      DEFAULT_STARTER_MANIFEST_KEY
     );
   }
 
@@ -457,18 +458,24 @@ export class RuntimeRevisionService {
   }
 
   private embeddedStarterManifest(): RevisionManifest {
-    const files = STARTER_REACT_VITE_V1_FILES.map((f) => ({ ...f }));
+    const embedded =
+      resolveEmbeddedStarter(this.starterRevisionId) ??
+      resolveEmbeddedStarter(STARTER_REACT_VITE_V1_REVISION_ID);
+    if (!embedded) {
+      throw new Error(`No embedded starter for revision ${this.starterRevisionId}`);
+    }
+    const files = embedded.files.map((f) => ({ ...f }));
     const payload = JSON.stringify({
-      revisionId: this.starterRevisionId,
+      revisionId: embedded.revisionId,
       parentRevisionId: null,
       files,
     });
     return {
-      revisionId: this.starterRevisionId,
+      revisionId: embedded.revisionId,
       workspaceId: '_system',
       parentRevisionId: null,
       manifestHash: createHash('sha256').update(payload).digest('hex'),
-      manifestObjectKey: this.starterManifestKey,
+      manifestObjectKey: embedded.manifestKey,
       files,
     };
   }

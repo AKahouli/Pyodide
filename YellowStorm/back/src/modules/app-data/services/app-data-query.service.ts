@@ -116,6 +116,7 @@ export class AppDataQueryService {
     idColumn?: string;
     principal: AppDataPrincipal;
     ownerUserId: string;
+    skipPolicyCheck?: boolean;
   }) {
     const idColumn = params.idColumn ?? 'id';
     return this.listRows({
@@ -127,6 +128,7 @@ export class AppDataQueryService {
       pageSize: 1,
       principal: params.principal,
       ownerUserId: params.ownerUserId,
+      skipPolicyCheck: params.skipPolicyCheck,
     });
   }
 }

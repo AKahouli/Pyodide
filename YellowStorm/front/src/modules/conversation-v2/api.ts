@@ -19,6 +19,7 @@ export interface AppDataOwnerStatus {
   appDataId: string | null;
   workspaceId: string;
   lifecycleState: string | null;
+  endUserAuthEnabled?: boolean;
   dev: { provisioned: boolean; schemaName: string | null; currentVersion: number | null };
   prod: { provisioned: boolean; schemaName: string | null; currentVersion: number | null };
 }

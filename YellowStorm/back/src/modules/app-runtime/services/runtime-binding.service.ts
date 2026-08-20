@@ -9,6 +9,7 @@ import {
 } from '../schemas/app-runtime-binding.schema';
 import { RuntimeRevisionService } from './runtime-revision.service';
 import { RuntimeTokenService } from './runtime-token.service';
+import { DEFAULT_STARTER_REVISION_ID } from '../constants/starter-revisions';
 
 export interface BindRuntimeParams {
   conversationSessionId: string;
@@ -181,7 +182,7 @@ export class RuntimeBindingService {
   private get starterRevisionId(): string {
     return (
       this.config.get<string>('appRuntime.starterRevisionId') ||
-      'starter_react_vite_v1'
+      DEFAULT_STARTER_REVISION_ID
     );
   }
 

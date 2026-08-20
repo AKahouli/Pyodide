@@ -40,4 +40,10 @@ export default registerAs('appData', () => ({
   statementTimeoutMs: parseInt(process.env.APP_DATA_STATEMENT_TIMEOUT_MS || '30000', 10),
   /** MCP URL returned on internal bind when MCP is enabled. */
   mcpUrl: process.env.APP_DATA_MCP_URL || '',
+  /** App end-user register/login JWT for generated apps. */
+  endUserAuthEnabled: process.env.APP_DATA_END_USER_AUTH_ENABLED !== 'false',
+  /** JWT TTL for app end-users (e.g. 7d, 24h). */
+  endUserJwtTtl: process.env.APP_DATA_END_USER_JWT_TTL || '7d',
+  /** bcrypt rounds for app end-user passwords. */
+  endUserBcryptRounds: parseInt(process.env.APP_DATA_END_USER_BCRYPT_ROUNDS || '12', 10),
 }));

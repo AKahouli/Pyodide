@@ -37,6 +37,7 @@ export class AppDataRowService {
     row: Record<string, unknown>;
     principal: AppDataPrincipal;
     ownerUserId: string;
+    skipPolicyCheck?: boolean;
   }) {
     this.assertBodySize(params.row);
     assertIdentifier(params.table, 'table name');
@@ -46,7 +47,9 @@ export class AppDataRowService {
       throw new AppDataException(AppDataErrorCode.NOT_PROVISIONED, 'Environment not provisioned');
     }
     const policyDoc = await this.policies.getPolicies(app.workspaceId, params.environment);
-    this.policies.assertAllowed(policyDoc[params.table], 'insert', params.principal, params.table);
+    if (!params.skipPolicyCheck) {
+      this.policies.assertAllowed(policyDoc[params.table], 'insert', params.principal, params.table);
+    }
 
     const manifest = await this.migrations.getCurrentManifest(app.id, params.environment);
     const tableDef = manifest.tables[params.table];
@@ -104,6 +107,7 @@ export class AppDataRowService {
     patch: Record<string, unknown>;
     principal: AppDataPrincipal;
     ownerUserId: string;
+    skipPolicyCheck?: boolean;
   }) {
     this.assertBodySize(params.patch);
     const idColumn = params.idColumn ?? 'id';
@@ -113,7 +117,9 @@ export class AppDataRowService {
     const app = await this.catalog.requireAppByAppDataId(params.appDataId);
     const env = await this.catalog.getEnvironment(app.id, params.environment);
     const policyDoc = await this.policies.getPolicies(app.workspaceId, params.environment);
-    this.policies.assertAllowed(policyDoc[params.table], 'update', params.principal, params.table);
+    if (!params.skipPolicyCheck) {
+      this.policies.assertAllowed(policyDoc[params.table], 'update', params.principal, params.table);
+    }
 
     const manifest = await this.migrations.getCurrentManifest(app.id, params.environment);
     const tableDef = manifest.tables[params.table];
@@ -161,13 +167,16 @@ export class AppDataRowService {
     idColumn?: string;
     principal: AppDataPrincipal;
     ownerUserId: string;
+    skipPolicyCheck?: boolean;
   }) {
     const idColumn = params.idColumn ?? 'id';
     assertIdentifier(params.table, 'table name');
     const app = await this.catalog.requireAppByAppDataId(params.appDataId);
     const env = await this.catalog.getEnvironment(app.id, params.environment);
     const policyDoc = await this.policies.getPolicies(app.workspaceId, params.environment);
-    this.policies.assertAllowed(policyDoc[params.table], 'delete', params.principal, params.table);
+    if (!params.skipPolicyCheck) {
+      this.policies.assertAllowed(policyDoc[params.table], 'delete', params.principal, params.table);
+    }
 
     const schemaQ = quoteIdent(env!.schemaName);
     const tableQ = quoteIdent(params.table);

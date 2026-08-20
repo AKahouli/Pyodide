@@ -18,6 +18,7 @@ import {
 import { Types } from 'mongoose';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
+import { isSystemStarterRevisionId } from '@modules/app-runtime/constants/starter-revisions';
 import * as grpc from '@grpc/grpc-js';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
@@ -742,7 +743,7 @@ export class ConversationV2Controller {
 
     const binding = await this.runtimeBindings.findByWorkspaceId(aiSessionId);
     const latest = binding?.latestRevisionId?.trim();
-    if (!latest || latest === 'starter_react_vite_v1') {
+    if (!latest || isSystemStarterRevisionId(latest)) {
       return undefined;
     }
     return latest;

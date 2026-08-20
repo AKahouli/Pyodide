@@ -1,6 +1,6 @@
 import { memo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ExternalLink, Globe, MessageSquare, Share2 } from 'lucide-react';
+import { ExternalLink, Globe, MessageSquare, Share2, Users } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +15,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import type { AppViewMode } from '../hooks/useAppMarketplaceFilters';
 import type { DeployedApp } from '../types';
 import { DeleteDeployedAppButton } from './DeleteDeployedAppButton';
+import { AppEndUsersDialog } from './AppEndUsersDialog';
 
 interface DeployedAppCardProps {
   app: DeployedApp;
@@ -28,6 +29,7 @@ export const DeployedAppCard = memo(function DeployedAppCard({
   const { t } = useModuleTranslation('app-marketplace');
   const navigate = useNavigate();
   const [shareOpen, setShareOpen] = useState(false);
+  const [usersOpen, setUsersOpen] = useState(false);
   const isOwned = app.source !== 'shared';
   const canOpenConversation = isOwned || app.canOpenConversation === true;
   const title = app.title || t('card.untitled');
@@ -64,6 +66,21 @@ export const DeployedAppCard = memo(function DeployedAppCard({
               </Button>
             </TooltipTrigger>
             <TooltipContent>{t('card.conversation')}</TooltipContent>
+          </Tooltip>
+        )}
+        {isOwned && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant='ghost'
+                size='icon-sm'
+                aria-label={t('card.manageUsers')}
+                onClick={() => setUsersOpen(true)}
+              >
+                <Users className='h-4 w-4' />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('card.manageUsers')}</TooltipContent>
           </Tooltip>
         )}
         {canOpenConversation && (
@@ -138,6 +155,15 @@ export const DeployedAppCard = memo(function DeployedAppCard({
           ) : null}
         </CardContent>
       </Card>
+
+      {isOwned && (
+        <AppEndUsersDialog
+          sessionId={app.sessionId}
+          appTitle={title}
+          open={usersOpen}
+          onOpenChange={setUsersOpen}
+        />
+      )}
 
       {canOpenConversation && (
         <ShareDeployDialog

@@ -14,6 +14,11 @@ export enum AppDataErrorCode {
   BINDING_NOT_FOUND = 'APP_DATA_BINDING_NOT_FOUND',
   ENVIRONMENT_FORBIDDEN = 'APP_DATA_ENVIRONMENT_FORBIDDEN',
   DEPLOY_CONFIG_MISSING = 'APP_DATA_DEPLOY_CONFIG_MISSING',
+  AUTH_REQUIRED = 'APP_DATA_AUTH_REQUIRED',
+  AUTH_INVALID = 'APP_DATA_AUTH_INVALID',
+  EMAIL_TAKEN = 'APP_DATA_EMAIL_TAKEN',
+  USER_DISABLED = 'APP_DATA_USER_DISABLED',
+  GRANT_DENIED = 'APP_DATA_GRANT_DENIED',
 }
 
 export class AppDataException extends HttpException {
@@ -45,6 +50,17 @@ export class AppDataVersionConflictException extends AppDataException {
       `Schema version conflict: expected ${expected}, actual ${actual}`,
       HttpStatus.CONFLICT,
       { expectedVersion: expected, actualVersion: actual },
+    );
+  }
+}
+
+export class AppDataGrantDeniedException extends AppDataException {
+  constructor(operation: string) {
+    super(
+      AppDataErrorCode.GRANT_DENIED,
+      `Permission denied for operation: ${operation}`,
+      HttpStatus.FORBIDDEN,
+      { operation },
     );
   }
 }

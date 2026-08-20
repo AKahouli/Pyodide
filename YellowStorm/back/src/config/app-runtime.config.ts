@@ -1,4 +1,8 @@
 import { registerAs } from '@nestjs/config';
+import {
+  DEFAULT_STARTER_MANIFEST_KEY,
+  DEFAULT_STARTER_REVISION_ID,
+} from '../modules/app-runtime/constants/starter-revisions';
 
 /**
  * App Builder runtime configuration.
@@ -31,8 +35,7 @@ export default registerAs('appRuntime', () => ({
     10,
   ),
   starterRevisionId:
-    process.env.APP_BUILDER_STARTER_REVISION_ID || 'starter_react_vite_v1',
+    process.env.APP_BUILDER_STARTER_REVISION_ID || DEFAULT_STARTER_REVISION_ID,
   starterManifestKey:
-    process.env.APP_BUILDER_STARTER_MANIFEST_KEY ||
-    'appbuilder/manifests/_system/starter_react_vite_v1.json',
+    process.env.APP_BUILDER_STARTER_MANIFEST_KEY || DEFAULT_STARTER_MANIFEST_KEY,
 }));

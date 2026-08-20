@@ -12,11 +12,12 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { SkipResponseWrap } from '@modules/response/decorators/skip-response-wrap.decorator';
+import { RateLimit } from '@modules/rate-limiter';
 import type { Request } from 'express';
 import { AppDataCatalogService } from '../services/app-data-catalog.service';
-import { AppDataPolicyService } from '../services/app-data-policy.service';
 import { AppDataQueryService } from '../services/app-data-query.service';
 import { AppDataRowService } from '../services/app-data-row.service';
+import { AppDataPublicAccessService } from '../services/app-data-public-access.service';
 import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
 import type { AppDataEnvironment } from '../constants/app-data.constants';
@@ -30,13 +31,14 @@ import { normalizeAppDataRowBody } from '../utils/app-data-row-body.util';
 @SkipResponseWrap()
 @ApiTags('App Data Public API')
 @Controller('app-data/public/:appDataId/:environment')
+@RateLimit({ limit: 120, windowMs: 60_000, keyPrefix: 'app-data:public:crud' })
 export class AppDataPublicController {
   private readonly logger = new Logger(AppDataPublicController.name);
 
   constructor(
     private readonly config: ConfigService,
     private readonly catalog: AppDataCatalogService,
-    private readonly policies: AppDataPolicyService,
+    private readonly access: AppDataPublicAccessService,
     private readonly query: AppDataQueryService,
     private readonly rows: AppDataRowService,
   ) {}
@@ -48,14 +50,6 @@ export class AppDataPublicController {
     ) {
       throw new ServiceUnavailableException('App Data public API is disabled');
     }
-  }
-
-  private resolvePrincipal(req: Request, ownerUserId: string) {
-    return this.policies.resolvePrincipal({
-      anonymous: !req.headers.authorization,
-      ownerUserId,
-      requestUserId: null,
-    });
   }
 
   private safeNormalizeBody(req: Request, action: string): Record<string, unknown> {
@@ -95,7 +89,12 @@ export class AppDataPublicController {
   ) {
     this.assertEnabled();
     const app = await this.catalog.requireAppByAppDataId(appDataId);
-    const principal = this.resolvePrincipal(req, app.ownerUserId);
+    const access = await this.access.authorizeCrud({
+      app,
+      environment,
+      operation: 'select',
+      req,
+    });
     const { page, pageSize, orderBy, orderDir, ...filters } = query;
     return this.query.listRows({
       appDataId,
@@ -106,8 +105,9 @@ export class AppDataPublicController {
       pageSize: pageSize ? Number(pageSize) : undefined,
       orderBy,
       orderDir: orderDir === 'desc' ? 'desc' : 'asc',
-      principal,
+      principal: access.principal,
       ownerUserId: app.ownerUserId,
+      skipPolicyCheck: access.skipPolicyCheck,
     });
   }
 
@@ -121,14 +121,20 @@ export class AppDataPublicController {
   ) {
     this.assertEnabled();
     const app = await this.catalog.requireAppByAppDataId(appDataId);
-    const principal = this.resolvePrincipal(req, app.ownerUserId);
+    const access = await this.access.authorizeCrud({
+      app,
+      environment,
+      operation: 'select',
+      req,
+    });
     return this.query.getRow({
       appDataId,
       environment,
       table,
       id,
-      principal,
+      principal: access.principal,
       ownerUserId: app.ownerUserId,
+      skipPolicyCheck: access.skipPolicyCheck,
     });
   }
 
@@ -141,7 +147,12 @@ export class AppDataPublicController {
   ) {
     this.assertEnabled();
     const app = await this.catalog.requireAppByAppDataId(appDataId);
-    const principal = this.resolvePrincipal(req, app.ownerUserId);
+    const access = await this.access.authorizeCrud({
+      app,
+      environment,
+      operation: 'insert',
+      req,
+    });
     const row = this.safeNormalizeBody(req, 'insert');
     return {
       row: await this.rows.insertRow({
@@ -149,8 +160,9 @@ export class AppDataPublicController {
         environment,
         table,
         row,
-        principal,
+        principal: access.principal,
         ownerUserId: app.ownerUserId,
+        skipPolicyCheck: access.skipPolicyCheck,
       }),
     };
   }
@@ -165,7 +177,12 @@ export class AppDataPublicController {
   ) {
     this.assertEnabled();
     const app = await this.catalog.requireAppByAppDataId(appDataId);
-    const principal = this.resolvePrincipal(req, app.ownerUserId);
+    const access = await this.access.authorizeCrud({
+      app,
+      environment,
+      operation: 'update',
+      req,
+    });
     const patch = this.safeNormalizeBody(req, 'update');
     return {
       row: await this.rows.updateRow({
@@ -174,8 +191,9 @@ export class AppDataPublicController {
         table,
         id,
         patch,
-        principal,
+        principal: access.principal,
         ownerUserId: app.ownerUserId,
+        skipPolicyCheck: access.skipPolicyCheck,
       }),
     };
   }
@@ -190,15 +208,21 @@ export class AppDataPublicController {
   ) {
     this.assertEnabled();
     const app = await this.catalog.requireAppByAppDataId(appDataId);
-    const principal = this.resolvePrincipal(req, app.ownerUserId);
+    const access = await this.access.authorizeCrud({
+      app,
+      environment,
+      operation: 'delete',
+      req,
+    });
     return {
       row: await this.rows.deleteRow({
         appDataId,
         environment,
         table,
         id,
-        principal,
+        principal: access.principal,
         ownerUserId: app.ownerUserId,
+        skipPolicyCheck: access.skipPolicyCheck,
       }),
     };
   }

@@ -266,6 +266,9 @@ export const configValidationSchema = Joi.object({
   APP_DATA_MAX_PAGE_SIZE: Joi.number().min(1).max(1000).default(200),
   APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE: Joi.number().min(1).max(10_000).default(120),
   APP_DATA_STATEMENT_TIMEOUT_MS: Joi.number().min(1000).max(300_000).default(30_000),
+  APP_DATA_END_USER_AUTH_ENABLED: Joi.boolean().default(true),
+  APP_DATA_END_USER_JWT_TTL: Joi.string().default('7d'),
+  APP_DATA_END_USER_BCRYPT_ROUNDS: Joi.number().min(10).max(15).default(12),
 
   // LiteLLM
   LITELLM_API_URL: Joi.string().uri().optional(),

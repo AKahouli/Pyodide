@@ -47,6 +47,7 @@
     "conversation": "Accéder à la conversation",
     "conversationReadOnly": "Ouvrir la conversation (lecture seule)",
     "share": "Partager l'app et la conversation",
+    "manageUsers": "Gérer les utilisateurs",
     "delete": "Supprimer",
     "deleteTitle": "Retirer l'application du Marketplace ?",
     "deleteDescription": "La conversation et l'application hébergée seront conservées. Une nouvelle publication l'ajoutera de nouveau au Marketplace.",
@@ -58,5 +59,23 @@
     "deleteError": "Impossible de retirer l'application.",
     "unshareSuccess": "Application partagée retirée de votre Marketplace.",
     "unshareError": "Impossible de retirer l'application partagée."
+  },
+  "endUsers": {
+    "title": "Utilisateurs et permissions",
+    "description": "Utilisateurs inscrits et permissions CRUD pour cette application déployée.",
+    "descriptionNamed": "Gérer les utilisateurs et permissions pour « {{title}} ».",
+    "loading": "Chargement des utilisateurs…",
+    "empty": "Aucun utilisateur inscrit sur cette application.",
+    "loadError": "Impossible de charger les utilisateurs.",
+    "saveError": "Impossible de mettre à jour les permissions.",
+    "registeredAt": "Inscrit le {{date}}",
+    "statusActive": "Actif",
+    "statusDisabled": "Désactivé",
+    "grants": {
+      "create": "Créer",
+      "read": "Lire",
+      "update": "Modifier",
+      "delete": "Supprimer"
+    }
   }
 }

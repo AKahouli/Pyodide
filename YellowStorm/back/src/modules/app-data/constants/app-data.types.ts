@@ -60,11 +60,38 @@ export interface AppDataRuntimeEnv {
   publicUrl: string;
 }
 
+export type AppDataEndUserStatus = 'active' | 'disabled';
+
+export type AppDataGrantOperation = 'create' | 'read' | 'update' | 'delete';
+
+export interface AppDataEndUserGrants {
+  create: boolean;
+  read: boolean;
+  update: boolean;
+  delete: boolean;
+}
+
+export interface AppDataEndUserSummary {
+  id: string;
+  email: string;
+  displayName: string | null;
+  status: AppDataEndUserStatus;
+  grants: AppDataEndUserGrants;
+  createdAt: string;
+}
+
+export interface AppDataEndUserJwtPayload {
+  sub: string;
+  appDataId: string;
+  typ: 'app_end_user';
+}
+
 export interface AppDataStatus {
   enabled: boolean;
   appDataId: string | null;
   workspaceId: string;
   lifecycleState: string | null;
+  endUserAuthEnabled: boolean;
   dev: {
     provisioned: boolean;
     schemaName: string | null;
