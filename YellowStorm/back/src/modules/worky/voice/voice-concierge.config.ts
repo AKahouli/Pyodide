@@ -1,5 +1,4 @@
 import type { FunctionDeclaration } from '@google/genai';
-import { Type } from '@google/genai';
 
 export const CONCIERGE_SYSTEM_PROMPT = [
   'You are worky, a warm, concise spoken-voice concierge.',
@@ -9,75 +8,92 @@ export const CONCIERGE_SYSTEM_PROMPT = [
   'After a tool returns, always speak again to report the outcome (e.g. "Done — it is running now", or describe what you found). Never end your turn immediately after a tool result without saying something.',
   'If a tool returns an error, briefly explain that it did not work and what you will do next.',
   // --- Tools ---
-  'When the user actually wants work done, first acknowledge out loud, then call dispatch_task with a clear, self-contained instruction, and once it succeeds tell them you have started.',
+  'You do NOT do tasks yourself — a separate worky agent, working alongside you, does all the real work. Your job is to hand work off to it. Whenever the user asks for ANYTHING to be done — research, a lookup, writing, sending an email, contacting someone, any action or deliverable — first acknowledge out loud, then call dispatch_task with a clear, self-contained instruction that captures exactly what they want, and once it succeeds tell them you have started. Never try to do the work or answer a work request from your own knowledge, and never say you cannot do it — dispatch it. You answer directly ONLY for small talk and questions about the run itself (status, what tasks exist, a task detail).',
   'Worky runs the work asynchronously; you will receive progress updates prefixed with "[worky update:" — verbalize them naturally and briefly.',
   'Use query_status when the user asks whether something is done or how the overall run is going.',
   'Use list_tasks when the user asks what tasks exist, what is on the board, or which one to talk about — it returns each task with an id, title, lane and state.',
-  'Use get_task_details with a task id from list_tasks when the user asks about a specific task — it returns the description, result, blocked reason, timing and any produced files, so you can describe the task richly in your own words.',
+  'Use get_task_details when the user asks about a specific task. It REQUIRES the task\'s id. If you do not already have the task list, call list_tasks first, match the user\'s words to a task title, and call get_task_details with THAT task\'s id. Task ids are opaque strings — you use them SILENTLY to make the call and never say them aloud, but you always need one: never call get_task_details without a real id taken from list_tasks. It returns the description, result, blocked reason, timing and any produced files, so you can describe the task richly in your own words.',
   'Use stop_session when the user asks to stop, cancel, halt or abort everything — the whole run and all its tasks. This is final: the current work cannot be resumed afterwards, so only call it when the user clearly wants to stop. Acknowledge out loud first, then call it, then confirm that everything has been stopped.',
   // --- Style ---
   'Keep spoken replies short and natural. Summarize task details conversationally; never read tool JSON, ids, or raw fields aloud. Match the user language (French or English).',
 ].join(' ');
 
-export const VOICE_TOOLS: FunctionDeclaration[] = [
-  {
-    name: 'dispatch_task',
-    description:
-      'Start a worky task. Use when the user wants something done that requires research, tools, or multi-step work.',
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        message: {
-          type: Type.STRING,
-          description: 'The full, self-contained task instruction, phrased for worky.',
-        },
-      },
-      required: ['message'],
-    },
-  },
-  {
-    name: 'query_status',
-    description: 'Get the current status/plan of the ongoing worky task to tell the user how it is going.',
-    parameters: { type: Type.OBJECT, properties: {} },
-  },
-  {
-    name: 'list_tasks',
-    description:
-      "List the stream's tasks with their id, title, lane and execution state. Use to see what work exists or to find the task the user is asking about before describing it.",
-    parameters: { type: Type.OBJECT, properties: {} },
-  },
-  {
-    name: 'get_task_details',
-    description:
-      'Get full detail for one task — description, result, blocked reason, timing, and produced files — so you can describe it to the user. Pass a task id obtained from list_tasks.',
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        taskId: {
-          type: Type.STRING,
-          description: 'The id of the task to describe, as returned by list_tasks.',
-        },
-      },
-      required: ['taskId'],
-    },
-  },
-  {
-    name: 'stop_session',
-    description:
-      'Stop the entire worky run and all of its tasks. Terminal — the run cannot be resumed afterwards. Use only when the user clearly wants to stop, cancel, halt or abort everything.',
-    parameters: { type: Type.OBJECT, properties: {} },
-  },
-];
+/**
+ * The concierge's tools are NOT hardcoded here any more: they are sourced from
+ * these MCP connectors' actions (see gemini-token.service). Each connector
+ * points at one MCP; its action list contributes tools, and the browser relay
+ * routes each tool call to that connector's MCP (see toolEndpoints).
+ *
+ * Order matters only for display — the first is the primary (task) MCP; others
+ * add more tools (e.g. human-agents lookup). A missing/empty connector is just
+ * skipped, so the concierge still works with whichever are present.
+ *
+ * Gemini Live has no MCP auto-execution (unlike the sync generateContent path),
+ * so the model still needs FunctionDeclarations in its session setup — we build
+ * them from the connectors' stored action schemas instead of a hardcoded array.
+ * Execution stays the client-side relay to the right MCP per tool.
+ */
+export const WORKY_CONCIERGE_CONNECTOR_SLUGS = ['worky-concierge', 'human-agents'];
+
+/**
+ * A connector's mcpServerUrl is a canonical/server-side URL, but the browser
+ * (which runs the tool relay) needs a reachable host. `0.0.0.0` is a bind
+ * address, not connectable from a browser — map it to localhost.
+ */
+export function browserReachableMcpUrl(url: string): string {
+  // Strip any whitespace (a stray space in a stored URL breaks the browser's
+  // fetch) and map the 0.0.0.0 bind address to a connectable host.
+  return (url || '').replace(/\s+/g, '').replace('0.0.0.0', 'localhost');
+}
+
+/**
+ * Convert a JSON-Schema fragment (as stored on a connector action's
+ * parameterSchema) into the Gemini raw-proto Schema shape: uppercase `type`,
+ * recursed properties/items. JSON-schema unions like ["string","null"] collapse
+ * to the first non-null type.
+ */
+function toGeminiSchema(schema: Record<string, any> | undefined): Record<string, unknown> {
+  if (!schema || typeof schema !== 'object') return { type: 'OBJECT', properties: {} };
+  const out: Record<string, unknown> = {};
+  const t = schema.type;
+  if (typeof t === 'string') out.type = t.toUpperCase();
+  else if (Array.isArray(t)) {
+    const first = t.find((x) => x !== 'null');
+    if (first) out.type = String(first).toUpperCase();
+  }
+  if (schema.description) out.description = schema.description;
+  if (schema.enum) out.enum = schema.enum;
+  if (schema.properties && typeof schema.properties === 'object') {
+    out.properties = Object.fromEntries(
+      Object.entries(schema.properties).map(([k, v]) => [k, toGeminiSchema(v as Record<string, any>)]),
+    );
+  }
+  if (Array.isArray(schema.required)) out.required = schema.required;
+  if (schema.items) out.items = toGeminiSchema(schema.items as Record<string, any>);
+  return out;
+}
+
+/** Connector actions -> Gemini function declarations (the concierge's tools). */
+export function connectorActionsToFunctionDeclarations(
+  actions: Array<{ key: string; description?: string; parameterSchema?: Record<string, unknown> }>,
+): FunctionDeclaration[] {
+  return actions.map((a) => ({
+    name: a.key,
+    description: a.description ?? '',
+    parameters: toGeminiSchema(a.parameterSchema as Record<string, any>),
+  })) as unknown as FunctionDeclaration[];
+}
 
 /**
  * Builds the raw BidiGenerateContentSetup message sent as the first WS frame.
  * NOTE: the raw Live proto nests responseModalities/speechConfig under
  * `generationConfig` — unlike the SDK's flat LiveConnectConfig — so this shape
- * differs from buildLiveConstraints on purpose.
+ * is intentional. `functionDeclarations` are sourced from the connector.
  */
 export function buildSetupMessage(
   model: string,
   voice: string,
+  functionDeclarations: FunctionDeclaration[],
   opts: { resumptionHandle?: string; prompt?: string } = {},
 ): Record<string, unknown> {
   const systemText = opts.prompt && opts.prompt.trim().length > 0 ? opts.prompt.trim() : CONCIERGE_SYSTEM_PROMPT;
@@ -88,30 +104,10 @@ export function buildSetupMessage(
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
     },
     systemInstruction: { parts: [{ text: systemText }] },
-    tools: [{ functionDeclarations: VOICE_TOOLS }],
+    tools: [{ functionDeclarations }],
     inputAudioTranscription: {},
     outputAudioTranscription: {},
     sessionResumption: opts.resumptionHandle ? { handle: opts.resumptionHandle } : {},
     contextWindowCompression: { slidingWindow: {} },
-  };
-}
-
-export function buildLiveConstraints(
-  model: string,
-  voice: string,
-  opts: { resumptionHandle?: string } = {},
-): { model: string; config: Record<string, unknown> } {
-  return {
-    model: `models/${model}`,
-    config: {
-      responseModalities: ['AUDIO'],
-      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
-      systemInstruction: { parts: [{ text: CONCIERGE_SYSTEM_PROMPT }] },
-      tools: [{ functionDeclarations: VOICE_TOOLS }],
-      inputAudioTranscription: {},
-      outputAudioTranscription: {},
-      sessionResumption: opts.resumptionHandle ? { handle: opts.resumptionHandle } : {},
-      contextWindowCompression: { slidingWindow: {} },
-    },
   };
 }

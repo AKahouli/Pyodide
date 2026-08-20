@@ -8,7 +8,28 @@ jest.mock('@google/genai', () => ({
   Type: { OBJECT: 'OBJECT', STRING: 'STRING' },
 }));
 
-function svc(overrides: Record<string, unknown> = {}) {
+const CONNECTOR_ACTIONS = [
+  {
+    key: 'dispatch_task',
+    description: 'Start a worky task.',
+    parameterSchema: {
+      type: 'object',
+      properties: { message: { type: 'string' }, streamId: { type: 'string' } },
+      required: ['message'],
+    },
+  },
+  {
+    key: 'get_task_details',
+    description: 'Detail one task.',
+    parameterSchema: {
+      type: 'object',
+      properties: { taskId: { type: 'string' }, streamId: { type: 'string' } },
+      required: ['taskId'],
+    },
+  },
+];
+
+function svc(overrides: Record<string, unknown> = {}, actions: unknown[] | null = CONNECTOR_ACTIONS) {
   const cfg = {
     'worky.voiceApiKey': 'test-key',
     'worky.voiceModel': 'gemini-live',
@@ -19,7 +40,16 @@ function svc(overrides: Record<string, unknown> = {}) {
     ...overrides,
   } as Record<string, unknown>;
   const config = { get: <T>(k: string) => cfg[k] as T } as any;
-  return new GeminiTokenService(config);
+  // The concierge tools come from the connectors' actions; here only
+  // 'worky-concierge' resolves (human-agents returns null and is skipped).
+  const connectors = {
+    findBySlug: jest.fn().mockImplementation((slug: string) =>
+      slug === 'worky-concierge' && actions
+        ? { slug, id: 'c1', mcpServerUrl: 'http://localhost:8080/mcp', actions }
+        : null,
+    ),
+  } as any;
+  return new GeminiTokenService(config, connectors);
 }
 
 describe('GeminiTokenService', () => {
@@ -41,6 +71,13 @@ describe('GeminiTokenService', () => {
     expect(setup.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Kore');
     expect(setup.systemInstruction.parts[0].text).toContain('worky');
     expect(setup.tools[0].functionDeclarations).toHaveLength(2);
+    // Each tool is routed to its connector's MCP url (browser-reachable).
+    expect(env.toolEndpoints).toEqual({
+      dispatch_task: 'http://localhost:8080/mcp',
+      get_task_details: 'http://localhost:8080/mcp',
+    });
+    // Both test actions declare streamId, so both need it injected.
+    expect(env.streamIdTools.sort()).toEqual(['dispatch_task', 'get_task_details']);
     expect(typeof env.expiresAt).toBe('string');
   });
 
@@ -59,5 +96,10 @@ describe('GeminiTokenService', () => {
   it('throws a clear error when the API key is unset', async () => {
     await expect(svc({ 'worky.voiceApiKey': '' }).mintSessionToken()).rejects.toThrow(/not configured/i);
     expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('throws a clear error when the concierge connector has no tools', async () => {
+    createMock.mockResolvedValue({ name: 'ephemeral-none' });
+    await expect(svc({}, null).mintSessionToken()).rejects.toThrow(/worky-concierge/);
   });
 });

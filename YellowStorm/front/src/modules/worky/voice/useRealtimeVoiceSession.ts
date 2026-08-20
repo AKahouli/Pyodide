@@ -100,7 +100,7 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
       onToolCall: async (calls) => {
         if (import.meta.env?.DEV) console.log('[voice] toolCall', calls.map((c) => c.name), calls);
         for (const call of calls) {
-          const res = await handleToolCall(streamId, call);
+          const res = await handleToolCall(streamId, call, envelope.toolEndpoints, envelope.streamIdTools);
           if (import.meta.env?.DEV) console.log('[voice] toolResponse', res);
           connRef.current?.sendToolResponse([res]);
         }
@@ -111,9 +111,11 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
       // answers by the worky manager (via the orchestrator). Persisting the
       // concierge's speech here would impersonate the manager in the transcript.
       onInputTranscript: (t) => {
+        if (import.meta.env?.DEV) console.log('[voice] you:', t);
         setTranscript((p) => ({ ...p, you: t }));
       },
       onOutputTranscript: (t) => {
+        if (import.meta.env?.DEV) console.log('[voice] concierge:', t);
         setTranscript((p) => ({ ...p, manager: t }));
       },
       onResumptionHandle: (h) => {
