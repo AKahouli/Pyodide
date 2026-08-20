@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 import { ConnectorService } from './connector.service';
 import { ConnectorActionSafety } from './schemas/connector.schema';
+import { SandboxRuntimeContext } from '../../common/runtime/sandbox-scope';
 
 const createPlaybookBindingSyncServiceMock = () => ({
   syncConnectorActions: jest.fn().mockResolvedValue(undefined),
@@ -898,5 +899,58 @@ describe('ConnectorService findByIdsForGrpc', () => {
     expect(binding.mcp_server_config_json).toBe(
       JSON.stringify({ headers: { Authorization: 'Bearer GATEWAY_TOKEN' } }),
     );
+  });
+
+  describe('sandbox scope injection', () => {
+    const ctx: SandboxRuntimeContext = {
+      userId: 'user-1',
+      scopeType: 'conversation',
+      scopeId: 'conversation:sess-1',
+      laneId: 'main',
+    };
+    const noAuth = {
+      resolveRuntimeAuth: jest.fn(),
+      resolveDynamicHeaders: jest.fn().mockResolvedValue({}),
+    };
+    const ciDoc = () => ({
+      _id: new Types.ObjectId(),
+      name: 'Code Interpreter',
+      slug: 'code-interpreter',
+      authSourceType: 'none',
+      mcpTransportType: 'streamable_http',
+      mcpServerUrl: 'https://ci/mcp',
+      actions: [{ key: 'run', label: 'Run', isEnabled: true }],
+      isActive: true,
+    });
+
+    it('stamps x-sandbox-* onto a code-interpreter connector when ctx is provided', async () => {
+      const doc = ciDoc();
+      const service = buildService(doc, { ...noAuth });
+
+      const [binding] = await service.findByIdsForGrpc([doc._id.toString()], 'user-1', ctx);
+
+      expect(binding.auth_headers['x-sandbox-scope-id']).toBe('conversation:sess-1');
+      expect(binding.auth_headers['x-sandbox-scope-type']).toBe('conversation');
+      expect(binding.auth_headers['x-sandbox-lane-id']).toBe('main');
+      expect(binding.auth_headers['x-user-id']).toBe('user-1');
+    });
+
+    it('does not stamp a non-code-interpreter connector', async () => {
+      const doc = { ...ciDoc(), name: 'Gmail', slug: 'gmail' };
+      const service = buildService(doc, { ...noAuth });
+
+      const [binding] = await service.findByIdsForGrpc([doc._id.toString()], 'user-1', ctx);
+
+      expect(binding.auth_headers['x-sandbox-scope-id']).toBeUndefined();
+    });
+
+    it('is unchanged when ctx is omitted (regression guard)', async () => {
+      const doc = ciDoc();
+      const service = buildService(doc, { ...noAuth });
+
+      const [binding] = await service.findByIdsForGrpc([doc._id.toString()], 'user-1');
+
+      expect(binding.auth_headers['x-sandbox-scope-id']).toBeUndefined();
+    });
   });
 });
