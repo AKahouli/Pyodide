@@ -1229,6 +1229,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           [...agentIds],
           undefined,
           executionId,
+          {
+            userId: normalizedOwnerId,
+            scopeType: 'playbook',
+            scopeId: `playbook:${executionId}`,
+            laneId: 'main',
+          },
         );
         for (const agent of resolved) {
           agentMap.set(agent.id, {

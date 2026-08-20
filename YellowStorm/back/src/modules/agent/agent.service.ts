@@ -10,6 +10,10 @@ import { UpdateAgentDto } from './dto/update-agent.dto';
 import { QueryAgentDto } from './dto/query-agent.dto';
 import { PublicQueryAgentDto } from './dto/public-query-agent.dto';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
+import {
+  SandboxRuntimeContext,
+  applySandboxScopeHeaders,
+} from '../../common/runtime/sandbox-scope';
 import { NotFoundException, ConflictException, ForbiddenException, BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { escapeRegex, collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '../../common/utils';
@@ -851,7 +855,17 @@ export class AgentService {
     agentIds: string[],
     fallbackModelId?: string,
     sessionId?: string,
-    runtimeContext?: { tenantId?: string; conversationId?: string; correlationId?: string },
+    runtimeContext?: {
+      tenantId?: string;
+      conversationId?: string;
+      correlationId?: string;
+      userId?: string;
+      scopeType?: 'conversation' | 'playbook';
+      scopeId?: string;
+      laneId?: string;
+      nodeId?: string;
+      iteration?: number;
+    },
   ): Promise<IGrpcAgent[]> {
     if (agentIds.length === 0) return [];
 
@@ -949,6 +963,29 @@ export class AgentService {
             'X-YellowStorm-Conversation-Id': runtimeContext?.conversationId || sessionId || 'playbook-runtime',
             'X-Correlation-Id': runtimeContext?.correlationId || sessionId || 'playbook-runtime',
           };
+        }
+        // Runtime scope identity for the Code Interpreter (MCP Manus) connector:
+        // stamp x-sandbox-* so MCP Manus forwards it to the Runtime Coordinator.
+        // Must run before connector_bindings_json is serialized below.
+        if (
+          runtimeContext?.scopeId &&
+          runtimeContext.scopeType &&
+          runtimeContext.userId &&
+          runtimeContext.laneId
+        ) {
+          const scopeCtx: SandboxRuntimeContext = {
+            userId: runtimeContext.userId,
+            scopeType: runtimeContext.scopeType,
+            scopeId: runtimeContext.scopeId,
+            laneId: runtimeContext.laneId,
+            nodeId: runtimeContext.nodeId,
+            iteration: runtimeContext.iteration,
+          };
+          applySandboxScopeHeaders(
+            connectorBindings as Array<{ connector_slug?: string; auth_headers?: Record<string, string> }>,
+            scopeCtx,
+            (b) => b.connector_slug,
+          );
         }
         const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
