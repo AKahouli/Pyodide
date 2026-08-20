@@ -43,7 +43,16 @@
     "jumpToLive": "Revenir au direct",
     "tabCode": "Code",
     "tabPreview": "Aperçu",
+    "tabData": "Données",
     "resizeHandle": "Glisser pour redimensionner l'aperçu"
+  },
+  "appData": {
+    "loading": "Chargement des données…",
+    "disabled": "App Data n'est pas activé pour cet espace.",
+    "loadError": "Impossible de charger les données.",
+    "refresh": "Actualiser",
+    "schemaVersion": "Version du schéma",
+    "noTables": "Aucune table pour le moment."
   },
   "nodepod": {
     "inBrowser": "Aperçu dans le navigateur",

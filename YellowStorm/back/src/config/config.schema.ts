@@ -251,6 +251,22 @@ export const configValidationSchema = Joi.object({
   APP_BUILDER_STARTER_REVISION_ID: Joi.string().optional(),
   APP_BUILDER_STARTER_MANIFEST_KEY: Joi.string().optional(),
 
+  // Persistent App Data (PostgreSQL tenant schemas — see app-data/README.md).
+  APP_DATA_ENABLED: Joi.boolean().default(false),
+  APP_DATA_MCP_ENABLED: Joi.boolean().default(false),
+  APP_DATA_PUBLIC_API_ENABLED: Joi.boolean().default(false),
+  APP_DATA_DATA_TAB_ENABLED: Joi.boolean().default(false),
+  APP_DATA_PUBLIC_BASE_URL: Joi.string().uri().optional(),
+  APP_DATA_PUBLIC_BASE_URL_PROD: Joi.string().uri().optional(),
+  APP_DATA_MCP_URL: Joi.string().uri().optional(),
+  APP_DATA_MAX_TABLES: Joi.number().min(1).max(256).default(32),
+  APP_DATA_MAX_COLUMNS: Joi.number().min(1).max(256).default(64),
+  APP_DATA_MAX_ROW_BODY_BYTES: Joi.number().min(1024).max(1_048_576).default(65_536),
+  APP_DATA_DEFAULT_PAGE_SIZE: Joi.number().min(1).max(500).default(50),
+  APP_DATA_MAX_PAGE_SIZE: Joi.number().min(1).max(1000).default(200),
+  APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE: Joi.number().min(1).max(10_000).default(120),
+  APP_DATA_STATEMENT_TIMEOUT_MS: Joi.number().min(1000).max(300_000).default(30_000),
+
   // LiteLLM
   LITELLM_API_URL: Joi.string().uri().optional(),
   LITELLM_API_KEY: Joi.string().optional(),

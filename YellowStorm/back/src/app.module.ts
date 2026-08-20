@@ -15,6 +15,7 @@ import litellmConfig from './config/litellm.config';
 import conversationConfig from './config/conversation.config';
 import conversationV2Config from './config/conversation-v2.config';
 import appRuntimeConfig from './config/app-runtime.config';
+import appDataConfig from './config/app-data.config';
 import playbookFlowConfig from './config/playbook-flow.config';
 import grpcSecurityConfig from './config/grpc-security.config';
 import grpcSecurityV2Config from './config/grpc-security-v2.config';
@@ -55,6 +56,7 @@ import { ChatCompletionModule } from './modules/chat-completion/chat-completion.
 import { ConversationModule } from './modules/conversation';
 import { ConversationV2Module } from './modules/conversation-v2/conversation-v2.module';
 import { AppRuntimeModule } from './modules/app-runtime/app-runtime.module';
+import { AppDataModule } from './modules/app-data/app-data.module';
 import { ToolModule } from './modules/tool';
 import { AgentTypeModule } from './modules/agent-type/agent-type.module';
 import { AgentModule } from './modules/agent/agent.module';
@@ -86,7 +88,7 @@ import { SemanticModelModule } from './modules/semantic-model/semantic-model.mod
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, appRuntimeConfig, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig, memoryCardsConfig, dataRoomConfig, governedConversationsConfig, semanticModelConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, appRuntimeConfig, appDataConfig, playbookFlowConfig, grpcSecurityConfig, grpcSecurityV2Config, telegramConfig, whatsappConfig, workyConfig, memoryCardsConfig, dataRoomConfig, governedConversationsConfig, semanticModelConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -124,6 +126,7 @@ import { SemanticModelModule } from './modules/semantic-model/semantic-model.mod
     ConversationModule,
     ConversationV2Module,
     AppRuntimeModule,
+    AppDataModule,
     ModelsModule,
     ChatCompletionModule,
     ToolModule,

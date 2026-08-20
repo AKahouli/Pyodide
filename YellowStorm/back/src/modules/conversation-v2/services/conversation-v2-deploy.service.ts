@@ -1,5 +1,12 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { randomBytes } from 'crypto';
+import { Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { AppDataDeploymentService } from '@modules/app-data/services/app-data-deployment.service';
+import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
+import {
+  AppDataErrorCode,
+  AppDataException,
+} from '@modules/app-data/constants/app-data.errors';
 
 const DEFAULT_DEPLOY_BASE_URL = 'https://app-deployer.yellowsys.org/';
 
@@ -7,6 +14,7 @@ interface DeployResponse {
   appId: string;
   url: string;
   revisionId?: string;
+  runtimeEnv?: Record<string, string>;
 }
 
 interface AppBuilderPayload {
@@ -27,6 +35,7 @@ interface DeploymentContext {
   deadline: number;
   statusPollIntervalMs: number;
   deployTimeoutMs: number;
+  runtimeEnv?: Record<string, string>;
 }
 
 interface AppBuilderRequest {
@@ -52,23 +61,76 @@ interface DeployRuntimeConfig {
 export class ConversationV2DeployService {
   private readonly logger = new Logger(ConversationV2DeployService.name);
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly revisions: RuntimeRevisionService,
+    @Optional() private readonly appDataDeployment?: AppDataDeploymentService,
+  ) {}
 
   async deploy(aiSessionId: string, revisionId: string): Promise<DeployResponse> {
+    let runtimeEnv: Record<string, string> | undefined;
+    if (this.config.get<boolean>('appData.enabled', false) && this.appDataDeployment) {
+      try {
+        const env = await this.appDataDeployment.prepareProduction(aiSessionId, revisionId);
+        runtimeEnv = {
+          VITE_YM_APP_DATA_URL: env.publicUrl,
+          VITE_YM_APP_DATA_ID: env.appDataId,
+          VITE_YM_APP_DATA_ENV: env.environment,
+        };
+        this.logger.log(
+          `App Data PROD env prepared for session=${aiSessionId}: URL=${env.publicUrl} appDataId=${env.appDataId}`,
+        );
+      } catch (err) {
+        if (
+          err instanceof AppDataException &&
+          err.appDataCode === AppDataErrorCode.NOT_PROVISIONED
+        ) {
+          this.logger.warn(
+            `App Data NOT_PROVISIONED for session=${aiSessionId} rev=${revisionId} — deploying without App Data env vars`,
+          );
+        } else if (await this.appDataDeployment.getRuntimeEnvForWorkspace(aiSessionId, 'dev')) {
+          throw err;
+        } else {
+          this.logger.warn(
+            `App Data prepareProduction failed for session=${aiSessionId} — deploying without App Data env vars: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+    }
+
+    let deployRevisionId = revisionId;
+    if (runtimeEnv) {
+      try {
+        deployRevisionId = await this.injectEnvProduction(aiSessionId, revisionId, runtimeEnv);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to inject .env.production into revision ${revisionId} — deploying without it: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
     const runtime = this.getDeployRuntimeConfig();
     const deadline = Date.now() + runtime.deployTimeoutMs;
+    const launchBody: Record<string, string> = { aiSessionId, revisionId: deployRevisionId };
+    if (runtimeEnv) {
+      launchBody.runtimeEnv = JSON.stringify(runtimeEnv);
+    }
     const launch = await this.requestAppBuilder({
       baseUrl: runtime.baseUrl,
       path: 'app/deploy',
       token: runtime.token,
-      body: { aiSessionId, revisionId },
+      body: launchBody,
       deadline,
     });
     const launchStatus = this.extractString(launch, 'status');
     const launchAppId = this.extractString(launch, 'app_id') ?? aiSessionId;
 
     if (this.isReady(launchStatus)) {
-      return this.extractDeployment(launch, launchAppId);
+      return { ...this.extractDeployment(launch, launchAppId), runtimeEnv };
     }
     if (launchStatus !== 'deploying') {
       this.logger.warn('App-builder deploy response did not confirm a deploying app');
@@ -84,6 +146,7 @@ export class ConversationV2DeployService {
       deadline,
       statusPollIntervalMs: runtime.statusPollIntervalMs,
       deployTimeoutMs: runtime.deployTimeoutMs,
+      runtimeEnv,
     });
   }
 
@@ -117,7 +180,9 @@ export class ConversationV2DeployService {
         deadline,
       });
       const status = this.extractString(statusBody, 'status');
-      if (this.isReady(status)) return this.extractDeployment(statusBody, launchAppId);
+      if (this.isReady(status)) {
+        return { ...this.extractDeployment(statusBody, launchAppId), runtimeEnv: context.runtimeEnv };
+      }
       if (status !== 'deploying') {
         this.logger.warn(`App-builder returned unsupported deployment status: ${status ?? 'none'}`);
         throw new ServiceUnavailableException('Deployment failed with an invalid status');
@@ -218,5 +283,34 @@ export class ConversationV2DeployService {
       deployTimeoutMs ?? this.config.get<number>('conversationV2.appBuilderDeployTimeoutMs') ?? 0;
     this.logger.error(`App-builder deployment timed out after ${timeoutMs / 1000}s`);
     throw new ServiceUnavailableException('Deployment service timed out');
+  }
+
+  /**
+   * Create a patched revision that includes a `.env.production` file with
+   * the PROD VITE env vars. The app-deployer runs `vite build` which reads
+   * `.env.production` automatically — no deployer-side changes needed.
+   */
+  private async injectEnvProduction(
+    workspaceId: string,
+    baseRevisionId: string,
+    env: Record<string, string>,
+  ): Promise<string> {
+    const lines = Object.entries(env)
+      .map(([k, v]) => `${k}=${v}`)
+      .join('\n');
+
+    const patchedRevisionId = `${baseRevisionId}_deploy_${randomBytes(4).toString('hex')}`;
+
+    await this.revisions.patchRevisionWithFiles({
+      workspaceId,
+      baseRevisionId,
+      newRevisionId: patchedRevisionId,
+      additionalFiles: [{ path: '.env.production', content: lines + '\n' }],
+    });
+
+    this.logger.log(
+      `Injected .env.production into patched revision ${patchedRevisionId} (base ${baseRevisionId})`,
+    );
+    return patchedRevisionId;
   }
 }

@@ -11,7 +11,7 @@ import {
 
 interface RequestShape {
   user?: { id: string };
-  params: { id?: string };
+  params: { id?: string; sessionId?: string };
   conversationV2Session?: ConversationV2ResolvedSession;
 }
 
@@ -22,7 +22,7 @@ export class ConversationV2OwnerGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<RequestShape>();
     const userId = req.user?.id;
-    const sessionId = req.params.id;
+    const sessionId = req.params.id ?? req.params.sessionId;
     if (!userId || !sessionId) throw new NotFoundException('Session not found');
 
     const resolved = await this.access.resolveSession(userId, sessionId);

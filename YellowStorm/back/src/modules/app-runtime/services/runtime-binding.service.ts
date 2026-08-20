@@ -22,6 +22,8 @@ export interface BindRuntimeResult {
   latestRevisionId: string;
   mcpUrl: string;
   mcpToken: string;
+  /** Second MCP for persistent App Data (when APP_DATA_MCP_ENABLED). */
+  appDataMcpUrl?: string;
 }
 
 export interface MarkBrowserActiveParams {
@@ -69,6 +71,7 @@ export class RuntimeBindingService {
       latestRevisionId: binding.latestRevisionId,
       mcpUrl: this.resolveMcpUrl(),
       mcpToken: token,
+      appDataMcpUrl: this.resolveAppDataMcpUrl(),
     };
   }
 
@@ -161,6 +164,18 @@ export class RuntimeBindingService {
       return `${publicBase}/api/v1/mcp/app-runtime`;
     }
     return 'http://127.0.0.1:3000/api/v1/mcp/app-runtime';
+  }
+
+  private resolveAppDataMcpUrl(): string | undefined {
+    if (!this.config.get<boolean>('appData.mcpEnabled', false)) return undefined;
+    const explicit = this.config.get<string>('appData.mcpUrl', '').trim();
+    if (explicit) return explicit;
+    const publicBase = this.config.get<string>('appData.publicBaseUrl', '').replace(/\/$/, '')
+      || this.config.get<string>('appRuntime.publicBaseUrl', '').replace(/\/$/, '');
+    if (publicBase) {
+      return `${publicBase}/api/v1/mcp/app-data`;
+    }
+    return 'http://127.0.0.1:3000/api/v1/mcp/app-data';
   }
 
   private get starterRevisionId(): string {

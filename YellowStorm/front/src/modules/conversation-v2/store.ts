@@ -53,6 +53,8 @@ interface State {
   streaming: boolean;
   streamError: string | null;
   rightPanelMode: 'closed' | 'tool' | 'app';
+  /** When rightPanelMode is app: preview iframe vs read-only data tab. */
+  rightPanelAppTab: 'preview' | 'data';
   /** Latest agent-pushed application component for the current session.
    *  Nodepod boots from cephPath + filesTree; `url` is retained for deploy links. */
   applicationComponent: ApplicationComponentState | null;
@@ -129,6 +131,7 @@ export interface SessionSlice {
   streaming: boolean;
   streamError: string | null;
   rightPanelMode: State['rightPanelMode'];
+  rightPanelAppTab: State['rightPanelAppTab'];
   applicationComponent: State['applicationComponent'];
   appBuildProgress: State['appBuildProgress'];
   runtimeStatus: State['runtimeStatus'];
@@ -172,7 +175,7 @@ interface Actions {
   openToolPanel: (toolCallId: string) => void;
   /** Switch the right panel between the Code (tool) and Preview (app) tabs.
    *  Only meaningful when both a tool and an application component exist. */
-  setRightPanelView: (view: 'code' | 'preview') => void;
+  setRightPanelView: (view: 'code' | 'preview' | 'data') => void;
   jumpToLive: () => void;
   closeRightPanel: () => void;
   /**
@@ -234,6 +237,7 @@ const initial: State = {
   streaming: false,
   streamError: null,
   rightPanelMode: 'closed',
+  rightPanelAppTab: 'preview',
   applicationComponent: null,
   appBuildProgress: null,
   runtimeStatus: 'idle',
@@ -271,6 +275,7 @@ function createSessionViewDefaults(): Pick<
   | 'liveAssistantIds'
   | 'selectedToolCallId'
   | 'rightPanelMode'
+  | 'rightPanelAppTab'
   | 'applicationComponent'
   | 'appBuildProgress'
   | 'runtimeStatus'
@@ -296,6 +301,7 @@ function createSessionViewDefaults(): Pick<
     liveAssistantIds: new Set<string>(),
     selectedToolCallId: null,
     rightPanelMode: 'closed',
+    rightPanelAppTab: 'preview',
     applicationComponent: null,
     appBuildProgress: null,
     runtimeStatus: 'idle',
@@ -323,6 +329,7 @@ function sliceFromState(s: State): SessionSlice {
     streaming: s.streaming,
     streamError: s.streamError,
     rightPanelMode: s.rightPanelMode,
+    rightPanelAppTab: s.rightPanelAppTab,
     applicationComponent: s.applicationComponent,
     appBuildProgress: s.appBuildProgress,
     // Host is destroyed on session leave; never hydrate a stale browser status.
@@ -386,6 +393,7 @@ export const useConversationV2Store = create<State & Actions>()(
               streaming: cached.streaming,
               streamError: cached.streamError,
               rightPanelMode: cached.rightPanelMode,
+              rightPanelAppTab: cached.rightPanelAppTab ?? 'preview',
               applicationComponent: cached.applicationComponent,
               appBuildProgress: cached.appBuildProgress,
               runtimeStatus: 'idle',
@@ -587,7 +595,10 @@ export const useConversationV2Store = create<State & Actions>()(
         ),
       setRightPanelView: (view) =>
         set(
-          { rightPanelMode: view === 'preview' ? 'app' : 'tool' },
+          {
+            rightPanelMode: view === 'code' ? 'tool' : 'app',
+            rightPanelAppTab: view === 'data' ? 'data' : 'preview',
+          },
           false,
           `setRightPanelView/${view}`,
         ),

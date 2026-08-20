@@ -14,6 +14,15 @@ import type {
 } from './interfaces';
 import type { RuntimeTicketResponse } from './runtime/runtime.types';
 
+export interface AppDataOwnerStatus {
+  enabled: boolean;
+  appDataId: string | null;
+  workspaceId: string;
+  lifecycleState: string | null;
+  dev: { provisioned: boolean; schemaName: string | null; currentVersion: number | null };
+  prod: { provisioned: boolean; schemaName: string | null; currentVersion: number | null };
+}
+
 export type {
   ListSessionsParams,
   DeployStatus,
@@ -266,6 +275,31 @@ export const conversationV2Api = {
     const res = await apiClient.post<ApiResponse<RuntimeTicketResponse>>(
       `/conversation-v2/sessions/${sessionId}/runtime-ticket`,
     );
+    return res.data.data;
+  },
+  async getAppDataStatus(sessionId: string): Promise<AppDataOwnerStatus> {
+    const res = await apiClient.get<ApiResponse<AppDataOwnerStatus>>(
+      `/conversation-v2/sessions/${sessionId}/app-data/status`,
+    );
+    return res.data.data;
+  },
+  async getAppDataTables(sessionId: string, environment: 'dev' | 'prod'): Promise<{ tables: string[] }> {
+    const res = await apiClient.get<ApiResponse<{ tables: string[]; environment: string; currentVersion: number }>>(
+      `/conversation-v2/sessions/${sessionId}/app-data/${environment}/tables`,
+    );
+    return res.data.data;
+  },
+  async getAppDataRows(
+    sessionId: string,
+    environment: 'dev' | 'prod',
+    table: string,
+    page = 1,
+  ): Promise<{ rows: Record<string, unknown>[]; total: number; page: number; pageSize: number }> {
+    const res = await apiClient.get<
+      ApiResponse<{ rows: Record<string, unknown>[]; total: number; page: number; pageSize: number }>
+    >(`/conversation-v2/sessions/${sessionId}/app-data/${environment}/tables/${encodeURIComponent(table)}/rows`, {
+      params: { page },
+    });
     return res.data.data;
   },
 };

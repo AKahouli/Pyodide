@@ -1,4 +1,4 @@
-import { PlayIcon, XIcon, CodeIcon, EyeIcon } from 'lucide-react';
+import { PlayIcon, XIcon, CodeIcon, EyeIcon, DatabaseIcon } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { Button } from '@/components/ui/button';
 import { ResizablePanel } from '@/components/ui/resizable-panel';
@@ -10,6 +10,7 @@ import { ToolDetailDispatch } from './tool-views/ToolDetailDispatch';
 import { ApplicationComponentView } from './ApplicationComponentView';
 import { AppBuildProgressPanel } from './AppBuildProgressPanel';
 import { DeployControls } from './DeployControls';
+import { AppDataPanel } from './AppDataPanel';
 
 const RIGHT_PANEL_STORAGE_KEY = 'conversation-v2-right-panel-width';
 const RIGHT_PANEL_DEFAULT_WIDTH = 560;
@@ -20,6 +21,8 @@ export function RightPanel() {
   const { t } = useConversationV2Translation();
   const {
     mode,
+    appTab,
+    sessionId,
     close,
     selectedToolCallId,
     liveToolCallId,
@@ -32,6 +35,8 @@ export function RightPanel() {
   } = useConversationV2Store(
     useShallow((s) => ({
       mode: s.rightPanelMode,
+      appTab: s.rightPanelAppTab,
+      sessionId: s.sessionId,
       close: s.closeRightPanel,
       selectedToolCallId: s.selectedToolCallId,
       liveToolCallId: s.liveToolCallId,
@@ -48,8 +53,6 @@ export function RightPanel() {
 
   const runtimePreview = isRuntimePreviewVisible(runtimeStatus);
   const hasCode = !!selectedToolCallId;
-  // Vague 5: show preview as soon as the browser runtime is active — do not
-  // wait for the SSE application_component event.
   const hasPreview =
     !!applicationComponent || !!appBuildProgress || runtimePreview;
   if (!hasCode && !hasPreview) return null;
@@ -57,15 +60,13 @@ export function RightPanel() {
   const showBuildProgress =
     !!appBuildProgress && !applicationComponent && !runtimePreview;
   const showNodepod = !!applicationComponent || runtimePreview;
-
-  // Which tab is active, clamped to what's actually available: prefer the
-  // preview when we're in 'app' mode (or when there's no code to show).
-  const showPreview = (showNodepod || showBuildProgress) && (mode === 'app' || !hasCode);
-  // The Code/Preview toggle only makes sense once BOTH exist.
+  const showAppPanel = (showNodepod || showBuildProgress) && (mode === 'app' || !hasCode);
+  const showDataTab = showAppPanel && appTab === 'data';
+  const showPreviewTab = showAppPanel && appTab !== 'data';
   const canToggle = hasCode && hasPreview;
 
   const realTime = selectedToolCallId === liveToolCallId;
-  const showJumpToLive = !showPreview && streaming && !!liveToolCallId && !realTime;
+  const showJumpToLive = !showAppPanel && streaming && !!liveToolCallId && !realTime;
 
   const tabClass = (active: boolean) =>
     cn(
@@ -92,20 +93,30 @@ export function RightPanel() {
     >
       <aside className='flex h-full min-w-0 flex-col overflow-hidden'>
         <header className='flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3'>
-          {canToggle ? (
+          {canToggle || showAppPanel ? (
             <div className='inline-flex items-center rounded-lg border bg-muted/40 p-0.5'>
-              <button type='button' onClick={() => setRightPanelView('code')} className={tabClass(!showPreview)}>
-                <CodeIcon className='size-3.5' />
-                {t('rightPanel.tabCode')}
-              </button>
-              <button type='button' onClick={() => setRightPanelView('preview')} className={tabClass(showPreview)}>
-                <EyeIcon className='size-3.5' />
-                {t('rightPanel.tabPreview')}
-              </button>
+              {hasCode && (
+                <button type='button' onClick={() => setRightPanelView('code')} className={tabClass(mode === 'tool')}>
+                  <CodeIcon className='size-3.5' />
+                  {t('rightPanel.tabCode')}
+                </button>
+              )}
+              {hasPreview && (
+                <>
+                  <button type='button' onClick={() => setRightPanelView('preview')} className={tabClass(showPreviewTab)}>
+                    <EyeIcon className='size-3.5' />
+                    {t('rightPanel.tabPreview')}
+                  </button>
+                  <button type='button' onClick={() => setRightPanelView('data')} className={tabClass(showDataTab)}>
+                    <DatabaseIcon className='size-3.5' />
+                    {t('rightPanel.tabData')}
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <span className='truncate text-sm font-semibold'>
-              {showPreview ? previewTitle : t('rightPanel.title')}
+              {showAppPanel ? previewTitle : t('rightPanel.title')}
             </span>
           )}
           <div className='flex shrink-0 items-center gap-1'>
@@ -116,8 +127,10 @@ export function RightPanel() {
           </div>
         </header>
         <div className='relative flex min-h-0 flex-1 flex-col overflow-hidden'>
-          {showPreview ? (
-            showNodepod ? (
+          {showAppPanel ? (
+            showDataTab && sessionId ? (
+              <AppDataPanel sessionId={sessionId} />
+            ) : showNodepod ? (
               <ApplicationComponentView
                 title={applicationComponent?.title}
                 filesTree={applicationComponent?.filesTree}

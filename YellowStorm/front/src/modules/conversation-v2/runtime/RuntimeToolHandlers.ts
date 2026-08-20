@@ -119,6 +119,8 @@ export interface ToolContext {
   ensurePreviewAttached?: () => Promise<void>;
   /** Surface the live preview panel in the UI (best-effort). */
   openPreviewPanel?: () => void;
+  /** Fresh VITE_YM_* env for dev-server restarts (e.g. after App Data provision). */
+  resolveAppDataViteEnv?: () => Promise<Record<string, string> | undefined>;
 }
 
 const PREVIEW_ACTIONS: readonly PreviewActionName[] = [
@@ -517,10 +519,14 @@ const handlers: Record<string, Handler> = {
 
     if (action === 'restart') {
       ctx.onProgress?.({ phase: 'starting', message: 'dev server restart' });
+      const extraEnv = ctx.resolveAppDataViteEnv ? await ctx.resolveAppDataViteEnv() : undefined;
       // Boots the configured dev command, waits for the ready line and probes
       // the URL before returning — the same path the host uses at boot.
-      await ctx.adapter.startDevServer(ctx.previewCtrl, () => false, (phase, message) =>
-        ctx.onProgress?.({ phase, message }),
+      await ctx.adapter.startDevServer(
+        ctx.previewCtrl,
+        () => false,
+        (phase, message) => ctx.onProgress?.({ phase, message }),
+        extraEnv,
       );
       ctx.openPreviewPanel?.();
       await ctx.ensurePreviewAttached?.();

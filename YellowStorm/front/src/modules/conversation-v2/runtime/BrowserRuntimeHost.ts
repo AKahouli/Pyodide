@@ -58,6 +58,77 @@ export class BrowserRuntimeHost {
   private reconnectAttempts = 0;
   private listeners = new Set<HostStateListener>();
   private pendingIframe: HTMLIFrameElement | null = null;
+  private appDataProxyInstalled = false;
+
+  private buildAppDataViteEnv(): Record<string, string> | undefined {
+    const env = this.ticket?.appDataRuntimeEnv;
+    if (!env) return undefined;
+    return {
+      VITE_YM_APP_DATA_URL: env.publicUrl,
+      VITE_YM_APP_DATA_ID: env.appDataId,
+      VITE_YM_APP_DATA_ENV: env.environment,
+      VITE_YM_APP_DATA_PROXY: 'true',
+    };
+  }
+
+  private appDataBroadcast: BroadcastChannel | null = null;
+
+  /**
+   * Proxy fetch requests from the generated app — bypasses the Nodepod SW
+   * which strips POST bodies when forwarding requests.
+   *
+   * Two transports:
+   *  - `window.message` — used when the app runs in the preview iframe
+   *  - `BroadcastChannel('ym-app-data-proxy')` — used when the user opens
+   *    the preview in a new tab (window.parent === window)
+   */
+  private setupAppDataFetchProxy(): void {
+    if (this.appDataProxyInstalled) return;
+    this.appDataProxyInstalled = true;
+
+    const handleProxyRequest = (
+      data: Record<string, unknown>,
+      reply: (response: Record<string, unknown>) => void,
+    ) => {
+      const { id, url, method, headers, body } = data;
+      if (typeof url !== 'string' || !url.includes('/app-data/public/')) return;
+
+      fetch(url, {
+        method: (method as string) || 'GET',
+        headers: (headers as HeadersInit) || undefined,
+        body: (body as BodyInit) || undefined,
+      })
+        .then(async (res) => {
+          const responseBody = await res.text();
+          const responseHeaders: Record<string, string> = {};
+          res.headers.forEach((v, k) => { responseHeaders[k] = v; });
+          reply({ type: 'ym-app-data-response', id, status: res.status, headers: responseHeaders, body: responseBody });
+        })
+        .catch((err) => {
+          reply({ type: 'ym-app-data-response', id, error: err instanceof Error ? err.message : String(err) });
+        });
+    };
+
+    // Transport 1: postMessage from preview iframe
+    window.addEventListener('message', (event: MessageEvent) => {
+      if (event.data?.type !== 'ym-app-data-fetch') return;
+      const source = event.source as WindowProxy | null;
+      if (!source) return;
+      handleProxyRequest(event.data, (response) => source.postMessage(response, '*'));
+    });
+
+    // Transport 2: BroadcastChannel for new-tab previews
+    try {
+      this.appDataBroadcast = new BroadcastChannel('ym-app-data-proxy');
+      this.appDataBroadcast.onmessage = (event: MessageEvent) => {
+        if (event.data?.type !== 'ym-app-data-fetch') return;
+        handleProxyRequest(event.data, (response) => this.appDataBroadcast?.postMessage(response));
+      };
+    } catch {
+      // BroadcastChannel not supported — new-tab proxy unavailable
+    }
+  }
+
   /** Off-screen iframe so preview_inspect works when the user panel is closed. */
   private hiddenIframe: HTMLIFrameElement | null = null;
 
@@ -112,6 +183,7 @@ export class BrowserRuntimeHost {
     this.sessionId = sessionId;
     this.reconnectAttempts = 0;
     this.legacyMode = false;
+    this.setupAppDataFetchProxy();
 
     const cephPath = existingCephPath ?? null;
     const filesTree = (existingFilesTree as FilesTreeNode | null) ?? null;
@@ -165,7 +237,7 @@ export class BrowserRuntimeHost {
 
       // 8. Start dev server
       this.setStatus('starting');
-      await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed);
+      await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, this.buildAppDataViteEnv());
       if (this._destroyed) return;
       this.flushPendingIframe();
       await this.ensureHiddenPreviewIframe();
@@ -232,7 +304,7 @@ export class BrowserRuntimeHost {
       if (this._destroyed) return;
 
       this.setStatus('starting');
-      await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed);
+      await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, this.buildAppDataViteEnv());
       if (this._destroyed) return;
       this.flushPendingIframe();
       await this.ensureHiddenPreviewIframe();
@@ -288,7 +360,29 @@ export class BrowserRuntimeHost {
       openPreviewPanel: () => {
         useConversationV2Store.getState().setRightPanelView('preview');
       },
+      resolveAppDataViteEnv: () => this.refreshAppDataViteEnv(),
     };
+  }
+
+  /** Re-issue runtime ticket metadata so VITE_YM_* reflects a newly provisioned App Data store. */
+  private async refreshAppDataViteEnv(): Promise<Record<string, string> | undefined> {
+    if (this.sessionId && appRuntimeEnabled) {
+      try {
+        const fresh = await conversationV2Api.createRuntimeTicket(this.sessionId);
+        if (fresh.appDataRuntimeEnv) {
+          this.ticket = this.ticket
+            ? { ...this.ticket, appDataRuntimeEnv: fresh.appDataRuntimeEnv }
+            : fresh;
+        }
+      } catch (err) {
+        console.warn(
+          LOG,
+          'refreshAppDataViteEnv failed',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+    return this.buildAppDataViteEnv();
   }
 
   private async handleToolInvoke(payload: ToolInvokePayload): Promise<void> {
