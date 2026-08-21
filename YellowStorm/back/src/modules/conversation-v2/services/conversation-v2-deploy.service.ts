@@ -104,14 +104,16 @@ export class ConversationV2DeployService {
     }
 
     let deployRevisionId = revisionId;
+    await this.assertRevisionSupportsSubpath(aiSessionId, revisionId);
     try {
       deployRevisionId = await this.injectEnvProduction(aiSessionId, revisionId, productionEnv);
     } catch (err) {
-      this.logger.warn(
-        `Failed to inject .env.production into revision ${revisionId} — deploying without it: ${
+      this.logger.error(
+        `Failed to inject .env.production into revision ${revisionId}: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
+      throw new ServiceUnavailableException('Failed to prepare deployment environment');
     }
 
     const runtime = this.getDeployRuntimeConfig();
@@ -222,10 +224,8 @@ export class ConversationV2DeployService {
         signal: AbortSignal.timeout(remainingMs),
       });
       const rawBody = await response.text();
-      this.logger.log(
-        `App-builder ${path} response: status=${response.status} headers=${JSON.stringify(
-          Object.fromEntries(response.headers.entries()),
-        )} body=${rawBody}`,
+      this.logger.debug(
+        `App-builder ${path} response: status=${response.status} bodyChars=${rawBody.length}`,
       );
       if (!response.ok) {
         this.logger.warn(`App-builder ${path} failed with status ${response.status}`);
@@ -307,7 +307,7 @@ export class ConversationV2DeployService {
     env: Record<string, string>,
   ): Promise<string> {
     const lines = Object.entries(env)
-      .map(([k, v]) => `${k}=${v}`)
+      .map(([k, v]) => `${k}=${quoteDotenvValue(v)}`)
       .join('\n');
 
     const patchedRevisionId = `${baseRevisionId}_deploy_${randomBytes(4).toString('hex')}`;
@@ -324,4 +324,24 @@ export class ConversationV2DeployService {
     );
     return patchedRevisionId;
   }
+
+  private async assertRevisionSupportsSubpath(
+    workspaceId: string,
+    revisionId: string,
+  ): Promise<void> {
+    const revision = await this.revisions.getAuthorizedRevision(workspaceId, revisionId);
+    const hasAppBase = revision.files.some(
+      (file) => file.path === 'src/lib/app-base.ts' || file.path.endsWith('/app-base.ts'),
+    );
+    if (!hasAppBase) {
+      throw new ServiceUnavailableException(
+        'This app cannot be deployed under /apps/{sessionId}/. Regenerate it with the current starter, then deploy again.',
+      );
+    }
+  }
+}
+
+function quoteDotenvValue(value: string): string {
+  if (/^[A-Za-z0-9_./:-]*$/.test(value)) return value;
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`;
 }

@@ -17,6 +17,9 @@ describe('ConversationV2DeployService', () => {
   };
   const revisions = {
     patchRevisionWithFiles: jest.fn().mockResolvedValue(undefined),
+    getAuthorizedRevision: jest.fn().mockResolvedValue({
+      files: [{ path: 'src/lib/app-base.ts' }],
+    }),
   };
   let service: ConversationV2DeployService;
 
@@ -24,6 +27,7 @@ describe('ConversationV2DeployService', () => {
     jest.restoreAllMocks();
     config.get.mockClear();
     revisions.patchRevisionWithFiles.mockClear();
+    revisions.getAuthorizedRevision.mockClear();
     configValues['conversationV2.appBuilderDeployBaseUrl'] = 'https://app-deployer.yellowsys.org/';
     configValues['conversationV2.appBuilderDeployToken'] = undefined;
     configValues['conversationV2.appBuilderDeployTimeoutMs'] = 600_000;

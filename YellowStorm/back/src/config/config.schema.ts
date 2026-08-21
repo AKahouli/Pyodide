@@ -226,6 +226,10 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_V2_SSE_HEARTBEAT_MS: Joi.number().default(15000),
   CONVERSATION_V2_MAX_MESSAGE_LENGTH: Joi.number().default(16384),
   CONVERSATION_V2_GRPC_MAX_MESSAGE_BYTES: Joi.number().default(16 * 1024 * 1024),
+  CONVERSATION_V2_MAX_CONCURRENT_STREAMS: Joi.number().min(1).default(5),
+  CONVERSATION_V2_MAX_SSE_CONNECTIONS: Joi.number().min(1).default(5),
+  CONVERSATION_V2_GRPC_IDLE_TIMEOUT_MS: Joi.number().min(1000).default(900000),
+  CONVERSATION_V2_LIVE_TAIL_POLL_MS: Joi.number().min(100).default(1000),
 
   // Conversation V2 gRPC channel security (separate AI service → own cert + key).
   CONVERSATION_V2_GRPC_API_KEY: Joi.string().optional(),
@@ -238,6 +242,7 @@ export const configValidationSchema = Joi.object({
   APP_BUILDER_DEPLOY_TIMEOUT_MS: Joi.number().min(30_000).default(600_000),
   APP_BUILDER_DEPLOY_INITIAL_STATUS_DELAY_MS: Joi.number().min(0).default(15_000),
   APP_BUILDER_DEPLOY_STATUS_POLL_INTERVAL_MS: Joi.number().min(1_000).default(15_000),
+  APP_BUILDER_DEPLOYED_APPS_PATH_PREFIX: Joi.string().default('/apps'),
 
   // App Builder runtime — MCP + Broker on YellowStorm (see app-runtime/README.md).
   APP_RUNTIME_MCP_ENABLED: Joi.boolean().default(true),

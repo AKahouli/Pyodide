@@ -13,7 +13,6 @@ import {
   type VerificationEvidence,
 } from '../mcp/runtime-mcp-validation';
 import {
-  MUTATING_BROKER_TOOLS,
   TOOL_NAME_SET,
   type RuntimeMcpToolName,
 } from '../mcp/runtime-mcp.tools';
@@ -141,10 +140,6 @@ export class RuntimeBrokerService {
       this.logger.log(
         `finalize ok bindingId=${binding.bindingId} toolCallId=${toolCallId} revisionId=${result.revisionId}`,
       );
-    }
-
-    if (MUTATING_BROKER_TOOLS.has(tool) && typeof result.revisionId === 'string') {
-      binding.latestRevisionId = result.revisionId;
     }
 
     return { result };

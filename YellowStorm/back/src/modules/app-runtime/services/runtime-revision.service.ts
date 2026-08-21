@@ -16,6 +16,7 @@ import {
   type StarterManifestFile,
 } from '../constants/starter-revisions';
 import { STARTER_REACT_VITE_V1_REVISION_ID } from '../constants/starter-react-vite-v1';
+import { blobObjectKey } from '../utils/blob-object-key';
 import {
   AppSourceRevision,
   AppSourceRevisionDocument,
@@ -260,7 +261,7 @@ export class RuntimeRevisionService {
       const path = this.normalizeRelativePath(raw.path);
       const body = Buffer.from(raw.content, 'utf8');
       const sha256 = createHash('sha256').update(body).digest('hex');
-      const objectKey = `appbuilder/blobs/sha256/${sha256}`;
+      const objectKey = blobObjectKey(sha256);
 
       if (!(await this.documents.exists(objectKey))) {
         await this.documents.upload(body, path.split('/').pop() || path, 'text/plain', {
@@ -345,7 +346,7 @@ export class RuntimeRevisionService {
       const path = this.normalizeRelativePath(raw.path);
       const body = Buffer.from(raw.content, 'utf8');
       const sha256 = createHash('sha256').update(body).digest('hex');
-      const objectKey = `appbuilder/blobs/sha256/${sha256}`;
+      const objectKey = blobObjectKey(sha256);
 
       if (!(await this.documents.exists(objectKey))) {
         await this.documents.upload(body, path.split('/').pop() || path, 'text/plain', {

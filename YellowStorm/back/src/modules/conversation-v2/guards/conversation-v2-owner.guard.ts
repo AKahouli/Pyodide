@@ -9,6 +9,10 @@ import {
   type ConversationV2ResolvedSession,
 } from '../services/conversation-v2-session-access.service';
 
+/**
+ * Allows the conversation owner **or a user the session is shared with**.
+ * Name is historical; access is resolved via ConversationV2SessionAccessService.
+ */
 interface RequestShape {
   user?: { id: string };
   params: { id?: string; sessionId?: string };
