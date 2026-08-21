@@ -1,10 +1,20 @@
 import { FormEvent, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { isAppHomePath, resolveAppHomeHref } from '@/lib/app-base';
 import { useAuth } from '@/lib/yellowmind-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+
+function redirectAfterAuth(navigate: ReturnType<typeof useNavigate>, from: string) {
+  if (isAppHomePath(from)) {
+    // Soft navigate('/') drops the trailing slash under /apps/{id}/ — hard replace keeps Vite base.
+    window.location.replace(resolveAppHomeHref());
+    return;
+  }
+  navigate(from, { replace: true });
+}
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -22,7 +32,7 @@ export function LoginPage() {
     setPending(true);
     try {
       await login(email, password);
-      navigate(from, { replace: true });
+      redirectAfterAuth(navigate, from);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
@@ -76,7 +86,7 @@ export function RegisterPage() {
     setPending(true);
     try {
       await register(email, password, displayName || undefined);
-      navigate(from, { replace: true });
+      redirectAfterAuth(navigate, from);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed');
     } finally {
