@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+from email.utils import parseaddr
 from typing import Awaitable, Callable, List, Optional
 
 from google.adk.agents import LlmAgent
@@ -408,13 +409,32 @@ def capture_artifacts_tool(tool, *, on_artifact: Callable[[dict], Awaitable[None
     return SearchToolADK(capturing, {"function": tool.custom_schema})
 
 
+def _sole_recipient(kwargs) -> Optional[str]:
+    """The one address a reply is expected from, or None when we can't be sure.
+
+    send_email tools take `to_recipients` as a list. When it holds exactly one
+    address, that is who a reply will come from — return its bare address so the
+    wait can verify the sender. With zero or several recipients there is no single
+    expected sender, so return None and let the wait stay token-only."""
+    to = kwargs.get("to_recipients")
+    if isinstance(to, str):
+        to = [to]
+    if isinstance(to, (list, tuple)):
+        addrs = [str(x).strip() for x in to if str(x).strip()]
+        if len(addrs) == 1:
+            return parseaddr(addrs[0])[1] or None
+    return None
+
+
 def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Optional[str]]],
-                          on_sent: Optional[Callable[[str], Awaitable[None]]] = None):
+                          on_sent: Optional[Callable[[str, Optional[str]], Awaitable[None]]] = None):
     """Wrap a send_email tool so the outbound mail carries its routing token.
 
-    `on_sent(token)` — optional — runs only after the underlying send returns
-    successfully, for callers that need to persist the wait (see
-    _mail_stamping's eager path). A send that raises must leave no wait behind.
+    `on_sent(token, expected_from)` — optional — runs only after the underlying
+    send returns successfully, for callers that need to persist the wait (see
+    _mail_stamping's eager path) or record who the reply is expected from.
+    `expected_from` is the sole recipient's address, or None when the mail has no
+    single recipient. A send that raises must leave no wait behind.
 
     Deterministic on purpose. The alternative — telling the executor LLM to put a
     marker in the subject — fails open: the one time the model omits it, the
@@ -451,7 +471,7 @@ def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Option
         # token has to be IN the mail — but persisting waits for the send to
         # come back.
         if token and on_sent is not None:
-            await on_sent(token)
+            await on_sent(token, _sole_recipient(kwargs))
         return result
 
     stamped.__name__ = original.__name__

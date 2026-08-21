@@ -377,10 +377,10 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         # Claim before anything else: this is what makes a duplicate delivery a
         # no-op instead of a second resume. Graph retries whatever it thinks
         # failed, so this path is walked twice as a matter of course.
-        wait = await self._rm.claim_mail_wait(request.token)
+        wait = await self._rm.claim_mail_wait(request.token, reply_from=request.reply_from)
         if wait is None:
-            logger.info("[worky] DeliverMailReply ignored — token unknown, already "
-                        "delivered, expired or cancelled")
+            logger.info("[worky] DeliverMailReply ignored — token unknown, wrong sender, "
+                        "already delivered, expired or cancelled")
             return pb.DeliverMailReplyResponse(delivered=False)
 
         session_id, user_id = wait["session_id"], wait["user_id"]

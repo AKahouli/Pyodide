@@ -159,7 +159,8 @@ async def test_a_reply_claims_its_wait_exactly_once(pool):
     await rm.bind_mail_wait_interrupt("s1", "m", "mail:plan@1/m@1")
 
     # Ten concurrent deliveries of the same notification; exactly one wins.
-    claims = await asyncio.gather(*[rm.claim_mail_wait(token) for _ in range(10)])
+    claims = await asyncio.gather(
+        *[rm.claim_mail_wait(token, reply_from="x@example.com") for _ in range(10)])
     won = [c for c in claims if c is not None]
     assert len(won) == 1, f"expected exactly one claim to win, got {len(won)}"
     assert won[0]["session_id"] == "s1" and won[0]["step_id"] == "m"
@@ -168,6 +169,92 @@ async def test_a_reply_claims_its_wait_exactly_once(pool):
     assert await rm.claim_mail_wait(token) is None, "a matched wait must not re-claim"
     assert await rm.claim_mail_wait("YW-nosuchtoken") is None, "unknown token must not resolve"
     print("ok  mail wait: claimed exactly once under concurrent deliveries")
+
+
+async def test_a_wait_only_resolves_for_its_expected_sender(pool):
+    """A wait registered for a specific recipient must not be claimed by a reply
+    from someone else. Repro of the observed bug: an await_reply step waiting on
+    rabeb@ was resolved by an email from agara@, because claim was token-only and
+    never checked the sender."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    token = mail_token.mint()
+    await rm.register_mail_wait(token, session_id="s7", step_id="rabeb-e2e",
+                                user_id="u1", expected_from="rabeb@yellowsys.fr")
+    await rm.bind_mail_wait_interrupt("s7", "rabeb-e2e", "mail:plan@1/rabeb-e2e@1")
+
+    # The wrong sender must NOT claim it.
+    assert await rm.claim_mail_wait(token, reply_from="agara@yellowsys.fr") is None, \
+        "a reply from the wrong sender must not resolve the wait"
+
+    # The wait is still live, so the right sender still resolves it exactly once.
+    won = await rm.claim_mail_wait(token, reply_from="Rabeb Sdiri <rabeb@yellowsys.fr>")
+    assert won is not None and won["step_id"] == "rabeb-e2e", \
+        "the expected sender must resolve the wait"
+    print("ok  mail wait: only the expected sender resolves the wait")
+
+
+async def test_deliver_mail_reply_rpc_refuses_a_wrong_sender(pool):
+    """End-to-end through the gRPC entrypoint: a DeliverMailReply carrying the
+    right token but the WRONG sender must not deliver, must not resume the plan,
+    and must leave the wait open for the real recipient's reply."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.grpc_server import companion_ai_servicer as srv
+
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    token = mail_token.mint()
+    await rm.register_mail_wait(token, session_id="s10", step_id="await-rabeb",
+                                user_id="u1", expected_from="rabeb@yellowsys.fr")
+    await rm.bind_mail_wait_interrupt("s10", "await-rabeb", "mail:plan@1/await-rabeb@1")
+
+    svc_mock = MagicMock(resume_turn=AsyncMock())
+    servicer = srv.CompanionAiServicer(svc_mock, rm)
+    request = MagicMock(token=token, reply_body="looks fine to me",
+                        reply_from="agara@yellowsys.fr", agents=[], connectors=[])
+
+    resp = await servicer.DeliverMailReply(request, MagicMock())
+
+    assert resp.delivered is False, "a wrong-sender reply must not be delivered"
+    svc_mock.resume_turn.assert_not_awaited()  # the plan must not resume on it
+    # The wait is untouched: the real recipient can still claim it.
+    won = await rm.claim_mail_wait(token, reply_from="rabeb@yellowsys.fr")
+    assert won is not None and won["step_id"] == "await-rabeb", \
+        "the wrong-sender attempt must leave the wait open for the real sender"
+    print("ok  DeliverMailReply: wrong sender refused, wait left open")
+
+
+async def test_expected_from_is_recorded_at_send_then_enforced(pool):
+    """End-to-end of the fix: the wait is minted at projection with no sender
+    (the recipient isn't known yet), the recipient is recorded when the mail is
+    sent, and from then on only that sender resolves the wait."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    token = mail_token.mint()
+    # Minted at plan projection — no expected_from yet.
+    await rm.register_mail_wait(token, session_id="s9", step_id="await", user_id="u1")
+    await rm.bind_mail_wait_interrupt("s9", "await", "mail:plan@1/await@1")
+    # Recorded when the send_email tool actually sends (sole recipient).
+    await rm.set_mail_wait_expected_from(token, "rabeb@yellowsys.fr")
+    # Now the wrong sender can't claim it, the right one can.
+    assert await rm.claim_mail_wait(token, reply_from="agara@yellowsys.fr") is None
+    won = await rm.claim_mail_wait(token, reply_from="rabeb@yellowsys.fr")
+    assert won is not None and won["step_id"] == "await"
+    print("ok  mail wait: expected_from recorded at send, then enforced")
+
+
+async def test_a_wait_with_no_expected_sender_still_resolves(pool):
+    """Backward compatibility: when expected_from is NULL (nothing to check
+    against), any reply carrying the token resolves it, as before."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    token = mail_token.mint()
+    await rm.register_mail_wait(token, session_id="s8", step_id="m", user_id="u1")
+    await rm.bind_mail_wait_interrupt("s8", "m", "mail:plan@1/m@1")
+    won = await rm.claim_mail_wait(token, reply_from="anyone@example.com")
+    assert won is not None and won["step_id"] == "m", \
+        "with no expected sender, any reply still resolves the wait"
+    print("ok  mail wait: unconstrained wait resolves for any sender")
 
 
 async def test_waits_are_cancelled_and_expired_out_of_the_waiting_set(pool):
