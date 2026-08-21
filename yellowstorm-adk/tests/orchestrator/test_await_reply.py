@@ -571,8 +571,8 @@ def test_a_successful_send_registers_the_wait_after_the_mail_is_away():
     asyncio.run(wrapped.func(to_recipients=["r@example.com"], subject="Q", body="<p>Hi</p>"))
 
     assert len(sent) == 1
-    # The sole recipient is passed through so the wait can verify the sender.
-    assert registered == [("YW-abcdefghijklmnop12", "r@example.com")]
+    # The recipients are passed through so the wait can verify the sender.
+    assert registered == [("YW-abcdefghijklmnop12", ["r@example.com"])]
 
 
 def test_the_send_step_feeding_a_wait_carries_that_wait_s_own_token():
@@ -816,14 +816,13 @@ def test_a_delivered_reply_is_attributed_to_its_sender_not_the_plan():
     assert answer.rstrip().endswith("do me a search about new mcps in the market")
 
 
-def test_sole_recipient_only_when_exactly_one():
-    """expected_from is set from the mail's recipient only when there is exactly
-    one — with several, a reply could legitimately come from any of them, so the
-    wait must stay token-only rather than reject the others."""
-    assert nodes._sole_recipient({"to_recipients": ["rabeb@yellowsys.fr"]}) == "rabeb@yellowsys.fr"
-    assert nodes._sole_recipient({"to_recipients": ["Rabeb <rabeb@yellowsys.fr>"]}) == "rabeb@yellowsys.fr"
-    assert nodes._sole_recipient({"to_recipients": "rabeb@yellowsys.fr"}) == "rabeb@yellowsys.fr"
-    assert nodes._sole_recipient({"to_recipients": ["a@x.fr", "b@x.fr"]}) is None
-    assert nodes._sole_recipient({"to_recipients": []}) is None
-    assert nodes._sole_recipient({}) is None
-    print("ok  sole recipient: address only when exactly one")
+def test_recipients_extracted_as_bare_lowercased_addresses():
+    """expected_from is built from EVERY recipient — a reply from any of them
+    resolves the wait — as bare, lower-cased addresses; empty when none."""
+    assert nodes._recipients({"to_recipients": ["rabeb@yellowsys.fr"]}) == ["rabeb@yellowsys.fr"]
+    assert nodes._recipients({"to_recipients": ["Rabeb <Rabeb@Yellowsys.FR>"]}) == ["rabeb@yellowsys.fr"]
+    assert nodes._recipients({"to_recipients": "rabeb@yellowsys.fr"}) == ["rabeb@yellowsys.fr"]
+    assert nodes._recipients({"to_recipients": ["a@x.fr", "B@x.fr"]}) == ["a@x.fr", "b@x.fr"]
+    assert nodes._recipients({"to_recipients": []}) == []
+    assert nodes._recipients({}) == []
+    print("ok  recipients: all, bare and lower-cased")

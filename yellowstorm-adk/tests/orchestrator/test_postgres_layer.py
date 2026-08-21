@@ -243,6 +243,25 @@ async def test_expected_from_is_recorded_at_send_then_enforced(pool):
     print("ok  mail wait: expected_from recorded at send, then enforced")
 
 
+async def test_a_multi_recipient_wait_resolves_for_any_recipient_only(pool):
+    """A mail to several people can be answered by any of them, so the wait
+    accepts a reply from any recipient — but still rejects a stranger (and worky's
+    own outgoing copy, whose sender is none of the recipients)."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    token = mail_token.mint()
+    await rm.register_mail_wait(token, session_id="s11", step_id="await", user_id="u1")
+    await rm.bind_mail_wait_interrupt("s11", "await", "mail:plan@1/await@1")
+    # Recorded at send: two recipients, comma-joined.
+    await rm.set_mail_wait_expected_from(token, "amine@yellowsys.fr,firas@yellowsys.fr")
+    # A stranger cannot claim it.
+    assert await rm.claim_mail_wait(token, reply_from="rabeb@yellowsys.fr") is None
+    # The second recipient (case-insensitive, full header) can.
+    won = await rm.claim_mail_wait(token, reply_from="Firas <Firas@Yellowsys.FR>")
+    assert won is not None and won["step_id"] == "await"
+    print("ok  mail wait: any recipient resolves a multi-recipient wait, strangers don't")
+
+
 async def test_a_wait_with_no_expected_sender_still_resolves(pool):
     """Backward compatibility: when expected_from is NULL (nothing to check
     against), any reply carrying the token resolves it, as before."""

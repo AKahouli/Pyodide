@@ -441,12 +441,12 @@ class OrchestratorService:
             if await_step_id:
                 async def token_provider(_step_id=await_step_id):
                     return await rm.mail_token_for(session_id, _step_id)
-                # The wait already exists (minted at projection); the recipient is
-                # only known now, at send — record it so the reply's sender is
-                # verified when it arrives.
-                async def on_sent(token, expected_from):
-                    if expected_from:
-                        await rm.set_mail_wait_expected_from(token, expected_from)
+                # The wait already exists (minted at projection); the recipients
+                # are only known now, at send — record them so the reply's sender
+                # is verified (against any recipient) when it arrives.
+                async def on_sent(token, recipients):
+                    if recipients:
+                        await rm.set_mail_wait_expected_from(token, ",".join(recipients))
                 return [nodes.stamp_send_email_tool(t, token_provider=token_provider, on_sent=on_sent)
                         if nodes.is_send_email_tool(t) else t
                         for t in tools]
@@ -459,12 +459,13 @@ class OrchestratorService:
             async def eager_token_provider():
                 return mail_token.mint()
 
-            async def eager_on_sent(token, expected_from, _pending_id=pending_id):
+            async def eager_on_sent(token, recipients, _pending_id=pending_id):
                 expires_at = datetime.now(timezone.utc) + timedelta(
                     hours=self._mail_wait_timeout_hours)
                 await rm.register_mail_wait(
                     token, session_id=session_id, step_id=_pending_id,
-                    user_id=user_id, expected_from=expected_from, expires_at=expires_at)
+                    user_id=user_id, expected_from=(",".join(recipients) or None),
+                    expires_at=expires_at)
             return [nodes.stamp_send_email_tool(
                         t, token_provider=eager_token_provider, on_sent=eager_on_sent)
                     if nodes.is_send_email_tool(t) else t

@@ -343,9 +343,11 @@ class ReadModel:
 
     async def set_mail_wait_expected_from(self, token: str, expected_from: str) -> None:
         """Record who the reply to `token`'s mail is expected from, once the mail
-        is actually sent (the recipient is only known then). Set once, and only
-        while the wait is still open — a matched/expired wait must not change, and
-        a wait that already has an expected sender is not overwritten."""
+        is actually sent (the recipients are only known then). `expected_from` is a
+        comma-joined list of the mail's recipient addresses — a reply from any of
+        them resolves the wait. Set once, and only while the wait is still open — a
+        matched/expired wait must not change, and a wait that already has an
+        expected sender is not overwritten."""
         if not expected_from:
             return
         async with self._pool.acquire() as con:
@@ -400,9 +402,10 @@ class ReadModel:
         first to match it, None if unknown, already matched, expired, cancelled —
         or not yet parked, since there is no interrupt to resume before then.
 
-        Sender check: when the wait was registered with `expected_from`, a reply
-        only resolves it if it came from that address — otherwise a reply from the
-        wrong person (or to the wrong thread) would answer a question meant for
+        Sender check: when the wait was registered with `expected_from` (a comma
+        list of the mail's recipient addresses), a reply only resolves it if it
+        came from one of them — otherwise a reply from the wrong person, or worky's
+        own outgoing message carrying the token, would answer a question meant for
         someone else. `reply_from` may be a full header ("Name <a@b>"); the bare
         address is compared, case-insensitively. A wait with no `expected_from`
         keeps the old token-only behaviour.
@@ -418,7 +421,8 @@ class ReadModel:
             row = await con.fetchrow(f"""
                 UPDATE {_q(self._schema,'mail_waits')} SET status='matched'
                 WHERE token=$1 AND status='waiting' AND interrupt_id IS NOT NULL
-                  AND (expected_from IS NULL OR lower(expected_from) = $2)
+                  AND (expected_from IS NULL
+                       OR $2 = ANY(string_to_array(lower(expected_from), ',')))
                 RETURNING *
             """, token, addr)
         return dict(row) if row else None
