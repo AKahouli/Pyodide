@@ -275,7 +275,6 @@ export function AppEndUsersDialog({
                         key={user.id}
                         user={user}
                         saving={savingUserId === user.id}
-                        t={t}
                         onToggleGrant={(key, value) => void updateGrant(user.id, key, value)}
                         onApplyPreset={(preset) => void applyPreset(user.id, preset)}
                       />
@@ -290,7 +289,6 @@ export function AppEndUsersDialog({
                     key={user.id}
                     user={user}
                     saving={savingUserId === user.id}
-                    t={t}
                     onToggleGrant={(key, value) => void updateGrant(user.id, key, value)}
                     onApplyPreset={(preset) => void applyPreset(user.id, preset)}
                   />
@@ -307,7 +305,6 @@ export function AppEndUsersDialog({
 interface EndUserRowProps {
   user: AppEndUserSummary;
   saving: boolean;
-  t: (key: string, params?: Record<string, string | number>) => string;
   onToggleGrant: (key: GrantKey, value: boolean) => void;
   onApplyPreset: (preset: keyof typeof PRESETS) => void;
 }
@@ -315,10 +312,10 @@ interface EndUserRowProps {
 function EndUserTableRow({
   user,
   saving,
-  t,
   onToggleGrant,
   onApplyPreset,
 }: EndUserRowProps) {
+  const { t } = useModuleTranslation('app-marketplace');
   const disabled = user.status === 'disabled';
   const enabledCount = countEnabledGrants(user.grants);
 
@@ -356,7 +353,6 @@ function EndUserTableRow({
         <div className='flex items-center gap-2'>
           {saving && <Loader2 className='h-4 w-4 animate-spin text-muted-foreground' />}
           <PresetMenu
-            t={t}
             disabled={saving || disabled}
             summary={t('endUsers.grantsSummary', { enabled: enabledCount, total: 4 })}
             onApplyPreset={onApplyPreset}
@@ -370,10 +366,10 @@ function EndUserTableRow({
 function EndUserMobileCard({
   user,
   saving,
-  t,
   onToggleGrant,
   onApplyPreset,
 }: EndUserRowProps) {
+  const { t } = useModuleTranslation('app-marketplace');
   const disabled = user.status === 'disabled';
   const enabledCount = countEnabledGrants(user.grants);
 
@@ -401,7 +397,7 @@ function EndUserMobileCard({
 
       <div className='mb-3 flex items-center justify-between'>
         <span className='text-sm font-medium'>{t('endUsers.grantsColumn')}</span>
-        <PresetMenu t={t} disabled={saving || disabled} onApplyPreset={onApplyPreset} />
+        <PresetMenu disabled={saving || disabled} onApplyPreset={onApplyPreset} />
       </div>
 
       <div className='grid grid-cols-2 gap-2'>
@@ -427,16 +423,15 @@ function EndUserMobileCard({
 }
 
 function PresetMenu({
-  t,
   disabled,
   summary,
   onApplyPreset,
 }: {
-  t: EndUserRowProps['t'];
   disabled: boolean;
   summary?: string;
   onApplyPreset: (preset: keyof typeof PRESETS) => void;
 }) {
+  const { t } = useModuleTranslation('app-marketplace');
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>

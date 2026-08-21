@@ -46,15 +46,4 @@ export const appMarketplaceApi = {
     );
     return res.data.data.user;
   },
-  async updateEndUserStatus(
-    sessionId: string,
-    userId: string,
-    status: 'active' | 'disabled',
-  ): Promise<AppEndUserSummary> {
-    const res = await apiClient.patch<ApiResponse<{ user: AppEndUserSummary }>>(
-      `/conversation-v2/sessions/${sessionId}/app-data/end-users/${userId}/status`,
-      { status },
-    );
-    return res.data.data.user;
-  },
 };
