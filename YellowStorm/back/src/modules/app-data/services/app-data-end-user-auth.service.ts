@@ -23,6 +23,9 @@ import { AppDataCatalogService } from './app-data-catalog.service';
 import { AppDataEndUserGrantsService } from './app-data-end-user-grants.service';
 import { AppDataEndUserService } from './app-data-end-user.service';
 
+/** Dummy hash so missing-user logins still pay bcrypt cost (timing). */
+const LOGIN_DUMMY_HASH = bcrypt.hashSync('__app_data_timing_dummy__', 4);
+
 export interface AppEndUserAuthResult {
   token: string;
   user: {
@@ -241,6 +244,7 @@ export class AppDataEndUserAuthService {
     const email = this.endUsers.normalizeEmail(params.email);
     const user = await this.endUsers.findByEmail(app.id, email);
     if (!user) {
+      await bcrypt.compare(params.password, LOGIN_DUMMY_HASH);
       throw new AppDataException(
         AppDataErrorCode.AUTH_INVALID,
         'Invalid email or password',

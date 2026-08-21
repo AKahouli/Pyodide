@@ -31,11 +31,18 @@ export class AppDataDeploymentService {
   resolvePublicUrl(appDataId: string, environment: 'dev' | 'prod'): string {
     let base: string;
     if (environment === 'prod') {
-      base =
-        this.config.get<string>('appData.publicBaseUrlProd') ||
+      const prodBase = this.config.get<string>('appData.publicBaseUrlProd') || '';
+      const fallback =
         this.config.get<string>('appData.publicBaseUrl') ||
         this.config.get<string>('appRuntime.publicBaseUrl') ||
-        'http://127.0.0.1:3000';
+        '';
+      if (!prodBase && process.env.NODE_ENV === 'production') {
+        throw new AppDataException(
+          AppDataErrorCode.DEPLOY_CONFIG_MISSING,
+          'APP_DATA_PUBLIC_BASE_URL_PROD is required when deploying App Data apps in production',
+        );
+      }
+      base = prodBase || fallback || 'http://127.0.0.1:3000';
     } else {
       base =
         this.config.get<string>('appData.publicBaseUrl') ||

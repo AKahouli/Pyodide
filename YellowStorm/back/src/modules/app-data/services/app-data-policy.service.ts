@@ -135,17 +135,21 @@ export class AppDataPolicyService {
       );
 
     for (const row of rows) {
+      const policyJson =
+        toEnvironment === 'prod'
+          ? this.stripAnonymousPrincipal(row.policyJson as AppDataTablePolicy)
+          : row.policyJson;
       await this.db
         .insert(appDataPolicies)
         .values({
           appId,
           environment: toEnvironment,
           tableName: row.tableName,
-          policyJson: row.policyJson,
+          policyJson,
         })
         .onConflictDoUpdate({
           target: [appDataPolicies.appId, appDataPolicies.environment, appDataPolicies.tableName],
-          set: { policyJson: row.policyJson, updatedAt: new Date() },
+          set: { policyJson, updatedAt: new Date() },
         });
     }
 
@@ -172,6 +176,17 @@ export class AppDataPolicyService {
     }
     if (params.requestUserId) return 'public';
     return 'anonymous';
+  }
+
+  private stripAnonymousPrincipal(policy: AppDataTablePolicy): AppDataTablePolicy {
+    const strip = (list?: AppDataPrincipal[]): AppDataPrincipal[] =>
+      (list ?? []).filter((principal) => principal !== 'anonymous');
+    return {
+      select: strip(policy.select),
+      insert: strip(policy.insert),
+      update: strip(policy.update),
+      delete: strip(policy.delete),
+    };
   }
 
   private validatePolicy(policy: AppDataTablePolicy): void {

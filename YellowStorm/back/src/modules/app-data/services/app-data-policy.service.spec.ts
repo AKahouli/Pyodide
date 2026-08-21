@@ -51,4 +51,41 @@ describe('AppDataPolicyService', () => {
       actorPrincipal: 'schema_apply',
     });
   });
+
+  it('strips anonymous principals when replicating policies to prod', async () => {
+    db.select.mockReturnValue({
+      from: jest.fn().mockReturnThis(),
+      where: jest.fn().mockResolvedValue([
+        {
+          tableName: 'tasks',
+          policyJson: {
+            select: ['anonymous', 'yellowmind_owner'],
+            insert: ['anonymous'],
+            update: ['yellowmind_owner'],
+            delete: [],
+          },
+        },
+      ]),
+    });
+    const insertChain = {
+      values: jest.fn().mockReturnThis(),
+      onConflictDoUpdate: jest.fn().mockResolvedValue(undefined),
+    };
+    db.insert.mockReturnValue(insertChain);
+
+    await service.replicatePolicies('app-1', 'dev', 'prod');
+
+    expect(insertChain.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environment: 'prod',
+        tableName: 'tasks',
+        policyJson: {
+          select: ['yellowmind_owner'],
+          insert: [],
+          update: ['yellowmind_owner'],
+          delete: [],
+        },
+      }),
+    );
+  });
 });
