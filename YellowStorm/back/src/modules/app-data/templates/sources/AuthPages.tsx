@@ -1,19 +1,19 @@
 import { FormEvent, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { isAppHomePath, resolveAppHomeHref } from '@/lib/app-base';
+import { isAppHomePath } from '@/lib/app-base';
 import { useAuth } from '@/lib/yellowmind-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
+/**
+ * Stay in the SPA after auth — a full reload would remount AuthProvider and
+ * re-validate the token before the app renders. AppUrlNormalizer restores the
+ * trailing slash that React Router drops for the app index.
+ */
 function redirectAfterAuth(navigate: ReturnType<typeof useNavigate>, from: string) {
-  if (isAppHomePath(from)) {
-    // Soft navigate('/') drops the trailing slash under /apps/{id}/ — hard replace keeps Vite base.
-    window.location.replace(resolveAppHomeHref());
-    return;
-  }
-  navigate(from, { replace: true });
+  navigate(isAppHomePath(from) ? '/' : from, { replace: true });
 }
 
 export function LoginPage() {

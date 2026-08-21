@@ -1,17 +1,26 @@
 import { useEffect } from 'react';
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
-import { resolveAppHomeHref, resolveRouterBasename } from '@/lib/app-base';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { ensureAppHomeTrailingSlash, resolveRouterBasename } from '@/lib/app-base';
 import { AuthProvider, isDevPreview } from '@/lib/yellowmind-auth';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { LoginPage, RegisterPage } from '@/pages/AuthPages';
 import App from '@/App';
 
-/** Hard redirect to Vite base (with trailing slash) — RR navigate('/') drops it. */
-function AppHomeRedirect() {
+/**
+ * Deployed apps live under /apps/{sessionId}/ but React Router renders the
+ * basename without the trailing slash. Restore it on every navigation so the
+ * address bar always matches the Vite base.
+ */
+function AppUrlNormalizer() {
+  const location = useLocation();
   useEffect(() => {
-    window.location.replace(resolveAppHomeHref());
-  }, []);
+    ensureAppHomeTrailingSlash();
+  }, [location.pathname]);
   return null;
+}
+
+function AppHomeRedirect() {
+  return <Navigate to="/" replace />;
 }
 
 export function AppRouter() {
@@ -20,6 +29,7 @@ export function AppRouter() {
   return (
     <AuthProvider>
       <BrowserRouter basename={resolveRouterBasename()}>
+        <AppUrlNormalizer />
         <Routes>
           <Route
             path="/login"

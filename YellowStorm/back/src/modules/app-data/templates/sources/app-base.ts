@@ -25,3 +25,21 @@ export function resolveAppHomeHref(): string {
 export function isAppHomePath(path: string | null | undefined): boolean {
   return path == null || path === '' || path === '/';
 }
+
+/**
+ * Rewrite `/apps/{id}` to `/apps/{id}/` in the address bar.
+ * React Router renders the basename without a trailing slash, so call this at
+ * bootstrap and after any navigation back to the app index. Uses replaceState
+ * so the router keeps its own location and no reload/auth remount happens.
+ */
+export function ensureAppHomeTrailingSlash(): void {
+  if (typeof window === 'undefined') return;
+  const home = resolveAppHomeHref();
+  if (home === '/') return;
+  if (window.location.pathname !== home.slice(0, -1)) return;
+  window.history.replaceState(
+    window.history.state,
+    '',
+    `${home}${window.location.search}${window.location.hash}`,
+  );
+}
