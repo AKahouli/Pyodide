@@ -20,13 +20,17 @@ export const APP_DATA_MCP_TOOL_SET = new Set<string>(APP_DATA_MCP_TOOL_NAMES);
 
 export const APP_DATA_MCP_TOOL_DESCRIPTIONS: Record<AppDataMcpToolName, string> = {
   appdata_status: 'Get App Data provisioning and schema status for the bound workspace',
-  provision: 'Provision DEV PostgreSQL schema for persistent app data (idempotent)',
+  provision:
+    'Provision DEV PostgreSQL schema for persistent app data (idempotent). After success, restart the Vite dev server (yellowruntime_dev_server action=restart) so VITE_YM_* env reaches the Nodepod preview.',
   schema_get: 'Get current DEV schema manifest and version',
   schema_plan: 'Plan typed schema migration without applying',
-  schema_apply: 'Apply typed schema migration to DEV',
+  schema_apply:
+    'Apply typed schema migration to DEV. New tables automatically receive default DEV policies (anonymous + yellowmind_owner CRUD).',
   policy_get: 'Get table policies for DEV',
-  policy_apply: 'Apply table policies for DEV',
-  table_sample: 'Sample rows from a DEV table (owner/MCP)',
+  policy_apply:
+    'Apply table policies for DEV. Format: { "<table>": { "select": ["anonymous","yellowmind_owner"], "insert": [...], "update": [...], "delete": [...] } }. Preview uses principal anonymous; MCP row_* uses yellowmind_owner.',
+  table_sample:
+    'Sample rows from a DEV table (owner/MCP diagnostic — bypasses policy checks; use row_query to verify policy enforcement)',
   row_insert: 'Insert a row into a DEV table',
   row_get: 'Get rows by equality filters in DEV',
   row_query: 'Query rows with pagination in DEV',

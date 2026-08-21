@@ -26,6 +26,7 @@ import {
 import { AppDataAdvisoryLockService } from './app-data-advisory-lock.service';
 import { AppDataAuditService } from './app-data-audit.service';
 import { AppDataCatalogService } from './app-data-catalog.service';
+import { AppDataPolicyService } from './app-data-policy.service';
 import { AppDataSchemaDiffService } from './app-data-schema-diff.service';
 
 @Injectable()
@@ -38,6 +39,7 @@ export class AppDataMigrationService {
     private readonly config: ConfigService,
     private readonly catalog: AppDataCatalogService,
     private readonly diff: AppDataSchemaDiffService,
+    private readonly policies: AppDataPolicyService,
     private readonly locks: AppDataAdvisoryLockService,
     private readonly audit: AppDataAuditService,
   ) {}
@@ -68,6 +70,7 @@ export class AppDataMigrationService {
   async applyPlan(params: {
     appId: string;
     appDataId: string;
+    workspaceId: string;
     environment: AppDataEnvironment;
     schemaName: string;
     plan: AppDataMigrationPlan;
@@ -161,6 +164,19 @@ export class AppDataMigrationService {
       this.logger.log(
         `Applied schema migration appDataId=${params.appDataId} env=${params.environment} v${params.plan.fromVersion}->v${params.plan.toVersion}`,
       );
+
+      if (params.environment === 'dev') {
+        const createdTables = params.plan.operations
+          .filter((op) => op.kind === 'create_table')
+          .map((op) => op.table);
+        if (createdTables.length > 0) {
+          await this.policies.ensureDevDefaultPolicies({
+            workspaceId: params.workspaceId,
+            tableNames: createdTables,
+            actorPrincipal: params.actorPrincipal ?? 'schema_apply',
+          });
+        }
+      }
 
       return { version: params.targetManifest.version, applied: true };
     });

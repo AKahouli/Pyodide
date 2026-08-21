@@ -6,6 +6,7 @@ import * as schema from '@modules/postgres/schema';
 import { appDataPolicies } from '@modules/postgres/schema/app-data.schema';
 import {
   APP_DATA_PRINCIPALS,
+  DEFAULT_DEV_TABLE_POLICY,
   type AppDataEnvironment,
   type AppDataPrincipal,
 } from '../constants/app-data.constants';
@@ -74,6 +75,32 @@ export class AppDataPolicyService {
       metadata: { environment: params.environment, tables: Object.keys(params.policies) },
     });
     return this.getPolicies(params.workspaceId, params.environment);
+  }
+
+  /**
+   * Seed DEV policies for newly created tables so preview (anonymous) and MCP (yellowmind_owner) work.
+   */
+  async ensureDevDefaultPolicies(params: {
+    workspaceId: string;
+    tableNames: string[];
+    actorPrincipal?: string;
+  }): Promise<void> {
+    if (params.tableNames.length === 0) return;
+    const policies: AppDataPolicyDocument = {};
+    for (const tableName of params.tableNames) {
+      policies[tableName] = {
+        select: [...DEFAULT_DEV_TABLE_POLICY.select],
+        insert: [...DEFAULT_DEV_TABLE_POLICY.insert],
+        update: [...DEFAULT_DEV_TABLE_POLICY.update],
+        delete: [...DEFAULT_DEV_TABLE_POLICY.delete],
+      };
+    }
+    await this.applyPolicies({
+      workspaceId: params.workspaceId,
+      environment: 'dev',
+      policies,
+      actorPrincipal: params.actorPrincipal ?? 'schema_apply',
+    });
   }
 
   assertAllowed(

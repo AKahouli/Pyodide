@@ -24,7 +24,12 @@ import {
   shouldApplyTerminalEvent,
 } from './utils/session-reducer';
 import { normalizeFilesTree } from './utils/files-tree';
-import { syncHostRevisionSources } from './runtime/BrowserRuntimeHost';
+import {
+  syncHostRevisionSources,
+  maybeRestartDevServerAfterAppDataTool,
+  refreshHostPreview,
+} from './runtime/BrowserRuntimeHost';
+import { CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT } from '@/modules/models/store';
 
 export interface ApplicationComponentState {
   url: string;
@@ -556,6 +561,7 @@ export const useConversationV2Store = create<State & Actions>()(
         } else {
           get().handleEvent(event);
         }
+        maybeRestartDevServerAfterAppDataTool(state.sessionId, event);
       },
       reconcileCurrentSession: async () => {
         const state = get();
@@ -843,6 +849,9 @@ export const useConversationV2Store = create<State & Actions>()(
                   isRuntimePreviewVisible(state.runtimeStatus) ||
                   !!state.applicationComponent;
                 const events = completePendingToolsInTurn(state.events);
+                if (showRuntimePreview && state.sessionId) {
+                  refreshHostPreview(state.sessionId);
+                }
                 return withSeq({
                   events: [...events, event],
                   streaming: false,
@@ -1105,3 +1114,15 @@ export const useConversationV2PointersStore = create<PointersState & PointersAct
     { name: 'conversation-v2-pointers' },
   ),
 );
+
+if (typeof window !== 'undefined') {
+  window.addEventListener(CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT, (event) => {
+    const previousDefaultId = (event as CustomEvent<{ previousDefaultId?: string | null }>).detail
+      ?.previousDefaultId;
+    if (!previousDefaultId) return;
+    const { selectedModelId, setSelectedModelId } = useConversationV2Store.getState();
+    if (selectedModelId === previousDefaultId) {
+      setSelectedModelId(null);
+    }
+  });
+}

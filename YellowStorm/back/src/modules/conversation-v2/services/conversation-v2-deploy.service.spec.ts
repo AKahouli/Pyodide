@@ -1,5 +1,6 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import { ConversationV2DeployService } from './conversation-v2-deploy.service';
 
 describe('ConversationV2DeployService', () => {
@@ -9,21 +10,29 @@ describe('ConversationV2DeployService', () => {
     'conversationV2.appBuilderDeployTimeoutMs': 600_000,
     'conversationV2.appBuilderDeployInitialStatusDelayMs': 15_000,
     'conversationV2.appBuilderDeployStatusPollIntervalMs': 15_000,
+    'conversationV2.appBuilderDeployedAppsPathPrefix': '/apps',
   };
   const config = {
     get: jest.fn((key: string) => configValues[key]),
+  };
+  const revisions = {
+    patchRevisionWithFiles: jest.fn().mockResolvedValue(undefined),
   };
   let service: ConversationV2DeployService;
 
   beforeEach(() => {
     jest.restoreAllMocks();
     config.get.mockClear();
+    revisions.patchRevisionWithFiles.mockClear();
     configValues['conversationV2.appBuilderDeployBaseUrl'] = 'https://app-deployer.yellowsys.org/';
     configValues['conversationV2.appBuilderDeployToken'] = undefined;
     configValues['conversationV2.appBuilderDeployTimeoutMs'] = 600_000;
     configValues['conversationV2.appBuilderDeployInitialStatusDelayMs'] = 15_000;
     configValues['conversationV2.appBuilderDeployStatusPollIntervalMs'] = 15_000;
-    service = new ConversationV2DeployService(config as unknown as ConfigService);
+    service = new ConversationV2DeployService(
+      config as unknown as ConfigService,
+      revisions as unknown as RuntimeRevisionService,
+    );
   });
 
   afterEach(() => {
@@ -52,17 +61,20 @@ describe('ConversationV2DeployService', () => {
       appId: '2e65d5fa87a0499f',
       url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
       revisionId: 'rev_15',
+      runtimeEnv: { VITE_APP_BASE: '/apps/2e65d5fa87a0499f/' },
     });
     expect(fetchMock).toHaveBeenCalledWith(
       new URL('https://app-deployer.yellowsys.org/app/deploy'),
       expect.objectContaining({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          aiSessionId: '2e65d5fa87a0499f',
-          revisionId: 'rev_15',
-        }),
+        body: expect.stringContaining('"aiSessionId":"2e65d5fa87a0499f"'),
       }),
+    );
+    const launchBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(launchBody.revisionId).toMatch(/^rev_15_deploy_/);
+    expect(launchBody.runtimeEnv).toBe(
+      JSON.stringify({ VITE_APP_BASE: '/apps/2e65d5fa87a0499f/' }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
@@ -88,6 +100,7 @@ describe('ConversationV2DeployService', () => {
       appId: '2e65d5fa87a0499f',
       url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/preview/',
       revisionId: undefined,
+      runtimeEnv: { VITE_APP_BASE: '/apps/2e65d5fa87a0499f/' },
     });
   });
 
@@ -112,6 +125,7 @@ describe('ConversationV2DeployService', () => {
       appId: '2e65d5fa87a0499f',
       url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
       revisionId: undefined,
+      runtimeEnv: { VITE_APP_BASE: '/apps/2e65d5fa87a0499f/' },
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
@@ -181,6 +195,12 @@ describe('ConversationV2DeployService', () => {
 
     await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toBeInstanceOf(
       ServiceUnavailableException,
+    );
+  });
+
+  it('resolves deployed app base path for Vite subpath routing', () => {
+    expect(service.resolveDeployAppBasePath('2cacade0981746b5')).toBe(
+      '/apps/2cacade0981746b5/',
     );
   });
 

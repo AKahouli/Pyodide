@@ -51,3 +51,16 @@ export const APP_DATA_CORS_REQUEST_HEADERS = [
   'X-YM-App-Data-Id',
   'X-YM-App-Data-Env',
 ] as const;
+
+/** Default DEV table policy: preview browser (anonymous) + MCP builder (yellowmind_owner). */
+export const DEFAULT_DEV_TABLE_POLICY: {
+  select: AppDataPrincipal[];
+  insert: AppDataPrincipal[];
+  update: AppDataPrincipal[];
+  delete: AppDataPrincipal[];
+} = {
+  select: ['anonymous', 'yellowmind_owner'],
+  insert: ['anonymous', 'yellowmind_owner'],
+  update: ['anonymous', 'yellowmind_owner'],
+  delete: ['anonymous', 'yellowmind_owner'],
+};

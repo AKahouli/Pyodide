@@ -51,7 +51,7 @@ export function LoginPage() {
             <Button type="submit" className="w-full" disabled={pending}>{pending ? 'Signing in…' : 'Sign in'}</Button>
           </form>
           <p className="mt-4 text-center text-sm text-muted-foreground">
-            No account? <Link to="/register" className="underline">Register</Link>
+            No account? <Link to="/register" state={{ from }} className="underline">Register</Link>
           </p>
         </CardContent>
       </Card>
@@ -62,11 +62,13 @@ export function LoginPage() {
 export function RegisterPage() {
   const { register } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const from = (location.state as { from?: string } | null)?.from ?? '/';
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -74,7 +76,7 @@ export function RegisterPage() {
     setPending(true);
     try {
       await register(email, password, displayName || undefined);
-      navigate('/', { replace: true });
+      navigate(from, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed');
     } finally {
@@ -107,7 +109,7 @@ export function RegisterPage() {
             <Button type="submit" className="w-full" disabled={pending}>{pending ? 'Creating…' : 'Register'}</Button>
           </form>
           <p className="mt-4 text-center text-sm text-muted-foreground">
-            Already have an account? <Link to="/login" className="underline">Sign in</Link>
+            Already have an account? <Link to="/login" state={{ from }} className="underline">Sign in</Link>
           </p>
         </CardContent>
       </Card>

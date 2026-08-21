@@ -1,16 +1,25 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { AuthProvider } from '@/lib/yellowmind-auth';
+import { resolveRouterBasename } from '@/lib/app-base';
+import { AuthProvider, isDevPreview } from '@/lib/yellowmind-auth';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { LoginPage, RegisterPage } from '@/pages/AuthPages';
 import App from '@/App';
 
 export function AppRouter() {
+  const previewDev = isDevPreview();
+
   return (
     <AuthProvider>
-      <BrowserRouter>
+      <BrowserRouter basename={resolveRouterBasename()}>
         <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
+          <Route
+            path="/login"
+            element={previewDev ? <Navigate to="/" replace /> : <LoginPage />}
+          />
+          <Route
+            path="/register"
+            element={previewDev ? <Navigate to="/" replace /> : <RegisterPage />}
+          />
           <Route
             path="/*"
             element={

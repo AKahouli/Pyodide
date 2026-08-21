@@ -72,4 +72,7 @@ export default registerAs('conversationV2', () => ({
     process.env.APP_BUILDER_DEPLOY_STATUS_POLL_INTERVAL_MS || '15000',
     10,
   ),
+  /** Path prefix for deployed app URLs (`/apps/{sessionId}/`). */
+  appBuilderDeployedAppsPathPrefix:
+    process.env.APP_BUILDER_DEPLOYED_APPS_PATH_PREFIX || '/apps',
 }));

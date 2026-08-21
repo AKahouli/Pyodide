@@ -174,12 +174,18 @@ export class AppDataMcpDispatcherService {
     switch (tool) {
       case 'appdata_status':
         return { status: await this.catalog.getStatus(workspaceId) };
-      case 'provision':
-        return this.provisioning.provisionDev({
+      case 'provision': {
+        const result = await this.provisioning.provisionDev({
           workspaceId,
           ownerUserId,
           actorPrincipal: 'mcp',
         });
+        return {
+          ...result,
+          devServerHint:
+            'Call yellowruntime_dev_server with action "restart" so VITE_YM_APP_DATA_* env is injected into the Nodepod preview (skips login gate in dev).',
+        };
+      }
       case 'schema_get':
         return this.schema.getSchema(workspaceId, 'dev');
       case 'schema_plan':

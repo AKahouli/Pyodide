@@ -53,6 +53,23 @@ Owner management (JWT YellowMind + `ConversationV2OwnerGuard`):
 
 When `apps.end_user_auth_enabled=true`, **PROD public CRUD** uses per-user grants instead of table policies.
 
+**Preview (Nodepod):** the starter skips the login gate when `VITE_YM_APP_DATA_ENV=dev` (injected by the runtime). The YellowStorm owner builds without register/login; DEV CRUD uses table policies.
+
+**DEV policies:** `schema_apply` auto-seeds default policies on new tables (`anonymous` + `yellowmind_owner`, full CRUD). Preview browser CRUD uses principal `anonymous`; MCP `row_*` uses `yellowmind_owner`. Manual override via `policy_apply`:
+
+```json
+{
+  "tasks": {
+    "select": ["anonymous", "yellowmind_owner"],
+    "insert": ["anonymous", "yellowmind_owner"],
+    "update": ["anonymous", "yellowmind_owner"],
+    "delete": ["anonymous", "yellowmind_owner"]
+  }
+}
+```
+
+After `provision`, restart the Vite dev server (`yellowruntime_dev_server` `action=restart`) so `VITE_YM_*` reaches the preview.
+
 Default deny-all grants for newly registered app users until the owner enables CRUD in App Marketplace.
 
 ## React starter templates
@@ -94,6 +111,8 @@ V3 adds (on top of v1):
 - Tailwind + minimal UI components for auth pages
 
 Wire `main.jsx` renders `<AppRouter />` (v3 only).
+
+Deployed apps are served under `/apps/{sessionId}/`. Deploy injects `VITE_APP_BASE` into `.env.production`; the starter sets Vite `base` and React Router `basename` so `/login` and post-auth redirects stay under the app URL.
 
 ## Error taxonomy
 

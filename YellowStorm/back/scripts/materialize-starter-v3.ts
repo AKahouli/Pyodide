@@ -48,12 +48,27 @@ function write(relativePath: string, content: string): void {
   console.log('wrote', relativePath);
 }
 
+function syncV1BaseFiles(): void {
+  for (const rel of ['src/App.jsx', 'src/App.css']) {
+    const from = path.join(v1Dir, rel);
+    const to = path.join(v3Dir, rel);
+    if (fs.existsSync(from)) {
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      fs.copyFileSync(from, to);
+      console.log('synced', rel, 'from v1');
+    }
+  }
+}
+
 function main(): void {
   if (!fs.existsSync(v3Dir)) {
     fs.mkdirSync(v3Dir, { recursive: true });
     copyDir(v1Dir, v3Dir, new Set(['manifest.json']));
+  } else {
+    syncV1BaseFiles();
   }
 
+  write('src/lib/app-base.ts', readSource('app-base.ts'));
   write('src/lib/yellowmind-data.ts', readSource('yellowmind-data.ts'));
   write('src/lib/yellowmind-auth.tsx', readSource('yellowmind-auth.tsx'));
   write('src/components/auth/ProtectedRoute.tsx', readSource('ProtectedRoute.tsx'));
@@ -288,6 +303,7 @@ import react from '@vitejs/plugin-react';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  base: process.env.VITE_APP_BASE || '/',
   plugins: [react()],
   resolve: {
     alias: {

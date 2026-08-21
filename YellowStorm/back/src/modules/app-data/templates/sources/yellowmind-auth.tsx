@@ -28,6 +28,15 @@ interface AuthContextValue extends AuthState {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+/**
+ * YellowStorm Nodepod preview injects VITE_YM_APP_DATA_ENV=dev.
+ * The session owner builds inside YellowStorm — no app login gate in preview.
+ * Deployed builds use prod and enforce register/login + owner-managed grants.
+ */
+export function isDevPreview(): boolean {
+  return import.meta.env.VITE_YM_APP_DATA_ENV === 'dev';
+}
+
 const proxyEnabled = import.meta.env.VITE_YM_APP_DATA_PROXY === 'true' && typeof window !== 'undefined';
 const inIframe = proxyEnabled && window.parent !== window;
 const inNewTab = proxyEnabled && window.parent === window;
@@ -172,13 +181,18 @@ export function logout(): void {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const previewDev = isDevPreview();
   const [state, setState] = useState<AuthState>({
-    user: getStoredUser(),
-    token: getAuthToken(),
-    isLoading: true,
+    user: previewDev ? null : getStoredUser(),
+    token: previewDev ? null : getAuthToken(),
+    isLoading: !previewDev,
   });
 
   const refreshMe = useCallback(async () => {
+    if (isDevPreview()) {
+      setState({ user: null, token: null, isLoading: false });
+      return;
+    }
     const token = getAuthToken();
     if (!token) {
       setState({ user: null, token: null, isLoading: false });

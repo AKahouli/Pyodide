@@ -98,6 +98,7 @@ export class AppDataSchemaService {
     return this.migrations.applyPlan({
       appId: app.id,
       appDataId: app.appDataId,
+      workspaceId: params.workspaceId,
       environment: params.environment,
       schemaName: env.schemaName,
       plan: planned.plan,

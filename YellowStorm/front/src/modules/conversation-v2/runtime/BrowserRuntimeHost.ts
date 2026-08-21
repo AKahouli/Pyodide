@@ -235,9 +235,10 @@ export class BrowserRuntimeHost {
       });
       if (this._destroyed) return;
 
-      // 8. Start dev server
+      // 8. Start dev server (refresh ticket so App Data env is present if already provisioned)
       this.setStatus('starting');
-      await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, this.buildAppDataViteEnv());
+      const viteEnv = await this.refreshAppDataViteEnv();
+      await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
       if (this._destroyed) return;
       this.flushPendingIframe();
       await this.ensureHiddenPreviewIframe();
@@ -385,6 +386,17 @@ export class BrowserRuntimeHost {
     return this.buildAppDataViteEnv();
   }
 
+  /** Restart Vite after App Data provision so preview receives VITE_YM_* env. */
+  async restartDevServerForAppData(): Promise<void> {
+    if (this._destroyed || this.legacyMode) return;
+    if (this._status !== 'ready' && this._status !== 'starting') return;
+    const viteEnv = await this.refreshAppDataViteEnv();
+    if (!viteEnv) return;
+    console.log(LOG, 'restarting dev server for App Data env');
+    await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
+    await this.refreshPreview();
+  }
+
   private async handleToolInvoke(payload: ToolInvokePayload): Promise<void> {
     const { toolCallId, tool, arguments: args } = payload;
     console.log(LOG, 'tool.invoke', { toolCallId, tool });
@@ -424,6 +436,9 @@ export class BrowserRuntimeHost {
       }
       if (this._destroyed) return;
       this.client.emitToolCompleted({ toolCallId, result });
+      if (tool === 'finalize') {
+        await this.refreshPreview();
+      }
       this.emit();
     } catch (err) {
       if (this._destroyed) return;
@@ -469,7 +484,6 @@ export class BrowserRuntimeHost {
     if (!pod) return;
 
     try {
-      this.setStatus('hydrating');
       const appComp = useConversationV2Store.getState().applicationComponent;
       const files = await this.resolveHydrationFiles(this.sessionId, {
         revisionId,
@@ -482,6 +496,13 @@ export class BrowserRuntimeHost {
       this.revisionId = revisionId;
       this.revisions.seed(await this.adapter.shaManifest(), revisionId);
       await this.adapter.refreshFileCache();
+
+      this.setStatus('starting');
+      const viteEnv = await this.refreshAppDataViteEnv();
+      await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
+      if (this._destroyed) return;
+
+      await this.refreshPreview();
       this.setStatus('ready');
       console.log(LOG, 'syncRevisionSources ok', { revisionId });
     } catch (err) {
@@ -491,7 +512,8 @@ export class BrowserRuntimeHost {
         err instanceof Error ? err.message : String(err),
       );
       await this.refreshSourceFiles();
-      if (!this._destroyed && this._status === 'hydrating') {
+      await this.refreshPreview();
+      if (!this._destroyed && this._status === 'starting') {
         this.setStatus('ready');
       }
     }
@@ -593,6 +615,48 @@ export class BrowserRuntimeHost {
     this.removeHiddenPreviewIframe();
     this.pendingIframe = iframe;
     this.flushPendingIframe();
+    this.reloadPreviewIframe(iframe);
+  }
+
+  /**
+   * Re-probe the Nodepod SW route and reload attached preview iframes so the
+   * visible panel matches what finalize / preview_inspect verified.
+   */
+  async refreshPreview(): Promise<void> {
+    if (this._destroyed) return;
+    const pod = this.adapter.currentPod;
+    const url = this.previewCtrl.previewUrl;
+    const port = this.previewCtrl.port;
+    if (pod && url && port) {
+      console.log(LOG, 'refreshPreview', { url });
+      await this.previewCtrl.probeAndPromote(pod, url, port, () => this._destroyed);
+    }
+    if (this._destroyed) return;
+    this.flushPendingIframe();
+    if (this.pendingIframe) {
+      this.reloadPreviewIframe(this.pendingIframe);
+    }
+    await this.ensureHiddenPreviewIframe();
+    this.emit();
+  }
+
+  private reloadPreviewIframe(iframe: HTMLIFrameElement): void {
+    const url = this.previewCtrl.previewUrl;
+    if (!url) return;
+    const current = iframe.src;
+    if (!current || current === 'about:blank') {
+      iframe.src = url;
+      return;
+    }
+    if (current !== url) {
+      iframe.src = url;
+      return;
+    }
+    iframe.src = 'about:blank';
+    window.requestAnimationFrame(() => {
+      if (this._destroyed || this.previewCtrl.previewUrl !== url) return;
+      iframe.src = url;
+    });
   }
 
   detachPreviewIframe(): void {
@@ -765,4 +829,35 @@ export function syncHostRevisionSources(sessionId: string, revisionId: string): 
   const host = hostRegistry.get(sessionId);
   if (!host || !revisionId) return;
   void host.syncRevisionSources(revisionId);
+}
+
+/** Re-probe and reload preview iframes when the agent finishes (best-effort). */
+export function refreshHostPreview(sessionId: string | null | undefined): void {
+  if (!sessionId) return;
+  const host = hostRegistry.get(sessionId);
+  if (!host) return;
+  void host.refreshPreview();
+}
+
+const APP_DATA_DEV_SERVER_RESTART_TOOL_MARKERS = [
+  'yellowappdata_provision',
+  'appdata_provision',
+  'app_data_provision',
+];
+
+const APP_DATA_TOOL_SUCCESS_STATUSES = new Set(['success', 'completed', 'done', 'ok', 'finished']);
+
+/** Restart Nodepod Vite when App Data provision completes so preview env is injected. */
+export function maybeRestartDevServerAfterAppDataTool(
+  sessionId: string | null | undefined,
+  event: { type: string; function?: string; name?: string; status?: string },
+): void {
+  if (!sessionId || event.type !== 'tool') return;
+  const status = (event.status ?? '').toLowerCase();
+  if (status && !APP_DATA_TOOL_SUCCESS_STATUSES.has(status)) return;
+  const label = `${event.function ?? ''} ${event.name ?? ''}`.toLowerCase();
+  if (!APP_DATA_DEV_SERVER_RESTART_TOOL_MARKERS.some((marker) => label.includes(marker))) return;
+  const host = hostRegistry.get(sessionId);
+  if (!host) return;
+  void host.restartDevServerForAppData();
 }

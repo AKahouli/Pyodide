@@ -103,6 +103,9 @@ export function ApplicationComponentView({
   const sessionId = useConversationV2Store((s) => s.sessionId);
   const appViewMode = useConversationV2Store((s) => s.appViewMode);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
+  const workspaceRevisionId = useConversationV2Store(
+    (s) => s.applicationComponent?.workspaceRevisionId,
+  );
   // The host is long-lived in ConversationV2SessionPage; this hook subscribes.
   const { status, previewUrl, error, files, retry, previewIframeRef } = useNodepodPreview({
     sessionId,
@@ -293,6 +296,7 @@ window._ymPxyId=0;
       {status === 'ready' && previewUrl ? (
         <div className='relative h-full min-h-0 overflow-hidden bg-muted/20'>
           <iframe
+            key={`${workspaceRevisionId ?? 'preview'}-${previewUrl}`}
             ref={previewIframeRef}
             title={title || t('nodepod.previewTitle')}
             src={previewUrl}

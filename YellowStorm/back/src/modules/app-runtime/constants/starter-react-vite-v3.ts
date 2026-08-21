@@ -19,12 +19,6 @@ export interface StarterManifestFile {
 
 export const STARTER_REACT_VITE_V3_FILES: readonly StarterManifestFile[] = [
   {
-    path: '.gitignore',
-    sha256: 'ea51f78e69c37ba5b07274b23829325147e58ae7f0b4ddb332200f761dd6ffb1',
-    objectKey: 'appbuilder/blobs/sha256/ea/ea51f78e69c37ba5b07274b23829325147e58ae7f0b4ddb332200f761dd6ffb1',
-    size: 22,
-  },
-  {
     path: 'index.html',
     sha256: '1014d23e974155d7848ea9798d05321f6b412466791e5fa71c9a375d44507baf',
     objectKey: 'appbuilder/blobs/sha256/10/1014d23e974155d7848ea9798d05321f6b412466791e5fa71c9a375d44507baf',
@@ -44,27 +38,27 @@ export const STARTER_REACT_VITE_V3_FILES: readonly StarterManifestFile[] = [
   },
   {
     path: 'src/App.css',
-    sha256: 'ae8c85b1ea210444b5e73a3ec98f072129c473e2281232952ec60f4f4e5f979e',
-    objectKey: 'appbuilder/blobs/sha256/ae/ae8c85b1ea210444b5e73a3ec98f072129c473e2281232952ec60f4f4e5f979e',
-    size: 80,
+    sha256: 'feba8cc42a281b52bd438215b86cdc7bdae3bcf39c57dccf9cf7b0c4b120c73e',
+    objectKey: 'appbuilder/blobs/sha256/fe/feba8cc42a281b52bd438215b86cdc7bdae3bcf39c57dccf9cf7b0c4b120c73e',
+    size: 60,
   },
   {
     path: 'src/App.jsx',
-    sha256: 'f5098527a3454c9eedb795710221e60b6ace532ed9355a478761c70fa4d87f50',
-    objectKey: 'appbuilder/blobs/sha256/f5/f5098527a3454c9eedb795710221e60b6ace532ed9355a478761c70fa4d87f50',
-    size: 132,
+    sha256: '753b51350f8a7a057d297a987aabf04fa3168a0ce5354ba88338744ebf45df47',
+    objectKey: 'appbuilder/blobs/sha256/75/753b51350f8a7a057d297a987aabf04fa3168a0ce5354ba88338744ebf45df47',
+    size: 140,
   },
   {
     path: 'src/AppRouter.tsx',
-    sha256: 'bac095e33d7abded77c0a1e15ff3ff9652cb08b8f98605914d45fd298fff8906',
-    objectKey: 'appbuilder/blobs/sha256/ba/bac095e33d7abded77c0a1e15ff3ff9652cb08b8f98605914d45fd298fff8906',
-    size: 841,
+    sha256: 'cc457384e8bee86fe69b87f18d58fe49a4756cb707446a30ff95783be78d2e60',
+    objectKey: 'appbuilder/blobs/sha256/cc/cc457384e8bee86fe69b87f18d58fe49a4756cb707446a30ff95783be78d2e60',
+    size: 1147,
   },
   {
     path: 'src/components/auth/ProtectedRoute.tsx',
-    sha256: '917442c2d77aa1752ffefc3815e0137f098aefa434259e7218ec579a5e8be781',
-    objectKey: 'appbuilder/blobs/sha256/91/917442c2d77aa1752ffefc3815e0137f098aefa434259e7218ec579a5e8be781',
-    size: 580,
+    sha256: '6a2488a508e9e3d45a5732b249fb89e695aeb2c846558c226332371bb3970b31',
+    objectKey: 'appbuilder/blobs/sha256/6a/6a2488a508e9e3d45a5732b249fb89e695aeb2c846558c226332371bb3970b31',
+    size: 689,
   },
   {
     path: 'src/components/ui/button.tsx',
@@ -97,6 +91,12 @@ export const STARTER_REACT_VITE_V3_FILES: readonly StarterManifestFile[] = [
     size: 581,
   },
   {
+    path: 'src/lib/app-base.ts',
+    sha256: 'be3def17119f28edf43b8bf5ac73e2de615a869a3071dcf7680a4ce0e2aba03c',
+    objectKey: 'appbuilder/blobs/sha256/be/be3def17119f28edf43b8bf5ac73e2de615a869a3071dcf7680a4ce0e2aba03c',
+    size: 377,
+  },
+  {
     path: 'src/lib/utils.ts',
     sha256: '9304a861c8673bee09e0f12de31773abbde503b02e59dfd74763ddec2e37cf05',
     objectKey: 'appbuilder/blobs/sha256/93/9304a861c8673bee09e0f12de31773abbde503b02e59dfd74763ddec2e37cf05',
@@ -104,9 +104,9 @@ export const STARTER_REACT_VITE_V3_FILES: readonly StarterManifestFile[] = [
   },
   {
     path: 'src/lib/yellowmind-auth.tsx',
-    sha256: '56caffbb9428725cf5c642574732636611bad2af9b20775353710f56ad41a818',
-    objectKey: 'appbuilder/blobs/sha256/56/56caffbb9428725cf5c642574732636611bad2af9b20775353710f56ad41a818',
-    size: 8328,
+    sha256: '9fccafd85b174518ab64fa1f15370108e5baf98951ef16799267a97186fe6453',
+    objectKey: 'appbuilder/blobs/sha256/9f/9fccafd85b174518ab64fa1f15370108e5baf98951ef16799267a97186fe6453',
+    size: 8870,
   },
   {
     path: 'src/lib/yellowmind-data.ts',
@@ -122,9 +122,9 @@ export const STARTER_REACT_VITE_V3_FILES: readonly StarterManifestFile[] = [
   },
   {
     path: 'src/pages/AuthPages.tsx',
-    sha256: 'efec0e4669bc70536287fb85af173181154b6c83ea3bc4ad2da9ec92482906bf',
-    objectKey: 'appbuilder/blobs/sha256/ef/efec0e4669bc70536287fb85af173181154b6c83ea3bc4ad2da9ec92482906bf',
-    size: 4917,
+    sha256: '35783526e107b1c3c4532db033d69e213c93162f454718d3f65a287ef581139f',
+    objectKey: 'appbuilder/blobs/sha256/35/35783526e107b1c3c4532db033d69e213c93162f454718d3f65a287ef581139f',
+    size: 5062,
   },
   {
     path: 'src/vite-env.d.ts',
@@ -146,8 +146,8 @@ export const STARTER_REACT_VITE_V3_FILES: readonly StarterManifestFile[] = [
   },
   {
     path: 'vite.config.js',
-    sha256: 'ea7a3958eb7f1af42c4e05e8e738f692c80bccb8f2fa66e4c1a0fbdd4db65fb2',
-    objectKey: 'appbuilder/blobs/sha256/ea/ea7a3958eb7f1af42c4e05e8e738f692c80bccb8f2fa66e4c1a0fbdd4db65fb2',
-    size: 346,
+    sha256: 'a38b046136d4ed68515ffa4febe119a00259752d5e164dc7c0d1515d3c7974cb',
+    objectKey: 'appbuilder/blobs/sha256/a3/a38b046136d4ed68515ffa4febe119a00259752d5e164dc7c0d1515d3c7974cb',
+    size: 388,
   },
 ] as const;

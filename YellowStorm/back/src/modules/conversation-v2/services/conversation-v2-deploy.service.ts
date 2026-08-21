@@ -68,15 +68,18 @@ export class ConversationV2DeployService {
   ) {}
 
   async deploy(aiSessionId: string, revisionId: string): Promise<DeployResponse> {
-    let runtimeEnv: Record<string, string> | undefined;
+    const productionEnv: Record<string, string> = {
+      VITE_APP_BASE: this.resolveDeployAppBasePath(aiSessionId),
+    };
+
     if (this.config.get<boolean>('appData.enabled', false) && this.appDataDeployment) {
       try {
         const env = await this.appDataDeployment.prepareProduction(aiSessionId, revisionId);
-        runtimeEnv = {
+        Object.assign(productionEnv, {
           VITE_YM_APP_DATA_URL: env.publicUrl,
           VITE_YM_APP_DATA_ID: env.appDataId,
           VITE_YM_APP_DATA_ENV: env.environment,
-        };
+        });
         this.logger.log(
           `App Data PROD env prepared for session=${aiSessionId}: URL=${env.publicUrl} appDataId=${env.appDataId}`,
         );
@@ -101,24 +104,23 @@ export class ConversationV2DeployService {
     }
 
     let deployRevisionId = revisionId;
-    if (runtimeEnv) {
-      try {
-        deployRevisionId = await this.injectEnvProduction(aiSessionId, revisionId, runtimeEnv);
-      } catch (err) {
-        this.logger.warn(
-          `Failed to inject .env.production into revision ${revisionId} — deploying without it: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
+    try {
+      deployRevisionId = await this.injectEnvProduction(aiSessionId, revisionId, productionEnv);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to inject .env.production into revision ${revisionId} — deploying without it: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
 
     const runtime = this.getDeployRuntimeConfig();
     const deadline = Date.now() + runtime.deployTimeoutMs;
-    const launchBody: Record<string, string> = { aiSessionId, revisionId: deployRevisionId };
-    if (runtimeEnv) {
-      launchBody.runtimeEnv = JSON.stringify(runtimeEnv);
-    }
+    const launchBody: Record<string, string> = {
+      aiSessionId,
+      revisionId: deployRevisionId,
+      runtimeEnv: JSON.stringify(productionEnv),
+    };
     const launch = await this.requestAppBuilder({
       baseUrl: runtime.baseUrl,
       path: 'app/deploy',
@@ -130,7 +132,7 @@ export class ConversationV2DeployService {
     const launchAppId = this.extractString(launch, 'app_id') ?? aiSessionId;
 
     if (this.isReady(launchStatus)) {
-      return { ...this.extractDeployment(launch, launchAppId), runtimeEnv };
+      return { ...this.extractDeployment(launch, launchAppId), runtimeEnv: productionEnv };
     }
     if (launchStatus !== 'deploying') {
       this.logger.warn('App-builder deploy response did not confirm a deploying app');
@@ -146,8 +148,17 @@ export class ConversationV2DeployService {
       deadline,
       statusPollIntervalMs: runtime.statusPollIntervalMs,
       deployTimeoutMs: runtime.deployTimeoutMs,
-      runtimeEnv,
+      runtimeEnv: productionEnv,
     });
+  }
+
+  /** Public URL path prefix for deployed apps, e.g. `/apps/{sessionId}/`. */
+  resolveDeployAppBasePath(aiSessionId: string): string {
+    const prefix =
+      this.config.get<string>('conversationV2.appBuilderDeployedAppsPathPrefix')?.trim() ||
+      '/apps';
+    const normalized = prefix.replace(/\/$/, '');
+    return `${normalized}/${aiSessionId}/`;
   }
 
   private getDeployRuntimeConfig(): DeployRuntimeConfig {

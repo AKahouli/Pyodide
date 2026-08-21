@@ -60,6 +60,7 @@ import {
   clearConversationV2DefaultModel,
   syncModels,
 } from '../api';
+import { useModelsStore } from '@/modules/models';
 import type { AdminModelResponse, AdminModelsListResponse, ModelInputModality, ModelType } from '../types';
 import { MODEL_INPUT_MODALITIES, MODEL_TYPES } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
@@ -236,6 +237,7 @@ export function ModelsPage() {
         setModels((prev) =>
           sortModels(prev.map((m) => (m.id === updated.id ? normalizeModel(updated) : m)))
         );
+        useModelsStore.getState().syncConversationV2Default(null);
         toast.success(t('models.toasts.conversationV2DefaultCleared.title'), {
           description: t('models.toasts.conversationV2DefaultCleared.description', {
             name: updated.name,
@@ -253,6 +255,7 @@ export function ModelsPage() {
             }))
           )
         );
+        useModelsStore.getState().syncConversationV2Default(updated.id);
         toast.success(t('models.toasts.conversationV2DefaultSet.title'), {
           description: t('models.toasts.conversationV2DefaultSet.description', {
             name: updated.name,

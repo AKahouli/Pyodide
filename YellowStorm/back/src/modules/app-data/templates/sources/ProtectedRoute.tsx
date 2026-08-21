@@ -1,9 +1,14 @@
 import { Navigate, useLocation } from 'react-router-dom';
-import { useAuth } from '@/lib/yellowmind-auth';
+import { isDevPreview, useAuth } from '@/lib/yellowmind-auth';
 
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const devPreview = isDevPreview();
   const { user, isLoading } = useAuth();
   const location = useLocation();
+
+  if (devPreview) {
+    return <>{children}</>;
+  }
 
   if (isLoading) {
     return (
