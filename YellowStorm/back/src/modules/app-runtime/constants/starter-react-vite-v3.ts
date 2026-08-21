@@ -37,6 +37,30 @@ export const STARTER_REACT_VITE_V3_FILES: readonly StarterManifestFile[] = [
     size: 81,
   },
   {
+    path: 'public/brand/auth-preview-app.png',
+    sha256: 'cf76c9a075afbe26d077ef5092deb8657499a66d59ccd408d55715e86c9076a9',
+    objectKey: 'appbuilder/blobs/sha256/cf/cf76c9a075afbe26d077ef5092deb8657499a66d59ccd408d55715e86c9076a9',
+    size: 1721103,
+  },
+  {
+    path: 'public/brand/auth-preview-builder.png',
+    sha256: '9a0d94d7c01b73cdc0fd951488a8c2bea451119c98b535fe091f141cdb5f9b3d',
+    objectKey: 'appbuilder/blobs/sha256/9a/9a0d94d7c01b73cdc0fd951488a8c2bea451119c98b535fe091f141cdb5f9b3d',
+    size: 1760562,
+  },
+  {
+    path: 'public/brand/auth-preview-mobile.png',
+    sha256: '4ec680db321af28b97ddf5b4c626aa87121b5cc50f59731f83be8e2fb149f8dc',
+    objectKey: 'appbuilder/blobs/sha256/4e/4ec680db321af28b97ddf5b4c626aa87121b5cc50f59731f83be8e2fb149f8dc',
+    size: 2003151,
+  },
+  {
+    path: 'public/brand/yellowsys-logo.svg',
+    sha256: 'e56ea7965a0d5a887dcc07b2052f90ab251875c7d61a5438613cfb9ee90a3e2b',
+    objectKey: 'appbuilder/blobs/sha256/e5/e56ea7965a0d5a887dcc07b2052f90ab251875c7d61a5438613cfb9ee90a3e2b',
+    size: 3394,
+  },
+  {
     path: 'src/App.css',
     sha256: 'feba8cc42a281b52bd438215b86cdc7bdae3bcf39c57dccf9cf7b0c4b120c73e',
     objectKey: 'appbuilder/blobs/sha256/fe/feba8cc42a281b52bd438215b86cdc7bdae3bcf39c57dccf9cf7b0c4b120c73e',
@@ -86,15 +110,15 @@ export const STARTER_REACT_VITE_V3_FILES: readonly StarterManifestFile[] = [
   },
   {
     path: 'src/index.css',
-    sha256: 'ae9c8245d09fbbee69711142d745d5d595d049a5f70b139a2f09db54ecd36878',
-    objectKey: 'appbuilder/blobs/sha256/ae/ae9c8245d09fbbee69711142d745d5d595d049a5f70b139a2f09db54ecd36878',
-    size: 581,
+    sha256: '6a231568549109e36f565fbfd349380e1a7cbf66706a1bc70c41cbf6875c8e34',
+    objectKey: 'appbuilder/blobs/sha256/6a/6a231568549109e36f565fbfd349380e1a7cbf66706a1bc70c41cbf6875c8e34',
+    size: 1633,
   },
   {
     path: 'src/lib/app-base.ts',
-    sha256: '89a1a6155979076a070993b20e01e22090f073939d44cd26c50b9574227943bb',
-    objectKey: 'appbuilder/blobs/sha256/89/89a1a6155979076a070993b20e01e22090f073939d44cd26c50b9574227943bb',
-    size: 1749,
+    sha256: 'b9cca2e0ad079d58270f8abfc6ace1f85c532851d9c4a6c9ce5111f93270e8b8',
+    objectKey: 'appbuilder/blobs/sha256/b9/b9cca2e0ad079d58270f8abfc6ace1f85c532851d9c4a6c9ce5111f93270e8b8',
+    size: 2059,
   },
   {
     path: 'src/lib/utils.ts',
@@ -122,9 +146,9 @@ export const STARTER_REACT_VITE_V3_FILES: readonly StarterManifestFile[] = [
   },
   {
     path: 'src/pages/AuthPages.tsx',
-    sha256: '8d8d2f2221dea99e073f0610126300d012497b2fea0fc4f72d651d7416649fad',
-    objectKey: 'appbuilder/blobs/sha256/8d/8d8d2f2221dea99e073f0610126300d012497b2fea0fc4f72d651d7416649fad',
-    size: 5500,
+    sha256: 'e351fb959f63d6b8f88e88671ce80b68268753666e862077af33cb24ec5bc91d',
+    objectKey: 'appbuilder/blobs/sha256/e3/e351fb959f63d6b8f88e88671ce80b68268753666e862077af33cb24ec5bc91d',
+    size: 9209,
   },
   {
     path: 'src/vite-env.d.ts',
