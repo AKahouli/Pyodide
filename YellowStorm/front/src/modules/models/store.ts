@@ -22,9 +22,14 @@ type ModelsSyncMessage = {
 export const CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT =
   'conversation-v2:default-model-changed';
 
-function applyConversationV2Default(modelId: string | null): string | null {
+function applyConversationV2Default(
+  modelId: string | null,
+  previousDefaultIdOverride?: string | null,
+): string | null {
   const previousDefaultId =
-    useModelsStore.getState().models.find((m) => m.isConversationV2Default)?.id ?? null;
+    previousDefaultIdOverride !== undefined
+      ? previousDefaultIdOverride
+      : (useModelsStore.getState().models.find((m) => m.isConversationV2Default)?.id ?? null);
 
   useModelsStore.setState((state) => ({
     models: state.models.map((m) => ({
@@ -255,7 +260,7 @@ if (typeof window !== 'undefined') {
     const channel = new BroadcastChannel(MODELS_SYNC_CHANNEL);
     channel.onmessage = (event: MessageEvent<ModelsSyncMessage>) => {
       if (event.data?.type !== 'conversation-v2-default') return;
-      applyConversationV2Default(event.data.modelId);
+      applyConversationV2Default(event.data.modelId, event.data.previousDefaultId);
     };
   } catch {
     // BroadcastChannel unavailable.

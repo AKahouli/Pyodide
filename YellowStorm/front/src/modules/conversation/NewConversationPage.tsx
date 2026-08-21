@@ -165,7 +165,13 @@ export function NewConversationPage() {
       let litellmModel: string | undefined;
       if (modelId) {
         writeSelectedModelForSession(sessionId, modelId);
-        const model = useModelsStore.getState().models.find((m) => m.id === modelId);
+      }
+      const lookupId =
+        modelId ??
+        useModelsStore.getState().models.find((m) => m.isConversationV2Default)?.id ??
+        null;
+      if (lookupId) {
+        const model = useModelsStore.getState().models.find((m) => m.id === lookupId);
         litellmModel = model?.litellmModel || undefined;
       }
 
@@ -438,7 +444,7 @@ function AgentInput({ onSubmit, disabled }: AgentInputProps) {
     // Persist the actual model id we want to remember — either the user's
     // explicit pick or the current admin default. handleAgentSubmit needs a
     // concrete id to look up the LiteLLM identifier.
-    onSubmit(message, selectedWorkspaceIds, activeModel?.id ?? null);
+    onSubmit(message, selectedWorkspaceIds, pickedModelId);
   };
 
   const handlePickModel = (modelId: string) => {

@@ -59,4 +59,23 @@ describe('useModelsStore.syncConversationV2Default', () => {
     expect(models.find((m) => m.id === 'model-a')?.isConversationV2Default).toBe(false);
     expect(models.find((m) => m.id === 'model-b')?.isConversationV2Default).toBe(true);
   });
+
+  it('uses the broadcast previousDefaultId when applying a remote sync', async () => {
+    const { clearSelectedModelIdFromAllSessions } = await import(
+      '@/modules/conversation-v2/selectedModelStorage'
+    );
+    useModelsStore.getState().syncConversationV2Default('model-b');
+    vi.mocked(clearSelectedModelIdFromAllSessions).mockClear();
+
+    const channel = new BroadcastChannel('ym-models-sync');
+    channel.postMessage({
+      type: 'conversation-v2-default',
+      modelId: 'model-a',
+      previousDefaultId: 'model-b',
+    });
+    await vi.waitFor(() => {
+      expect(clearSelectedModelIdFromAllSessions).toHaveBeenCalledWith('model-b');
+    });
+    channel.close();
+  });
 });
