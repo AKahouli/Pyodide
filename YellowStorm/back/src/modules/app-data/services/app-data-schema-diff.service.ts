@@ -6,7 +6,6 @@ import type {
   AppDataMigrationOperation,
   AppDataMigrationPlan,
   AppDataSchemaManifest,
-  AppDataTableDef,
 } from '../constants/app-data.types';
 
 @Injectable()
@@ -115,19 +114,8 @@ export class AppDataSchemaDiffService {
     };
   }
 
-  buildTargetManifest(current: AppDataSchemaManifest, nextManifest: AppDataSchemaManifest): AppDataSchemaManifest {
-    return {
-      version: nextManifest.version,
-      tables: nextManifest.tables,
-    };
-  }
-
   emptyAtVersion(version: number): AppDataSchemaManifest {
     return { version, tables: {} };
-  }
-
-  tableDef(manifest: AppDataSchemaManifest, table: string): AppDataTableDef | null {
-    return manifest.tables[table] ?? null;
   }
 
   overallClassification(plan: AppDataMigrationPlan): AppDataMigrationClassification {

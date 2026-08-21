@@ -9,20 +9,15 @@ import * as schema from '@modules/postgres/schema';
 import {
   appDataApps,
   appDataEnvironments,
-  appDataPolicies,
 } from '@modules/postgres/schema/app-data.schema';
-import type { AppDataEnvironment } from '../constants/app-data.constants';
 import {
   AppDataErrorCode,
   AppDataException,
 } from '../constants/app-data.errors';
-import type { AppDataPolicyDocument } from '../constants/app-data.types';
 import { AppDataCatalogService } from './app-data-catalog.service';
 import { AppDataIdentifierService } from './app-data-identifier.service';
 import { AppDataAuditService } from './app-data-audit.service';
 import { quoteIdent, tenantSchemaName } from '../utils/app-data-sql.util';
-
-const DEFAULT_OWNER_POLICY: AppDataPolicyDocument = {};
 
 @Injectable()
 export class AppDataProvisioningService {
@@ -155,17 +150,6 @@ export class AppDataProvisioningService {
       actorPrincipal: 'system',
       metadata: { schemaName: env.schemaName },
     });
-  }
-
-  async seedDefaultPolicies(appId: string, environment: AppDataEnvironment): Promise<void> {
-    for (const [tableName, policy] of Object.entries(DEFAULT_OWNER_POLICY)) {
-      await this.db.insert(appDataPolicies).values({
-        appId,
-        environment,
-        tableName,
-        policyJson: policy,
-      });
-    }
   }
 
   private async createPhysicalSchema(schemaName: string): Promise<void> {

@@ -144,10 +144,6 @@ export function validateManifest(
   }
 }
 
-export function emptyManifest(version = 0): AppDataSchemaManifest {
-  return { version, tables: {} };
-}
-
 export function advisoryLockKey(appDataId: string, environment: AppDataEnvironment): string {
   return `${appDataId}:${environment}`;
 }

@@ -23,7 +23,6 @@ import { AppDataEndUserGrantsService } from './services/app-data-end-user-grants
 import { AppDataEndUserService } from './services/app-data-end-user.service';
 import { AppDataPublicAccessService } from './services/app-data-public-access.service';
 import { AppDataIdentifierService } from './services/app-data-identifier.service';
-import { AppDataLifecycleService } from './services/app-data-lifecycle.service';
 import { AppDataMigrationService } from './services/app-data-migration.service';
 import { AppDataMcpAuthService } from './services/app-data-mcp-auth.service';
 import { AppDataMcpDispatcherService } from './services/app-data-mcp-dispatcher.service';
@@ -72,7 +71,6 @@ import { AppDataSchemaService } from './services/app-data-schema.service';
     AppDataMcpDispatcherService,
     AppDataReleaseBindingService,
     AppDataDeploymentService,
-    AppDataLifecycleService,
   ],
   exports: [
     AppDataCatalogService,

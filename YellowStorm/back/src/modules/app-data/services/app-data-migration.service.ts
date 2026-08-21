@@ -1,15 +1,10 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { and, desc, eq } from 'drizzle-orm';
-import { Pool } from 'pg';
-import { DRIZZLE_DB, PG_POOL } from '@modules/postgres/postgres.constants';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from '@modules/postgres/schema';
-import {
-  appDataEnvironments,
-  appDataMigrations,
-  appDataSchemaVersions,
-} from '@modules/postgres/schema/app-data.schema';
+import { appDataSchemaVersions } from '@modules/postgres/schema/app-data.schema';
 import type { AppDataEnvironment } from '../constants/app-data.constants';
 import {
   AppDataErrorCode,
@@ -35,7 +30,6 @@ export class AppDataMigrationService {
 
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
-    @Inject(PG_POOL) private readonly pool: Pool,
     private readonly config: ConfigService,
     private readonly catalog: AppDataCatalogService,
     private readonly diff: AppDataSchemaDiffService,
@@ -94,7 +88,7 @@ export class AppDataMigrationService {
       );
     }
 
-    return this.locks.withLock(params.appDataId, params.environment, async () => {
+    return this.locks.withLock(params.appDataId, params.environment, async (client) => {
       const env = await this.catalog.getEnvironment(params.appId, params.environment);
       if (!env) {
         throw new AppDataException(AppDataErrorCode.NOT_PROVISIONED, 'Environment not found');
@@ -106,48 +100,44 @@ export class AppDataMigrationService {
         return { version: env.currentVersion, applied: false };
       }
 
-      const client = await this.pool.connect();
       const timeoutMs = this.config.get<number>('appData.statementTimeoutMs', 30_000);
-      try {
-        await client.query('BEGIN');
-        await client.query(`SET statement_timeout = ${timeoutMs}`);
-        await client.query(`SET search_path TO ${quoteIdent(params.schemaName)}, public`);
+      await client.query(`SET LOCAL statement_timeout = ${timeoutMs}`);
+      await client.query(`SET LOCAL search_path TO ${quoteIdent(params.schemaName)}, public`);
 
-        for (const op of params.plan.operations) {
-          await this.executeOperation(client, op, params.targetManifest);
-        }
-
-        const nextVersion = params.targetManifest.version;
-        await this.db.insert(appDataSchemaVersions).values({
-          appId: params.appId,
-          environment: params.environment,
-          version: nextVersion,
-          manifestHash: params.manifestHash,
-          manifestJson: params.targetManifest,
-        });
-
-        await this.db.insert(appDataMigrations).values({
-          appId: params.appId,
-          environment: params.environment,
-          fromVersion: params.plan.fromVersion,
-          toVersion: params.plan.toVersion,
-          planJson: params.plan,
-          classification: this.diff.overallClassification(params.plan),
-          toolCallId: params.toolCallId ?? null,
-        });
-
-        await this.db
-          .update(appDataEnvironments)
-          .set({ currentVersion: nextVersion, updatedAt: new Date() })
-          .where(eq(appDataEnvironments.id, env.id));
-
-        await client.query('COMMIT');
-      } catch (err) {
-        await client.query('ROLLBACK');
-        throw err;
-      } finally {
-        client.release();
+      for (const op of params.plan.operations) {
+        await this.executeOperation(client, op, params.targetManifest);
       }
+
+      const nextVersion = params.targetManifest.version;
+      await client.query(
+        `INSERT INTO app_data.schema_versions (app_id, environment, version, manifest_hash, manifest_json)
+         VALUES ($1, $2, $3, $4, $5::jsonb)`,
+        [
+          params.appId,
+          params.environment,
+          nextVersion,
+          params.manifestHash,
+          JSON.stringify(params.targetManifest),
+        ],
+      );
+      await client.query(
+        `INSERT INTO app_data.migrations
+           (app_id, environment, from_version, to_version, plan_json, classification, tool_call_id)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
+        [
+          params.appId,
+          params.environment,
+          params.plan.fromVersion,
+          params.plan.toVersion,
+          JSON.stringify(params.plan),
+          this.diff.overallClassification(params.plan),
+          params.toolCallId ?? null,
+        ],
+      );
+      await client.query(
+        `UPDATE app_data.environments SET current_version = $1, updated_at = NOW() WHERE id = $2`,
+        [nextVersion, env.id],
+      );
 
       await this.audit.record({
         appId: params.appId,
@@ -202,18 +192,33 @@ export class AppDataMigrationService {
         await client.query(`DROP TABLE IF EXISTS ${tableQ}`);
         break;
       case 'add_column': {
-        if (!op.column || !op.columnDef) break;
+        if (!op.column || !op.columnDef) {
+          throw new AppDataException(
+            AppDataErrorCode.INVALID_MANIFEST,
+            `add_column on ${op.table} is missing column definition`,
+          );
+        }
         await client.query(
           `ALTER TABLE ${tableQ} ADD COLUMN IF NOT EXISTS ${this.columnSql(op.column, op.columnDef)}`,
         );
         break;
       }
       case 'drop_column':
-        if (!op.column) break;
+        if (!op.column) {
+          throw new AppDataException(
+            AppDataErrorCode.INVALID_MANIFEST,
+            `drop_column on ${op.table} is missing column name`,
+          );
+        }
         await client.query(`ALTER TABLE ${tableQ} DROP COLUMN IF EXISTS ${quoteIdent(op.column)}`);
         break;
       case 'alter_column_nullable':
-        if (!op.column || !op.columnDef) break;
+        if (!op.column || !op.columnDef) {
+          throw new AppDataException(
+            AppDataErrorCode.INVALID_MANIFEST,
+            `alter_column_nullable on ${op.table} is missing column definition`,
+          );
+        }
         await client.query(
           `ALTER TABLE ${tableQ} ALTER COLUMN ${quoteIdent(op.column)} ${
             op.columnDef.nullable === false ? 'SET NOT NULL' : 'DROP NOT NULL'
@@ -221,7 +226,10 @@ export class AppDataMigrationService {
         );
         break;
       default:
-        break;
+        throw new AppDataException(
+          AppDataErrorCode.INVALID_MANIFEST,
+          `Unsupported migration operation: ${String((op as { kind?: string }).kind)}`,
+        );
     }
   }
 

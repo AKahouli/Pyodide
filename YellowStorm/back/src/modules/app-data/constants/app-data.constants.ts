@@ -43,9 +43,6 @@ export const APP_DATA_IDENTIFIER_RE = /^[a-z][a-z0-9_]{0,62}$/;
 /** Opaque appDataId — server-generated lowercase slug. */
 export const APP_DATA_ID_RE = /^[a-z0-9]{8,32}$/;
 
-export const MCP_SERVER_NAME = 'yellowmind-app-data';
-export const MCP_SERVER_VERSION = '0.1.0';
-
 /** Optional client headers (allowed in CORS preflight for generated preview apps). */
 export const APP_DATA_CORS_REQUEST_HEADERS = [
   'X-YM-App-Data-Id',
