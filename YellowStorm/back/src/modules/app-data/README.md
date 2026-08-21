@@ -75,7 +75,7 @@ Source of truth: [`templates/sources/`](templates/sources/) (valid TypeScript; c
 | `templates/sources/ProtectedRoute.tsx` | Login gate (skipped in dev preview) |
 | `templates/sources/AuthPages.tsx` | Login/Register pages |
 | `templates/sources/AppRouter.tsx` | Router + basename |
-| `templates/sources/app-base.ts` | React Router basename from `VITE_APP_BASE` |
+| `templates/sources/app-base.ts` | React Router basename + `/apps/{id}/` trailing-slash normalization |
 
 ### Ceph starter sync
 
@@ -100,7 +100,7 @@ V3 adds (on top of v1):
 
 Wire `main.jsx` renders `<AppRouter />` (v3 only).
 
-Deployed apps are served under `/apps/{sessionId}/`. Deploy injects `VITE_APP_BASE` into `.env.production`; the starter sets Vite `base` and React Router `basename` so `/login` and post-auth redirects stay under the app URL. Revisions missing `src/lib/app-base.ts` (pre-v3) are rejected at deploy time.
+Deployed apps are served under `/apps/{sessionId}/`. Deploy injects `VITE_APP_BASE` into `.env.production`; the starter sets Vite `base` and React Router `basename` so `/login` and post-auth redirects stay under the app URL. React Router renders the basename without a trailing slash, so `AppUrlNormalizer` calls `ensureAppHomeTrailingSlash()` on every navigation to keep `/apps/{sessionId}/` in the address bar. Revisions missing `src/lib/app-base.ts` (pre-v3) are rejected at deploy time.
 
 ## Error taxonomy
 

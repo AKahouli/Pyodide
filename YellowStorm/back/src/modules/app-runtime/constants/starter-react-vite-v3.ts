@@ -50,9 +50,9 @@ export const STARTER_REACT_VITE_V3_FILES: readonly StarterManifestFile[] = [
   },
   {
     path: 'src/AppRouter.tsx',
-    sha256: 'cc457384e8bee86fe69b87f18d58fe49a4756cb707446a30ff95783be78d2e60',
-    objectKey: 'appbuilder/blobs/sha256/cc/cc457384e8bee86fe69b87f18d58fe49a4756cb707446a30ff95783be78d2e60',
-    size: 1147,
+    sha256: 'f6b1e6cb63b440014f4362b6ebb481540a9aa75f6f9f7287d4a0e6525257a23a',
+    objectKey: 'appbuilder/blobs/sha256/f6/f6b1e6cb63b440014f4362b6ebb481540a9aa75f6f9f7287d4a0e6525257a23a',
+    size: 1687,
   },
   {
     path: 'src/components/auth/ProtectedRoute.tsx',
@@ -92,9 +92,9 @@ export const STARTER_REACT_VITE_V3_FILES: readonly StarterManifestFile[] = [
   },
   {
     path: 'src/lib/app-base.ts',
-    sha256: 'be3def17119f28edf43b8bf5ac73e2de615a869a3071dcf7680a4ce0e2aba03c',
-    objectKey: 'appbuilder/blobs/sha256/be/be3def17119f28edf43b8bf5ac73e2de615a869a3071dcf7680a4ce0e2aba03c',
-    size: 377,
+    sha256: '89a1a6155979076a070993b20e01e22090f073939d44cd26c50b9574227943bb',
+    objectKey: 'appbuilder/blobs/sha256/89/89a1a6155979076a070993b20e01e22090f073939d44cd26c50b9574227943bb',
+    size: 1749,
   },
   {
     path: 'src/lib/utils.ts',
@@ -122,9 +122,9 @@ export const STARTER_REACT_VITE_V3_FILES: readonly StarterManifestFile[] = [
   },
   {
     path: 'src/pages/AuthPages.tsx',
-    sha256: '35783526e107b1c3c4532db033d69e213c93162f454718d3f65a287ef581139f',
-    objectKey: 'appbuilder/blobs/sha256/35/35783526e107b1c3c4532db033d69e213c93162f454718d3f65a287ef581139f',
-    size: 5062,
+    sha256: '8d8d2f2221dea99e073f0610126300d012497b2fea0fc4f72d651d7416649fad',
+    objectKey: 'appbuilder/blobs/sha256/8d/8d8d2f2221dea99e073f0610126300d012497b2fea0fc4f72d651d7416649fad',
+    size: 5500,
   },
   {
     path: 'src/vite-env.d.ts',
