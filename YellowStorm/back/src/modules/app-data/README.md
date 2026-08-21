@@ -73,9 +73,10 @@ Source of truth: [`templates/sources/`](templates/sources/) (valid TypeScript; c
 | `templates/sources/yellowmind-data.ts` | App Data client (Bearer JWT) |
 | `templates/sources/yellowmind-auth.tsx` | Register/login/session |
 | `templates/sources/ProtectedRoute.tsx` | Login gate (skipped in dev preview) |
-| `templates/sources/AuthPages.tsx` | Login/Register pages |
+| `templates/sources/AuthPages.tsx` | Login/Register pages (Yellowsys landing layout) |
 | `templates/sources/AppRouter.tsx` | Router + basename |
 | `templates/sources/app-base.ts` | React Router basename + `/apps/{id}/` trailing-slash normalization |
+| `templates/assets/` | Yellowsys logo + App Builder preview images copied to `public/brand/` |
 
 ### Ceph starter sync
 

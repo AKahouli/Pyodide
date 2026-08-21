@@ -12,6 +12,7 @@ import {
   Star,
   Cloud,
   MessagesSquare,
+  Bot,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -505,13 +506,13 @@ export function ModelsPage() {
                                 onClick={() => handleToggleConversationV2Default(model)}
                                 disabled={!model.isActive}
                               >
-                                <MessagesSquare
+                                <Bot
                                   className={`h-4 w-4 ${
                                     model.isConversationV2Default
-                                      ? 'fill-sky-400 text-sky-400'
+                                      ? 'fill-yellow-400 text-yellow-400'
                                       : 'text-muted-foreground'
                                   }`}
-                                />
+                                /> 
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>

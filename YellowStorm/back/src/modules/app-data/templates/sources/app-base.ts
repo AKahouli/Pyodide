@@ -43,3 +43,10 @@ export function ensureAppHomeTrailingSlash(): void {
     `${home}${window.location.search}${window.location.hash}`,
   );
 }
+
+/** Public file under Vite `base` (works for `/` and `/apps/{id}/`). */
+export function resolvePublicAsset(relativePath: string): string {
+  const base = import.meta.env.BASE_URL ?? '/';
+  const prefix = base.endsWith('/') ? base : `${base}/`;
+  return `${prefix}${relativePath.replace(/^\//, '')}`;
+}
