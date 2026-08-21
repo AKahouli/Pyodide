@@ -1411,3 +1411,30 @@ def test_a_projection_failure_never_fails_the_tool_call():
 
     assert asyncio.run(wrapped.func()) == {"ceph_path": "ceph/x/report.pdf",
                                            "path": "/report.pdf"}
+
+
+def test_requester_context_names_the_user_and_forbids_delegating_to_them():
+    """The planner/executor preamble must name the requester and rule out
+    emailing or delegating work back to them — the fix for worky not knowing who
+    it works for."""
+    ctx = svc.requester_context(
+        {"name": "Rabeb Sdiri", "email": "rabeb@yellowsys.fr", "role": "Data Scientist"})
+    assert "Rabeb Sdiri" in ctx and "rabeb@yellowsys.fr" in ctx and "Data Scientist" in ctx
+    low = ctx.lower()
+    assert "never" in low and ("delegat" in low or "assign" in low) and "email" in low
+
+
+def test_requester_context_is_empty_without_a_name_or_email():
+    """No identity -> no preamble, so behaviour is unchanged for older clients."""
+    assert svc.requester_context(None) == ""
+    assert svc.requester_context({"name": "", "email": "", "role": "x"}) == ""
+    # email alone is enough to name someone
+    assert "a@b.fr" in svc.requester_context({"email": "a@b.fr"})
+
+
+def test_with_requester_appends_but_preserves_the_base_prompt():
+    assert svc._with_requester("BASE", None) == "BASE"
+    out = svc._with_requester("BASE", {"name": "R", "email": "r@x.fr"})
+    assert out.startswith("BASE\n\n") and "r@x.fr" in out
+    # no base prompt -> just the context
+    assert svc._with_requester(None, {"email": "r@x.fr"}).startswith("You are working for")

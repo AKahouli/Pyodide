@@ -63,6 +63,12 @@ message RunRequest {
   repeated Skill skills = 5;
   repeated ConnectorBinding connectors = 6;
   repeated chatbot.Agent agents = 11;
+  // Who the turn is for. user_id is an opaque id; these let the planner and
+  // executor know the requester by name, so they address them directly and
+  // never email or delegate a task back to the person who asked for it.
+  string user_name  = 12;
+  string user_email = 13;
+  string user_role  = 14;
 }
 
 message RunResponse {

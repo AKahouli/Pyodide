@@ -185,6 +185,9 @@ export class WorkyOrchestratorGrpcClientService
       agents?: unknown[];
       skills?: unknown[];
       connectors?: unknown[];
+      userName?: string;
+      userEmail?: string;
+      userRole?: string;
     },
   ): Promise<{ sessionId: string; accepted: boolean; runId: string }> {
     const request: Record<string, unknown> = {
@@ -195,6 +198,11 @@ export class WorkyOrchestratorGrpcClientService
     if (opts.agents?.length) request.agents = opts.agents;
     if (opts.skills?.length) request.skills = opts.skills;
     if (opts.connectors?.length) request.connectors = opts.connectors;
+    // Who the turn is for — so the planner/executor address the requester and
+    // never delegate or email work back to them (orchestrator RunRequest.user_*).
+    if (opts.userName) request.user_name = opts.userName;
+    if (opts.userEmail) request.user_email = opts.userEmail;
+    if (opts.userRole) request.user_role = opts.userRole;
     return new Promise((resolve, reject) => {
       this.client.RunTask(
         request,

@@ -73,5 +73,22 @@ describe('voice-concierge.config', () => {
     it('CONCIERGE_SYSTEM_PROMPT mentions worky', () => {
       expect(CONCIERGE_SYSTEM_PROMPT).toContain('worky');
     });
+
+    it('appends the requester name and role to the system instruction', () => {
+      const s = buildSetupMessage('gemini-live', 'Kore', decls, {
+        requester: { name: 'Rabeb Sdiri', email: 'rabeb@yellowsys.fr', role: 'Data Scientist' },
+      }) as any;
+      const text = s.systemInstruction.parts[0].text;
+      expect(text).toContain('worky'); // base persona kept
+      expect(text).toContain('Rabeb Sdiri');
+      expect(text).toContain('Data Scientist');
+    });
+
+    it('adds no identity line when there is no requester name', () => {
+      const s = buildSetupMessage('gemini-live', 'Kore', decls, {
+        requester: { name: '', email: '', role: 'x' },
+      }) as any;
+      expect(s.systemInstruction.parts[0].text).toBe(CONCIERGE_SYSTEM_PROMPT);
+    });
   });
 });

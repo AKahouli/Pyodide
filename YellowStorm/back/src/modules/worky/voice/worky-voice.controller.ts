@@ -6,6 +6,7 @@ import { RequirePermissions } from '../../authorization/decorators/require-permi
 import { Permissions } from '../../authorization/constants/permissions';
 import { GeminiTokenService, VoiceSessionEnvelope } from './gemini-token.service';
 import { VoiceToolService } from './voice-tool.service';
+import { requesterOpts } from '../worky-requester.util';
 import { WorkyPlanningService } from '../services/worky-planning.service';
 import { CONCIERGE_SYSTEM_PROMPT } from './voice-concierge.config';
 import {
@@ -45,7 +46,14 @@ export class WorkyVoiceController {
     const prompt = dto.streamId
       ? ((await this.planning.getVoicePrompt(user._id.toString(), dto.streamId)).prompt ?? undefined)
       : undefined;
-    return this.tokens.mintSessionToken({ resumptionHandle: dto.resumptionHandle, prompt });
+    // Tell the concierge who it is speaking with (name + role) so it greets and
+    // addresses them naturally. Same identity the orchestrator turn gets.
+    const r = requesterOpts(user);
+    return this.tokens.mintSessionToken({
+      resumptionHandle: dto.resumptionHandle,
+      prompt,
+      requester: { name: r.userName, email: r.userEmail, role: r.userRole },
+    });
   }
 
   @Get('prompt/:streamId')

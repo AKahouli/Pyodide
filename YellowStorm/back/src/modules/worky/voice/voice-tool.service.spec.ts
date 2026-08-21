@@ -7,12 +7,14 @@ describe('VoiceToolService', () => {
   const orchestrator = { runTask: jest.fn(), getSession: jest.fn() };
   const turnContext = { resolveWorkyAgents: jest.fn(), resolveConnectors: jest.fn() };
   const tasks = { projectForBoard: jest.fn(), findByIdInternal: jest.fn(), getResultContent: jest.fn() };
+  const users = { findById: jest.fn() };
   const svc = new VoiceToolService(
     planning as any,
     streamSvc as any,
     orchestrator as any,
     turnContext as any,
     tasks as any,
+    users as any,
   );
 
   beforeEach(() => jest.clearAllMocks());
@@ -32,6 +34,28 @@ describe('VoiceToolService', () => {
       connectors: [{ c: 1 }],
     });
     expect(res).toEqual({ runId: 'run-9', sessionId: 'sess-1', accepted: true });
+  });
+
+  it('dispatch passes the requester identity so worky knows who it works for', async () => {
+    planning.appendOwnerMessage.mockResolvedValue({ id: 'm1' });
+    streamSvc.ensureKickoffContext.mockResolvedValue({ aiSessionId: 'sess-1' });
+    turnContext.resolveWorkyAgents.mockResolvedValue([]);
+    turnContext.resolveConnectors.mockResolvedValue([]);
+    users.findById.mockResolvedValue({
+      email: 'rabeb@yellowsys.fr',
+      profile: { firstName: 'Rabeb', lastName: 'Sdiri', role: 'Data Scientist' },
+    });
+    orchestrator.runTask.mockResolvedValue({ sessionId: 'sess-1', accepted: true, runId: 'r' });
+
+    await svc.dispatchTask('u1', 's1', 'do it');
+
+    expect(orchestrator.runTask).toHaveBeenCalledWith('u1', 'sess-1', 'do it', {
+      agents: [],
+      connectors: [],
+      userName: 'Rabeb Sdiri',
+      userEmail: 'rabeb@yellowsys.fr',
+      userRole: 'Data Scientist',
+    });
   });
 
   it('status reads the current session from the orchestrator', async () => {

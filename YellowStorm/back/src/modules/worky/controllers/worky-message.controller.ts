@@ -21,6 +21,7 @@ import { RequirePermissions } from '../../authorization/decorators/require-permi
 import { Permissions } from '../../authorization/constants/permissions';
 import { LoggerService } from '../../logger';
 import { WorkyTurnContextService } from '../services/worky-turn-context.service';
+import { requesterOpts } from '../worky-requester.util';
 
 @ApiTags('Worky')
 @ApiBearerAuth()
@@ -70,6 +71,7 @@ export class WorkyMessageController {
       .runTask(user._id.toString(), ctx.aiSessionId, dto.content, {
         agents,
         connectors,
+        ...requesterOpts(user),
       })
       .catch((err) =>
         this.logger.error('[worky-orchestrator] RunTask kickoff failed', {
@@ -163,6 +165,7 @@ export class WorkyMessageController {
       .runTask(user._id.toString(), aiSessionId, '', {
         agents,
         connectors,
+        ...requesterOpts(user),
       })
       .catch((err) =>
         this.logger.error('[worky-orchestrator] resume RunTask failed', {

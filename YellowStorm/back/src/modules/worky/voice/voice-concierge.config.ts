@@ -90,13 +90,38 @@ export function connectorActionsToFunctionDeclarations(
  * `generationConfig` — unlike the SDK's flat LiveConnectConfig — so this shape
  * is intentional. `functionDeclarations` are sourced from the connector.
  */
+/**
+ * A line telling the concierge who it is speaking with — name and role — so it
+ * greets and addresses them naturally and tailors its tone to their role.
+ * Empty when we have no name to give.
+ */
+export function conciergeRequesterLine(
+  requester?: { name?: string; email?: string; role?: string },
+): string {
+  if (!requester) return '';
+  const name = (requester.name ?? '').trim();
+  const role = (requester.role ?? '').trim();
+  if (!name) return '';
+  const who = role ? `${name}, whose role is ${role}` : name;
+  return (
+    `You are speaking with ${who}. Greet them by name and address them naturally, ` +
+    `and take their role into account when deciding how much detail to give.`
+  );
+}
+
 export function buildSetupMessage(
   model: string,
   voice: string,
   functionDeclarations: FunctionDeclaration[],
-  opts: { resumptionHandle?: string; prompt?: string } = {},
+  opts: {
+    resumptionHandle?: string;
+    prompt?: string;
+    requester?: { name?: string; email?: string; role?: string };
+  } = {},
 ): Record<string, unknown> {
-  const systemText = opts.prompt && opts.prompt.trim().length > 0 ? opts.prompt.trim() : CONCIERGE_SYSTEM_PROMPT;
+  const base = opts.prompt && opts.prompt.trim().length > 0 ? opts.prompt.trim() : CONCIERGE_SYSTEM_PROMPT;
+  const who = conciergeRequesterLine(opts.requester);
+  const systemText = who ? `${base}\n\n${who}` : base;
   return {
     model: `models/${model}`,
     generationConfig: {
