@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { RefreshCwIcon, DatabaseIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -20,47 +20,57 @@ export function AppDataPanel({ sessionId }: AppDataPanelProps) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
-  const loadStatus = useCallback(async () => {
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(null);
-    try {
-      const next = await conversationV2Api.getAppDataStatus(sessionId);
-      setStatus(next);
-      if (!next.enabled) {
-        setError(t('appData.disabled'));
-        return;
+    void (async () => {
+      try {
+        const next = await conversationV2Api.getAppDataStatus(sessionId);
+        if (cancelled) return;
+        setStatus(next);
+        if (!next.enabled) {
+          setError(t('appData.disabled'));
+          return;
+        }
+        const tableRes = await conversationV2Api.getAppDataTables(sessionId, environment);
+        if (cancelled) return;
+        setTables(tableRes.tables);
+        setSelectedTable((prev) => prev ?? tableRes.tables[0] ?? null);
+      } catch (e) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : t('appData.loadError'));
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      const tableRes = await conversationV2Api.getAppDataTables(sessionId, environment);
-      setTables(tableRes.tables);
-      setSelectedTable((prev) => prev ?? tableRes.tables[0] ?? null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t('appData.loadError'));
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId, environment, t]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, environment, t, refreshNonce]);
 
-  const loadRows = useCallback(async () => {
+  useEffect(() => {
     if (!selectedTable) {
       setRows([]);
       return;
     }
-    try {
-      const res = await conversationV2Api.getAppDataRows(sessionId, environment, selectedTable);
-      setRows(res.rows);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t('appData.loadError'));
-    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await conversationV2Api.getAppDataRows(sessionId, environment, selectedTable);
+        if (cancelled) return;
+        setRows(res.rows);
+      } catch (e) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : t('appData.loadError'));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [sessionId, environment, selectedTable, t]);
-
-  useEffect(() => {
-    void loadStatus();
-  }, [loadStatus]);
-
-  useEffect(() => {
-    void loadRows();
-  }, [loadRows]);
 
   const envClass = (active: boolean) =>
     cn(
@@ -77,13 +87,18 @@ export function AppDataPanel({ sessionId }: AppDataPanelProps) {
       <div className='flex items-center justify-between gap-2 border-b px-3 py-2'>
         <div className='inline-flex items-center gap-1 rounded-lg border bg-muted/40 p-0.5'>
           <button type='button' className={envClass(environment === 'dev')} onClick={() => setEnvironment('dev')}>
-            DEV
+            {t('appData.envDev')}
           </button>
           <button type='button' className={envClass(environment === 'prod')} onClick={() => setEnvironment('prod')}>
-            PROD
+            {t('appData.envProd')}
           </button>
         </div>
-        <Button variant='ghost' size='icon-sm' aria-label={t('appData.refresh')} onClick={() => void loadStatus()}>
+        <Button
+          variant='ghost'
+          size='icon-sm'
+          aria-label={t('appData.refresh')}
+          onClick={() => setRefreshNonce((n) => n + 1)}
+        >
           <RefreshCwIcon className='size-4' />
         </Button>
       </div>

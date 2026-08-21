@@ -79,7 +79,7 @@ describe('RightPanel', () => {
 
     render(<RightPanel />);
 
-    expect(screen.getAllByText('Generated app').length).toBeGreaterThan(0);
+    expect(screen.getByTitle('Generated app')).toBeInTheDocument();
     expect(document.querySelector('iframe')).toHaveAttribute(
       'src',
       'https://nodepod.local/__virtual__/3000/',

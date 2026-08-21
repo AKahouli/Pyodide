@@ -76,9 +76,7 @@ export function RightPanel() {
         : 'text-muted-foreground hover:text-foreground',
     );
 
-  const previewTitle =
-    applicationComponent?.title ||
-    (showBuildProgress ? t('nodepod.previewTitle') : t('nodepod.previewTitle'));
+  const previewTitle = applicationComponent?.title || t('nodepod.previewTitle');
 
   return (
     <ResizablePanel
@@ -128,21 +126,34 @@ export function RightPanel() {
         </header>
         <div className='relative flex min-h-0 flex-1 flex-col overflow-hidden'>
           {showAppPanel ? (
-            showDataTab && sessionId ? (
-              <AppDataPanel sessionId={sessionId} />
-            ) : showNodepod ? (
-              <ApplicationComponentView
-                title={applicationComponent?.title}
-                filesTree={applicationComponent?.filesTree}
-                fileCount={applicationComponent?.fileCount}
-                buildProgress={appBuildProgress}
-              />
-            ) : (
-              <AppBuildProgressPanel
-                key={appBuildProgress!.revision}
-                progress={appBuildProgress!}
-              />
-            )
+            <>
+              {showNodepod ? (
+                <div
+                  className={cn(
+                    'flex min-h-0 flex-1 flex-col overflow-hidden',
+                    showDataTab && 'invisible pointer-events-none absolute inset-0',
+                  )}
+                  aria-hidden={showDataTab || undefined}
+                >
+                  <ApplicationComponentView
+                    title={applicationComponent?.title}
+                    filesTree={applicationComponent?.filesTree}
+                    fileCount={applicationComponent?.fileCount}
+                    buildProgress={appBuildProgress}
+                  />
+                </div>
+              ) : (
+                <AppBuildProgressPanel
+                  key={appBuildProgress!.revision}
+                  progress={appBuildProgress!}
+                />
+              )}
+              {showDataTab && sessionId ? (
+                <div className='relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden'>
+                  <AppDataPanel sessionId={sessionId} />
+                </div>
+              ) : null}
+            </>
           ) : (
             <div className='relative flex min-h-0 flex-1 flex-col p-3'>
               <ToolDetailDispatch />

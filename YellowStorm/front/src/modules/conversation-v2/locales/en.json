@@ -52,7 +52,9 @@
     "loadError": "Failed to load app data.",
     "refresh": "Refresh data",
     "schemaVersion": "Schema version",
-    "noTables": "No tables yet."
+    "noTables": "No tables yet.",
+    "envDev": "DEV",
+    "envProd": "PROD"
   },
   "nodepod": {
     "inBrowser": "In-browser preview",

@@ -52,7 +52,9 @@
     "loadError": "Impossible de charger les données.",
     "refresh": "Actualiser",
     "schemaVersion": "Version du schéma",
-    "noTables": "Aucune table pour le moment."
+    "noTables": "Aucune table pour le moment.",
+    "envDev": "DEV",
+    "envProd": "PROD"
   },
   "nodepod": {
     "inBrowser": "Aperçu dans le navigateur",
