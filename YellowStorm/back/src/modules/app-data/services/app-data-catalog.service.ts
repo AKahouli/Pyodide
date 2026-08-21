@@ -16,7 +16,7 @@ import {
   AppDataException,
 } from '../constants/app-data.errors';
 import type { AppDataStatus } from '../constants/app-data.types';
-import { tenantSchemaName } from '../utils/app-data-sql.util';
+import { tenantSchemaName, assertAppDataId } from '../utils/app-data-sql.util';
 
 @Injectable()
 export class AppDataCatalogService {
@@ -71,6 +71,7 @@ export class AppDataCatalogService {
   }
 
   async requireAppByAppDataId(appDataId: string): Promise<AppDataAppRow> {
+    assertAppDataId(appDataId);
     const app = await this.findByAppDataId(appDataId);
     if (!app) {
       throw new AppDataException(

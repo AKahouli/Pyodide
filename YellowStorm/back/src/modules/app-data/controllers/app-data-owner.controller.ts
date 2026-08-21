@@ -27,6 +27,7 @@ import {
 import type { AppDataEnvironment } from '../constants/app-data.constants';
 import type { AppDataEndUserGrants, AppDataEndUserStatus } from '../constants/app-data.types';
 import { assertIdentifier } from '../utils/app-data-sql.util';
+import { parseAppDataEnvironment, parsePositiveInt } from '../utils/app-data-request.util';
 
 @ApiTags('App Data Owner')
 @Controller('conversation-v2/sessions/:id/app-data')
@@ -145,12 +146,13 @@ export class AppDataOwnerController {
     @Param('environment') environment: AppDataEnvironment,
   ) {
     this.assertEnabled();
+    const env = parseAppDataEnvironment(environment);
     const ws = await this.workspaceId(sessionId);
     const app = await this.catalog.requireAppByWorkspace(ws);
-    const manifest = await this.migrations.getCurrentManifest(app.id, environment);
+    const manifest = await this.migrations.getCurrentManifest(app.id, env);
     return {
-      environment,
-      currentVersion: (await this.catalog.getEnvironment(app.id, environment))?.currentVersion ?? 0,
+      environment: env,
+      currentVersion: (await this.catalog.getEnvironment(app.id, env))?.currentVersion ?? 0,
       tables: Object.keys(manifest.tables ?? {}),
     };
   }
@@ -165,14 +167,15 @@ export class AppDataOwnerController {
   ) {
     this.assertEnabled();
     assertIdentifier(table, 'table name');
+    const env = parseAppDataEnvironment(environment);
     const ws = await this.workspaceId(sessionId);
     const app = await this.catalog.requireAppByWorkspace(ws);
     return this.query.listRows({
       appDataId: app.appDataId,
-      environment,
+      environment: env,
       table,
-      page: page ? Number(page) : 1,
-      pageSize: pageSize ? Number(pageSize) : undefined,
+      page: parsePositiveInt(page, 1),
+      pageSize: pageSize ? parsePositiveInt(pageSize, 50) : undefined,
       principal: 'yellowmind_owner',
       ownerUserId: app.ownerUserId,
       skipPolicyCheck: true,

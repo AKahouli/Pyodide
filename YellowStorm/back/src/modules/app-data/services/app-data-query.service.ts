@@ -8,6 +8,7 @@ import {
   AppDataException,
 } from '../constants/app-data.errors';
 import { assertIdentifier, quoteIdent } from '../utils/app-data-sql.util';
+import { APP_DATA_MAX_LIST_FILTERS, parsePositiveInt } from '../utils/app-data-request.util';
 import { AppDataCatalogService } from './app-data-catalog.service';
 import { AppDataMigrationService } from './app-data-migration.service';
 import { AppDataPolicyService } from './app-data-policy.service';
@@ -53,10 +54,10 @@ export class AppDataQueryService {
     }
 
     const pageSize = Math.min(
-      params.pageSize ?? this.config.get<number>('appData.defaultPageSize', 50),
+      parsePositiveInt(params.pageSize, this.config.get<number>('appData.defaultPageSize', 50)),
       this.config.get<number>('appData.maxPageSize', 200),
     );
-    const page = Math.max(1, params.page ?? 1);
+    const page = parsePositiveInt(params.page, 1);
     const offset = (page - 1) * pageSize;
 
     const manifest = await this.migrations.getCurrentManifest(app.id, params.environment);
@@ -65,10 +66,18 @@ export class AppDataQueryService {
       throw new AppDataException(AppDataErrorCode.INVALID_MANIFEST, `Unknown table: ${params.table}`);
     }
 
+    const filterEntries = Object.entries(params.filters ?? {});
+    if (filterEntries.length > APP_DATA_MAX_LIST_FILTERS) {
+      throw new AppDataException(
+        AppDataErrorCode.LIMIT_EXCEEDED,
+        `Too many filters (max ${APP_DATA_MAX_LIST_FILTERS})`,
+      );
+    }
+
     const where: string[] = [];
     const values: unknown[] = [];
     let idx = 1;
-    for (const [col, val] of Object.entries(params.filters ?? {})) {
+    for (const [col, val] of filterEntries) {
       assertIdentifier(col, 'column name');
       if (!(col in tableDef.columns)) {
         throw new AppDataException(AppDataErrorCode.INVALID_MANIFEST, `Unknown column: ${col}`);

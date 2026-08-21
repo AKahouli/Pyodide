@@ -26,6 +26,22 @@ import {
   AppDataException,
 } from '../constants/app-data.errors';
 import { normalizeAppDataRowBody } from '../utils/app-data-row-body.util';
+import { parseAppDataEnvironment, parsePositiveInt } from '../utils/app-data-request.util';
+
+const PUBLIC_CRUD_RATE_LIMIT = Number.parseInt(
+  process.env.APP_DATA_PUBLIC_RATE_LIMIT_PER_MINUTE || '120',
+  10,
+);
+
+@Public()
+@SkipResponseWrap()
+@ApiTags('App Data Public API')
+@Controller('app-data/public/:appDataId/:environment')
+@RateLimit({
+  limit: Number.isFinite(PUBLIC_CRUD_RATE_LIMIT) ? PUBLIC_CRUD_RATE_LIMIT : 120,
+  windowMs: 60_000,
+  keyPrefix: 'app-data:public:crud',
+})
 
 @Public()
 @SkipResponseWrap()
@@ -57,12 +73,10 @@ export class AppDataPublicController {
     try {
       const result = normalizeAppDataRowBody(req.body, req.headers['content-type']);
       if (Object.keys(result).length === 0) {
-        const snapshot = JSON.stringify(req.body)?.slice(0, 500) ?? String(req.body);
         this.logger.warn(
           `App Data ${action}: normalized body is empty. ` +
             `Content-Type: ${ct}, typeof req.body: ${typeof req.body}, ` +
-            `keys: [${req.body && typeof req.body === 'object' ? Object.keys(req.body).join(', ') : ''}], ` +
-            `snapshot: ${snapshot}`,
+            `keys: [${req.body && typeof req.body === 'object' ? Object.keys(req.body).join(', ') : ''}]`,
         );
       }
       return result;
@@ -88,21 +102,22 @@ export class AppDataPublicController {
     @Req() req: Request,
   ) {
     this.assertEnabled();
+    const env = parseAppDataEnvironment(environment);
     const app = await this.catalog.requireAppByAppDataId(appDataId);
     const access = await this.access.authorizeCrud({
       app,
-      environment,
+      environment: env,
       operation: 'select',
       req,
     });
     const { page, pageSize, orderBy, orderDir, ...filters } = query;
     return this.query.listRows({
       appDataId,
-      environment,
+      environment: env,
       table,
       filters,
-      page: page ? Number(page) : 1,
-      pageSize: pageSize ? Number(pageSize) : undefined,
+      page: parsePositiveInt(page, 1),
+      pageSize: pageSize ? parsePositiveInt(pageSize, 50) : undefined,
       orderBy,
       orderDir: orderDir === 'desc' ? 'desc' : 'asc',
       principal: access.principal,
@@ -120,16 +135,17 @@ export class AppDataPublicController {
     @Req() req: Request,
   ) {
     this.assertEnabled();
+    const env = parseAppDataEnvironment(environment);
     const app = await this.catalog.requireAppByAppDataId(appDataId);
     const access = await this.access.authorizeCrud({
       app,
-      environment,
+      environment: env,
       operation: 'select',
       req,
     });
     return this.query.getRow({
       appDataId,
-      environment,
+      environment: env,
       table,
       id,
       principal: access.principal,
@@ -146,10 +162,11 @@ export class AppDataPublicController {
     @Req() req: Request,
   ) {
     this.assertEnabled();
+    const env = parseAppDataEnvironment(environment);
     const app = await this.catalog.requireAppByAppDataId(appDataId);
     const access = await this.access.authorizeCrud({
       app,
-      environment,
+      environment: env,
       operation: 'insert',
       req,
     });
@@ -157,7 +174,7 @@ export class AppDataPublicController {
     return {
       row: await this.rows.insertRow({
         appDataId,
-        environment,
+        environment: env,
         table,
         row,
         principal: access.principal,
@@ -176,10 +193,11 @@ export class AppDataPublicController {
     @Req() req: Request,
   ) {
     this.assertEnabled();
+    const env = parseAppDataEnvironment(environment);
     const app = await this.catalog.requireAppByAppDataId(appDataId);
     const access = await this.access.authorizeCrud({
       app,
-      environment,
+      environment: env,
       operation: 'update',
       req,
     });
@@ -187,7 +205,7 @@ export class AppDataPublicController {
     return {
       row: await this.rows.updateRow({
         appDataId,
-        environment,
+        environment: env,
         table,
         id,
         patch,
@@ -207,17 +225,18 @@ export class AppDataPublicController {
     @Req() req: Request,
   ) {
     this.assertEnabled();
+    const env = parseAppDataEnvironment(environment);
     const app = await this.catalog.requireAppByAppDataId(appDataId);
     const access = await this.access.authorizeCrud({
       app,
-      environment,
+      environment: env,
       operation: 'delete',
       req,
     });
     return {
       row: await this.rows.deleteRow({
         appDataId,
-        environment,
+        environment: env,
         table,
         id,
         principal: access.principal,

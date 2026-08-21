@@ -14,6 +14,10 @@ import { SkipResponseWrap } from '@modules/response/decorators/skip-response-wra
 import { RateLimit } from '@modules/rate-limiter';
 import type { Request } from 'express';
 import { AppDataEndUserAuthService } from '../services/app-data-end-user-auth.service';
+import {
+  AppDataEndUserLoginDto,
+  AppDataEndUserRegisterDto,
+} from '../dto/app-data-end-user-auth.dto';
 
 @Public()
 @SkipResponseWrap()
@@ -40,13 +44,13 @@ export class AppDataPublicAuthController {
   @ApiOperation({ summary: 'Register an app end-user account' })
   async register(
     @Param('appDataId') appDataId: string,
-    @Body() body: { email?: string; password?: string; displayName?: string },
+    @Body() body: AppDataEndUserRegisterDto,
   ) {
     this.assertEnabled();
     return this.auth.register({
       appDataId,
-      email: String(body.email ?? ''),
-      password: String(body.password ?? ''),
+      email: body.email,
+      password: body.password,
       displayName: body.displayName,
     });
   }
@@ -56,13 +60,13 @@ export class AppDataPublicAuthController {
   @ApiOperation({ summary: 'Login as an app end-user' })
   async login(
     @Param('appDataId') appDataId: string,
-    @Body() body: { email?: string; password?: string },
+    @Body() body: AppDataEndUserLoginDto,
   ) {
     this.assertEnabled();
     return this.auth.login({
       appDataId,
-      email: String(body.email ?? ''),
-      password: String(body.password ?? ''),
+      email: body.email,
+      password: body.password,
     });
   }
 

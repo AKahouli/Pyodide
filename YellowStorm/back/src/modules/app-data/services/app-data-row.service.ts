@@ -116,6 +116,9 @@ export class AppDataRowService {
 
     const app = await this.catalog.requireAppByAppDataId(params.appDataId);
     const env = await this.catalog.getEnvironment(app.id, params.environment);
+    if (!env?.provisionedAt) {
+      throw new AppDataException(AppDataErrorCode.NOT_PROVISIONED, 'Environment not provisioned');
+    }
     const policyDoc = await this.policies.getPolicies(app.workspaceId, params.environment);
     if (!params.skipPolicyCheck) {
       this.policies.assertAllowed(policyDoc[params.table], 'update', params.principal, params.table);
@@ -143,7 +146,7 @@ export class AppDataRowService {
     }
     values.push(params.id);
 
-    const schemaQ = quoteIdent(env!.schemaName);
+    const schemaQ = quoteIdent(env.schemaName);
     const tableQ = quoteIdent(params.table);
     const sql = `UPDATE ${schemaQ}.${tableQ} SET ${sets.join(', ')} WHERE ${quoteIdent(idColumn)} = $${idx} RETURNING *`;
 
@@ -173,12 +176,15 @@ export class AppDataRowService {
     assertIdentifier(params.table, 'table name');
     const app = await this.catalog.requireAppByAppDataId(params.appDataId);
     const env = await this.catalog.getEnvironment(app.id, params.environment);
+    if (!env?.provisionedAt) {
+      throw new AppDataException(AppDataErrorCode.NOT_PROVISIONED, 'Environment not provisioned');
+    }
     const policyDoc = await this.policies.getPolicies(app.workspaceId, params.environment);
     if (!params.skipPolicyCheck) {
       this.policies.assertAllowed(policyDoc[params.table], 'delete', params.principal, params.table);
     }
 
-    const schemaQ = quoteIdent(env!.schemaName);
+    const schemaQ = quoteIdent(env.schemaName);
     const tableQ = quoteIdent(params.table);
     const sql = `DELETE FROM ${schemaQ}.${tableQ} WHERE ${quoteIdent(idColumn)} = $1 RETURNING *`;
     const client = await this.pool.connect();
@@ -200,9 +206,12 @@ export class AppDataRowService {
   }) {
     const app = await this.catalog.requireAppByWorkspace(params.workspaceId);
     const env = await this.catalog.getEnvironment(app.id, 'dev');
+    if (!env?.provisionedAt) {
+      throw new AppDataException(AppDataErrorCode.NOT_PROVISIONED, 'Environment not provisioned');
+    }
     assertIdentifier(params.table, 'table name');
     const limit = Math.min(params.limit ?? 5, 20);
-    const schemaQ = quoteIdent(env!.schemaName);
+    const schemaQ = quoteIdent(env.schemaName);
     const tableQ = quoteIdent(params.table);
     const sql = `SELECT * FROM ${schemaQ}.${tableQ} LIMIT $1`;
     const client = await this.pool.connect();

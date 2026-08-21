@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from '@modules/postgres/schema';
@@ -62,25 +62,29 @@ export class AppDataEndUserService {
       .from(appDataEndUsers)
       .where(eq(appDataEndUsers.appId, appId));
 
-    const summaries: AppDataEndUserSummary[] = [];
-    for (const user of users) {
-      const grantRows = await this.db
-        .select()
-        .from(appDataEndUserGrants)
-        .where(and(eq(appDataEndUserGrants.appId, appId), eq(appDataEndUserGrants.userId, user.id)))
-        .limit(1);
-      const grantRow = grantRows[0];
-      summaries.push({
+    const userIds = users.map((user) => user.id);
+    const grantRows =
+      userIds.length === 0
+        ? []
+        : await this.db
+            .select()
+            .from(appDataEndUserGrants)
+            .where(
+              and(eq(appDataEndUserGrants.appId, appId), inArray(appDataEndUserGrants.userId, userIds)),
+            );
+    const grantsByUserId = new Map(grantRows.map((row) => [row.userId, row]));
+
+    const summaries: AppDataEndUserSummary[] = users.map((user) => {
+      const grantRow = grantsByUserId.get(user.id);
+      return {
         id: user.id,
         email: user.email,
         displayName: user.displayName,
         status: user.status as AppDataEndUserStatus,
-        grants: grantRow
-          ? this.grants.toGrantsObject(grantRow)
-          : this.grants.denyAllTemplate(),
+        grants: grantRow ? this.grants.toGrantsObject(grantRow) : this.grants.denyAllTemplate(),
         createdAt: user.createdAt.toISOString(),
-      });
-    }
+      };
+    });
     return summaries.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
