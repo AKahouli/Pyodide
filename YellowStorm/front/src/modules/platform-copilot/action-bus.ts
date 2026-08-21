@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { NavigateFunction } from 'react-router-dom';
-import type { SecondBrainPageContext, SecondBrainUiTarget } from './types';
+import type { PlatformCopilotPageContext, PlatformCopilotUiTarget } from './types';
 
 const paramsSchema = z.object({
   playbookId: z.string().min(1).max(200).optional(),
@@ -27,9 +27,9 @@ const targetSchema = z.object({
 
 export type UiActionResult = { ok: true } | { ok: false; reason: 'invalid_target' | 'missing_parameter' | 'navigation_cancelled' };
 
-export function executeSecondBrainUiTarget(input: {
-  target: SecondBrainUiTarget;
-  pageContext: SecondBrainPageContext;
+export function executePlatformCopilotUiTarget(input: {
+  target: PlatformCopilotUiTarget;
+  pageContext: PlatformCopilotPageContext;
   navigate: NavigateFunction;
   confirmNavigation: () => boolean;
 }): UiActionResult {
@@ -86,7 +86,7 @@ export function executeSecondBrainUiTarget(input: {
   return { ok: true };
 }
 
-export function findUiTargets(value: unknown, depth = 0): SecondBrainUiTarget[] {
+export function findUiTargets(value: unknown, depth = 0): PlatformCopilotUiTarget[] {
   if (depth > 6 || value == null) return [];
   if (typeof value === 'string') {
     try {
@@ -100,22 +100,22 @@ export function findUiTargets(value: unknown, depth = 0): SecondBrainUiTarget[] 
   const record = value as Record<string, unknown>;
   const direct = targetSchema.safeParse(record.uiTarget);
   return [
-    ...(direct.success ? [direct.data as SecondBrainUiTarget] : []),
+    ...(direct.success ? [direct.data as PlatformCopilotUiTarget] : []),
     ...Object.values(record).flatMap((item) => findUiTargets(item, depth + 1)),
   ];
 }
 
-export function dedupeSecondBrainUiTargets(targets: SecondBrainUiTarget[]): SecondBrainUiTarget[] {
+export function dedupePlatformCopilotUiTargets(targets: PlatformCopilotUiTarget[]): PlatformCopilotUiTarget[] {
   const seen = new Set<string>();
   return targets.filter((target) => {
-    const identity = getSecondBrainUiTargetIdentity(target);
+    const identity = getPlatformCopilotUiTargetIdentity(target);
     if (seen.has(identity)) return false;
     seen.add(identity);
     return true;
   });
 }
 
-export function getSecondBrainUiTargetIdentity(target: SecondBrainUiTarget): string {
+export function getPlatformCopilotUiTargetIdentity(target: PlatformCopilotUiTarget): string {
   const { playbookId = '', executionId = '', taskId = '', operationId = '' } = target.params;
   switch (target.surface) {
     case 'playbook.list':

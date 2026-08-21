@@ -18,8 +18,8 @@ vi.mock('../utils/playbookImport', () => ({
 }));
 
 const openPanelMock = vi.hoisted(() => vi.fn());
-vi.mock('../../second-brain/secondBrainPanelStore', () => ({
-  useSecondBrainPanelStore: {
+vi.mock('../../platform-copilot/platformCopilotPanelStore', () => ({
+  usePlatformCopilotPanelStore: {
     getState: () => ({ openPanel: openPanelMock }),
   },
 }));

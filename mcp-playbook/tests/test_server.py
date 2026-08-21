@@ -114,6 +114,41 @@ async def test_create_playbook_allows_omitting_workspace_ids(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_start_playbook_execution_preserves_the_canvas_handoff(monkeypatch):
+    class BackendStub:
+        async def post(self, path, user_id, payload, idempotency_key=None):
+            assert path == "/api/v1/internal/playbook-assistant/playbooks/playbook%2F1/executions"
+            assert user_id == "user-1"
+            assert payload == {"inputContext": {"source": "Yellowmind"}, "singleStepTaskId": None}
+            assert idempotency_key == "request-1"
+            return {
+                "executionId": "execution-1",
+                "uiTarget": {
+                    "surface": "playbook.execution.details",
+                    "params": {"playbookId": "playbook/1", "executionId": "execution-1"},
+                    "effects": [{"type": "focusExecutionStatus"}],
+                },
+            }
+
+    monkeypatch.setattr(server, "backend", lambda: BackendStub())
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
+    try:
+        async with Client(mcp) as client:
+            response = await client.call_tool("start_playbook_execution", {
+                "playbook_id": "playbook/1",
+                "idempotency_key": "request-1",
+                "input_context": {"source": "Yellowmind"},
+            })
+    finally:
+        actor_context.reset(token)
+
+    result = result_dict(response)
+    assert result["data"]["executionId"] == "execution-1"
+    assert result["data"]["uiTarget"]["params"] == {"playbookId": "playbook/1", "executionId": "execution-1"}
+    assert result["meta"]["uiTarget"] == result["data"]["uiTarget"]
+
+
+@pytest.mark.asyncio
 async def test_generation_uses_the_current_trusted_turn_without_a_request_id(monkeypatch):
     class BackendStub:
         async def post(self, path, user_id, payload):

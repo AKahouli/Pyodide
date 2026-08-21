@@ -18,13 +18,16 @@ import { NewConversationPage } from '@/modules/conversation';
 import { useModelsStore } from '@/modules/models';
 import { useConversationStream } from '@/modules/conversation/hooks/useConversationStream';
 import { useConversationV2StreamConnection } from '@/modules/conversation-v2/useStream';
-import { secondBrainFeatures } from '@/config/secondBrainFeatures';
-import { SecondBrainMascot } from '@/modules/second-brain';
+import { DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admin';
+import { PlatformCopilotMascot } from '@/modules/platform-copilot';
 
 export function RootGuard() {
   const { isAuthenticated, isLoading, requiresEmailVerification, requiresProfileCompletion } = useAuth();
   const location = useLocation();
   const fetchModels = useModelsStore((state) => state.fetchModels);
+  const [platformCopilotEnabled, setPlatformCopilotEnabled] = React.useState(
+    DEFAULT_FEATURE_VISIBILITY.platformCopilot,
+  );
 
   // Keep SSE connections alive at app level so streaming persists across
   // navigation. v2 uses its own per-user pipe (one connection for all
@@ -38,6 +41,22 @@ export function RootGuard() {
       fetchModels();
     }
   }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion, fetchModels]);
+
+  React.useEffect(() => {
+    if (!isAuthenticated || requiresEmailVerification || requiresProfileCompletion) {
+      setPlatformCopilotEnabled(false);
+      return;
+    }
+    let active = true;
+    void getFeatureVisibility()
+      .then((visibility) => {
+        if (active) setPlatformCopilotEnabled(visibility.platformCopilot);
+      })
+      .catch(() => {
+        if (active) setPlatformCopilotEnabled(false);
+      });
+    return () => { active = false; };
+  }, [isAuthenticated, requiresEmailVerification, requiresProfileCompletion]);
 
   // Still loading auth state - show spinner to prevent flash of wrong content
   if (isLoading) {
@@ -75,7 +94,7 @@ export function RootGuard() {
         </header>
         <div className='flex flex-1 min-h-0 flex-col items-center  overflow-hidden'>{isIndexRoute ? <NewConversationPage /> : <Outlet />}</div>
       </SidebarInset>
-      {secondBrainFeatures.enabled && <SecondBrainMascot />}
+      {platformCopilotEnabled && <PlatformCopilotMascot />}
     </SidebarProvider>
   );
 }

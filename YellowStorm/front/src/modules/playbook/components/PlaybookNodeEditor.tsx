@@ -82,7 +82,6 @@ interface EditorDraft {
   modelId: string | null;
   disableAdvisorEvaluation: boolean;
   expectedResult: string | null;
-  deepSearch: boolean;
   dynamicReasoningEnabled: boolean;
   stepReplayMode: NonNullable<PlaybookTask['stepReplayMode']>;
 }
@@ -206,7 +205,6 @@ function buildDraftFromTask(task: PlaybookTask, t: (key: 'nodeEditor.portDefault
     modelId: task.modelId ?? null,
     disableAdvisorEvaluation: task.disableAdvisorEvaluation ?? false,
     expectedResult: task.expectedResult ?? null,
-    deepSearch: task.deepSearch ?? false,
     dynamicReasoningEnabled: task.dynamicReasoning?.enabled ?? false,
     stepReplayMode: task.stepReplayMode ?? 'live',
   };
@@ -250,7 +248,6 @@ function draftToSavePayload(
     modelId: capabilities.supportsModel ? draft.modelId : null,
     disableAdvisorEvaluation: capabilities.supportsAdvisorEvaluation ? draft.disableAdvisorEvaluation : undefined,
     expectedResult: capabilities.supportsExpectedResult ? draft.expectedResult : undefined,
-    deepSearch: capabilities.supportsDeepSearch ? draft.deepSearch : undefined,
     dynamicReasoning: capabilities.supportsDynamicReasoning
       ? { enabled: draft.dynamicReasoningEnabled }
       : undefined,
@@ -287,7 +284,6 @@ function draftToSavePayload(
   copyWhenChanged('modelId', 'modelId');
   copyWhenChanged('disableAdvisorEvaluation', 'disableAdvisorEvaluation');
   copyWhenChanged('expectedResult', 'expectedResult');
-  copyWhenChanged('deepSearch', 'deepSearch');
   copyWhenChanged('dynamicReasoningEnabled', 'dynamicReasoning');
   copyWhenChanged('stepReplayMode', 'stepReplayMode');
 
@@ -445,7 +441,6 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
     modelId: null,
     disableAdvisorEvaluation: false,
     expectedResult: null,
-    deepSearch: false,
     dynamicReasoningEnabled: false,
     stepReplayMode: 'live',
   });
@@ -1315,18 +1310,6 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                         {iteratorCandidates.length === 0 && <p className="text-xs text-muted-foreground">{t('nodeEditor.iteratorChildrenEmpty')}</p>}
                       </div>
                       {iteratorChildren.length > 0 && <p className="text-xs text-muted-foreground">{t('iterator.childCount', { count: iteratorChildren.length })}</p>}
-                    </div>
-                  </EditorSection>
-                )}
-
-                {capabilities.supportsDeepSearch && (
-                  <EditorSection title={t('nodeEditor.capabilitiesTitle')} resetKey={`${task.id}:capabilities`}>
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="space-y-1">
-                        <Label htmlFor="deep-search" className="text-sm font-medium">{t('nodeEditor.deepSearch')}</Label>
-                        <p id="deep-search-description" className="text-xs text-muted-foreground">{t('nodeEditor.deepSearchDescription')}</p>
-                      </div>
-                      <Switch id="deep-search" name="deep-search" aria-describedby="deep-search-description" checked={draft.deepSearch} onCheckedChange={(checked) => updateEditorDraft({ deepSearch: checked })} />
                     </div>
                   </EditorSection>
                 )}

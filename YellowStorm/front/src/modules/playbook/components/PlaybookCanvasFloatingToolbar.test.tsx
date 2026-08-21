@@ -166,15 +166,12 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         disabled
         onRemoveAllTasks={vi.fn()}
         taskCount={1}
-        deepSearch={false}
-        onToggleDeepSearch={vi.fn()}
       />,
     );
 
     expect(screen.getByText('toolbar.addBlankStep').closest('button')).toBeDisabled();
     expect(screen.getByText('toolbar.autoLayout').closest('button')).toBeDisabled();
     await userEvent.click(screen.getByText('toolbar.moreActions'));
-    expect(screen.getByText('floatingToolbar.deepSearchEnable').closest('[role="menuitem"]')).toHaveAttribute('data-disabled');
     expect(screen.getByText('toolbar.removeAllTasks').closest('[role="menuitem"]')).toHaveAttribute('data-disabled');
   });
 

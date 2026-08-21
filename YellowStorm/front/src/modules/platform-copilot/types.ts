@@ -1,4 +1,4 @@
-export type SecondBrainSurface =
+export type PlatformCopilotSurface =
   | 'playbook.list'
   | 'playbook.editor'
   | 'playbook.editor.assistant'
@@ -6,8 +6,8 @@ export type SecondBrainSurface =
   | 'playbook.execution.details'
   | 'playbook.execution.task';
 
-export type SecondBrainUiTarget = {
-  surface: SecondBrainSurface;
+export type PlatformCopilotUiTarget = {
+  surface: PlatformCopilotSurface;
   params: {
     playbookId?: string;
     executionId?: string;
@@ -20,7 +20,7 @@ export type SecondBrainUiTarget = {
   >;
 };
 
-export type SecondBrainPageContext = {
+export type PlatformCopilotPageContext = {
   route: string;
   module: 'playbooks' | 'executions' | 'other';
   surface: string;

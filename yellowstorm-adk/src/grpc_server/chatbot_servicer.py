@@ -2531,7 +2531,6 @@ class ChatbotServicer(
                     prompt_overrides=dict(request.prompt_overrides)
                     if getattr(request, "prompt_overrides", None)
                     else {},
-                    deep_search=getattr(request, "deep_search", False),
                 )
             )
             register_task(thread_id, bg_task)

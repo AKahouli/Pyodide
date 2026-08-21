@@ -790,7 +790,6 @@ describe('PlaybookNodeEditor', () => {
     expect(screen.getByText('nodeEditor.retryPolicy')).toBeInTheDocument();
     expect(screen.getByText('nodeEditor.interruptSettings')).toBeInTheDocument();
     expect(screen.getByText('nodeEditor.notificationSettings')).toBeInTheDocument();
-    expect(screen.queryByLabelText('nodeEditor.deepSearch')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /nodeEditor.tabs.setup/ }));
     expect(screen.getByLabelText('nodeEditor.stepTitle')).toHaveValue('Business-ready step');
@@ -814,8 +813,6 @@ describe('PlaybookNodeEditor', () => {
     });
     onSave.mockClear();
 
-    fireEvent.click(screen.getByText('nodeEditor.capabilitiesTitle'));
-    fireEvent.click(screen.getByLabelText('nodeEditor.deepSearch'));
     fireEvent.click(screen.getByRole('button', { name: /nodeEditor.tabs.quality/ }));
     fireEvent.click(screen.getByLabelText('nodeEditor.advisorEvaluation'));
 
@@ -826,7 +823,6 @@ describe('PlaybookNodeEditor', () => {
     expect(onSave).toHaveBeenCalledWith(
       'task-1',
       expect.objectContaining({
-        deepSearch: true,
         disableAdvisorEvaluation: true,
       }),
     );

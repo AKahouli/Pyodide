@@ -233,7 +233,7 @@ function releasePromptImagePreview(previewUrl: string) {
   if (previewUrl.startsWith('blob:') && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(previewUrl);
 }
 
-export function PlaybookSecondBrainPanel({
+export function PlaybookDesignerPanel({
   playbookId,
   designChatEnabled = true,
   assistantMessages,

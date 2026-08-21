@@ -35,6 +35,7 @@ import { GovernedConversationRuntimeService } from '../../governance/services/go
 import { ResponseReliabilityService } from '../services/response-reliability.service';
 import { createHash } from 'node:crypto';
 import { ConflictException } from '../../exceptions';
+import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -105,7 +106,7 @@ export class MessageController {
     });
 
     const conversation = await this.conversationService.getConversationDocument(conversationId);
-    const platformCopilot = conversation.runtimePurpose === 'platform_copilot';
+    const platformCopilot = conversation.runtimePurpose === PLATFORM_COPILOT;
     if (platformCopilot) {
       const hasRuntimeOverride = [
         dto.agentIds,
@@ -584,7 +585,7 @@ export class MessageController {
 
     const userMessage = await this.messageService.getMessageDocument(questionId);
     const conversation = await this.conversationService.getConversationDocument(conversationId);
-    const platformCopilot = conversation.runtimePurpose === 'platform_copilot';
+    const platformCopilot = conversation.runtimePurpose === PLATFORM_COPILOT;
     const pinnedAgentId = platformCopilot
       ? await this.conversationService.resolvePlatformCopilotAgent(conversation)
       : undefined;

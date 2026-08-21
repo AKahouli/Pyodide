@@ -16,7 +16,6 @@ import { PlaybookFlowService } from '../services/playbook-flow.service';
 import { PlaybookFlowExecutionService } from '../services/playbook-flow-execution.service';
 import { PlaybookFlowReplayService } from '../services/playbook-flow-replay.service';
 import { AgentService } from '@modules/agent/agent.service';
-import { SECOND_BRAIN_AGENT_SLUG } from '@modules/agent/services/playbook-assistant-connector-reconciler.service';
 import type { ExecutionDiagnosticCategory, ExecutionDiagnostics, MascotExecutionStatus } from '../interfaces/playbook-mascot.interface';
 import { PlaybookAssistantRequestService } from './playbook-assistant-request.service';
 import { PlaybookAssistantHistoryService } from './playbook-assistant-history.service';
@@ -25,6 +24,9 @@ import { randomUUID } from 'crypto';
 import { PlaybookAssistantAttachmentService } from './playbook-assistant-attachment.service';
 import { ConversationService } from '@modules/conversation/services/conversation.service';
 import { MessageService } from '@modules/conversation/services/message.service';
+import { PLATFORM_COPILOT } from '@modules/agent/constants/platform-copilot.constants';
+import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
+import { Types } from 'mongoose';
 
 const DEFAULT_OPTIMIZATION_DIMENSIONS = ['clarity', 'agent', 'tools', 'inputs', 'outputs', 'bindings', 'cost', 'latency', 'determinism'];
 
@@ -53,6 +55,7 @@ export class PlaybookAssistantService {
     private readonly attachmentService: PlaybookAssistantAttachmentService,
     private readonly conversationService: ConversationService,
     private readonly messageService: MessageService,
+    private readonly featureVisibility: FeatureVisibilityService,
   ) {}
 
   assertEnabled(): void {
@@ -61,12 +64,20 @@ export class PlaybookAssistantService {
     }
   }
 
-  async runTurn(playbookId: string, userId: string, dto: RunPlaybookAssistantTurnDto) {
+  private async assertPlatformCopilotEnabled(): Promise<void> {
     this.assertEnabled();
+    const visibility = await this.featureVisibility.getVisibility();
+    if (!visibility.platformCopilot) {
+      throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Platform Copilot is disabled');
+    }
+  }
+
+  async runTurn(playbookId: string, userId: string, dto: RunPlaybookAssistantTurnDto) {
+    await this.assertPlatformCopilotEnabled();
     const flow = await this.accessService.findAccessibleFlow(playbookId, userId, 'write');
     const definitionRevision = flow.definitionRevision ?? 0;
     this.assertRevision(definitionRevision, dto.expectedDefinitionRevision);
-    const agentId = await this.agentService.findActiveDefaultAgentIdBySlug(SECOND_BRAIN_AGENT_SLUG);
+    const agentId = await this.agentService.findActivePlatformCopilotAgentId();
     if (!agentId) {
       throw new ServiceUnavailableException(ErrorCode.AGENT_UNAVAILABLE, 'Yellowmind is unavailable');
     }
@@ -395,14 +406,14 @@ export class PlaybookAssistantService {
   }
 
   async startCurrentTurnGeneration(actor: TrustedPlaybookAssistantActor, dto: StartPlaybookGenerationDto) {
-    this.assertEnabled();
+    await this.assertPlatformCopilotEnabled();
     const text = await this.resolveCurrentTurnQuestion(actor, 'generation');
     const request = await this.requestService.claimGenerationForTurn({ actor, text });
     return this.startGeneration(request.requestId, actor, dto);
   }
 
   async runCurrentTurnModification(playbookId: string, actor: TrustedPlaybookAssistantActor, dto: RunCurrentTurnPlaybookModificationDto) {
-    this.assertEnabled();
+    await this.assertPlatformCopilotEnabled();
     const flow = await this.accessService.findAccessibleFlow(playbookId, actor.ownerId, 'write');
     const continuationId = dto.continuationId?.trim();
     let requestId: string;
@@ -460,7 +471,7 @@ export class PlaybookAssistantService {
   private async resolveCurrentTurnQuestion(actor: TrustedPlaybookAssistantActor, purpose: 'generation' | 'modification'): Promise<string> {
     const conversation = await this.conversationService.getConversationDocument(actor.conversationId);
     if (conversation.createdBy.toString() !== actor.ownerId
-      || conversation.runtimePurpose !== 'platform_copilot'
+      || conversation.runtimePurpose !== PLATFORM_COPILOT
       || conversation.pinnedAgentId?.toString() !== actor.agentId) {
       throw new ConflictException(ErrorCode.CONFLICT, `Assistant ${purpose} conversation binding does not match`);
     }
@@ -617,7 +628,15 @@ export class PlaybookAssistantService {
       dto.stepExecutionModes,
       dto.modelIdOverride,
     );
-    return { executionId: this.executionId(execution) };
+    const executionId = this.executionId(execution);
+    return {
+      executionId,
+      uiTarget: {
+        surface: 'playbook.execution.details' as const,
+        params: { playbookId, executionId },
+        effects: [{ type: 'focusExecutionStatus' as const }],
+      },
+    };
   }
 
   async searchPlaybooks(userId: string, dto: SearchPlaybooksDto) {
@@ -775,8 +794,9 @@ export class PlaybookAssistantService {
   private executionId(execution: unknown): string {
     if (execution && typeof execution === 'object') {
       const record = execution as { id?: unknown; _id?: unknown };
-      if (typeof record.id === 'string') return record.id;
-      if (record._id != null) return String(record._id);
+      const identifier = record.id ?? record._id;
+      if (typeof identifier === 'string' && identifier.trim()) return identifier.trim();
+      if (identifier instanceof Types.ObjectId) return identifier.toHexString();
     }
     throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Execution identifier is unavailable');
   }

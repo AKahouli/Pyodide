@@ -4,7 +4,6 @@ export interface PlaybookNodeCapabilities {
   requiresAgent: boolean;
   supportsModel: boolean;
   supportsDynamicReasoning: boolean;
-  supportsDeepSearch: boolean;
   supportsExpectedResult: boolean;
   supportsReference: boolean;
   supportsReplayReasoning: boolean;
@@ -19,7 +18,6 @@ const CAPABILITIES: Record<PlaybookNodeType, PlaybookNodeCapabilities> = {
     requiresAgent: true,
     supportsModel: true,
     supportsDynamicReasoning: true,
-    supportsDeepSearch: true,
     supportsExpectedResult: true,
     supportsReference: true,
     supportsReplayReasoning: true,
@@ -32,7 +30,6 @@ const CAPABILITIES: Record<PlaybookNodeType, PlaybookNodeCapabilities> = {
     requiresAgent: false,
     supportsModel: false,
     supportsDynamicReasoning: false,
-    supportsDeepSearch: false,
     supportsExpectedResult: true,
     supportsReference: true,
     supportsReplayReasoning: false,
@@ -45,7 +42,6 @@ const CAPABILITIES: Record<PlaybookNodeType, PlaybookNodeCapabilities> = {
     requiresAgent: false,
     supportsModel: false,
     supportsDynamicReasoning: false,
-    supportsDeepSearch: false,
     supportsExpectedResult: true,
     supportsReference: false,
     supportsReplayReasoning: false,
@@ -58,7 +54,6 @@ const CAPABILITIES: Record<PlaybookNodeType, PlaybookNodeCapabilities> = {
     requiresAgent: true,
     supportsModel: true,
     supportsDynamicReasoning: true,
-    supportsDeepSearch: true,
     supportsExpectedResult: false,
     supportsReference: true,
     supportsReplayReasoning: true,
@@ -71,7 +66,6 @@ const CAPABILITIES: Record<PlaybookNodeType, PlaybookNodeCapabilities> = {
     requiresAgent: false,
     supportsModel: false,
     supportsDynamicReasoning: false,
-    supportsDeepSearch: false,
     supportsExpectedResult: false,
     supportsReference: false,
     supportsReplayReasoning: false,
@@ -84,7 +78,6 @@ const CAPABILITIES: Record<PlaybookNodeType, PlaybookNodeCapabilities> = {
     requiresAgent: false,
     supportsModel: false,
     supportsDynamicReasoning: false,
-    supportsDeepSearch: false,
     supportsExpectedResult: false,
     supportsReference: false,
     supportsReplayReasoning: false,

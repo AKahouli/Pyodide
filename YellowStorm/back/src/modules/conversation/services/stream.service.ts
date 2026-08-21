@@ -41,6 +41,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { ResponseReliabilityService } from './response-reliability.service';
 import { ConversationAgentRequestBuilder, type BuiltAgentExecutionRequest } from './conversation-agent-request.builder';
+import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
 
 export interface StreamRequest {
   content: string;
@@ -843,13 +844,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           sharedAgentIds,
           groupMembers,
           request.connectorRepo?.connectorId,
-          conversation.runtimePurpose === 'platform_copilot' ? {
+          conversation.runtimePurpose === PLATFORM_COPILOT ? {
             conversationId,
             correlationId: runtimeCorrelationId,
           } : undefined,
         ),
     ]);
-    if (conversation.runtimePurpose === 'platform_copilot') {
+    if (conversation.runtimePurpose === PLATFORM_COPILOT) {
       const pinnedAgentId = conversation.pinnedAgentId?.toString();
       if (!pinnedAgentId || agents.length !== 1 || agents[0]?.id !== pinnedAgentId) {
         throw new ServiceUnavailableException(

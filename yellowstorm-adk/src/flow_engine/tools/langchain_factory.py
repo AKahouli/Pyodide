@@ -567,7 +567,6 @@ def create_langchain_tools(
     initial_components: Optional[List[dict]] = None,
     user_id: Optional[str] = None,
     workspace_ceph_paths: Optional[List[str]] = None,
-    deep_search: bool = False,
     binding_workspace_ids: Optional[List[str]] = None,
     execution_id: str = "",
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
@@ -584,7 +583,6 @@ def create_langchain_tools(
         step_connector_bindings: Optional list of connector bindings attached to this step.
         initial_components: Prior playbook source/citation components used to continue
             citation numbering and avoid duplicate source emission.
-        deep_search: When True, attach a search_relevant_documents tool via the MCP indexation server.
 
     Returns:
         Tuple of (list of StructuredTools, ToolResultCollector).
@@ -644,7 +642,6 @@ def create_langchain_tools(
             external_ids=input_files,
             session_id=session_id,
             workspace_paths=workspace_paths,
-            deep_search=deep_search,
             execution_id=execution_id,
         )
 
@@ -733,15 +730,6 @@ def create_langchain_tools(
         )
         if activate_skill_tool:
             tools.append(activate_skill_tool)
-
-    if deep_search:
-        deep_search_workspace_id = next(
-            (workspace_id for workspace_id in (binding_workspace_ids or []) if workspace_id),
-            output_workspace_id,
-        )
-        deep_search_tool = _create_deep_search_tool(deep_search_workspace_id)
-        if deep_search_tool:
-            tools.append(deep_search_tool)
 
     logger.info(
         "Created LangChain tools for playbook agent",
@@ -1627,34 +1615,6 @@ def _create_plan_tool() -> StructuredTool:
     )
 
 
-class DeepSearchInput(BaseModel):
-    query: str = Field(description="The search query string.")
-
-
-def _create_deep_search_tool(workspace_id: str) -> Optional[StructuredTool]:
-    """Create the relevant-document tool for compatible non-preflight callers."""
-    async def _deep_search(query: str) -> str:
-        from src.flow_engine.deep_search import search_relevant_documents
-
-        try:
-            result = await search_relevant_documents(query, workspace_id)
-            return json.dumps(result, ensure_ascii=False)
-        except Exception as e:
-            logger.error("deep_search_tool_failed", error=str(e))
-            return f"Deep search failed: {str(e)}"
-
-    return StructuredTool(
-        name="search_relevant_documents",
-        description=(
-            "Search for relevant documents across the knowledge base using semantic search. "
-            "Use this to find information in indexed documents by providing a natural language query."
-        ),
-        func=None,
-        coroutine=_deep_search,
-        args_schema=DeepSearchInput,
-    )
-
-
 def _format_search_result(result: Dict[str, Any]) -> str:
     """Format a SearchToolkit result dict into a readable string for the LLM."""
     if not result:
@@ -1705,7 +1665,6 @@ def _create_connector_mcp_tools(
     external_ids: Optional[List[str]] = None,
     session_id: str = "",
     workspace_paths: Optional[List[str]] = None,
-    deep_search: bool = False,
     execution_id: str = "",
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
@@ -1730,10 +1689,9 @@ def _create_connector_mcp_tools(
         fixed_params = binding.get("fixed_params", {})
         binding_auth_headers = binding.get("auth_headers") or {}
         binding_auth_env = binding.get("auth_env") or {}
-        # When deep search is off, strip the header so the MCP server hides
-        # search_relevant_documents, and filter the action below.
-        if not deep_search:
-            binding_auth_headers.pop("X-Deep-Search", None)
+        # The MCP server can hide search_relevant_documents behind the X-Deep-Search
+        # header; strip it so the gated action never surfaces to the agent.
+        binding_auth_headers.pop("X-Deep-Search", None)
         actions = (
             [
                 {
@@ -1756,10 +1714,9 @@ def _create_connector_mcp_tools(
             if raw_actions
             else []
         )
-        # When deep search is off, drop the gated MCP action so the agent
-        # never sees search_relevant_documents as a connector tool.
-        if not deep_search:
-            actions = [a for a in actions if a.get("action_key") != "search_relevant_documents"]
+        # Drop the gated MCP action so the agent never sees
+        # search_relevant_documents as a connector tool.
+        actions = [a for a in actions if a.get("action_key") != "search_relevant_documents"]
         if not actions:
             continue
 

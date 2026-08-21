@@ -102,8 +102,8 @@ function getActivityItems(components: readonly MessageComponent[]): ActivityItem
   });
 }
 
-export function SecondBrainActivity({ components, isStreaming }: Readonly<{ components: readonly MessageComponent[]; isStreaming: boolean }>) {
-  const { t } = useModuleTranslation('second-brain');
+export function PlatformCopilotActivity({ components, isStreaming }: Readonly<{ components: readonly MessageComponent[]; isStreaming: boolean }>) {
+  const { t } = useModuleTranslation('platform-copilot');
   const items = getActivityItems(components);
   if (!isStreaming && items.length === 0) return null;
 

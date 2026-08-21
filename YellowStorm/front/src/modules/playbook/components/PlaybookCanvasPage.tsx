@@ -90,7 +90,7 @@ import { ReferenceModePromptDialog, type ReferenceModePromptState, type StepRepl
 import { PlaybookIntentGhostNode } from './PlaybookIntentGhostNode';
 import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
 import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
-import { PlaybookSecondBrainPanel } from './PlaybookSecondBrainPanel';
+import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
 import { PlaybookNodeAdvisorDialog } from './PlaybookNodeAdvisorDialog';
 import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
 import { SharePlaybookDialog } from './SharePlaybookDialog';
@@ -3783,14 +3783,6 @@ function PlaybookCanvasInner() {
     setAdvisorAutopilotEnabled((playbook.advisorAutopilotEnabled ?? false) === true);
   }, [playbook?.advisorAutopilotEnabled]);
 
-  const handleToggleDeepSearch = useCallback(() => {
-    if (!id || !playbook) return;
-    const currentDeepSearch = playbook.tasks.some((t) => t.deepSearch);
-    const newValue = !currentDeepSearch;
-    updateTasks(playbook.tasks.map((t) => ({ ...t, deepSearch: newValue })));
-    toast.success(newValue ? t('floatingToolbar.deepSearchOn') : t('floatingToolbar.deepSearchOff'));
-  }, [id, playbook, updateTasks, t]);
-
   useEffect(() => {
     if (!id || !executionForCanvas || executionForCanvas.status !== 'interrupted' || executionForCanvas.waitingForHumanInput) {
       return;
@@ -4260,8 +4252,6 @@ function PlaybookCanvasInner() {
                   collapsed={toolbarCollapsed}
                   onCollapsedChange={setToolbarCollapsed}
                   minLeftOffset={TOOLBAR_MIN_LEFT_OFFSET}
-                  deepSearch={playbook.tasks.some((t) => t.deepSearch)}
-                  onToggleDeepSearch={() => { void handleToggleDeepSearch(); }}
                 />
                 </ConnectionDragContext.Provider>
               </NodeDataActionsContext.Provider>
@@ -4274,7 +4264,7 @@ function PlaybookCanvasInner() {
               />
             )}
             {shouldShowAssistant && (
-              <PlaybookSecondBrainPanel
+              <PlaybookDesignerPanel
                 playbookId={id}
                 designChatEnabled={false}
                 assistantMessages={playbookFeatures.mcpAssistantEnabled ? designerAssistantMessages : undefined}

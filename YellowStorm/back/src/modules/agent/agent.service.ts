@@ -33,6 +33,7 @@ import { normalizeWidgetSettings } from './constants/widget-default-settings';
 import { AgentRepository, CreateAgentInput, UpdateAgentInput } from './repositories/agent.repository';
 import { AgentRecord } from './repositories/agent-record.mapper';
 import { AgentRoleEmbeddingService } from './services/agent-role-embedding.service';
+import { PLATFORM_COPILOT, PLATFORM_COPILOT_AGENT_SLUG } from './constants/platform-copilot.constants';
 
 /** Agent-type slug of the orchestrating manager agent. */
 const MANAGER_SLUG = 'manager';
@@ -428,6 +429,7 @@ export class AgentService {
     if (!agent) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
+    this.assertReservedPlatformCopilotIdentity(agent, dto);
 
     if (dto.agentType) {
       const agentType = await this.agentTypeService.findById(dto.agentType);
@@ -477,6 +479,12 @@ export class AgentService {
     const agent = await this.agentRepository.findByIdDefault(agentId);
     if (!agent) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
+    }
+    if (this.isReservedPlatformCopilotAgent(agent)) {
+      throw new ForbiddenException(
+        ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY,
+        'Platform Copilot technical identity is system-reserved',
+      );
     }
 
     await this.agentRepository.deleteById(agentId);
@@ -748,7 +756,7 @@ export class AgentService {
         userId,
         this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
       );
-      if (agent.agentTypeSlug === 'platform_copilot' && runtimeContext) {
+      if (agent.agentTypeSlug === PLATFORM_COPILOT && runtimeContext) {
         for (const binding of connectorBindings) {
           binding.auth_headers = {
             ...((binding.auth_headers as Record<string, string> | undefined) ?? {}),
@@ -1464,27 +1472,28 @@ export class AgentService {
     }
   }
 
-  async listActivePlatformCopilotAgentOptions(): Promise<Array<{ id: string; name: string; description?: string; agentTypeName?: string; model?: string }>> {
-    const agents = await this.agentRepository.findActiveDefaultsByTypeSlug('platform_copilot');
-    const hydrated = await this.hydrate(agents);
-    return hydrated.map((agent) => {
-      const agentType = agent.agentType as unknown as { name?: string } | undefined;
-      return { id: agent._id as string, name: agent.name as string, description: (agent.description as string) || undefined, agentTypeName: agentType?.name, model: agent.llmModel as string | undefined };
-    });
+  async findActivePlatformCopilotAgentId(): Promise<string | null> {
+    return this.agentRepository.findActiveDefaultIdBySlugAndType(PLATFORM_COPILOT_AGENT_SLUG, PLATFORM_COPILOT);
   }
 
-  async assertActivePlatformCopilotAgent(agentId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(agentId)) {
-      throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected platform copilot agent is invalid');
-    }
-    const exists = await this.agentRepository.existsActiveDefaultByTypeSlug(agentId, 'platform_copilot');
-    if (!exists) {
-      throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected agent must be an active platform copilot');
-    }
+  private isReservedPlatformCopilotAgent(agent: AgentRecord): boolean {
+    return agent.isDefault
+      && agent.slug === PLATFORM_COPILOT_AGENT_SLUG
+      && agent.agentTypeSlug === PLATFORM_COPILOT;
   }
 
-  async findActiveDefaultAgentIdBySlug(slug: string): Promise<string | null> {
-    return this.agentRepository.findActiveDefaultIdBySlug(slug);
+  private assertReservedPlatformCopilotIdentity(agent: AgentRecord, dto: UpdateAgentDto): void {
+    if (!this.isReservedPlatformCopilotAgent(agent)) return;
+    const changesIdentity = (dto.slug !== undefined && dto.slug !== PLATFORM_COPILOT_AGENT_SLUG)
+      || (dto.agentType !== undefined && dto.agentType !== agent.agentType)
+      || dto.isActive === false
+      || dto.isDefaultForType === false;
+    if (changesIdentity) {
+      throw new ForbiddenException(
+        ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY,
+        'Platform Copilot technical identity is system-reserved',
+      );
+    }
   }
 
   async listPlaybookPlannerAgentOptions(): Promise<PlaybookPlannerAgentOption[]> {

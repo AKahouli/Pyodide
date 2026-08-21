@@ -27,15 +27,12 @@ import { GuardrailsModule } from '../guardrails/guardrails.module';
 import { ConversationModule } from '../conversation/conversation.module';
 import { AgentTaskExecutionService } from './services/agent-task-execution.service';
 import { UsageModule } from '../usage/usage.module';
-import playbookFlowConfig from '@config/playbook-flow.config';
-import { PlaybookAssistantConnectorReconcilerService } from './services/playbook-assistant-connector-reconciler.service';
 import { AgentRepositoryModule } from './repositories/agent-repository.module';
 
 @Module({
   imports: [
     ConfigModule,
     ConfigModule.forFeature(a2aAdminConfig),
-    ConfigModule.forFeature(playbookFlowConfig),
     MongooseModule.forFeature([
       { name: SharedAgent.name, schema: SharedAgentSchema },
     ]),
@@ -54,7 +51,7 @@ import { AgentRepositoryModule } from './repositories/agent-repository.module';
     AgentRepositoryModule,
   ],
   controllers: [AgentController, PublicAgentController, AdminAgentController, AgentA2AController, AgentShareController],
-  providers: [AgentService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, PlaybookAssistantConnectorReconcilerService,AgentConnectorRuntimeService],
+  providers: [AgentService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService],
   exports: [
     AgentService,
     AgentShareService,

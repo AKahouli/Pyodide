@@ -372,7 +372,6 @@ export interface PlaybookTask {
   expectedResult?: string | null;
   disableAdvisorEvaluation?: boolean;
   advisorOptimizedAt?: string | null;
-  deepSearch?: boolean;
   dynamicReasoning?: { enabled: boolean };
 }
 
@@ -1122,7 +1121,6 @@ export interface Playbook {
   controlEdges?: ControlEdge[];
   dataBindings?: DataBinding[];
   settings?: FlowSettings;
-  deepSearch?: boolean;
 }
 
 export interface CloneShareResult {
@@ -1599,7 +1597,6 @@ export interface PlaybookExecution {
   routerDecisions?: RouterDecision[];
   dynamicReasoningAttempts?: DynamicReasoningAttempt[];
   playbookExecutionSettings?: Record<string, unknown>;
-  deepSearch?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -2186,7 +2183,6 @@ export interface CreatePlaybookData {
   name: string;
   description?: string;
   workspaces?: string[];
-  deepSearch?: boolean;
 }
 
 export interface GeneratePlaybookData {
@@ -2276,7 +2272,6 @@ export interface UpdatePlaybookData {
   clientMutationId?: string;
   assistantOperationId?: string;
   assistantOperationTarget?: 'canonical' | 'advisor_preview';
-  deepSearch?: boolean;
 }
 
 export interface ExecutePlaybookData {
@@ -2916,7 +2911,6 @@ export interface FlowNode {
   retryPolicy?: RetryPolicy;
   hitlPolicy?: HitlPolicy;
   modelId?: string;
-  deepSearch?: boolean;
   dynamicReasoning?: { enabled: boolean };
   metadata?: Record<string, unknown>;
 }
@@ -3030,7 +3024,6 @@ export interface UpdateFlowData {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
-  deepSearch?: boolean;
   expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
@@ -3059,7 +3052,6 @@ export interface PlaybookDeltaPatchFields {
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
   workspaces?: string[];
-  deepSearch?: boolean;
 }
 
 export interface PatchPlaybookFlowDeltaData {

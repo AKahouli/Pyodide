@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { dedupeSecondBrainUiTargets, executeSecondBrainUiTarget, findUiTargets, getSecondBrainUiTargetIdentity } from './action-bus';
-import type { SecondBrainPageContext } from './types';
+import { dedupePlatformCopilotUiTargets, executePlatformCopilotUiTarget, findUiTargets, getPlatformCopilotUiTargetIdentity } from './action-bus';
+import type { PlatformCopilotPageContext } from './types';
 
-const context: SecondBrainPageContext = {
+const context: PlatformCopilotPageContext = {
   route: '/playbooks',
   module: 'playbooks',
   surface: 'playbook.list',
@@ -12,10 +12,10 @@ const context: SecondBrainPageContext = {
   contextVersion: 1,
 };
 
-describe('second brain action bus', () => {
+describe('platform copilot action bus', () => {
   it('resolves allowlisted semantic targets to local routes', () => {
     const navigate = vi.fn();
-    expect(executeSecondBrainUiTarget({
+    expect(executePlatformCopilotUiTarget({
       target: { surface: 'playbook.execution.task', params: { playbookId: 'p/1', executionId: 'e/1', taskId: 't/1' } },
       pageContext: context,
       navigate,
@@ -26,7 +26,7 @@ describe('second brain action bus', () => {
 
   it('rejects unknown surfaces and arbitrary route fields', () => {
     const navigate = vi.fn();
-    const result = executeSecondBrainUiTarget({
+    const result = executePlatformCopilotUiTarget({
       target: { surface: 'external.url', params: {}, url: 'https://example.com' } as never,
       pageContext: context,
       navigate,
@@ -38,7 +38,7 @@ describe('second brain action bus', () => {
 
   it('preserves unsaved changes when the user cancels navigation', () => {
     const navigate = vi.fn();
-    const result = executeSecondBrainUiTarget({
+    const result = executePlatformCopilotUiTarget({
       target: { surface: 'playbook.editor', params: { playbookId: 'p1' } },
       pageContext: { ...context, hasUnsavedChanges: true },
       navigate,
@@ -50,7 +50,7 @@ describe('second brain action bus', () => {
 
   it('opens an operation-owned draft in the Canvas assistant', () => {
     const navigate = vi.fn();
-    const result = executeSecondBrainUiTarget({
+    const result = executePlatformCopilotUiTarget({
       target: {
         surface: 'playbook.editor.assistant',
         params: { playbookId: 'p1', operationId: 'operation/1' },
@@ -71,7 +71,7 @@ describe('second brain action bus', () => {
 
   it('deduplicates equivalent destinations while preserving distinct operations', () => {
     const editor = { surface: 'playbook.editor' as const, params: { playbookId: 'p1' } };
-    const targets = dedupeSecondBrainUiTargets([
+    const targets = dedupePlatformCopilotUiTargets([
       editor,
       { ...editor, effects: [{ type: 'highlightTask', taskId: 'task-1' }] },
       { surface: 'playbook.editor.assistant', params: { playbookId: 'p1', operationId: 'op1' } },
@@ -80,7 +80,7 @@ describe('second brain action bus', () => {
 
     expect(targets).toHaveLength(4);
     expect(targets[0]).toBe(editor);
-    expect(targets.map(getSecondBrainUiTargetIdentity)).toEqual([
+    expect(targets.map(getPlatformCopilotUiTargetIdentity)).toEqual([
       '["playbook.editor","p1",[]]',
       '["playbook.editor","p1",[{"type":"highlightTask","taskId":"task-1"}]]',
       '["playbook.editor.assistant","p1","op1",[]]',
@@ -90,7 +90,7 @@ describe('second brain action bus', () => {
 
   it('rejects the removed selectTab effect instead of silently dropping it', () => {
     const navigate = vi.fn();
-    expect(executeSecondBrainUiTarget({
+    expect(executePlatformCopilotUiTarget({
       target: {
         surface: 'playbook.execution.details',
         params: { playbookId: 'p1', executionId: 'e1' },

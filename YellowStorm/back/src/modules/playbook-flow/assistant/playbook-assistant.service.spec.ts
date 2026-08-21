@@ -1,9 +1,11 @@
 import { PlaybookAssistantService } from './playbook-assistant.service';
+import { Types } from 'mongoose';
 
 describe('PlaybookAssistantService.runTurn', () => {
   const createService = (overrides: {
     constructionStatus?: Record<string, unknown>;
     assessment?: Record<string, unknown>;
+    platformCopilotEnabled?: boolean;
   } = {}) => {
     const accessService = { findAccessibleFlow: jest.fn().mockResolvedValue({ definitionRevision: 7 }) };
     const constructionService = {
@@ -20,7 +22,7 @@ describe('PlaybookAssistantService.runTurn', () => {
         lastSequence: 1,
       }),
     };
-    const agentService = { findActiveDefaultAgentIdBySlug: jest.fn().mockResolvedValue('507f1f77bcf86cd799439011') };
+    const agentService = { findActivePlatformCopilotAgentId: jest.fn().mockResolvedValue('507f1f77bcf86cd799439011') };
     const requestService = {
       claimTurn: jest.fn().mockResolvedValue({
         replay: false,
@@ -112,6 +114,7 @@ describe('PlaybookAssistantService.runTurn', () => {
       findByAssistantOperationId: jest.fn(),
       removeAssistantDraftIfUnchanged: jest.fn().mockResolvedValue(true),
     };
+    const executionService = { start: jest.fn().mockResolvedValue({ id: 'execution-1' }) };
     const intentService = { assessDesign: jest.fn().mockResolvedValue(overrides.assessment ?? {
       status: 'ready_for_review',
       detectedIntent: 'Add a review task',
@@ -129,6 +132,9 @@ describe('PlaybookAssistantService.runTurn', () => {
       .mockResolvedValueOnce({
         conversationId: 'conversation-1', conversationType: 'user', senderId: 'user-1', content: 'Build lead generation',
       }) };
+    const featureVisibility = {
+      getVisibility: jest.fn().mockResolvedValue({ platformCopilot: overrides.platformCopilotEnabled ?? true }),
+    };
     const service = new PlaybookAssistantService(
       { mcpAssistantEnabled: true } as any,
       {} as any,
@@ -136,7 +142,7 @@ describe('PlaybookAssistantService.runTurn', () => {
       constructionService as any,
       {} as any,
       flowService as any,
-      {} as any,
+      executionService as any,
       {} as any,
       agentService as any,
       requestService as any,
@@ -145,9 +151,63 @@ describe('PlaybookAssistantService.runTurn', () => {
       attachmentService as any,
       conversationService as any,
       messageService as any,
+      featureVisibility as any,
     );
-    return { service, accessService, constructionService, flowService, agentService, requestService, historyService, intentService, attachmentService, conversationService, messageService };
+    return { service, accessService, constructionService, flowService, executionService, agentService, requestService, historyService, intentService, attachmentService, conversationService, messageService, featureVisibility };
   };
+
+  it('returns a focused canvas handoff when it starts an execution', async () => {
+    const { service, executionService } = createService();
+
+    await expect(service.startExecution('playbook-1', 'user-1', {
+      inputContext: { source: 'Yellowmind' },
+    })).resolves.toEqual({
+      executionId: 'execution-1',
+      uiTarget: {
+        surface: 'playbook.execution.details',
+        params: { playbookId: 'playbook-1', executionId: 'execution-1' },
+        effects: [{ type: 'focusExecutionStatus' }],
+      },
+    });
+    expect(executionService.start).toHaveBeenCalledWith(
+      'playbook-1',
+      'user-1',
+      { source: 'Yellowmind' },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
+  });
+
+  it('normalizes the runtime Mongoose ObjectId into the execution handoff', async () => {
+    const { service, executionService } = createService();
+    const executionId = new Types.ObjectId();
+    executionService.start.mockResolvedValueOnce({ id: executionId });
+
+    await expect(service.startExecution('playbook-1', 'user-1', {})).resolves.toEqual({
+      executionId: executionId.toHexString(),
+      uiTarget: {
+        surface: 'playbook.execution.details',
+        params: { playbookId: 'playbook-1', executionId: executionId.toHexString() },
+        effects: [{ type: 'focusExecutionStatus' }],
+      },
+    });
+  });
+
+  it('rejects unsupported execution identifier shapes', async () => {
+    const { service, executionService } = createService();
+    executionService.start.mockResolvedValueOnce({ id: { toString: () => 'not-an-object-id' } });
+
+    await expect(service.startExecution('playbook-1', 'user-1', {}))
+      .rejects.toThrow('Execution identifier is unavailable');
+  });
 
   it('routes a design turn directly through assessment and construction', async () => {
     const { service, intentService, constructionService } = createService();
@@ -165,6 +225,17 @@ describe('PlaybookAssistantService.runTurn', () => {
     });
     expect(intentService.assessDesign).toHaveBeenCalledTimes(1);
     expect(constructionService.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a design turn when Platform Copilot visibility is disabled', async () => {
+    const { service, accessService, agentService } = createService({ platformCopilotEnabled: false });
+
+    await expect(service.runTurn('playbook-1', 'user-1', {
+      message: 'Add a review task',
+      expectedDefinitionRevision: 7,
+    })).rejects.toThrow('Platform Copilot is disabled');
+    expect(accessService.findAccessibleFlow).not.toHaveBeenCalled();
+    expect(agentService.findActivePlatformCopilotAgentId).not.toHaveBeenCalled();
   });
 
   it('authorizes read access before returning server-owned history', async () => {

@@ -341,24 +341,6 @@ describe('AgentService connector skill inheritance', () => {
     expect(binding.auth_headers).not.toHaveProperty('X-YellowStorm-Tenant-Id');
   });
 
-  it('accepts only active default platform-copilot agents for global copilot settings', async () => {
-    const { service, agentRepository } = createService();
-    const agentId = new Types.ObjectId().toString();
-    agentRepository.existsActiveDefaultByTypeSlug.mockResolvedValue(true);
-
-    await expect(service.assertActivePlatformCopilotAgent(agentId)).resolves.toBeUndefined();
-    expect(agentRepository.existsActiveDefaultByTypeSlug).toHaveBeenCalledWith(agentId, 'platform_copilot');
-  });
-
-  it('rejects a normal active default agent as the global copilot', async () => {
-    const { service, agentRepository } = createService();
-    const agentId = new Types.ObjectId().toString();
-    agentRepository.existsActiveDefaultByTypeSlug.mockResolvedValue(false);
-
-    await expect(service.assertActivePlatformCopilotAgent(agentId))
-      .rejects.toThrow('must be an active platform copilot');
-  });
-
   it('resolves the mono-agent directly from the DB even though it is not part of the user\'s roster', async () => {
     const { service, agentRepository, agentTypeService } = createService();
 
@@ -910,5 +892,63 @@ describe('AgentService connector skill inheritance', () => {
       expect.objectContaining({ name: 'General Assistant', model: 'general-model' }),
       expect.objectContaining({ name: 'Planner', model: 'planner-model' }),
     ]);
+  });
+
+  it('rejects technical identity changes for the reserved Platform Copilot Agent', async () => {
+    const { service, agentRepository } = createService();
+    const reserved = makeRecord({
+      slug: 'platform-copilot',
+      agentTypeSlug: 'platform_copilot',
+      isDefault: true,
+      isDefaultForType: true,
+    });
+    agentRepository.findByIdDefault.mockResolvedValue(reserved);
+
+    await expect(service.updateDefault(reserved._id, { isActive: false }))
+      .rejects.toThrow('technical identity is system-reserved');
+    await expect(service.updateDefault(reserved._id, { slug: 'renamed' }))
+      .rejects.toThrow('technical identity is system-reserved');
+    expect(agentRepository.updateById).not.toHaveBeenCalled();
+  });
+
+  it('rejects deletion of the reserved Platform Copilot Agent', async () => {
+    const { service, agentRepository } = createService();
+    const reserved = makeRecord({
+      slug: 'platform-copilot',
+      agentTypeSlug: 'platform_copilot',
+      isDefault: true,
+      isDefaultForType: true,
+    });
+    agentRepository.findByIdDefault.mockResolvedValue(reserved);
+
+    await expect(service.deleteDefault(reserved._id))
+      .rejects.toThrow('technical identity is system-reserved');
+    expect(agentRepository.deleteById).not.toHaveBeenCalled();
+  });
+
+  it('allows capability edits on the reserved Platform Copilot Agent', async () => {
+    const { service, agentRepository, agentTypeService, skillService, connectorService } = createService();
+    const reserved = makeRecord({
+      slug: 'platform-copilot',
+      agentTypeSlug: 'platform_copilot',
+      isDefault: true,
+      isDefaultForType: true,
+    });
+    const updated = { ...reserved, instruction: 'Admin-managed instruction' };
+    agentRepository.findByIdDefault.mockResolvedValue(reserved);
+    agentRepository.updateById.mockResolvedValue(updated);
+    agentTypeService.getManyForHydration.mockResolvedValue(new Map([[
+      reserved.agentType,
+      { id: reserved.agentType, name: 'Platform Copilot', slug: 'platform_copilot', skills: [] },
+    ]]));
+    skillService.findByIds.mockResolvedValue([]);
+    connectorService.findByIds.mockResolvedValue([]);
+
+    await expect(service.updateDefault(reserved._id, { instruction: 'Admin-managed instruction' }))
+      .resolves.toEqual(expect.objectContaining({ instruction: 'Admin-managed instruction' }));
+    expect(agentRepository.updateById).toHaveBeenCalledWith(
+      reserved._id,
+      expect.objectContaining({ instruction: 'Admin-managed instruction' }),
+    );
   });
 });

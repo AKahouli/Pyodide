@@ -193,6 +193,7 @@ export interface FeatureVisibility {
   appMarketplace: boolean;
   worky: boolean;
   agents: boolean;
+  platformCopilot: boolean;
 }
 
 export interface CorsOriginEntry {
@@ -1741,12 +1742,6 @@ export interface ComposerSuggestionSettings {
 export interface ConversationSettingsResponse { composerSuggestions: ComposerSuggestionSettings; updatedAt?: string; }
 export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'>;
 export interface ConversationSettingsAgentOption { id: string; name: string; description?: string; agentTypeName?: string; model?: string; }
-
-// ===== Copilot Assistant =====
-
-export interface CopilotAssistantSettingsResponse { agentId: string | null; updatedAt?: string; }
-export type UpdateCopilotAssistantSettingsRequest = Pick<CopilotAssistantSettingsResponse, 'agentId'>;
-export interface CopilotAssistantAgentOption { id: string; name: string; description?: string; agentTypeName?: string; model?: string; }
 
 // ===== Team Auto-Builder =====
 

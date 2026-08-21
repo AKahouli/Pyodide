@@ -104,55 +104,6 @@ export class AgentRepository {
     return rec;
   }
 
-  async upsertDefaultSystemAgent(input: CreateAgentInput): Promise<AgentRecord> {
-    const id = await this.db.transaction(async (tx: Tx) => {
-      const existingBeforeInsert = await tx.select({ id: agents.id }).from(agents)
-        .where(and(eq(agents.slug, input.slug), eq(agents.isDefault, true))).limit(1);
-      await tx.insert(agents).values({
-        id: input.id,
-        name: input.name,
-        slug: input.slug,
-        role: input.role,
-        description: input.description,
-        temperature: input.temperature,
-        llmModel: input.llmModel ?? null,
-        email: input.email ?? null,
-        instruction: input.instruction,
-        ignorePrePrompt: input.ignorePrePrompt,
-        agentTypeId: input.agentType,
-        agentTypeSlug: input.agentTypeSlug,
-        enableTemporaryChildAgents: input.enable_temporary_child_agents,
-        maxTemporaryChildAgents: input.max_temporary_child_agents,
-        isDefault: true,
-        isActive: input.isActive,
-        isDefaultForType: input.isDefaultForType,
-        createdBy: input.createdBy,
-        guardrails: input.guardrails,
-        deploymentSettings: input.deploymentSettings,
-      }).onConflictDoNothing();
-
-      const matches = await tx.select({ id: agents.id }).from(agents)
-        .where(and(eq(agents.slug, input.slug), eq(agents.isDefault, true))).limit(1);
-      if (matches.length === 0) {
-        throw new Error(`AgentRepository.upsertDefaultSystemAgent: slug ${input.slug} conflicts with another agent identity`);
-      }
-      const canonicalId = trim24(matches[0].id);
-      await tx.update(agents).set({
-        agentTypeId: input.agentType,
-        agentTypeSlug: input.agentTypeSlug,
-        isDefaultForType: input.isDefaultForType,
-        updatedAt: new Date(),
-      }).where(eq(agents.id, canonicalId));
-      if (existingBeforeInsert.length === 0) {
-        await this.replaceJunction(tx, canonicalId, input);
-      }
-      return canonicalId;
-    });
-    const record = await this.findById(id);
-    if (!record) throw new Error(`AgentRepository.upsertDefaultSystemAgent: row ${id} not found after upsert`);
-    return record;
-  }
-
   async findById(id: string): Promise<AgentRecord | null> {
     return this.one(eq(agents.id, id));
   }
@@ -228,31 +179,47 @@ export class AgentRepository {
     return rows.length > 0;
   }
 
-  async existsActiveDefaultByTypeSlug(id: string, agentTypeSlug: string): Promise<boolean> {
-    const rows = await this.db.select({ id: agents.id }).from(agents)
-      .where(and(
-        eq(agents.id, id),
-        eq(agents.agentTypeSlug, agentTypeSlug),
-        eq(agents.isDefault, true),
-        eq(agents.isActive, true),
-      )).limit(1);
-    return rows.length > 0;
-  }
+  async createDefaultSystemAgentIfMissing(input: CreateAgentInput): Promise<AgentRecord> {
+    const id = await this.db.transaction(async (tx: Tx) => {
+      const inserted = await tx.insert(agents).values({
+        id: input.id,
+        name: input.name,
+        slug: input.slug,
+        role: input.role,
+        description: input.description,
+        temperature: input.temperature,
+        llmModel: input.llmModel ?? null,
+        email: input.email ?? null,
+        instruction: input.instruction,
+        ignorePrePrompt: input.ignorePrePrompt,
+        agentTypeId: input.agentType,
+        agentTypeSlug: input.agentTypeSlug,
+        enableTemporaryChildAgents: input.enable_temporary_child_agents,
+        maxTemporaryChildAgents: input.max_temporary_child_agents,
+        isDefault: true,
+        isActive: true,
+        isDefaultForType: true,
+        createdBy: input.createdBy,
+        guardrails: input.guardrails,
+        deploymentSettings: input.deploymentSettings,
+      }).onConflictDoNothing().returning({ id: agents.id });
 
-  async findActiveDefaultsByTypeSlug(agentTypeSlug: string): Promise<AgentRecord[]> {
-    const rows = await this.db.select().from(agents)
-      .where(and(
-        eq(agents.agentTypeSlug, agentTypeSlug),
-        eq(agents.isDefault, true),
-        eq(agents.isActive, true),
-      )).orderBy(asc(agents.name));
-    return this.assemble(rows);
-  }
+      if (inserted.length > 0) {
+        const insertedId = trim24(inserted[0].id);
+        await this.insertJunctions(tx, insertedId, input);
+        return insertedId;
+      }
 
-  async findActiveDefaultIdBySlug(slug: string): Promise<string | null> {
-    const rows = await this.db.select({ id: agents.id }).from(agents)
-      .where(and(eq(agents.slug, slug), eq(agents.isDefault, true), eq(agents.isActive, true))).limit(1);
-    return rows.length ? trim24(rows[0].id) : null;
+      const existing = await tx.select({ id: agents.id }).from(agents)
+        .where(eq(agents.slug, input.slug)).limit(1);
+      if (existing.length === 0) {
+        throw new Error(`AgentRepository.createDefaultSystemAgentIfMissing: slug ${input.slug} conflicts with another agent identity`);
+      }
+      return trim24(existing[0].id);
+    });
+    const record = await this.findById(id);
+    if (!record) throw new Error(`AgentRepository.createDefaultSystemAgentIfMissing: row ${id} not found after insert`);
+    return record;
   }
 
   async findActiveDefaultIdBySlugAndType(slug: string, agentTypeSlug: string): Promise<string | null> {
@@ -357,13 +324,6 @@ export class AgentRepository {
     return this.assemble(rows);
   }
 
-  async pullConnectorFromAllExcept(connectorId: string, exceptAgentIds: string[]): Promise<void> {
-    await this.db.transaction(async (tx: Tx) => {
-      await tx.delete(agentConnectors).where(and(eq(agentConnectors.connectorId, connectorId), notInArray(agentConnectors.agentId, exceptAgentIds)));
-      await tx.delete(agentConnectorActions).where(and(eq(agentConnectorActions.connectorId, connectorId), notInArray(agentConnectorActions.agentId, exceptAgentIds)));
-    });
-  }
-
   /** Remove a connector (and its action selections) from every agent except the given ids. */
   async pullConnectorFromAgentsExcept(connectorId: string, exceptAgentIds: string[]): Promise<void> {
     await this.db.transaction(async (tx: Tx) => {
@@ -378,12 +338,6 @@ export class AgentRepository {
   async setRoleEmbedding(id: string, embedding: number[]): Promise<void> {
     const literal = `[${embedding.join(',')}]`;
     await this.db.execute(sql`UPDATE agents SET role_embedding = ${literal}::halfvec WHERE id = ${id}`);
-  }
-
-  async findIdsByInstructionLike(pattern: string, exceptAgentIds: string[]): Promise<Array<{ id: string; instruction: string }>> {
-    const rows = await this.db.select({ id: agents.id, instruction: agents.instruction }).from(agents)
-      .where(and(ilike(agents.instruction, pattern), notInArray(agents.id, exceptAgentIds)));
-    return rows.map((r) => ({ id: trim24(r.id), instruction: r.instruction }));
   }
 
   // ---- internals ----

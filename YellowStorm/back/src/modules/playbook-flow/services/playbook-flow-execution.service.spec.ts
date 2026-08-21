@@ -74,30 +74,6 @@ describe('buildGrpcNodeMetadata', () => {
       { id: 'user-rule', createdBy: 'user', enabled: true },
     ]);
   });
-
-  it('emits deep_search: true when node.deepSearch is true', () => {
-    const metadata = buildGrpcNodeMetadata(
-      { deepSearch: true },
-      {},
-    );
-    expect(metadata.deep_search).toBe(true);
-  });
-
-  it('emits deep_search: false when node.deepSearch is false', () => {
-    const metadata = buildGrpcNodeMetadata(
-      { deepSearch: false },
-      {},
-    );
-    expect(metadata.deep_search).toBe(false);
-  });
-
-  it('overrides stale metadata.deep_search: true when toggle is off', () => {
-    const metadata = buildGrpcNodeMetadata(
-      { deepSearch: false, metadata: { deep_search: true } },
-      {},
-    );
-    expect(metadata.deep_search).toBe(false);
-  });
 });
 
 describe('PlaybookFlowExecutionService start preflight', () => {

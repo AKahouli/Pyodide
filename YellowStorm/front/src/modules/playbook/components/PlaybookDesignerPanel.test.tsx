@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PlaybookSecondBrainPanel as PlaybookDesignerPanel } from './PlaybookSecondBrainPanel';
+import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
 import type { DesignMessage, HitlFeedbackScope, IntentSuggestionHistoryEntry, InterruptType, Playbook, PlaybookExecution, PlaybookIntentDesignResponse, PlaybookIntentSuggestion } from '../types';
 
 type StoreSnapshot = {
@@ -252,7 +252,7 @@ function createDeferred() {
   return { promise, resolve };
 }
 
-describe('PlaybookSecondBrainPanel HITL feedback scope', () => {
+describe('PlaybookDesignerPanel HITL feedback scope', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     isDesigning = false;

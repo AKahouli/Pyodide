@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { SecondBrainHistoryDialog } from './SecondBrainHistoryDialog';
+import { PlatformCopilotHistoryDialog } from './PlatformCopilotHistoryDialog';
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
@@ -16,11 +16,11 @@ vi.mock('@/modules/localization', () => ({
   }),
 }));
 
-describe('SecondBrainHistoryDialog', () => {
+describe('PlatformCopilotHistoryDialog', () => {
   it('filters history and selects a conversation', async () => {
     const onSelect = vi.fn().mockResolvedValue(true);
     const onOpenChange = vi.fn();
-    render(<SecondBrainHistoryDialog
+    render(<PlatformCopilotHistoryDialog
       open
       onOpenChange={onOpenChange}
       activeConversationId='conversation-1'

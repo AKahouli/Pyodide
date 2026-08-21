@@ -127,64 +127,6 @@ export class ConnectorService {
     return connector ? this.toResponse(connector) : null;
   }
 
-  async reconcilePlaybookMcpSystemConnector(
-    createdBy: string,
-    serverUrl: string,
-    tools: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>,
-  ): Promise<IConnectorResponse> {
-    const existing = await this.connectorModel
-      .findOne({ slug: 'playbook-mcp', isSystem: true })
-      .lean()
-      .exec();
-    const enabledByKey = new Map(
-      (existing?.actions ?? []).map((action) => [action.key, action.isEnabled !== false]),
-    );
-    const actions = this.normalizeConnectorActions(tools.map((tool) => ({
-      key: tool.name,
-      label: this.humanizeToolName(tool.name),
-      description: tool.description ?? '',
-      parameterSchema: tool.inputSchema ?? {},
-      outputSchema: {},
-      safety: 'read' as const,
-      supportsBatch: false,
-      supportsIteration: false,
-      isEnabled: enabledByKey.get(tool.name) ?? true,
-    })));
-    const connector = await this.connectorModel.findOneAndUpdate(
-      { slug: 'playbook-mcp', isSystem: true },
-      {
-        $set: {
-          name: 'Playbook MCP',
-          description: 'System connector for canonical Playbook inspection and construction.',
-          authType: 'token',
-          authSourceType: 'server_config',
-          runtimeAuthConfig: { secretKey: 'playbook_mcp_ingress' },
-          mcpTransportType: 'streamable_http',
-          mcpServerUrl: serverUrl,
-          mcpServerConfig: {},
-          dynamicHeaders: [{ headerName: 'X-YellowStorm-User-Id', source: DynamicHeaderSource.USER_ID, enabled: true }],
-          actions,
-          isActive: true,
-          isSystem: true,
-          isHidden: true,
-        },
-        $setOnInsert: {
-          slug: 'playbook-mcp',
-          createdBy: new Types.ObjectId(createdBy),
-          icon: '',
-          color: '',
-          iconColor: 'light',
-          categoryId: null,
-          authConfigSchema: {},
-          connectedAppKey: '',
-          referencedSkillIds: [],
-        },
-      },
-      { upsert: true, new: true, runValidators: true },
-    ).exec();
-    return this.toResponse(connector);
-  }
-
   async findByIds(ids: string[]): Promise<IConnectorResponse[]> {
     if (!ids.length) return [];
 

@@ -7,6 +7,7 @@ import { RootGuard } from './RootGuard';
 
 const useAuthMock = vi.hoisted(() => vi.fn());
 const fetchModelsMock = vi.hoisted(() => vi.fn());
+const getFeatureVisibilityMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/modules/auth/useAuth', () => ({ useAuth: useAuthMock }));
 vi.mock('@/modules/models', () => ({
@@ -23,6 +24,13 @@ vi.mock('@/components/ui/sidebar', () => ({
   SidebarTriggerMobile: () => <button type='button'>trigger</button>,
 }));
 vi.mock('@/modules/auth/components/LandingPage', () => ({ LandingPage: () => <div>landing page</div> }));
+vi.mock('@/modules/admin', () => ({
+  DEFAULT_FEATURE_VISIBILITY: { platformCopilot: false },
+  getFeatureVisibility: getFeatureVisibilityMock,
+}));
+vi.mock('@/modules/platform-copilot', () => ({
+  PlatformCopilotMascot: () => <div>platform copilot mascot</div>,
+}));
 
 describe('RootGuard', () => {
   const renderWithRouter = (ui: ReactNode, initialEntries: string[] = ['/']) =>
@@ -30,6 +38,7 @@ describe('RootGuard', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    getFeatureVisibilityMock.mockResolvedValue({ platformCopilot: false });
   });
 
   it('renders landing page for guests', () => {
@@ -84,5 +93,24 @@ describe('RootGuard', () => {
 
     expect(screen.getByText('platform overview page')).toBeInTheDocument();
     expect(screen.queryByText('new conversation page')).not.toBeInTheDocument();
+  });
+
+  it('renders Platform Copilot only when persisted feature visibility enables it', async () => {
+    useAuthMock.mockReturnValue(makeAuthState({ isAuthenticated: true }));
+    getFeatureVisibilityMock.mockResolvedValue({ platformCopilot: true });
+
+    renderWithRouter(<RootGuard />);
+
+    await waitFor(() => expect(screen.getByText('platform copilot mascot')).toBeInTheDocument());
+  });
+
+  it('keeps Platform Copilot hidden when feature visibility cannot be loaded', async () => {
+    useAuthMock.mockReturnValue(makeAuthState({ isAuthenticated: true }));
+    getFeatureVisibilityMock.mockRejectedValue(new Error('unavailable'));
+
+    renderWithRouter(<RootGuard />);
+
+    await waitFor(() => expect(getFeatureVisibilityMock).toHaveBeenCalled());
+    expect(screen.queryByText('platform copilot mascot')).not.toBeInTheDocument();
   });
 });

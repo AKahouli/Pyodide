@@ -6,13 +6,10 @@ import {
   getPlaybookPlannerAgents,
   getPlaybookSuggestorAgents,
   getFeatureVisibility,
-  getCopilotAssistantAgents,
-  getCopilotAssistantSettings,
   getUserAnalytics,
   setMaintenanceMode,
   updatePlan,
   updateFeatureVisibility,
-  updateCopilotAssistantSettings,
 } from './api';
 
 const getMock = vi.hoisted(() => vi.fn());
@@ -45,10 +42,6 @@ vi.mock('@/lib/api/config', () => ({
     adminPlaybookSettings: {
       plannerAgents: '/admin/playbook-settings/planner-agents',
       suggestorAgents: '/admin/playbook-settings/suggestor-agents',
-    },
-    adminCopilotAssistant: {
-      base: '/admin/copilot-assistant',
-      agents: '/admin/copilot-assistant/agents',
     },
   },
 }));
@@ -104,6 +97,7 @@ describe('admin api', () => {
       appMarketplace: true,
       worky: false,
       agents: true,
+      platformCopilot: false,
     };
     getMock.mockResolvedValue({ data: { data: visibility } });
     putMock.mockResolvedValue({ data: { data: visibility } });
@@ -112,28 +106,6 @@ describe('admin api', () => {
     await expect(updateFeatureVisibility(visibility)).resolves.toEqual(visibility);
     expect(getMock).toHaveBeenCalledWith('/system/features');
     expect(putMock).toHaveBeenCalledWith('/system/features', visibility);
-  });
-
-  it('gets, lists, and updates the copilot assistant agent mapping', async () => {
-    const settings = { agentId: 'agent-1' };
-    const agents = [{ id: 'agent-1', name: 'Agent 1', model: 'model-1' }];
-    getMock.mockResolvedValue({ data: { data: settings } });
-    getMock.mockResolvedValueOnce({ data: { data: settings } });
-    getMock.mockResolvedValueOnce({ data: { data: agents } });
-    putMock.mockResolvedValue({ data: { data: settings } });
-
-    const [copilotSettings, copilotAgents] = await Promise.all([
-      getCopilotAssistantSettings(),
-      getCopilotAssistantAgents(),
-    ]);
-    const updated = await updateCopilotAssistantSettings({ agentId: 'agent-1' });
-
-    expect(copilotSettings).toEqual(settings);
-    expect(copilotAgents).toEqual(agents);
-    expect(updated).toEqual(settings);
-    expect(getMock).toHaveBeenCalledWith('/admin/copilot-assistant');
-    expect(getMock).toHaveBeenCalledWith('/admin/copilot-assistant/agents');
-    expect(putMock).toHaveBeenCalledWith('/admin/copilot-assistant', { agentId: 'agent-1' });
   });
 
   it('handles plans CRUD endpoints', async () => {

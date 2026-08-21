@@ -2,9 +2,10 @@ import * as React from 'react';
 import { createConversation, fetchConversation, fetchConversations, fetchMessages, sendMessage } from '@/modules/conversation/api';
 import { conversationStreamService } from '@/modules/conversation/stream';
 import type { ChoiceInteractionMetadata, Conversation, Message, StreamingComponent, StreamSSEEvent } from '@/modules/conversation/types';
-import type { SecondBrainPageContext } from './types';
+import type { PlatformCopilotPageContext } from './types';
 
-export const SECOND_BRAIN_CONVERSATION_STORAGE_KEY = 'ys_second_brain_conversation_id';
+export const PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY = 'ys_platform_copilot_conversation_id';
+const LEGACY_CONVERSATION_STORAGE_KEY = 'ys_second_brain_conversation_id';
 
 function upsertMessage(messages: Message[], message: Message): Message[] {
   const index = messages.findIndex((candidate) => candidate.id === message.id);
@@ -43,7 +44,7 @@ function applyStreamAction(
   return next;
 }
 
-export function useSecondBrainConversation(open: boolean, clientContext: SecondBrainPageContext) {
+export function usePlatformCopilotConversation(open: boolean, clientContext: PlatformCopilotPageContext) {
   const [conversationId, setConversationId] = React.useState<string>();
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [streamingComponents, setStreamingComponents] = React.useState<StreamingComponent[]>([]);
@@ -83,19 +84,24 @@ export function useSecondBrainConversation(open: boolean, clientContext: SecondB
     let cancelled = false;
     setLoading(true);
     void (async () => {
-      const storedId = localStorage.getItem(SECOND_BRAIN_CONVERSATION_STORAGE_KEY);
+      const legacyId = localStorage.getItem(LEGACY_CONVERSATION_STORAGE_KEY);
+      const storedId = localStorage.getItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY) ?? legacyId;
+      if (legacyId && !localStorage.getItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY)) {
+        localStorage.setItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY, legacyId);
+        localStorage.removeItem(LEGACY_CONVERSATION_STORAGE_KEY);
+      }
       let conversation;
       if (storedId) {
         try {
           const candidate = await fetchConversation(storedId);
           if (candidate.runtimePurpose === 'platform_copilot') conversation = candidate;
         } catch {
-          localStorage.removeItem(SECOND_BRAIN_CONVERSATION_STORAGE_KEY);
+          localStorage.removeItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY);
         }
       }
       conversation ??= await createConversation({ runtimePurpose: 'platform_copilot' });
       if (cancelled) return;
-      localStorage.setItem(SECOND_BRAIN_CONVERSATION_STORAGE_KEY, conversation.id);
+      localStorage.setItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY, conversation.id);
       await hydrate(conversation.id);
       if (!cancelled) {
         setConversationId(conversation.id);
@@ -192,7 +198,7 @@ export function useSecondBrainConversation(open: boolean, clientContext: SecondB
       setStreamingComponents([]);
       setStreamingMessageId(undefined);
       setConversationId(id);
-      localStorage.setItem(SECOND_BRAIN_CONVERSATION_STORAGE_KEY, id);
+      localStorage.setItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY, id);
       return true;
     } catch (selectionError: unknown) {
       setError(selectionError);
@@ -217,7 +223,7 @@ export function useSecondBrainConversation(open: boolean, clientContext: SecondB
       setStreamingComponents([]);
       setStreamingMessageId(undefined);
       setConversationId(conversation.id);
-      localStorage.setItem(SECOND_BRAIN_CONVERSATION_STORAGE_KEY, conversation.id);
+      localStorage.setItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY, conversation.id);
       setHistory((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
       return true;
     } catch (creationError: unknown) {

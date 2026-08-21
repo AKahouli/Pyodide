@@ -208,30 +208,58 @@ describeIntegration('AgentRepository plan-4 methods (integration)', () => {
     expect(found).toHaveLength(2);
   });
 
-  it('upsertDefaultSystemAgent converges concurrent inserts on the default slug', async () => {
+  it('createDefaultSystemAgentIfMissing reuses an existing slug regardless of default status', async () => {
     const slug = `system-${oid().slice(-6)}`;
-    const first = createInput({ id: oid(), slug, name: `System ${oid().slice(-6)}`, isDefault: true });
+    const existing = createInput({
+      slug,
+      isDefault: false,
+      instruction: 'custom instruction',
+      llmModel: 'custom-model',
+      guardrails: { custom: true },
+      connectors: [oid()],
+      connectorActionSelections: [],
+      skills: [oid()],
+      knowledgeBases: [oid()],
+    });
+    created.push(existing.id);
+    await repo.create(existing);
+
+    const result = await repo.createDefaultSystemAgentIfMissing({
+      ...createInput({ slug, isDefault: true }),
+      id: oid(),
+      name: existing.name,
+      createdBy: existing.createdBy,
+      instruction: '',
+      llmModel: undefined,
+      connectors: [],
+      skills: [],
+      knowledgeBases: [],
+    });
+
+    expect(result).toMatchObject({
+      _id: existing.id,
+      instruction: existing.instruction,
+      llmModel: existing.llmModel,
+      guardrails: existing.guardrails,
+      connectors: existing.connectors,
+      skills: existing.skills,
+      knowledgeBases: existing.knowledgeBases,
+    });
+  });
+
+  it('createDefaultSystemAgentIfMissing converges concurrent startup inserts', async () => {
+    const slug = `system-${oid().slice(-6)}`;
+    const first = createInput({ id: oid(), slug, isDefault: true });
     const second = { ...first, id: oid() };
     created.push(first.id, second.id);
 
     const [a, b] = await Promise.all([
-      repo.upsertDefaultSystemAgent(first),
-      repo.upsertDefaultSystemAgent(second),
+      repo.createDefaultSystemAgentIfMissing(first),
+      repo.createDefaultSystemAgentIfMissing(second),
     ]);
 
     expect(a._id).toBe(b._id);
     expect(a.slug).toBe(slug);
-  });
-
-  it('pullConnectorFromAllExcept removes the connector from all agents but the excepted one', async () => {
-    const connectorId = oid();
-    const keep = createInput({ connectors: [connectorId], connectorActionSelections: [{ connectorId, actionKeys: ['x'] }] });
-    const strip = createInput({ connectors: [connectorId], connectorActionSelections: [{ connectorId, actionKeys: ['x'] }] });
-    await seed(repo, created, [keep, strip]);
-    await repo.pullConnectorFromAllExcept(connectorId, [keep.id]);
-    expect((await repo.findById(keep.id))!.connectors).toEqual([connectorId]);
-    expect((await repo.findById(strip.id))!.connectors).toEqual([]);
-    expect((await repo.findById(strip.id))!.connectorActionSelections).toEqual([]);
   });
 
   it('setRoleEmbedding stores a 3072-dim halfvec on the agent', async () => {
@@ -244,15 +272,6 @@ describeIntegration('AgentRepository plan-4 methods (integration)', () => {
     expect(rows.rows[0].has).toBe(true);
   });
 
-  it('findIdsByInstructionLike matches by ILIKE and excludes the given id', async () => {
-    const tag = `[Playbook MCP ${oid().slice(-6)}]`;
-    const a = createInput({ instruction: `hello ${tag} world` });
-    const b = createInput({ instruction: `hello ${tag} world` });
-    await seed(repo, created, [a, b]);
-    const found = await repo.findIdsByInstructionLike(`%${tag}%`, [a.id]);
-    expect(found.map((r) => r.id)).toEqual([b.id]);
-    expect(found[0].instruction).toContain(tag);
-  });
 });
 
 describeIntegration('AgentRepository pull ops (integration)', () => {

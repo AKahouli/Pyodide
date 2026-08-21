@@ -1,20 +1,25 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SECOND_BRAIN_PANEL_WIDTH_STORAGE_KEY, SecondBrainMascot, shouldShowSecondBrainMascot } from './SecondBrainMascot';
+import { PLATFORM_COPILOT_PANEL_WIDTH_STORAGE_KEY, PlatformCopilotMascot, shouldAutoConsumeExecutionHandoff } from './PlatformCopilotMascot';
 import { mockNavigate } from '@/test/setup';
-import { useSecondBrainPanelStore } from './secondBrainPanelStore';
+import { usePlatformCopilotPanelStore } from './platformCopilotPanelStore';
 
 const setDesignerOpen = vi.fn();
 const setCopilotMode = vi.fn();
+const setPageMode = vi.fn();
+const setExecutionPanelOpen = vi.fn();
+const fetchExecutions = vi.fn().mockResolvedValue(undefined);
+const fetchExecution = vi.fn().mockResolvedValue(undefined);
+const viewExecutionInPanel = vi.fn();
 let designerOpen = false;
 let pageMode: 'design' | 'run' = 'design';
 let currentExecution: { playbookId: string; status: string } | null = null;
 let executionHistoryByPlaybook: Record<string, Array<{ status: string }>> = {};
 let playbookDirty = false;
 
-const secondBrainMock = vi.hoisted(() => ({
+const platformCopilotMock = vi.hoisted(() => ({
   send: vi.fn().mockResolvedValue(true),
   createNewConversation: vi.fn().mockResolvedValue(true),
   selectConversation: vi.fn().mockResolvedValue(true),
@@ -22,12 +27,12 @@ const secondBrainMock = vi.hoisted(() => ({
   current: {} as Record<string, unknown>,
 }));
 
-vi.mock('./useSecondBrainConversation', () => ({
-  useSecondBrainConversation: () => ({ ...secondBrainMock.current,
-    send: secondBrainMock.send,
-    createNewConversation: secondBrainMock.createNewConversation,
-    selectConversation: secondBrainMock.selectConversation,
-    refreshHistory: secondBrainMock.refreshHistory,
+vi.mock('./usePlatformCopilotConversation', () => ({
+  usePlatformCopilotConversation: () => ({ ...platformCopilotMock.current,
+    send: platformCopilotMock.send,
+    createNewConversation: platformCopilotMock.createNewConversation,
+    selectConversation: platformCopilotMock.selectConversation,
+    refreshHistory: platformCopilotMock.refreshHistory,
   }),
 }));
 
@@ -49,28 +54,40 @@ function completedMessage() {
     };
 }
 
-vi.mock('@/modules/playbook', () => ({
-  usePlaybookStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
+vi.mock('@/modules/playbook', () => {
+  const state = () => ({
     isDirty: playbookDirty,
-      currentPlaybook: {
-        id: 'p1',
-        name: 'Lead qualification',
-        tasks: [{ id: 'task-1', title: 'Score lead' }],
-        nodes: [],
-      },
-      currentExecution,
-      executionHistoryByPlaybook,
-      designerOpen,
-      setDesignerOpen,
-    }),
-  usePlaybookUiStore: (selector: (state: Record<string, unknown>) => unknown) => selector({
+    currentPlaybook: {
+      id: 'p1',
+      name: 'Lead qualification',
+      tasks: [{ id: 'task-1', title: 'Score lead' }],
+      nodes: [],
+    },
+    currentExecution,
+    executionHistoryByPlaybook,
+    designerOpen,
+    setDesignerOpen,
+    setPageMode,
+    setExecutionPanelOpen,
+    fetchExecutions,
+    fetchExecution,
+    viewExecutionInPanel,
+  });
+  const usePlaybookStore = Object.assign(
+    (selector: (currentState: Record<string, unknown>) => unknown) => selector(state()),
+    { getState: state },
+  );
+  return {
+    usePlaybookStore,
+    usePlaybookUiStore: (selector: (currentState: Record<string, unknown>) => unknown) => selector({
       selectedStepId: 'task-1',
       designerOpen,
       setDesignerOpen,
       setCopilotMode,
       pageMode,
-  }),
-}));
+    }),
+  };
+});
 
 vi.mock('@/modules/playbook/api', () => ({ getExecution: vi.fn() }));
 
@@ -138,20 +155,25 @@ function setViewport(width: number) {
 }
 
 function renderMascot(path = '/playbooks') {
-  return render(<MemoryRouter initialEntries={[path]}><SecondBrainMascot /></MemoryRouter>);
+  return render(<MemoryRouter initialEntries={[path]}><PlatformCopilotMascot /></MemoryRouter>);
 }
 
-describe('SecondBrainMascot', () => {
+describe('PlatformCopilotMascot', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    localStorage.removeItem(SECOND_BRAIN_PANEL_WIDTH_STORAGE_KEY);
-    useSecondBrainPanelStore.setState({ open: false, pendingPrompt: null });
+    localStorage.removeItem(PLATFORM_COPILOT_PANEL_WIDTH_STORAGE_KEY);
+    usePlatformCopilotPanelStore.setState({ open: false, pendingPrompt: null });
     designerOpen = false;
     pageMode = 'design';
     currentExecution = null;
     executionHistoryByPlaybook = {};
+    setPageMode.mockClear();
+    setExecutionPanelOpen.mockClear();
+    fetchExecutions.mockClear();
+    fetchExecution.mockClear();
+    viewExecutionInPanel.mockClear();
     setViewport(1440);
-    secondBrainMock.current = {
+    platformCopilotMock.current = {
       conversationId: 'conversation-1',
       loading: false,
       historyLoading: false,
@@ -202,8 +224,8 @@ describe('SecondBrainMascot', () => {
   });
 
   it('auto-consumes the assistant operation when the impacted canvas is already open', async () => {
-    secondBrainMock.current = {
-      ...secondBrainMock.current,
+    platformCopilotMock.current = {
+      ...platformCopilotMock.current,
       messages: [{
         id: 'assistant-handoff',
         conversationId: 'conversation-1',
@@ -218,7 +240,7 @@ describe('SecondBrainMascot', () => {
         ],
       }],
     };
-    useSecondBrainPanelStore.setState({ open: true, pendingPrompt: null });
+    usePlatformCopilotPanelStore.setState({ open: true, pendingPrompt: null });
     renderMascot('/playbooks/p1');
 
     await waitFor(() => {
@@ -227,10 +249,154 @@ describe('SecondBrainMascot', () => {
     expect(screen.queryByRole('button', { name: /Continue in Canvas assistant/ })).not.toBeInTheDocument();
   });
 
+  it('refreshes the matching canvas when Yellowmind starts an execution', async () => {
+    platformCopilotMock.current = {
+      ...platformCopilotMock.current,
+      messages: [{
+        id: 'assistant-execution-handoff',
+        conversationId: 'conversation-1',
+        conversationType: 'ai',
+        webSearchEnabled: false,
+        isStreaming: false,
+        isComplete: true,
+        createdAt: new Date().toISOString(),
+        components: [
+          { id: 'tool-1', type: 'toolInfo', data: { resultJson: { uiTarget: {
+            surface: 'playbook.execution.details',
+            params: { playbookId: 'p1', executionId: 'execution-1' },
+            effects: [{ type: 'focusExecutionStatus' }],
+          } } } },
+        ],
+      }],
+    };
+    usePlatformCopilotPanelStore.setState({ open: true, pendingPrompt: null });
+    renderMascot('/playbooks/p1');
+
+    await waitFor(() => expect(viewExecutionInPanel).toHaveBeenCalledWith('execution-1'));
+    expect(setPageMode).toHaveBeenCalledWith('run');
+    expect(setExecutionPanelOpen).toHaveBeenCalledWith(true);
+    expect(fetchExecutions).toHaveBeenCalledWith('p1');
+    expect(fetchExecution).toHaveBeenCalledWith('p1', 'execution-1');
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('only consumes focused execution handoffs for the open canvas', () => {
+    const target = {
+      surface: 'playbook.execution.details' as const,
+      params: { playbookId: 'p1', executionId: 'execution-1' },
+      effects: [{ type: 'focusExecutionStatus' as const }],
+    };
+
+    expect(shouldAutoConsumeExecutionHandoff(target, 'p1')).toBe(true);
+    expect(shouldAutoConsumeExecutionHandoff(target, 'p2')).toBe(false);
+    expect(shouldAutoConsumeExecutionHandoff({ ...target, effects: undefined }, 'p1')).toBe(false);
+  });
+
+  it('keeps the execution handoff on a standalone execution route', () => {
+    platformCopilotMock.current = {
+      ...platformCopilotMock.current,
+      messages: [{
+        id: 'assistant-execution-detail',
+        conversationId: 'conversation-1',
+        conversationType: 'ai',
+        webSearchEnabled: false,
+        isStreaming: false,
+        isComplete: true,
+        createdAt: new Date().toISOString(),
+        components: [
+          { id: 'tool-1', type: 'toolInfo', data: { resultJson: { uiTarget: {
+            surface: 'playbook.execution.details',
+            params: { playbookId: 'p1', executionId: 'execution-1' },
+            effects: [{ type: 'focusExecutionStatus' }],
+          } } } },
+        ],
+      }],
+    };
+    usePlatformCopilotPanelStore.setState({ open: true, pendingPrompt: null });
+    renderMascot('/playbooks/p1/executions/execution-0');
+
+    expect(fetchExecutions).not.toHaveBeenCalled();
+    expect(fetchExecution).not.toHaveBeenCalled();
+    expect(viewExecutionInPanel).not.toHaveBeenCalled();
+  });
+
+  it('keeps the execution handoff on the execution-list route', () => {
+    platformCopilotMock.current = {
+      ...platformCopilotMock.current,
+      messages: [{
+        id: 'assistant-execution-list',
+        conversationId: 'conversation-1',
+        conversationType: 'ai',
+        webSearchEnabled: false,
+        isStreaming: false,
+        isComplete: true,
+        createdAt: new Date().toISOString(),
+        components: [
+          { id: 'tool-1', type: 'toolInfo', data: { resultJson: { uiTarget: {
+            surface: 'playbook.execution.details',
+            params: { playbookId: 'p1', executionId: 'execution-1' },
+            effects: [{ type: 'focusExecutionStatus' }],
+          } } } },
+        ],
+      }],
+    };
+    usePlatformCopilotPanelStore.setState({ open: true, pendingPrompt: null });
+    renderMascot('/playbooks/p1/executions');
+
+    expect(fetchExecutions).not.toHaveBeenCalled();
+    expect(fetchExecution).not.toHaveBeenCalled();
+    expect(viewExecutionInPanel).not.toHaveBeenCalled();
+  });
+
+  it('keeps canvas handoffs visible on the execution-list route', () => {
+    usePlatformCopilotPanelStore.setState({ open: true, pendingPrompt: null });
+    renderMascot('/playbooks/p1/executions');
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(screen.getAllByRole('button', { name: /Open Playbook Canvas/ })).toHaveLength(1);
+  });
+
+  it('does not focus a stale execution handoff after navigating away', async () => {
+    let resolveHistory = () => {};
+    fetchExecutions.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveHistory = resolve;
+    }));
+    platformCopilotMock.current = {
+      ...platformCopilotMock.current,
+      messages: [{
+        id: 'assistant-stale-execution-handoff',
+        conversationId: 'conversation-1',
+        conversationType: 'ai',
+        webSearchEnabled: false,
+        isStreaming: false,
+        isComplete: true,
+        createdAt: new Date().toISOString(),
+        components: [
+          { id: 'tool-1', type: 'toolInfo', data: { resultJson: { uiTarget: {
+            surface: 'playbook.execution.details',
+            params: { playbookId: 'p1', executionId: 'execution-1' },
+            effects: [{ type: 'focusExecutionStatus' }],
+          } } } },
+        ],
+      }],
+    };
+    usePlatformCopilotPanelStore.setState({ open: true, pendingPrompt: null });
+    const { rerender } = render(<MemoryRouter key='p1' initialEntries={['/playbooks/p1']}><PlatformCopilotMascot /></MemoryRouter>);
+
+    rerender(<MemoryRouter key='p2' initialEntries={['/playbooks/p2']}><PlatformCopilotMascot /></MemoryRouter>);
+    await act(async () => {
+      resolveHistory();
+      await Promise.resolve();
+    });
+
+    expect(fetchExecution).not.toHaveBeenCalled();
+    expect(viewExecutionInPanel).not.toHaveBeenCalled();
+  });
+
   it('keeps the canvas handoff when the impacted canvas has unsaved changes', () => {
     playbookDirty = true;
-    secondBrainMock.current = {
-      ...secondBrainMock.current,
+    platformCopilotMock.current = {
+      ...platformCopilotMock.current,
       messages: [{
         id: 'assistant-handoff',
         conversationId: 'conversation-1',
@@ -250,7 +416,7 @@ describe('SecondBrainMascot', () => {
     expect(screen.getByRole('button', { name: /Continue in Canvas assistant/ })).toBeInTheDocument();
   });
 
-  it('uses a modal drawer on compact viewports', () => {
+  it('uses a modal drawer on compact viewports and can reopen it after closing', () => {
     setViewport(390);
     renderMascot();
 
@@ -259,12 +425,14 @@ describe('SecondBrainMascot', () => {
     expect(screen.getByRole('dialog', { name: 'Yellowmind' })).toBeInTheDocument();
     expect(screen.queryByRole('complementary')).not.toBeInTheDocument();
     expect(screen.queryByRole('separator', { name: 'Resize Yellowmind panel' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Close Yellowmind' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close Yellowmind' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Yellowmind' }));
+    expect(screen.getByRole('dialog', { name: 'Yellowmind' })).toBeInTheDocument();
   });
 
   it('renders present_choices clarifications and submits the selected option', async () => {
-    secondBrainMock.current = {
-      ...secondBrainMock.current,
+    platformCopilotMock.current = {
+      ...platformCopilotMock.current,
       messages: [{
         id: 'assistant-choice',
         conversationId: 'conversation-1',
@@ -297,7 +465,7 @@ describe('SecondBrainMascot', () => {
     fireEvent.click(screen.getByRole('radio', { name: /All scored leads/ }));
     fireEvent.click(screen.getByRole('button', { name: 'choice.submit' }));
 
-    await waitFor(() => expect(secondBrainMock.send).toHaveBeenCalledWith(
+    await waitFor(() => expect(platformCopilotMock.send).toHaveBeenCalledWith(
       'Add an Excel export step containing all scored leads.',
       expect.objectContaining({
         type: 'choice',
@@ -311,8 +479,8 @@ describe('SecondBrainMascot', () => {
 
   it('renders multiple present_choices as tabs and submits all answers in one send', async () => {
     const user = userEvent.setup();
-    secondBrainMock.current = {
-      ...secondBrainMock.current,
+    platformCopilotMock.current = {
+      ...platformCopilotMock.current,
       messages: [{
         id: 'assistant-choices',
         conversationId: 'conversation-1',
@@ -363,7 +531,7 @@ describe('SecondBrainMascot', () => {
     await user.click(screen.getByRole('radio', { name: 'Marketing' }));
     await user.click(screen.getByRole('button', { name: 'choice.submitAll' }));
 
-    await waitFor(() => expect(secondBrainMock.send).toHaveBeenCalledWith(
+    await waitFor(() => expect(platformCopilotMock.send).toHaveBeenCalledWith(
       'Use Germany Scope to marketing',
       undefined,
       [
@@ -386,8 +554,8 @@ describe('SecondBrainMascot', () => {
   });
 
   it('renders a readable user message for multi-interaction answers instead of raw JSON', () => {
-    secondBrainMock.current = {
-      ...secondBrainMock.current,
+    platformCopilotMock.current = {
+      ...platformCopilotMock.current,
       messages: [
         {
           id: 'user-answer',
@@ -412,8 +580,8 @@ describe('SecondBrainMascot', () => {
   });
 
   it('renders one assistant identity for an empty placeholder plus live activity', () => {
-    secondBrainMock.current = {
-      ...secondBrainMock.current,
+    platformCopilotMock.current = {
+      ...platformCopilotMock.current,
       streamingMessageId: 'assistant-live',
       streamingComponents: [
         { id: 'reasoning-live', type: 'reasoning', data: { content: 'private hidden reasoning' } },
@@ -444,7 +612,7 @@ describe('SecondBrainMascot', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     fireEvent.click(screen.getByRole('button', { name: 'Start a new Yellowmind conversation' }));
-    await waitFor(() => expect(secondBrainMock.createNewConversation).toHaveBeenCalled());
+    await waitFor(() => expect(platformCopilotMock.createNewConversation).toHaveBeenCalled());
   });
 
   it('opens the contextual Yellowmind panel on a Playbook route instead of the local designer', () => {
@@ -464,24 +632,17 @@ describe('SecondBrainMascot', () => {
     expect(screen.queryByRole('button', { name: 'Open Yellowmind' })).not.toBeInTheDocument();
   });
 
-  it('hides the launcher on a playbook monitor or active run', () => {
-    expect(shouldShowSecondBrainMascot(true, 'run', undefined)).toBe(false);
-    expect(shouldShowSecondBrainMascot(true, 'design', 'running')).toBe(false);
-    expect(shouldShowSecondBrainMascot(true, 'design', 'interrupted')).toBe(false);
-    expect(shouldShowSecondBrainMascot(true, 'design', 'pending_approval')).toBe(false);
-    expect(shouldShowSecondBrainMascot(true, 'design', undefined)).toBe(true);
-    expect(shouldShowSecondBrainMascot(false, 'run', 'running')).toBe(true);
-
+  it('keeps the launcher visible while the Playbook is in run mode', () => {
     pageMode = 'run';
     renderMascot('/playbooks/p1');
-    expect(screen.queryByRole('button', { name: 'Open Yellowmind' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Yellowmind' })).toBeInTheDocument();
   });
 
-  it('hides the launcher when the latest execution summary is active', () => {
+  it('keeps the launcher visible when the latest execution summary is active', () => {
     executionHistoryByPlaybook = { p1: [{ status: 'running' }] };
 
     renderMascot('/playbooks/p1');
 
-    expect(screen.queryByRole('button', { name: 'Open Yellowmind' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Yellowmind' })).toBeInTheDocument();
   });
 });

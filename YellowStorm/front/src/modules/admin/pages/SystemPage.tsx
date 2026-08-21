@@ -50,7 +50,6 @@ import { getMaintenanceStatus, setMaintenanceMode, getRegistrationStatus, setReg
 import type { MaintenanceStatus, RegistrationStatus } from '../types';
 import { CorsSettingsCard } from '../components/CorsSettingsCard';
 import { FeatureVisibilityCard } from '../components/FeatureVisibilityCard';
-import { CopilotAssistantCard } from '../components/CopilotAssistantCard';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 
@@ -302,8 +301,6 @@ export function SystemPage() {
       )}
 
       <FeatureVisibilityCard />
-
-      <CopilotAssistantCard />
 
       {/* Maintenance Mode Card */}
       <Card>

@@ -18,46 +18,34 @@ import type { ChoiceComponentAction } from '@/components/ai-elements/choice/Choi
 import { ChoicePartRenderer } from '@/components/ai-elements/choice/ChoicePartRenderer';
 import { ChoiceTabsQuestions } from '@/components/ai-elements/choice/ChoiceTabsQuestions';
 import type { Message as ConversationMessage, MessageComponent } from '@/modules/conversation/types';
-import { dedupeSecondBrainUiTargets, executeSecondBrainUiTarget, findUiTargets, getSecondBrainUiTargetIdentity } from './action-bus';
-import type { SecondBrainPageContext, SecondBrainUiTarget } from './types';
-import { SecondBrainActivity } from './SecondBrainActivity';
-import { SecondBrainHistoryDialog } from './SecondBrainHistoryDialog';
-import { useSecondBrainConversation } from './useSecondBrainConversation';
-import { useSecondBrainPanelStore } from './secondBrainPanelStore';
+import { dedupePlatformCopilotUiTargets, executePlatformCopilotUiTarget, findUiTargets, getPlatformCopilotUiTargetIdentity } from './action-bus';
+import type { PlatformCopilotPageContext, PlatformCopilotUiTarget } from './types';
+import { PlatformCopilotActivity } from './PlatformCopilotActivity';
+import { PlatformCopilotHistoryDialog } from './PlatformCopilotHistoryDialog';
+import { usePlatformCopilotConversation } from './usePlatformCopilotConversation';
+import { usePlatformCopilotPanelStore } from './platformCopilotPanelStore';
 
-type Message = { id: string; role: 'user' | 'assistant'; text: string; components: MessageComponent[]; isStreaming: boolean; targets?: SecondBrainUiTarget[] };
+type Message = { id: string; role: 'user' | 'assistant'; text: string; components: MessageComponent[]; isStreaming: boolean; targets?: PlatformCopilotUiTarget[] };
 
-export const SECOND_BRAIN_PANEL_WIDTH_STORAGE_KEY = 'ys_second_brain_panel_width';
-const SECOND_BRAIN_PANEL_DEFAULT_WIDTH = 400;
-const SECOND_BRAIN_PANEL_MIN_WIDTH = 336;
-const SECOND_BRAIN_PANEL_MAX_WIDTH_RATIO = 0.5;
+export const PLATFORM_COPILOT_PANEL_WIDTH_STORAGE_KEY = 'ys_platform_copilot_panel_width';
+const PLATFORM_COPILOT_PANEL_DEFAULT_WIDTH = 400;
+const PLATFORM_COPILOT_PANEL_MIN_WIDTH = 336;
+const PLATFORM_COPILOT_PANEL_MAX_WIDTH_RATIO = 0.5;
 
-export function shouldShowSecondBrainMascot(
-  isPlaybookRoute: boolean,
-  pageMode: 'design' | 'run',
-  executionStatus: string | undefined,
-): boolean {
-  if (!isPlaybookRoute) return true;
-  return pageMode !== 'run' && !['queued', 'running', 'interrupted', 'pending_approval'].includes(executionStatus ?? '');
-}
-
-export function SecondBrainMascot() {
-  const { t, language } = useModuleTranslation('second-brain');
+export function PlatformCopilotMascot() {
+  const { t, language } = useModuleTranslation('platform-copilot');
   const location = useLocation();
   const navigate = useNavigate();
   const isDirty = usePlaybookStore((state) => state.isDirty);
   const currentPlaybook = usePlaybookStore((state) => state.currentPlaybook);
-  const currentExecution = usePlaybookStore((state) => state.currentExecution);
-  const executionHistoryByPlaybook = usePlaybookStore((state) => state.executionHistoryByPlaybook);
   const legacyDesignerOpen = usePlaybookStore((state) => state.designerOpen);
   const selectedTaskId = usePlaybookUiStore((state) => state.selectedStepId);
   const designerOpen = usePlaybookUiStore((state) => state.designerOpen);
-  const pageMode = usePlaybookUiStore((state) => state.pageMode);
   const useDrawer = useCompactAssistantLayout();
-  const panelOpen = useSecondBrainPanelStore((s) => s.open);
-  const openPanel = useSecondBrainPanelStore((s) => s.openPanel);
-  const closePanel = useSecondBrainPanelStore((s) => s.closePanel);
-  const consumePendingPrompt = useSecondBrainPanelStore((s) => s.consumePendingPrompt);
+  const panelOpen = usePlatformCopilotPanelStore((s) => s.open);
+  const openPanel = usePlatformCopilotPanelStore((s) => s.openPanel);
+  const closePanel = usePlatformCopilotPanelStore((s) => s.closePanel);
+  const consumePendingPrompt = usePlatformCopilotPanelStore((s) => s.consumePendingPrompt);
   const [open, setOpen] = React.useState(panelOpen);
   const [input, setInput] = React.useState('');
   const [historyOpen, setHistoryOpen] = React.useState(false);
@@ -96,14 +84,15 @@ export function SecondBrainMascot() {
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [open, useDrawer, closePanel]);
 
-  const pageContext = React.useMemo<SecondBrainPageContext>(() => {
+  const pageContext = React.useMemo<PlatformCopilotPageContext>(() => {
     const match = location.pathname.match(/^\/playbooks\/([^/]+)(?:\/executions\/([^/]+))?/);
     const playbookId = match?.[1] ? decodeURIComponent(match[1]) : undefined;
     const executionId = match?.[2] ? decodeURIComponent(match[2]) : undefined;
+    const isExecutionRoute = /^\/playbooks\/[^/]+\/executions(?:\/|$)/.test(location.pathname);
     return {
       route: `${location.pathname}${location.search}`,
-      module: executionId ? 'executions' : playbookId || location.pathname === '/playbooks' ? 'playbooks' : 'other',
-      surface: executionId ? 'playbook.execution.details' : playbookId ? 'playbook.editor' : location.pathname === '/playbooks' ? 'playbook.list' : 'other',
+      module: isExecutionRoute ? 'executions' : playbookId || location.pathname === '/playbooks' ? 'playbooks' : 'other',
+      surface: isExecutionRoute ? 'playbook.execution.details' : playbookId ? 'playbook.editor' : location.pathname === '/playbooks' ? 'playbook.list' : 'other',
       ...(executionId ? { entity: { type: 'execution' as const, id: executionId } } : playbookId ? { entity: { type: 'playbook' as const, id: playbookId } } : {}),
       ...(selectedTaskId && playbookId ? { selection: { type: 'task' as const, id: selectedTaskId } } : {}),
       availableActions: playbookId ? ['explain', 'validate', 'open', 'run'] : ['search', 'open'],
@@ -114,103 +103,120 @@ export function SecondBrainMascot() {
   }, [isDirty, language, location.pathname, location.search, selectedTaskId]);
 
   const routePlaybookId = pageContext.entity?.type === 'playbook' ? pageContext.entity.id : undefined;
-  const secondBrain = useSecondBrainConversation(open, pageContext);
+  const platformCopilot = usePlatformCopilotConversation(open, pageContext);
   React.useEffect(() => {
-    if (secondBrain.error) handleApiError(secondBrain.error);
-  }, [secondBrain.error]);
+    if (platformCopilot.error) handleApiError(platformCopilot.error);
+  }, [platformCopilot.error]);
   const messages = React.useMemo(() => {
-    const persisted = secondBrain.messages
+    const persisted = platformCopilot.messages
       .map((message) => {
-        const isStreaming = message.id === secondBrain.streamingMessageId;
+        const isStreaming = message.id === platformCopilot.streamingMessageId;
         return toDisplayMessage({
           ...message,
-          components: isStreaming ? secondBrain.streamingComponents : message.components,
+          components: isStreaming ? platformCopilot.streamingComponents : message.components,
         }, isStreaming);
       })
       .filter((message): message is Message => message !== null);
-    if (!secondBrain.streamingMessageId || persisted.some((message) => message.id === secondBrain.streamingMessageId)) return persisted;
+    if (!platformCopilot.streamingMessageId || persisted.some((message) => message.id === platformCopilot.streamingMessageId)) return persisted;
     const streaming = toDisplayMessage({
-      id: secondBrain.streamingMessageId,
-      conversationId: secondBrain.conversationId ?? '',
+      id: platformCopilot.streamingMessageId,
+      conversationId: platformCopilot.conversationId ?? '',
       conversationType: 'ai',
-      components: secondBrain.streamingComponents,
+      components: platformCopilot.streamingComponents,
       webSearchEnabled: false,
       isStreaming: true,
       isComplete: false,
       createdAt: new Date().toISOString(),
     }, true);
     return streaming ? [...persisted, streaming] : persisted;
-  }, [secondBrain.conversationId, secondBrain.messages, secondBrain.streamingComponents, secondBrain.streamingMessageId]);
-  const loading = secondBrain.loading || Boolean(secondBrain.streamingMessageId);
+  }, [platformCopilot.conversationId, platformCopilot.messages, platformCopilot.streamingComponents, platformCopilot.streamingMessageId]);
+  const loading = platformCopilot.loading || Boolean(platformCopilot.streamingMessageId);
 
   const sendMessage = async () => {
     const message = input.trim();
     if (!message || loading) return;
     setScrollRequest((request) => request + 1);
-    if (await secondBrain.send(message)) setInput('');
+    if (await platformCopilot.send(message)) setInput('');
   };
 
   const choiceInteractions = React.useMemo(
-    () => buildChoiceInteractionIndex(secondBrain.messages),
-    [secondBrain.messages],
+    () => buildChoiceInteractionIndex(platformCopilot.messages),
+    [platformCopilot.messages],
   );
 
   const handleChoiceAction = React.useCallback(async (sourceMessageId: string, action: ChoiceComponentAction) => {
-    if (!secondBrain.conversationId) throw new Error('No active conversation');
-    const ok = await secondBrain.send(action.submitText, {
+    if (!platformCopilot.conversationId) throw new Error('No active conversation');
+    const ok = await platformCopilot.send(action.submitText, {
       ...action.interaction,
       sourceMessageId,
     });
     if (!ok) throw new Error('Failed to submit the answer');
-  }, [secondBrain.conversationId, secondBrain.send]);
+  }, [platformCopilot.conversationId, platformCopilot.send]);
 
   const handleSubmitQuestions = React.useCallback((sourceMessageId: string) => async (actions: ChoiceComponentAction[]) => {
-    if (!secondBrain.conversationId) throw new Error('No active conversation');
-    const ok = await secondBrain.send(
+    if (!platformCopilot.conversationId) throw new Error('No active conversation');
+    const ok = await platformCopilot.send(
       actions.map((action) => action.submitText).join(' '),
       undefined,
       actions.map((action) => ({ ...action.interaction, sourceMessageId })),
     );
     if (!ok) throw new Error('Failed to submit the answers');
-  }, [secondBrain.conversationId, secondBrain.send]);
+  }, [platformCopilot.conversationId, platformCopilot.send]);
 
   const contextPlaybook = currentPlaybook?.id === routePlaybookId ? currentPlaybook : null;
-  const showMascot = shouldShowSecondBrainMascot(
-    Boolean(routePlaybookId),
-    pageMode,
-    currentExecution && currentExecution.playbookId === routePlaybookId
-      ? currentExecution.status
-      : routePlaybookId
-        ? executionHistoryByPlaybook[routePlaybookId]?.[0]?.status
-        : undefined,
-  );
   const selectedTask = contextPlaybook?.tasks.find((task) => task.id === selectedTaskId)
     ?? contextPlaybook?.nodes?.find((node) => node.id === selectedTaskId);
 
   const autoConsumedHandoffsRef = React.useRef<Set<string>>(new Set());
   React.useEffect(() => {
-    if (!open || !routePlaybookId) return;
+    if (!open || !routePlaybookId || pageContext.surface !== 'playbook.editor') return;
     for (const target of messages.flatMap((message) => message.targets ?? [])) {
       if (!target.params.operationId) continue;
       if (!shouldAutoConsumeCanvasHandoff(target, routePlaybookId, Boolean(pageContext.hasUnsavedChanges))) continue;
-      const identity = getSecondBrainUiTargetIdentity(target);
+      const identity = getPlatformCopilotUiTargetIdentity(target);
       if (autoConsumedHandoffsRef.current.has(identity)) continue;
       autoConsumedHandoffsRef.current.add(identity);
       // The impacted canvas is already open: consume the operation in place instead of showing a button.
-      executeSecondBrainUiTarget({ target, pageContext, navigate, confirmNavigation: () => window.confirm(t('navigation.unsaved')) });
+      executePlatformCopilotUiTarget({ target, pageContext, navigate, confirmNavigation: () => window.confirm(t('navigation.unsaved')) });
     }
   }, [messages, open, pageContext, routePlaybookId, navigate, t]);
 
-  const renderAction = (target: SecondBrainUiTarget) => {
+  const autoConsumedExecutionHandoffsRef = React.useRef<Set<string>>(new Set());
+  React.useEffect(() => {
+    if (!open || !routePlaybookId || pageContext.surface !== 'playbook.editor') return;
+    let cancelled = false;
+    for (const target of messages.flatMap((message) => message.targets ?? [])) {
+      if (!shouldAutoConsumeExecutionHandoff(target, routePlaybookId)) continue;
+      const identity = getPlatformCopilotUiTargetIdentity(target);
+      if (autoConsumedExecutionHandoffsRef.current.has(identity)) continue;
+      autoConsumedExecutionHandoffsRef.current.add(identity);
+
+      const { playbookId, executionId } = target.params;
+      if (!playbookId || !executionId) continue;
+      const playbookStore = usePlaybookStore.getState();
+      playbookStore.setPageMode('run');
+      playbookStore.setExecutionPanelOpen(true);
+      void (async () => {
+        await playbookStore.fetchExecutions(playbookId);
+        if (cancelled) return;
+        await playbookStore.fetchExecution(playbookId, executionId);
+        if (cancelled) return;
+        playbookStore.viewExecutionInPanel(executionId);
+      })();
+    }
+    return () => { cancelled = true; };
+  }, [messages, open, pageContext.surface, routePlaybookId]);
+
+  const renderAction = (target: PlatformCopilotUiTarget) => {
     const presentation = getTargetPresentation(target.surface);
     const Icon = presentation.icon;
     return (
       <Button
         type='button'
-        key={getSecondBrainUiTargetIdentity(target)}
+        key={getPlatformCopilotUiTargetIdentity(target)}
         variant='ghost'
         className='group/action h-auto min-h-11 w-full justify-between gap-3 rounded-lg border bg-background px-3 py-2 text-left shadow-sm hover:border-primary/40 hover:bg-accent'
-        onClick={() => executeSecondBrainUiTarget({ target, pageContext, navigate, confirmNavigation: () => window.confirm(t('navigation.unsaved')) })}>
+        onClick={() => executePlatformCopilotUiTarget({ target, pageContext, navigate, confirmNavigation: () => window.confirm(t('navigation.unsaved')) })}>
         <span className='flex min-w-0 items-center gap-3'>
           <span className='grid size-8 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground group-hover/action:text-foreground'><Icon className='size-4' /></span>
           <span className='min-w-0'>
@@ -233,10 +239,10 @@ export function SecondBrainMascot() {
             <p className='mt-0.5 text-xs text-muted-foreground'>{t('description')}</p>
           </div>
           <div className='ml-auto flex shrink-0 items-center gap-1'>
-            <Button type='button' variant='ghost' size='icon' className='size-9' title={t('newConversation')} aria-label={t('newConversation')} disabled={loading} onClick={() => { void secondBrain.createNewConversation().then((created) => { if (created) { setInput(''); setScrollRequest((request) => request + 1); } }); }}>
+            <Button type='button' variant='ghost' size='icon' className='size-9' title={t('newConversation')} aria-label={t('newConversation')} disabled={loading} onClick={() => { void platformCopilot.createNewConversation().then((created) => { if (created) { setInput(''); setScrollRequest((request) => request + 1); } }); }}>
               <MessageSquarePlus className='size-4' />
             </Button>
-            <Button type='button' variant='ghost' size='icon' className='size-9' title={t('history.open')} aria-label={t('history.open')} disabled={loading} onClick={() => { setHistoryOpen(true); void secondBrain.refreshHistory(); }}>
+            <Button type='button' variant='ghost' size='icon' className='size-9' title={t('history.open')} aria-label={t('history.open')} disabled={loading} onClick={() => { setHistoryOpen(true); void platformCopilot.refreshHistory(); }}>
               <History className='size-4' />
             </Button>
             {!useDrawer && <Button type='button' variant='ghost' size='icon' className='size-9' aria-label={t('close')} onClick={closePanel}>
@@ -274,7 +280,7 @@ export function SecondBrainMascot() {
                 : 'min-w-0 max-w-full overflow-hidden text-sm leading-6 text-foreground'}>
                 {message.role === 'assistant' ? (
                   <>
-                    <SecondBrainActivity components={message.components} isStreaming={message.isStreaming} />
+                    <PlatformCopilotActivity components={message.components} isStreaming={message.isStreaming} />
                     {message.text && <Streamdown className='min-w-0 w-full max-w-full overflow-hidden break-words [&_code]:[overflow-wrap:anywhere] [&_ol]:my-2 [&_ol]:pl-5 [&_p]:my-2 [&_p]:[overflow-wrap:anywhere] [&_pre]:w-full [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre_code]:break-normal [&_pre_code]:[overflow-wrap:normal] [&_table]:my-3 [&_table]:block [&_table]:w-full [&_table]:max-w-full [&_table]:overflow-x-auto [&_table]:whitespace-nowrap [&_ul]:my-2 [&_ul]:pl-5'>{message.text}</Streamdown>}
                     {(() => {
                       const pendingChoices = message.components
@@ -312,7 +318,8 @@ export function SecondBrainMascot() {
               </div>
               {(() => {
                 const visibleTargets = (message.targets ?? []).filter(
-                  (target) => !shouldAutoConsumeCanvasHandoff(target, routePlaybookId, Boolean(pageContext.hasUnsavedChanges)),
+                  (target) => pageContext.surface !== 'playbook.editor'
+                    || !shouldAutoConsumeCanvasHandoff(target, routePlaybookId, Boolean(pageContext.hasUnsavedChanges)),
                 );
                 return visibleTargets.length > 0 ? (
                   <div className='mt-3 space-y-2'>
@@ -327,16 +334,16 @@ export function SecondBrainMascot() {
         <ChatScrollButton className='bottom-3 z-10' aria-label={t('scrollLatest')} title={t('scrollLatest')} />
       </ChatConversation>
       <footer className='shrink-0 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]'>
-        <label htmlFor='second-brain-message' className='sr-only'>{t('placeholder')}</label>
+        <label htmlFor='platform-copilot-message' className='sr-only'>{t('placeholder')}</label>
         <div className='flex items-end gap-2 rounded-xl border bg-card p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring'>
-          <Textarea id='second-brain-message' name='secondBrainMessage' value={input} onChange={(event) => setInput(event.target.value)} placeholder={t('placeholder')} className='max-h-32 min-h-10 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0' onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} />
+          <Textarea id='platform-copilot-message' name='platformCopilotMessage' value={input} onChange={(event) => setInput(event.target.value)} placeholder={t('placeholder')} className='max-h-32 min-h-10 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0' onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} />
           <Button type='button' size='icon' className='size-11 shrink-0 rounded-lg' onClick={(event) => { event.preventDefault(); event.stopPropagation(); void sendMessage(); }} disabled={loading || !input.trim()} aria-label={t('sendLabel')}><Send className='size-4' /></Button>
         </div>
       </footer>
     </>
   );
 
-  if (!showMascot || (routePlaybookId && (designerOpen || legacyDesignerOpen))) return null;
+  if (routePlaybookId && (designerOpen || legacyDesignerOpen)) return null;
 
   return (
     <>
@@ -352,7 +359,7 @@ export function SecondBrainMascot() {
         </Button>
       )}
       {open && useDrawer && (
-        <Sheet open onOpenChange={setOpen}>
+        <Sheet open onOpenChange={(nextOpen) => { if (nextOpen) openPanel(); else closePanel(); }}>
           <SheetContent className='pointer-events-auto z-[110] flex w-full flex-col gap-0 p-0 [&>button]:right-3 [&>button]:top-3 [&>button]:grid [&>button]:size-11 [&>button]:place-items-center [&>button_svg]:size-5 sm:max-w-md' aria-label={t('title')} closeLabel={t('close')}>
             <SheetHeader className='sr-only'><SheetTitle>{t('title')}</SheetTitle><SheetDescription>{t('description')}</SheetDescription></SheetHeader>
             {panel}
@@ -361,10 +368,10 @@ export function SecondBrainMascot() {
       )}
       {open && !useDrawer && (
         <ResizablePanel
-          storageKey={SECOND_BRAIN_PANEL_WIDTH_STORAGE_KEY}
-          defaultWidth={SECOND_BRAIN_PANEL_DEFAULT_WIDTH}
-          minWidth={SECOND_BRAIN_PANEL_MIN_WIDTH}
-          maxWidthRatio={SECOND_BRAIN_PANEL_MAX_WIDTH_RATIO}
+          storageKey={PLATFORM_COPILOT_PANEL_WIDTH_STORAGE_KEY}
+          defaultWidth={PLATFORM_COPILOT_PANEL_DEFAULT_WIDTH}
+          minWidth={PLATFORM_COPILOT_PANEL_MIN_WIDTH}
+          maxWidthRatio={PLATFORM_COPILOT_PANEL_MAX_WIDTH_RATIO}
           handlePosition='left'
           withHandle
           resizeHandleLabel={t('resize')}
@@ -375,13 +382,13 @@ export function SecondBrainMascot() {
           </aside>
         </ResizablePanel>
       )}
-      <SecondBrainHistoryDialog
+      <PlatformCopilotHistoryDialog
         open={historyOpen}
         onOpenChange={setHistoryOpen}
-        conversations={secondBrain.history}
-        activeConversationId={secondBrain.conversationId}
-        loading={secondBrain.historyLoading || secondBrain.loading}
-        onSelect={secondBrain.selectConversation}
+        conversations={platformCopilot.history}
+        activeConversationId={platformCopilot.conversationId}
+        loading={platformCopilot.historyLoading || platformCopilot.loading}
+        onSelect={platformCopilot.selectConversation}
       />
     </>
   );
@@ -407,14 +414,14 @@ function useCompactAssistantLayout(): boolean {
   return compact;
 }
 
-function getContextLabelKey(pageContext: SecondBrainPageContext): 'context.execution' | 'context.playbook' | 'context.library' | 'context.platform' {
+function getContextLabelKey(pageContext: PlatformCopilotPageContext): 'context.execution' | 'context.playbook' | 'context.library' | 'context.platform' {
   if (pageContext.entity?.type === 'execution') return 'context.execution';
   if (pageContext.entity?.type === 'playbook') return 'context.playbook';
   if (pageContext.module === 'playbooks') return 'context.library';
   return 'context.platform';
 }
 
-function getTargetPresentation(surface: SecondBrainUiTarget['surface']) {
+function getTargetPresentation(surface: PlatformCopilotUiTarget['surface']) {
   const presentations = {
     'playbook.list': { icon: Library, labelKey: 'navigation.playbooks', descriptionKey: 'navigation.playbooksDescription' },
     'playbook.editor': { icon: Workflow, labelKey: 'navigation.canvas', descriptionKey: 'navigation.canvasDescription' },
@@ -427,15 +434,25 @@ function getTargetPresentation(surface: SecondBrainUiTarget['surface']) {
 }
 
 // Canvas handoff buttons are only useful when the impacted Playbook canvas is not already open.
-const CANVAS_TARGET_SURFACES: ReadonlySet<SecondBrainUiTarget['surface']> = new Set(['playbook.editor', 'playbook.editor.assistant']);
+const CANVAS_TARGET_SURFACES: ReadonlySet<PlatformCopilotUiTarget['surface']> = new Set(['playbook.editor', 'playbook.editor.assistant']);
 
 export function shouldAutoConsumeCanvasHandoff(
-  target: SecondBrainUiTarget,
+  target: PlatformCopilotUiTarget,
   routePlaybookId: string | undefined,
   canvasDirty: boolean,
 ): boolean {
   return !canvasDirty && CANVAS_TARGET_SURFACES.has(target.surface)
     && Boolean(routePlaybookId) && target.params.playbookId === routePlaybookId;
+}
+
+export function shouldAutoConsumeExecutionHandoff(
+  target: PlatformCopilotUiTarget,
+  routePlaybookId: string | undefined,
+): boolean {
+  return target.surface === 'playbook.execution.details'
+    && target.params.playbookId === routePlaybookId
+    && Boolean(target.params.executionId)
+    && target.effects?.some((effect) => effect.type === 'focusExecutionStatus') === true;
 }
 
 function toDisplayMessage(message: ConversationMessage, isStreaming = false): Message | null {
@@ -446,7 +463,7 @@ function toDisplayMessage(message: ConversationMessage, isStreaming = false): Me
     text: message.conversationType === 'user' ? getUserMessageDisplayText(message) : getAssistantText(components),
     components,
     isStreaming,
-    targets: dedupeSecondBrainUiTargets(components.flatMap((component) => findUiTargets(getToolResult(component)))),
+    targets: dedupePlatformCopilotUiTargets(components.flatMap((component) => findUiTargets(getToolResult(component)))),
   };
   if (displayMessage.role === 'assistant'
     && !displayMessage.text

@@ -1,14 +1,14 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { SecondBrainActivity } from './SecondBrainActivity';
+import { PlatformCopilotActivity } from './PlatformCopilotActivity';
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
 }));
 
-describe('SecondBrainActivity', () => {
+describe('PlatformCopilotActivity', () => {
   it('shows safe progress and tool status without exposing raw reasoning or arguments', () => {
-    render(<SecondBrainActivity isStreaming components={[
+    render(<PlatformCopilotActivity isStreaming components={[
       { id: 'reasoning', type: 'reasoning', data: { content: 'private chain of thought' } },
       { id: 'steps', type: 'chainOfThought', data: { steps: ['Review Playbook structure', 'validate_playbook', '<private>hidden</private>', 'token=secret'] } },
       { id: 'tool', type: 'toolInfo', data: { title: 'validate_playbook', status: 'completed', params: '{"password":"hidden"}', resultJson: '{"secret":"hidden"}' } },

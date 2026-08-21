@@ -90,10 +90,6 @@ export const API_ENDPOINTS = {
     base: '/admin/conversation-settings',
     agents: '/admin/conversation-settings/agents',
   },
-  adminCopilotAssistant: {
-    base: '/admin/copilot-assistant',
-    agents: '/admin/copilot-assistant/agents',
-  },
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
     plannerAgents: '/admin/playbook-settings/planner-agents',

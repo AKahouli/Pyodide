@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SECOND_BRAIN_CONVERSATION_STORAGE_KEY, useSecondBrainConversation } from './useSecondBrainConversation';
+import { PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY, usePlatformCopilotConversation } from './usePlatformCopilotConversation';
 import type { StreamSSEEvent } from '@/modules/conversation/types';
 
 const mocks = vi.hoisted(() => ({
@@ -39,10 +39,10 @@ const context = {
   locale: 'en',
 };
 
-describe('useSecondBrainConversation', () => {
+describe('usePlatformCopilotConversation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    localStorage.removeItem(SECOND_BRAIN_CONVERSATION_STORAGE_KEY);
+    localStorage.removeItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY);
     mocks.listener = undefined;
     mocks.subscribe.mockImplementation((listener: (event: StreamSSEEvent) => void) => {
       mocks.listener = listener;
@@ -62,7 +62,7 @@ describe('useSecondBrainConversation', () => {
   });
 
   it('creates a standard platform-copilot conversation and sends typed context', async () => {
-    const { result } = renderHook(() => useSecondBrainConversation(true, context));
+    const { result } = renderHook(() => usePlatformCopilotConversation(true, context));
     await waitFor(() => expect(result.current.conversationId).toBe('conversation-1'));
     expect(result.current.loading).toBe(false);
 
@@ -74,11 +74,22 @@ describe('useSecondBrainConversation', () => {
       requestId: expect.any(String),
       clientContext: context,
     }));
-    expect(localStorage.getItem(SECOND_BRAIN_CONVERSATION_STORAGE_KEY)).toBe('conversation-1');
+    expect(localStorage.getItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY)).toBe('conversation-1');
+  });
+
+  it('migrates the legacy conversation storage key once', async () => {
+    localStorage.setItem('ys_second_brain_conversation_id', 'conversation-1');
+    mocks.fetchConversation.mockResolvedValue({ id: 'conversation-1', runtimePurpose: 'platform_copilot' });
+    mocks.fetchMessages.mockResolvedValue({ items: [], total: 0, page: 1, limit: 100, totalPages: 0 });
+
+    renderHook(() => usePlatformCopilotConversation(true, context));
+
+    await waitFor(() => expect(localStorage.getItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY)).toBe('conversation-1'));
+    expect(localStorage.getItem('ys_second_brain_conversation_id')).toBeNull();
   });
 
   it('filters the shared stream by the pinned conversation id', async () => {
-    const { result } = renderHook(() => useSecondBrainConversation(true, context));
+    const { result } = renderHook(() => usePlatformCopilotConversation(true, context));
     await waitFor(() => expect(result.current.conversationId).toBe('conversation-1'));
 
     act(() => mocks.listener?.({
@@ -99,7 +110,7 @@ describe('useSecondBrainConversation', () => {
   });
 
   it('tracks one streaming AI message and accumulates component updates', async () => {
-    const { result } = renderHook(() => useSecondBrainConversation(true, context));
+    const { result } = renderHook(() => usePlatformCopilotConversation(true, context));
     await waitFor(() => expect(result.current.conversationId).toBe('conversation-1'));
 
     act(() => mocks.listener?.({
@@ -123,7 +134,7 @@ describe('useSecondBrainConversation', () => {
     mocks.createConversation
       .mockResolvedValueOnce({ id: 'conversation-1', runtimePurpose: 'platform_copilot' })
       .mockResolvedValueOnce({ id: 'conversation-2', title: 'Yellowmind', runtimePurpose: 'platform_copilot' });
-    const { result } = renderHook(() => useSecondBrainConversation(true, context));
+    const { result } = renderHook(() => usePlatformCopilotConversation(true, context));
     await waitFor(() => expect(result.current.conversationId).toBe('conversation-1'));
 
     await act(async () => { expect(await result.current.createNewConversation()).toBe(true); });
@@ -133,7 +144,7 @@ describe('useSecondBrainConversation', () => {
       creationRequestId: expect.any(String),
     });
     expect(result.current.conversationId).toBe('conversation-2');
-    expect(localStorage.getItem(SECOND_BRAIN_CONVERSATION_STORAGE_KEY)).toBe('conversation-2');
+    expect(localStorage.getItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY)).toBe('conversation-2');
     expect(result.current.history.map((conversation) => conversation.id)).toEqual([
       'conversation-2',
       'conversation-1',
@@ -153,7 +164,7 @@ describe('useSecondBrainConversation', () => {
 
   it('loads and selects an owned platform-copilot history item', async () => {
     mocks.fetchConversation.mockResolvedValue({ id: 'conversation-2', runtimePurpose: 'platform_copilot' });
-    const { result } = renderHook(() => useSecondBrainConversation(true, context));
+    const { result } = renderHook(() => usePlatformCopilotConversation(true, context));
     await waitFor(() => expect(result.current.history).toHaveLength(1));
 
     await act(async () => { expect(await result.current.selectConversation('conversation-2')).toBe(true); });
@@ -164,7 +175,7 @@ describe('useSecondBrainConversation', () => {
 
   it('does not start a turn when the shared Conversation stream is unavailable', async () => {
     mocks.waitForConnection.mockResolvedValue(false);
-    const { result } = renderHook(() => useSecondBrainConversation(true, context));
+    const { result } = renderHook(() => usePlatformCopilotConversation(true, context));
     await waitFor(() => expect(result.current.conversationId).toBe('conversation-1'));
 
     await act(async () => { expect(await result.current.send('Find it')).toBe(false); });

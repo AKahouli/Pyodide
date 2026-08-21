@@ -4,7 +4,7 @@ import type { Edge, Node } from '@xyflow/react';
 import { autoLayoutTasks } from '../utils/auto-layout';
 import { readPlaybookDefinitionFile, PlaybookImportError } from '../utils/playbookImport';
 import { tasksToNodes } from '../hooks/helpers/node-serializer';
-import { useSecondBrainPanelStore } from '../../second-brain/secondBrainPanelStore';
+import { usePlatformCopilotPanelStore } from '../../platform-copilot/platformCopilotPanelStore';
 import type {
   DataBinding,
   Playbook,
@@ -239,7 +239,7 @@ export function usePlaybookCanvasPageHandlers({
     // Design-time assistance moved to the global Yellowmind assistant: the toolbar button opens
     // the Yellowmind panel (playbook context is carried by the route) instead of the local designer.
     if (designerOpen) setDesignerOpen(false);
-    useSecondBrainPanelStore.getState().openPanel();
+    usePlatformCopilotPanelStore.getState().openPanel();
   }, [designerOpen, setCopilotMode, setDesignerOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, waitingForHumanInput]);
 
   const handlePageModeChange = useCallback((mode: PlaybookPageMode) => {

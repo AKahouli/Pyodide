@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { useModuleTranslation } from '@/modules/localization';
 import type { Conversation } from '@/modules/conversation/types';
 
-export function SecondBrainHistoryDialog({
+export function PlatformCopilotHistoryDialog({
   open,
   onOpenChange,
   conversations,
@@ -21,7 +21,7 @@ export function SecondBrainHistoryDialog({
   loading: boolean;
   onSelect: (id: string) => Promise<boolean>;
 }>) {
-  const { t, language } = useModuleTranslation('second-brain');
+  const { t, language } = useModuleTranslation('platform-copilot');
   const [query, setQuery] = React.useState('');
   const normalizedQuery = query.trim().toLocaleLowerCase(language);
   const filtered = conversations.filter((conversation) => !normalizedQuery
