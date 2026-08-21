@@ -8,6 +8,7 @@ import { sha256 } from './hashing';
 import { parseCommandLine, type CommandStep } from './command-line';
 import { applyUnifiedPatch, createUnifiedDiff } from './unified-diff';
 import { buildFilesTreeFromVfsPaths } from '../utils/files-tree';
+import { isTextSourcePath } from '../utils/app-source';
 import {
   validateToolPath,
   validateToolPathOptional,
@@ -194,6 +195,7 @@ async function commitRevision(ctx: ToolContext): Promise<string> {
 
   const files: Array<{ path: string; content: string }> = [];
   for (const relPath of manifest.keys()) {
+    if (!isTextSourcePath(relPath)) continue;
     const vfsPath = toVfsPath(relPath);
     const content = await ctx.adapter.readFile(vfsPath);
     if (typeof content === 'string') {
@@ -209,6 +211,7 @@ async function commitRevision(ctx: ToolContext): Promise<string> {
       toolCallId: ctx.toolCallId ?? null,
     });
   } catch (err) {
+    ctx.revisions.abandonLatest();
     throw new ToolError(
       RuntimeErrorCodes.INTERNAL_ERROR,
       `Failed to persist revision ${revisionId} to Ceph: ${

@@ -70,6 +70,25 @@ export class WorkspaceRevisionStore {
     return id;
   }
 
+  /** Drop the latest minted revision after a failed Ceph persist. */
+  abandonLatest(): string {
+    const latest = this._latestRevisionId;
+    const parent = this.parents.get(latest) ?? null;
+    if (!this.revisions.has(latest) || (parent == null && this.revisions.size <= 1)) {
+      return latest;
+    }
+    this.revisions.delete(latest);
+    this.parents.delete(latest);
+    if (parent && this.revisions.has(parent)) {
+      this._latestRevisionId = parent;
+    }
+    const numbered = REV_ID_RE.exec(latest);
+    if (numbered) {
+      this.counter = Math.max(0, Number(numbered[1]) - 1);
+    }
+    return this._latestRevisionId;
+  }
+
   has(revisionId: string): boolean {
     return this.revisions.has(revisionId);
   }

@@ -8,6 +8,7 @@ import { ToolError } from '../ToolError';
 import { sha256 } from '../hashing';
 import { RuntimeErrorCodes, type FileEntry, type FinalizeResult } from '../runtime.types';
 import { MAX_FILE_SIZE, SEARCH_EXCERPT_CHARS } from '../limits';
+import { conversationV2Api } from '../../api';
 
 vi.mock('../../api', () => ({
   conversationV2Api: {
@@ -395,6 +396,27 @@ describe('write', () => {
       ),
       RuntimeErrorCodes.INVALID_PARAMS,
     );
+  });
+
+  it('omits binary files from the persisted revision snapshot', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    await adapter.writeFile('/public/hero.png', 'not-a-real-png');
+    await dispatchTool('write', { path: 'src/New.tsx', content: 'x', create: true }, ctx);
+    const body = vi.mocked(conversationV2Api.commitWorkspaceRevision).mock.calls.at(-1)?.[1] as {
+      files: Array<{ path: string }>;
+    };
+    expect(body.files.some((file) => file.path.endsWith('.png'))).toBe(false);
+    expect(body.files.some((file) => file.path === 'src/New.tsx')).toBe(true);
+  });
+
+  it('rolls back the local revision when Ceph persist fails', async () => {
+    vi.mocked(conversationV2Api.commitWorkspaceRevision).mockRejectedValueOnce(new Error('413'));
+    const { ctx, revisions } = await makeContext(BASE_FILES);
+    await expectToolError(
+      dispatchTool('write', { path: 'src/New.tsx', content: 'x', create: true }, ctx),
+      RuntimeErrorCodes.INTERNAL_ERROR,
+    );
+    expect(revisions.latestRevisionId).toBe('rev_1');
   });
 
   it('invalidates the install fingerprint when package.json changes', async () => {

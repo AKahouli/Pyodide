@@ -57,23 +57,43 @@ function AuthShell({
         </section>
 
         <aside className="relative hidden md:block" aria-hidden="true">
-          <div className="relative overflow-hidden rounded-3xl border border-neutral-800 bg-neutral-950/60 shadow-2xl shadow-black/40">
-            <img
-              src={resolvePublicAsset('brand/auth-preview-builder.png')}
-              alt=""
-              className="h-64 w-full object-cover object-top lg:h-80"
-            />
-            <div className="grid grid-cols-5 gap-3 p-4">
-              <img
-                src={resolvePublicAsset('brand/auth-preview-app.png')}
-                alt=""
-                className="col-span-3 h-40 rounded-2xl object-cover lg:h-48"
-              />
-              <img
-                src={resolvePublicAsset('brand/auth-preview-mobile.png')}
-                alt=""
-                className="col-span-2 h-40 rounded-2xl object-cover object-top lg:h-48"
-              />
+          <div className="overflow-hidden rounded-3xl border border-neutral-800 bg-neutral-950/70 shadow-2xl shadow-black/40">
+            <div className="flex items-center gap-2 border-b border-neutral-800 px-4 py-3">
+              <span className="h-2.5 w-2.5 rounded-full bg-red-400/80" />
+              <span className="h-2.5 w-2.5 rounded-full bg-primary/80" />
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/80" />
+              <span className="ml-2 text-xs text-neutral-500">App Builder · live preview</span>
+            </div>
+            <div className="grid grid-cols-5">
+              <div className="col-span-2 space-y-3 border-r border-neutral-800 p-4">
+                <div className="rounded-2xl rounded-tl-sm bg-neutral-800 px-3 py-2 text-[11px] text-neutral-300">
+                  Create a recipe app with favorites and a shopping list.
+                </div>
+                <div className="rounded-2xl rounded-tr-sm bg-primary/15 px-3 py-2 text-[11px] text-primary">
+                  Provisioning App Data, then building the interface…
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {['write', 'preview', 'finalize'].map((chip) => (
+                    <span
+                      key={chip}
+                      className="rounded-full border border-neutral-700 px-2 py-0.5 text-[10px] text-neutral-400"
+                    >
+                      {chip}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div className="col-span-3 space-y-3 p-4">
+                <div className="h-3 w-1/2 rounded bg-neutral-800" />
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="h-20 rounded-xl bg-gradient-to-br from-primary/30 to-neutral-800" />
+                  <div className="h-20 rounded-xl bg-gradient-to-br from-neutral-700 to-neutral-900" />
+                </div>
+                <div className="h-16 rounded-xl border border-neutral-800 bg-neutral-900/80 p-3">
+                  <div className="h-2 w-2/3 rounded bg-neutral-700" />
+                  <div className="mt-2 h-2 w-1/3 rounded bg-primary/50" />
+                </div>
+              </div>
             </div>
           </div>
           <p className="mt-4 text-xs text-neutral-500">
