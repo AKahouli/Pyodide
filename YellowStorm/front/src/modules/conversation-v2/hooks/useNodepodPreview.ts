@@ -4,10 +4,8 @@ import {
   type HostState,
 } from '../runtime/BrowserRuntimeHost';
 import {
-  mapHostStatusToRuntimeUi,
   type RuntimeHostStatus,
 } from '../runtime/runtime.types';
-import { useConversationV2Store } from '../store';
 
 // Re-export the port-resolution helpers so call-sites that import from here
 // continue to work unchanged.
@@ -78,7 +76,6 @@ export function useNodepodPreview({
   const [error, setError] = useState<string | null>(null);
   const [files, setFiles] = useState<Record<string, string | Uint8Array> | null>(null);
   const hostRef = useRef<ReturnType<typeof getOrCreateHost> | null>(null);
-  const setRuntimeStatus = useConversationV2Store((s) => s.setRuntimeStatus);
 
   useEffect(() => {
     if (!sessionId) {
@@ -86,7 +83,6 @@ export function useNodepodPreview({
       setPreviewUrl(null);
       setError(null);
       setFiles(null);
-      setRuntimeStatus('idle');
       return;
     }
 
@@ -98,7 +94,6 @@ export function useNodepodPreview({
       setPreviewUrl(state.previewUrl);
       setError(state.error);
       setFiles(state.files);
-      setRuntimeStatus(mapHostStatusToRuntimeUi(state.status));
     };
 
     sync(host.state);
@@ -108,7 +103,7 @@ export function useNodepodPreview({
       unsubscribe();
       host.detachPreviewIframe();
     };
-  }, [sessionId, setRuntimeStatus]);
+  }, [sessionId]);
 
   const retry = useCallback(() => {
     hostRef.current?.retry();

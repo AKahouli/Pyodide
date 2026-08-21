@@ -65,7 +65,7 @@ describe('useNodepodPreview', () => {
     expect(mockStart).not.toHaveBeenCalled();
   });
 
-  it('mirrors host status into the Zustand runtimeStatus store', () => {
+  it('does not write runtimeStatus into the conversation store (session page owns that)', () => {
     renderHook(() => useNodepodPreview({ sessionId: 'sess_1' }));
 
     act(() => {
@@ -77,22 +77,10 @@ describe('useNodepodPreview', () => {
       listener?.(hostState);
     });
 
-    expect(useConversationV2Store.getState().runtimeStatus).toBe('browser_active');
-    expect(useConversationV2Store.getState().rightPanelMode).toBe('app');
+    expect(useConversationV2Store.getState().runtimeStatus).toBe('idle');
   });
 
-  it('maps hydrating host status to store hydrating and opens the app panel', () => {
-    renderHook(() => useNodepodPreview({ sessionId: 'sess_1' }));
-
-    act(() => {
-      hostState = { ...hostState, status: 'installing' };
-      listener?.(hostState);
-    });
-
-    expect(useConversationV2Store.getState().runtimeStatus).toBe('hydrating');
-  });
-
-  it('does not override an open tool panel when the runtime becomes ready', () => {
+  it('keeps an open tool panel unchanged when preview status updates', () => {
     useConversationV2Store.setState({
       rightPanelMode: 'tool',
       selectedToolCallId: 'tc_1',
@@ -123,7 +111,7 @@ describe('useNodepodPreview', () => {
     expect(mockDetach).toHaveBeenCalled();
   });
 
-  it('resets store runtimeStatus when sessionId becomes null', () => {
+  it('does not reset store runtimeStatus when sessionId becomes null', () => {
     useConversationV2Store.setState({ runtimeStatus: 'browser_active' });
     const { rerender } = renderHook(
       ({ sessionId }: { sessionId: string | null }) => useNodepodPreview({ sessionId }),
@@ -131,7 +119,7 @@ describe('useNodepodPreview', () => {
     );
 
     rerender({ sessionId: null });
-    expect(useConversationV2Store.getState().runtimeStatus).toBe('idle');
+    expect(useConversationV2Store.getState().runtimeStatus).toBe('browser_active');
   });
 });
 

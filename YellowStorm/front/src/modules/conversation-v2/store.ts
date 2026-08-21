@@ -792,7 +792,12 @@ export const useConversationV2Store = create<State & Actions>()(
         const stored = readSelectedModelForSession(sessionId);
         set({ selectedModelId: stored }, false, 'hydrateSelectedModelForSession');
       },
-      handleEvent: (event) =>
+      handleEvent: (event) => {
+        const sideEffects: {
+          previewSessionId: string | null;
+          syncRevision: { sessionId: string; revisionId: string } | null;
+          titleSync: { sessionId: string; title: string } | null;
+        } = { previewSessionId: null, syncRevision: null, titleSync: null };
         set(
           (state) => {
             const incomingSeq = (event as { sequence?: number }).sequence;
@@ -816,20 +821,8 @@ export const useConversationV2Store = create<State & Actions>()(
                   state.sessionId !== null &&
                   event.title.length > 0 &&
                   event.title !== state.title;
-                // Mirror the title into the pointer list so the sidebar
-                // updates in lockstep with the header.
                 if (isFresh && state.sessionId) {
-                  const sid = state.sessionId;
-                  const newTitle = event.title;
-                  useConversationV2PointersStore.setState(
-                    (p) => ({
-                      items: p.items.map((row) =>
-                        row.sessionId === sid ? { ...row, title: newTitle } : row,
-                      ),
-                    }),
-                    false,
-                    'pointers/title-sync',
-                  );
+                  sideEffects.titleSync = { sessionId: state.sessionId, title: event.title };
                 }
                 return withSeq({
                   title: event.title,
@@ -850,7 +843,7 @@ export const useConversationV2Store = create<State & Actions>()(
                   !!state.applicationComponent;
                 const events = completePendingToolsInTurn(state.events);
                 if (showRuntimePreview && state.sessionId) {
-                  refreshHostPreview(state.sessionId);
+                  sideEffects.previewSessionId = state.sessionId;
                 }
                 return withSeq({
                   events: [...events, event],
@@ -972,7 +965,7 @@ export const useConversationV2Store = create<State & Actions>()(
                   hasFilesTree: !!event.files_tree,
                 });
                 if (state.sessionId && event.revision_id) {
-                  syncHostRevisionSources(state.sessionId, event.revision_id);
+                  sideEffects.syncRevision = { sessionId: state.sessionId, revisionId: event.revision_id };
                 }
                 return withSeq({
                   events: [...state.events, event],
@@ -1017,7 +1010,24 @@ export const useConversationV2Store = create<State & Actions>()(
           },
           false,
           `handleEvent/${event.type}`,
-        ),
+        );
+        if (sideEffects.titleSync) {
+          const { sessionId: sid, title: newTitle } = sideEffects.titleSync;
+          useConversationV2PointersStore.setState(
+            (p) => ({
+              items: p.items.map((row) =>
+                row.sessionId === sid ? { ...row, title: newTitle } : row,
+              ),
+            }),
+            false,
+            'pointers/title-sync',
+          );
+        }
+        if (sideEffects.previewSessionId) refreshHostPreview(sideEffects.previewSessionId);
+        if (sideEffects.syncRevision) {
+          syncHostRevisionSources(sideEffects.syncRevision.sessionId, sideEffects.syncRevision.revisionId);
+        }
+      },
     }),
     { name: 'conversation-v2' },
   ),

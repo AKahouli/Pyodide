@@ -166,26 +166,6 @@ export class NodepodRuntimeAdapter {
     return this._files;
   }
 
-  /**
-   * Try restoring a cached pod.  Returns true if hit.
-   */
-  restoreFromCache(sessionId: string, revision: string): boolean {
-    cleanupStaleEntries();
-    const key = cacheKey(sessionId, revision);
-    const entry = podCache.get(key);
-    if (entry?.alive && entry.pod) {
-      log('cache-hit', { key });
-      this.pod = entry.pod;
-      this._files = entry.files;
-      this.sessionId = sessionId;
-      this.revision = revision;
-      this.lastInstallFingerprint = entry.installFingerprint;
-      entry.lastAccessed = Date.now();
-      return true;
-    }
-    return false;
-  }
-
   async boot(
     files: VfsFiles,
     sessionId: string,

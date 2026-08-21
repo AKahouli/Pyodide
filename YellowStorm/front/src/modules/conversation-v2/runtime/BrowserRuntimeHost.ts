@@ -27,6 +27,77 @@ const HIDDEN_IFRAME_STYLE =
 const HIDDEN_IFRAME_SANDBOX =
   'allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts';
 
+let appDataFetchProxyInstalled = false;
+
+function isAppDataPublicUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url, window.location.href);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    return parsed.pathname.includes('/app-data/public/');
+  } catch {
+    return false;
+  }
+}
+
+function installAppDataFetchProxyOnce(): void {
+  if (appDataFetchProxyInstalled || typeof window === 'undefined') return;
+  appDataFetchProxyInstalled = true;
+
+  const handleProxyRequest = (
+    data: Record<string, unknown>,
+    reply: (response: Record<string, unknown>) => void,
+  ) => {
+    const { id, url, method, headers, body } = data;
+    if (typeof url !== 'string' || !isAppDataPublicUrl(url)) return;
+
+    fetch(url, {
+      method: (method as string) || 'GET',
+      headers: (headers as HeadersInit) || undefined,
+      body: (body as BodyInit) || undefined,
+    })
+      .then(async (res) => {
+        const responseBody = await res.text();
+        const responseHeaders: Record<string, string> = {};
+        res.headers.forEach((v, k) => {
+          responseHeaders[k] = v;
+        });
+        reply({
+          type: 'ym-app-data-response',
+          id,
+          status: res.status,
+          headers: responseHeaders,
+          body: responseBody,
+        });
+      })
+      .catch((err) => {
+        reply({
+          type: 'ym-app-data-response',
+          id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  };
+
+  window.addEventListener('message', (event: MessageEvent) => {
+    if (event.data?.type !== 'ym-app-data-fetch') return;
+    const source = event.source as WindowProxy | null;
+    if (!source) return;
+    const targetOrigin =
+      event.origin && event.origin !== 'null' ? event.origin : '*';
+    handleProxyRequest(event.data, (response) => source.postMessage(response, targetOrigin));
+  });
+
+  try {
+    const channel = new BroadcastChannel('ym-app-data-proxy');
+    channel.onmessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'ym-app-data-fetch') return;
+      handleProxyRequest(event.data, (response) => channel.postMessage(response));
+    };
+  } catch {
+    // BroadcastChannel not supported — new-tab proxy unavailable
+  }
+}
+
 export type HostStateListener = (state: HostState) => void;
 
 export interface HostState {
@@ -58,7 +129,7 @@ export class BrowserRuntimeHost {
   private reconnectAttempts = 0;
   private listeners = new Set<HostStateListener>();
   private pendingIframe: HTMLIFrameElement | null = null;
-  private appDataProxyInstalled = false;
+  private refreshPreviewInFlight: Promise<void> | null = null;
 
   private buildAppDataViteEnv(): Record<string, string> | undefined {
     const env = this.ticket?.appDataRuntimeEnv;
@@ -71,62 +142,8 @@ export class BrowserRuntimeHost {
     };
   }
 
-  private appDataBroadcast: BroadcastChannel | null = null;
-
-  /**
-   * Proxy fetch requests from the generated app — bypasses the Nodepod SW
-   * which strips POST bodies when forwarding requests.
-   *
-   * Two transports:
-   *  - `window.message` — used when the app runs in the preview iframe
-   *  - `BroadcastChannel('ym-app-data-proxy')` — used when the user opens
-   *    the preview in a new tab (window.parent === window)
-   */
   private setupAppDataFetchProxy(): void {
-    if (this.appDataProxyInstalled) return;
-    this.appDataProxyInstalled = true;
-
-    const handleProxyRequest = (
-      data: Record<string, unknown>,
-      reply: (response: Record<string, unknown>) => void,
-    ) => {
-      const { id, url, method, headers, body } = data;
-      if (typeof url !== 'string' || !url.includes('/app-data/public/')) return;
-
-      fetch(url, {
-        method: (method as string) || 'GET',
-        headers: (headers as HeadersInit) || undefined,
-        body: (body as BodyInit) || undefined,
-      })
-        .then(async (res) => {
-          const responseBody = await res.text();
-          const responseHeaders: Record<string, string> = {};
-          res.headers.forEach((v, k) => { responseHeaders[k] = v; });
-          reply({ type: 'ym-app-data-response', id, status: res.status, headers: responseHeaders, body: responseBody });
-        })
-        .catch((err) => {
-          reply({ type: 'ym-app-data-response', id, error: err instanceof Error ? err.message : String(err) });
-        });
-    };
-
-    // Transport 1: postMessage from preview iframe
-    window.addEventListener('message', (event: MessageEvent) => {
-      if (event.data?.type !== 'ym-app-data-fetch') return;
-      const source = event.source as WindowProxy | null;
-      if (!source) return;
-      handleProxyRequest(event.data, (response) => source.postMessage(response, '*'));
-    });
-
-    // Transport 2: BroadcastChannel for new-tab previews
-    try {
-      this.appDataBroadcast = new BroadcastChannel('ym-app-data-proxy');
-      this.appDataBroadcast.onmessage = (event: MessageEvent) => {
-        if (event.data?.type !== 'ym-app-data-fetch') return;
-        handleProxyRequest(event.data, (response) => this.appDataBroadcast?.postMessage(response));
-      };
-    } catch {
-      // BroadcastChannel not supported — new-tab proxy unavailable
-    }
+    installAppDataFetchProxyOnce();
   }
 
   /** Off-screen iframe so preview_inspect works when the user panel is closed. */
@@ -460,7 +477,7 @@ export class BrowserRuntimeHost {
    * event, so re-registration is the readiness signal.
    */
   /** Refresh the split-view source cache from the live Nodepod VFS. */
-  async refreshSourceFiles(): Promise<void> {
+  private async refreshSourceFiles(): Promise<void> {
     if (this._destroyed || !this.adapter.currentPod) return;
     try {
       await this.adapter.refreshFileCache();
@@ -615,6 +632,11 @@ export class BrowserRuntimeHost {
     this.removeHiddenPreviewIframe();
     this.pendingIframe = iframe;
     this.flushPendingIframe();
+    const url = this.previewCtrl.previewUrl;
+    if (!url) return;
+    if (iframe.src && iframe.src !== 'about:blank' && iframe.src === url) {
+      return;
+    }
     this.reloadPreviewIframe(iframe);
   }
 
@@ -623,6 +645,14 @@ export class BrowserRuntimeHost {
    * visible panel matches what finalize / preview_inspect verified.
    */
   async refreshPreview(): Promise<void> {
+    if (this.refreshPreviewInFlight) return this.refreshPreviewInFlight;
+    this.refreshPreviewInFlight = this.runRefreshPreview().finally(() => {
+      this.refreshPreviewInFlight = null;
+    });
+    return this.refreshPreviewInFlight;
+  }
+
+  private async runRefreshPreview(): Promise<void> {
     if (this._destroyed) return;
     const pod = this.adapter.currentPod;
     const url = this.previewCtrl.previewUrl;

@@ -183,64 +183,13 @@ export function ApplicationComponentView({
 
   const handleOpenExternal = useCallback(() => {
     if (!previewUrl) return;
-    // The Nodepod SW strips POST bodies when forwarding requests.
-    // Open a wrapper page (about:blank — not controlled by the SW) that:
-    //  1. Embeds the preview in an iframe
-    //  2. Listens for postMessage-based fetch proxy requests from the iframe
-    //  3. On iframe load, injects a fetch monkey-patch so even apps without
-    //     the postMessage proxy template get their bodies preserved.
-    const w = window.open('about:blank', '_blank');
-    if (!w) { window.open(previewUrl, '_blank', 'noopener,noreferrer'); return; }
-    const escaped = previewUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-    w.document.write(`<!DOCTYPE html><html><head>
-<meta charset="utf-8"><title>Preview</title>
-<style>*{margin:0;padding:0}html,body{height:100%}iframe{width:100%;height:100%;border:none}</style>
-</head><body>
-<iframe id="pv" src="${escaped}" sandbox="allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts"></iframe>
-<script>
-// Proxy postMessage-based fetch requests from apps that use the proxy template
-window.addEventListener("message",function(e){
-  if(!e.data||e.data.type!=="ym-app-data-fetch")return;
-  var d=e.data,s=e.source;if(!s)return;
-  fetch(d.url,{method:d.method||"GET",headers:d.headers||undefined,body:d.body||undefined})
-  .then(function(r){return r.text().then(function(b){
-    var h={};r.headers.forEach(function(v,k){h[k]=v});
-    s.postMessage({type:"ym-app-data-response",id:d.id,status:r.status,headers:h,body:b},"*");
-  })}).catch(function(err){
-    s.postMessage({type:"ym-app-data-response",id:d.id,error:err.message},"*");
-  });
-});
-
-// Universal fix: inject a fetch monkey-patch into the iframe so even apps
-// without the postMessage proxy get their App Data bodies preserved.
-document.getElementById("pv").addEventListener("load",function(){
-  try{
-    var iw=this.contentWindow;
-    if(!iw)return;
-    var origFetch=iw.fetch.bind(iw);
-    iw.fetch=function(input,init){
-      var url=typeof input==="string"?input:(input&&input.url)||"";
-      if(url.indexOf("/app-data/public/")!==-1&&init&&init.body){
-        return new Promise(function(resolve,reject){
-          var id="pxy-"+(++window._ymPxyId)+ "-"+Date.now();
-          var tm=setTimeout(function(){iw.removeEventListener("message",h);reject(new Error("proxy timeout"))},30000);
-          function h(ev){
-            if(!ev.data||ev.data.type!=="ym-app-data-response"||ev.data.id!==id)return;
-            iw.removeEventListener("message",h);clearTimeout(tm);
-            if(ev.data.error){reject(new Error(ev.data.error));return;}
-            resolve(new iw.Response(ev.data.body||"",{status:ev.data.status||200,headers:new iw.Headers(ev.data.headers||{})}));
-          }
-          iw.addEventListener("message",h);
-          window.postMessage({type:"ym-app-data-fetch",id:id,url:url,method:(init.method||"GET"),headers:init.headers||undefined,body:init.body||undefined},"*");
-        });
-      }
-      return origFetch(input,init);
-    };
-  }catch(e){}
-});
-window._ymPxyId=0;
-<\/script></body></html>`);
-    w.document.close();
+    const base = import.meta.env.BASE_URL || '/';
+    const wrapper = new URL('preview-wrapper.html', `${window.location.origin}${base}`);
+    wrapper.searchParams.set('src', previewUrl);
+    const opened = window.open(wrapper.toString(), '_blank', 'noopener,noreferrer');
+    if (!opened) {
+      window.open(previewUrl, '_blank', 'noopener,noreferrer');
+    }
   }, [previewUrl]);
 
   const setPreviewOnly = () => {
