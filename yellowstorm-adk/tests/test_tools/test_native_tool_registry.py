@@ -89,6 +89,13 @@ def test_every_registered_native_tool_has_explicit_guardrail_policy():
     assert registered <= set(NATIVE_TOOL_POLICIES)
 
 
+def test_run_code_guardrail_policy_is_write_execution():
+    assert NATIVE_TOOL_POLICIES["run_code"] == {
+        "safety": "write",
+        "kind": "execution",
+    }
+
+
 def test_native_tool_metadata_uses_authoritative_policy():
     tool = get_native_tool("calculator")
     assert tool.metadata == tool_policy("calculator")

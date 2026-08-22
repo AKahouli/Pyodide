@@ -5,7 +5,7 @@ from functools import lru_cache
 from typing import Optional, List
 from urllib.parse import urlparse
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -147,6 +147,12 @@ class Settings(BaseSettings):
 
     # Code Interpreter Backend
     CODE_INTERPRETER_BACKEND_URL: Optional[str] = None
+
+    # Lightweight isolated JavaScript runtime
+    RUN_CODE_ENABLED: bool = False
+    RUN_CODE_RUNTIME_URL: str = "http://localhost:8080"
+    RUN_CODE_RUNTIME_API_KEY: Optional[str] = None
+    RUN_CODE_REQUEST_TIMEOUT_SECONDS: float = Field(default=10.0, gt=0, le=120)
 
     # Vectorstores API (document indexing)
     VECTORSTORES_API_URL: Optional[str] = None
@@ -450,6 +456,24 @@ class Settings(BaseSettings):
             raise ValueError("CODE_INTERPRETER_BACKEND_URL must be a valid URL")
 
         return v
+
+    @field_validator("RUN_CODE_RUNTIME_URL", mode="before")
+    @classmethod
+    def validate_run_code_runtime_url(cls, v):
+        if not v or not str(v).strip():
+            raise ValueError("RUN_CODE_RUNTIME_URL is required")
+        parsed = urlparse(str(v))
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("RUN_CODE_RUNTIME_URL must be a valid HTTP(S) URL")
+        return str(v).rstrip("/")
+
+    @model_validator(mode="after")
+    def validate_run_code_credentials(self):
+        if self.RUN_CODE_ENABLED and not (self.RUN_CODE_RUNTIME_API_KEY or "").strip():
+            raise ValueError(
+                "RUN_CODE_RUNTIME_API_KEY is required when RUN_CODE_ENABLED is true"
+            )
+        return self
 
     @field_validator("LANGFUSE_HOST", mode="before")
     @classmethod

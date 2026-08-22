@@ -913,6 +913,14 @@ async def _execute_step(
         for tool in agent_config.get("tools", [])
         if isinstance(tool, dict)
     }
+    if "run_code" in tool_names:
+        from src.smart_rag.tools.utilities.run_code import (
+            RUN_CODE_PROMPT_GUIDANCE,
+            run_code_globally_enabled,
+        )
+
+        if run_code_globally_enabled():
+            system_prompt = f"{system_prompt}\n\n{RUN_CODE_PROMPT_GUIDANCE}"
     user_msg = _build_prompt(
         label=label,
         node_id=node_id,

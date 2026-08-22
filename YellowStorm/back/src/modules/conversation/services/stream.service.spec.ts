@@ -2,6 +2,108 @@ import { StreamService } from './stream.service';
 import type { MessageComponent } from '../interfaces/message.interface';
 
 describe('StreamService guardrail metadata buffering', () => {
+  it('injects owner-rooted run-code source prefixes only into assigned agents', async () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    Object.assign(service as object, {
+      workspaceService: {
+        getStoragePathMapByIds: jest.fn().mockResolvedValue({
+          'workspace-1': 'owner-1/immutable-finance',
+        }),
+      },
+      workspaceShareService: {
+        assertUserHasAccess: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const agents = [
+      {
+        id: 'agent-1', tools: [{ name: 'run_code' }], agent_params: { params: {} },
+      },
+      {
+        id: 'agent-2', tools: [{ name: 'calculator' }], agent_params: { params: {} },
+      },
+    ];
+
+    await (service as any).attachRunCodeContexts(
+      agents, 'user-1', 'conversation-1', ['workspace-1', 'workspace-1'],
+    );
+
+    const assignedParams = agents[0]!.agent_params.params as Record<string, string>;
+    const unassignedParams = agents[1]!.agent_params.params as Record<string, string>;
+    expect(JSON.parse(assignedParams.run_code_context_json!)).toEqual({
+      userId: 'user-1',
+      runId: 'conversation-1',
+      sourcePrefixes: ['owner-1/immutable-finance'],
+    });
+    expect(unassignedParams.run_code_context_json).toBeUndefined();
+  });
+
+  it('rejects attachment-derived run-code mounts when workspace access is denied', async () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    const getStoragePathMapByIds = jest.fn();
+    Object.assign(service as object, {
+      workspaceService: { getStoragePathMapByIds },
+      workspaceShareService: {
+        assertUserHasAccess: jest.fn().mockRejectedValue(new Error('forbidden')),
+      },
+    });
+    const agents = [{
+      id: 'agent-1', tools: [{ name: 'run_code' }], agent_params: { params: {} },
+    }];
+
+    await expect((service as any).attachRunCodeContexts(
+      agents,
+      'user-1',
+      'conversation-1',
+      ['trusted-workspace'],
+      ['foreign-workspace'],
+    )).rejects.toThrow('forbidden');
+    expect(getStoragePathMapByIds).not.toHaveBeenCalled();
+  });
+
+  it('injects run-code context for WhatsApp and Telegram single-agent execution', async () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    const agent = {
+      id: 'agent-1', name: 'Agent', tools: [{ name: 'run_code' }],
+      agent_params: { params: {} }, brain_context: [{ workspace_id: 'brain-1' }],
+      chatbot: { model: 'model-1' },
+    };
+    const attachRunCodeContexts = jest.fn().mockResolvedValue(undefined);
+    const executeSingleAgentGrpcStream = jest.fn().mockResolvedValue({
+      durationMs: 1, componentCount: 0, chunkCount: 0,
+    });
+    Object.assign(service as object, {
+      isGrpcAvailable: true,
+      modelsService: {
+        getDefaultModel: jest.fn().mockResolvedValue({}),
+        getModelIdentifier: jest.fn().mockReturnValue('model-1'),
+      },
+      agentService: { buildGrpcAgentsForPlaybook: jest.fn().mockResolvedValue([agent]) },
+      resolveAgentBrainContexts: jest.fn().mockResolvedValue(undefined),
+      conversationService: {
+        getConversationDocument: jest.fn().mockResolvedValue({ systemWorkspaceId: 'system-1' }),
+      },
+      buildWorkspaceContexts: jest.fn().mockResolvedValue([{ workspace_id: 'workspace-1' }]),
+      buildPreviousAttachedFiles: jest.fn().mockResolvedValue([{ workspace_id: 'system-1' }]),
+      attachRunCodeContexts,
+      executeSingleAgentGrpcStream,
+      configService: { get: jest.fn((_key: string, fallback: unknown) => fallback) },
+      logger: { log: jest.fn() },
+    });
+
+    await service.runSingleAgentStream({
+      userId: 'user-1', username: 'User', conversationId: 'conversation-1',
+      messageId: 'message-1', agentId: 'agent-1', query: 'hello',
+    });
+
+    expect(attachRunCodeContexts).toHaveBeenCalledWith(
+      [agent],
+      'user-1',
+      'conversation-1',
+      ['workspace-1', 'brain-1', 'system-1', 'system-1'],
+    );
+    expect(executeSingleAgentGrpcStream).toHaveBeenCalled();
+  });
+
   it('does not create a gRPC call when the durable lease was lost during request preparation', async () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     const executeGrpcStream = jest.fn();

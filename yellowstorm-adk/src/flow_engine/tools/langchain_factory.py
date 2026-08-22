@@ -18,13 +18,19 @@ from pydantic import BaseModel, Field, create_model
 from structlog import get_logger
 
 from src.connector_tool_name import build_connector_tool_name
-from src.run_workspace import with_run_workspace_path
+from src.run_workspace import run_workspace_path, with_run_workspace_path
 from src.config.settings import get_settings
 from src.flow_engine.runtime.artifact_routing import (
     infer_artifact_kind,
     semantic_match_output_port,
 )
 from src.guardrails.tool_registry import tool_policy
+from src.infrastructure.run_code import RunCodeClient, build_run_code_context
+from src.smart_rag.tools.utilities.run_code import (
+    RUN_CODE_CODE_DESCRIPTION,
+    RUN_CODE_TOOL_DESCRIPTION,
+    run_code_globally_enabled,
+)
 from src.smart_rag.tools.utilities.code_interpreter_payload import (
     _extract_workspace_name_from_filepath,
     _extract_workspace_name_hint,
@@ -553,6 +559,11 @@ class ActivateSkillInput(BaseModel):
     name: str = Field(description="The exact skill name to activate.")
 
 
+class RunCodeInput(BaseModel):
+    code: str = Field(description=RUN_CODE_CODE_DESCRIPTION)
+    input: Any = Field(default=None, description="Optional JSON-compatible input value.")
+
+
 def create_langchain_tools(
     agent_config: dict,
     workspace_context: Optional[list] = None,
@@ -591,7 +602,7 @@ def create_langchain_tools(
     effective_file_names = file_names if file_names is not None else input_files
     agent_params = agent_config.get("agent_params") or {}
     session_id = str(agent_params.get("session_id") or "")
-    user_id = str(agent_params.get("user_id") or "")
+    user_id = str(agent_params.get("user_id") or user_id or "")
     # Prefer the authoritative Ceph paths ("user_id/workspace_name") resolved by the
     # step node from the backend payload. Fall back to deriving them from document
     # filepaths only when the backend did not supply explicit paths.
@@ -719,6 +730,37 @@ def create_langchain_tools(
         )
         if code_tool:
             tools.append(code_tool)
+
+    if "run_code" in tool_names and run_code_globally_enabled():
+        run_id = session_id or execution_id
+        if user_id and run_id:
+            context = build_run_code_context(
+                user_id,
+                run_id,
+                [
+                    path
+                    for path in workspace_paths
+                    if path != run_workspace_path(user_id, run_id)
+                ],
+            )
+            client = RunCodeClient()
+
+            async def execute_run_code(code: str, input: Any = None) -> dict[str, Any]:
+                return await client.execute(
+                    code=code,
+                    input_value=input,
+                    context=context,
+                )
+
+            tools.append(
+                StructuredTool.from_function(
+                    coroutine=execute_run_code,
+                    func=None,
+                    name="run_code",
+                    description=RUN_CODE_TOOL_DESCRIPTION,
+                    args_schema=RunCodeInput,
+                )
+            )
 
     # --- Plan generator ---
     if "plan" in tool_names:

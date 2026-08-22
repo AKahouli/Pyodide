@@ -1,0 +1,39 @@
+name: Build Code Runtime Image
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+    paths:
+      - 'yellowstorm-code-runtime/**'
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: yscrmetachatbot002.azurecr.io/yellowstorm-code-runtime-poc
+
+jobs:
+  build:
+    if: (github.event.pull_request.merged == true) || (github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, Linux, X64, host142, yellowstorm, rec]
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        name: Set version
+        shell: bash
+        run: echo "tag=0.1.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+      - uses: azure/docker-login@v1
+        with:
+          login-server: yscrmetachatbot002.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+      - name: Build and push
+        shell: bash
+        run: |
+          docker build --network=host \
+            -t "$IMAGE_NAME:${{ steps.version.outputs.tag }}" \
+            yellowstorm-code-runtime
+          docker push "$IMAGE_NAME:${{ steps.version.outputs.tag }}"
+      - name: Deployment handoff
+        shell: bash
+        run: |
+          echo "Deploy $IMAGE_NAME:${{ steps.version.outputs.tag }} using yellowstorm-code-runtime/DEPLOYMENT.md" >> "$GITHUB_STEP_SUMMARY"

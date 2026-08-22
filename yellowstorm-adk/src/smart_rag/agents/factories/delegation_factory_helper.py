@@ -53,6 +53,24 @@ def _get_enabled_tool_config(
     return None
 
 
+def _append_run_code_guidance(
+    prompt: str,
+    tools_config: List[Any],
+    runtime_context: Dict[str, Any],
+) -> str:
+    if not _get_enabled_tool_config(tools_config, "run_code"):
+        return prompt
+    from src.infrastructure.run_code.context import parse_run_code_context
+    from src.smart_rag.tools.utilities.run_code import (
+        RUN_CODE_PROMPT_GUIDANCE,
+        run_code_globally_enabled,
+    )
+
+    if not run_code_globally_enabled() or parse_run_code_context(runtime_context) is None:
+        return prompt
+    return f"{prompt}\n\n{RUN_CODE_PROMPT_GUIDANCE}"
+
+
 def _build_connector_repo_fixed_params(
     connector_repo: Dict[str, str],
 ) -> Dict[str, str]:
@@ -467,6 +485,12 @@ def create_search_agent_with_tools(
     )
 
     agent_params = agent_config.get("agent_params") or {}
+    tools_config = agent_config.get("tools", [])
+    enhanced_prompt = _append_run_code_guidance(
+        enhanced_prompt,
+        tools_config,
+        agent_params,
+    )
     temp = _resolve_temperature(agent_params)
     if agent_config.get("agent_type") == "visualizer":
         max_tokens = (
@@ -481,7 +505,6 @@ def create_search_agent_with_tools(
             else 20000
         )
     top_k = 1
-    tools_config = agent_config.get("tools", [])
     preview_tool_config = _get_enabled_tool_config(
         tools_config, "generate_web_preview"
     )
@@ -695,6 +718,11 @@ def create_standard_agent_with_tools(
     enhanced_prompt = _append_workspace_document_context(
         enhanced_prompt,
         agent_config.get("brain_documents", []),
+    )
+    enhanced_prompt = _append_run_code_guidance(
+        enhanced_prompt,
+        agent_config.get("tools", []),
+        agent_params,
     )
 
     connector_bindings = []

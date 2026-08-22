@@ -5,6 +5,7 @@ from src.smart_rag.tools.utilities.calculator import calculator
 from src.smart_rag.tools.utilities.connector_tools import create_save_file_to_workspace
 from src.smart_rag.tools.utilities.present_choices import present_choices
 from src.smart_rag.tools.utilities.render_chart import render_chart
+from src.smart_rag.tools.utilities.run_code import create_run_code_tool
 from src.guardrails.tool_registry import tool_policy
 
 
@@ -16,6 +17,7 @@ NATIVE_TOOL_REGISTRY: dict[str, Any] = {
 
 RUNTIME_NATIVE_TOOL_FACTORIES = {
     "save_file_to_workspace": create_save_file_to_workspace,
+    "run_code": create_run_code_tool,
 }
 
 # These tools are attached by the existing agent factories. The catalogue may

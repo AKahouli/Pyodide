@@ -29,6 +29,7 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { UsageService } from '../../usage';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { WorkspaceService } from '../../workspace/workspace.service';
+import { WorkspaceShareService } from '../../workspace/workspace-share.service';
 import { DocumentStatus } from '../../workspace/schemas/workspace-document.schema';
 import { AgentService } from '../../agent/agent.service';
 import { IGrpcAgent, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
@@ -104,6 +105,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     @Inject(forwardRef(() => WorkspaceDocumentService))
     private readonly workspaceDocumentService: WorkspaceDocumentService,
     private readonly workspaceService: WorkspaceService,
+    private readonly workspaceShareService: WorkspaceShareService,
     private readonly agentService: AgentService,
     private readonly modelsService: ModelsService,
     private readonly skillService: SkillService,
@@ -865,6 +867,18 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       this.buildPreviousAttachedFiles(systemWorkspaceId, request.attachedFileIds),
       request.skillIds.length ? this.skillService.findByIdsForGrpc(request.skillIds) : Promise.resolve([]),
     ]);
+    await this.attachRunCodeContexts(
+      agents,
+      userId,
+      conversationId,
+      [
+        ...workspaceContexts.map((context) => context.workspace_id),
+        ...agents.flatMap((agent) => agent.brain_context.map((context) => context.workspace_id)),
+        ...previousAttachedFiles.flatMap((file) => file.workspace_id ? [file.workspace_id] : []),
+        ...(systemWorkspaceId ? [systemWorkspaceId] : []),
+      ],
+      attachedFiles.flatMap((file) => file.document?.workspace_id ? [file.document.workspace_id] : []),
+    );
     return this.agentRequestBuilder.build({
       userId,
       username,
@@ -877,6 +891,43 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       skills,
       correctionReplayContext,
     });
+  }
+
+  private async attachRunCodeContexts(
+    agents: IGrpcAgent[],
+    userId: string,
+    runId: string,
+    trustedWorkspaceIds: string[],
+    attachmentWorkspaceIds: string[] = [],
+  ): Promise<void> {
+    const eligibleAgents = agents.filter((agent) =>
+      agent.tools.some((tool) => tool.name === 'run_code'),
+    );
+    if (eligibleAgents.length === 0) return;
+
+    const uniqueAttachmentWorkspaceIds = [
+      ...new Set(attachmentWorkspaceIds.filter(Boolean)),
+    ];
+    await this.workspaceShareService.assertUserHasAccess(
+      userId,
+      uniqueAttachmentWorkspaceIds,
+    );
+    const uniqueWorkspaceIds = [
+      ...new Set([
+        ...trustedWorkspaceIds.filter(Boolean),
+        ...uniqueAttachmentWorkspaceIds,
+      ]),
+    ];
+    const pathMap = await this.workspaceService.getStoragePathMapByIds(uniqueWorkspaceIds);
+    const contextJson = JSON.stringify({
+      userId,
+      runId,
+      sourcePrefixes: uniqueWorkspaceIds.flatMap((id) => pathMap[id] ? [pathMap[id]] : []),
+    });
+    for (const agent of eligibleAgents) {
+      agent.agent_params ??= { params: {} };
+      agent.agent_params.params.run_code_context_json = contextJson;
+    }
   }
 
   executePrivateAgentRequest(
@@ -1989,6 +2040,21 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       this.buildWorkspaceContexts(params.conversationId, logOpts, conversation),
       this.buildPreviousAttachedFiles(systemWorkspaceId, []),
     ]);
+    await this.attachRunCodeContexts(
+      grpcAgents,
+      params.userId,
+      params.conversationId,
+      [
+        ...workspaceContexts.map((context) => context.workspace_id),
+        ...grpcAgents.flatMap((agent) =>
+          agent.brain_context.map((context) => context.workspace_id),
+        ),
+        ...previousAttachedFiles.flatMap((file) =>
+          file.workspace_id ? [file.workspace_id] : [],
+        ),
+        ...(systemWorkspaceId ? [systemWorkspaceId] : []),
+      ],
+    );
 
     const grpcRequest = {
       user_context: { user_id: params.userId, username: params.username || '' },
