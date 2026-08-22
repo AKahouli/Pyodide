@@ -27,6 +27,7 @@ from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_d
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from src.flow_engine.runtime.artifact_routing import infer_artifact_kind
 from src.logger.logging import get_logger
+from src.smart_rag.infrastructure.model_parameters import get_context_window_for_model
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
 APP_NAME = "manager_app"
@@ -383,6 +384,18 @@ class AgentRunner:
 
         try:
             async for event in stream:
+                if q and event.usage_metadata:
+                    model_name = event.model_version if getattr(event, "model_version", None) else "unknown"
+                    await q.put({
+                        "usage": {
+                            "input_tokens": event.usage_metadata.prompt_token_count or 0,
+                            "output_tokens": event.usage_metadata.candidates_token_count or 0,
+                            "total_tokens": event.usage_metadata.total_token_count or 0,
+                            "model": model_name,
+                            "context_window_tokens": get_context_window_for_model(model_name) or 0,
+                        },
+                        "metadata": {"message_id": session_id, "agent_id": str(agent_id or "")},
+                    })
                 # Log event for debugging
                 logger.debug(
                     f"Received event for {agent_name}: is_final={event.is_final_response() if hasattr(event, 'is_final_response') else 'N/A'}, has_content={bool(event.content)}, has_parts={bool(event.content.parts) if event.content else False}"

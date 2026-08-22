@@ -45,6 +45,12 @@ export type ModelType = (typeof MODEL_TYPES)[number];
 export const MODEL_INPUT_MODALITIES = ['text', 'image'] as const;
 export type ModelInputModality = (typeof MODEL_INPUT_MODALITIES)[number];
 
+export interface ReasoningEffortOption {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 // Internal types
 export interface ModelResponse {
   id: string;
@@ -59,6 +65,13 @@ export interface ModelResponse {
   isDefault: boolean;
   omitTemperature: boolean;
   inputModalities: ModelInputModality[];
+  maxInputTokens: number | null;
+  maxOutputTokens: number | null;
+  supportsReasoning: boolean | null;
+  reasoning: {
+    efforts: ReasoningEffortOption[];
+    defaultEffort?: string;
+  };
 }
 
 export interface ModelsListResponse {

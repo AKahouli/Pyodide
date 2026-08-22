@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyChunksToComponents, useConversationStore } from './store';
+import { useModelsStore } from '@/modules/models';
 
 const fetchConversationMock = vi.hoisted(() => vi.fn());
 const fetchConversationsMock = vi.hoisted(() => vi.fn());
@@ -205,6 +206,13 @@ describe('conversation workspace selection', () => {
 });
 
 describe('new conversation selections', () => {
+  it('accepts legacy model records without reasoning metadata', () => {
+    useModelsStore.setState({ models: [{ id: 'legacy-model' } as never] });
+
+    expect(() => useConversationStore.getState().setSelectedModelId('legacy-model')).not.toThrow();
+    expect(useConversationStore.getState().selectedReasoningEffort).toBeNull();
+  });
+
   it('claims the submitted model and workspaces before route hydration', () => {
     const conversation = { id: 'conv-1', title: 'New Conversation' } as never;
 

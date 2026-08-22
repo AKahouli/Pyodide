@@ -63,6 +63,9 @@ export class Message extends Document {
   @Prop({ type: String, maxlength: 100 })
   modelId?: string;
 
+  @Prop({ type: String, maxlength: 50 })
+  reasoningEffort?: string;
+
   @Prop({ type: Boolean, default: false })
   webSearchEnabled!: boolean;
 
@@ -106,6 +109,9 @@ export class Message extends Document {
 
   @Prop({ type: Number })
   outputTokens?: number;
+
+  @Prop({ type: Object, default: undefined })
+  modelRequestTelemetry?: { usedTokens: number; contextWindow: number; model: string };
 
   @Prop({ type: Number })
   durationMs?: number;

@@ -925,6 +925,8 @@ class ChatbotServicer(
             chatbot_name={
                 "provider": pb_agent.chatbot.model,
                 "input_modalities": list(pb_agent.chatbot.input_modalities) or ["text"],
+                **({"reasoning_effort": pb_agent.chatbot.reasoning_effort} if pb_agent.chatbot.reasoning_effort else {}),
+                **({"context_window_tokens": pb_agent.chatbot.context_window_tokens} if pb_agent.chatbot.context_window_tokens > 0 else {}),
             }
             if pb_agent.HasField("chatbot")
             else None,
@@ -1791,6 +1793,7 @@ class ChatbotServicer(
                     output_tokens=usage_data.get("output_tokens", 0),
                     total_tokens=usage_data.get("total_tokens", 0),
                     model=usage_data.get("model", ""),
+                    context_window_tokens=usage_data.get("context_window_tokens", 0),
                 ),
             )
 

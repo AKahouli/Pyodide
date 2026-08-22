@@ -4,12 +4,12 @@ import { ChatConversation, ChatConversationContent, ChatMessageBubble, ChatScrol
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { useAuth } from '@/modules/auth';
 import { useConversationStore, useDisplayMessages, useIsAwaitingFirstChunk, useAwaitingConversationId, useMessagesHasMore, useMessagesLoadingOlder, useBranchCache, useActiveBranches, useEditingMessageId } from '../store';
-import { getConversationStreamActivity, mapConversationComponentsToContentParts, messageToChat } from '../utils';
+import { mapConversationComponentsToContentParts, messageToChat } from '../utils';
 import { MessageActions } from './MessageActions';
 import { UserMessageActions } from './UserMessageActions';
 import { EditableUserMessage } from './EditableUserMessage';
 import { BranchNavigation } from './BranchNavigation';
-import { LoadingIndicator } from './LoadingIndicator';
+import { ConversationActivity } from './ConversationActivity';
 import { MessageAttachments } from './MessageAttachments';
 import { MentionMessageJump } from './MentionMessageJump';
 import type { ChoiceInteractionMetadata, Message } from '../types';
@@ -18,6 +18,7 @@ import { MessageAvatar } from './MessageAvatar';
 import { cn } from '@/lib/utils';
 import { buildChoiceInteractionIndex } from '../choice-interactions';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
+import { projectConversationTurn } from '../utils/conversation-turn-projection';
 
 /** Find the scrollable ancestor element */
 function getScrollContainer(element: HTMLElement | null): HTMLElement | null {
@@ -85,6 +86,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   choiceInteractions: Map<string, ChoiceInteractionMetadata>;
 }) {
   const sendMessage = useConversationStore((s) => s.sendMessage);
+  const turn = useMemo(() => projectConversationTurn(message.id, message.components || []), [message.id, message.components]);
   const handleComponentAction = useCallback(async (action: ChoiceComponentAction) => {
     await sendMessage(conversationId, { content: action.submitText, interaction: { ...action.interaction, sourceMessageId: message.id } });
   }, [conversationId, message.id, sendMessage]);
@@ -95,13 +97,13 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
     });
   }, [conversationId, message.id, sendMessage]);
   const chatMessage = useMemo(() => {
-    const chatMsg = messageToChat(message);
+    const chatMsg = messageToChat({ ...message, components: turn.answerComponents });
     // Force the role to 'assistant' for other members' messages so ChatMessageBubble renders them on the left
     if (message.conversationType === 'user' && message.senderId && currentUserId && message.senderId !== currentUserId) {
       return { ...chatMsg, role: 'assistant', onComponentAction: handleComponentAction, onSubmitQuestions: handleSubmitQuestions, choiceInteractions } as const;
     }
     return { ...chatMsg, onComponentAction: handleComponentAction, onSubmitQuestions: handleSubmitQuestions, choiceInteractions } as const;
-  }, [message, currentUserId, handleComponentAction, handleSubmitQuestions, choiceInteractions]);
+  }, [message, turn.answerComponents, currentUserId, handleComponentAction, handleSubmitQuestions, choiceInteractions]);
   const branchCache = useBranchCache();
   const activeBranches = useActiveBranches();
   const editingMessageId = useEditingMessageId();
@@ -146,13 +148,14 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   const branches = message.questionMessageId ? branchCache.get(message.questionMessageId) : undefined;
   const activeBranchId = message.questionMessageId ? activeBranches.get(message.questionMessageId) : undefined;
   const showBranchNav = !isStreaming && message.conversationType === 'ai' && message.questionMessageId && branches && branches.length > 1 && activeBranchId;
-  const hasPersistedActivity = message.components?.some((component) => component.type === 'chainOfThought' || component.type === 'toolInfo') ?? false;
+  const hasPersistedActivity = turn.activity.length > 0 || turn.artifacts.length > 0;
 
   if (!isUser && Array.isArray(chatMessage.content) && chatMessage.content.length === 0 && !hasPersistedActivity) return null;
 
   return (
     <div className='group/msg' id={`message-${message.id}`}>
       {isUser && message.attachedFiles && message.attachedFiles.length > 0 && <MessageAttachments files={message.attachedFiles} />}
+      {!isUser && <div className='md:ml-12'><ConversationActivity activity={turn.activity} artifacts={turn.artifacts} /></div>}
       <MessageProvider isLastAiMessage={isLastAiMessage} isStreaming={isStreaming}>
         {isUser && isEditing ? (
           <EditableUserMessage message={message} conversationId={conversationId} />
@@ -222,7 +225,6 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
           </div>
         )}
       </MessageProvider>
-      {!isUser && <LoadingIndicator isComplete components={message.components || []} />}
       {showBranchNav && <BranchNavigation userMessageId={message.questionMessageId!} branches={branches!} activeBranchId={activeBranchId!} />}
     </div>
   );
@@ -250,7 +252,7 @@ export function GroupConversationContent() {
   const choiceInteractions = useMemo(() => buildChoiceInteractionIndex(messages), [messages]);
   const isActiveStream = isStreaming && streamingConversationId === currentConversationId;
   const showStreamingActivity = (isAwaitingFirstChunk && awaitingConversationId === currentConversationId) || isActiveStream;
-  const streamingActivity = useMemo(() => getConversationStreamActivity(streamingComponents), [streamingComponents]);
+  const streamingTurn = useMemo(() => projectConversationTurn(streamingMessageId || 'streaming', streamingComponents, streamingComponents, true), [streamingMessageId, streamingComponents]);
 
   // Refs for branch fetching
   const fetchedRef = useRef(new Set<string>());
@@ -324,7 +326,7 @@ export function GroupConversationContent() {
   const streamingChatMessage = useMemo(() => {
     if (!isActiveStream || !streamingComponents.length) return null;
 
-    const parts = mapConversationComponentsToContentParts(streamingComponents);
+    const parts = mapConversationComponentsToContentParts(streamingTurn.answerComponents);
     if (!parts.length) return null;
     const lastPart = parts.at(-1);
     if (lastPart?.type === 'text') {
@@ -348,7 +350,7 @@ export function GroupConversationContent() {
         });
       },
     } as const;
-  }, [isActiveStream, streamingComponents, currentConversationId, streamingMessageId, sendMessage]);
+  }, [isActiveStream, streamingComponents.length, streamingTurn.answerComponents, currentConversationId, streamingMessageId, sendMessage]);
 
   return (
     <>
@@ -381,22 +383,21 @@ export function GroupConversationContent() {
             ))
           )}
 
-          {streamingChatMessage && !mentionNavigationLock && (
-            <div className='group/msg animate-in fade-in-0 duration-300' id={`message-${streamingChatMessage.id}`}>
+          {(showStreamingActivity || streamingChatMessage) && !mentionNavigationLock && (
+            <div className='group/msg animate-in fade-in-0 duration-300' id={`message-${streamingChatMessage?.id || 'streaming'}`}>
+              <div className='md:ml-12'>
+                <ConversationActivity activity={streamingTurn.activity} artifacts={streamingTurn.artifacts} showWorking={showStreamingActivity && streamingTurn.activity.length === 0 && !streamingChatMessage} />
+              </div>
               <MessageProvider isStreaming={true} isLastAiMessage={true}>
-                <div className="grid w-full gap-x-2 md:gap-x-3 gap-y-1 grid-cols-[auto_1fr]">
-                  <MessageAvatar message={streamingChatMessage as any} currentConversation={currentConversation} />
-                  <div className="flex justify-start min-w-0">
-                    <ChatMessageBubble message={streamingChatMessage} isStreaming={true} />
+                {streamingChatMessage && (
+                  <div className="grid w-full gap-x-2 md:gap-x-3 gap-y-1 grid-cols-[auto_1fr]">
+                    <MessageAvatar message={streamingChatMessage as any} currentConversation={currentConversation} />
+                    <div className="flex justify-start min-w-0">
+                      <ChatMessageBubble message={streamingChatMessage} isStreaming={true} />
+                    </div>
                   </div>
-                </div>
+                )}
               </MessageProvider>
-            </div>
-          )}
-
-          {showStreamingActivity && (
-            <div data-testid='inline-stream-activity' className='mt-3 animate-in fade-in-0 slide-in-from-bottom-1 duration-300 md:ml-12'>
-              <LoadingIndicator activity={streamingActivity} components={isActiveStream ? streamingComponents : []} />
             </div>
           )}
           </div>

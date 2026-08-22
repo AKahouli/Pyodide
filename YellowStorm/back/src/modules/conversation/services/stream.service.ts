@@ -43,6 +43,7 @@ import { randomUUID } from 'node:crypto';
 import { ResponseReliabilityService } from './response-reliability.service';
 import { ConversationAgentRequestBuilder, type BuiltAgentExecutionRequest } from './conversation-agent-request.builder';
 import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
+import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 
 export interface StreamRequest {
   content: string;
@@ -51,6 +52,7 @@ export interface StreamRequest {
   webSearchEnabled?: boolean;
   deepSearchEnabled?: boolean;
   modelId?: string;
+  reasoningEffort?: string;
   agentIds?: string[];
   connectorRepo?: {
     connectorId: string;
@@ -850,6 +852,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             conversationId,
             correlationId: runtimeCorrelationId,
           } : undefined,
+          request.reasoningEffort,
         ),
     ]);
     if (conversation.runtimePurpose === PLATFORM_COPILOT) {
@@ -1157,6 +1160,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
+      let latestModelRequestTelemetry: { usedTokens: number; contextWindow: number; model: string } | undefined;
       let chunkCount = 0;
       let lastLoggedChunk = 0;
       const startTime = Date.now();
@@ -1276,10 +1280,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               }
 
               // Send chunk immediately to frontend
+              const publicComponent = sanitizePublicComponent({ id: comp.id, type, data });
               this.streamGateway.broadcastToConversation(
                 memberIds, {
                 type: 'stream_chunk',
-                data: { conversationId, action, component: { id: comp.id, type, data } },
+                data: { conversationId, action, component: publicComponent },
               }).catch((err) => {
                 this.logger.error('Failed to broadcast stream chunk', { error: err.message, streamKey }, logOpts);
               });
@@ -1290,6 +1295,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           if (chunk.usage) {
             totalInputTokens += chunk.usage.input_tokens || 0;
             totalOutputTokens += chunk.usage.output_tokens || 0;
+            if (chunk.usage.input_tokens > 0 && chunk.usage.context_window_tokens > 0 && chunk.usage.model) {
+              latestModelRequestTelemetry = {
+                usedTokens: chunk.usage.input_tokens,
+                contextWindow: chunk.usage.context_window_tokens,
+                model: chunk.usage.model,
+              };
+            }
             const usageData = this.streamUsage.get(streamKey);
             if (usageData) {
               usageData.inputTokens = totalInputTokens;
@@ -1373,6 +1385,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             durationMs,
             timeToFirstChunk: timeToFirstChunk ?? undefined,
             timeToFirstToken: timeToFirstToken ?? undefined,
+            modelRequestTelemetry: latestModelRequestTelemetry,
           });
 
           // Record usage

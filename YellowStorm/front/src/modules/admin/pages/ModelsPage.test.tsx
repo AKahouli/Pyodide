@@ -32,6 +32,10 @@ const model = {
   isDefault: false,
   omitTemperature: false,
   inputModalities: ['text'] as Array<'text' | 'image'>,
+  maxInputTokens: null,
+  maxOutputTokens: null,
+  supportsReasoning: null,
+  reasoning: { efforts: [] },
 };
 
 describe('ModelsPage', () => {
@@ -57,7 +61,7 @@ describe('ModelsPage', () => {
 
     await waitFor(() => expect(updateModel).toHaveBeenCalledWith(
       'text-model',
-      expect.objectContaining({ inputModalities: ['text', 'image'] }),
+      expect.objectContaining({ inputModalities: ['text', 'image'], defaultReasoningEffort: null }),
     ));
   });
 });

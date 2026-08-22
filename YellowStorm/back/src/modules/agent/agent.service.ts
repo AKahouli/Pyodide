@@ -519,6 +519,7 @@ export class AgentService {
     groupMembers?: any[],
     selectedConnectorId?: string,
     runtimeContext?: { conversationId: string; correlationId: string },
+    reasoningEffort?: string,
   ): Promise<IGrpcAgent[]> {
     this.logger.log('Building agents for stream', {
       userId,
@@ -683,14 +684,14 @@ export class AgentService {
         .map(effectiveModelIdForAgent)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[] }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; maxInputTokens: number | null }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
         if (m) {
-          modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature, inputModalities: m.inputModalities });
+          modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature, inputModalities: m.inputModalities, maxInputTokens: m.maxInputTokens });
         }
       }
     }
@@ -808,6 +809,8 @@ export class AgentService {
         chatbot: {
           model: proxyModel,
           input_modalities: resolvedModel?.inputModalities || ['text'],
+          ...(reasoningEffort && pingedAgents.length === 0 ? { reasoning_effort: reasoningEffort } : {}),
+          ...(resolvedModel?.maxInputTokens ? { context_window_tokens: resolvedModel.maxInputTokens } : {}),
         },
         agent_params: {
           params: {

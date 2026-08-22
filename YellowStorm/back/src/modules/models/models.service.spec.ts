@@ -217,6 +217,24 @@ describe('ModelsService', () => {
       );
     });
 
+    it('clears a persisted default reasoning effort explicitly', async () => {
+      findOneAndUpdate.mockReturnValue({
+        lean: () => ({ exec: () => Promise.resolve({
+          modelId: 'reasoning', name: 'Reasoning', chef: 'OpenAI', chefSlug: 'openai',
+          litellmModel: 'openai/reasoning', providers: ['openai'], type: 'chat',
+          types: ['chat'], isActive: true, isDefault: false,
+        }) }),
+      });
+
+      await svc.updateModel('reasoning', { defaultReasoningEffort: null });
+
+      expect(findOneAndUpdate).toHaveBeenCalledWith(
+        { modelId: 'reasoning' },
+        { $set: {}, $unset: { defaultReasoningEffort: 1 } },
+        { new: true },
+      );
+    });
+
     it('finds guardrails classifiers classified through types', async () => {
       const sort = jest.fn().mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(null) }) });
       findOne.mockReturnValue({ sort });

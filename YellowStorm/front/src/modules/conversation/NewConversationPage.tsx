@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { BotIcon, CheckIcon, MessageSquareIcon } from 'lucide-react';
+import { BotIcon, BrainCircuit, CheckIcon, ChevronDown, MessageSquareIcon } from 'lucide-react';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import Input from '@/components/ai-elements/input';
 import { Shimmer } from '@/components/ai-elements/shimmer';
@@ -35,7 +35,10 @@ import { useUsage } from '@/modules/usage/UsageContext';
 import {
   useConversationStore,
   useInputDisabled,
+  useSelectedModelId,
+  useSelectedReasoningEffort,
   useSelectedWorkspaceIds,
+  useSetSelectedReasoningEffort,
 } from './store';
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
 import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
@@ -54,6 +57,7 @@ import { RecentSkillsMenu, ManageSkillsDialog, SelectedSkillsPills } from '@/mod
 import { RecentConnectorsMenu, ManageConnectorsDialog, SelectedConnectorsPills } from '@/modules/connector';
 import { getActiveSkills, getActiveConnectors, type ConnectorOption } from '@/modules/agent/api';
 import type { SkillOption } from '@/modules/agent/types';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 type Mode = 'chat' | 'agent';
 export function NewConversationPage() {
@@ -64,6 +68,16 @@ export function NewConversationPage() {
   const claimCurrentConversation = useConversationStore((s) => s.claimCurrentConversation);
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const selectedWorkspaceIds = useSelectedWorkspaceIds();
+  const selectedModelId = useSelectedModelId();
+  const selectedReasoningEffort = useSelectedReasoningEffort();
+  const setSelectedReasoningEffort = useSetSelectedReasoningEffort();
+  const models = useModels();
+  const defaultModel = useDefaultModel();
+  const selectedModel = models.find((model) => model.id === selectedModelId) ?? defaultModel ?? models[0];
+  const reasoningEfforts = selectedModel?.supportsReasoning ? (selectedModel.reasoning?.efforts ?? []) : [];
+  const effectiveReasoningEffort = reasoningEfforts.some((effort) => effort.id === selectedReasoningEffort)
+    ? selectedReasoningEffort
+    : selectedModel?.reasoning?.defaultEffort;
   const navigate = useNavigate();
   const [isSending, setIsSending] = useState(false);
   const [silentConvId, setSilentConvId] = useState<string | null>(null);
@@ -192,7 +206,7 @@ export function NewConversationPage() {
     message: PromptInputMessage,
     modelId: string,
     agentIds?: string[],
-    _memberIds?: string[],
+    memberIds?: string[],
     workspaceIds?: string[],
     connectorRepo?: {
       connectorId: string;
@@ -247,6 +261,9 @@ export function NewConversationPage() {
         modelId: modelId || undefined,
         agentIds: agentIds?.length ? agentIds : undefined,
         teamIds: teamIds?.length ? teamIds : undefined,
+        ...(!agentIds?.length && !memberIds?.length && !teamIds?.length && effectiveReasoningEffort
+          ? { reasoningEffort: effectiveReasoningEffort }
+          : {}),
         connectorRepo: connectorRepo ?? useConversationStore.getState().selectedConnectorRepo ?? undefined,
         skillIds: useConversationStore.getState().selectedSkillIds.length
           ? useConversationStore.getState().selectedSkillIds
@@ -289,6 +306,31 @@ export function NewConversationPage() {
                   showWorkspaceSelect={true}
                   preserveWorkspaceSelectionOnSubmit
                   showModelSelector
+                  extraTools={
+                    reasoningEfforts.length > 0 ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <PromptInputButton type='button' aria-label={t('input.reasoning.label')}>
+                            <BrainCircuit className='h-4 w-4' />
+                            <span className='hidden sm:inline'>
+                              {reasoningEfforts.find((effort) => effort.id === effectiveReasoningEffort)?.name ?? t('input.reasoning.label')}
+                            </span>
+                            <ChevronDown className='h-3 w-3 opacity-60' />
+                          </PromptInputButton>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align='start'>
+                          <DropdownMenuLabel>{t('input.reasoning.label')}</DropdownMenuLabel>
+                          <DropdownMenuRadioGroup value={effectiveReasoningEffort ?? undefined} onValueChange={setSelectedReasoningEffort}>
+                            {reasoningEfforts.map((effort) => (
+                              <DropdownMenuRadioItem key={effort.id} value={effort.id} title={effort.description}>
+                                {effort.name}
+                              </DropdownMenuRadioItem>
+                            ))}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : undefined
+                  }
                   belowTextarea={
                     <ComposerSuggestionChips
                       fetchDisabled={inputDisabled || isLimitExceeded || isUploading || isSending}

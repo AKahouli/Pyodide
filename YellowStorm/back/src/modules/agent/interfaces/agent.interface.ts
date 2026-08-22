@@ -275,6 +275,8 @@ export interface IGrpcAgent {
   chatbot: {
     model: string;
     input_modalities: string[];
+    reasoning_effort?: string;
+    context_window_tokens?: number;
   };
   agent_params?: {
     params: Record<string, string>;

@@ -12,11 +12,21 @@ const clearAllMock = vi.hoisted(() => vi.fn());
 const mockNavigate = vi.hoisted(() => vi.fn());
 const selectedWorkspaceIdsMock = vi.hoisted(() => ({ value: ['ws-1'] as string[] }));
 const uploadConversationIdMock = vi.hoisted(() => ({ value: null as string | null }));
+const selectedReasoningEffortMock = vi.hoisted(() => ({ value: null as string | null }));
+const setSelectedReasoningEffortMock = vi.hoisted(() => vi.fn((value: string) => {
+  selectedReasoningEffortMock.value = value;
+}));
+const submitRoutingMock = vi.hoisted(() => ({
+  agentIds: ['agent-1'] as string[] | undefined,
+  memberIds: undefined as string[] | undefined,
+  teamIds: undefined as string[] | undefined,
+}));
 
 vi.mock('@/components/ai-elements/input', () => ({
   default: ({
     onSubmit,
     preserveWorkspaceSelectionOnSubmit,
+    extraTools,
   }: {
     onSubmit: (
       message: { text: string },
@@ -31,19 +41,22 @@ vi.mock('@/components/ai-elements/input', () => ({
         repoName: string;
         repoUrl?: string;
       },
+      teamIds?: string[],
     ) => Promise<void>;
     preserveWorkspaceSelectionOnSubmit?: boolean;
+    extraTools?: React.ReactNode;
   }) => (
     <>
       <span>{preserveWorkspaceSelectionOnSubmit ? 'workspace-selection-preserved' : 'workspace-selection-reset'}</span>
+      {extraTools}
       <button
         type='button'
         onClick={() => {
           void onSubmit(
             { text: 'hello' },
             'model-1',
-            ['agent-1'],
-            undefined,
+            submitRoutingMock.agentIds,
+            submitRoutingMock.memberIds,
             selectedWorkspaceIdsMock.value,
             {
               connectorId: 'connector-1',
@@ -52,6 +65,7 @@ vi.mock('@/components/ai-elements/input', () => ({
               repoName: 'org-name/repo-name',
               repoUrl: 'https://github.com/org-name/repo-name',
             },
+            submitRoutingMock.teamIds,
           );
         }}
       >
@@ -84,7 +98,10 @@ vi.mock('./store', () => ({
     },
   ),
   useInputDisabled: () => false,
+  useSelectedModelId: () => 'model-1',
+  useSelectedReasoningEffort: () => selectedReasoningEffortMock.value,
   useSelectedWorkspaceIds: () => selectedWorkspaceIdsMock.value,
+  useSetSelectedReasoningEffort: () => setSelectedReasoningEffortMock,
 }));
 
 vi.mock('./hooks/useConversationFileUpload', () => ({
@@ -131,11 +148,31 @@ vi.mock('@/modules/governance/components/consumer/GovernedScopesCarousel', () =>
 
 vi.mock('@/modules/models', () => ({
   useChefs: () => [],
-  useDefaultModel: () => null,
-  useModels: () => [],
+  useDefaultModel: () => ({
+    id: 'model-1',
+    supportsReasoning: true,
+    reasoning: {
+      defaultEffort: 'medium',
+      efforts: [
+        { id: 'medium', name: 'Medium' },
+        { id: 'high', name: 'High' },
+      ],
+    },
+  }),
+  useModels: () => [{
+    id: 'model-1',
+    supportsReasoning: true,
+    reasoning: {
+      defaultEffort: 'medium',
+      efforts: [
+        { id: 'medium', name: 'Medium' },
+        { id: 'high', name: 'High' },
+      ],
+    },
+  }],
   useModelsStore: {
     getState: () => ({
-      models: [],
+      models: [{ id: 'model-1', litellmModel: 'provider/model-1' }],
       fetchModels: vi.fn().mockResolvedValue(undefined),
     }),
   },
@@ -162,6 +199,10 @@ describe('NewConversationPage', () => {
     sendMessageMock.mockResolvedValue(undefined);
     selectedWorkspaceIdsMock.value = ['ws-1'];
     uploadConversationIdMock.value = null;
+    selectedReasoningEffortMock.value = null;
+    submitRoutingMock.agentIds = ['agent-1'];
+    submitRoutingMock.memberIds = undefined;
+    submitRoutingMock.teamIds = undefined;
   });
 
   it('forwards selected connector repo on first legacy message', async () => {
@@ -217,5 +258,51 @@ describe('NewConversationPage', () => {
       });
       expect(sendMessageMock).toHaveBeenCalledWith('conv-upload', expect.objectContaining({ content: 'hello' }));
     });
+  });
+
+  it('uses the model default reasoning effort for an untagged first legacy message', async () => {
+    submitRoutingMock.agentIds = undefined;
+    render(<NewConversationPage />);
+
+    expect(screen.getByRole('button', { name: 'input.reasoning.label' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'submit-new-conversation' }));
+
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({ modelId: 'model-1', reasoningEffort: 'medium' }),
+    ));
+  });
+
+  it('uses an explicitly selected reasoning effort for the first legacy message', async () => {
+    submitRoutingMock.agentIds = undefined;
+    const { rerender } = render(<NewConversationPage />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'input.reasoning.label' }));
+    await userEvent.click(screen.getByRole('menuitemradio', { name: 'High' }));
+    expect(setSelectedReasoningEffortMock).toHaveBeenCalledWith('high');
+
+    rerender(<NewConversationPage />);
+    await userEvent.click(screen.getByRole('button', { name: 'submit-new-conversation' }));
+
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({ reasoningEffort: 'high' }),
+    ));
+  });
+
+  it.each([
+    ['agent', ['agent-1'], undefined, undefined],
+    ['member', undefined, ['member-1'], undefined],
+    ['team', undefined, undefined, ['team-1']],
+  ])('omits reasoning effort for a %s-tagged first message', async (_kind, agentIds, memberIds, teamIds) => {
+    submitRoutingMock.agentIds = agentIds;
+    submitRoutingMock.memberIds = memberIds;
+    submitRoutingMock.teamIds = teamIds;
+    render(<NewConversationPage />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'submit-new-conversation' }));
+
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalled());
+    expect(sendMessageMock.mock.calls.at(-1)?.[1]).not.toHaveProperty('reasoningEffort');
   });
 });

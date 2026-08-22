@@ -24,6 +24,7 @@ import { ConflictException, NotFoundException } from '../../exceptions';
 import { AppException } from '../../exceptions/exceptions/base.exception';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { sanitizeTaskDiagnosticItems } from '../utils/task-diagnostics';
+import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import { StreamEvent } from '../interfaces/stream.interface';
 import { EmailService } from '../../email/email.service';
 
@@ -100,6 +101,7 @@ export class MessageService {
       attachedFileIds: data.attachedFileIds?.map((id) => new Types.ObjectId(id)),
       webSearchEnabled: data.webSearchEnabled || false,
       modelId: data.modelId,
+      reasoningEffort: data.reasoningEffort,
       agentIds: data.agentIds?.map((id) => new Types.ObjectId(id)),
       memberIds: data.memberIds?.map((id) => new Types.ObjectId(id)),
       isStreaming: false,
@@ -161,6 +163,7 @@ export class MessageService {
       conversationType: 'ai',
       senderId: data.senderId ? new Types.ObjectId(data.senderId) : undefined,
       modelId: data.modelId,
+      reasoningEffort: data.reasoningEffort,
       questionMessageId: new Types.ObjectId(data.questionMessageId),
       isStreaming: true,
       isComplete: false,
@@ -225,6 +228,7 @@ export class MessageService {
             durationMs: data.durationMs,
             timeToFirstChunk: data.timeToFirstChunk,
             timeToFirstToken: data.timeToFirstToken,
+            modelRequestTelemetry: data.modelRequestTelemetry,
             guardrailDecision,
           },
         },
@@ -253,6 +257,7 @@ export class MessageService {
       message.durationMs = data.durationMs;
       message.timeToFirstChunk = data.timeToFirstChunk;
       message.timeToFirstToken = data.timeToFirstToken;
+      message.modelRequestTelemetry = data.modelRequestTelemetry;
       message.guardrailDecision = guardrailDecision;
       await message.save();
     }
@@ -1016,6 +1021,7 @@ export class MessageService {
       components: this.publicComponents(message.components, true) as any,
       attachedFileIds: message.attachedFileIds?.map((id: any) => toStr(id)),
       modelId: message.modelId,
+      reasoningEffort: message.reasoningEffort,
       webSearchEnabled: message.webSearchEnabled,
       questionMessageId: toStr(message.questionMessageId),
       answerMessageId: toStr(message.answerMessageId),
@@ -1027,6 +1033,7 @@ export class MessageService {
       isComplete: message.isComplete,
       inputTokens: message.inputTokens,
       outputTokens: message.outputTokens,
+      modelRequestTelemetry: message.modelRequestTelemetry,
       durationMs: message.durationMs,
       timeToFirstChunk: message.timeToFirstChunk,
       timeToFirstToken: message.timeToFirstToken,
@@ -1068,10 +1075,10 @@ export class MessageService {
       }
       if (component?.type !== 'toolInfo' || !component.data) return component;
       if (includeToolResults) {
-        return { id: component.id, type: component.type, data: { ...component.data } };
+        return sanitizePublicComponent({ id: component.id, type: component.type, data: { ...component.data } });
       }
       const { resultJson: _resultJson, result_json: _resultJsonSnake, ...publicData } = component.data;
-      return { id: component.id, type: component.type, data: publicData };
+      return sanitizePublicComponent({ id: component.id, type: component.type, data: publicData });
     });
   }
 

@@ -372,6 +372,7 @@ interface ConversationState {
 
   // Model selection
   selectedModelId: string | null;
+  selectedReasoningEffort: string | null;
 
   // Workspace selection
   selectedWorkspaceIds: string[];
@@ -463,6 +464,7 @@ interface ConversationState {
 
   // Model selection
   setSelectedModelId: (modelId: string | null) => void;
+  setSelectedReasoningEffort: (effort: string | null) => void;
 
   // Workspace selection
   setSelectedWorkspaceIds: (workspaceIds: string[]) => void;
@@ -530,6 +532,7 @@ export const useConversationStore = create<ConversationState>()(
       inputDisabled: false,
 
       selectedModelId: null,
+      selectedReasoningEffort: null,
       selectedWorkspaceIds: [],
       selectedConnectorRepo: null,
       deepSearchEnabled: false,
@@ -769,6 +772,7 @@ export const useConversationStore = create<ConversationState>()(
           conversationLoading: false,
           selectedSkillIds: cached?.selectedSkills ?? [],
           selectedModelId: selections?.modelId ?? null,
+          selectedReasoningEffort: null,
           selectedWorkspaceIds: selections?.workspaceIds ?? cached?.workspaces ?? [],
         });
       },
@@ -779,7 +783,7 @@ export const useConversationStore = create<ConversationState>()(
         set({
           conversationLoading: true,
           currentConversationId: id,
-          ...(isSwitchingConversation ? { selectedModelId: null } : {}),
+          ...(isSwitchingConversation ? { selectedModelId: null, selectedReasoningEffort: null } : {}),
         });
         try {
           const conversation = await api.fetchConversation(id);
@@ -816,9 +820,11 @@ export const useConversationStore = create<ConversationState>()(
 
           // Find the last user message's modelId
           let lastUserModelId: string | null = null;
+          let lastUserReasoningEffort: string | null = null;
           for (let i = messages.length - 1; i >= 0; i--) {
             if (messages[i].conversationType === 'user' && messages[i].modelId) {
               lastUserModelId = messages[i].modelId!;
+              lastUserReasoningEffort = messages[i].reasoningEffort ?? null;
               break;
             }
           }
@@ -855,6 +861,7 @@ export const useConversationStore = create<ConversationState>()(
             messagesHasMore: (result.totalPages || 1) > 1,
             messagesLoading: false,
             ...(lastUserModelId ? { selectedModelId: lastUserModelId } : {}),
+            ...(lastUserModelId ? { selectedReasoningEffort: lastUserReasoningEffort } : {}),
             branchCache: newBranchCache,
             activeBranches: newActiveBranches,
           });
@@ -963,6 +970,8 @@ export const useConversationStore = create<ConversationState>()(
           conversationId,
           conversationType: 'user',
           content: payload.content,
+          modelId: payload.modelId,
+          reasoningEffort: payload.reasoningEffort,
           interaction: payload.interaction,
           interactions: payload.interactions,
           attachedFileIds: payload.attachedFileIds,
@@ -1037,7 +1046,7 @@ export const useConversationStore = create<ConversationState>()(
             // Refresh models list to get updated active models
             useModelsStore.getState().refreshModels();
             // Clear selected model so it falls back to default
-            set({ selectedModelId: null });
+            set({ selectedModelId: null, selectedReasoningEffort: null });
           } else {
             toast.error(translateConversation('toasts.messages.sendError'), { description: apiError.message });
           }
@@ -1082,7 +1091,7 @@ export const useConversationStore = create<ConversationState>()(
               description: translateConversation('toasts.model.unavailableDescription'),
             });
             useModelsStore.getState().refreshModels();
-            set({ selectedModelId: null });
+            set({ selectedModelId: null, selectedReasoningEffort: null });
           } else {
             toast.error(translateConversation('toasts.messages.regenerateError'), { description: apiError.message });
           }
@@ -1750,7 +1759,15 @@ export const useConversationStore = create<ConversationState>()(
       // ===== Model Selection =====
 
       setSelectedModelId: (modelId) => {
-        set({ selectedModelId: modelId });
+        const model = modelId ? useModelsStore.getState().models.find((candidate) => candidate.id === modelId) : undefined;
+        set({
+          selectedModelId: modelId,
+          selectedReasoningEffort: model?.reasoning?.defaultEffort ?? null,
+        });
+      },
+
+      setSelectedReasoningEffort: (effort) => {
+        set({ selectedReasoningEffort: effort });
       },
 
       // ===== Workspace Selection =====
@@ -1843,6 +1860,7 @@ export const useConversationStore = create<ConversationState>()(
           editingMessageId: null,
           replyingToMessage: null,
           selectedModelId: null,
+          selectedReasoningEffort: null,
         });
       },
 
@@ -1882,6 +1900,7 @@ export const useConversationStore = create<ConversationState>()(
           criticalError: null,
           inputDisabled: false,
           selectedModelId: null,
+          selectedReasoningEffort: null,
           streamingStateCache: new Map(),
           typewriterConversationId: null,
           typewriterName: null,
@@ -2054,6 +2073,10 @@ export const useIsInitialLoading = () => useConversationStore((s) => s.conversat
 export const useSelectedModelId = () => useConversationStore((s) => s.selectedModelId);
 
 export const useSetSelectedModelId = () => useConversationStore((s) => s.setSelectedModelId);
+
+export const useSelectedReasoningEffort = () => useConversationStore((s) => s.selectedReasoningEffort);
+
+export const useSetSelectedReasoningEffort = () => useConversationStore((s) => s.setSelectedReasoningEffort);
 
 export const useSelectedWorkspaceIds = () => useConversationStore((s) => s.selectedWorkspaceIds);
 

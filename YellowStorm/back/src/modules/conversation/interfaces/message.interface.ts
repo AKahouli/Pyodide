@@ -80,6 +80,7 @@ export interface MessageReplayContext {
   webSearchEnabled: boolean;
   deepSearchEnabled: boolean;
   modelId?: string;
+  reasoningEffort?: string;
   agentIds: string[];
   skillIds: string[];
   connectorRepo?: {
@@ -204,6 +205,7 @@ export interface CreateUserMessageData {
   attachedFileIds?: string[];
   webSearchEnabled?: boolean;
   modelId?: string;
+  reasoningEffort?: string;
   agentIds?: string[];
   memberIds?: string[];
   requestId?: string;
@@ -218,6 +220,7 @@ export interface CreateAIPlaceholderData {
   questionMessageId: string;
   senderId?: string;
   modelId?: string;
+  reasoningEffort?: string;
   requestId?: string;
 }
 
@@ -232,6 +235,13 @@ export interface CompleteAIMessageData {
   timeToFirstToken?: number;
   guardrailDecision?: GuardrailDecisionMetadata;
   interaction?: Record<string, unknown>;
+  modelRequestTelemetry?: ModelRequestTelemetry;
+}
+
+export interface ModelRequestTelemetry {
+  usedTokens: number;
+  contextWindow: number;
+  model: string;
 }
 
 export interface MessageQueryParams {
@@ -259,6 +269,7 @@ export interface MessageResponse {
   attachedFileIds?: string[];
   attachedFiles?: AttachedFileResponse[];
   modelId?: string;
+  reasoningEffort?: string;
   webSearchEnabled: boolean;
   questionMessageId?: string;
   answerMessageId?: string;
@@ -270,6 +281,7 @@ export interface MessageResponse {
   isComplete: boolean;
   inputTokens?: number;
   outputTokens?: number;
+  modelRequestTelemetry?: ModelRequestTelemetry;
   durationMs?: number;
   timeToFirstChunk?: number;
   timeToFirstToken?: number;

@@ -67,8 +67,8 @@ describe('ConversationContent', () => {
     isAwaitingFirstChunk = true;
     storeState.awaitingConversationId = 'conv-1';
     render(<ConversationContent />);
-    expect(screen.getByText('loading-thinking')).toBeInTheDocument();
-    expect(screen.getByTestId('inline-stream-activity')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    expect(screen.getByTestId('conversation-activity')).toBeInTheDocument();
     isAwaitingFirstChunk = false;
     storeState.awaitingConversationId = null;
   });

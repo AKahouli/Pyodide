@@ -117,10 +117,10 @@ describe('MessageService createUserMessage agent tagging', () => {
     expect(conversationService.updateTaggedAgents).not.toHaveBeenCalled();
   });
 
-  it('includes bounded tool results in authorized message responses', () => {
+  it('includes sanitized bounded tool results in authorized message responses', () => {
     const toolComponent = {
       id: 'tool-1',
-      data: { title: 'connector', status: 'completed', resultJson: '{"secret":"value"}', params: '{"query":"safe"}' },
+      data: { title: 'connector', status: 'completed', resultJson: '{"secret":"[REDACTED]"}', params: '{"query":"safe"}' },
     };
     // Mongoose subdocuments expose schema paths without making all of them enumerable.
     Object.defineProperty(toolComponent, 'type', { value: 'toolInfo', enumerable: false });
@@ -134,7 +134,7 @@ describe('MessageService createUserMessage agent tagging', () => {
     expect(response.components[0]).toEqual({
       id: 'tool-1',
       type: 'toolInfo',
-      data: { title: 'connector', status: 'completed', resultJson: '{"secret":"value"}', params: '{"query":"safe"}' },
+      data: { title: 'connector', status: 'completed', resultJson: '{"secret":"[REDACTED]"}', params: '{"query":"safe"}' },
     });
   });
 
@@ -172,7 +172,7 @@ describe('MessageService createUserMessage agent tagging', () => {
           messageId: messageId.toString(),
           message: expect.objectContaining({
             isComplete: true,
-            components: [expect.objectContaining({ data: expect.objectContaining({ resultJson: '{"secret":true}' }) })],
+            components: [expect.objectContaining({ data: expect.objectContaining({ resultJson: '{"secret":"[REDACTED]"}' }) })],
           }),
         }),
       }),

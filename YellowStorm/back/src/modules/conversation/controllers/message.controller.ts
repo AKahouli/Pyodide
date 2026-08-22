@@ -113,6 +113,7 @@ export class MessageController {
         dto.teamIds,
         dto.memberIds,
         dto.modelId,
+        dto.reasoningEffort,
         dto.skillIds,
         dto.connectorRepo,
       ].some((value) => value !== undefined);
@@ -236,6 +237,21 @@ export class MessageController {
         reuseSticky: willRunAi,
       });
 
+    let effectiveReasoningEffort: string | undefined;
+    if (dto.reasoningEffort) {
+      if (governedRuntime || platformCopilot || !willRunAi || (effectiveAgentIds?.length ?? 0) > 0) {
+        throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Reasoning effort is available only for untagged standard model turns.');
+      }
+      if (!dto.modelId) {
+        throw new BadRequestException(ErrorCode.BAD_REQUEST, 'A selected model is required when reasoning effort is provided.');
+      }
+      const selectedModel = await this.modelsService.findById(dto.modelId);
+      if (!selectedModel?.isActive || selectedModel.supportsReasoning !== true || !selectedModel.reasoning.efforts.some((effort) => effort.id === dto.reasoningEffort)) {
+        throw new BadRequestException(ErrorCode.BAD_REQUEST, 'The selected reasoning effort is not supported by this model.');
+      }
+      effectiveReasoningEffort = dto.reasoningEffort;
+    }
+
     if (!platformCopilot && shouldReplaceSticky && effectiveAgentIds?.length) {
       await this.conversationService.replaceTaggedAgentIds(
         conversationId,
@@ -269,6 +285,7 @@ export class MessageController {
         attachedFileIds: dto.attachedFileIds,
         webSearchEnabled: dto.webSearchEnabled,
         modelId: dto.modelId,
+        reasoningEffort: effectiveReasoningEffort,
         agentIds: effectiveAgentIds,
         memberIds: dto.memberIds,
         requestId,
@@ -283,6 +300,7 @@ export class MessageController {
           webSearchEnabled: dto.webSearchEnabled ?? false,
           deepSearchEnabled: dto.deepSearchEnabled ?? false,
           modelId: dto.modelId,
+          reasoningEffort: effectiveReasoningEffort,
           agentIds: effectiveAgentIds ?? [],
           skillIds: dto.skillIds ?? [],
           connectorRepo: dto.connectorRepo,
@@ -344,6 +362,8 @@ export class MessageController {
         conversationId,
         questionMessageId: userMessage.id,
         senderId: user._id.toString(),
+        modelId: dto.modelId,
+        reasoningEffort: effectiveReasoningEffort,
         requestId,
       });
       aiMessageId = aiMessage.id;
@@ -365,6 +385,7 @@ export class MessageController {
           webSearchEnabled: dto.webSearchEnabled,
           deepSearchEnabled: dto.deepSearchEnabled,
           modelId: dto.modelId,
+          reasoningEffort: effectiveReasoningEffort,
           agentIds: effectiveAgentIds,
           connectorRepo: dto.connectorRepo,
           skillIds: dto.skillIds,
@@ -467,6 +488,7 @@ export class MessageController {
       webSearchEnabled: dto.webSearchEnabled ?? false,
       deepSearchEnabled: dto.deepSearchEnabled ?? false,
       modelId: dto.modelId ?? null,
+      reasoningEffort: dto.reasoningEffort ?? null,
       agentIds: dto.agentIds ?? [],
       memberIds: dto.memberIds ?? [],
       teamIds: dto.teamIds ?? [],
@@ -595,6 +617,8 @@ export class MessageController {
       conversationId,
       questionMessageId: questionId,
       senderId: user._id.toString(),
+      modelId: userMessage.modelId,
+      reasoningEffort: userMessage.reasoningEffort,
       requestId,
     });
 
@@ -624,6 +648,7 @@ export class MessageController {
           webSearchEnabled: userMessage.webSearchEnabled,
           deepSearchEnabled: false,
           modelId: userMessage.modelId,
+          reasoningEffort: userMessage.reasoningEffort,
           agentIds: pinnedAgentId ? [pinnedAgentId] : userMessage.agentIds?.map((id) => id.toString()) ?? [],
           skillIds: [],
         },

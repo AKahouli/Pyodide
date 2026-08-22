@@ -1184,7 +1184,7 @@ const WebPreviewPartRenderer = ({ content }: { content: string }) => {
 };
 
 // Artifact Part - Document/file artifact
-const ArtifactPartRenderer = ({ filePath, filename }: { filePath: string; filename: string }) => {
+export const ArtifactPartRenderer = ({ filePath, filename }: { filePath: string; filename: string }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
   const [isDownloading, setIsDownloading] = useState(false);

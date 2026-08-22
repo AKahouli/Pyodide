@@ -10,7 +10,10 @@ import {
   ModelInputModality,
   ModelResponse,
   ModelsListResponse,
+  ReasoningEffortOption,
 } from './interfaces/model.interface';
+import { BadRequestException } from '../exceptions';
+import { ErrorCode } from '../exceptions/constants/error-codes';
 
 // Provider display name mappings
 const CHEF_DISPLAY_NAMES: Record<string, string> = {
@@ -114,7 +117,12 @@ export class ModelsService implements OnApplicationBootstrap {
             litellmModel,
             providers: [chefSlug],
             chef: this.getChefDisplayName(chefSlug),
+            maxInputTokens: this.nullableNumber(entry.model_info?.max_input_tokens),
+            maxOutputTokens: this.nullableNumber(entry.model_info?.max_output_tokens),
+            supportsReasoning: typeof entry.model_info?.supports_reasoning === 'boolean' ? entry.model_info.supports_reasoning : null,
           };
+          const publishedEfforts = this.extractReasoningEfforts(entry);
+          if (publishedEfforts.length > 0) updateFields.reasoningEfforts = publishedEfforts;
 
           if (!existingModel.isActive) {
             // Reactivate
@@ -125,6 +133,10 @@ export class ModelsService implements OnApplicationBootstrap {
           const hasChanges =
             existingModel.chefSlug !== chefSlug ||
             existingModel.litellmModel !== litellmModel ||
+            existingModel.maxInputTokens !== updateFields.maxInputTokens ||
+            existingModel.maxOutputTokens !== updateFields.maxOutputTokens ||
+            existingModel.supportsReasoning !== updateFields.supportsReasoning ||
+            (publishedEfforts.length > 0 && JSON.stringify(existingModel.reasoningEfforts ?? []) !== JSON.stringify(publishedEfforts)) ||
             !existingModel.isActive;
 
           if (hasChanges) {
@@ -287,7 +299,31 @@ export class ModelsService implements OnApplicationBootstrap {
       type: entry.model_info?.mode || '',
       types: entry.model_info?.mode ? [entry.model_info.mode] : [],
       inputModalities: ['text'],
+      maxInputTokens: this.nullableNumber(entry.model_info?.max_input_tokens),
+      maxOutputTokens: this.nullableNumber(entry.model_info?.max_output_tokens),
+      supportsReasoning: typeof entry.model_info?.supports_reasoning === 'boolean' ? entry.model_info.supports_reasoning : null,
+      reasoningEfforts: this.extractReasoningEfforts(entry),
     };
+  }
+
+  private nullableNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  private extractReasoningEfforts(entry: LiteLLMModelInfoEntry): ReasoningEffortOption[] {
+    const source = entry.model_info.reasoning_efforts ?? entry.model_info.supported_reasoning_efforts;
+    if (!Array.isArray(source)) return [];
+    return source.flatMap((item): ReasoningEffortOption[] => {
+      if (typeof item === 'string' && item.trim()) return [{ id: item.trim(), name: this.generateDisplayName(item.trim()) }];
+      if (!item || typeof item !== 'object') return [];
+      const record = item as Record<string, unknown>;
+      if (typeof record.id !== 'string' || !record.id.trim()) return [];
+      return [{
+        id: record.id.trim(),
+        name: typeof record.name === 'string' && record.name.trim() ? record.name.trim() : this.generateDisplayName(record.id.trim()),
+        ...(typeof record.description === 'string' && record.description.trim() ? { description: record.description.trim() } : {}),
+      }];
+    });
   }
 
   private generateDisplayName(id: string): string {
@@ -334,7 +370,7 @@ export class ModelsService implements OnApplicationBootstrap {
 
   async updateModel(
     id: string,
-    data: Partial<{ name: string; chef: string; chefSlug: string; providers: string[]; type: string; types: string[]; isActive: boolean; omitTemperature: boolean; inputModalities: ModelInputModality[] }>,
+    data: Partial<{ name: string; chef: string; chefSlug: string; providers: string[]; type: string; types: string[]; isActive: boolean; omitTemperature: boolean; inputModalities: ModelInputModality[]; reasoningEfforts: ReasoningEffortOption[]; defaultReasoningEffort: string | null }>,
   ): Promise<ModelResponse | null> {
     const update = { ...data };
     if (update.types) {
@@ -342,11 +378,19 @@ export class ModelsService implements OnApplicationBootstrap {
     } else if (update.type !== undefined) {
       update.types = update.type ? [update.type] : [];
     }
+    if (update.defaultReasoningEffort && update.reasoningEfforts && !update.reasoningEfforts.some((effort) => effort.id === update.defaultReasoningEffort)) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Default reasoning effort must be included in the supported efforts.');
+    }
+    const clearDefaultReasoningEffort = update.defaultReasoningEffort === null;
+    if (clearDefaultReasoningEffort) delete update.defaultReasoningEffort;
 
     const model = await this.aiModelModel
       .findOneAndUpdate(
         { modelId: id },
-        { $set: update },
+        {
+          $set: update,
+          ...(clearDefaultReasoningEffort ? { $unset: { defaultReasoningEffort: 1 } } : {}),
+        },
         { new: true },
       )
       .lean()
@@ -492,6 +536,21 @@ export class ModelsService implements OnApplicationBootstrap {
       isDefault: (doc.isDefault as boolean) || false,
       omitTemperature: (doc.omitTemperature as boolean) || false,
       inputModalities,
+      maxInputTokens: typeof doc.maxInputTokens === 'number' ? doc.maxInputTokens : null,
+      maxOutputTokens: typeof doc.maxOutputTokens === 'number' ? doc.maxOutputTokens : null,
+      supportsReasoning: typeof doc.supportsReasoning === 'boolean' ? doc.supportsReasoning : null,
+      reasoning: {
+        efforts: Array.isArray(doc.reasoningEfforts)
+          ? doc.reasoningEfforts.flatMap((effort): ReasoningEffortOption[] => {
+              if (!effort || typeof effort !== 'object') return [];
+              const value = effort as Record<string, unknown>;
+              return typeof value.id === 'string' && typeof value.name === 'string'
+                ? [{ id: value.id, name: value.name, ...(typeof value.description === 'string' ? { description: value.description } : {}) }]
+                : [];
+            })
+          : [],
+        ...(typeof doc.defaultReasoningEffort === 'string' ? { defaultEffort: doc.defaultReasoningEffort } : {}),
+      },
     };
   }
 }

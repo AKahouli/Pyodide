@@ -960,6 +960,13 @@ export interface AdminModelResponse {
   isDefault: boolean;
   omitTemperature: boolean;
   inputModalities: ModelInputModality[];
+  maxInputTokens: number | null;
+  maxOutputTokens: number | null;
+  supportsReasoning: boolean | null;
+  reasoning: {
+    efforts: Array<{ id: string; name: string; description?: string }>;
+    defaultEffort?: string;
+  };
 }
 
 export interface AdminModelsListResponse {
@@ -994,6 +1001,8 @@ export interface UpdateModelRequest {
   isActive?: boolean;
   omitTemperature?: boolean;
   inputModalities?: ModelInputModality[];
+  reasoningEfforts?: Array<{ id: string; name: string; description?: string }>;
+  defaultReasoningEffort?: string | null;
 }
 
 export interface SyncModelsResponse {

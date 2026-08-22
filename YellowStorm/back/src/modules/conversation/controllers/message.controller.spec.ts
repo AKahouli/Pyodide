@@ -455,4 +455,19 @@ describe('MessageController.sendMessage sticky routing', () => {
     expect(conversationService.resolvePlatformCopilotAgent).toHaveBeenCalled();
     expect(messageService.createAIPlaceholder).toHaveBeenCalled();
   });
+
+  it('preserves model reasoning metadata on regenerated placeholders', async () => {
+    const questionId = new Types.ObjectId();
+    messageService.getMessageDocument
+      .mockResolvedValueOnce({ questionMessageId: questionId })
+      .mockResolvedValueOnce({ content: 'original question', modelId: 'model-1', reasoningEffort: 'high' });
+    conversationService.getConversationDocument.mockResolvedValue({ runtimePurpose: 'standard' });
+
+    await controller.regenerate(user, conversationId, 'ai-1');
+
+    expect(messageService.createAIPlaceholder).toHaveBeenCalledWith(expect.objectContaining({
+      modelId: 'model-1',
+      reasoningEffort: 'high',
+    }));
+  });
 });

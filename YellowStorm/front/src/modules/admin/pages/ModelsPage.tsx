@@ -115,6 +115,10 @@ function normalizeModel(model: AdminModelResponse): AdminModelResponse {
     inputModalities: Array.isArray(model.inputModalities) && model.inputModalities.includes('text')
       ? model.inputModalities
       : ['text'],
+    maxInputTokens: typeof model.maxInputTokens === 'number' ? model.maxInputTokens : null,
+    maxOutputTokens: typeof model.maxOutputTokens === 'number' ? model.maxOutputTokens : null,
+    supportsReasoning: typeof model.supportsReasoning === 'boolean' ? model.supportsReasoning : null,
+    reasoning: model.reasoning && Array.isArray(model.reasoning.efforts) ? model.reasoning : { efforts: [] },
   };
 }
 
@@ -137,6 +141,8 @@ export function ModelsPage() {
     types: [] as ModelType[],
     omitTemperature: false,
     inputModalities: ['text'] as ModelInputModality[],
+    reasoningEfforts: '',
+    defaultReasoningEffort: '',
   });
 
   const fetchModels = async () => {
@@ -234,6 +240,8 @@ export function ModelsPage() {
       types: (model.types.length > 0 ? model.types : model.type ? [model.type] : []) as ModelType[],
       omitTemperature: model.omitTemperature,
       inputModalities: model.inputModalities,
+      reasoningEfforts: model.reasoning.efforts.map((effort) => effort.id).join(', '),
+      defaultReasoningEffort: model.reasoning.defaultEffort || '',
     });
     setShowEditDialog(true);
   };
@@ -261,6 +269,12 @@ export function ModelsPage() {
         types: editFormData.types,
         omitTemperature: editFormData.omitTemperature,
         inputModalities: editFormData.inputModalities,
+        reasoningEfforts: editFormData.reasoningEfforts.split(',').map((id) => id.trim()).filter(Boolean).map((id) => ({
+          id,
+          name: editingModel.reasoning.efforts.find((effort) => effort.id === id)?.name
+            || id.replace(/[_-]+/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase()),
+        })),
+        defaultReasoningEffort: editFormData.defaultReasoningEffort || null,
       });
 
       setModels((prev) =>
@@ -598,6 +612,33 @@ export function ModelsPage() {
                   {t('models.edit.fields.omitTemperatureHelper')}
                 </p>
               </div>
+              {editingModel.supportsReasoning === true && (
+                <div className="space-y-4 rounded-md border p-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="reasoningEfforts">{t('models.edit.fields.reasoningEfforts')}</Label>
+                    <Input
+                      id="reasoningEfforts"
+                      value={editFormData.reasoningEfforts}
+                      onChange={(event) => setEditFormData((prev) => ({ ...prev, reasoningEfforts: event.target.value }))}
+                      placeholder={t('models.edit.fields.reasoningEffortsPlaceholder')}
+                    />
+                    <p className="text-xs text-muted-foreground">{t('models.edit.fields.reasoningEffortsHelper')}</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="defaultReasoningEffort">{t('models.edit.fields.defaultReasoningEffort')}</Label>
+                    <Select
+                      value={editFormData.defaultReasoningEffort || '__none__'}
+                      onValueChange={(value) => setEditFormData((prev) => ({ ...prev, defaultReasoningEffort: value === '__none__' ? '' : value }))}
+                    >
+                      <SelectTrigger id="defaultReasoningEffort"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">{t('models.edit.fields.noDefaultReasoningEffort')}</SelectItem>
+                        {editFormData.reasoningEfforts.split(',').map((id) => id.trim()).filter(Boolean).map((id) => <SelectItem key={id} value={id}>{id}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

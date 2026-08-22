@@ -94,6 +94,13 @@ export class SendMessageDto {
   @IsString()
   modelId?: string;
 
+  @ApiPropertyOptional({ description: 'Reasoning effort ID supported by the selected model', maxLength: 50 })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z0-9._-]+$/)
+  @MaxLength(50)
+  reasoningEffort?: string;
+
   @ApiPropertyOptional({ description: 'Mentioned agent IDs', type: [String] })
   @IsOptional()
   @IsArray()

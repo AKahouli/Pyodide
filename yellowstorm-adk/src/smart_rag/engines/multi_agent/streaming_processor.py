@@ -29,6 +29,7 @@ from src.smart_rag.engines.helpers import (
 from src.smart_rag.messaging.component_tracker import ComponentTracker
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
+from src.smart_rag.infrastructure.model_parameters import get_context_window_for_model
 
 logger = get_logger("api.routers.agentic_rag.StreamingEventProcessor")
 
@@ -193,6 +194,7 @@ class StreamingEventProcessor:
                                 "output_tokens": response_tokens,
                                 "total_tokens": event_total_tokens,
                                 "model": model_name,
+                                "context_window_tokens": get_context_window_for_model(model_name) or 0,
                             },
                             "metadata": {"message_id": session_id},
                         }

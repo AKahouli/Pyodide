@@ -1,7 +1,13 @@
 import pytest
 from types import SimpleNamespace
 
-from src.smart_rag.infrastructure.model_parameters import normalize_messages_for_model, register_model_input_modalities
+from src.smart_rag.infrastructure.model_parameters import (
+    get_context_window_for_model,
+    get_reasoning_effort_for_model,
+    normalize_messages_for_model,
+    register_model_input_modalities,
+    resolve_model_config,
+)
 
 
 def test_text_only_messages_keep_text_and_tool_linkage_without_mutating_input():
@@ -122,6 +128,17 @@ def test_llm_factory_registers_modalities_from_model_config():
     assert normalize_messages_for_model(model_name, messages)[0]["content"] == [
         {"type": "text", "text": "question"}
     ]
+
+
+def test_model_config_registers_reasoning_effort_and_context_capacity():
+    model_name = resolve_model_config({
+        "provider": "openai/reasoning-model",
+        "reasoning_effort": "high",
+        "context_window_tokens": 128000,
+    })
+
+    assert get_reasoning_effort_for_model(model_name) == "high"
+    assert get_context_window_for_model("reasoning-model") == 128000
 
 
 @pytest.mark.parametrize(
