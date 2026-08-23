@@ -16,6 +16,11 @@ export interface RuntimeTicketResponse {
   workspaceId: string;
   revisionId: string;
   expiresAt: string;
+  appDataRuntimeEnv?: {
+    appDataId: string;
+    environment: 'dev' | 'prod';
+    publicUrl: string;
+  };
 }
 
 export interface ToolInvokePayload {

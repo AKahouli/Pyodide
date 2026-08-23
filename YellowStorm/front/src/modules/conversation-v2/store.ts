@@ -24,7 +24,12 @@ import {
   shouldApplyTerminalEvent,
 } from './utils/session-reducer';
 import { normalizeFilesTree } from './utils/files-tree';
-import { syncHostRevisionSources } from './runtime/BrowserRuntimeHost';
+import {
+  syncHostRevisionSources,
+  maybeRestartDevServerAfterAppDataTool,
+  refreshHostPreview,
+} from './runtime/BrowserRuntimeHost';
+import { CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT } from '@/modules/models/store';
 
 export interface ApplicationComponentState {
   url: string;
@@ -53,6 +58,8 @@ interface State {
   streaming: boolean;
   streamError: string | null;
   rightPanelMode: 'closed' | 'tool' | 'app';
+  /** When rightPanelMode is app: preview iframe vs read-only data tab. */
+  rightPanelAppTab: 'preview' | 'data';
   /** Latest agent-pushed application component for the current session.
    *  Nodepod boots from cephPath + filesTree; `url` is retained for deploy links. */
   applicationComponent: ApplicationComponentState | null;
@@ -129,6 +136,7 @@ export interface SessionSlice {
   streaming: boolean;
   streamError: string | null;
   rightPanelMode: State['rightPanelMode'];
+  rightPanelAppTab: State['rightPanelAppTab'];
   applicationComponent: State['applicationComponent'];
   appBuildProgress: State['appBuildProgress'];
   runtimeStatus: State['runtimeStatus'];
@@ -172,7 +180,7 @@ interface Actions {
   openToolPanel: (toolCallId: string) => void;
   /** Switch the right panel between the Code (tool) and Preview (app) tabs.
    *  Only meaningful when both a tool and an application component exist. */
-  setRightPanelView: (view: 'code' | 'preview') => void;
+  setRightPanelView: (view: 'code' | 'preview' | 'data') => void;
   jumpToLive: () => void;
   closeRightPanel: () => void;
   /**
@@ -234,6 +242,7 @@ const initial: State = {
   streaming: false,
   streamError: null,
   rightPanelMode: 'closed',
+  rightPanelAppTab: 'preview',
   applicationComponent: null,
   appBuildProgress: null,
   runtimeStatus: 'idle',
@@ -271,6 +280,7 @@ function createSessionViewDefaults(): Pick<
   | 'liveAssistantIds'
   | 'selectedToolCallId'
   | 'rightPanelMode'
+  | 'rightPanelAppTab'
   | 'applicationComponent'
   | 'appBuildProgress'
   | 'runtimeStatus'
@@ -296,6 +306,7 @@ function createSessionViewDefaults(): Pick<
     liveAssistantIds: new Set<string>(),
     selectedToolCallId: null,
     rightPanelMode: 'closed',
+    rightPanelAppTab: 'preview',
     applicationComponent: null,
     appBuildProgress: null,
     runtimeStatus: 'idle',
@@ -323,6 +334,7 @@ function sliceFromState(s: State): SessionSlice {
     streaming: s.streaming,
     streamError: s.streamError,
     rightPanelMode: s.rightPanelMode,
+    rightPanelAppTab: s.rightPanelAppTab,
     applicationComponent: s.applicationComponent,
     appBuildProgress: s.appBuildProgress,
     // Host is destroyed on session leave; never hydrate a stale browser status.
@@ -386,6 +398,7 @@ export const useConversationV2Store = create<State & Actions>()(
               streaming: cached.streaming,
               streamError: cached.streamError,
               rightPanelMode: cached.rightPanelMode,
+              rightPanelAppTab: cached.rightPanelAppTab ?? 'preview',
               applicationComponent: cached.applicationComponent,
               appBuildProgress: cached.appBuildProgress,
               runtimeStatus: 'idle',
@@ -548,6 +561,7 @@ export const useConversationV2Store = create<State & Actions>()(
         } else {
           get().handleEvent(event);
         }
+        maybeRestartDevServerAfterAppDataTool(state.sessionId, event);
       },
       reconcileCurrentSession: async () => {
         const state = get();
@@ -587,7 +601,10 @@ export const useConversationV2Store = create<State & Actions>()(
         ),
       setRightPanelView: (view) =>
         set(
-          { rightPanelMode: view === 'preview' ? 'app' : 'tool' },
+          {
+            rightPanelMode: view === 'code' ? 'tool' : 'app',
+            rightPanelAppTab: view === 'data' ? 'data' : 'preview',
+          },
           false,
           `setRightPanelView/${view}`,
         ),
@@ -775,7 +792,12 @@ export const useConversationV2Store = create<State & Actions>()(
         const stored = readSelectedModelForSession(sessionId);
         set({ selectedModelId: stored }, false, 'hydrateSelectedModelForSession');
       },
-      handleEvent: (event) =>
+      handleEvent: (event) => {
+        const sideEffects: {
+          previewSessionId: string | null;
+          syncRevision: { sessionId: string; revisionId: string } | null;
+          titleSync: { sessionId: string; title: string } | null;
+        } = { previewSessionId: null, syncRevision: null, titleSync: null };
         set(
           (state) => {
             const incomingSeq = (event as { sequence?: number }).sequence;
@@ -799,20 +821,8 @@ export const useConversationV2Store = create<State & Actions>()(
                   state.sessionId !== null &&
                   event.title.length > 0 &&
                   event.title !== state.title;
-                // Mirror the title into the pointer list so the sidebar
-                // updates in lockstep with the header.
                 if (isFresh && state.sessionId) {
-                  const sid = state.sessionId;
-                  const newTitle = event.title;
-                  useConversationV2PointersStore.setState(
-                    (p) => ({
-                      items: p.items.map((row) =>
-                        row.sessionId === sid ? { ...row, title: newTitle } : row,
-                      ),
-                    }),
-                    false,
-                    'pointers/title-sync',
-                  );
+                  sideEffects.titleSync = { sessionId: state.sessionId, title: event.title };
                 }
                 return withSeq({
                   title: event.title,
@@ -832,6 +842,9 @@ export const useConversationV2Store = create<State & Actions>()(
                   isRuntimePreviewVisible(state.runtimeStatus) ||
                   !!state.applicationComponent;
                 const events = completePendingToolsInTurn(state.events);
+                if (showRuntimePreview && state.sessionId) {
+                  sideEffects.previewSessionId = state.sessionId;
+                }
                 return withSeq({
                   events: [...events, event],
                   streaming: false,
@@ -952,7 +965,7 @@ export const useConversationV2Store = create<State & Actions>()(
                   hasFilesTree: !!event.files_tree,
                 });
                 if (state.sessionId && event.revision_id) {
-                  syncHostRevisionSources(state.sessionId, event.revision_id);
+                  sideEffects.syncRevision = { sessionId: state.sessionId, revisionId: event.revision_id };
                 }
                 return withSeq({
                   events: [...state.events, event],
@@ -997,7 +1010,24 @@ export const useConversationV2Store = create<State & Actions>()(
           },
           false,
           `handleEvent/${event.type}`,
-        ),
+        );
+        if (sideEffects.titleSync) {
+          const { sessionId: sid, title: newTitle } = sideEffects.titleSync;
+          useConversationV2PointersStore.setState(
+            (p) => ({
+              items: p.items.map((row) =>
+                row.sessionId === sid ? { ...row, title: newTitle } : row,
+              ),
+            }),
+            false,
+            'pointers/title-sync',
+          );
+        }
+        if (sideEffects.previewSessionId) refreshHostPreview(sideEffects.previewSessionId);
+        if (sideEffects.syncRevision) {
+          syncHostRevisionSources(sideEffects.syncRevision.sessionId, sideEffects.syncRevision.revisionId);
+        }
+      },
     }),
     { name: 'conversation-v2' },
   ),
@@ -1094,3 +1124,15 @@ export const useConversationV2PointersStore = create<PointersState & PointersAct
     { name: 'conversation-v2-pointers' },
   ),
 );
+
+if (typeof window !== 'undefined') {
+  window.addEventListener(CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT, (event) => {
+    const previousDefaultId = (event as CustomEvent<{ previousDefaultId?: string | null }>).detail
+      ?.previousDefaultId;
+    if (!previousDefaultId) return;
+    const { selectedModelId, setSelectedModelId } = useConversationV2Store.getState();
+    if (selectedModelId === previousDefaultId) {
+      setSelectedModelId(null);
+    }
+  });
+}

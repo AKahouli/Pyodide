@@ -9,6 +9,67 @@ import { useShallow } from 'zustand/react/shallow';
 import type { ModelsStore, ModelsState, Model } from './types';
 import * as api from './api';
 import { i18nInstance } from '@/modules/localization/i18nInstance';
+import { clearSelectedModelIdFromAllSessions } from '@/modules/conversation-v2/selectedModelStorage';
+
+const MODELS_SYNC_CHANNEL = 'ym-models-sync';
+
+type ModelsSyncMessage = {
+  type: 'conversation-v2-default';
+  modelId: string | null;
+  previousDefaultId: string | null;
+};
+
+export const CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT =
+  'conversation-v2:default-model-changed';
+
+function applyConversationV2Default(
+  modelId: string | null,
+  previousDefaultIdOverride?: string | null,
+): string | null {
+  const previousDefaultId =
+    previousDefaultIdOverride !== undefined
+      ? previousDefaultIdOverride
+      : (useModelsStore.getState().models.find((m) => m.isConversationV2Default)?.id ?? null);
+
+  useModelsStore.setState((state) => ({
+    models: state.models.map((m) => ({
+      ...m,
+      isConversationV2Default: modelId !== null && m.id === modelId,
+    })),
+  }));
+
+  if (previousDefaultId) {
+    clearSelectedModelIdFromAllSessions(previousDefaultId);
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent(CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT, {
+        detail: { previousDefaultId, newDefaultId: modelId },
+      }),
+    );
+  }
+
+  return previousDefaultId;
+}
+
+function broadcastConversationV2DefaultSync(
+  modelId: string | null,
+  previousDefaultId: string | null,
+): void {
+  if (typeof BroadcastChannel === 'undefined') return;
+  try {
+    const channel = new BroadcastChannel(MODELS_SYNC_CHANNEL);
+    channel.postMessage({
+      type: 'conversation-v2-default',
+      modelId,
+      previousDefaultId,
+    } satisfies ModelsSyncMessage);
+    channel.close();
+  } catch {
+    // BroadcastChannel unavailable — same-tab CustomEvent still applies.
+  }
+}
 
 function tModels(key: string, fallback: string) {
   if (i18nInstance.isInitialized) {
@@ -111,6 +172,11 @@ export const useModelsStore = create<ModelsStore>()(
         await get().fetchModels();
       },
 
+      syncConversationV2Default: (modelId) => {
+        const previousDefaultId = applyConversationV2Default(modelId);
+        broadcastConversationV2DefaultSync(modelId, previousDefaultId);
+      },
+
       reset: () => {
         set(initialState);
       },
@@ -188,3 +254,15 @@ export const useDefaultModel = () =>
  */
 export const useConversationV2DefaultModel = () =>
   useModelsStore(useShallow((state) => state.models.find((m) => m.isConversationV2Default)));
+
+if (typeof window !== 'undefined') {
+  try {
+    const channel = new BroadcastChannel(MODELS_SYNC_CHANNEL);
+    channel.onmessage = (event: MessageEvent<ModelsSyncMessage>) => {
+      if (event.data?.type !== 'conversation-v2-default') return;
+      applyConversationV2Default(event.data.modelId, event.data.previousDefaultId);
+    };
+  } catch {
+    // BroadcastChannel unavailable.
+  }
+}

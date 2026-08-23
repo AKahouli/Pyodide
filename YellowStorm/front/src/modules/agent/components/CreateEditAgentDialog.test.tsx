@@ -26,6 +26,8 @@ vi.mock('@/modules/models/store', () => ({
   useModelsStore: {
     getState: () => ({ fetchModels: fetchModelsMock }),
   },
+  // Re-exported for conversation-v2 store listeners pulled in via AppSidebar.
+  CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT: 'conversation-v2:default-model-changed',
 }));
 
 vi.mock('../api', () => ({

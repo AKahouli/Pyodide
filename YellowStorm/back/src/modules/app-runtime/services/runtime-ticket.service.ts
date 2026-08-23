@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { randomBytes } from 'crypto';
@@ -10,6 +10,7 @@ import {
 import type { RuntimeTicketResult } from '../types/app-runtime-protocol';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeTokenService } from './runtime-token.service';
+import { AppDataDeploymentService } from '@modules/app-data/services/app-data-deployment.service';
 
 export interface IssueRuntimeTicketParams {
   conversationSessionId: string;
@@ -38,6 +39,7 @@ export class RuntimeTicketService {
     private readonly bindings: RuntimeBindingService,
     private readonly tokens: RuntimeTokenService,
     private readonly config: ConfigService,
+    @Optional() private readonly appDataDeployment?: AppDataDeploymentService,
   ) {}
 
   async issue(params: IssueRuntimeTicketParams): Promise<RuntimeTicketResult> {
@@ -66,12 +68,17 @@ export class RuntimeTicketService {
       `Issued runtime ticket runtimeSessionId=${runtimeSessionId} workspaceId=${binding.workspaceId}`,
     );
 
+    const appDataRuntimeEnv = this.appDataDeployment
+      ? await this.appDataDeployment.getRuntimeEnvForWorkspace(binding.workspaceId, 'dev')
+      : null;
+
     return {
       runtimeSessionId,
       ticket,
       workspaceId: binding.workspaceId,
       revisionId: binding.latestRevisionId,
       expiresAt: expiresAt.toISOString(),
+      ...(appDataRuntimeEnv ? { appDataRuntimeEnv } : {}),
     };
   }
 

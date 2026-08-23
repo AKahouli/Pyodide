@@ -10,11 +10,13 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { DocumentService } from '@modules/document/document.service';
 import {
-  STARTER_REACT_VITE_V1_FILES,
-  STARTER_REACT_VITE_V1_MANIFEST_KEY,
-  STARTER_REACT_VITE_V1_REVISION_ID,
+  DEFAULT_STARTER_MANIFEST_KEY,
+  DEFAULT_STARTER_REVISION_ID,
+  resolveEmbeddedStarter,
   type StarterManifestFile,
-} from '../constants/starter-react-vite-v1';
+} from '../constants/starter-revisions';
+import { STARTER_REACT_VITE_V1_REVISION_ID } from '../constants/starter-react-vite-v1';
+import { blobObjectKey } from '../utils/blob-object-key';
 import {
   AppSourceRevision,
   AppSourceRevisionDocument,
@@ -56,14 +58,14 @@ export class RuntimeRevisionService {
   get starterRevisionId(): string {
     return (
       this.config.get<string>('appRuntime.starterRevisionId') ||
-      STARTER_REACT_VITE_V1_REVISION_ID
+      DEFAULT_STARTER_REVISION_ID
     );
   }
 
   get starterManifestKey(): string {
     return (
       this.config.get<string>('appRuntime.starterManifestKey') ||
-      STARTER_REACT_VITE_V1_MANIFEST_KEY
+      DEFAULT_STARTER_MANIFEST_KEY
     );
   }
 
@@ -259,7 +261,7 @@ export class RuntimeRevisionService {
       const path = this.normalizeRelativePath(raw.path);
       const body = Buffer.from(raw.content, 'utf8');
       const sha256 = createHash('sha256').update(body).digest('hex');
-      const objectKey = `appbuilder/blobs/sha256/${sha256}`;
+      const objectKey = blobObjectKey(sha256);
 
       if (!(await this.documents.exists(objectKey))) {
         await this.documents.upload(body, path.split('/').pop() || path, 'text/plain', {
@@ -327,6 +329,84 @@ export class RuntimeRevisionService {
     };
   }
 
+  /**
+   * Create a new revision from a base revision plus additional (or replacement)
+   * files. Only the new files are uploaded to Ceph; existing blobs are reused.
+   */
+  async patchRevisionWithFiles(input: {
+    workspaceId: string;
+    baseRevisionId: string;
+    newRevisionId: string;
+    additionalFiles: Array<{ path: string; content: string }>;
+  }): Promise<RevisionManifest> {
+    const base = await this.getAuthorizedRevision(input.workspaceId, input.baseRevisionId);
+
+    const newFiles: AppSourceRevisionFile[] = [];
+    for (const raw of input.additionalFiles) {
+      const path = this.normalizeRelativePath(raw.path);
+      const body = Buffer.from(raw.content, 'utf8');
+      const sha256 = createHash('sha256').update(body).digest('hex');
+      const objectKey = blobObjectKey(sha256);
+
+      if (!(await this.documents.exists(objectKey))) {
+        await this.documents.upload(body, path.split('/').pop() || path, 'text/plain', {
+          generateUniqueName: false,
+          customFileName: objectKey,
+        });
+      }
+      newFiles.push({ path, sha256, objectKey, size: body.length });
+    }
+
+    const fileMap = new Map(base.files.map((f) => [f.path, f]));
+    for (const f of newFiles) {
+      fileMap.set(f.path, f);
+    }
+    const manifestFiles = [...fileMap.values()].sort((a, b) => a.path.localeCompare(b.path));
+
+    const manifestPayload = JSON.stringify({
+      revisionId: input.newRevisionId,
+      workspaceId: input.workspaceId,
+      parentRevisionId: input.baseRevisionId,
+      files: manifestFiles,
+    });
+    const manifestHash = createHash('sha256').update(manifestPayload).digest('hex');
+    const manifestObjectKey = `appbuilder/manifests/${input.workspaceId}/${input.newRevisionId}.json`;
+
+    await this.documents.upload(
+      Buffer.from(manifestPayload, 'utf8'),
+      `${input.newRevisionId}.json`,
+      'application/json',
+      { generateUniqueName: false, customFileName: manifestObjectKey },
+    );
+
+    try {
+      await this.model.create({
+        revisionId: input.newRevisionId,
+        workspaceId: input.workspaceId,
+        parentRevisionId: input.baseRevisionId,
+        manifestHash,
+        manifestObjectKey,
+        files: manifestFiles,
+        createdByToolCallId: null,
+      });
+    } catch (error) {
+      if ((error as { code?: number } | null)?.code !== 11000) throw error;
+    }
+
+    this.logger.log(
+      `Patched revision workspaceId=${input.workspaceId} base=${input.baseRevisionId} new=${input.newRevisionId} files=${manifestFiles.length}`,
+    );
+
+    return {
+      revisionId: input.newRevisionId,
+      workspaceId: input.workspaceId,
+      parentRevisionId: input.baseRevisionId,
+      manifestHash,
+      manifestObjectKey,
+      files: manifestFiles,
+    };
+  }
+
   async getStarterManifest(): Promise<RevisionManifest> {
     if (this.starterCache) {
       return this.starterCache;
@@ -379,18 +459,24 @@ export class RuntimeRevisionService {
   }
 
   private embeddedStarterManifest(): RevisionManifest {
-    const files = STARTER_REACT_VITE_V1_FILES.map((f) => ({ ...f }));
+    const embedded =
+      resolveEmbeddedStarter(this.starterRevisionId) ??
+      resolveEmbeddedStarter(STARTER_REACT_VITE_V1_REVISION_ID);
+    if (!embedded) {
+      throw new Error(`No embedded starter for revision ${this.starterRevisionId}`);
+    }
+    const files = embedded.files.map((f) => ({ ...f }));
     const payload = JSON.stringify({
-      revisionId: this.starterRevisionId,
+      revisionId: embedded.revisionId,
       parentRevisionId: null,
       files,
     });
     return {
-      revisionId: this.starterRevisionId,
+      revisionId: embedded.revisionId,
       workspaceId: '_system',
       parentRevisionId: null,
       manifestHash: createHash('sha256').update(payload).digest('hex'),
-      manifestObjectKey: this.starterManifestKey,
+      manifestObjectKey: embedded.manifestKey,
       files,
     };
   }

@@ -25,6 +25,19 @@ describe('WorkspaceRevisionStore', () => {
     expect(store.parentOf('rev_3')).toBe('rev_2');
   });
 
+  it('rolls back a minted id after abandonLatest', () => {
+    expect(store.commit(manifest({ 'package.json': 'aaa' }))).toBe('rev_2');
+    expect(store.abandonLatest()).toBe('rev_1');
+    expect(store.latestRevisionId).toBe('rev_1');
+    expect(store.has('rev_2')).toBe(false);
+    expect(store.commit(manifest({ 'package.json': 'bbb' }))).toBe('rev_2');
+  });
+
+  it('does not abandon the seeded root', () => {
+    expect(store.abandonLatest()).toBe('rev_1');
+    expect(store.has('rev_1')).toBe(true);
+  });
+
   it('keeps snapshots isolated from later mutation of the source map', () => {
     const live = manifest({ 'a.ts': '111' });
     store.commit(live);

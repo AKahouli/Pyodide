@@ -58,3 +58,18 @@ export function writeSelectedModelForSession(
   }
   writeMap(map);
 }
+
+/** Drop persisted picks that matched a rotated Conversation V2 admin default. */
+export function clearSelectedModelIdFromAllSessions(modelId: string): void {
+  const map = readMap();
+  let changed = false;
+  for (const [sessionId, id] of Object.entries(map)) {
+    if (id === modelId) {
+      delete map[sessionId];
+      changed = true;
+    }
+  }
+  if (changed) {
+    writeMap(map);
+  }
+}

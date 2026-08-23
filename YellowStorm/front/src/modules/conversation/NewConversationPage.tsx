@@ -48,7 +48,7 @@ import { GovernedScopesCarousel } from '@/modules/governance/components/consumer
 import { conversationV2Api } from '@/modules/conversation-v2/api';
 import { useConversationV2PointersStore, useConversationV2Store } from '@/modules/conversation-v2/store';
 import { writeSelectedModelForSession } from '@/modules/conversation-v2/selectedModelStorage';
-import { useChefs, useDefaultModel, useConversationV2DefaultModel, useModels, useModelsStore } from '@/modules/models';
+import { useChefs, useDefaultModel, useConversationV2DefaultModel, useModels, useModelsStore, CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT } from '@/modules/models';
 import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect';
 import { RecentSkillsMenu, ManageSkillsDialog, SelectedSkillsPills } from '@/modules/skill';
 import { RecentConnectorsMenu, ManageConnectorsDialog, SelectedConnectorsPills } from '@/modules/connector';
@@ -165,7 +165,13 @@ export function NewConversationPage() {
       let litellmModel: string | undefined;
       if (modelId) {
         writeSelectedModelForSession(sessionId, modelId);
-        const model = useModelsStore.getState().models.find((m) => m.id === modelId);
+      }
+      const lookupId =
+        modelId ??
+        useModelsStore.getState().models.find((m) => m.isConversationV2Default)?.id ??
+        null;
+      if (lookupId) {
+        const model = useModelsStore.getState().models.find((m) => m.id === lookupId);
         litellmModel = model?.litellmModel || undefined;
       }
 
@@ -416,6 +422,18 @@ function AgentInput({ onSubmit, disabled }: AgentInputProps) {
     void useModelsStore.getState().fetchModels().catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    const onDefaultChanged = (event: Event) => {
+      const previousDefaultId = (event as CustomEvent<{ previousDefaultId?: string | null }>).detail
+        ?.previousDefaultId;
+      if (!previousDefaultId) return;
+      setPickedModelId((current) => (current === previousDefaultId ? null : current));
+    };
+    window.addEventListener(CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT, onDefaultChanged);
+    return () =>
+      window.removeEventListener(CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT, onDefaultChanged);
+  }, []);
+
   const activeModel =
     (pickedModelId && models.find((m) => m.id === pickedModelId)) ||
     conversationV2DefaultModel ||
@@ -426,7 +444,7 @@ function AgentInput({ onSubmit, disabled }: AgentInputProps) {
     // Persist the actual model id we want to remember — either the user's
     // explicit pick or the current admin default. handleAgentSubmit needs a
     // concrete id to look up the LiteLLM identifier.
-    onSubmit(message, selectedWorkspaceIds, activeModel?.id ?? null);
+    onSubmit(message, selectedWorkspaceIds, pickedModelId);
   };
 
   const handlePickModel = (modelId: string) => {

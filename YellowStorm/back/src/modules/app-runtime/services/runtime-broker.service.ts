@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
 import {
@@ -20,6 +20,7 @@ import {
 import { AppRuntimeBinding } from '../schemas/app-runtime-binding.schema';
 import { RuntimeToolDispatcherService } from './runtime-tool-dispatcher.service';
 import { AppRuntimeConversationNotifierService } from './app-runtime-conversation-notifier.service';
+import { AppDataReleaseBindingService } from '@modules/app-data/services/app-data-release-binding.service';
 import type { ToolInvokeEnvelope } from '../types/app-runtime-protocol';
 
 export interface BrokerDispatchResult {
@@ -39,6 +40,7 @@ export class RuntimeBrokerService {
     private readonly dispatcher: RuntimeToolDispatcherService,
     private readonly config: ConfigService,
     private readonly conversationNotifier: AppRuntimeConversationNotifierService,
+    @Optional() private readonly releaseBinding?: AppDataReleaseBindingService,
   ) {}
 
   async dispatch(
@@ -90,6 +92,18 @@ export class RuntimeBrokerService {
             `application_component push failed bindingId=${binding.bindingId}: ${err.message}`,
           );
         });
+      if (this.releaseBinding && typeof outcome.result.revisionId === 'string') {
+        void this.releaseBinding
+          .bindRevision({
+            workspaceId: binding.workspaceId,
+            revisionId: outcome.result.revisionId as string,
+          })
+          .catch((err: Error) => {
+            this.logger.warn(
+              `release binding failed bindingId=${binding.bindingId}: ${err.message}`,
+            );
+          });
+      }
     }
     return outcome;
   }
@@ -129,7 +143,13 @@ export class RuntimeBrokerService {
       );
     }
 
-    if (MUTATING_BROKER_TOOLS.has(tool) && typeof result.revisionId === 'string') {
+    // Keep the in-memory binding ahead for any caller that reuses the same
+    // document in-process. Persistence is owned by the tool dispatcher.
+    if (
+      MUTATING_BROKER_TOOLS.has(tool) &&
+      typeof result.revisionId === 'string' &&
+      result.revisionId
+    ) {
       binding.latestRevisionId = result.revisionId;
     }
 

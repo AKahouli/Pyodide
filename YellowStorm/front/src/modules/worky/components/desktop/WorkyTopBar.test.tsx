@@ -26,6 +26,8 @@ vi.mock('../../query/hooks', () => ({
     },
   }),
   useCreateStream: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  // Consumed by useStopSession (stop button in the top bar).
+  useStopTurn: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 import { WorkyTopBar } from './WorkyTopBar';

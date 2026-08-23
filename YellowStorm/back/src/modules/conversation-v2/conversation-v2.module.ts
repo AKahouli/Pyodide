@@ -20,6 +20,7 @@ import { ConversationV2SessionAccessService } from './services/conversation-v2-s
 import { SseAuthGuard } from '@modules/conversation/guards/stream-auth.guard';
 import { AuthModule } from '@modules/auth/auth.module';
 import { AppRuntimeModule } from '@modules/app-runtime/app-runtime.module';
+import { AppDataModule } from '@modules/app-data/app-data.module';
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
 import { ChatCompletionModule } from '@modules/chat-completion';
 import { ModelsModule } from '@modules/models/models.module';
@@ -49,6 +50,7 @@ import {
     forwardRef(() => AuthModule),
     forwardRef(() => WorkspaceModule),
     forwardRef(() => AppRuntimeModule),
+    forwardRef(() => AppDataModule),
     UserModule,
     NotificationsModule,
     ChatCompletionModule,

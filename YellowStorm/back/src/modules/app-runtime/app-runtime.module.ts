@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '@modules/auth/auth.module';
 import { ConversationV2Module } from '@modules/conversation-v2/conversation-v2.module';
+import { AppDataModule } from '@modules/app-data/app-data.module';
 import appRuntimeConfig from '@config/app-runtime.config';
 import { AppRuntimeInternalController } from './controllers/app-runtime-internal.controller';
 import { AppRuntimeMcpController } from './controllers/app-runtime-mcp.controller';
@@ -39,6 +40,7 @@ import { AppRuntimeConversationNotifierService } from './services/app-runtime-co
     ConfigModule.forFeature(appRuntimeConfig),
     forwardRef(() => AuthModule),
     forwardRef(() => ConversationV2Module),
+    forwardRef(() => AppDataModule),
     MongooseModule.forFeature([
       { name: AppRuntimeBinding.name, schema: AppRuntimeBindingSchema },
       { name: AppRuntimeTicket.name, schema: AppRuntimeTicketSchema },
@@ -65,6 +67,7 @@ import { AppRuntimeConversationNotifierService } from './services/app-runtime-co
     RuntimeBindingService,
     RuntimeTicketService,
     RuntimeRevisionService,
+    RuntimeMcpAuthService,
     RuntimeMcpDispatcherService,
   ],
 })

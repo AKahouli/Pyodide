@@ -103,6 +103,9 @@ export function ApplicationComponentView({
   const sessionId = useConversationV2Store((s) => s.sessionId);
   const appViewMode = useConversationV2Store((s) => s.appViewMode);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
+  const workspaceRevisionId = useConversationV2Store(
+    (s) => s.applicationComponent?.workspaceRevisionId,
+  );
   // The host is long-lived in ConversationV2SessionPage; this hook subscribes.
   const { status, previewUrl, error, files, retry, previewIframeRef } = useNodepodPreview({
     sessionId,
@@ -180,7 +183,13 @@ export function ApplicationComponentView({
 
   const handleOpenExternal = useCallback(() => {
     if (!previewUrl) return;
-    window.open(previewUrl, '_blank', 'noopener,noreferrer');
+    const base = import.meta.env.BASE_URL || '/';
+    const wrapper = new URL('preview-wrapper.html', `${window.location.origin}${base}`);
+    wrapper.searchParams.set('src', previewUrl);
+    const opened = window.open(wrapper.toString(), '_blank', 'noopener,noreferrer');
+    if (!opened) {
+      window.open(previewUrl, '_blank', 'noopener,noreferrer');
+    }
   }, [previewUrl]);
 
   const setPreviewOnly = () => {
@@ -236,6 +245,7 @@ export function ApplicationComponentView({
       {status === 'ready' && previewUrl ? (
         <div className='relative h-full min-h-0 overflow-hidden bg-muted/20'>
           <iframe
+            key={`${workspaceRevisionId ?? 'preview'}-${previewUrl}`}
             ref={previewIframeRef}
             title={title || t('nodepod.previewTitle')}
             src={previewUrl}

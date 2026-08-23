@@ -13,6 +13,7 @@ export function emptySlice(): SessionSlice {
     streaming: true,
     streamError: null,
     rightPanelMode: 'closed',
+    rightPanelAppTab: 'preview',
     applicationComponent: null,
     appBuildProgress: null,
     runtimeStatus: 'idle',

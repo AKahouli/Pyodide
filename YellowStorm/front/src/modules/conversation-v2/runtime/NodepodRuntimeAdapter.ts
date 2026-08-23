@@ -166,26 +166,6 @@ export class NodepodRuntimeAdapter {
     return this._files;
   }
 
-  /**
-   * Try restoring a cached pod.  Returns true if hit.
-   */
-  restoreFromCache(sessionId: string, revision: string): boolean {
-    cleanupStaleEntries();
-    const key = cacheKey(sessionId, revision);
-    const entry = podCache.get(key);
-    if (entry?.alive && entry.pod) {
-      log('cache-hit', { key });
-      this.pod = entry.pod;
-      this._files = entry.files;
-      this.sessionId = sessionId;
-      this.revision = revision;
-      this.lastInstallFingerprint = entry.installFingerprint;
-      entry.lastAccessed = Date.now();
-      return true;
-    }
-    return false;
-  }
-
   async boot(
     files: VfsFiles,
     sessionId: string,
@@ -333,13 +313,18 @@ export class NodepodRuntimeAdapter {
     previewCtrl: PreviewController,
     isStale: () => boolean,
     onProgress?: ProgressCallback,
+    extraEnv?: Record<string, string>,
   ): Promise<string | null> {
     const pod = this.requirePod();
     const files = this._files ?? {};
     const { cmd, args } = detectDevCommand(files);
     const needsWasi = await pod.fs.exists(ROLLDOWN_WASM_PATH);
-    const devEnv = needsWasi ? { NAPI_RS_FORCE_WASI: 'true', NAPI_RS_FORCE_WASM: '1' } : undefined;
-    log('dev-server:spawn', { cmd, args, env: devEnv ?? null });
+    const devEnv = {
+      ...(needsWasi ? { NAPI_RS_FORCE_WASI: 'true', NAPI_RS_FORCE_WASM: '1' } : {}),
+      ...(extraEnv ?? {}),
+    };
+    const spawnEnv = Object.keys(devEnv).length > 0 ? devEnv : undefined;
+    log('dev-server:spawn', { cmd, args, env: spawnEnv ?? null });
     onProgress?.('starting', `${cmd} ${args.join(' ')}`);
 
     let pendingPort: number | null = null;
@@ -386,7 +371,7 @@ export class NodepodRuntimeAdapter {
       };
 
       void (async () => {
-        const proc = await pod.spawn(cmd, args, devEnv ? { env: devEnv } : undefined);
+        const proc = await pod.spawn(cmd, args, spawnEnv ? { env: spawnEnv } : undefined);
         proc.on('output', (text: string) => {
           console.log(`${LOG} [dev:stdout]`, text);
           if (!resolved && !isStale() && looksLikeDevServerReady(text)) {

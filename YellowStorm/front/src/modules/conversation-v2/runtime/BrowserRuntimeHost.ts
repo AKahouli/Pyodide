@@ -27,6 +27,77 @@ const HIDDEN_IFRAME_STYLE =
 const HIDDEN_IFRAME_SANDBOX =
   'allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts';
 
+let appDataFetchProxyInstalled = false;
+
+function isAppDataPublicUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url, window.location.href);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    return parsed.pathname.includes('/app-data/public/');
+  } catch {
+    return false;
+  }
+}
+
+function installAppDataFetchProxyOnce(): void {
+  if (appDataFetchProxyInstalled || typeof window === 'undefined') return;
+  appDataFetchProxyInstalled = true;
+
+  const handleProxyRequest = (
+    data: Record<string, unknown>,
+    reply: (response: Record<string, unknown>) => void,
+  ) => {
+    const { id, url, method, headers, body } = data;
+    if (typeof url !== 'string' || !isAppDataPublicUrl(url)) return;
+
+    fetch(url, {
+      method: (method as string) || 'GET',
+      headers: (headers as HeadersInit) || undefined,
+      body: (body as BodyInit) || undefined,
+    })
+      .then(async (res) => {
+        const responseBody = await res.text();
+        const responseHeaders: Record<string, string> = {};
+        res.headers.forEach((v, k) => {
+          responseHeaders[k] = v;
+        });
+        reply({
+          type: 'ym-app-data-response',
+          id,
+          status: res.status,
+          headers: responseHeaders,
+          body: responseBody,
+        });
+      })
+      .catch((err) => {
+        reply({
+          type: 'ym-app-data-response',
+          id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  };
+
+  window.addEventListener('message', (event: MessageEvent) => {
+    if (event.data?.type !== 'ym-app-data-fetch') return;
+    const source = event.source as WindowProxy | null;
+    if (!source) return;
+    const targetOrigin =
+      event.origin && event.origin !== 'null' ? event.origin : '*';
+    handleProxyRequest(event.data, (response) => source.postMessage(response, targetOrigin));
+  });
+
+  try {
+    const channel = new BroadcastChannel('ym-app-data-proxy');
+    channel.onmessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'ym-app-data-fetch') return;
+      handleProxyRequest(event.data, (response) => channel.postMessage(response));
+    };
+  } catch {
+    // BroadcastChannel not supported — new-tab proxy unavailable
+  }
+}
+
 export type HostStateListener = (state: HostState) => void;
 
 export interface HostState {
@@ -58,6 +129,23 @@ export class BrowserRuntimeHost {
   private reconnectAttempts = 0;
   private listeners = new Set<HostStateListener>();
   private pendingIframe: HTMLIFrameElement | null = null;
+  private refreshPreviewInFlight: Promise<void> | null = null;
+
+  private buildAppDataViteEnv(): Record<string, string> | undefined {
+    const env = this.ticket?.appDataRuntimeEnv;
+    if (!env) return undefined;
+    return {
+      VITE_YM_APP_DATA_URL: env.publicUrl,
+      VITE_YM_APP_DATA_ID: env.appDataId,
+      VITE_YM_APP_DATA_ENV: env.environment,
+      VITE_YM_APP_DATA_PROXY: 'true',
+    };
+  }
+
+  private setupAppDataFetchProxy(): void {
+    installAppDataFetchProxyOnce();
+  }
+
   /** Off-screen iframe so preview_inspect works when the user panel is closed. */
   private hiddenIframe: HTMLIFrameElement | null = null;
 
@@ -112,6 +200,7 @@ export class BrowserRuntimeHost {
     this.sessionId = sessionId;
     this.reconnectAttempts = 0;
     this.legacyMode = false;
+    this.setupAppDataFetchProxy();
 
     const cephPath = existingCephPath ?? null;
     const filesTree = (existingFilesTree as FilesTreeNode | null) ?? null;
@@ -163,9 +252,10 @@ export class BrowserRuntimeHost {
       });
       if (this._destroyed) return;
 
-      // 8. Start dev server
+      // 8. Start dev server (refresh ticket so App Data env is present if already provisioned)
       this.setStatus('starting');
-      await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed);
+      const viteEnv = await this.refreshAppDataViteEnv();
+      await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
       if (this._destroyed) return;
       this.flushPendingIframe();
       await this.ensureHiddenPreviewIframe();
@@ -232,7 +322,7 @@ export class BrowserRuntimeHost {
       if (this._destroyed) return;
 
       this.setStatus('starting');
-      await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed);
+      await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, this.buildAppDataViteEnv());
       if (this._destroyed) return;
       this.flushPendingIframe();
       await this.ensureHiddenPreviewIframe();
@@ -288,7 +378,40 @@ export class BrowserRuntimeHost {
       openPreviewPanel: () => {
         useConversationV2Store.getState().setRightPanelView('preview');
       },
+      resolveAppDataViteEnv: () => this.refreshAppDataViteEnv(),
     };
+  }
+
+  /** Re-issue runtime ticket metadata so VITE_YM_* reflects a newly provisioned App Data store. */
+  private async refreshAppDataViteEnv(): Promise<Record<string, string> | undefined> {
+    if (this.sessionId && appRuntimeEnabled) {
+      try {
+        const fresh = await conversationV2Api.createRuntimeTicket(this.sessionId);
+        if (fresh.appDataRuntimeEnv) {
+          this.ticket = this.ticket
+            ? { ...this.ticket, appDataRuntimeEnv: fresh.appDataRuntimeEnv }
+            : fresh;
+        }
+      } catch (err) {
+        console.warn(
+          LOG,
+          'refreshAppDataViteEnv failed',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+    return this.buildAppDataViteEnv();
+  }
+
+  /** Restart Vite after App Data provision so preview receives VITE_YM_* env. */
+  async restartDevServerForAppData(): Promise<void> {
+    if (this._destroyed || this.legacyMode) return;
+    if (this._status !== 'ready' && this._status !== 'starting') return;
+    const viteEnv = await this.refreshAppDataViteEnv();
+    if (!viteEnv) return;
+    console.log(LOG, 'restarting dev server for App Data env');
+    await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
+    await this.refreshPreview();
   }
 
   private async handleToolInvoke(payload: ToolInvokePayload): Promise<void> {
@@ -330,6 +453,9 @@ export class BrowserRuntimeHost {
       }
       if (this._destroyed) return;
       this.client.emitToolCompleted({ toolCallId, result });
+      if (tool === 'finalize') {
+        await this.refreshPreview();
+      }
       this.emit();
     } catch (err) {
       if (this._destroyed) return;
@@ -351,7 +477,7 @@ export class BrowserRuntimeHost {
    * event, so re-registration is the readiness signal.
    */
   /** Refresh the split-view source cache from the live Nodepod VFS. */
-  async refreshSourceFiles(): Promise<void> {
+  private async refreshSourceFiles(): Promise<void> {
     if (this._destroyed || !this.adapter.currentPod) return;
     try {
       await this.adapter.refreshFileCache();
@@ -375,7 +501,6 @@ export class BrowserRuntimeHost {
     if (!pod) return;
 
     try {
-      this.setStatus('hydrating');
       const appComp = useConversationV2Store.getState().applicationComponent;
       const files = await this.resolveHydrationFiles(this.sessionId, {
         revisionId,
@@ -388,6 +513,13 @@ export class BrowserRuntimeHost {
       this.revisionId = revisionId;
       this.revisions.seed(await this.adapter.shaManifest(), revisionId);
       await this.adapter.refreshFileCache();
+
+      this.setStatus('starting');
+      const viteEnv = await this.refreshAppDataViteEnv();
+      await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
+      if (this._destroyed) return;
+
+      await this.refreshPreview();
       this.setStatus('ready');
       console.log(LOG, 'syncRevisionSources ok', { revisionId });
     } catch (err) {
@@ -397,7 +529,8 @@ export class BrowserRuntimeHost {
         err instanceof Error ? err.message : String(err),
       );
       await this.refreshSourceFiles();
-      if (!this._destroyed && this._status === 'hydrating') {
+      await this.refreshPreview();
+      if (!this._destroyed && this._status === 'starting') {
         this.setStatus('ready');
       }
     }
@@ -499,6 +632,61 @@ export class BrowserRuntimeHost {
     this.removeHiddenPreviewIframe();
     this.pendingIframe = iframe;
     this.flushPendingIframe();
+    const url = this.previewCtrl.previewUrl;
+    if (!url) return;
+    if (iframe.src && iframe.src !== 'about:blank' && iframe.src === url) {
+      return;
+    }
+    this.reloadPreviewIframe(iframe);
+  }
+
+  /**
+   * Re-probe the Nodepod SW route and reload attached preview iframes so the
+   * visible panel matches what finalize / preview_inspect verified.
+   */
+  async refreshPreview(): Promise<void> {
+    if (this.refreshPreviewInFlight) return this.refreshPreviewInFlight;
+    this.refreshPreviewInFlight = this.runRefreshPreview().finally(() => {
+      this.refreshPreviewInFlight = null;
+    });
+    return this.refreshPreviewInFlight;
+  }
+
+  private async runRefreshPreview(): Promise<void> {
+    if (this._destroyed) return;
+    const pod = this.adapter.currentPod;
+    const url = this.previewCtrl.previewUrl;
+    const port = this.previewCtrl.port;
+    if (pod && url && port) {
+      console.log(LOG, 'refreshPreview', { url });
+      await this.previewCtrl.probeAndPromote(pod, url, port, () => this._destroyed);
+    }
+    if (this._destroyed) return;
+    this.flushPendingIframe();
+    if (this.pendingIframe) {
+      this.reloadPreviewIframe(this.pendingIframe);
+    }
+    await this.ensureHiddenPreviewIframe();
+    this.emit();
+  }
+
+  private reloadPreviewIframe(iframe: HTMLIFrameElement): void {
+    const url = this.previewCtrl.previewUrl;
+    if (!url) return;
+    const current = iframe.src;
+    if (!current || current === 'about:blank') {
+      iframe.src = url;
+      return;
+    }
+    if (current !== url) {
+      iframe.src = url;
+      return;
+    }
+    iframe.src = 'about:blank';
+    window.requestAnimationFrame(() => {
+      if (this._destroyed || this.previewCtrl.previewUrl !== url) return;
+      iframe.src = url;
+    });
   }
 
   detachPreviewIframe(): void {
@@ -671,4 +859,35 @@ export function syncHostRevisionSources(sessionId: string, revisionId: string): 
   const host = hostRegistry.get(sessionId);
   if (!host || !revisionId) return;
   void host.syncRevisionSources(revisionId);
+}
+
+/** Re-probe and reload preview iframes when the agent finishes (best-effort). */
+export function refreshHostPreview(sessionId: string | null | undefined): void {
+  if (!sessionId) return;
+  const host = hostRegistry.get(sessionId);
+  if (!host) return;
+  void host.refreshPreview();
+}
+
+const APP_DATA_DEV_SERVER_RESTART_TOOL_MARKERS = [
+  'yellowappdata_provision',
+  'appdata_provision',
+  'app_data_provision',
+];
+
+const APP_DATA_TOOL_SUCCESS_STATUSES = new Set(['success', 'completed', 'done', 'ok', 'finished']);
+
+/** Restart Nodepod Vite when App Data provision completes so preview env is injected. */
+export function maybeRestartDevServerAfterAppDataTool(
+  sessionId: string | null | undefined,
+  event: { type: string; function?: string; name?: string; status?: string },
+): void {
+  if (!sessionId || event.type !== 'tool') return;
+  const status = (event.status ?? '').toLowerCase();
+  if (status && !APP_DATA_TOOL_SUCCESS_STATUSES.has(status)) return;
+  const label = `${event.function ?? ''} ${event.name ?? ''}`.toLowerCase();
+  if (!APP_DATA_DEV_SERVER_RESTART_TOOL_MARKERS.some((marker) => label.includes(marker))) return;
+  const host = hostRegistry.get(sessionId);
+  if (!host) return;
+  void host.restartDevServerForAppData();
 }

@@ -98,4 +98,10 @@ export interface RuntimeTicketResult {
   workspaceId: string;
   revisionId: string;
   expiresAt: string;
+  /** Non-secret App Data config for Vite injection in preview. */
+  appDataRuntimeEnv?: {
+    appDataId: string;
+    environment: 'dev' | 'prod';
+    publicUrl: string;
+  };
 }
