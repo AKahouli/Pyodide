@@ -141,6 +141,10 @@ class StreamingBuffer {
 
 const streamingBuffer = new StreamingBuffer();
 
+function isImmediateStreamingComponent(component: StreamingComponent): boolean {
+  return component.type === 'reasoning' || component.type === 'toolInfo' || component.type === 'artifact';
+}
+
 function upsertMessage(messages: Message[], message: Message): { messages: Message[]; inserted: boolean } {
   const index = messages.findIndex((candidate) => candidate.id === message.id);
   if (index < 0) return { messages: [...messages, message], inserted: true };
@@ -219,8 +223,7 @@ function initializeStreamingData(type: string, data: Record<string, unknown>): R
  */
 function mergeStreamingData(type: string, existing: Record<string, unknown>, incoming: Record<string, unknown>): Record<string, unknown> {
   switch (type) {
-    case 'text':
-    case 'reasoning': {
+    case 'text': {
       if (incoming.guardrailDecision) {
         return { ...existing, ...incoming };
       }
@@ -232,6 +235,8 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
         content: existingContent + newContent,
       };
     }
+    case 'reasoning':
+      return { ...existing, ...incoming };
     case 'code': {
       // Append content, preserve language/filename from first chunk
       const existingContent = (existing.content as string) || '';
@@ -250,7 +255,6 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
     case 'task':
     case 'error':
     case 'citation':
-    case 'chainOfThought':
       // Charts and other structured components replace the full payload on update.
       return { ...incoming };
     case 'toolInfo':
@@ -258,13 +262,13 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
       // the initial event so the live debug pane matches persisted history.
       const existingStatus = (existing.status as string) || 'running';
       const incomingStatus = (incoming.status as string) || existingStatus;
-      const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'failed';
+      const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'failed' || existingStatus === 'stopped';
       const merged: Record<string, unknown> = {
         ...existing,
         ...incoming,
-        title: (incoming.title as string) || (existing.title as string) || '',
+        toolName: (incoming.toolName as string) || (existing.toolName as string) || '',
         status: existingIsTerminal ? existingStatus : incomingStatus,
-        params: (incoming.params as string) || (existing.params as string) || '',
+        paramsJson: (incoming.paramsJson as string) || (existing.paramsJson as string) || '',
         startedAt: (incoming.startedAt as string) || (existing.startedAt as string) || '',
       };
       return merged;
@@ -1260,6 +1264,20 @@ export const useConversationStore = create<ConversationState>()(
           return;
         }
 
+        if (isImmediateStreamingComponent(event.component)) {
+          streamingBuffer.flush();
+          set((current) => {
+            const components = applyChunksToComponents(current.streamingComponents, [{ action: event.action, component: event.component }]);
+            return {
+              streamingComponents: components,
+              ...(components.length > 0 && current.isAwaitingFirstChunk
+                ? { isAwaitingFirstChunk: false, awaitingConversationId: null }
+                : {}),
+            };
+          });
+          return;
+        }
+
         // Current conversation — buffer the chunk instead of immediately updating state
         streamingBuffer.addChunk(event.action, event.component);
       },
@@ -1311,27 +1329,6 @@ export const useConversationStore = create<ConversationState>()(
         // Flush any remaining buffered chunks and clear
         streamingBuffer.flush();
         streamingBuffer.clear();
-
-        // Move plan component to the top immediately (before API fetch returns),
-        // then chain-of-thought above it so it sits at the very top.
-        set((s) => {
-          const reordered = [...s.streamingComponents];
-
-          const planIndex = reordered.findIndex((c) => c.type === 'plan');
-          if (planIndex > 0) {
-            const [plan] = reordered.splice(planIndex, 1);
-            reordered.unshift(plan);
-          }
-
-          const cotIndex = reordered.findIndex((c) => c.type === 'chainOfThought');
-          if (cotIndex > 0) {
-            const [cot] = reordered.splice(cotIndex, 1);
-            reordered.unshift(cot);
-          }
-
-          if (planIndex <= 0 && cotIndex <= 0) return s;
-          return { streamingComponents: reordered };
-        });
 
         // completeAIMessage broadcasts the canonical message before stream_complete.
         // Prefer that ordered SSE update; REST is only recovery for a missed update.

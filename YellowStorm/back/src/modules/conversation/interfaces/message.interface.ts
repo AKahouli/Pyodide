@@ -16,8 +16,42 @@ export type ComponentType =
   | 'artifact'
   | 'citation'
   | 'toolInfo'
-  | 'chainOfThought'
   | 'choice';
+
+export interface ReasoningActivityData extends Record<string, unknown> {
+  summary: string;
+  status: 'running' | 'completed';
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+}
+
+export interface ToolActivityData extends Record<string, unknown> {
+  toolName: string;
+  displayKey?: string;
+  fallbackDisplayName?: string;
+  summary: string;
+  renderKind: 'run_code' | 'search' | 'read' | 'write' | 'file' | 'web' | 'generic';
+  status: 'running' | 'completed' | 'failed' | 'stopped';
+  paramsJson?: string;
+  resultJson?: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  actorId?: string;
+  actorName?: string;
+}
+
+export interface ArtifactActivityData extends Record<string, unknown> {
+  artifactId: string;
+  filename: string;
+  artifactKind?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  producerToolId?: string;
+  availability: 'pending' | 'ready' | 'failed';
+  storagePath?: string;
+}
 
 export type FeedbackType = 'like' | 'dislike';
 

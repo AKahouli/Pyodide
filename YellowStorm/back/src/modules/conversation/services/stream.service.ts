@@ -164,28 +164,28 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     this.initGrpcClient();
   }
 
-  onModuleDestroy() {
+  async onModuleDestroy(): Promise<void> {
     // Cancel all active gRPC calls
     for (const [, call] of this.activeCalls) {
       call.cancel();
     }
     this.activeCalls.clear();
 
-    // Persist all active buffers
     for (const [streamKey, buffer] of this.componentBuffers) {
-      const [, , messageId] = streamKey.split(':');
+      const [, conversationId, messageId] = streamKey.split(':');
       if (messageId && buffer.size > 0) {
-        this.messageService
-          .completeAIMessage({
+        try {
+          await this.finalizeRunningTools(buffer, 'stopped', conversationId, [], false);
+          await this.messageService.completeAIMessage({
             messageId,
             components: Array.from(buffer.values()),
-          })
-          .catch((err) => {
-            this.logger.error('Failed to persist buffer on shutdown', {
-              messageId,
-              error: (err as Error).message,
-            });
           });
+        } catch (err) {
+          this.logger.error('Failed to persist buffer on shutdown', {
+            messageId,
+            error: (err as Error).message,
+          });
+        }
       }
     }
 
@@ -1053,6 +1053,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     // Persist current buffer
     const buffer = this.componentBuffers.get(streamKey) || new Map();
+    await this.finalizeRunningTools(buffer, 'stopped', conversationId, await this.resolveMemberIds(conversationId));
     if (buffer.size > 0) {
         this.logger.debug('Persisting buffer on stop', {
         streamKey,
@@ -1363,21 +1364,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
         try {
           const buffer = this.componentBuffers.get(streamKey) || new Map();
+          await this.finalizeRunningTools(buffer, 'failed', conversationId, memberIds);
           const components = Array.from(buffer.values());
-
-          // Move plan component to the top so it appears first in the persisted message
-          const planIndex = components.findIndex((c) => c.type === 'plan');
-          if (planIndex > 0) {
-            const [plan] = components.splice(planIndex, 1);
-            components.unshift(plan);
-          }
-
-          // Chain-of-thought sits above everything (including the plan)
-          const cotIndex = components.findIndex((c) => c.type === 'chainOfThought');
-          if (cotIndex > 0) {
-            const [cot] = components.splice(cotIndex, 1);
-            components.unshift(cot);
-          }
 
           this.logger.debug(
             'Persisting stream components',
@@ -1559,6 +1547,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     // Persist partial buffer with an error component appended
     const buffer = this.componentBuffers.get(streamKey) || new Map();
+    await this.finalizeRunningTools(buffer, 'failed', conversationId, await this.resolveMemberIds(conversationId));
 
     // Add an error component so the message itself shows the error visually
     const errorComponentId = `error-${randomUUID()}`;
@@ -1657,6 +1646,36 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async finalizeRunningTools(
+    buffer: Map<string, MessageComponent>,
+    status: 'failed' | 'stopped',
+    conversationId: string,
+    memberIds: string[],
+    broadcast = true,
+  ): Promise<void> {
+    const completedAt = new Date().toISOString();
+    for (const component of buffer.values()) {
+      if (component.type !== 'toolInfo' || component.data.status !== 'running') continue;
+      const startedAt = typeof component.data.startedAt === 'string' ? Date.parse(component.data.startedAt) : Number.NaN;
+      component.data = {
+        ...component.data,
+        status,
+        completedAt,
+        ...(Number.isFinite(startedAt) ? { durationMs: Math.max(0, Date.now() - startedAt) } : {}),
+      };
+      if (broadcast) {
+        await this.streamGateway.broadcastToConversation(memberIds, {
+          type: 'stream_chunk',
+          data: {
+            conversationId,
+            action: 'update',
+            component: sanitizePublicComponent(component),
+          },
+        });
+      }
+    }
+  }
+
   private async sendErrorEvent(userId: string, conversationId: string, errorCode: ErrorCode): Promise<void> {
     const memberIds = await this.resolveMemberIds(conversationId);
     await this.streamGateway.broadcastToConversation(
@@ -1746,7 +1765,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   ): Record<string, unknown> {
     switch (type) {
       case 'text':
-      case 'reasoning': {
+      {
         if (incoming.guardrailDecision) {
           return { ...existing, ...incoming };
         }
@@ -1758,6 +1777,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           content: existingContent + newContent,
         };
       }
+      case 'reasoning':
+        return { ...existing, ...incoming };
       case 'code': {
         // Append content, preserve language/filename from first chunk
         const existingContent = (existing.content as string) || '';
@@ -1779,7 +1800,6 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       case 'webPreview':
       case 'artifact':
       case 'citation':
-      case 'chainOfThought':
       case 'choice':
         // These arrive fully formed - replace with incoming data
         return { ...incoming };
@@ -1789,13 +1809,21 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         // only sent on the initial 'add' — preserve them when the update omits them.
         const existingStatus = (existing.status as string) || 'running';
         const incomingStatus = (incoming.status as string) || existingStatus;
-        const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'failed';
+        const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'failed' || existingStatus === 'stopped';
         return {
-          title: (incoming.title as string) || (existing.title as string) || '',
+          toolName: (incoming.toolName as string) || (existing.toolName as string) || '',
+          displayKey: (incoming.displayKey as string) || (existing.displayKey as string) || '',
+          fallbackDisplayName: (incoming.fallbackDisplayName as string) || (existing.fallbackDisplayName as string) || '',
+          summary: (incoming.summary as string) || (existing.summary as string) || '',
+          renderKind: (incoming.renderKind as string) || (existing.renderKind as string) || 'generic',
           status: existingIsTerminal ? existingStatus : incomingStatus,
-          params: (incoming.params as string) || (existing.params as string) || '',
+          paramsJson: (incoming.paramsJson as string) || (existing.paramsJson as string) || '',
           startedAt: (incoming.startedAt as string) || (existing.startedAt as string) || '',
+          completedAt: (incoming.completedAt as string) || (existing.completedAt as string) || '',
+          durationMs: incoming.durationMs ?? existing.durationMs,
           resultJson: (incoming.resultJson as string) || (existing.resultJson as string) || '',
+          actorId: (incoming.actorId as string) || (existing.actorId as string) || '',
+          actorName: (incoming.actorName as string) || (existing.actorName as string) || '',
         };
       case 'sandbox':
         // Sandbox: merge code from first chunk with output/error from update

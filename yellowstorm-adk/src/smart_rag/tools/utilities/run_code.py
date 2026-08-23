@@ -32,11 +32,15 @@ RUN_CODE_TOOL_DESCRIPTION = (
     "/workspace/attachments/... are read-only, while /workspace/run is writable. Code is "
     "an async function body and must explicitly return a JSON-compatible value. Use "
     "mcp-manus for Python, shell commands, packages, large or binary files, and "
-    "resource-heavy work."
+    "resource-heavy work. The required description is a concise user-visible objective, "
+    "preferably 3-12 words in the user's language; never include credentials, storage keys, "
+    "internal IDs, or implementation details."
 )
 
 RUN_CODE_PROMPT_GUIDANCE = """Use run_code for small JavaScript-based JSON/text transformations, control flow,
-calculations, and small UTF-8 text/JSON workspace files.
+calculations, and small UTF-8 text/JSON workspace files. Always provide `description`: a
+concise user-visible objective, preferably 3-12 words in the user's language. Do not mention
+implementation details, credentials, storage keys, or internal IDs.
 
 The code argument is an async JavaScript function body. Top-level await is allowed, but
 you must explicitly return a JSON-compatible value. Use
@@ -86,11 +90,13 @@ def create_run_code_tool(runtime_context: dict[str, Any]):
     client = RunCodeClient()
 
     async def run_code(
+        description: str,
         code: str,
         input: Any = None,
         tool_context: ToolContext = None,
     ) -> dict[str, Any]:
-        """Run bounded QuickJS JavaScript. There is no module loader or Node APIs: never
+        """Run bounded QuickJS JavaScript for the user-visible objective in description.
+        There is no module loader or Node APIs: never
         use import, import(), require, or node:*. fs allows list/glob/find/stat/readText,
         readJson/copy/writeText/writeJson/remove. Discover absolute paths with
         ``fs.list('/workspace')``; never guess a bare attachment filename.

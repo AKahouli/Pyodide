@@ -83,28 +83,6 @@ def _grpc_skill_summaries(skills: Any) -> List[Dict[str, Any]]:
     return summaries
 
 
-def _convert_file_chunk_to_artifact(chunk_dict: Dict[str, Any]) -> Dict[str, Any]:
-    file_data = json.loads(chunk_dict.get("chunk", "{}"))
-    return {
-        "action": "add",
-        "component": {
-            "id": str(uuid.uuid4()),
-            "type": "artifact",
-            "data": {
-                "filename": file_data.get("filename", ""),
-                "file_path": file_data.get("object_key")
-                or file_data.get("azure_path")
-                or file_data.get("file_path")
-                or "",
-            },
-        },
-        "metadata": {
-            "message_id": chunk_dict.get("message_id", ""),
-            "agent_id": chunk_dict.get("agent_id", ""),
-        },
-    }
-
-
 class ChatbotServicer(
     chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grpc else object
 ):
@@ -404,6 +382,8 @@ class ChatbotServicer(
                     action="replay_started",
                     metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
                 )
+            else:
+                yield self._build_initial_reasoning_chunk(request.conversation_id)
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -482,17 +462,9 @@ class ChatbotServicer(
                     await bg_task
                     break
 
-                # Convert old File chunks to artifact components
                 if chunk_dict.get("content_type") == "File":
-                    try:
-                        chunk_dict = _convert_file_chunk_to_artifact(chunk_dict)
-                        logger.info(
-                            "[gRPC] Converted old File chunk to artifact component"
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"[gRPC] Failed to convert File chunk to artifact: {e}"
-                        )
+                    logger.warning("[gRPC] Dropped unsupported legacy File chunk")
+                    continue
 
                 # Convert dict to protobuf
                 chunk_pb = self._dict_to_stream_chunk(chunk_dict)
@@ -654,6 +626,8 @@ class ChatbotServicer(
                     action="replay_started",
                     metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
                 )
+            else:
+                yield self._build_initial_reasoning_chunk(request.conversation_id)
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -709,12 +683,8 @@ class ChatbotServicer(
                     break
 
                 if chunk_dict.get("content_type") == "File":
-                    try:
-                        chunk_dict = _convert_file_chunk_to_artifact(chunk_dict)
-                    except Exception as e:
-                        logger.error(
-                            f"[gRPC] Failed to convert File chunk to artifact: {e}"
-                        )
+                    logger.warning("[gRPC] Dropped unsupported legacy File chunk")
+                    continue
 
                 yield self._dict_to_stream_chunk(chunk_dict)
 
@@ -777,6 +747,18 @@ class ChatbotServicer(
                 pass
 
     # ========== CONVERSION HELPERS ==========
+
+    def _build_initial_reasoning_chunk(self, message_id: str) -> "chatbot_pb2.StreamChunk":
+        """Emit public progress without exposing model chain-of-thought."""
+        return self._dict_to_stream_chunk({
+            "action": "add",
+            "component": {
+                "id": f"reasoning-{uuid.uuid4()}",
+                "type": "reasoning",
+                "data": {"summary": "", "status": "completed"},
+            },
+            "metadata": {"message_id": message_id},
+        })
 
     def _convert_agent(self, pb_agent: "chatbot_pb2.Agent") -> AgentSuggestion:
         """Convert protobuf Agent (V2) to internal V1 AgentSuggestion Pydantic model.
@@ -1887,13 +1869,15 @@ class ChatbotServicer(
                 or component_data.get("outputPortId", ""),
             )
         elif component_type == "reasoning":
-            component_kwargs["reasoning"] = chatbot_pb2.ReasoningComponent(
-                content=component_data.get("content", "")
+            reasoning = chatbot_pb2.ReasoningComponent(
+                summary=component_data.get("summary", ""),
+                status=component_data.get("status", "running"),
             )
-        elif component_type == "chain_of_thought":
-            component_kwargs["chain_of_thought"] = chatbot_pb2.ChainOfThoughtComponent(
-                steps=[str(step) for step in component_data.get("steps", [])],
-            )
+            for field in ("started_at", "completed_at", "duration_ms"):
+                value = component_data.get(field)
+                if value is not None and value != "":
+                    setattr(reasoning, field, value)
+            component_kwargs["reasoning"] = reasoning
         elif component_type == "plan":
             # Build PlanComponent with PlanStep objects
             steps = []
@@ -2024,18 +2008,16 @@ class ChatbotServicer(
             )
         elif component_type == "tool_info":
             tool_info = chatbot_pb2.ToolInfoComponent(
-                title=component_data.get("title", ""),
+                tool_name=component_data.get("tool_name", ""),
                 status=component_data.get("status", ""),
             )
-            params = component_data.get("params")
-            if params:
-                tool_info.params = params
-            result_json = component_data.get("result_json")
-            if result_json:
-                tool_info.result_json = result_json
-            started_at = component_data.get("started_at")
-            if started_at:
-                tool_info.started_at = started_at
+            for field in (
+                "params_json", "result_json", "started_at", "completed_at", "duration_ms",
+                "display_key", "fallback_display_name", "summary", "render_kind", "actor_id", "actor_name",
+            ):
+                value = component_data.get(field)
+                if value is not None and value != "":
+                    setattr(tool_info, field, value)
             component_kwargs["tool_info"] = tool_info
         elif component_type == "web_preview":
             component_kwargs["web_preview"] = chatbot_pb2.WebPreviewComponent(
@@ -2054,6 +2036,13 @@ class ChatbotServicer(
                 or component_data.get("artifactKind", ""),
                 mime_type=component_data.get("mime_type")
                 or component_data.get("mimeType", ""),
+                artifact_id=component_data.get("artifact_id")
+                or component_data.get("artifactId", ""),
+                producer_tool_id=component_data.get("producer_tool_id")
+                or component_data.get("producerToolId", ""),
+                size_bytes=component_data.get("size_bytes")
+                or component_data.get("sizeBytes", 0),
+                availability=component_data.get("availability", "ready"),
             )
         elif component_type == "citation":
             # Build CitationComponent with TextSourceData or ImageSourceData

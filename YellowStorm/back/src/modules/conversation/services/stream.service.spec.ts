@@ -2,6 +2,30 @@ import { StreamService } from './stream.service';
 import type { MessageComponent } from '../interfaces/message.interface';
 
 describe('StreamService guardrail metadata buffering', () => {
+  it('terminalizes running tools before persisting active buffers on shutdown', async () => {
+    const completeAIMessage = jest.fn().mockResolvedValue(undefined);
+    const service = Object.create(StreamService.prototype) as StreamService;
+    Object.assign(service as object, {
+      activeCalls: new Map(),
+      activeStreams: new Map(),
+      componentBuffers: new Map([['user-1:conversation-1:message-1', new Map([['tool-1', {
+        id: 'tool-1', type: 'toolInfo', data: {
+          toolName: 'run_code', status: 'running', startedAt: new Date(Date.now() - 100).toISOString(),
+        },
+      }]])]]),
+      chatbotClient: null,
+      messageService: { completeAIMessage },
+      logger: { error: jest.fn() },
+    });
+
+    await service.onModuleDestroy();
+
+    expect(completeAIMessage).toHaveBeenCalledWith({
+      messageId: 'message-1',
+      components: [expect.objectContaining({ data: expect.objectContaining({ status: 'stopped', completedAt: expect.any(String), durationMs: expect.any(Number) }) })],
+    });
+  });
+
   it('uses the user-visible original name for current attached documents', async () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     Object.assign(service as object, {
@@ -242,18 +266,18 @@ describe('StreamService guardrail metadata buffering', () => {
     (service as any).applyChunkToBuffer(buffer, 'add', {
       id: 'tool-call-1',
       type: 'toolInfo',
-      data: { title: 'search_documents', status: 'running', params: '{"query":"contract"}', startedAt: '2026-07-21T10:13:42Z' },
+       data: { toolName: 'search_documents', status: 'running', paramsJson: '{"query":"contract"}', startedAt: '2026-07-21T10:13:42Z' },
     });
     (service as any).applyChunkToBuffer(buffer, 'update', {
       id: 'tool-call-1',
       type: 'toolInfo',
-      data: { title: 'search_documents', status: 'completed', resultJson: '{"matches":2}' },
+       data: { toolName: 'search_documents', status: 'completed', resultJson: '{"matches":2}' },
     });
 
-    expect(buffer.get('tool-call-1')?.data).toEqual({
-      title: 'search_documents',
+    expect(buffer.get('tool-call-1')?.data).toMatchObject({
+      toolName: 'search_documents',
       status: 'completed',
-      params: '{"query":"contract"}',
+      paramsJson: '{"query":"contract"}',
       startedAt: '2026-07-21T10:13:42Z',
       resultJson: '{"matches":2}',
     });
@@ -265,11 +289,11 @@ describe('StreamService guardrail metadata buffering', () => {
 
     (service as any).applyChunkToBuffer(buffer, 'add', {
       id: 'tool-call-public', type: 'toolInfo',
-      data: { title: 'connector', status: 'completed', resultJson: '{"secret":"value"}' },
+       data: { toolName: 'connector', status: 'completed', resultJson: '{"secret":"value"}' },
     });
 
-    expect(buffer.get('tool-call-public')?.data).toEqual({
-      title: 'connector',
+    expect(buffer.get('tool-call-public')?.data).toMatchObject({
+      toolName: 'connector',
       status: 'completed',
       resultJson: '{"secret":"value"}',
     });
@@ -282,12 +306,12 @@ describe('StreamService guardrail metadata buffering', () => {
       id, type: 'toolInfo', data,
     });
 
-    apply('update', 'tool-agent-call-1', { title: 'search', status: 'completed', resultJson: '{"matches":1}' });
-    apply('add', 'tool-agent-call-1', { title: 'search', status: 'running', params: '{"q":"one"}' });
-    apply('add', 'tool-agent-call-2', { title: 'search', status: 'running', params: '{"q":"two"}' });
+    apply('update', 'tool-agent-call-1', { toolName: 'search', status: 'completed', resultJson: '{"matches":1}' });
+    apply('add', 'tool-agent-call-1', { toolName: 'search', status: 'running', paramsJson: '{"q":"one"}' });
+    apply('add', 'tool-agent-call-2', { toolName: 'search', status: 'running', paramsJson: '{"q":"two"}' });
 
     expect(buffer.size).toBe(2);
-    expect(buffer.get('tool-agent-call-1')?.data).toMatchObject({ status: 'completed', params: '{"q":"one"}', resultJson: '{"matches":1}' });
-    expect(buffer.get('tool-agent-call-2')?.data).toMatchObject({ status: 'running', params: '{"q":"two"}' });
+    expect(buffer.get('tool-agent-call-1')?.data).toMatchObject({ status: 'completed', paramsJson: '{"q":"one"}', resultJson: '{"matches":1}' });
+    expect(buffer.get('tool-agent-call-2')?.data).toMatchObject({ status: 'running', paramsJson: '{"q":"two"}' });
   });
 });

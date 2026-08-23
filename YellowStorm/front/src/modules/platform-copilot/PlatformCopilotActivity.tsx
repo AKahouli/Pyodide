@@ -38,16 +38,8 @@ function getActivityItems(components: readonly MessageComponent[]): ActivityItem
       return;
     }
 
-    if (component.type === 'chainOfThought') {
-      if (!hasReasoning) {
-        items.push({ key: 'reasoning', kind: 'reasoning', label: '', status: 'running' });
-        hasReasoning = true;
-      }
-      return;
-    }
-
     if (component.type === 'toolInfo') {
-      const label = safeSummary(component.data.title);
+      const label = safeSummary(component.data.summary) || safeSummary(component.data.fallbackDisplayName) || safeSummary(component.data.toolName);
       if (label) items.push({
         key: component.id || `tool-${componentIndex}`,
         kind: 'tool',

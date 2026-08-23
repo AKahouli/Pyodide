@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Message } from '../types';
+import type { Message, MessageComponent } from '../types';
 import { ConversationContent } from './ConversationContent';
 
 vi.mock('@/components/ai-elements/chat-conversation', () => ({
@@ -26,9 +26,11 @@ vi.mock('./MessageAttachments', () => ({ MessageAttachments: () => <div>attachme
 
 const storeState = {
   isStreaming: false,
-  streamingComponents: [],
+  streamingComponents: [] as MessageComponent[],
   streamingConversationId: null as string | null,
+  streamingMessageId: null as string | null,
   awaitingConversationId: null as string | null,
+  sendMessage: vi.fn(),
   loadMoreMessages: vi.fn(),
   messagesLoading: false,
   currentConversationId: 'conv-1',
@@ -55,6 +57,10 @@ describe('ConversationContent', () => {
   beforeEach(() => {
     displayMessages = [];
     isAwaitingFirstChunk = false;
+    storeState.isStreaming = false;
+    storeState.streamingComponents = [];
+    storeState.streamingConversationId = null;
+    storeState.streamingMessageId = null;
     storeState.awaitingConversationId = null;
   });
 
@@ -68,7 +74,7 @@ describe('ConversationContent', () => {
     storeState.awaitingConversationId = 'conv-1';
     render(<ConversationContent />);
     expect(screen.getByRole('status')).toBeInTheDocument();
-    expect(screen.getByTestId('conversation-activity')).toBeInTheDocument();
+    expect(screen.getByTestId('conversation-assistant-bubble')).toBeInTheDocument();
     isAwaitingFirstChunk = false;
     storeState.awaitingConversationId = null;
   });
@@ -85,7 +91,6 @@ describe('ConversationContent', () => {
       id: 'ai-no-tool', conversationId: 'conv-1', conversationType: 'ai', createdAt: '2026-07-28T00:00:00.000Z',
       components: [
         { type: 'text', data: { content: 'Hello' } },
-        { type: 'chainOfThought', data: { steps: ['Responded directly'] } },
       ],
       reliabilityEvaluation: { status: 'insufficient_evidence' },
     }];
@@ -120,5 +125,23 @@ describe('ConversationContent', () => {
     render(<ConversationContent />);
 
     expect(screen.getByText('reliability-card')).toBeInTheDocument();
+  });
+
+  it('animates only the dedicated live assistant bubble', () => {
+    displayMessages = [{
+      id: 'ai-complete', conversationId: 'conv-1', conversationType: 'ai', isComplete: true, createdAt: '2026-07-28T00:00:00.000Z',
+      components: [{ id: 'tool-complete', type: 'toolInfo', data: { toolName: 'run_code', summary: 'Completed work', renderKind: 'run_code', status: 'completed', actorName: 'Completed Agent' } }],
+    }];
+    storeState.isStreaming = true;
+    storeState.streamingConversationId = 'conv-1';
+    storeState.streamingMessageId = 'ai-live';
+    storeState.streamingComponents = [{ id: 'tool-live', type: 'toolInfo', data: { toolName: 'run_code', summary: 'Current work', renderKind: 'run_code', status: 'running', actorName: 'Live Agent' } }];
+
+    const { container } = render(<ConversationContent />);
+
+    expect(screen.getByText('Completed Agent')).toBeInTheDocument();
+    expect(screen.getByText('Live Agent')).toBeInTheDocument();
+    expect(container.querySelectorAll('[data-agent-activity][data-active="true"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-agent-scan]')).toHaveLength(1);
   });
 });

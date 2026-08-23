@@ -16,8 +16,8 @@ describe('ShareService public share sanitization', () => {
 
   const components: MessageComponent[] = [
     { id: 'reasoning', type: 'reasoning', data: { content: 'Internal instructions' } },
-    { id: 'tool', type: 'toolInfo', data: { title: 'activate_skill', params: '{"secret":"value"}', resultJson: '{"private":true}' } },
-    { id: 'thought', type: 'chainOfThought', data: { steps: ['Internal step'] } },
+    { id: 'tool', type: 'toolInfo', data: { toolName: 'activate_skill', paramsJson: '{"secret":"value"}', resultJson: '{"private":true}' } },
+    { id: 'artifact', type: 'artifact', data: { artifactId: 'artifact-1', filename: 'private.pdf', storagePath: 'owner/run/private.pdf' } },
     { id: 'task', type: 'task', data: { title: 'Smart Agent', items: ['Raw private context'], status: 'completed' } },
     { id: 'answer', type: 'text', data: { content: 'Public answer' } },
     { id: 'choice', type: 'choice', data: { prompt: 'Continue?' } },

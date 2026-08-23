@@ -469,7 +469,7 @@ function toDisplayMessage(message: ConversationMessage, isStreaming = false): Me
     && !displayMessage.text
     && !displayMessage.targets?.length
     && !isStreaming
-    && !components.some((component) => ['reasoning', 'chainOfThought', 'toolInfo', 'plan', 'queue', 'checkpoint', 'task', 'choice'].includes(component.type))) {
+    && !components.some((component) => ['reasoning', 'toolInfo', 'plan', 'queue', 'checkpoint', 'task', 'choice'].includes(component.type))) {
     return null;
   }
   return displayMessage;
@@ -488,5 +488,5 @@ function getAssistantText(components: MessageComponent[]): string {
 
 function getToolResult(component: MessageComponent): unknown {
   if (component.type !== 'toolInfo') return undefined;
-  return component.data.resultJson ?? component.data.result_json;
+  return component.data.resultJson;
 }

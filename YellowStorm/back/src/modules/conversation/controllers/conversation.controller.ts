@@ -19,8 +19,6 @@ import { ConversationQueryDto } from '../dto/conversation-query.dto';
 import { DocumentQueryDto } from '../../workspace/dto/document-query.dto';
 import { ConversationOwnerGuard } from '../guards/conversation-owner.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { DocumentService } from '../../document/document.service';
-import { ServiceUnavailableException, BadRequestException } from '../../exceptions';
 
 @ApiTags('Conversations')
 @Controller('conversations')
@@ -29,7 +27,6 @@ export class ConversationController {
   constructor(
     private readonly conversationService: ConversationService,
     private readonly conversationBranchService: ConversationBranchService,
-    private readonly documentService: DocumentService,
   ) {}
 
   @Post()
@@ -38,34 +35,6 @@ export class ConversationController {
     @Body() dto: CreateConversationDto,
   ) {
     return this.conversationService.create(user._id.toString(), dto);
-  }
-
-  @Post('artifact-url')
-  async getArtifactDownloadUrl(
-    @Body() body: { filePath: string; filename?: string },
-  ) {
-    if (!body.filePath) {
-      throw new BadRequestException('File path is required');
-    }
-
-    if (!this.documentService.isAvailable()) {
-      throw new ServiceUnavailableException(
-        undefined,
-        'Document service is currently unavailable',
-      );
-    }
-
-    const contentDisposition = body.filename
-      ? `attachment; filename="${body.filename}"`
-      : undefined;
-
-    const downloadUrl = await this.documentService.generateSasUrl(body.filePath, {
-      expiryMinutes: 60,
-      contentDisposition,
-      checkExists: true,
-    });
-
-    return { downloadUrl };
   }
 
   @Get()

@@ -11,6 +11,7 @@ Classes:
 import asyncio
 import contextlib
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, Any, Dict, List
@@ -30,6 +31,7 @@ from src.smart_rag.messaging.component_tracker import ComponentTracker
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
 from src.smart_rag.infrastructure.model_parameters import get_context_window_for_model
+from src.smart_rag.tool_activity_presenter import present_tool_call, serialize_tool_value
 
 logger = get_logger("api.routers.agentic_rag.StreamingEventProcessor")
 
@@ -64,6 +66,7 @@ class StreamingEventProcessor:
             self.config.call_id_registry = {}
         self._manager_pending_tools_by_call_id: Dict[str, List[str]] = {}
         self._manager_pending_tools_by_name: Dict[str, List[str]] = {}
+        self._manager_pending_tool_metadata: Dict[str, Dict[str, Any]] = {}
         self._manager_seen_tool_ids: set[str] = set()
 
     def _get_manager_info(self, manager_agent: Any = None) -> tuple:
@@ -313,25 +316,37 @@ class StreamingEventProcessor:
 
                 delegation_count += 1
                 func_name = part.function_call.name
+                tool_args = dict(part.function_call.args or {})
+                presentation = present_tool_call(func_name, tool_args)
 
                 if q:
                     raw_call_id = getattr(part.function_call, "id", None)
                     call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else str(uuid.uuid4())
-                    manager_id, _ = self._get_manager_info(manager_agent)
+                    manager_id, manager_name = self._get_manager_info(manager_agent)
                     tool_component_id = f"tool-{manager_id}-{call_id}"
                     if tool_component_id in self._manager_seen_tool_ids:
                         tool_component_id = f"{tool_component_id}-{uuid.uuid4()}"
                     self._manager_seen_tool_ids.add(tool_component_id)
                     self._manager_pending_tools_by_call_id.setdefault(call_id, []).append(tool_component_id)
                     self._manager_pending_tools_by_name.setdefault(func_name, []).append(tool_component_id)
+                    started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                    self._manager_pending_tool_metadata[tool_component_id] = {
+                        "started_monotonic": time.monotonic(),
+                    }
                     await q.put(self.streaming_formatter.format_component_event(
                         agent_id=manager_id,
                         component_type="tool_info",
                         component_data={
-                            "title": func_name,
+                            "tool_name": func_name,
                             "status": "running",
-                            "params": json.dumps(dict(part.function_call.args or {}), default=str, sort_keys=True),
-                            "started_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                            "params_json": serialize_tool_value(tool_args),
+                            "started_at": started_at,
+                            "display_key": presentation.display_key or "",
+                            "fallback_display_name": presentation.fallback_display_name or "",
+                            "summary": presentation.summary,
+                            "render_kind": presentation.render_kind,
+                            "actor_id": manager_id,
+                            "actor_name": manager_name,
                         },
                         message_id=current_message_id,
                         component_id=tool_component_id,
@@ -482,21 +497,25 @@ class StreamingEventProcessor:
                                         self._manager_pending_tools_by_call_id.pop(call_id)
                                     break
                     if tool_component_id:
+                        metadata = self._manager_pending_tool_metadata.pop(tool_component_id, {})
                         result_json = ""
                         if getattr(q, "include_tool_results", False) and func_name != "generate_web_preview" and not func_name.startswith("delegate_to_"):
-                            try:
-                                candidate = json.dumps(part.function_response.response, default=str, separators=(",", ":"))
-                                if len(candidate.encode("utf-8")) <= 65536:
-                                    result_json = candidate
-                            except (TypeError, ValueError):
-                                logger.warning("manager_tool_result_serialization_failed tool=%s", func_name)
+                            result_json = serialize_tool_value(part.function_response.response)
                         manager_id, _ = self._get_manager_info(manager_agent)
+                        failed = getattr(part.function_response, "is_error", False)
+                        response_payload = part.function_response.response
+                        if func_name == "run_code" and isinstance(response_payload, dict) and response_payload.get("ok") is False:
+                            failed = True
+                        started_monotonic = metadata.get("started_monotonic")
+                        duration_ms = max(0, round((time.monotonic() - started_monotonic) * 1000)) if isinstance(started_monotonic, float) else 0
                         await q.put(self.streaming_formatter.format_component_event(
                             agent_id=manager_id,
                             component_type="tool_info",
                             component_data={
-                                "title": func_name,
-                                "status": "failed" if getattr(part.function_response, "is_error", False) else "completed",
+                                "tool_name": func_name,
+                                "status": "failed" if failed else "completed",
+                                "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                                "duration_ms": duration_ms,
                                 **({"result_json": result_json} if result_json else {}),
                             },
                             message_id=current_message_id,

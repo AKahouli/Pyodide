@@ -19,11 +19,27 @@ describe('component-mapper text extraction', () => {
     const comp = {
       id: 'comp-2',
       text: { content: '' },
-      reasoning: { content: 'Thinking step' },
+      reasoning: { summary: 'Preparing sources', status: 'running' },
     };
 
     expect(getComponentType(comp)).toBe('reasoning');
-    expect(extractComponentData(comp).data.content).toBe('Thinking step');
+    expect(extractComponentData(comp).data.summary).toBe('Preparing sources');
+  });
+
+  it('uses the oneof discriminator for display-safe reasoning with an empty summary', () => {
+    const comp = {
+      id: 'comp-2-empty',
+      data: 'reasoning',
+      text: { content: '' },
+      reasoning: { summary: '', status: 'completed' },
+      tool_info: { tool_name: '', status: '' },
+    };
+
+    expect(getComponentType(comp)).toBe('reasoning');
+    expect(extractComponentData(comp)).toEqual({
+      type: 'reasoning',
+      data: { summary: '', status: 'completed' },
+    });
   });
 
   it('supports legacy component.type + component.data shape from ADK formatter', () => {
@@ -39,13 +55,13 @@ describe('component-mapper text extraction', () => {
     });
   });
 
-  it('aggregates text and reasoning for plain-text reply', () => {
+  it('excludes progress reasoning from plain-text replies', () => {
     const reply = aggregateTextFromComponents([
-      { type: 'reasoning', data: { content: 'Plan: ' } },
+      { type: 'reasoning', data: { summary: 'Preparing answer', status: 'completed' } },
       { type: 'text', data: { content: 'Answer.' } },
     ]);
 
-    expect(reply).toBe('Plan: Answer.');
+    expect(reply).toBe('Answer.');
   });
 });
 
@@ -280,20 +296,22 @@ describe('component-mapper choice extraction', () => {
     expect(extractComponentData({
       id: 'tool-1',
       tool_info: {
-        title: 'search_documents',
+        tool_name: 'search_documents',
         status: 'completed',
-        params: '{"query":"contract"}',
+        params_json: '{"query":"contract"}',
         result_json: '{"matches":2}',
         started_at: '2026-07-21T10:13:42Z',
       },
     })).toEqual({
       type: 'toolInfo',
       data: {
-        title: 'search_documents',
+        toolName: 'search_documents',
         status: 'completed',
-        params: '{"query":"contract"}',
+        paramsJson: '{"query":"contract"}',
         resultJson: '{"matches":2}',
         startedAt: '2026-07-21T10:13:42Z',
+        summary: '',
+        renderKind: 'generic',
       },
     });
   });

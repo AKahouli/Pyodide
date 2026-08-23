@@ -252,6 +252,7 @@ class Settings(BaseSettings):
             "postgresql://",
             "mysql://",
             "sqlite://",
+            "sqlite+aiosqlite://",
             "mssql://",
             "oracle://",
             "postgresql+asyncpg://",

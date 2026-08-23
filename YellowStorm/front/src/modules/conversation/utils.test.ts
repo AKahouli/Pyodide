@@ -121,8 +121,7 @@ describe('conversation utils', () => {
   it('excludes internal execution payloads from conversation content and copies', () => {
     const components = [
       { type: 'reasoning', data: { content: 'Internal system instructions' } },
-      { type: 'toolInfo', data: { title: 'activate_skill', params: '{"secret":"value"}' } },
-      { type: 'chainOfThought', data: { steps: ['Internal step'] } },
+      { type: 'toolInfo', data: { toolName: 'activate_skill', paramsJson: '{"secret":"value"}' } },
       { type: 'text', data: { content: 'Public answer' } },
       { type: 'unknown', data: { content: 'Unexpected payload' } },
     ] as never;

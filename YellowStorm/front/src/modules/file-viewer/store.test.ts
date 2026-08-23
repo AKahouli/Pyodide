@@ -1,15 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useFileViewerStore } from './store';
 
-vi.mock('../workspace/api', () => ({
-  getDocumentDownloadUrl: vi.fn().mockResolvedValue({
-    url: 'https://example.test/file.pdf',
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
-  }),
+const apiGetMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@/lib/api', () => ({
+  apiClient: { get: apiGetMock },
+  API_ENDPOINTS: {
+    workspaceDocuments: {
+      downloadUrl: (workspaceId: string, documentId: string) => `/workspaces/${workspaceId}/documents/${documentId}/download-url`,
+    },
+  },
 }));
 
 describe('file-viewer store', () => {
   beforeEach(() => {
+    apiGetMock.mockReset().mockResolvedValue({
+      data: {
+        data: {
+          url: 'https://example.test/file.pdf',
+          expiresAt: '2026-08-23T13:00:00.000Z',
+        },
+      },
+    });
     useFileViewerStore.setState({
       mode: 'closed',
       displayMode: 'floating',
@@ -30,6 +42,39 @@ describe('file-viewer store', () => {
     expect(state.mode).toBe('open');
     expect(state.tabs).toHaveLength(1);
     expect(state.activeTabId).toBe('url:https://example.test/a.txt');
+  });
+
+  it('opens a workspace document using the scoped download response', async () => {
+    await useFileViewerStore.getState().openFile('workspace-1', 'document-1', 'internal/path.pdf', 'file.pdf', 'application/pdf');
+
+    expect(apiGetMock).toHaveBeenCalledWith('/workspaces/workspace-1/documents/document-1/download-url');
+    expect(useFileViewerStore.getState().tabs[0]).toMatchObject({
+      id: 'workspace-1:document-1',
+      url: 'https://example.test/file.pdf',
+      urlExpiresAt: '2026-08-23T13:00:00.000Z',
+      isLoading: false,
+    });
+  });
+
+  it('refreshes a workspace document using the scoped download response', async () => {
+    useFileViewerStore.setState({
+      tabs: [{
+        id: 'workspace-1:document-1',
+        workspaceId: 'workspace-1',
+        documentId: 'document-1',
+        path: 'internal/path.pdf',
+        fileName: 'file.pdf',
+        mimeType: 'application/pdf',
+        url: 'https://example.test/expired.pdf',
+      }],
+    });
+
+    await useFileViewerStore.getState().refreshTabUrl('workspace-1:document-1');
+
+    expect(useFileViewerStore.getState().tabs[0]).toMatchObject({
+      url: 'https://example.test/file.pdf',
+      urlExpiresAt: '2026-08-23T13:00:00.000Z',
+    });
   });
 
   it('keeps citation bbox in pending navigation', () => {

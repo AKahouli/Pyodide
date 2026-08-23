@@ -135,8 +135,10 @@ export async function reportMessage(conversationId: string, messageId: string, p
   await apiClient.post(API_ENDPOINTS.conversations.report(conversationId, messageId), payload);
 }
 
-export async function getArtifactDownloadUrl(filePath: string, filename?: string): Promise<{ downloadUrl: string }> {
-  const response = await apiClient.post<ApiResponse<{ downloadUrl: string }>>(API_ENDPOINTS.conversations.artifactUrl, { filePath, filename });
+export async function getArtifactDownloadUrl(conversationId: string, messageId: string, artifactId: string): Promise<{ downloadUrl: string }> {
+  const response = await apiClient.post<ApiResponse<{ downloadUrl: string }>>(
+    API_ENDPOINTS.conversations.artifactUrl(conversationId, messageId, artifactId),
+  );
   return response.data.data;
 }
 

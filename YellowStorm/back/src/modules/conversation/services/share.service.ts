@@ -16,6 +16,7 @@ import { MessageComponent } from '../interfaces/message.interface';
 import { LoggerService } from '../../logger';
 import { NotFoundException, ForbiddenException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 
 const publicShareComponentTypes = new Set([
   'text',
@@ -29,7 +30,6 @@ const publicShareComponentTypes = new Set([
   'sources',
   'sandbox',
   'webPreview',
-  'artifact',
   'citation',
   'choice',
 ]);
@@ -43,9 +43,9 @@ function sanitizePublicShareMessages(messages: readonly EmbeddedMessage[]): Embe
     ...(components ? {
       components: components
         .filter((component) => publicShareComponentTypes.has(component.type))
-        .map((component) => component.type === 'task'
+        .map((component) => sanitizePublicComponent(component.type === 'task'
           ? { ...component, data: { ...component.data, items: [] } }
-          : component),
+          : component)),
     } : {}),
   }));
 }

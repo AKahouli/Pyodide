@@ -120,7 +120,7 @@ describe('MessageService createUserMessage agent tagging', () => {
   it('includes sanitized bounded tool results in authorized message responses', () => {
     const toolComponent = {
       id: 'tool-1',
-      data: { title: 'connector', status: 'completed', resultJson: '{"secret":"[REDACTED]"}', params: '{"query":"safe"}' },
+      data: { toolName: 'connector', status: 'completed', resultJson: '{"secret":"[REDACTED]"}', paramsJson: '{"query":"safe"}' },
     };
     // Mongoose subdocuments expose schema paths without making all of them enumerable.
     Object.defineProperty(toolComponent, 'type', { value: 'toolInfo', enumerable: false });
@@ -134,8 +134,25 @@ describe('MessageService createUserMessage agent tagging', () => {
     expect(response.components[0]).toEqual({
       id: 'tool-1',
       type: 'toolInfo',
-      data: { title: 'connector', status: 'completed', resultJson: '{"secret":"[REDACTED]"}', params: '{"query":"safe"}' },
+      data: { toolName: 'connector', status: 'completed', resultJson: '{"secret":"[REDACTED]"}', paramsJson: '{"query":"safe"}' },
     });
+  });
+
+  it('strips persisted artifact paths and legacy reasoning detail from message responses', () => {
+    const response = (service as any).mapToResponse({
+      _id: new Types.ObjectId(),
+      conversationId: new Types.ObjectId(conversationId),
+      conversationType: 'ai',
+      components: [
+        { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf', storagePath: 'owner/system_run/report.pdf' } },
+        { id: 'reasoning-1', type: 'reasoning', data: { summary: 'Reviewing evidence', detail: 'private reasoning', status: 'completed' } },
+      ],
+    });
+
+    expect(response.components).toEqual([
+      { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf' } },
+      { id: 'reasoning-1', type: 'reasoning', data: { summary: 'Reviewing evidence', status: 'completed' } },
+    ]);
   });
 
   it('waits for the canonical completion update to broadcast', async () => {

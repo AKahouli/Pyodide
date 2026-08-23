@@ -8,7 +8,7 @@ export class MessageComponentSchema {
   @Prop({ type: String })
   id?: string;
 
-  @Prop({ type: String, required: true, enum: ['text', 'code', 'reasoning', 'plan', 'queue', 'checkpoint', 'chart', 'task', 'error', 'sources', 'sandbox', 'webPreview', 'artifact', 'citation', 'toolInfo', 'chainOfThought', 'choice'] })
+  @Prop({ type: String, required: true, enum: ['text', 'code', 'reasoning', 'plan', 'queue', 'checkpoint', 'chart', 'task', 'error', 'sources', 'sandbox', 'webPreview', 'artifact', 'citation', 'toolInfo', 'choice'] })
   type!: string;
 
   @Prop({ type: Object, required: true })
@@ -40,7 +40,7 @@ export class Message extends Document {
   @Prop({
     type: [new MongooseSchema({
       id: String,
-      type: { type: String, required: true, enum: ['text', 'code', 'reasoning', 'plan', 'queue', 'checkpoint', 'chart', 'task', 'error', 'sources', 'sandbox', 'webPreview', 'artifact', 'citation', 'toolInfo', 'chainOfThought', 'choice'] },
+      type: { type: String, required: true, enum: ['text', 'code', 'reasoning', 'plan', 'queue', 'checkpoint', 'chart', 'task', 'error', 'sources', 'sandbox', 'webPreview', 'artifact', 'citation', 'toolInfo', 'choice'] },
       data: { type: MongooseSchema.Types.Mixed, required: true },
     }, { _id: false })],
     default: undefined,

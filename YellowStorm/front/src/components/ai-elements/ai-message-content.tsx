@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { downloadCode } from '@/lib/download';
 import { toast } from 'sonner';
 import { useState, useMemo, useCallback, useEffect, useRef, type HTMLAttributes } from 'react';
-import { useShouldAutoOpenPreview, useFileViewerDisplayMode } from './message-context';
+import { useShouldAutoOpenPreview } from './message-context';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CodeArtifact } from './code-artifact';
@@ -15,7 +15,6 @@ import { Checkpoint, CheckpointIcon, CheckpointTrigger } from './checkpoint';
 import { Task, TaskTrigger, TaskContent, TaskItem, TaskDiagnosticsTrigger } from './task';
 import { Tool, ToolHeader, ToolContent, ToolInput } from './tool';
 import type { ToolUIPart } from 'ai';
-import { ChainOfThought, ChainOfThoughtHeader, ChainOfThoughtContent, ChainOfThoughtStep } from './chain-of-thought';
 import { Sources, SourcesTrigger, SourcesContent, Source } from './sources';
 import { Sandbox, SandboxHeader, SandboxContent, SandboxTabs, SandboxTabsBar, SandboxTabsList, SandboxTabsTrigger, SandboxTabContent, type SandboxState } from './sandbox';
 import { WebPreview, WebPreviewNavigation, WebPreviewBody, isolateGeneratedPreviewHtml } from './web-preview';
@@ -32,7 +31,6 @@ import type { ChoiceComponentData, ChoiceInteractionMetadata } from '@/modules/c
 import { ChoicePartRenderer, type ChoiceComponentAction } from './choice/ChoicePartRenderer';
 import { ChoiceTabsQuestions } from './choice/ChoiceTabsQuestions';
 import { useModuleTranslation } from '@/modules/localization';
-import { isViewableFilename } from '@/modules/file-viewer/renderers';
 import { Separator } from '../ui/separator';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
 import { rehypeCitationMarkers } from '@/lib/rehype-citation-markers';
@@ -188,13 +186,7 @@ export interface ToolInfoPart {
   startedAt?: string;
 }
 
-export interface ChainOfThoughtPart {
-  type: 'chainOfThought';
-  /** Ordered step titles, shown as a collapsed list on top of the response. */
-  steps: string[];
-}
-
-export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | ChoicePart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolInfoPart | ChainOfThoughtPart;
+export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | ChoicePart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolInfoPart;
 
 // ============================================================================
 // AIMessageContent Component
@@ -234,7 +226,7 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, onComp
   const taskActivity: TaskActivityStep[] = [];
   const visibleParts = parts.filter((part) => {
     if (part.type === 'text' && choicePrompts.has(part.content.trim())) return false;
-    return !(taskDisplay === 'activity' && hasTask && (part.type === 'chainOfThought' || part.type === 'toolInfo'));
+    return !(taskDisplay === 'activity' && hasTask && part.type === 'toolInfo');
   });
 
   const pendingChoiceParts = visibleParts.filter(
@@ -311,8 +303,6 @@ const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInt
       return <CitationPartRenderer citation={part} />;
     case 'toolInfo':
       return <ToolInfoPartRenderer title={part.title} status={part.status} params={part.params} />;
-    case 'chainOfThought':
-      return <ChainOfThoughtPartRenderer steps={part.steps} />;
     default:
       return null;
   }
@@ -445,61 +435,13 @@ const TextPartRenderer = ({ content, showCursor, citations }: { content: string;
   );
 };
 
-// Single inline citation badge rendered at a marker position within text
-// Resolve a citation to a signed URL via the path-signer endpoint and open it.
-// Image citations carry `path`; text citations carry the path in `source` (the
-// proto comment calling it a filename is misleading — it's the object key).
-async function openCitationSource(
-  c: CitationData,
-  displayMode: ReturnType<typeof useFileViewerDisplayMode>,
-  defaultLabel: string,
-): Promise<void> {
-  const { openFileViewerFromUrl, getMimeTypeFromFilename } = await import('@/modules/file-viewer');
-
-  const objectKey = (c.sourceType === 'image' ? c.path : c.source) || '';
-  if (!objectKey) return;
-
-  // Display name = the proto-provided filename when present; otherwise the
-  // basename of the object key. Falls back to the i18n default label so the
-  // viewer tab always has *some* title.
-  const displayName =
-    (c.sourceType === 'image' ? c.source : '') ||
-    objectKey.split('/').pop() ||
-    defaultLabel;
-  const mimeType = getMimeTypeFromFilename(displayName) ?? 'application/octet-stream';
-  const numbers = c.page?.match(/\d+/g);
-  const page = numbers?.length ? parseInt(numbers[numbers.length - 1], 10) : undefined;
-
-  const { getArtifactDownloadUrl } = await import('@/modules/conversation/api');
-  const { downloadUrl } = await getArtifactDownloadUrl(objectKey, displayName);
-  openFileViewerFromUrl(downloadUrl, displayName, mimeType, {
-    displayMode,
-    closeOnOutsideClick: displayMode === 'floating',
-    page,
-    highlightText: c.highlightText || c.pageContent || undefined,
-    highlightBBox: c.highlightBBox || c.blockBBox,
-  });
-}
-
 const SingleInlineCitation = ({ citation: c }: { citation: CitationData }) => {
   const { t: tCommon } = useModuleTranslation('common');
-  const fileViewerDisplayMode = useFileViewerDisplayMode();
-
-  const handleClick = useCallback(async () => {
-    try {
-      await openCitationSource(c, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'));
-    } catch (error) {
-      console.error('Failed to open citation source:', error);
-      toast.error(tCommon('ai.errors.openFileTitle'), {
-        description: tCommon('ai.errors.openFileDescription'),
-      });
-    }
-  }, [c, tCommon, fileViewerDisplayMode]);
 
   return (
     <InlineCitation>
       <InlineCitationCard>
-        <InlineCitationCardTrigger sources={[getCitationTriggerLabel(c, tCommon('ai.citations.defaultSource'))]} className='cursor-pointer' onClick={handleClick} />
+        <InlineCitationCardTrigger sources={[getCitationTriggerLabel(c, tCommon('ai.citations.defaultSource'))]} />
         <InlineCitationCardBody>
           <InlineCitationCarousel>
             <InlineCitationCarouselContent>
@@ -518,25 +460,13 @@ const SingleInlineCitation = ({ citation: c }: { citation: CitationData }) => {
 // Citations Inline - renders citation badges after text content
 const CitationsInline = ({ citations }: { citations: CitationData[] }) => {
   const { t: tCommon } = useModuleTranslation('common');
-  const fileViewerDisplayMode = useFileViewerDisplayMode();
-
-  const handleCitationClick = async (c: CitationData) => {
-    try {
-      await openCitationSource(c, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'));
-    } catch (error) {
-      console.error('Failed to open citation source:', error);
-      toast.error(tCommon('ai.errors.openFileTitle'), {
-        description: tCommon('ai.errors.openFileDescription'),
-      });
-    }
-  };
 
   return (
     <span className='inline-flex flex-wrap gap-1 ml-1'>
       {citations.map((c, i) => (
         <InlineCitation key={i}>
           <InlineCitationCard>
-            <InlineCitationCardTrigger sources={[getCitationTriggerLabel(c, tCommon('ai.citations.defaultSource'))]} className='cursor-pointer' onClick={() => handleCitationClick(c)} />
+            <InlineCitationCardTrigger sources={[getCitationTriggerLabel(c, tCommon('ai.citations.defaultSource'))]} />
             <InlineCitationCardBody>
               <InlineCitationCarousel>
                 <InlineCitationCarouselContent>
@@ -751,24 +681,6 @@ const ToolInfoPartRenderer = ({ title, status, params }: { title: string; status
         </ToolContent>
       )}
     </Tool>
-  );
-};
-
-// Chain of Thought Part - collapsed list of reasoning step titles, pinned to the
-// top of the response. Closed by default; the user toggles it open/closed.
-const ChainOfThoughtPartRenderer = ({ steps }: { steps: string[] }) => {
-  const { t: tCommon } = useModuleTranslation('common');
-  if (!steps.length) return null;
-
-  return (
-    <ChainOfThought className='my-2' defaultOpen={false}>
-      <ChainOfThoughtHeader>{tCommon('ai.chainOfThought.label')}</ChainOfThoughtHeader>
-      <ChainOfThoughtContent>
-        {steps.map((step, index) => (
-          <ChainOfThoughtStep key={index} label={step} />
-        ))}
-      </ChainOfThoughtContent>
-    </ChainOfThought>
   );
 };
 
@@ -1184,75 +1096,10 @@ const WebPreviewPartRenderer = ({ content }: { content: string }) => {
 };
 
 // Artifact Part - Document/file artifact
-export const ArtifactPartRenderer = ({ filePath, filename }: { filePath: string; filename: string }) => {
+export const ArtifactPartRenderer = ({ filename }: { filePath: string; filename: string }) => {
   const { t: tCommon } = useModuleTranslation('common');
-  const fileViewerDisplayMode = useFileViewerDisplayMode();
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [isOpening, setIsOpening] = useState(false);
-  const downloadErrorTitle = tCommon('ai.errors.downloadFailedTitle');
-  const downloadErrorDescription = tCommon('ai.errors.downloadFailedDescription');
-  const openErrorTitle = tCommon('ai.errors.openFileTitle');
-  const openErrorDescription = tCommon('ai.errors.openFileDescription');
   const defaultFileName = tCommon('ai.artifact.defaultName');
   const generatedLabel = tCommon('ai.artifact.generatedFile');
-  const downloadTooltipLabel = tCommon('ai.artifact.downloadTooltip', { name: filename || tCommon('ai.artifact.genericFile') });
-
-  const handleDownload = async () => {
-    if (isDownloading || !filePath) return;
-
-    setIsDownloading(true);
-    try {
-      const { getArtifactDownloadUrl } = await import('@/modules/conversation/api');
-      const { downloadUrl } = await getArtifactDownloadUrl(filePath, filename);
-
-      window.open(downloadUrl, '_blank');
-    } catch (error: unknown) {
-      console.error('Failed to download artifact:', error);
-
-      let errorMessage = downloadErrorDescription;
-      if (error && typeof error === 'object' && 'message' in error) {
-        errorMessage = (error as { message: string }).message;
-      }
-
-      toast.error(downloadErrorTitle, {
-        description: errorMessage,
-      });
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
-  const handleOpenViewer = async () => {
-    if (isOpening || !filePath) return;
-
-    setIsOpening(true);
-    try {
-      const [{ getArtifactDownloadUrl }, { openFileViewerFromUrl, getMimeTypeFromFilename }] = await Promise.all([import('@/modules/conversation/api'), import('@/modules/file-viewer')]);
-
-      const { downloadUrl } = await getArtifactDownloadUrl(filePath, filename);
-      const mimeType = getMimeTypeFromFilename(filename) ?? 'application/octet-stream';
-      openFileViewerFromUrl(downloadUrl, filename, mimeType, {
-        displayMode: fileViewerDisplayMode,
-        closeOnOutsideClick: fileViewerDisplayMode === 'floating',
-      });
-    } catch (error: unknown) {
-      console.error('Failed to open artifact:', error);
-
-      let errorMessage = openErrorDescription;
-      if (error && typeof error === 'object' && 'message' in error) {
-        errorMessage = (error as { message: string }).message;
-      }
-
-      toast.error(openErrorTitle, {
-        description: errorMessage,
-      });
-    } finally {
-      setIsOpening(false);
-    }
-  };
-
-  // Check if this file type can be previewed
-  const canView = useMemo(() => isViewableFilename(filename), [filename]);
 
   return (
     <div className='my-2 flex items-center gap-3 rounded-lg border bg-muted/30 p-3'>
@@ -1262,36 +1109,6 @@ export const ArtifactPartRenderer = ({ filePath, filename }: { filePath: string;
       <div className='flex flex-1 flex-col min-w-0'>
         <span className='text-sm font-medium truncate'>{filename || defaultFileName}</span>
         <span className='text-xs text-muted-foreground'>{generatedLabel}</span>
-      </div>
-      <div className='flex items-center gap-1.5'>
-        {canView && (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant='outline' size='sm' className='h-8 gap-1.5' onClick={handleOpenViewer} disabled={isOpening || !filePath}>
-                  {isOpening ? <Loader2 className='h-4 w-4 animate-spin' /> : <Eye className='h-4 w-4' />}
-                  {tCommon('actionView')}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{tCommon('ai.artifact.openInViewer')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant='outline' size='sm' className='h-8 gap-1.5' onClick={handleDownload} disabled={isDownloading || !filePath}>
-                {isDownloading ? <Loader2 className='h-4 w-4 animate-spin' /> : <Download className='h-4 w-4' />}
-                {tCommon('actionDownload')}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{downloadTooltipLabel}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
       </div>
     </div>
   );

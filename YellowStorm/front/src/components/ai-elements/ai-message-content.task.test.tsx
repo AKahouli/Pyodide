@@ -50,7 +50,6 @@ describe('AIMessageContent task activity', () => {
         taskDisplay='activity'
         parts={[
           { type: 'task', title: 'smart_agent', items: ['<original_user_request>Audit revenue</original_user_request> secret=hidden'], status: 'completed' },
-          { type: 'chainOfThought', steps: ['search_documents', 'Review request token=hidden', '<corrective_replay_context>private</corrective_replay_context>'] },
           { type: 'toolInfo', title: 'search_documents', status: 'completed', params: '{"token":"private"}' },
         ]}
       />,

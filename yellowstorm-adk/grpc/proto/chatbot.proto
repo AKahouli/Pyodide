@@ -225,11 +225,13 @@ message CodeComponent {
 }
 
 message ReasoningComponent {
-    string content = 1;          // Internal thought process
-}
-
-message ChainOfThoughtComponent {
-    repeated string steps = 1;   // Ordered step titles (e.g. tool names)
+    string summary = 1;          // Display-safe progress summary; never private chain-of-thought
+    reserved 2;
+    reserved "detail";
+    string status = 3;           // running | completed
+    optional string started_at = 4;
+    optional string completed_at = 5;
+    optional int64 duration_ms = 6;
 }
 
 // Task status enum
@@ -278,11 +280,19 @@ message CheckpointComponent {
 }
 
 message ToolInfoComponent {
-    string title = 1;            // Tool name / label
-    string status = 2;           // running | completed | failed
-    optional string params = 3;  // JSON object of tool-call arguments {name: value}; omitted when empty
+    string tool_name = 1;        // Stable machine identity
+    string status = 2;           // running | completed | failed | stopped
+    optional string params_json = 3; // Sanitized JSON tool-call arguments
     optional string result_json = 4; // Bounded structured tool result for trusted backend consumers
     optional string started_at = 5; // RFC 3339 UTC instant captured when the tool call starts
+    optional string completed_at = 6;
+    optional int64 duration_ms = 7;
+    optional string display_key = 8;
+    optional string fallback_display_name = 9;
+    optional string summary = 10;
+    optional string render_kind = 11;
+    optional string actor_id = 12;
+    optional string actor_name = 13;
 }
 
 enum ChartKind {
@@ -344,11 +354,15 @@ message WebPreviewComponent {
 }
 
 message ArtifactComponent {
-    string file_path = 1;        // Path to the generated file
+    string file_path = 1;        // Trusted internal storage path; never public component data
     string filename = 2;         // Name of the generated file
     string output_port_id = 3;   // Optional target playbook output port
     string artifact_kind = 4;    // Optional artifact kind override
     string mime_type = 5;        // Optional file MIME type
+    string artifact_id = 6;      // Opaque browser-safe identity
+    optional string producer_tool_id = 7;
+    optional int64 size_bytes = 8;
+    string availability = 9;     // pending | ready | failed
 }
 
 message TextSourceData {
@@ -436,6 +450,8 @@ message ChoiceComponent {
 // Main Component message using oneof for type safety
 message Component {
     string id = 1;               // Component unique identifier
+    reserved 17;
+    reserved "chain_of_thought";
     oneof data {
         TextComponent text = 2;
         CodeComponent code = 3;
@@ -452,7 +468,6 @@ message Component {
         ArtifactComponent artifact = 14;  // Generated file artifact
         CitationComponent citation = 15;  // Document citation reference
         ToolInfoComponent tool_info = 16; // Tool execution status (running/completed/failed)
-        ChainOfThoughtComponent chain_of_thought = 17; // Collapsed list of step titles
         ChoiceComponent choice = 18;
     }
 }

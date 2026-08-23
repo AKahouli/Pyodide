@@ -9,9 +9,8 @@ vi.mock('@/modules/localization', () => ({
 describe('PlatformCopilotActivity', () => {
   it('shows safe progress and tool status without exposing raw reasoning or arguments', () => {
     render(<PlatformCopilotActivity isStreaming components={[
-      { id: 'reasoning', type: 'reasoning', data: { content: 'private chain of thought' } },
-      { id: 'steps', type: 'chainOfThought', data: { steps: ['Review Playbook structure', 'validate_playbook', '<private>hidden</private>', 'token=secret'] } },
-      { id: 'tool', type: 'toolInfo', data: { title: 'validate_playbook', status: 'completed', params: '{"password":"hidden"}', resultJson: '{"secret":"hidden"}' } },
+      { id: 'reasoning', type: 'reasoning', data: { summary: 'Preparing validation', status: 'running' } },
+      { id: 'tool', type: 'toolInfo', data: { toolName: 'validate_playbook', fallbackDisplayName: 'validate playbook', summary: '', renderKind: 'generic', status: 'completed', paramsJson: '{"password":"hidden"}', resultJson: '{"secret":"hidden"}' } },
     ]} />);
 
     expect(screen.queryByText('Review Playbook structure')).not.toBeInTheDocument();

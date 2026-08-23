@@ -207,7 +207,8 @@ export const API_ENDPOINTS = {
     fileConfirm: (convId: string) => `/conversations/${convId}/files/confirm`,
     fileDelete: (convId: string, docId: string) => `/conversations/${convId}/files/${docId}`,
     stream: '/conversations/stream',
-    artifactUrl: '/conversations/artifact-url',
+    artifactUrl: (conversationId: string, messageId: string, artifactId: string) =>
+      `/conversations/${conversationId}/messages/${messageId}/artifacts/${artifactId}/url`,
     composerSuggestions: '/conversations/suggestions',
     settings: '/conversations/settings',
     // Share endpoints

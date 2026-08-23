@@ -18,10 +18,13 @@ function sanitizeString(value: string): string {
   }
 
   const redacted = value
+    .replace(/YELLOWSTORM_ATTACHMENT_SENTINEL_\d+(?:\\n)?/g, REDACTED)
+    .replace(/\/workspace(?:\/[^\s"'`)<>{}\]]+)*/g, REDACTED)
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, `$1${REDACTED}`)
     .replace(/\b(authorization)\b(\s*[:=]\s*)(?!Bearer\s+)([^\s,;]+)/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
     .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s/@]+@/gi, `$1${REDACTED}@`)
-    .replace(/\b(password|passwd|secret|api[-_]?key|access[-_]?token|refresh[-_]?token|client[-_]?secret|connection[-_]?string)\b(\s*[:=]\s*)([^\s,;]+)/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`);
+    .replace(/\b(password|passwd|secret|api[-_]?key|access[-_]?token|refresh[-_]?token|client[-_]?secret|connection[-_]?string)\b(\s*[:=]\s*)([^\s,;]+)/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
+    .replace(/(?:^|\s)[A-Za-z0-9_-]{8,}\/(?:runs?|workspaces?)\/[^\s"']+/gi, ` ${REDACTED}`);
 
   return redacted.length > MAX_STRING_LENGTH
     ? `${redacted.slice(0, MAX_STRING_LENGTH)}... [truncated]`
@@ -53,7 +56,24 @@ export function sanitizePublicToolData(data: Record<string, unknown>): Record<st
 }
 
 export function sanitizePublicComponent(component: MessageComponent): MessageComponent {
-  if (component.type !== 'toolInfo') return component;
+  if (component.type === 'artifact') {
+    const { storagePath: _storagePath, filePath: _filePath, file_path: _filePathSnake, ...publicData } = component.data;
+    return { id: component.id, type: component.type, data: sanitizePublicToolData(publicData) };
+  }
+  if (component.type === 'text' && typeof component.data.content === 'string') {
+    const content = component.data.content
+      .replace(/\{[^{}\r\n]*"content"\s*:\s*"YELLOWSTORM_ATTACHMENT_SENTINEL_\d+(?:\\n)?"[^{}\r\n]*\}/g, '')
+      .replace(/YELLOWSTORM_ATTACHMENT_SENTINEL_\d+(?:\\n)?/g, '');
+    return {
+      id: component.id,
+      type: component.type,
+      data: sanitizePublicToolData({ ...component.data, content }),
+    };
+  }
+  if (component.type === 'reasoning') {
+    const { detail: _detail, ...publicData } = component.data;
+    return { id: component.id, type: component.type, data: sanitizePublicToolData(publicData) };
+  }
   return {
     id: component.id,
     type: component.type,

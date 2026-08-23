@@ -205,6 +205,63 @@ describe('conversation workspace selection', () => {
   });
 });
 
+describe('conversation live activity', () => {
+  it('applies reasoning and tool descriptions immediately while answer text remains buffered', () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'message-1',
+      isAwaitingFirstChunk: true,
+      awaitingConversationId: 'conv-1',
+      streamingComponents: [],
+    });
+
+    const store = useConversationStore.getState();
+    store.onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'add',
+      component: { id: 'reasoning-1', type: 'reasoning', data: { summary: '', status: 'completed' } },
+    });
+    store.onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'add',
+      component: { id: 'tool-1', type: 'toolInfo', data: { toolName: 'run_code', status: 'running', summary: 'Read the research explanation' } },
+    });
+    store.onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'add',
+      component: { id: 'text-1', type: 'text', data: { content: 'Final answer' } },
+    });
+
+    expect(useConversationStore.getState().streamingComponents).toEqual([
+      { id: 'reasoning-1', type: 'reasoning', data: { summary: '', status: 'completed' } },
+      { id: 'tool-1', type: 'toolInfo', data: { toolName: 'run_code', status: 'running', summary: 'Read the research explanation' } },
+    ]);
+    expect(useConversationStore.getState().isAwaitingFirstChunk).toBe(false);
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'message-2' });
+  });
+
+  it('flushes earlier text before applying immediate activity and merges reasoning updates', () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      streamingComponents: [],
+    });
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'message-1' });
+    useConversationStore.setState({ streamingComponents: [{ id: 'reasoning-1', type: 'reasoning', data: { summary: 'Planning', status: 'running' } }] });
+    const store = useConversationStore.getState();
+    store.onStreamChunk({ conversationId: 'conv-1', action: 'add', component: { id: 'text-1', type: 'text', data: { content: 'First. ' } } });
+    store.onStreamChunk({ conversationId: 'conv-1', action: 'add', component: { id: 'tool-1', type: 'toolInfo', data: { toolName: 'search', status: 'running', summary: 'Find sources' } } });
+    store.onStreamChunk({ conversationId: 'conv-1', action: 'update', component: { id: 'reasoning-1', type: 'reasoning', data: { summary: 'Sources selected', status: 'completed' } } });
+
+    expect(useConversationStore.getState().streamingComponents).toEqual([
+      { id: 'reasoning-1', type: 'reasoning', data: { summary: 'Sources selected', status: 'completed' } },
+      { id: 'text-1', type: 'text', data: { content: 'First. ' } },
+      { id: 'tool-1', type: 'toolInfo', data: { toolName: 'search', status: 'running', summary: 'Find sources' } },
+    ]);
+  });
+});
+
 describe('new conversation selections', () => {
   it('accepts legacy model records without reasoning metadata', () => {
     useModelsStore.setState({ models: [{ id: 'legacy-model' } as never] });
@@ -575,7 +632,7 @@ describe('conversation streaming component updates', () => {
         component: {
           id: 'tool-call-1',
           type: 'toolInfo',
-          data: { title: 'search_documents', status: 'running', params: '{"query":"contract"}', startedAt: '2026-07-21T10:13:42Z' },
+          data: { toolName: 'search_documents', status: 'running', paramsJson: '{"query":"contract"}', startedAt: '2026-07-21T10:13:42Z' },
         },
       },
       {
@@ -583,7 +640,7 @@ describe('conversation streaming component updates', () => {
         component: {
           id: 'tool-call-1',
           type: 'toolInfo',
-          data: { title: 'search_documents', status: 'completed', params: '', resultJson: '{"matches":2}' },
+          data: { toolName: 'search_documents', status: 'completed', paramsJson: '', resultJson: '{"matches":2}' },
         },
       },
     ] as never);
@@ -593,9 +650,9 @@ describe('conversation streaming component updates', () => {
         id: 'tool-call-1',
         type: 'toolInfo',
         data: {
-          title: 'search_documents',
+          toolName: 'search_documents',
           status: 'completed',
-          params: '{"query":"contract"}',
+          paramsJson: '{"query":"contract"}',
           startedAt: '2026-07-21T10:13:42Z',
           resultJson: '{"matches":2}',
         },
@@ -605,14 +662,14 @@ describe('conversation streaming component updates', () => {
 
   it('upserts out-of-order tools without collapsing repeated names or regressing status', () => {
     const components = applyChunksToComponents([], [
-      { action: 'update', component: { id: 'tool-agent-call-1', type: 'toolInfo', data: { title: 'search', status: 'completed', resultJson: '{"matches":1}' } } },
-      { action: 'add', component: { id: 'tool-agent-call-1', type: 'toolInfo', data: { title: 'search', status: 'running', params: '{"q":"one"}' } } },
-      { action: 'add', component: { id: 'tool-agent-call-2', type: 'toolInfo', data: { title: 'search', status: 'running', params: '{"q":"two"}' } } },
-      { action: 'add', component: { id: 'tool-agent-call-2', type: 'toolInfo', data: { title: 'search', status: 'running', params: '{"q":"two"}' } } },
+      { action: 'update', component: { id: 'tool-agent-call-1', type: 'toolInfo', data: { toolName: 'search', status: 'completed', resultJson: '{"matches":1}' } } },
+      { action: 'add', component: { id: 'tool-agent-call-1', type: 'toolInfo', data: { toolName: 'search', status: 'running', paramsJson: '{"q":"one"}' } } },
+      { action: 'add', component: { id: 'tool-agent-call-2', type: 'toolInfo', data: { toolName: 'search', status: 'running', paramsJson: '{"q":"two"}' } } },
+      { action: 'add', component: { id: 'tool-agent-call-2', type: 'toolInfo', data: { toolName: 'search', status: 'running', paramsJson: '{"q":"two"}' } } },
     ] as never);
 
     expect(components).toHaveLength(2);
-    expect(components[0].data).toMatchObject({ status: 'completed', params: '{"q":"one"}', resultJson: '{"matches":1}' });
-    expect(components[1].data).toMatchObject({ status: 'running', params: '{"q":"two"}' });
+    expect(components[0].data).toMatchObject({ status: 'completed', paramsJson: '{"q":"one"}', resultJson: '{"matches":1}' });
+    expect(components[1].data).toMatchObject({ status: 'running', paramsJson: '{"q":"two"}' });
   });
 });

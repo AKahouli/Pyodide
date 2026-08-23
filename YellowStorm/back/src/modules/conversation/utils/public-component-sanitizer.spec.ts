@@ -18,14 +18,34 @@ describe('public component sanitizer', () => {
       id: 'tool-1',
       type: 'toolInfo',
       data: {
-        params: '{"query":"safe","password":"private"}',
+        paramsJson: '{"query":"safe","password":"private"}',
         resultJson: '{"access_token":"token","count":2}',
       },
     });
 
     expect(component.data).toEqual({
-      params: '{"query":"safe","password":"[REDACTED]"}',
+      paramsJson: '{"query":"safe","password":"[REDACTED]"}',
       resultJson: '{"access_token":"[REDACTED]","count":2}',
     });
+  });
+
+  it('removes attachment sentinels and redacts workspace paths from answer text', () => {
+    const component = sanitizePublicComponent({
+      id: 'text-1',
+      type: 'text',
+      data: { content: 'Before {"content":"YELLOWSTORM_ATTACHMENT_SENTINEL_123\\n"} /workspace/sources/id/report.pdf after' },
+    });
+
+    expect(component.data.content).toBe('Before  [REDACTED] after');
+  });
+
+  it('never exposes artifact storage paths', () => {
+    const component = sanitizePublicComponent({
+      id: 'artifact-1',
+      type: 'artifact',
+      data: { artifactId: 'opaque', filename: 'report.pdf', storagePath: '/workspace/run/report.pdf' },
+    });
+
+    expect(component.data).toEqual({ artifactId: 'opaque', filename: 'report.pdf' });
   });
 });

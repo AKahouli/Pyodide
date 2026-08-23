@@ -36,6 +36,7 @@ import { ResponseReliabilityService } from '../services/response-reliability.ser
 import { createHash } from 'node:crypto';
 import { ConflictException } from '../../exceptions';
 import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
+import { ConversationArtifactService } from '../services/conversation-artifact.service';
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -52,8 +53,18 @@ export class MessageController {
     private readonly choiceInteractionService: ChoiceInteractionService,
     private readonly governedRuntimeService: GovernedConversationRuntimeService,
     private readonly responseReliabilityService: ResponseReliabilityService,
+    private readonly conversationArtifactService: ConversationArtifactService,
   ) {
     this.logger.setContext('MessageController');
+  }
+
+  @Post(':messageId/artifacts/:artifactId/url')
+  async getArtifactDownloadUrl(
+    @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string,
+    @Param('artifactId') artifactId: string,
+  ): Promise<{ downloadUrl: string }> {
+    return this.conversationArtifactService.resolveDownloadUrl(conversationId, messageId, artifactId);
   }
 
   /**

@@ -18,7 +18,6 @@ const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> =
   { field: 'artifact', type: 'artifact' },
   { field: 'citation', type: 'citation' },
   { field: 'tool_info', type: 'toolInfo' },
-  { field: 'chain_of_thought', type: 'chainOfThought' },
   { field: 'choice', type: 'choice' },
 ];
 
@@ -40,8 +39,6 @@ const LEGACY_TYPE_MAP: Record<string, ComponentType> = {
   citation: 'citation',
   tool_info: 'toolInfo',
   toolInfo: 'toolInfo',
-  chain_of_thought: 'chainOfThought',
-  chainOfThought: 'chainOfThought',
   choice: 'choice',
 };
 
@@ -52,7 +49,6 @@ function normalizeLegacyType(raw: string): ComponentType {
 function oneofPayloadHasContent(type: ComponentType, payload: Record<string, unknown>): boolean {
   switch (type) {
     case 'text':
-    case 'reasoning':
     case 'code':
     case 'webPreview':
       return typeof payload.content === 'string' && payload.content.length > 0;
@@ -85,13 +81,13 @@ function oneofPayloadHasContent(type: ComponentType, payload: Record<string, unk
       );
     case 'citation':
       return Boolean(payload.text_source || payload.image_source);
+    case 'reasoning':
+      return typeof payload.summary === 'string' && payload.summary.length > 0;
     case 'toolInfo':
       return (
-        (typeof payload.title === 'string' && payload.title.length > 0) ||
+        (typeof payload.tool_name === 'string' && payload.tool_name.length > 0) ||
         (typeof payload.status === 'string' && payload.status.length > 0)
       );
-    case 'chainOfThought':
-      return Array.isArray(payload.steps) && payload.steps.length > 0;
     case 'choice':
       return normalizeChoiceComponentData(payload) !== null;
     default:
@@ -108,6 +104,11 @@ export function getComponentType(comp: any): ComponentType {
 
   if (typeof comp.type === 'string' && comp.data && typeof comp.data === 'object') {
     return normalizeLegacyType(comp.type);
+  }
+
+  if (typeof comp.data === 'string') {
+    const selected = ONEOF_FIELD_TYPES.find(({ field }) => field === comp.data);
+    if (selected) return selected.type;
   }
 
   for (const { field, type } of ONEOF_FIELD_TYPES) {
@@ -196,8 +197,11 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
       return {
         type,
         data: {
-          content: comp.reasoning?.content || '',
-          duration: comp.reasoning?.duration || 0,
+          summary: comp.reasoning?.summary || '',
+          status: comp.reasoning?.status || 'running',
+          ...(comp.reasoning?.started_at ? { startedAt: comp.reasoning.started_at } : {}),
+          ...(comp.reasoning?.completed_at ? { completedAt: comp.reasoning.completed_at } : {}),
+          ...(comp.reasoning?.duration_ms !== undefined ? { durationMs: Number(comp.reasoning.duration_ms) } : {}),
         },
       };
     case 'plan':
@@ -302,15 +306,17 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
       return {
         type,
         data: {
-          filePath: comp.artifact?.file_path || '',
-          file_path: comp.artifact?.file_path || '',
+          storagePath: comp.artifact?.file_path || '',
           filename: comp.artifact?.filename || '',
           outputPortId: comp.artifact?.output_port_id || '',
           output_port_id: comp.artifact?.output_port_id || '',
           artifactKind: comp.artifact?.artifact_kind || '',
           artifact_kind: comp.artifact?.artifact_kind || '',
           mimeType: comp.artifact?.mime_type || '',
-          mime_type: comp.artifact?.mime_type || '',
+          artifactId: comp.artifact?.artifact_id || '',
+          producerToolId: comp.artifact?.producer_tool_id || '',
+          sizeBytes: Number(comp.artifact?.size_bytes || 0),
+          availability: comp.artifact?.availability || 'ready',
         },
       };
     case 'citation': {
@@ -350,21 +356,22 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
       return {
         type,
         data: {
-          title: toolInfo?.title || '',
+          toolName: toolInfo?.tool_name || '',
           status: toolInfo?.status || 'running',
-          params: toolInfo?.params || '',
+          paramsJson: toolInfo?.params_json || '',
           ...(toolInfo?.result_json ? { resultJson: toolInfo.result_json } : {}),
           ...(toolInfo?.started_at ? { startedAt: toolInfo.started_at } : {}),
+          ...(toolInfo?.completed_at ? { completedAt: toolInfo.completed_at } : {}),
+          ...(toolInfo?.duration_ms !== undefined ? { durationMs: Number(toolInfo.duration_ms) } : {}),
+          ...(toolInfo?.display_key ? { displayKey: toolInfo.display_key } : {}),
+          ...(toolInfo?.fallback_display_name ? { fallbackDisplayName: toolInfo.fallback_display_name } : {}),
+          summary: toolInfo?.summary || '',
+          renderKind: toolInfo?.render_kind || 'generic',
+          ...(toolInfo?.actor_id ? { actorId: toolInfo.actor_id } : {}),
+          ...(toolInfo?.actor_name ? { actorName: toolInfo.actor_name } : {}),
         },
       };
     }
-    case 'chainOfThought':
-      return {
-        type,
-        data: {
-          steps: (comp.chain_of_thought?.steps || []).map((s: any) => String(s ?? '')),
-        },
-      };
     case 'choice': {
       const normalized = normalizeChoiceComponentData(comp.choice);
       return normalized ? { type, data: normalized } : { type: 'text', data: { content: '' } };
@@ -396,13 +403,13 @@ export function mapTaskStatus(status: string | undefined): string {
   return statusMap[status] || 'pending';
 }
 
-/** Merges text/reasoning/code/error content from streamed components for plain-text consumers (widget, telegram). */
+/** Merges answer content from streamed components for plain-text consumers (widget, telegram). */
 export function aggregateTextFromComponents(
   components: Array<{ type: ComponentType | string; data: Record<string, unknown> }>,
 ): string {
   let replyText = '';
   for (const component of components) {
-    if ((component.type === 'text' || component.type === 'reasoning') && typeof component.data.content === 'string') {
+    if (component.type === 'text' && typeof component.data.content === 'string') {
       replyText += component.data.content;
       continue;
     }

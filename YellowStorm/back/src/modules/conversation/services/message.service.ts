@@ -1067,14 +1067,14 @@ export class MessageService {
     if (!Array.isArray(components)) return undefined;
     return components.map((component) => {
       if (component?.type === 'task' && component.data) {
-        return {
+        return sanitizePublicComponent({
           id: component.id,
           type: component.type,
           data: { ...component.data, items: sanitizeTaskDiagnosticItems(component.data.items) },
-        };
+        });
       }
-      if (component?.type !== 'toolInfo' || !component.data) return component;
-      if (includeToolResults) {
+      if (!component?.data) return component;
+      if (component.type !== 'toolInfo' || includeToolResults) {
         return sanitizePublicComponent({ id: component.id, type: component.type, data: { ...component.data } });
       }
       const { resultJson: _resultJson, result_json: _resultJsonSnake, ...publicData } = component.data;

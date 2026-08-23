@@ -288,21 +288,16 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
     case 'artifact':
       return {
         type: 'artifact',
-        filePath: (data.filePath as string) || (data.file_path as string) || '',
+        filePath: '',
         filename: (data.filename as string) || '',
       };
     case 'toolInfo':
       return {
         type: 'toolInfo',
-        title: (data.title as string) || '',
-        status: (data.status as 'running' | 'completed' | 'failed') || 'running',
-        params: (data.params as string) || '',
+        title: (data.fallbackDisplayName as string) || (data.toolName as string) || '',
+        status: data.status === 'stopped' ? 'failed' : (data.status as 'running' | 'completed' | 'failed') || 'running',
+        params: (data.paramsJson as string) || '',
         startedAt: (data.startedAt as string) || undefined,
-      };
-    case 'chainOfThought':
-      return {
-        type: 'chainOfThought',
-        steps: (data.steps as string[]) || [],
       };
     default:
       return { type: 'text', content: (data.content as string) || '' };
