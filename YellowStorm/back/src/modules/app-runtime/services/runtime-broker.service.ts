@@ -13,6 +13,7 @@ import {
   type VerificationEvidence,
 } from '../mcp/runtime-mcp-validation';
 import {
+  MUTATING_BROKER_TOOLS,
   TOOL_NAME_SET,
   type RuntimeMcpToolName,
 } from '../mcp/runtime-mcp.tools';
@@ -140,6 +141,16 @@ export class RuntimeBrokerService {
       this.logger.log(
         `finalize ok bindingId=${binding.bindingId} toolCallId=${toolCallId} revisionId=${result.revisionId}`,
       );
+    }
+
+    // Keep the in-memory binding ahead for any caller that reuses the same
+    // document in-process. Persistence is owned by the tool dispatcher.
+    if (
+      MUTATING_BROKER_TOOLS.has(tool) &&
+      typeof result.revisionId === 'string' &&
+      result.revisionId
+    ) {
+      binding.latestRevisionId = result.revisionId;
     }
 
     return { result };
