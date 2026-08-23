@@ -11,6 +11,14 @@ export interface ResolvedPath {
   objectKey: string;
 }
 
+function normalizeAllowedPath(path: string): string {
+  const normalized = path.replace(/^\/+|\/+$/g, "");
+  if (!normalized || /[\\\0-\x1f\x7f]/.test(normalized) || normalized.split("/").some((part) => part === "." || part === ".." || !part)) {
+    throw new RuntimeError("INVALID_REQUEST", "Invalid authorized relative path.");
+  }
+  return normalized;
+}
+
 function normalizePrefix(prefix: string): string {
   return prefix.replace(/^\/+|\/+$/g, "");
 }
@@ -45,7 +53,10 @@ export function validateMounts(context: ExecutionContext, maxMounts: number): Wo
   const mounts = context.mounts.map((mount) => ({
     virtualPath: normalizeVirtualPath(mount.virtualPath),
     cephPrefix: normalizePrefix(mount.cephPrefix),
-    mode: mount.mode
+    mode: mount.mode,
+    ...(mount.allowedRelativePaths === undefined ? {} : {
+      allowedRelativePaths: [...new Set(mount.allowedRelativePaths.map(normalizeAllowedPath))].sort()
+    })
   }));
   const writable = mounts.filter((mount) => mount.mode === "rw");
   if (
@@ -66,10 +77,16 @@ export function validateMounts(context: ExecutionContext, maxMounts: number): Wo
       throw new RuntimeError("INVALID_REQUEST", "Invalid Ceph prefix.");
     }
     if (mount.mode === "r") {
-      const match = /^\/workspace\/sources\/([^/]+)$/.exec(mount.virtualPath);
+      const match = /^\/workspace\/(?:sources|attachments)\/([^/]+)$/.exec(mount.virtualPath);
       if (!match?.[1] || !ALIAS.test(match[1])) {
         throw new RuntimeError("INVALID_REQUEST", "Invalid source mount alias.");
       }
+    }
+    if (mount.mode === "rw" && mount.allowedRelativePaths !== undefined) {
+      throw new RuntimeError("INVALID_REQUEST", "Writable mounts cannot be file-scoped.");
+    }
+    if (mount.allowedRelativePaths?.length === 0) {
+      throw new RuntimeError("INVALID_REQUEST", "File-scoped mounts require authorized files.");
     }
     if (paths.has(mount.virtualPath) || prefixes.has(mount.cephPrefix)) {
       throw new RuntimeError("INVALID_REQUEST", "Duplicate workspace mount.");
@@ -96,6 +113,12 @@ export function resolvePath(mounts: WorkspaceMount[], requestedPath: string): Re
   );
   if (!mount) throw new RuntimeError("PATH_NOT_MOUNTED", "Path is outside authorized workspace mounts.");
   const relativePath = virtualPath.slice(mount.virtualPath.length).replace(/^\//, "");
+  if (mount.allowedRelativePaths !== undefined && relativePath) {
+    const visible = mount.allowedRelativePaths.some(
+      (allowed) => relativePath === allowed || allowed.startsWith(`${relativePath}/`)
+    );
+    if (!visible) throw new RuntimeError("PATH_NOT_MOUNTED", "Path is outside the authorized file scope.");
+  }
   const objectKey = relativePath ? `${mount.cephPrefix}/${relativePath}` : mount.cephPrefix;
   if (objectKey !== mount.cephPrefix && !objectKey.startsWith(`${mount.cephPrefix}/`)) {
     throw new RuntimeError("INVALID_PATH", "Resolved path escaped its workspace mount.");

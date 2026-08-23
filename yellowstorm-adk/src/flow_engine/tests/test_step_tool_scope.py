@@ -303,6 +303,33 @@ def test_build_step_tool_scope_keeps_opaque_refs_without_fallback_workspace() ->
     assert scope.workspace_context_mode == "resolved_inputs_only"
 
 
+def test_build_step_tool_scope_derives_exact_run_code_source_without_changing_legacy_scope() -> None:
+    scope = build_step_tool_scope(
+        {
+            "__playbook_workspace_paths": {"workspace-1": "owner/immutable-workspace"},
+            "report": {
+                "kind": "document",
+                "documentId": "doc-1",
+                "name": "report.pdf",
+                "path": "owner/immutable-workspace/reports/report.pdf",
+                "workspaceId": "workspace-1",
+                "workspaceName": "Finance",
+                "workspacePath": "owner/immutable-workspace",
+            },
+        },
+        {},
+    )
+    assert scope.workspace_ceph_paths == ["owner/immutable-workspace"]
+    assert scope.binding_workspace_ids == ["workspace-1"]
+    assert scope.workspace_context_mode == "resolved_inputs_only"
+    assert scope.run_code_sources == [{
+        "workspaceId": "workspace-1",
+        "alias": "finance",
+        "cephPrefix": "owner/immutable-workspace",
+        "scope": {"kind": "files", "relativePaths": ["reports/report.pdf"]},
+    }]
+
+
 def test_build_step_tool_scope_prefers_workspace_filename_when_hydrating() -> None:
     scope = build_step_tool_scope(
         {"report": {"document_id": "doc-1", "filename": "doc-1-report.xlsx"}},

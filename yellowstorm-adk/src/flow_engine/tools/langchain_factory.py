@@ -25,7 +25,11 @@ from src.flow_engine.runtime.artifact_routing import (
     semantic_match_output_port,
 )
 from src.guardrails.tool_registry import tool_policy
-from src.infrastructure.run_code import RunCodeClient, build_run_code_context
+from src.infrastructure.run_code import (
+    RunCodeClient,
+    build_run_code_context,
+    build_run_code_context_from_sources,
+)
 from src.smart_rag.tools.utilities.run_code import (
     RUN_CODE_CODE_DESCRIPTION,
     RUN_CODE_TOOL_DESCRIPTION,
@@ -579,6 +583,7 @@ def create_langchain_tools(
     user_id: Optional[str] = None,
     workspace_ceph_paths: Optional[List[str]] = None,
     binding_workspace_ids: Optional[List[str]] = None,
+    run_code_sources: Optional[List[Dict[str, Any]]] = None,
     execution_id: str = "",
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
@@ -734,15 +739,20 @@ def create_langchain_tools(
     if "run_code" in tool_names and run_code_globally_enabled():
         run_id = session_id or execution_id
         if user_id and run_id:
-            context = build_run_code_context(
-                user_id,
-                run_id,
-                [
-                    path
-                    for path in workspace_paths
-                    if path != run_workspace_path(user_id, run_id)
-                ],
-            )
+            if run_code_sources:
+                context = build_run_code_context_from_sources(
+                    user_id, run_id, run_code_sources
+                )
+            else:
+                context = build_run_code_context(
+                    user_id,
+                    run_id,
+                    [
+                        path
+                        for path in workspace_paths
+                        if path != run_workspace_path(user_id, run_id)
+                    ],
+                )
             client = RunCodeClient()
 
             async def execute_run_code(code: str, input: Any = None) -> dict[str, Any]:

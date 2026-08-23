@@ -46,6 +46,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     maxFsOperations: positiveInt(env, "RUN_CODE_MAX_FS_OPERATIONS", DEFAULT_LIMITS.maxFsOperations),
     maxConcurrentFsOperations: positiveInt(env, "RUN_CODE_MAX_CONCURRENT_FS_OPERATIONS", DEFAULT_LIMITS.maxConcurrentFsOperations),
     maxListEntries: positiveInt(env, "RUN_CODE_MAX_LIST_ENTRIES", DEFAULT_LIMITS.maxListEntries),
+    maxScanPages: positiveInt(env, "RUN_CODE_MAX_SCAN_PAGES", DEFAULT_LIMITS.maxScanPages),
+    maxScannedKeys: positiveInt(env, "RUN_CODE_MAX_SCANNED_KEYS", DEFAULT_LIMITS.maxScannedKeys),
+    maxGlobResults: positiveInt(env, "RUN_CODE_MAX_GLOB_RESULTS", DEFAULT_LIMITS.maxGlobResults),
+    maxFindResults: positiveInt(env, "RUN_CODE_MAX_FIND_RESULTS", DEFAULT_LIMITS.maxFindResults),
+    maxTotalScanPages: positiveInt(env, "RUN_CODE_MAX_TOTAL_SCAN_PAGES", DEFAULT_LIMITS.maxTotalScanPages),
+    maxTotalScannedKeys: positiveInt(env, "RUN_CODE_MAX_TOTAL_SCANNED_KEYS", DEFAULT_LIMITS.maxTotalScannedKeys),
+    maxCopyOperations: positiveInt(env, "RUN_CODE_MAX_COPY_OPERATIONS", DEFAULT_LIMITS.maxCopyOperations),
+    maxCopyFileBytes: positiveInt(env, "RUN_CODE_MAX_COPY_FILE_BYTES", DEFAULT_LIMITS.maxCopyFileBytes),
+    maxTotalCopiedBytes: positiveInt(env, "RUN_CODE_MAX_TOTAL_COPIED_BYTES", DEFAULT_LIMITS.maxTotalCopiedBytes),
     maxMounts: positiveInt(env, "RUN_CODE_MAX_MOUNTS", DEFAULT_LIMITS.maxMounts),
     memoryBytes: positiveInt(env, "RUN_CODE_MEMORY_MB", DEFAULT_LIMITS.memoryBytes / 1_048_576) * 1_048_576,
     cpuTimeoutMs: positiveInt(env, "RUN_CODE_CPU_TIMEOUT_MS", DEFAULT_LIMITS.cpuTimeoutMs),
@@ -54,6 +63,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
   if (limits.cpuTimeoutMs > limits.wallTimeoutMs) throw new Error("RUN_CODE_CPU_TIMEOUT_MS cannot exceed wall timeout.");
   if (limits.maxReadFileBytes > limits.maxTotalReadBytes || limits.maxWriteFileBytes > limits.maxTotalWriteBytes) {
     throw new Error("Per-file limits cannot exceed aggregate limits.");
+  }
+  if (limits.maxScanPages > limits.maxTotalScanPages || limits.maxScannedKeys > limits.maxTotalScannedKeys) {
+    throw new Error("Per-scan limits cannot exceed aggregate scan limits.");
+  }
+  if (limits.maxCopyFileBytes > limits.maxTotalCopiedBytes) {
+    throw new Error("Per-file copy limit cannot exceed aggregate copy limit.");
   }
   const maxHttpBodyBytes = positiveInt(env, "RUN_CODE_MAX_HTTP_BODY_BYTES", 4_194_304);
   if (maxHttpBodyBytes <= limits.maxCodeBytes + limits.maxInputBytes) {

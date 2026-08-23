@@ -77,6 +77,7 @@ export class CorrectiveReplayRunnerService {
           prompt.correctionContext,
           { requestId: replayRequestId },
           sessionId,
+          replayRequestId,
         );
       } catch (error) {
         throw new CorrectiveReplayFailure('corrective_replay_request_build_failed', false);

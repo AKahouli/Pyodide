@@ -4,6 +4,7 @@ import httpx
 
 from src.config.settings import get_settings
 from src.infrastructure.run_code.context import RunCodeContext
+from src.infrastructure.files.resolved_file import ResolvedFile
 from src.logger.logging import get_logger
 
 
@@ -33,7 +34,7 @@ class RunCodeClient:
                     json={
                         "code": code,
                         "input": input_value,
-                        "context": context.model_dump(),
+                        "context": context.model_dump(exclude_none=True),
                     },
                 )
         except (httpx.TimeoutException, httpx.TransportError):
@@ -67,12 +68,13 @@ class RunCodeClient:
     def _normalize(self, payload: dict[str, Any]) -> dict[str, Any]:
         execution = payload.get("execution")
         execution = execution if isinstance(execution, dict) else {}
-        files = payload.get("writtenFiles")
-        files = files if isinstance(files, list) else []
+        files = self._public_files(payload.get("writtenFiles"))
+        mutations = self._public_mutations(payload.get("mutations"))
         normalized: dict[str, Any] = {
             "ok": payload.get("ok") is True,
             "logs": payload.get("logs") if isinstance(payload.get("logs"), list) else [],
             "written_files": files,
+            "mutations": mutations,
             "execution_ms": int(execution.get("durationMs") or 0),
         }
         if normalized["ok"]:
@@ -84,3 +86,34 @@ class RunCodeClient:
                 "message": "Lightweight code execution failed.",
             }
         return normalized
+
+    def _public_files(self, value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        files: list[dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            allowed = {key: item.get(key) for key in ("name", "path", "sizeBytes", "contentType", "createdBy") if key in item}
+            if (
+                isinstance(allowed.get("name"), str)
+                and isinstance(allowed.get("path"), str)
+                and isinstance(allowed.get("sizeBytes"), int)
+                and allowed.get("createdBy") == "run_code"
+            ):
+                files.append(allowed)
+        return files
+
+    def _public_mutations(self, value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        mutations: list[dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, dict) or item.get("operation") not in ("created", "copied", "removed") or not isinstance(item.get("path"), str):
+                continue
+            mutations.append({key: item[key] for key in ("operation", "path", "sizeBytes", "contentType") if key in item})
+        return mutations
+
+    @staticmethod
+    def resolved_file(value: dict[str, Any]) -> ResolvedFile:
+        return ResolvedFile.from_runtime(value)

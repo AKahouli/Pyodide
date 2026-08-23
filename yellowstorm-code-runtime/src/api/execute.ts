@@ -75,6 +75,7 @@ export function createExecuteHandler(
         result: result.result,
         logs: result.logs,
         writtenFiles: result.writtenFiles,
+        mutations: result.mutations,
         execution: { durationMs: result.durationMs, runtime: result.runtime }
       });
     } catch (error) {
@@ -89,6 +90,7 @@ export function createExecuteHandler(
         },
         logs: [],
         writtenFiles: workspace ? [...workspace.writtenFiles] : [],
+        mutations: workspace ? [...workspace.mutations] : [],
         execution: { durationMs: 0, runtime: "quickjs" }
       });
     } finally {
@@ -138,7 +140,15 @@ function validateRequest(value: unknown): ExecuteRequest {
     if (typeof item.virtualPath !== "string" || typeof item.cephPrefix !== "string" || (item.mode !== "r" && item.mode !== "rw")) {
       throw new RuntimeError("INVALID_REQUEST", "Invalid workspace mount.");
     }
-    return { virtualPath: item.virtualPath, cephPrefix: item.cephPrefix, mode: item.mode as "r" | "rw" };
+    if (item.allowedRelativePaths !== undefined && (!Array.isArray(item.allowedRelativePaths) || item.allowedRelativePaths.some((path) => typeof path !== "string"))) {
+      throw new RuntimeError("INVALID_REQUEST", "Invalid workspace file scope.");
+    }
+    return {
+      virtualPath: item.virtualPath,
+      cephPrefix: item.cephPrefix,
+      mode: item.mode as "r" | "rw",
+      ...(Array.isArray(item.allowedRelativePaths) ? { allowedRelativePaths: item.allowedRelativePaths as string[] } : {})
+    };
   });
   return {
     code: request.code,

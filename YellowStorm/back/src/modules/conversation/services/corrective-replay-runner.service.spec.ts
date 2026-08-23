@@ -46,7 +46,8 @@ describe('CorrectiveReplayRunnerService', () => {
     const seededSession = streamService.seedConversationSession.mock.calls[0][1] as string;
     expect(seededSession).toMatch(/^correction:conversation-1:message-1:1:/);
     expect(streamService.buildAgentExecutionRequest).toHaveBeenCalledWith(
-      'user-1', 'conversation-1', expect.any(Object), undefined, expect.any(Object), expect.any(Object), seededSession,
+      'user-1', 'conversation-1', expect.any(Object), undefined, expect.any(Object), expect.any(Object),
+      seededSession, expect.stringMatching(/^[0-9a-f-]{36}$/),
     );
     expect(streamService.deleteConversationSession).toHaveBeenCalledWith('user-1', seededSession, expect.any(String));
     expect(result.components.map((component) => component.type)).toEqual(['text', 'task', 'citation']);

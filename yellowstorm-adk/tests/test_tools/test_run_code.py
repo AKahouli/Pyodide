@@ -7,6 +7,7 @@ from google.adk.tools import FunctionTool
 
 from src.infrastructure.run_code.context import (
     build_run_code_context,
+    build_run_code_context_from_sources,
     parse_run_code_context,
 )
 import src.infrastructure.run_code.client as client_module
@@ -31,13 +32,15 @@ def _assert_workspace_guidance(text: str):
     assert "import()" in text
     assert "require" in text
     assert "node:*" in text
-    for method in ("list", "stat", "readText", "readJson", "writeText", "writeJson"):
+    for method in ("list", "glob", "find", "stat", "readText", "readJson", "copy", "writeText", "writeJson", "remove"):
         assert method in text
     assert "fs.list('/workspace')" in text
     assert "/workspace/sources/" in text
+    assert "/workspace/attachments/" in text
     assert "read-only" in text
     assert "absolute paths" in text
     assert "bare attachment filename" in text
+    assert "server-side" in text or "binary processing" in text
 
 
 def test_context_builds_owner_rooted_read_only_mounts_with_unique_aliases():
@@ -47,7 +50,7 @@ def test_context_builds_owner_rooted_read_only_mounts_with_unique_aliases():
         ["owner-1/finance", "owner-2/finance", "owner-1/finance"],
     )
 
-    assert context.mounts[0].model_dump() == {
+    assert context.mounts[0].model_dump(exclude_none=True) == {
         "virtualPath": "/workspace/run",
         "cephPrefix": "user-1/system_conversation-1",
         "mode": "rw",
@@ -71,6 +74,44 @@ def test_context_parser_accepts_trusted_source_prefix_payload():
     assert context.mounts[1].cephPrefix == "workspace-owner/immutable-prefix"
 
 
+def test_descriptor_context_preserves_workspace_and_exact_attachment_scopes():
+    context = build_run_code_context_from_sources("user-1", "run-1", [
+        {
+            "workspaceId": "workspace-1", "alias": "finance-europe",
+            "cephPrefix": "owner-1/immutable-finance", "scope": {"kind": "workspace"},
+        },
+        {
+            "workspaceId": "workspace-2", "alias": "contracts",
+            "cephPrefix": "owner-2/immutable-legal",
+            "scope": {"kind": "files", "relativePaths": ["legal/contract.pdf"]},
+        },
+    ])
+    assert context.mounts[1].model_dump(exclude_none=True) == {
+        "virtualPath": "/workspace/sources/finance-europe",
+        "cephPrefix": "owner-1/immutable-finance",
+        "mode": "r",
+    }
+    assert context.mounts[2].model_dump(exclude_none=True) == {
+        "virtualPath": "/workspace/attachments/contracts",
+        "cephPrefix": "owner-2/immutable-legal",
+        "mode": "r",
+        "allowedRelativePaths": ["legal/contract.pdf"],
+    }
+
+
+def test_context_parser_prefers_descriptor_payload_and_rejects_unknown_fields():
+    context = parse_run_code_context({
+        "run_code_context_json": json.dumps({
+            "userId": "user-1", "runId": "run-1", "sources": [{
+                "workspaceId": "workspace-1", "alias": "finance",
+                "cephPrefix": "owner-1/finance", "scope": {"kind": "workspace"},
+            }]
+        })
+    })
+    assert context is not None
+    assert context.sources[0].workspaceId == "workspace-1"
+
+
 def test_native_tool_requires_flag_assignment_and_trusted_context(monkeypatch):
     monkeypatch.setattr(run_code_module, "get_settings", _enabled_settings)
     runtime_context = {
@@ -90,7 +131,7 @@ def test_native_tool_requires_flag_assignment_and_trusted_context(monkeypatch):
     normalized_description = " ".join(declaration.description.split())
     assert set(schema["properties"]) == {"code", "input"}
     assert len(declaration.description) <= 512
-    assert "Explicitly return JSON" in normalized_description
+    assert "JSON explicitly" in normalized_description
     assert "/workspace/run" in declaration.description
     assert "mcp-manus" in declaration.description
     _assert_workspace_guidance(declaration.description)
@@ -137,6 +178,8 @@ def test_prompt_guidance_is_only_added_for_available_assigned_tool(monkeypatch):
     assert "{" not in run_code_module.RUN_CODE_PROMPT_GUIDANCE
     assert "}" not in run_code_module.RUN_CODE_PROMPT_GUIDANCE
     assert "/workspace/run" in guided
+    assert "metadata-only" in guided
+    assert "current execution" in guided
     _assert_workspace_guidance(guided)
 
 
@@ -155,6 +198,7 @@ async def test_runtime_client_supplies_auth_and_normalizes_response(monkeypatch)
                 "result": {"count": 1},
                 "logs": [],
                 "writtenFiles": [],
+                "mutations": [],
                 "execution": {"durationMs": 3},
             }
 
@@ -181,5 +225,6 @@ async def test_runtime_client_supplies_auth_and_normalizes_response(monkeypatch)
         "result": {"count": 1},
         "logs": [],
         "written_files": [],
+        "mutations": [],
         "execution_ms": 3,
     }

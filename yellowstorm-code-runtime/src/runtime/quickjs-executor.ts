@@ -92,6 +92,7 @@ export class QuickJsExecutor implements Executor {
         logs: logsTruncated ? [...logs, "[log output truncated]"] : logs,
         logsTruncated,
         writtenFiles: [...host.writtenFiles],
+        mutations: [...host.mutations],
         durationMs: Date.now() - started,
         runtime: "quickjs"
       };
@@ -186,7 +187,7 @@ export class QuickJsExecutor implements Executor {
     hostCall.dispose();
     const setup = vm.evalCode(`
       globalThis.__fs = Object.freeze(Object.fromEntries(
-        ["list", "stat", "readText", "readJson", "writeText", "writeJson"].map((name) => [name, (...args) =>
+        ["list", "glob", "find", "stat", "readText", "readJson", "copy", "writeText", "writeJson", "remove"].map((name) => [name, (...args) =>
           __hostCall(name, JSON.stringify(args)).then((raw) => {
             const response = JSON.parse(raw);
             if (!response.ok) {

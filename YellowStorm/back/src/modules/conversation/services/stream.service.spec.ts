@@ -2,13 +2,39 @@ import { StreamService } from './stream.service';
 import type { MessageComponent } from '../interfaces/message.interface';
 
 describe('StreamService guardrail metadata buffering', () => {
-  it('injects owner-rooted run-code source prefixes only into assigned agents', async () => {
+  it('uses the user-visible original name for current attached documents', async () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     Object.assign(service as object, {
-      workspaceService: {
-        getStoragePathMapByIds: jest.fn().mockResolvedValue({
-          'workspace-1': 'owner-1/immutable-finance',
-        }),
+      workspaceDocumentService: {
+        findByIds: jest.fn().mockResolvedValue([{
+          id: 'file-1',
+          filename: 'stored-name-42.txt',
+          originalName: 'deatils.txt',
+          mimeType: 'text/plain',
+          path: 'owner/conversation-1/deatils.txt',
+          workspaceId: 'workspace-1',
+          createdAt: '2026-08-23T08:50:00.000Z',
+        }]),
+      },
+      logger: { warn: jest.fn(), error: jest.fn() },
+    });
+
+    const files = await (service as any).buildAttachedFiles(['file-1']);
+
+    expect(files[0].document.filename).toBe('deatils.txt');
+    expect(files[0].document.filepath).toBe('owner/conversation-1/deatils.txt');
+  });
+
+  it('injects per-agent run-code descriptors only into assigned agents', async () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    Object.assign(service as object, {
+      runCodeSourceScopeService: {
+        buildSources: jest.fn(async (workspaceIds: string[]) => workspaceIds.map((workspaceId) => ({
+          workspaceId,
+          alias: workspaceId,
+          cephPrefix: `owner/${workspaceId}`,
+          scope: { kind: 'workspace' },
+        }))),
       },
       workspaceShareService: {
         assertUserHasAccess: jest.fn().mockResolvedValue(undefined),
@@ -17,9 +43,10 @@ describe('StreamService guardrail metadata buffering', () => {
     const agents = [
       {
         id: 'agent-1', tools: [{ name: 'run_code' }], agent_params: { params: {} },
+        brain_context: [{ workspace_id: 'private-1' }],
       },
       {
-        id: 'agent-2', tools: [{ name: 'calculator' }], agent_params: { params: {} },
+        id: 'agent-2', tools: [{ name: 'calculator' }], agent_params: { params: {} }, brain_context: [],
       },
     ];
 
@@ -32,22 +59,25 @@ describe('StreamService guardrail metadata buffering', () => {
     expect(JSON.parse(assignedParams.run_code_context_json!)).toEqual({
       userId: 'user-1',
       runId: 'conversation-1',
-      sourcePrefixes: ['owner-1/immutable-finance'],
+      sources: [
+        { workspaceId: 'workspace-1', alias: 'workspace-1', cephPrefix: 'owner/workspace-1', scope: { kind: 'workspace' } },
+        { workspaceId: 'private-1', alias: 'private-1', cephPrefix: 'owner/private-1', scope: { kind: 'workspace' } },
+      ],
     });
     expect(unassignedParams.run_code_context_json).toBeUndefined();
   });
 
   it('rejects attachment-derived run-code mounts when workspace access is denied', async () => {
     const service = Object.create(StreamService.prototype) as StreamService;
-    const getStoragePathMapByIds = jest.fn();
+    const buildSources = jest.fn();
     Object.assign(service as object, {
-      workspaceService: { getStoragePathMapByIds },
+      runCodeSourceScopeService: { buildSources },
       workspaceShareService: {
         assertUserHasAccess: jest.fn().mockRejectedValue(new Error('forbidden')),
       },
     });
     const agents = [{
-      id: 'agent-1', tools: [{ name: 'run_code' }], agent_params: { params: {} },
+      id: 'agent-1', tools: [{ name: 'run_code' }], agent_params: { params: {} }, brain_context: [],
     }];
 
     await expect((service as any).attachRunCodeContexts(
@@ -55,9 +85,30 @@ describe('StreamService guardrail metadata buffering', () => {
       'user-1',
       'conversation-1',
       ['trusted-workspace'],
-      ['foreign-workspace'],
+       [{ workspaceId: 'foreign-workspace', path: 'owner/private/file.pdf' }],
     )).rejects.toThrow('forbidden');
-    expect(getStoragePathMapByIds).not.toHaveBeenCalled();
+    expect(buildSources).not.toHaveBeenCalled();
+  });
+
+  it('does not union private brain workspaces across run-code agents', async () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    Object.assign(service as object, {
+      workspaceShareService: { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) },
+      runCodeSourceScopeService: {
+        buildSources: jest.fn(async (ids: string[]) => ids.map((workspaceId) => ({
+          workspaceId, alias: workspaceId, cephPrefix: `owner/${workspaceId}`, scope: { kind: 'workspace' },
+        }))),
+      },
+    });
+    const agents = [
+      { id: 'agent-a', tools: [{ name: 'run_code' }], brain_context: [{ workspace_id: 'private-a' }], agent_params: { params: {} } },
+      { id: 'agent-b', tools: [{ name: 'run_code' }], brain_context: [{ workspace_id: 'private-b' }], agent_params: { params: {} } },
+    ];
+    await (service as any).attachRunCodeContexts(agents, 'user-1', 'message-1', ['shared'], []);
+    const contextA = JSON.parse((agents[0].agent_params.params as Record<string, string>).run_code_context_json!);
+    const contextB = JSON.parse((agents[1].agent_params.params as Record<string, string>).run_code_context_json!);
+    expect(contextA.sources.map((source: { workspaceId: string }) => source.workspaceId)).toEqual(['shared', 'private-a']);
+    expect(contextB.sources.map((source: { workspaceId: string }) => source.workspaceId)).toEqual(['shared', 'private-b']);
   });
 
   it('injects run-code context for WhatsApp and Telegram single-agent execution', async () => {
@@ -98,8 +149,9 @@ describe('StreamService guardrail metadata buffering', () => {
     expect(attachRunCodeContexts).toHaveBeenCalledWith(
       [agent],
       'user-1',
-      'conversation-1',
-      ['workspace-1', 'brain-1', 'system-1', 'system-1'],
+      'message-1',
+      ['workspace-1'],
+      [],
     );
     expect(executeSingleAgentGrpcStream).toHaveBeenCalled();
   });

@@ -10,6 +10,15 @@ export interface RuntimeLimits {
   maxFsOperations: number;
   maxConcurrentFsOperations: number;
   maxListEntries: number;
+  maxScanPages: number;
+  maxScannedKeys: number;
+  maxGlobResults: number;
+  maxFindResults: number;
+  maxTotalScanPages: number;
+  maxTotalScannedKeys: number;
+  maxCopyOperations: number;
+  maxCopyFileBytes: number;
+  maxTotalCopiedBytes: number;
   maxMounts: number;
   memoryBytes: number;
   cpuTimeoutMs: number;
@@ -28,6 +37,15 @@ export const DEFAULT_LIMITS: RuntimeLimits = {
   maxFsOperations: 100,
   maxConcurrentFsOperations: 4,
   maxListEntries: 1_000,
+  maxScanPages: 10,
+  maxScannedKeys: 5_000,
+  maxGlobResults: 500,
+  maxFindResults: 100,
+  maxTotalScanPages: 20,
+  maxTotalScannedKeys: 10_000,
+  maxCopyOperations: 10,
+  maxCopyFileBytes: 104_857_600,
+  maxTotalCopiedBytes: 209_715_200,
   maxMounts: 20,
   memoryBytes: 64 * 1_048_576,
   cpuTimeoutMs: 2_000,

@@ -5,7 +5,7 @@ import { RuntimeError } from "../src/runtime/errors.js";
 import type { WorkspaceHost } from "../src/workspace/types.js";
 
 function host(invoke: WorkspaceHost["invoke"] = async () => null): WorkspaceHost {
-  return { invoke, writtenFiles: [] };
+  return { invoke, writtenFiles: [], mutations: [] };
 }
 
 describe("QuickJsExecutor spike", () => {
@@ -35,6 +35,18 @@ describe("QuickJsExecutor spike", () => {
       limits: DEFAULT_LIMITS
     });
     expect(result.result).toEqual({ value: { count: 3 }, process: "undefined", require: "undefined", fetch: "undefined" });
+  });
+
+  it("exposes only the explicit filesystem allowlist", async () => {
+    const executor = new QuickJsExecutor();
+    const result = await executor.execute({
+      code: "return Object.keys(fs).sort();",
+      input: null,
+      host: host(), limits: DEFAULT_LIMITS
+    });
+    expect(result.result).toEqual([
+      "copy", "find", "glob", "list", "readJson", "readText", "remove", "stat", "writeJson", "writeText"
+    ]);
   });
 
   it("interrupts infinite loops", async () => {

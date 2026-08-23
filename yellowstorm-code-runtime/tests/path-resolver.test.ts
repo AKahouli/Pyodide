@@ -38,4 +38,20 @@ describe("workspace path security", () => {
       { virtualPath: "/workspace/sources/finance/sub", cephPrefix: "owner-2/other", mode: "r" }
     ] }, 20)).toThrowError(expect.objectContaining({ code: "INVALID_REQUEST" }));
   });
+
+  it("allows only exact files and their virtual parent directories in file scopes", () => {
+    const mounts = validateMounts({ ...context, mounts: [
+      context.mounts[0]!,
+      {
+        virtualPath: "/workspace/attachments/contracts",
+        cephPrefix: "owner-2/immutable-finance",
+        mode: "r",
+        allowedRelativePaths: ["legal/contract.pdf"]
+      }
+    ] }, 20);
+    expect(resolvePath(mounts, "/workspace/attachments/contracts/legal/contract.pdf").objectKey)
+      .toBe("owner-2/immutable-finance/legal/contract.pdf");
+    expect(() => resolvePath(mounts, "/workspace/attachments/contracts/private.pdf"))
+      .toThrowError(expect.objectContaining({ code: "PATH_NOT_MOUNTED" }));
+  });
 });

@@ -1,5 +1,5 @@
 import type { RuntimeLimits } from "./limits.js";
-import type { FileRef, WorkspaceHost } from "../workspace/types.js";
+import type { PublicFileRef, WorkspaceHost, WorkspaceMutation } from "../workspace/types.js";
 
 export interface ExecuteInput {
   code: string;
@@ -12,7 +12,8 @@ export interface ExecutionResult {
   result: unknown;
   logs: string[];
   logsTruncated: boolean;
-  writtenFiles: FileRef[];
+  writtenFiles: PublicFileRef[];
+  mutations: WorkspaceMutation[];
   durationMs: number;
   runtime: "quickjs";
 }

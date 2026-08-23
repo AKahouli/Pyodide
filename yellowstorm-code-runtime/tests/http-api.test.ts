@@ -10,7 +10,14 @@ const store: ObjectStore = {
   async head(key) { return objects.has(key) ? { sizeBytes: objects.get(key)!.byteLength } : null; },
   async list() { return { files: [], prefixes: [], truncated: false }; },
   async read(key) { return objects.get(key) ?? new Uint8Array(); },
-  async write(key, body) { objects.set(key, body); }
+  async write(key, body) { objects.set(key, body); },
+  async copy(sourceKey, destinationKey) {
+    const body = objects.get(sourceKey);
+    if (!body) throw new Error("missing");
+    objects.set(destinationKey, body);
+    return { sizeBytes: body.byteLength };
+  },
+  async delete(key) { objects.delete(key); }
 };
 
 const config = {
@@ -71,15 +78,34 @@ describe("runtime HTTP API", () => {
     });
     expect(await success.json()).toMatchObject({ ok: true, result: 6, execution: { runtime: "quickjs" } });
 
+    const writeSuccess = await fetch(`${base}/v1/execute`, {
+      method: "POST", headers,
+      body: JSON.stringify(requestBody("return await fs.writeText('/workspace/run/safe.txt', 'safe');"))
+    });
+    const writePayload = await writeSuccess.json();
+    expect(writePayload).toMatchObject({
+      ok: true,
+      result: { name: "safe.txt", path: "/workspace/run/safe.txt", createdBy: "run_code" },
+      writtenFiles: [{ path: "/workspace/run/safe.txt" }],
+      mutations: [{ operation: "created", path: "/workspace/run/safe.txt" }]
+    });
+    expect(JSON.stringify(writePayload)).not.toContain("user-1/system_run-1");
+    expect(JSON.stringify(writePayload)).not.toContain("objectKey");
+
     const failed = await fetch(`${base}/v1/execute`, {
       method: "POST", headers,
       body: JSON.stringify(requestBody("await fs.writeText('/workspace/run/partial.txt', 'saved'); throw new Error('later');"))
     });
-    expect(await failed.json()).toMatchObject({
+    const failedPayload = await failed.json();
+    expect(failedPayload).toMatchObject({
       ok: false,
       error: { code: "RUNTIME_ERROR" },
-      writtenFiles: [{ objectKey: "user-1/system_run-1/partial.txt" }]
+      writtenFiles: [{ path: "/workspace/run/partial.txt" }],
+      mutations: [{ operation: "created", path: "/workspace/run/partial.txt" }]
     });
+    const body = JSON.stringify(failedPayload);
+    expect(body).not.toContain("objectKey");
+    expect(body).not.toContain("user-1/system_run-1");
     expect(new TextDecoder().decode(objects.get("user-1/system_run-1/partial.txt"))).toBe("saved");
   });
 

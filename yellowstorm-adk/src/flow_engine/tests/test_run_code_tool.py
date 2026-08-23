@@ -8,7 +8,7 @@ def _assert_workspace_guidance(text: str):
     assert "import()" in text
     assert "require" in text
     assert "node:*" in text
-    for method in ("list", "stat", "readText", "readJson", "writeText", "writeJson"):
+    for method in ("list", "glob", "find", "stat", "readText", "readJson", "copy", "writeText", "writeJson", "remove"):
         assert method in text
     assert "fs.list('/workspace')" in text
     assert "/workspace/sources/" in text
@@ -59,3 +59,33 @@ def test_playbook_run_code_is_absent_when_global_switch_is_off(monkeypatch):
         execution_id="execution-1",
     )
     assert all(tool.name != "run_code" for tool in tools)
+
+
+@pytest.mark.asyncio
+async def test_playbook_run_code_prefers_descriptor_sources_over_legacy_paths(monkeypatch):
+    monkeypatch.setattr(factory, "run_code_globally_enabled", lambda: True)
+    captured = {}
+
+    async def execute(_self, **kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "result": [], "logs": [], "written_files": [], "mutations": [], "execution_ms": 1}
+
+    monkeypatch.setattr(factory.RunCodeClient, "execute", execute)
+    tools, _collector = factory.create_langchain_tools(
+        agent_config={"tools": [{"name": "run_code"}], "agent_params": {}},
+        user_id="caller-1",
+        execution_id="execution-1",
+        workspace_ceph_paths=["legacy-owner/legacy-workspace"],
+        run_code_sources=[{
+            "workspaceId": "workspace-1",
+            "alias": "report",
+            "cephPrefix": "workspace-owner/immutable-finance",
+            "scope": {"kind": "files", "relativePaths": ["2026/report.pdf"]},
+        }],
+    )
+    tool = next(item for item in tools if item.name == "run_code")
+    await tool.ainvoke({"code": "return await fs.find('report');", "input": None})
+    context = captured["context"]
+    assert context.mounts[1].virtualPath == "/workspace/attachments/report"
+    assert context.mounts[1].allowedRelativePaths == ["2026/report.pdf"]
+    assert all(mount.cephPrefix != "legacy-owner/legacy-workspace" for mount in context.mounts)

@@ -969,7 +969,8 @@ async def _execute_step(
 
     effective_file_names = list(tool_scope.file_names)
 
-    user_msg = f"{user_msg}\n\n{_build_available_file_context(effective_file_names)}"
+    if connector_bindings or {"code interpreter", "search", "in_memory"} & tool_names:
+        user_msg = f"{user_msg}\n\n{_build_available_file_context(effective_file_names)}"
 
     tools, collector = create_langchain_tools(
         agent_config=agent_config,
@@ -984,6 +985,7 @@ async def _execute_step(
         user_id=str(state.get("evaluation_user_id") or ""),
         workspace_ceph_paths=workspace_ceph_paths,
         binding_workspace_ids=tool_scope.binding_workspace_ids,
+        run_code_sources=tool_scope.run_code_sources,
         execution_id=str(state.get("execution_id") or ""),
     )
     if _temporary_child_enabled(agent_config["agent_params"]):

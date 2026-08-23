@@ -30,6 +30,8 @@ import { UsageService } from '../../usage';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { WorkspaceService } from '../../workspace/workspace.service';
 import { WorkspaceShareService } from '../../workspace/workspace-share.service';
+import { RunCodeSourceScopeService } from '../../workspace/services/run-code-source-scope.service';
+import type { RunCodeAttachmentSource } from '../../workspace/interfaces/run-code-source.interface';
 import { DocumentStatus } from '../../workspace/schemas/workspace-document.schema';
 import { AgentService } from '../../agent/agent.service';
 import { IGrpcAgent, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
@@ -108,6 +110,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly workspaceDocumentService: WorkspaceDocumentService,
     private readonly workspaceService: WorkspaceService,
     private readonly workspaceShareService: WorkspaceShareService,
+    private readonly runCodeSourceScopeService: RunCodeSourceScopeService,
     private readonly agentService: AgentService,
     private readonly modelsService: ModelsService,
     private readonly skillService: SkillService,
@@ -499,7 +502,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           type: 'document',
           document: {
             filepath: doc.path || '',
-            filename: doc.filename || '',
+            filename: doc.originalName || doc.filename || '',
             workspace_name: this.workspaceNameFromPath(doc.path, doc.workspaceId),
             workspace_id: doc.workspaceId,
             source: doc.path || '',
@@ -811,6 +814,18 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async buildRunCodeAttachmentSources(
+    attachedFileIds: string[],
+  ): Promise<RunCodeAttachmentSource[]> {
+    if (attachedFileIds.length === 0) return [];
+    const documents = await this.workspaceDocumentService.findByIds(attachedFileIds);
+    return documents.flatMap((document) =>
+      document.workspaceId && document.path
+        ? [{ workspaceId: document.workspaceId, path: document.path }]
+        : [],
+    );
+  }
+
   isConversationStreaming(userId: string, conversationId: string): boolean {
     return this.activeStreams.get(userId)?.has(conversationId) ?? false;
   }
@@ -864,23 +879,26 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         );
       }
     }
-    const [, attachedFiles, previousAttachedFiles, skills] = await Promise.all([
+    const [, attachedFiles, previousAttachedFiles, skills, currentAttachmentSources] = await Promise.all([
       this.resolveAgentBrainContexts(agents),
       this.buildAttachedFiles(request.attachedFileIds),
       this.buildPreviousAttachedFiles(systemWorkspaceId, request.attachedFileIds),
       request.skillIds.length ? this.skillService.findByIdsForGrpc(request.skillIds) : Promise.resolve([]),
+      this.buildRunCodeAttachmentSources(request.attachedFileIds),
     ]);
     await this.attachRunCodeContexts(
       agents,
       userId,
-      conversationId,
+      runtimeCorrelationId,
+      workspaceContexts.map((context) => context.workspace_id),
       [
-        ...workspaceContexts.map((context) => context.workspace_id),
-        ...agents.flatMap((agent) => agent.brain_context.map((context) => context.workspace_id)),
-        ...previousAttachedFiles.flatMap((file) => file.workspace_id ? [file.workspace_id] : []),
-        ...(systemWorkspaceId ? [systemWorkspaceId] : []),
+        ...currentAttachmentSources,
+        ...previousAttachedFiles.flatMap((file) =>
+          file.workspace_id && file.filepath
+            ? [{ workspaceId: file.workspace_id, path: file.filepath }]
+            : [],
+        ),
       ],
-      attachedFiles.flatMap((file) => file.document?.workspace_id ? [file.document.workspace_id] : []),
     );
     return this.agentRequestBuilder.build({
       userId,
@@ -900,37 +918,32 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     agents: IGrpcAgent[],
     userId: string,
     runId: string,
-    trustedWorkspaceIds: string[],
-    attachmentWorkspaceIds: string[] = [],
+    selectedWorkspaceIds: string[],
+    attachments: RunCodeAttachmentSource[] = [],
   ): Promise<void> {
     const eligibleAgents = agents.filter((agent) =>
       agent.tools.some((tool) => tool.name === 'run_code'),
     );
     if (eligibleAgents.length === 0) return;
 
-    const uniqueAttachmentWorkspaceIds = [
-      ...new Set(attachmentWorkspaceIds.filter(Boolean)),
-    ];
+    const uniqueAttachmentWorkspaceIds = [...new Set(
+      attachments.map((attachment) => attachment.workspaceId).filter(Boolean),
+    )];
     await this.workspaceShareService.assertUserHasAccess(
       userId,
-      uniqueAttachmentWorkspaceIds,
+      [...new Set([...selectedWorkspaceIds.filter(Boolean), ...uniqueAttachmentWorkspaceIds])],
     );
-    const uniqueWorkspaceIds = [
-      ...new Set([
-        ...trustedWorkspaceIds.filter(Boolean),
-        ...uniqueAttachmentWorkspaceIds,
-      ]),
-    ];
-    const pathMap = await this.workspaceService.getStoragePathMapByIds(uniqueWorkspaceIds);
-    const contextJson = JSON.stringify({
-      userId,
-      runId,
-      sourcePrefixes: uniqueWorkspaceIds.flatMap((id) => pathMap[id] ? [pathMap[id]] : []),
-    });
-    for (const agent of eligibleAgents) {
+    await Promise.all(eligibleAgents.map(async (agent) => {
+      const sources = await this.runCodeSourceScopeService.buildSources(
+        [...new Set([
+          ...selectedWorkspaceIds.filter(Boolean),
+          ...agent.brain_context.map((context) => context.workspace_id).filter(Boolean),
+        ])],
+        attachments,
+      );
       agent.agent_params ??= { params: {} };
-      agent.agent_params.params.run_code_context_json = contextJson;
-    }
+      agent.agent_params.params.run_code_context_json = JSON.stringify({ userId, runId, sources });
+    }));
   }
 
   executePrivateAgentRequest(
@@ -2056,17 +2069,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     await this.attachRunCodeContexts(
       grpcAgents,
       params.userId,
-      params.conversationId,
-      [
-        ...workspaceContexts.map((context) => context.workspace_id),
-        ...grpcAgents.flatMap((agent) =>
-          agent.brain_context.map((context) => context.workspace_id),
-        ),
-        ...previousAttachedFiles.flatMap((file) =>
-          file.workspace_id ? [file.workspace_id] : [],
-        ),
-        ...(systemWorkspaceId ? [systemWorkspaceId] : []),
-      ],
+      params.messageId,
+      workspaceContexts.map((context) => context.workspace_id),
+      previousAttachedFiles.flatMap((file) =>
+        file.workspace_id && file.filepath
+          ? [{ workspaceId: file.workspace_id, path: file.filepath }]
+          : [],
+      ),
     );
 
     const grpcRequest = {
