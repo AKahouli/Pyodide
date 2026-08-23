@@ -1321,7 +1321,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
               // Capture time to first token when first text/reasoning content appears
               if (timeToFirstToken === null) {
-                if ((type === 'text' || type === 'reasoning') && data?.content) {
+                if (type === 'text' && data?.content) {
                   timeToFirstToken = Date.now() - startTime;
                 }
               }
@@ -1695,7 +1695,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   ): Promise<void> {
     const completedAt = new Date().toISOString();
     for (const component of buffer.values()) {
-      if (component.type !== 'toolInfo' || component.data.status !== 'running') continue;
+      if (component.type !== 'toolActivity' || component.data.status !== 'running') continue;
       const startedAt = typeof component.data.startedAt === 'string' ? Date.parse(component.data.startedAt) : Number.NaN;
       component.data = {
         ...component.data,
@@ -1766,7 +1766,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
    * - 'update': Merges data into existing component
    *
    * Type-specific behavior:
-   * - text/code/reasoning: Append to content string
+   * - text/code: Append to content string
    * - queue/plan/checkpoint/task: Replace entire data (arrives in one chunk)
    */
   private applyChunkToBuffer(
@@ -1782,7 +1782,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
     if (action === 'add') {
       const existing = buffer.get(componentId);
-      if (existing && type === 'toolInfo') {
+      if (existing && type === 'toolActivity') {
         existing.data = this.mergeComponentData(type, existing.data, data);
         return;
       }
@@ -1798,7 +1798,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         if (guardrailDecision) {
           existing.data.guardrailDecision = guardrailDecision;
         }
-      } else if (type === 'toolInfo') {
+      } else if (type === 'toolActivity') {
         const merged = this.mergeComponentData(type, {}, data);
         buffer.set(componentId, { id: componentId, type, data: merged });
       }
@@ -1827,7 +1827,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           content: existingContent + newContent,
         };
       }
-      case 'reasoning':
+      case 'agentActivity':
         return { ...existing, ...incoming };
       case 'code': {
         // Append content, preserve language/filename from first chunk
@@ -1853,7 +1853,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       case 'choice':
         // These arrive fully formed - replace with incoming data
         return { ...incoming };
-      case 'toolInfo':
+      case 'toolActivity':
         // The 'update' chunk carries the final status (completed/failed) that
         // supersedes the initial 'running', but params (the tool-call args) are
         // only sent on the initial 'add' — preserve them when the update omits them.
@@ -1874,6 +1874,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           resultJson: (incoming.resultJson as string) || (existing.resultJson as string) || '',
           actorId: (incoming.actorId as string) || (existing.actorId as string) || '',
           actorName: (incoming.actorName as string) || (existing.actorName as string) || '',
+          primaryInput: (incoming.primaryInput as string) || (existing.primaryInput as string) || '',
+          primaryInputLanguage: (incoming.primaryInputLanguage as string) || (existing.primaryInputLanguage as string) || '',
         };
       case 'sandbox':
         // Sandbox: merge code from first chunk with output/error from update

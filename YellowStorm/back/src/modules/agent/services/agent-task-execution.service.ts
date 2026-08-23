@@ -38,7 +38,7 @@ export class AgentTaskExecutionService {
       const metadata = createGrpcMetadata(this.config); metadata.set('user', input.username || 'SYSTEM'); metadata.set('x-correlation-id', input.correlationId);
       const call = client.RunSingleAgent(request, metadata); let text = ''; const textComponents = new Map<string, string>(); const textComponentOrder: string[] = []; const toolResults: AgentTaskToolResult[] = []; let usage: { inputTokens: number; outputTokens: number; model?: string } | undefined; let terminalError = false; let settled = false; const startedAt = Date.now();
       const timer = setTimeout(() => { if (!settled) { settled = true; call.cancel(); reject(new ServiceUnavailableException(ErrorCode.AI_SERVICE_TIMEOUT, 'Decision-flow generation timed out')); } }, timeoutMs);
-      call.on('data', (chunk: { action?: string; component?: { id?: string; text?: { content?: string }; error?: { title?: string; content?: string }; tool_info?: { tool_name?: string; status?: string; result_json?: string } }; usage?: { input_tokens?: number; output_tokens?: number; model?: string } }) => {
+      call.on('data', (chunk: { action?: string; component?: { id?: string; text?: { content?: string }; error?: { title?: string; content?: string }; tool_activity?: { tool_name?: string; status?: string; result_json?: string } }; usage?: { input_tokens?: number; output_tokens?: number; model?: string } }) => {
         if (chunk.component?.error) terminalError = true;
         const content = chunk.component?.text?.content;
         if (content && (chunk.action === 'add' || chunk.action === 'update')) {
@@ -50,12 +50,12 @@ export class AgentTaskExecutionService {
             text += content;
           }
         }
-        const toolInfo = chunk.component?.tool_info;
-        if (toolInfo?.tool_name && (toolInfo.status === 'completed' || toolInfo.status === 'failed') && toolInfo.result_json) {
+        const toolActivity = chunk.component?.tool_activity;
+        if (toolActivity?.tool_name && (toolActivity.status === 'completed' || toolActivity.status === 'failed') && toolActivity.result_json) {
           try {
-            toolResults.push({ name: toolInfo.tool_name, status: toolInfo.status, result: JSON.parse(toolInfo.result_json) });
+            toolResults.push({ name: toolActivity.tool_name, status: toolActivity.status, result: JSON.parse(toolActivity.result_json) });
           } catch {
-            this.logger.warn(`Ignored malformed structured tool result tool=${toolInfo.tool_name}`);
+            this.logger.warn(`Ignored malformed structured tool result tool=${toolActivity.tool_name}`);
           }
         }
         if (chunk.usage) usage = { inputTokens: (usage?.inputTokens ?? 0) + (chunk.usage.input_tokens ?? 0), outputTokens: (usage?.outputTokens ?? 0) + (chunk.usage.output_tokens ?? 0), model: chunk.usage.model ?? usage?.model };

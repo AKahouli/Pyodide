@@ -9,7 +9,7 @@ describe('ResponseReliabilityEvidenceBuilder', () => {
       _id: new Types.ObjectId(),
       components: [
         { id: 'text-1', type: 'text', data: { content: 'Revenue was 10.' } },
-        { id: 'reasoning-1', type: 'reasoning', data: { content: 'Private reasoning' } },
+        { id: 'activity-1', type: 'agentActivity', data: { summary: 'Preparing evidence', status: 'completed' } },
         { type: 'citation', data: { parentId: 'text-1', highlightText: 'Revenue was 10.', pageContent: 'fallback', source: 'report.pdf', page: '2' } },
       ],
     } as never;
@@ -53,15 +53,15 @@ describe('ResponseReliabilityEvidenceBuilder', () => {
       messageId: 'message-1', question: 'Question?', requestId: 'replay-2',
       components: [
         { id: 'text', type: 'text', data: { content: 'Revenue was 10 and 2 + 2 is 4.' } },
-        { id: 'search', type: 'toolInfo', data: {
+        { id: 'search', type: 'toolActivity', data: {
           toolName: 'perform_document_search', status: 'completed',
           resultJson: JSON.stringify({ sources_text: [{ page_content: 'Revenue was 10.', filename: 'report.pdf', page: '2', source_reference: '[1]' }] }),
         } },
-        { id: 'web', type: 'toolInfo', data: {
+        { id: 'web', type: 'toolActivity', data: {
           toolName: 'perform_web_search', status: 'completed',
           resultJson: JSON.stringify({ text: 'Published result', sources: [{ title: 'Source', url: 'https://example.com/result' }] }),
         } },
-        { id: 'calculator', type: 'toolInfo', data: { toolName: 'calculator', status: 'completed', resultJson: JSON.stringify('4') } },
+        { id: 'calculator', type: 'toolActivity', data: { toolName: 'calculator', status: 'completed', resultJson: JSON.stringify('4') } },
       ] as never,
     });
 
@@ -77,11 +77,11 @@ describe('ResponseReliabilityEvidenceBuilder', () => {
       messageId: 'message-1', question: 'Question?', requestId: 'replay-3',
       components: [
         { id: 'text', type: 'text', data: { content: 'Answer' } },
-        { id: 'failed', type: 'toolInfo', data: { toolName: 'perform_document_search', status: 'failed', resultJson: '{"sources_text":[{"page_content":"bad"}]}' } },
-        { id: 'malformed', type: 'toolInfo', data: { toolName: 'perform_document_search', status: 'completed', resultJson: '{' } },
-        { id: 'large', type: 'toolInfo', data: { toolName: 'perform_document_search', status: 'completed', resultJson: 'x'.repeat(65_537) } },
-        { id: 'web', type: 'toolInfo', data: { toolName: 'perform_web_search', status: 'completed', resultJson: JSON.stringify({ text: 'Result', sources: [{ url: 'http://example.com' }] }) } },
-        { id: 'other', type: 'toolInfo', data: { toolName: 'activate_skill', status: 'completed', resultJson: '{"secret":"value"}' } },
+        { id: 'failed', type: 'toolActivity', data: { toolName: 'perform_document_search', status: 'failed', resultJson: '{"sources_text":[{"page_content":"bad"}]}' } },
+        { id: 'malformed', type: 'toolActivity', data: { toolName: 'perform_document_search', status: 'completed', resultJson: '{' } },
+        { id: 'large', type: 'toolActivity', data: { toolName: 'perform_document_search', status: 'completed', resultJson: 'x'.repeat(65_537) } },
+        { id: 'web', type: 'toolActivity', data: { toolName: 'perform_web_search', status: 'completed', resultJson: JSON.stringify({ text: 'Result', sources: [{ url: 'http://example.com' }] }) } },
+        { id: 'other', type: 'toolActivity', data: { toolName: 'activate_skill', status: 'completed', resultJson: '{"secret":"value"}' } },
       ] as never,
     });
     expect(result.globalEvidence).toEqual([]);

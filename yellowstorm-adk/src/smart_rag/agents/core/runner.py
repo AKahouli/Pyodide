@@ -29,7 +29,11 @@ from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT
 from src.logger.logging import get_logger
 from src.smart_rag.infrastructure.model_parameters import get_context_window_for_model
 from src.smart_rag.run_code_artifacts import build_run_code_artifacts
-from src.smart_rag.tool_activity_presenter import present_tool_call, serialize_tool_value
+from src.smart_rag.tool_activity_presenter import (
+    present_tool_call,
+    sanitize_activity_summary,
+    serialize_tool_value,
+)
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
 APP_NAME = "manager_app"
@@ -387,16 +391,41 @@ class AgentRunner:
                 if not event.content or not event.content.parts:
                     continue
 
-                # Skip text parts if event has multiple parts (indicates explanation + function call)
-                has_multiple_parts = len(event.content.parts) > 1
+                has_function_call = any(part.function_call for part in event.content.parts)
 
                 for part in event.content.parts:
                     if (
                         agent_type != "html"
                         and part.text
                         and getattr(part, "thought", False) is not True
+                        and has_function_call
                         and not event.is_final_response()
-                        and not has_multiple_parts
+                        and not guarded_output
+                    ):
+                        summary = sanitize_activity_summary(part.text)
+                        if summary and q:
+                            await q.put(
+                                self.streaming_formatter.format_component_event(
+                                    agent_id=agent_id,
+                                    component_type="agent_activity",
+                                    component_data={
+                                        "summary": summary,
+                                        "status": "completed",
+                                        "actor_id": str(agent_id or ""),
+                                        "actor_name": str(agent_name or ""),
+                                    },
+                                    message_id=session_id,
+                                    component_id=f"activity-{uuid.uuid4()}",
+                                    action="add",
+                                )
+                            )
+                        continue
+                    if (
+                        agent_type != "html"
+                        and part.text
+                        and getattr(part, "thought", False) is not True
+                        and not event.is_final_response()
+                        and not has_function_call
                         and not guarded_output
                     ):
                         event_text = part.text or ""
@@ -548,7 +577,7 @@ class AgentRunner:
                             await q.put(
                                 self.streaming_formatter.format_component_event(
                                     agent_id=agent_id,
-                                    component_type="tool_info",
+                                    component_type="tool_activity",
                                     component_data={
                                         "tool_name": func_name,
                                         "status": "running",
@@ -560,6 +589,10 @@ class AgentRunner:
                                         "render_kind": presentation.render_kind,
                                         "actor_id": actor_id,
                                         "actor_name": str(agent_name or ""),
+                                        **({
+                                            "primary_input": tool_args.get("code", ""),
+                                            "primary_input_language": tool_args.get("language", ""),
+                                        } if func_name == "run_code" else {}),
                                     },
                                     message_id=session_id,
                                     component_id=tool_component_id,
@@ -702,7 +735,7 @@ class AgentRunner:
                                 await q.put(
                                     self.streaming_formatter.format_component_event(
                                         agent_id=agent_id,
-                                        component_type="tool_info",
+                                        component_type="tool_activity",
                                         component_data={
                                             "tool_name": func_name,
                                             "status": "completed" if success else "failed",

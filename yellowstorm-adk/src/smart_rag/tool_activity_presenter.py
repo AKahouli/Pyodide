@@ -40,7 +40,7 @@ def _humanize(value: str) -> str:
     return " ".join(part.capitalize() for part in re.split(r"[_\-\s]+", value) if part)
 
 
-def _safe_summary(value: Any) -> str:
+def sanitize_activity_summary(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     text = _CONTROL.sub(" ", value).replace("\r", " ").replace("\n", " ")
@@ -68,7 +68,7 @@ def _safe_file_label(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     filename = value.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
-    return _safe_summary(filename)
+    return sanitize_activity_summary(filename)
 
 
 def present_tool_call(tool_name: str, args: dict[str, Any]) -> ToolPresentation:
@@ -76,7 +76,7 @@ def present_tool_call(tool_name: str, args: dict[str, Any]) -> ToolPresentation:
     known = _KNOWN.get(normalized)
     if known:
         display_key, render_kind, summary_keys = known
-        summary = next((_safe_summary(args.get(key)) for key in summary_keys if _safe_summary(args.get(key))), "")
+        summary = next((sanitize_activity_summary(args.get(key)) for key in summary_keys if sanitize_activity_summary(args.get(key))), "")
         return ToolPresentation(display_key, None, summary, render_kind)
 
     if any(token in normalized for token in ("glob", "find_file", "list_file")):
@@ -89,7 +89,7 @@ def present_tool_call(tool_name: str, args: dict[str, Any]) -> ToolPresentation:
         if token in normalized:
             return ToolPresentation(display_key, None, next((_safe_file_label(args.get(key)) for key in keys if _safe_file_label(args.get(key))), ""), kind)
 
-    summary = next((_safe_summary(args.get(key)) for key in ("description", "query", "path") if _safe_summary(args.get(key))), "")
+    summary = next((sanitize_activity_summary(args.get(key)) for key in ("description", "query", "path") if sanitize_activity_summary(args.get(key))), "")
     return ToolPresentation(None, _humanize(tool_name), summary, "generic")
 
 

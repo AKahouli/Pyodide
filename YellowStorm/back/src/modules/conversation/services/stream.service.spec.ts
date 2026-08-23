@@ -6,7 +6,7 @@ describe('StreamService guardrail metadata buffering', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     Object.assign(service as object, {
       componentBuffers: new Map([['user-1:conversation-1:message-1', new Map([
-        ['reasoning-1', { id: 'reasoning-1', type: 'reasoning', data: { summary: 'Planning', detail: 'private trace' } }],
+        ['activity-1', { id: 'activity-1', type: 'agentActivity', data: { summary: 'Planning', detail: 'private trace' } }],
         ['artifact-1', { id: 'artifact-1', type: 'artifact', data: { filename: 'report.pdf', storagePath: '/workspace/private/report.pdf' } }],
       ])]]),
       streamRevisions: new Map([['user-1:conversation-1:message-1', 7]]),
@@ -17,7 +17,7 @@ describe('StreamService guardrail metadata buffering', () => {
       messageId: 'message-1',
       revision: 7,
       components: [
-        { id: 'reasoning-1', type: 'reasoning', data: { summary: 'Planning' } },
+        { id: 'activity-1', type: 'agentActivity', data: { summary: 'Planning' } },
         { id: 'artifact-1', type: 'artifact', data: { filename: 'report.pdf' } },
       ],
     });
@@ -29,7 +29,7 @@ describe('StreamService guardrail metadata buffering', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     const streamKey = 'user-1:conversation-1:message-1';
     const buffer = new Map<string, MessageComponent>([['tool-1', {
-      id: 'tool-1', type: 'toolInfo', data: { toolName: 'search', status: 'running' },
+      id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', status: 'running' },
     }]]);
     Object.assign(service as object, {
       streamRevisions: new Map([[streamKey, 4]]),
@@ -60,7 +60,7 @@ describe('StreamService guardrail metadata buffering', () => {
       activeCalls: new Map(),
       activeStreams: new Map(),
       componentBuffers: new Map([['user-1:conversation-1:message-1', new Map([['tool-1', {
-        id: 'tool-1', type: 'toolInfo', data: {
+        id: 'tool-1', type: 'toolActivity', data: {
           toolName: 'run_code', status: 'running', startedAt: new Date(Date.now() - 100).toISOString(),
         },
       }]])]]),
@@ -318,12 +318,12 @@ describe('StreamService guardrail metadata buffering', () => {
 
     (service as any).applyChunkToBuffer(buffer, 'add', {
       id: 'tool-call-1',
-      type: 'toolInfo',
+      type: 'toolActivity',
        data: { toolName: 'search_documents', status: 'running', paramsJson: '{"query":"contract"}', startedAt: '2026-07-21T10:13:42Z' },
     });
     (service as any).applyChunkToBuffer(buffer, 'update', {
       id: 'tool-call-1',
-      type: 'toolInfo',
+      type: 'toolActivity',
        data: { toolName: 'search_documents', status: 'completed', resultJson: '{"matches":2}' },
     });
 
@@ -341,7 +341,7 @@ describe('StreamService guardrail metadata buffering', () => {
     const buffer = new Map<string, MessageComponent>();
 
     (service as any).applyChunkToBuffer(buffer, 'add', {
-      id: 'tool-call-public', type: 'toolInfo',
+      id: 'tool-call-public', type: 'toolActivity',
        data: { toolName: 'connector', status: 'completed', resultJson: '{"secret":"value"}' },
     });
 
@@ -356,7 +356,7 @@ describe('StreamService guardrail metadata buffering', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     const buffer = new Map<string, MessageComponent>();
     const apply = (action: string, id: string, data: Record<string, unknown>) => (service as any).applyChunkToBuffer(buffer, action, {
-      id, type: 'toolInfo', data,
+      id, type: 'toolActivity', data,
     });
 
     apply('update', 'tool-agent-call-1', { toolName: 'search', status: 'completed', resultJson: '{"matches":1}' });

@@ -79,7 +79,7 @@ class TestAgentRunner:
             assert result == ("Test result", [], {}, [])
             mock_session_helper.create_session.assert_called_once()
             mock_run_standard.assert_called_once()
-            mock_prompt_processor.extract_task_description.assert_called_once_with("Test message")
+            mock_prompt_processor.extract_task_description.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_run_agent_tool_prefers_explicit_task_summary(self):
@@ -107,14 +107,7 @@ class TestAgentRunner:
             )
 
         mock_prompt_processor.extract_task_description.assert_not_called()
-        mock_streaming_formatter.format_streaming_event.assert_called_once_with(
-            agent_id="agent_123",
-            agent_name="Smart Agent",
-            agent_type="agent",
-            chunk="Profitability",
-            message_id=ANY,
-            content_type="description",
-        )
+        mock_streaming_formatter.format_streaming_event.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_run_agent_tool_html_agent(self):
@@ -406,18 +399,19 @@ class TestAgentRunner:
         mock_queue = AsyncMock()
         mock_content = types.Content(role="user", parts=[types.Part(text="test")])
 
-        mock_queue.include_tool_results = True
+        mock_queue.include_tool_results = False
 
         # Mock event with function call
         mock_event = MagicMock()
         mock_event.content = MagicMock()
-        mock_event.content.parts = [MagicMock()]
-        mock_event.content.parts[0].text = None
-        mock_event.content.parts[0].function_response = None
-        mock_event.content.parts[0].function_call = MagicMock()
-        mock_event.content.parts[0].function_call.name = "test_function"
-        mock_event.content.parts[0].function_call.id = "call-1"
-        mock_event.content.parts[0].function_call.args = {"arg1": "value1"}
+        visible_narration = MagicMock(text="I'll inspect the selected file.", thought=False, function_call=None, function_response=None)
+        hidden_thought = MagicMock(text="Private chain of thought", thought=True, function_call=None, function_response=None)
+        function_call = MagicMock(text=None, function_response=None)
+        function_call.function_call = MagicMock()
+        function_call.function_call.name = "run_code"
+        function_call.function_call.id = "call-1"
+        function_call.function_call.args = {"code": "print('safe')", "language": "python"}
+        mock_event.content.parts = [visible_narration, hidden_thought, function_call]
         mock_event.is_final_response.return_value = False
 
         # Matching function response transitions the same tool component.
@@ -427,7 +421,7 @@ class TestAgentRunner:
         mock_response_event.content.parts[0].text = None
         mock_response_event.content.parts[0].function_call = None
         mock_response_event.content.parts[0].function_response = MagicMock()
-        mock_response_event.content.parts[0].function_response.name = "test_function"
+        mock_response_event.content.parts[0].function_response.name = "run_code"
         mock_response_event.content.parts[0].function_response.id = "call-1"
         mock_response_event.content.parts[0].function_response.is_error = False
         mock_response_event.content.parts[0].function_response.response = {}
@@ -475,21 +469,37 @@ class TestAgentRunner:
 
             mock_handle_func.assert_called_once()
             assert result[0] == "Final response"
+            component_types = [call.kwargs["component_type"] for call in mock_streaming_formatter.format_component_event.call_args_list]
+            assert component_types[:2] == ["agent_activity", "tool_activity"]
+            activity_events = [
+                call.kwargs
+                for call in mock_streaming_formatter.format_component_event.call_args_list
+                if call.kwargs["component_type"] == "agent_activity"
+            ]
+            assert [event["component_data"]["summary"] for event in activity_events] == ["I'll inspect the selected file."]
             tool_events = [
                 call.kwargs
                 for call in mock_streaming_formatter.format_component_event.call_args_list
-                if call.kwargs["component_type"] == "tool_info"
+                if call.kwargs["component_type"] == "tool_activity"
             ]
             started_at = tool_events[0]["component_data"].pop("started_at")
             assert datetime.fromisoformat(started_at.replace("Z", "+00:00")).tzinfo is not None
             assert tool_events == [
                 {
                     "agent_id": "agent_123",
-                    "component_type": "tool_info",
+                    "component_type": "tool_activity",
                     "component_data": {
-                        "title": "test_function",
+                        "tool_name": "run_code",
                         "status": "running",
-                        "params": '{"arg1": "value1"}',
+                        "params_json": '{"code":"print(\'safe\')","language":"python"}',
+                        "display_key": "runCode",
+                        "fallback_display_name": "",
+                        "summary": "",
+                        "render_kind": "run_code",
+                        "actor_id": "agent_123",
+                        "actor_name": "TestAgent",
+                        "primary_input": "print('safe')",
+                        "primary_input_language": "python",
                     },
                     "message_id": "session_123",
                     "component_id": "tool-agent_123-call-1",
@@ -497,11 +507,12 @@ class TestAgentRunner:
                 },
                 {
                     "agent_id": "agent_123",
-                    "component_type": "tool_info",
+                    "component_type": "tool_activity",
                     "component_data": {
-                        "title": "test_function",
+                        "tool_name": "run_code",
                         "status": "completed",
-                        "result_json": "{}",
+                        "completed_at": ANY,
+                        "duration_ms": ANY,
                     },
                     "message_id": "session_123",
                     "component_id": "tool-agent_123-call-1",

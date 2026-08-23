@@ -15,29 +15,29 @@ describe('component-mapper text extraction', () => {
     });
   });
 
-  it('prefers reasoning over empty default text oneof (proto-loader defaults)', () => {
+  it('prefers agent activity over empty default text oneof (proto-loader defaults)', () => {
     const comp = {
       id: 'comp-2',
       text: { content: '' },
-      reasoning: { summary: 'Preparing sources', status: 'running' },
+      agent_activity: { summary: 'Preparing sources', status: 'running' },
     };
 
-    expect(getComponentType(comp)).toBe('reasoning');
+    expect(getComponentType(comp)).toBe('agentActivity');
     expect(extractComponentData(comp).data.summary).toBe('Preparing sources');
   });
 
-  it('uses the oneof discriminator for display-safe reasoning with an empty summary', () => {
+  it('uses the oneof discriminator for display-safe agent activity with an empty summary', () => {
     const comp = {
       id: 'comp-2-empty',
-      data: 'reasoning',
+      data: 'agent_activity',
       text: { content: '' },
-      reasoning: { summary: '', status: 'completed' },
-      tool_info: { tool_name: '', status: '' },
+      agent_activity: { summary: '', status: 'completed' },
+      tool_activity: { tool_name: '', status: '' },
     };
 
-    expect(getComponentType(comp)).toBe('reasoning');
+    expect(getComponentType(comp)).toBe('agentActivity');
     expect(extractComponentData(comp)).toEqual({
-      type: 'reasoning',
+      type: 'agentActivity',
       data: { summary: '', status: 'completed' },
     });
   });
@@ -55,9 +55,9 @@ describe('component-mapper text extraction', () => {
     });
   });
 
-  it('excludes progress reasoning from plain-text replies', () => {
+  it('excludes agent activity from plain-text replies', () => {
     const reply = aggregateTextFromComponents([
-      { type: 'reasoning', data: { summary: 'Preparing answer', status: 'completed' } },
+      { type: 'agentActivity', data: { summary: 'Preparing answer', status: 'completed' } },
       { type: 'text', data: { content: 'Answer.' } },
     ]);
 
@@ -292,18 +292,20 @@ describe('component-mapper choice extraction', () => {
     expect(result.data).toMatchObject({ questionId: 'q1', selectionMode: 'multiple', submitBehavior: 'explicit', labels: { submit: 'Continue' }, progress: { current: 1, total: 2 } });
   });
 
-  it('maps tool arguments and terminal status from the toolInfo proto component', () => {
+  it('maps full tool activity metadata from the proto component', () => {
     expect(extractComponentData({
       id: 'tool-1',
-      tool_info: {
+      tool_activity: {
         tool_name: 'search_documents',
         status: 'completed',
         params_json: '{"query":"contract"}',
         result_json: '{"matches":2}',
         started_at: '2026-07-21T10:13:42Z',
+        primary_input: 'return normalize(input);',
+        primary_input_language: 'typescript',
       },
     })).toEqual({
-      type: 'toolInfo',
+      type: 'toolActivity',
       data: {
         toolName: 'search_documents',
         status: 'completed',
@@ -312,6 +314,8 @@ describe('component-mapper choice extraction', () => {
         startedAt: '2026-07-21T10:13:42Z',
         summary: '',
         renderKind: 'generic',
+        primaryInput: 'return normalize(input);',
+        primaryInputLanguage: 'typescript',
       },
     });
   });

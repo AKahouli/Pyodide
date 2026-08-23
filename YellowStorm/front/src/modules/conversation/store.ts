@@ -21,6 +21,8 @@ let receivedCurrentStreamStart = false;
 let pendingRecoveryChunks: BufferedStreamChunk[] = [];
 let pendingStreamReconcileTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingStreamReconcileAttempts = 0;
+let pendingStreamReconcileInFlight = false;
+let pendingStreamReconcileTarget: string | null = null;
 const PENDING_STREAM_RECONCILE_INTERVAL_MS = 2_000;
 const MAX_PENDING_STREAM_RECONCILE_ATTEMPTS = 150;
 
@@ -53,9 +55,9 @@ export function applyChunksToComponents(
   for (const { action, component } of chunks) {
     if (action === 'add') {
       const existingIndex = result.findIndex((item) => item.id === component.id);
-      if (component.type === 'toolInfo' && existingIndex >= 0) {
+      if (component.type === 'toolActivity' && existingIndex >= 0) {
         const existing = result[existingIndex];
-        result[existingIndex] = { ...existing, data: mergeStreamingData('toolInfo', existing.data, component.data) };
+        result[existingIndex] = { ...existing, data: mergeStreamingData('toolActivity', existing.data, component.data) };
       } else {
         result.push({ ...component, data: initializeStreamingData(component.type, component.data) });
       }
@@ -65,7 +67,7 @@ export function applyChunksToComponents(
         if (comp.id !== component.id) return comp;
         return { ...comp, data: mergeStreamingData(comp.type, comp.data, component.data) };
       });
-      if (!hasExisting && component.type === 'toolInfo') {
+      if (!hasExisting && component.type === 'toolActivity') {
         result.push({ ...component, data: initializeStreamingData(component.type, component.data) });
       }
     } else if (action === 'delete') {
@@ -163,11 +165,12 @@ function cancelPendingStreamReconciliation(): void {
   if (pendingStreamReconcileTimer) clearTimeout(pendingStreamReconcileTimer);
   pendingStreamReconcileTimer = null;
   pendingStreamReconcileAttempts = 0;
+  pendingStreamReconcileInFlight = false;
+  pendingStreamReconcileTarget = null;
 }
 
 function schedulePendingStreamReconciliation(reconcile: () => Promise<void>): void {
   if (pendingStreamReconcileTimer || pendingStreamReconcileAttempts >= MAX_PENDING_STREAM_RECONCILE_ATTEMPTS) return;
-  pendingStreamReconcileAttempts += 1;
   pendingStreamReconcileTimer = setTimeout(() => {
     pendingStreamReconcileTimer = null;
     void reconcile();
@@ -175,7 +178,12 @@ function schedulePendingStreamReconciliation(reconcile: () => Promise<void>): vo
 }
 
 function isImmediateStreamingComponent(component: StreamingComponent): boolean {
-  return component.type === 'reasoning' || component.type === 'toolInfo' || component.type === 'artifact';
+  return component.type === 'agentActivity' || component.type === 'toolActivity' || component.type === 'artifact';
+}
+
+function isTransientReconciliationError(error: unknown): boolean {
+  const status = parseApiError(error).statusCode;
+  return status === 0 || status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
 function upsertMessage(messages: Message[], message: Message): { messages: Message[]; inserted: boolean } {
@@ -268,7 +276,7 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
         content: existingContent + newContent,
       };
     }
-    case 'reasoning':
+    case 'agentActivity':
       return { ...existing, ...incoming };
     case 'code': {
       // Append content, preserve language/filename from first chunk
@@ -290,7 +298,7 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
     case 'citation':
       // Charts and other structured components replace the full payload on update.
       return { ...incoming };
-    case 'toolInfo':
+    case 'toolActivity':
       // Terminal tool updates only include status. Retain the arguments from
       // the initial event so the live debug pane matches persisted history.
       const existingStatus = (existing.status as string) || 'running';
@@ -1790,6 +1798,14 @@ export const useConversationStore = create<ConversationState>()(
         const conversationId = state.streamingConversationId ?? state.awaitingConversationId;
         const messageId = state.streamingMessageId ?? state.pendingAssistantMessageId;
         if (!conversationId || !messageId) return;
+        const target = `${conversationId}:${messageId}`;
+        if (pendingStreamReconcileTarget !== target) {
+          cancelPendingStreamReconciliation();
+          pendingStreamReconcileTarget = target;
+        }
+        if (pendingStreamReconcileInFlight || pendingStreamReconcileAttempts >= MAX_PENDING_STREAM_RECONCILE_ATTEMPTS) return;
+        pendingStreamReconcileInFlight = true;
+        pendingStreamReconcileAttempts += 1;
 
         try {
           const message = await api.fetchMessage(conversationId, messageId);
@@ -1829,8 +1845,12 @@ export const useConversationStore = create<ConversationState>()(
             current.currentConversationId === conversationId
             && (current.streamingMessageId ?? current.pendingAssistantMessageId) === messageId
           ) {
-            schedulePendingStreamReconciliation(() => get().reconcilePendingStream());
+            if (isTransientReconciliationError(err)) {
+              schedulePendingStreamReconciliation(() => get().reconcilePendingStream());
+            }
           }
+        } finally {
+          if (pendingStreamReconcileTarget === target) pendingStreamReconcileInFlight = false;
         }
       },
 

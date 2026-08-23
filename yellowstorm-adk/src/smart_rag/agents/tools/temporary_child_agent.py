@@ -52,7 +52,7 @@ class _ChildResultQueue:
             return
         component = item.get("component")
         if isinstance(component, dict):
-            if component.get("type") == "tool_info" and self._activity_queue is not None:
+            if component.get("type") == "tool_activity" and self._activity_queue is not None:
                 await self._activity_queue.put(item)
             self._collect_component(component)
             return

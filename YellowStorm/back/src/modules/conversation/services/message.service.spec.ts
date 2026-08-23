@@ -123,7 +123,7 @@ describe('MessageService createUserMessage agent tagging', () => {
       data: { toolName: 'connector', status: 'completed', resultJson: '{"secret":"[REDACTED]"}', paramsJson: '{"query":"safe"}' },
     };
     // Mongoose subdocuments expose schema paths without making all of them enumerable.
-    Object.defineProperty(toolComponent, 'type', { value: 'toolInfo', enumerable: false });
+    Object.defineProperty(toolComponent, 'type', { value: 'toolActivity', enumerable: false });
     const response = (service as any).mapToResponse({
       _id: new Types.ObjectId(),
       conversationId: new Types.ObjectId(conversationId),
@@ -133,25 +133,25 @@ describe('MessageService createUserMessage agent tagging', () => {
 
     expect(response.components[0]).toEqual({
       id: 'tool-1',
-      type: 'toolInfo',
+      type: 'toolActivity',
       data: { toolName: 'connector', status: 'completed', resultJson: '{"secret":"[REDACTED]"}', paramsJson: '{"query":"safe"}' },
     });
   });
 
-  it('strips persisted artifact paths and legacy reasoning detail from message responses', () => {
+  it('strips persisted artifact paths and private activity detail from message responses', () => {
     const response = (service as any).mapToResponse({
       _id: new Types.ObjectId(),
       conversationId: new Types.ObjectId(conversationId),
       conversationType: 'ai',
       components: [
         { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf', storagePath: 'owner/system_run/report.pdf' } },
-        { id: 'reasoning-1', type: 'reasoning', data: { summary: 'Reviewing evidence', detail: 'private reasoning', status: 'completed' } },
+        { id: 'activity-1', type: 'agentActivity', data: { summary: 'Reviewing evidence', detail: 'private reasoning', status: 'completed' } },
       ],
     });
 
     expect(response.components).toEqual([
       { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf' } },
-      { id: 'reasoning-1', type: 'reasoning', data: { summary: 'Reviewing evidence', status: 'completed' } },
+      { id: 'activity-1', type: 'agentActivity', data: { summary: 'Reviewing evidence', status: 'completed' } },
     ]);
   });
 
@@ -174,7 +174,7 @@ describe('MessageService createUserMessage agent tagging', () => {
     let completed = false;
     const completion = service.completeAIMessage({
       messageId: messageId.toString(),
-      components: [{ id: 'tool-1', type: 'toolInfo', data: { title: 'search', status: 'completed', resultJson: '{"secret":true}', startedAt: '2026-07-29T08:00:00.000Z' } }],
+      components: [{ id: 'tool-1', type: 'toolActivity', data: { title: 'search', status: 'completed', resultJson: '{"secret":true}', startedAt: '2026-07-29T08:00:00.000Z' } }],
       inputTokens: 10,
       outputTokens: 20,
       durationMs: 1000,
@@ -297,7 +297,7 @@ describe('MessageService createUserMessage agent tagging', () => {
     await service.upsertCorrectionAttempt('message-1', { ...base, status: 'generating' });
     await service.upsertCorrectionAttempt('message-1', {
       ...base, status: 'rejected', decision: 'rejected', policyReasons: ['score_below_threshold'],
-      components: [{ id: 'tool', type: 'toolInfo', data: { title: 'search', resultJson: '{"secret":"value"}' } }],
+      components: [{ id: 'tool', type: 'toolActivity', data: { title: 'search', resultJson: '{"secret":"value"}' } }],
     });
     await service.upsertCorrectionAttempt('message-1', { ...base, status: 'generating' });
 

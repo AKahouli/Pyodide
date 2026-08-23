@@ -224,7 +224,7 @@ message CodeComponent {
     string output_port_id = 4;   // Optional target playbook output port
 }
 
-message ReasoningComponent {
+message AgentActivityComponent {
     string summary = 1;          // Display-safe progress summary; never private chain-of-thought
     reserved 2;
     reserved "detail";
@@ -232,6 +232,8 @@ message ReasoningComponent {
     optional string started_at = 4;
     optional string completed_at = 5;
     optional int64 duration_ms = 6;
+    optional string actor_id = 7;
+    optional string actor_name = 8;
 }
 
 // Task status enum
@@ -279,7 +281,7 @@ message CheckpointComponent {
     string label = 1;            // Checkpoint label
 }
 
-message ToolInfoComponent {
+message ToolActivityComponent {
     string tool_name = 1;        // Stable machine identity
     string status = 2;           // running | completed | failed | stopped
     optional string params_json = 3; // Sanitized JSON tool-call arguments
@@ -293,6 +295,8 @@ message ToolInfoComponent {
     optional string render_kind = 11;
     optional string actor_id = 12;
     optional string actor_name = 13;
+    optional string primary_input = 14; // Sanitized first-class display payload, e.g. run_code source
+    optional string primary_input_language = 15;
 }
 
 enum ChartKind {
@@ -455,7 +459,7 @@ message Component {
     oneof data {
         TextComponent text = 2;
         CodeComponent code = 3;
-        ReasoningComponent reasoning = 4;
+        AgentActivityComponent agent_activity = 4;
         PlanComponent plan = 5;
         QueueComponent queue = 6;
         CheckpointComponent checkpoint = 7;
@@ -467,7 +471,7 @@ message Component {
         WebPreviewComponent web_preview = 13;  // HTML/CSS/JS web preview
         ArtifactComponent artifact = 14;  // Generated file artifact
         CitationComponent citation = 15;  // Document citation reference
-        ToolInfoComponent tool_info = 16; // Tool execution status (running/completed/failed)
+        ToolActivityComponent tool_activity = 16; // Tool execution status (running/completed/failed)
         ChoiceComponent choice = 18;
     }
 }

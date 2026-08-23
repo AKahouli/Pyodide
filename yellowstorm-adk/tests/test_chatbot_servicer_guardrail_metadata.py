@@ -40,13 +40,13 @@ def test_stream_chunk_allows_missing_guardrail_metadata() -> None:
     assert chunk.metadata.guardrail_decision_json == ""
 
 
-def test_tool_info_serializes_semantic_identity_start_time_and_result() -> None:
-    field = chatbot_pb2.ToolInfoComponent.DESCRIPTOR.fields_by_name["started_at"]
+def test_tool_activity_serializes_semantic_identity_start_time_and_result() -> None:
+    field = chatbot_pb2.ToolActivityComponent.DESCRIPTOR.fields_by_name["started_at"]
     assert field.number == 5
 
     component = ChatbotServicer(agent_team_service=None)._build_component(
         "tool-1",
-        "tool_info",
+        "tool_activity",
         {
             "tool_name": "search_documents",
             "display_key": "searchKnowledge",
@@ -58,11 +58,11 @@ def test_tool_info_serializes_semantic_identity_start_time_and_result() -> None:
     )
 
     decoded = chatbot_pb2.Component.FromString(component.SerializeToString())
-    assert decoded.tool_info.tool_name == "search_documents"
-    assert decoded.tool_info.display_key == "searchKnowledge"
-    assert decoded.tool_info.params_json == '{"query":"contract"}'
-    assert decoded.tool_info.result_json == '{"matches":2}'
-    assert decoded.tool_info.started_at == "2026-07-21T10:13:42Z"
+    assert decoded.tool_activity.tool_name == "search_documents"
+    assert decoded.tool_activity.display_key == "searchKnowledge"
+    assert decoded.tool_activity.params_json == '{"query":"contract"}'
+    assert decoded.tool_activity.result_json == '{"matches":2}'
+    assert decoded.tool_activity.started_at == "2026-07-21T10:13:42Z"
 
 
 def test_artifact_component_serializes_opaque_identity_and_linkage() -> None:
@@ -84,12 +84,12 @@ def test_artifact_component_serializes_opaque_identity_and_linkage() -> None:
     assert decoded.artifact.file_path == "user/session/hello_world.py"
 
 
-def test_initial_reasoning_chunk_is_display_safe_progress_only() -> None:
-    chunk = ChatbotServicer(agent_team_service=None)._build_initial_reasoning_chunk("conversation-1")
+def test_initial_agent_activity_chunk_is_display_safe_progress_only() -> None:
+    chunk = ChatbotServicer(agent_team_service=None)._build_initial_agent_activity_chunk("conversation-1")
 
     assert chunk.action == "add"
     assert chunk.metadata.message_id == "conversation-1"
-    assert chunk.component.WhichOneof("data") == "reasoning"
-    assert chunk.component.reasoning.summary == ""
-    assert chunk.component.reasoning.status == "completed"
-    assert not hasattr(chunk.component.reasoning, "detail")
+    assert chunk.component.WhichOneof("data") == "agent_activity"
+    assert chunk.component.agent_activity.summary == ""
+    assert chunk.component.agent_activity.status == "completed"
+    assert not hasattr(chunk.component.agent_activity, "detail")

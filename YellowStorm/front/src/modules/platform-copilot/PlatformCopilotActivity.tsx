@@ -30,7 +30,7 @@ function getActivityItems(components: readonly MessageComponent[]): ActivityItem
   let hasReasoning = false;
 
   components.forEach((component, componentIndex) => {
-    if (component.type === 'reasoning') {
+    if (component.type === 'agentActivity') {
       if (!hasReasoning) {
         items.push({ key: 'reasoning', kind: 'reasoning', label: '', status: 'running' });
         hasReasoning = true;
@@ -38,7 +38,7 @@ function getActivityItems(components: readonly MessageComponent[]): ActivityItem
       return;
     }
 
-    if (component.type === 'toolInfo') {
+    if (component.type === 'toolActivity') {
       const label = safeSummary(component.data.summary) || safeSummary(component.data.fallbackDisplayName) || safeSummary(component.data.toolName);
       if (label) items.push({
         key: component.id || `tool-${componentIndex}`,

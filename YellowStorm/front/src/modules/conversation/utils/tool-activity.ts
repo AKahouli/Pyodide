@@ -64,6 +64,15 @@ export function formatSanitizedToolText(value: string | undefined): string | und
   }
 }
 
+export function sanitizeRunCodeInput(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const sanitized = sanitizeText(value)
+    .replace(/(?:[A-Za-z]:[\\/]|\/(?:home|tmp|workspace|users?)\/|\\\\)[^\s"'`]+/gi, REDACTED)
+    .replace(/\b(?:s3|ceph|azure|file):\/\/[^\s"'`]+/gi, REDACTED)
+    .replace(OPAQUE_IDENTIFIER, REDACTED);
+  return sanitized.trim() || undefined;
+}
+
 export type ToolRenderKind = 'generic' | 'run_code' | 'search' | 'document' | 'file' | 'web';
 
 export function resolveToolRenderKind(title: string): ToolRenderKind {

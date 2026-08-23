@@ -64,7 +64,7 @@ describe('ResponseCorrectionService', () => {
           components: [{ id: 'replay-text', type: 'text', data: { content: 'Revenue was 10.' } }],
           evidenceComponents: [
             { id: 'replay-text', type: 'text', data: { content: 'Revenue was 10.' } },
-            { id: 'tool-search', type: 'toolInfo', data: { title: 'perform_document_search', status: 'completed', resultJson: '{"sources_text":[{"page_content":"Revenue was 10."}]}' } },
+            { id: 'tool-search', type: 'toolActivity', data: { title: 'perform_document_search', status: 'completed', resultJson: '{"sources_text":[{"page_content":"Revenue was 10."}]}' } },
           ],
           usage: { inputTokens: 10, outputTokens: 5, durationMs: 100 }, promptVersion: 'corrective-replay-v2',
         }) } as never,
@@ -91,7 +91,7 @@ describe('ResponseCorrectionService', () => {
 
     const evidenceBuilder = (service as any).evidenceBuilder;
     expect(evidenceBuilder.buildFromComponents).toHaveBeenCalledWith(expect.objectContaining({
-      components: expect.arrayContaining([expect.objectContaining({ id: 'tool-search', type: 'toolInfo' })]),
+      components: expect.arrayContaining([expect.objectContaining({ id: 'tool-search', type: 'toolActivity' })]),
     }));
     expect(messageService.updateCorrectionWorkflow).toHaveBeenLastCalledWith('message-1', expect.objectContaining({
       correctedComponents: [{ id: 'replay-text', type: 'text', data: { content: 'Revenue was 10.' } }],

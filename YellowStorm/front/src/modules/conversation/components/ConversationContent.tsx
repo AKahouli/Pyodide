@@ -102,7 +102,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
   const activeBranchId = message.questionMessageId ? activeBranches.get(message.questionMessageId) : undefined;
   const showBranchNav = !isStreaming && message.conversationType === 'ai' && message.questionMessageId && branches && branches.length > 1 && activeBranchId;
   const hasPersistedContent = (message.components?.length || 0) > 0;
-  const hasToolCall = message.components?.some((component) => component.type === 'toolInfo') ?? false;
+  const hasToolCall = message.components?.some((component) => component.type === 'toolActivity') ?? false;
   const hasRerunnableAnswer = message.isComplete === true
     && message.isStreaming !== true
     && (message.components?.some((component) => component.type === 'text'

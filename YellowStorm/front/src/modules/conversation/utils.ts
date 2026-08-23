@@ -20,6 +20,8 @@ const conversationVisibleComponentTypes = new Set([
   'sandbox',
   'webPreview',
   'artifact',
+  'agentActivity',
+  'toolActivity',
   'citation',
   'choice',
 ]);
@@ -32,7 +34,7 @@ function getComponentType(component: MessageComponent): string {
 
 /**
  * Projects structured agent output into the user-facing transcript. Internal
- * reasoning, tool calls, and unrecognised payloads are never chat content.
+ * Activity remains structured UI content; unrecognised payloads are never chat content.
  */
 export function mapConversationComponentsToContentParts(components: MessageComponent[]): MessageContentPart[] {
   return mapComponentsToContentParts(components.filter((component) => conversationVisibleComponentTypes.has(getComponentType(component))));
@@ -40,7 +42,7 @@ export function mapConversationComponentsToContentParts(components: MessageCompo
 
 export function getConversationStreamActivity(components: MessageComponent[]): ConversationStreamActivity {
   const componentTypes = components.map(getComponentType);
-  if (componentTypes.includes('toolInfo')) return 'usingTools';
+  if (componentTypes.includes('toolActivity')) return 'usingTools';
   if (componentTypes.some((type) => type === 'text' || type === 'code')) return 'responding';
   return 'thinking';
 }
@@ -223,11 +225,16 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         language: (data.language as string) || '',
         filename: (data.filename as string) || undefined,
       };
-    case 'reasoning':
+    case 'agentActivity':
       return {
-        type: 'reasoning',
-        content: (data.content as string) || '',
-        duration: data.duration != null ? (data.duration as number) : undefined,
+        type: 'agentActivity',
+        summary: (data.summary as string) || '',
+        status: (data.status as 'running' | 'completed') || 'running',
+        startedAt: (data.startedAt as string) || undefined,
+        completedAt: (data.completedAt as string) || undefined,
+        durationMs: data.durationMs != null ? Number(data.durationMs) : undefined,
+        actorId: (data.actorId as string) || undefined,
+        actorName: (data.actorName as string) || undefined,
       };
     case 'plan':
       return {
@@ -291,13 +298,24 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         filePath: '',
         filename: (data.filename as string) || '',
       };
-    case 'toolInfo':
+    case 'toolActivity':
       return {
-        type: 'toolInfo',
-        title: (data.fallbackDisplayName as string) || (data.toolName as string) || '',
-        status: data.status === 'stopped' ? 'failed' : (data.status as 'running' | 'completed' | 'failed') || 'running',
-        params: (data.paramsJson as string) || '',
+        type: 'toolActivity',
+        toolName: (data.toolName as string) || '',
+        summary: (data.summary as string) || '',
+        renderKind: (data.renderKind as import('./types').ToolRenderKind) || 'generic',
+        status: (data.status as 'running' | 'completed' | 'failed' | 'stopped') || 'running',
+        displayKey: (data.displayKey as string) || undefined,
+        fallbackDisplayName: (data.fallbackDisplayName as string) || undefined,
+        paramsJson: (data.paramsJson as string) || undefined,
+        resultJson: (data.resultJson as string) || undefined,
         startedAt: (data.startedAt as string) || undefined,
+        completedAt: (data.completedAt as string) || undefined,
+        durationMs: data.durationMs != null ? Number(data.durationMs) : undefined,
+        actorId: (data.actorId as string) || undefined,
+        actorName: (data.actorName as string) || undefined,
+        primaryInput: (data.primaryInput as string) || undefined,
+        primaryInputLanguage: (data.primaryInputLanguage as string) || undefined,
       };
     default:
       return { type: 'text', content: (data.content as string) || '' };
@@ -565,8 +583,6 @@ export function componentsToMarkdown(components: MessageComponent[]): string {
           const content = (data.content as string) || '';
           return `\`\`\`${lang}\n${content}\n\`\`\``;
         }
-        case 'reasoning':
-          return `> ${(data.content as string) || ''}`;
         case 'plan': {
           const title = (data.title as string) || '';
           const steps = (data.steps as string[]) || [];

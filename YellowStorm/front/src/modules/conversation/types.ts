@@ -264,13 +264,15 @@ export interface ChoiceInteractionMetadata {
 }
 
 export type ToolRenderKind = 'run_code' | 'search' | 'read' | 'write' | 'file' | 'web' | 'generic';
-export interface ReasoningActivityData extends Record<string, unknown> {
+export interface AgentActivityData extends Record<string, unknown> {
   summary: string; status: 'running' | 'completed'; startedAt?: string; completedAt?: string; durationMs?: number;
+  actorId?: string; actorName?: string;
 }
 export interface ToolActivityData extends Record<string, unknown> {
   toolName: string; displayKey?: string; fallbackDisplayName?: string; summary: string; renderKind: ToolRenderKind;
   status: 'running' | 'completed' | 'failed' | 'stopped'; paramsJson?: string; resultJson?: string;
   startedAt?: string; completedAt?: string; durationMs?: number; actorId?: string; actorName?: string;
+  primaryInput?: string; primaryInputLanguage?: string;
 }
 export interface ArtifactActivityData extends Record<string, unknown> {
   artifactId: string; filename: string; artifactKind?: string; mimeType?: string; sizeBytes?: number;
@@ -279,7 +281,7 @@ export interface ArtifactActivityData extends Record<string, unknown> {
 
 export interface MessageComponent {
   id?: string;
-  type: 'text' | 'code' | 'reasoning' | 'plan' | 'queue' | 'checkpoint' | 'chart' | 'task' | 'error' | 'sources' | 'sandbox' | 'webPreview' | 'artifact' | 'citation' | 'toolInfo' | 'choice';
+  type: 'text' | 'code' | 'agentActivity' | 'plan' | 'queue' | 'checkpoint' | 'chart' | 'task' | 'error' | 'sources' | 'sandbox' | 'webPreview' | 'artifact' | 'citation' | 'toolActivity' | 'choice';
   data: Record<string, unknown> | ChartComponentData | ChoiceComponentData;
 }
 

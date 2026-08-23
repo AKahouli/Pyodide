@@ -48,8 +48,8 @@ function completedMessage() {
       components: [
         { id: 'text-1', type: 'text', data: { content: '**Ready.** Open the generated workflow.\n\n| Playbook | Owner | Status | Revision | Updated | Action |\n| --- | --- | --- | --- | --- | --- |\n| Lead qualification | Revenue operations | Active | 7 | Today | Open |\n\n```text\nthis-is-a-long-code-line-that-must-remain-contained-inside-the-assistant-message\n```' } },
         { id: 'error-1', type: 'error', data: { content: 'The response could not be completed.' } },
-        { id: 'tool-1', type: 'toolInfo', data: { resultJson: { uiTarget: { surface: 'playbook.editor', params: { playbookId: 'p1' } } } } },
-        { id: 'tool-2', type: 'toolInfo', data: { resultJson: { nested: { uiTarget: { surface: 'playbook.editor', params: { playbookId: 'p1' } } } } } },
+        { id: 'tool-1', type: 'toolActivity', data: { resultJson: { uiTarget: { surface: 'playbook.editor', params: { playbookId: 'p1' } } } } },
+        { id: 'tool-2', type: 'toolActivity', data: { resultJson: { nested: { uiTarget: { surface: 'playbook.editor', params: { playbookId: 'p1' } } } } } },
       ],
     };
 }
@@ -236,7 +236,7 @@ describe('PlatformCopilotMascot', () => {
         createdAt: new Date().toISOString(),
         components: [
           { id: 'text-1', type: 'text', data: { content: 'Modification ready.' } },
-          { id: 'tool-1', type: 'toolInfo', data: { resultJson: { uiTarget: { surface: 'playbook.editor.assistant', params: { playbookId: 'p1', operationId: 'operation-9' } } } } },
+          { id: 'tool-1', type: 'toolActivity', data: { resultJson: { uiTarget: { surface: 'playbook.editor.assistant', params: { playbookId: 'p1', operationId: 'operation-9' } } } } },
         ],
       }],
     };
@@ -261,7 +261,7 @@ describe('PlatformCopilotMascot', () => {
         isComplete: true,
         createdAt: new Date().toISOString(),
         components: [
-          { id: 'tool-1', type: 'toolInfo', data: { resultJson: { uiTarget: {
+          { id: 'tool-1', type: 'toolActivity', data: { resultJson: { uiTarget: {
             surface: 'playbook.execution.details',
             params: { playbookId: 'p1', executionId: 'execution-1' },
             effects: [{ type: 'focusExecutionStatus' }],
@@ -304,7 +304,7 @@ describe('PlatformCopilotMascot', () => {
         isComplete: true,
         createdAt: new Date().toISOString(),
         components: [
-          { id: 'tool-1', type: 'toolInfo', data: { resultJson: { uiTarget: {
+          { id: 'tool-1', type: 'toolActivity', data: { resultJson: { uiTarget: {
             surface: 'playbook.execution.details',
             params: { playbookId: 'p1', executionId: 'execution-1' },
             effects: [{ type: 'focusExecutionStatus' }],
@@ -332,7 +332,7 @@ describe('PlatformCopilotMascot', () => {
         isComplete: true,
         createdAt: new Date().toISOString(),
         components: [
-          { id: 'tool-1', type: 'toolInfo', data: { resultJson: { uiTarget: {
+          { id: 'tool-1', type: 'toolActivity', data: { resultJson: { uiTarget: {
             surface: 'playbook.execution.details',
             params: { playbookId: 'p1', executionId: 'execution-1' },
             effects: [{ type: 'focusExecutionStatus' }],
@@ -372,7 +372,7 @@ describe('PlatformCopilotMascot', () => {
         isComplete: true,
         createdAt: new Date().toISOString(),
         components: [
-          { id: 'tool-1', type: 'toolInfo', data: { resultJson: { uiTarget: {
+          { id: 'tool-1', type: 'toolActivity', data: { resultJson: { uiTarget: {
             surface: 'playbook.execution.details',
             params: { playbookId: 'p1', executionId: 'execution-1' },
             effects: [{ type: 'focusExecutionStatus' }],
@@ -406,7 +406,7 @@ describe('PlatformCopilotMascot', () => {
         isComplete: true,
         createdAt: new Date().toISOString(),
         components: [
-          { id: 'tool-1', type: 'toolInfo', data: { resultJson: { uiTarget: { surface: 'playbook.editor.assistant', params: { playbookId: 'p1', operationId: 'operation-9' } } } } },
+          { id: 'tool-1', type: 'toolActivity', data: { resultJson: { uiTarget: { surface: 'playbook.editor.assistant', params: { playbookId: 'p1', operationId: 'operation-9' } } } } },
         ],
       }],
     };
@@ -584,8 +584,8 @@ describe('PlatformCopilotMascot', () => {
       ...platformCopilotMock.current,
       streamingMessageId: 'assistant-live',
       streamingComponents: [
-        { id: 'reasoning-live', type: 'reasoning', data: { content: 'private hidden reasoning' } },
-        { id: 'tool-live', type: 'toolInfo', data: { title: 'search_playbooks', status: 'running', params: '{"token":"hidden"}' } },
+        { id: 'activity-live', type: 'agentActivity', data: { summary: 'Preparing playbook search', status: 'running' } },
+        { id: 'tool-live', type: 'toolActivity', data: { toolName: 'search_playbooks', summary: '', renderKind: 'search', status: 'running', paramsJson: '{"token":"hidden"}' } },
       ],
       messages: [{
         id: 'assistant-live', conversationId: 'conversation-1', conversationType: 'ai', components: [],

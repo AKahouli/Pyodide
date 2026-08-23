@@ -31,7 +31,7 @@ from src.smart_rag.messaging.component_tracker import ComponentTracker
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
 from src.smart_rag.infrastructure.model_parameters import get_context_window_for_model
-from src.smart_rag.tool_activity_presenter import present_tool_call, serialize_tool_value
+from src.smart_rag.tool_activity_presenter import present_tool_call, sanitize_activity_summary, serialize_tool_value
 
 logger = get_logger("api.routers.agentic_rag.StreamingEventProcessor")
 
@@ -295,11 +295,33 @@ class StreamingEventProcessor:
                 current_agent,
             )
 
-        # Skip text parts if event has multiple parts (indicates explanation + function call)
-        has_multiple_parts = len(event.content.parts) > 1
+        has_function_call = any(part.function_call for part in event.content.parts)
 
         for part in event.content.parts:
-            if part.text and not event.is_final_response() and not has_multiple_parts:
+            if (
+                part.text
+                and getattr(part, "thought", False) is not True
+                and has_function_call
+                and not event.is_final_response()
+                and not guarded_output
+            ):
+                summary = sanitize_activity_summary(part.text)
+                if summary and q:
+                    manager_id, manager_name = self._get_manager_info(manager_agent)
+                    await q.put(self.streaming_formatter.format_component_event(
+                        agent_id=manager_id,
+                        component_type="agent_activity",
+                        component_data={
+                            "summary": summary,
+                            "status": "completed",
+                            "actor_id": manager_id,
+                            "actor_name": manager_name,
+                        },
+                        message_id=current_message_id,
+                        component_id=f"activity-{uuid.uuid4()}",
+                        action="add",
+                    ))
+            elif part.text and not event.is_final_response() and not has_function_call:
                 event_text = part.text
                 accumulated_manager_text += event_text
                 if not guarded_output:
@@ -335,7 +357,7 @@ class StreamingEventProcessor:
                     }
                     await q.put(self.streaming_formatter.format_component_event(
                         agent_id=manager_id,
-                        component_type="tool_info",
+                        component_type="tool_activity",
                         component_data={
                             "tool_name": func_name,
                             "status": "running",
@@ -347,6 +369,10 @@ class StreamingEventProcessor:
                             "render_kind": presentation.render_kind,
                             "actor_id": manager_id,
                             "actor_name": manager_name,
+                            **({
+                                "primary_input": tool_args.get("code", ""),
+                                "primary_input_language": tool_args.get("language", ""),
+                            } if func_name == "run_code" else {}),
                         },
                         message_id=current_message_id,
                         component_id=tool_component_id,
@@ -510,7 +536,7 @@ class StreamingEventProcessor:
                         duration_ms = max(0, round((time.monotonic() - started_monotonic) * 1000)) if isinstance(started_monotonic, float) else 0
                         await q.put(self.streaming_formatter.format_component_event(
                             agent_id=manager_id,
-                            component_type="tool_info",
+                            component_type="tool_activity",
                             component_data={
                                 "tool_name": func_name,
                                 "status": "failed" if failed else "completed",

@@ -226,12 +226,12 @@ describe('conversation live activity', () => {
     store.onStreamChunk({
       conversationId: 'conv-1',
       action: 'add',
-      component: { id: 'reasoning-1', type: 'reasoning', data: { summary: '', status: 'completed' } },
+      component: { id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'completed' } },
     });
     store.onStreamChunk({
       conversationId: 'conv-1',
       action: 'add',
-      component: { id: 'tool-1', type: 'toolInfo', data: { toolName: 'run_code', status: 'running', summary: 'Read the research explanation' } },
+      component: { id: 'tool-1', type: 'toolActivity', data: { toolName: 'run_code', status: 'running', summary: 'Read the research explanation' } },
     });
     store.onStreamChunk({
       conversationId: 'conv-1',
@@ -240,8 +240,8 @@ describe('conversation live activity', () => {
     });
 
     expect(useConversationStore.getState().streamingComponents).toEqual([
-      { id: 'reasoning-1', type: 'reasoning', data: { summary: '', status: 'completed' } },
-      { id: 'tool-1', type: 'toolInfo', data: { toolName: 'run_code', status: 'running', summary: 'Read the research explanation' } },
+      { id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'completed' } },
+      { id: 'tool-1', type: 'toolActivity', data: { toolName: 'run_code', status: 'running', summary: 'Read the research explanation' } },
     ]);
     expect(useConversationStore.getState().isAwaitingFirstChunk).toBe(false);
     useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'message-2' });
@@ -253,16 +253,16 @@ describe('conversation live activity', () => {
       streamingComponents: [],
     });
     useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'message-1' });
-    useConversationStore.setState({ streamingComponents: [{ id: 'reasoning-1', type: 'reasoning', data: { summary: 'Planning', status: 'running' } }] });
+    useConversationStore.setState({ streamingComponents: [{ id: 'activity-1', type: 'agentActivity', data: { summary: 'Planning', status: 'running' } }] });
     const store = useConversationStore.getState();
     store.onStreamChunk({ conversationId: 'conv-1', action: 'add', component: { id: 'text-1', type: 'text', data: { content: 'First. ' } } });
-    store.onStreamChunk({ conversationId: 'conv-1', action: 'add', component: { id: 'tool-1', type: 'toolInfo', data: { toolName: 'search', status: 'running', summary: 'Find sources' } } });
-    store.onStreamChunk({ conversationId: 'conv-1', action: 'update', component: { id: 'reasoning-1', type: 'reasoning', data: { summary: 'Sources selected', status: 'completed' } } });
+    store.onStreamChunk({ conversationId: 'conv-1', action: 'add', component: { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', status: 'running', summary: 'Find sources' } } });
+    store.onStreamChunk({ conversationId: 'conv-1', action: 'update', component: { id: 'activity-1', type: 'agentActivity', data: { summary: 'Sources selected', status: 'completed' } } });
 
     expect(useConversationStore.getState().streamingComponents).toEqual([
-      { id: 'reasoning-1', type: 'reasoning', data: { summary: 'Sources selected', status: 'completed' } },
+      { id: 'activity-1', type: 'agentActivity', data: { summary: 'Sources selected', status: 'completed' } },
       { id: 'text-1', type: 'text', data: { content: 'First. ' } },
-      { id: 'tool-1', type: 'toolInfo', data: { toolName: 'search', status: 'running', summary: 'Find sources' } },
+      { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', status: 'running', summary: 'Find sources' } },
     ]);
   });
 });
@@ -388,7 +388,7 @@ describe('conversation streaming component updates', () => {
     useConversationStore.getState().onStreamChunk({
       conversationId: 'conv-1',
       action: 'add',
-      component: { id: 'tool-1', type: 'toolInfo', data: { toolName: 'search', status: 'running' } },
+      component: { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', status: 'running' } },
     });
 
     expect(useConversationStore.getState()).toMatchObject({
@@ -543,6 +543,48 @@ describe('conversation streaming component updates', () => {
         id: 'ai-1', isComplete: true,
         components: [{ data: { content: 'Eventually complete' } }],
       });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops reconciliation after a permanent canonical read failure', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMessagesMock.mockResolvedValue({
+        items: [{ id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai', components: [], isStreaming: true, isComplete: false }],
+        total: 1,
+        totalPages: 1,
+      });
+      fetchActiveStreamMock.mockResolvedValue(null);
+      fetchMessageMock.mockRejectedValue({ isAxiosError: true, response: { status: 404 } });
+      useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+      await useConversationStore.getState().fetchMessages('conv-1');
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(fetchMessageMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('caps canonical reconciliation reads at 150 including the initial read', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMessagesMock.mockResolvedValue({
+        items: [{ id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai', components: [], isStreaming: true, isComplete: false }],
+        total: 1,
+        totalPages: 1,
+      });
+      fetchActiveStreamMock.mockResolvedValue(null);
+      fetchMessageMock.mockResolvedValue({ id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai', components: [], isStreaming: true, isComplete: false });
+      useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+      await useConversationStore.getState().fetchMessages('conv-1');
+      await vi.advanceTimersByTimeAsync(2_000 * 200);
+
+      expect(fetchMessageMock).toHaveBeenCalledTimes(150);
     } finally {
       vi.useRealTimers();
     }
@@ -767,14 +809,14 @@ describe('conversation streaming component updates', () => {
       streamingConversationId: 'conv-1',
       streamingMessageId: 'ai-1',
       pendingAssistantMessageId: 'ai-1',
-      streamingComponents: [{ id: 'live-tool', type: 'toolInfo', data: { title: 'search', status: 'running' } }],
+      streamingComponents: [{ id: 'live-tool', type: 'toolActivity', data: { title: 'search', status: 'running' } }],
       messages: [{
         id: 'ai-1',
         conversationId: 'conv-1',
         conversationType: 'ai',
         components: [
-          { id: 'tool-1', type: 'toolInfo', data: { title: 'search', status: 'completed', startedAt: '2026-07-29T08:00:00.000Z' } },
-          { id: 'tool-2', type: 'toolInfo', data: { title: 'read', status: 'completed', startedAt: '2026-07-29T08:00:04.000Z' } },
+          { id: 'tool-1', type: 'toolActivity', data: { title: 'search', status: 'completed', startedAt: '2026-07-29T08:00:00.000Z' } },
+          { id: 'tool-2', type: 'toolActivity', data: { title: 'read', status: 'completed', startedAt: '2026-07-29T08:00:04.000Z' } },
         ],
         isComplete: true,
         createdAt: '2026-07-29T08:00:00.000Z',
@@ -850,7 +892,7 @@ describe('conversation streaming component updates', () => {
       messageId: 'ai-1',
       message: {
         conversationType: 'ai',
-        components: [{ id: 'tool-1', type: 'toolInfo', data: { title: 'search', status: 'completed' } }],
+        components: [{ id: 'tool-1', type: 'toolActivity', data: { title: 'search', status: 'completed' } }],
         reliabilityEvaluation: { status: 'completed', score: 100 },
         isComplete: true,
         createdAt: '2026-07-29T08:00:00.000Z',
@@ -868,7 +910,7 @@ describe('conversation streaming component updates', () => {
 
     expect(useConversationStore.getState().messages).toEqual([
       expect.objectContaining({
-        components: [expect.objectContaining({ type: 'toolInfo' })],
+        components: [expect.objectContaining({ type: 'toolActivity' })],
         reliabilityEvaluation: { status: 'completed', score: 100 },
       }),
     ]);
@@ -914,7 +956,7 @@ describe('conversation streaming component updates', () => {
         action: 'add',
         component: {
           id: 'tool-call-1',
-          type: 'toolInfo',
+          type: 'toolActivity',
           data: { toolName: 'search_documents', status: 'running', paramsJson: '{"query":"contract"}', startedAt: '2026-07-21T10:13:42Z' },
         },
       },
@@ -922,7 +964,7 @@ describe('conversation streaming component updates', () => {
         action: 'update',
         component: {
           id: 'tool-call-1',
-          type: 'toolInfo',
+          type: 'toolActivity',
           data: { toolName: 'search_documents', status: 'completed', paramsJson: '', resultJson: '{"matches":2}' },
         },
       },
@@ -931,7 +973,7 @@ describe('conversation streaming component updates', () => {
     expect(components).toEqual([
       {
         id: 'tool-call-1',
-        type: 'toolInfo',
+        type: 'toolActivity',
         data: {
           toolName: 'search_documents',
           status: 'completed',
@@ -945,10 +987,10 @@ describe('conversation streaming component updates', () => {
 
   it('upserts out-of-order tools without collapsing repeated names or regressing status', () => {
     const components = applyChunksToComponents([], [
-      { action: 'update', component: { id: 'tool-agent-call-1', type: 'toolInfo', data: { toolName: 'search', status: 'completed', resultJson: '{"matches":1}' } } },
-      { action: 'add', component: { id: 'tool-agent-call-1', type: 'toolInfo', data: { toolName: 'search', status: 'running', paramsJson: '{"q":"one"}' } } },
-      { action: 'add', component: { id: 'tool-agent-call-2', type: 'toolInfo', data: { toolName: 'search', status: 'running', paramsJson: '{"q":"two"}' } } },
-      { action: 'add', component: { id: 'tool-agent-call-2', type: 'toolInfo', data: { toolName: 'search', status: 'running', paramsJson: '{"q":"two"}' } } },
+      { action: 'update', component: { id: 'tool-agent-call-1', type: 'toolActivity', data: { toolName: 'search', status: 'completed', resultJson: '{"matches":1}' } } },
+      { action: 'add', component: { id: 'tool-agent-call-1', type: 'toolActivity', data: { toolName: 'search', status: 'running', paramsJson: '{"q":"one"}' } } },
+      { action: 'add', component: { id: 'tool-agent-call-2', type: 'toolActivity', data: { toolName: 'search', status: 'running', paramsJson: '{"q":"two"}' } } },
+      { action: 'add', component: { id: 'tool-agent-call-2', type: 'toolActivity', data: { toolName: 'search', status: 'running', paramsJson: '{"q":"two"}' } } },
     ] as never);
 
     expect(components).toHaveLength(2);

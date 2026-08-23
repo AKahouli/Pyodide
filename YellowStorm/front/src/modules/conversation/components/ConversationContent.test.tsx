@@ -105,7 +105,7 @@ describe('ConversationContent', () => {
       id: 'ai-with-tool', conversationId: 'conv-1', conversationType: 'ai', createdAt: '2026-07-28T00:00:00.000Z',
       components: [
         { type: 'text', data: { content: 'Hello' } },
-        { type: 'toolInfo', data: { title: 'Search' } },
+        { type: 'toolActivity', data: { title: 'Search' } },
       ],
       reliabilityEvaluation: { status: 'insufficient_evidence' },
     }];
@@ -130,12 +130,12 @@ describe('ConversationContent', () => {
   it('animates only the dedicated live assistant bubble', () => {
     displayMessages = [{
       id: 'ai-complete', conversationId: 'conv-1', conversationType: 'ai', isComplete: true, createdAt: '2026-07-28T00:00:00.000Z',
-      components: [{ id: 'tool-complete', type: 'toolInfo', data: { toolName: 'run_code', summary: 'Completed work', renderKind: 'run_code', status: 'completed', actorName: 'Completed Agent' } }],
+      components: [{ id: 'tool-complete', type: 'toolActivity', data: { toolName: 'run_code', summary: 'Completed work', renderKind: 'run_code', status: 'completed', actorName: 'Completed Agent' } }],
     }];
     storeState.isStreaming = true;
     storeState.streamingConversationId = 'conv-1';
     storeState.streamingMessageId = 'ai-live';
-    storeState.streamingComponents = [{ id: 'tool-live', type: 'toolInfo', data: { toolName: 'run_code', summary: 'Current work', renderKind: 'run_code', status: 'running', actorName: 'Live Agent' } }];
+    storeState.streamingComponents = [{ id: 'tool-live', type: 'toolActivity', data: { toolName: 'run_code', summary: 'Current work', renderKind: 'run_code', status: 'running', actorName: 'Live Agent' } }];
 
     const { container } = render(<ConversationContent />);
 

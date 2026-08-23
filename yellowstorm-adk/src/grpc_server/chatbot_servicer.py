@@ -383,7 +383,7 @@ class ChatbotServicer(
                     metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
                 )
             else:
-                yield self._build_initial_reasoning_chunk(request.conversation_id)
+                yield self._build_initial_agent_activity_chunk(request.conversation_id)
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -627,7 +627,7 @@ class ChatbotServicer(
                     metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
                 )
             else:
-                yield self._build_initial_reasoning_chunk(request.conversation_id)
+                yield self._build_initial_agent_activity_chunk(request.conversation_id)
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -748,13 +748,13 @@ class ChatbotServicer(
 
     # ========== CONVERSION HELPERS ==========
 
-    def _build_initial_reasoning_chunk(self, message_id: str) -> "chatbot_pb2.StreamChunk":
+    def _build_initial_agent_activity_chunk(self, message_id: str) -> "chatbot_pb2.StreamChunk":
         """Emit public progress without exposing model chain-of-thought."""
         return self._dict_to_stream_chunk({
             "action": "add",
             "component": {
-                "id": f"reasoning-{uuid.uuid4()}",
-                "type": "reasoning",
+                "id": f"activity-{uuid.uuid4()}",
+                "type": "agent_activity",
                 "data": {"summary": "", "status": "completed"},
             },
             "metadata": {"message_id": message_id},
@@ -1868,16 +1868,16 @@ class ChatbotServicer(
                 output_port_id=component_data.get("output_port_id")
                 or component_data.get("outputPortId", ""),
             )
-        elif component_type == "reasoning":
-            reasoning = chatbot_pb2.ReasoningComponent(
+        elif component_type == "agent_activity":
+            agent_activity = chatbot_pb2.AgentActivityComponent(
                 summary=component_data.get("summary", ""),
                 status=component_data.get("status", "running"),
             )
-            for field in ("started_at", "completed_at", "duration_ms"):
+            for field in ("started_at", "completed_at", "duration_ms", "actor_id", "actor_name"):
                 value = component_data.get(field)
                 if value is not None and value != "":
-                    setattr(reasoning, field, value)
-            component_kwargs["reasoning"] = reasoning
+                    setattr(agent_activity, field, value)
+            component_kwargs["agent_activity"] = agent_activity
         elif component_type == "plan":
             # Build PlanComponent with PlanStep objects
             steps = []
@@ -2006,19 +2006,20 @@ class ChatbotServicer(
                 error=component_data.get("error", ""),
                 output_available=component_data.get("output_available", False),
             )
-        elif component_type == "tool_info":
-            tool_info = chatbot_pb2.ToolInfoComponent(
+        elif component_type == "tool_activity":
+            tool_activity = chatbot_pb2.ToolActivityComponent(
                 tool_name=component_data.get("tool_name", ""),
                 status=component_data.get("status", ""),
             )
             for field in (
                 "params_json", "result_json", "started_at", "completed_at", "duration_ms",
                 "display_key", "fallback_display_name", "summary", "render_kind", "actor_id", "actor_name",
+                "primary_input", "primary_input_language",
             ):
                 value = component_data.get(field)
                 if value is not None and value != "":
-                    setattr(tool_info, field, value)
-            component_kwargs["tool_info"] = tool_info
+                    setattr(tool_activity, field, value)
+            component_kwargs["tool_activity"] = tool_activity
         elif component_type == "web_preview":
             component_kwargs["web_preview"] = chatbot_pb2.WebPreviewComponent(
                 content=component_data.get("content", "")

@@ -1074,7 +1074,7 @@ export class MessageService {
         });
       }
       if (!component?.data) return component;
-      if (component.type !== 'toolInfo' || includeToolResults) {
+      if (component.type !== 'toolActivity' || includeToolResults) {
         return sanitizePublicComponent({ id: component.id, type: component.type, data: { ...component.data } });
       }
       const { resultJson: _resultJson, result_json: _resultJsonSnake, ...publicData } = component.data;

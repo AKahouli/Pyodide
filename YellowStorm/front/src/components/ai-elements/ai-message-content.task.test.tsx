@@ -50,7 +50,7 @@ describe('AIMessageContent task activity', () => {
         taskDisplay='activity'
         parts={[
           { type: 'task', title: 'smart_agent', items: ['<original_user_request>Audit revenue</original_user_request> secret=hidden'], status: 'completed' },
-          { type: 'toolInfo', title: 'search_documents', status: 'completed', params: '{"token":"private"}' },
+          { type: 'toolActivity', toolName: 'search_documents', summary: '', renderKind: 'search', status: 'completed', paramsJson: '{"token":"private"}' },
         ]}
       />,
     );

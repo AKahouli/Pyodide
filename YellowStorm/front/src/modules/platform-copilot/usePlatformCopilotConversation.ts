@@ -16,12 +16,12 @@ function upsertMessage(messages: Message[], message: Message): Message[] {
 }
 
 function mergeStreamData(component: StreamingComponent, incoming: StreamingComponent): StreamingComponent {
-  if (component.type === 'text' || component.type === 'reasoning' || component.type === 'code') {
+  if (component.type === 'text' || component.type === 'agentActivity' || component.type === 'code') {
     const existingContent = typeof component.data.content === 'string' ? component.data.content : '';
     const incomingContent = typeof incoming.data.content === 'string' ? incoming.data.content : '';
     return { ...component, ...incoming, data: { ...component.data, ...incoming.data, content: existingContent + incomingContent } };
   }
-  if (component.type === 'toolInfo') {
+  if (component.type === 'toolActivity') {
     const existingStatus = component.data.status;
     const status = existingStatus === 'completed' || existingStatus === 'failed'
       ? existingStatus

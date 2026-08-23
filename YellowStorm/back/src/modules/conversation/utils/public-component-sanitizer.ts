@@ -70,7 +70,7 @@ export function sanitizePublicComponent(component: MessageComponent): MessageCom
       data: sanitizePublicToolData({ ...component.data, content }),
     };
   }
-  if (component.type === 'reasoning') {
+  if (component.type === 'agentActivity') {
     const { detail: _detail, ...publicData } = component.data;
     return { id: component.id, type: component.type, data: sanitizePublicToolData(publicData) };
   }

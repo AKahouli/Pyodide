@@ -15,8 +15,8 @@ describe('ShareService public share sanitization', () => {
   const userId = new Types.ObjectId().toString();
 
   const components: MessageComponent[] = [
-    { id: 'reasoning', type: 'reasoning', data: { content: 'Internal instructions' } },
-    { id: 'tool', type: 'toolInfo', data: { toolName: 'activate_skill', paramsJson: '{"secret":"value"}', resultJson: '{"private":true}' } },
+    { id: 'activity', type: 'agentActivity', data: { summary: 'Preparing answer', status: 'completed' } },
+    { id: 'tool', type: 'toolActivity', data: { toolName: 'activate_skill', paramsJson: '{"secret":"value"}', resultJson: '{"private":true}' } },
     { id: 'artifact', type: 'artifact', data: { artifactId: 'artifact-1', filename: 'private.pdf', storagePath: 'owner/run/private.pdf' } },
     { id: 'task', type: 'task', data: { title: 'Smart Agent', items: ['Raw private context'], status: 'completed' } },
     { id: 'answer', type: 'text', data: { content: 'Public answer' } },
@@ -73,7 +73,13 @@ describe('ShareService public share sanitization', () => {
     await service.createShare(userId, { conversationId: conversationId.toString(), shareType: 'public' });
 
     const snapshot = sharedConversationModel.create.mock.calls[0][0].messages as EmbeddedMessage[];
-    expect(snapshot[0].components).toEqual([{ ...components[3], data: { ...components[3].data, items: [] } }, components[4], components[5]]);
+    expect(snapshot[0].components).toEqual([
+      components[0],
+      { ...components[1], data: { toolName: 'activate_skill' } },
+      { ...components[3], data: { ...components[3].data, items: [] } },
+      components[4],
+      components[5],
+    ]);
     expect(snapshot[0].content).toBeUndefined();
   });
 
@@ -97,10 +103,16 @@ describe('ShareService public share sanitization', () => {
 
     const result = await service.viewPublicShare('token');
 
-    expect(result.messages[0].components).toEqual([{ ...components[3], data: { ...components[3].data, items: [] } }, components[4], components[5]]);
+    expect(result.messages[0].components).toEqual([
+      components[0],
+      { ...components[1], data: { toolName: 'activate_skill' } },
+      { ...components[3], data: { ...components[3].data, items: [] } },
+      components[4],
+      components[5],
+    ]);
     expect(result.messages[0].content).toBeUndefined();
     expect(result.messages[1]).toEqual(legacyMessages[1]);
-    expect(result.messages[2].components).toEqual([]);
+    expect(result.messages[2].components).toEqual([components[0]]);
     expect(share.messages).toEqual(legacyMessages);
     expect(share.save).toHaveBeenCalledTimes(1);
   });

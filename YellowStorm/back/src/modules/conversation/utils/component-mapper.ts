@@ -4,7 +4,7 @@ import { redactTaskDiagnosticText } from './task-diagnostics';
 
 const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> = [
   { field: 'text', type: 'text' },
-  { field: 'reasoning', type: 'reasoning' },
+  { field: 'agent_activity', type: 'agentActivity' },
   { field: 'code', type: 'code' },
   { field: 'error', type: 'error' },
   { field: 'plan', type: 'plan' },
@@ -17,14 +17,15 @@ const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> =
   { field: 'web_preview', type: 'webPreview' },
   { field: 'artifact', type: 'artifact' },
   { field: 'citation', type: 'citation' },
-  { field: 'tool_info', type: 'toolInfo' },
+  { field: 'tool_activity', type: 'toolActivity' },
   { field: 'choice', type: 'choice' },
 ];
 
 const LEGACY_TYPE_MAP: Record<string, ComponentType> = {
   text: 'text',
   code: 'code',
-  reasoning: 'reasoning',
+  agent_activity: 'agentActivity',
+  agentActivity: 'agentActivity',
   plan: 'plan',
   queue: 'queue',
   checkpoint: 'checkpoint',
@@ -37,8 +38,8 @@ const LEGACY_TYPE_MAP: Record<string, ComponentType> = {
   webPreview: 'webPreview',
   artifact: 'artifact',
   citation: 'citation',
-  tool_info: 'toolInfo',
-  toolInfo: 'toolInfo',
+  tool_activity: 'toolActivity',
+  toolActivity: 'toolActivity',
   choice: 'choice',
 };
 
@@ -81,9 +82,9 @@ function oneofPayloadHasContent(type: ComponentType, payload: Record<string, unk
       );
     case 'citation':
       return Boolean(payload.text_source || payload.image_source);
-    case 'reasoning':
+    case 'agentActivity':
       return typeof payload.summary === 'string' && payload.summary.length > 0;
-    case 'toolInfo':
+    case 'toolActivity':
       return (
         (typeof payload.tool_name === 'string' && payload.tool_name.length > 0) ||
         (typeof payload.status === 'string' && payload.status.length > 0)
@@ -193,15 +194,17 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
           output_port_id: comp.code?.output_port_id || '',
         },
       };
-    case 'reasoning':
+    case 'agentActivity':
       return {
         type,
         data: {
-          summary: comp.reasoning?.summary || '',
-          status: comp.reasoning?.status || 'running',
-          ...(comp.reasoning?.started_at ? { startedAt: comp.reasoning.started_at } : {}),
-          ...(comp.reasoning?.completed_at ? { completedAt: comp.reasoning.completed_at } : {}),
-          ...(comp.reasoning?.duration_ms !== undefined ? { durationMs: Number(comp.reasoning.duration_ms) } : {}),
+          summary: comp.agent_activity?.summary || '',
+          status: comp.agent_activity?.status || 'running',
+          ...(comp.agent_activity?.started_at ? { startedAt: comp.agent_activity.started_at } : {}),
+          ...(comp.agent_activity?.completed_at ? { completedAt: comp.agent_activity.completed_at } : {}),
+          ...(comp.agent_activity?.duration_ms !== undefined ? { durationMs: Number(comp.agent_activity.duration_ms) } : {}),
+          ...(comp.agent_activity?.actor_id ? { actorId: comp.agent_activity.actor_id } : {}),
+          ...(comp.agent_activity?.actor_name ? { actorName: comp.agent_activity.actor_name } : {}),
         },
       };
     case 'plan':
@@ -351,24 +354,26 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
 
       return { type: 'citation' as ComponentType, data: sourceData };
     }
-    case 'toolInfo': {
-      const toolInfo = comp.tool_info;
+    case 'toolActivity': {
+      const toolActivity = comp.tool_activity;
       return {
         type,
         data: {
-          toolName: toolInfo?.tool_name || '',
-          status: toolInfo?.status || 'running',
-          paramsJson: toolInfo?.params_json || '',
-          ...(toolInfo?.result_json ? { resultJson: toolInfo.result_json } : {}),
-          ...(toolInfo?.started_at ? { startedAt: toolInfo.started_at } : {}),
-          ...(toolInfo?.completed_at ? { completedAt: toolInfo.completed_at } : {}),
-          ...(toolInfo?.duration_ms !== undefined ? { durationMs: Number(toolInfo.duration_ms) } : {}),
-          ...(toolInfo?.display_key ? { displayKey: toolInfo.display_key } : {}),
-          ...(toolInfo?.fallback_display_name ? { fallbackDisplayName: toolInfo.fallback_display_name } : {}),
-          summary: toolInfo?.summary || '',
-          renderKind: toolInfo?.render_kind || 'generic',
-          ...(toolInfo?.actor_id ? { actorId: toolInfo.actor_id } : {}),
-          ...(toolInfo?.actor_name ? { actorName: toolInfo.actor_name } : {}),
+          toolName: toolActivity?.tool_name || '',
+          status: toolActivity?.status || 'running',
+          paramsJson: toolActivity?.params_json || '',
+          ...(toolActivity?.result_json ? { resultJson: toolActivity.result_json } : {}),
+          ...(toolActivity?.started_at ? { startedAt: toolActivity.started_at } : {}),
+          ...(toolActivity?.completed_at ? { completedAt: toolActivity.completed_at } : {}),
+          ...(toolActivity?.duration_ms !== undefined ? { durationMs: Number(toolActivity.duration_ms) } : {}),
+          ...(toolActivity?.display_key ? { displayKey: toolActivity.display_key } : {}),
+          ...(toolActivity?.fallback_display_name ? { fallbackDisplayName: toolActivity.fallback_display_name } : {}),
+          summary: toolActivity?.summary || '',
+          renderKind: toolActivity?.render_kind || 'generic',
+          ...(toolActivity?.actor_id ? { actorId: toolActivity.actor_id } : {}),
+          ...(toolActivity?.actor_name ? { actorName: toolActivity.actor_name } : {}),
+          ...(toolActivity?.primary_input ? { primaryInput: toolActivity.primary_input } : {}),
+          ...(toolActivity?.primary_input_language ? { primaryInputLanguage: toolActivity.primary_input_language } : {}),
         },
       };
     }

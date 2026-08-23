@@ -3,7 +3,7 @@ export type ConversationType = 'user' | 'ai';
 export type ComponentType =
   | 'text'
   | 'code'
-  | 'reasoning'
+  | 'agentActivity'
   | 'plan'
   | 'queue'
   | 'checkpoint'
@@ -15,15 +15,17 @@ export type ComponentType =
   | 'webPreview'
   | 'artifact'
   | 'citation'
-  | 'toolInfo'
+  | 'toolActivity'
   | 'choice';
 
-export interface ReasoningActivityData extends Record<string, unknown> {
+export interface AgentActivityData extends Record<string, unknown> {
   summary: string;
   status: 'running' | 'completed';
   startedAt?: string;
   completedAt?: string;
   durationMs?: number;
+  actorId?: string;
+  actorName?: string;
 }
 
 export interface ToolActivityData extends Record<string, unknown> {
@@ -40,6 +42,8 @@ export interface ToolActivityData extends Record<string, unknown> {
   durationMs?: number;
   actorId?: string;
   actorName?: string;
+  primaryInput?: string;
+  primaryInputLanguage?: string;
 }
 
 export interface ArtifactActivityData extends Record<string, unknown> {

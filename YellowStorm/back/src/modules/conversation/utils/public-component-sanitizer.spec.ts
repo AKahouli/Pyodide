@@ -16,7 +16,7 @@ describe('public component sanitizer', () => {
   it('sanitizes JSON-encoded tool parameters and results', () => {
     const component = sanitizePublicComponent({
       id: 'tool-1',
-      type: 'toolInfo',
+      type: 'toolActivity',
       data: {
         paramsJson: '{"query":"safe","password":"private"}',
         resultJson: '{"access_token":"token","count":2}',

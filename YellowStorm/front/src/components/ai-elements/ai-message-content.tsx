@@ -8,13 +8,10 @@ import { useShouldAutoOpenPreview } from './message-context';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CodeArtifact } from './code-artifact';
-import { Reasoning, ReasoningTrigger, ReasoningContent } from './reasoning';
 import { Queue, QueueSection, QueueSectionTrigger, QueueSectionLabel, QueueSectionContent, QueueList, QueueItem, QueueItemIndicator, QueueItemContent } from './queue';
 import { Plan, PlanHeader, PlanTitle, PlanDescription, PlanContent, PlanFooter } from './plan';
 import { Checkpoint, CheckpointIcon, CheckpointTrigger } from './checkpoint';
 import { Task, TaskTrigger, TaskContent, TaskItem, TaskDiagnosticsTrigger } from './task';
-import { Tool, ToolHeader, ToolContent, ToolInput } from './tool';
-import type { ToolUIPart } from 'ai';
 import { Sources, SourcesTrigger, SourcesContent, Source } from './sources';
 import { Sandbox, SandboxHeader, SandboxContent, SandboxTabs, SandboxTabsBar, SandboxTabsList, SandboxTabsTrigger, SandboxTabContent, type SandboxState } from './sandbox';
 import { WebPreview, WebPreviewNavigation, WebPreviewBody, isolateGeneratedPreviewHtml } from './web-preview';
@@ -73,10 +70,15 @@ export interface CodePart {
   filename?: string;
 }
 
-export interface ReasoningPart {
-  type: 'reasoning';
-  content: string;
-  duration?: number;
+export interface AgentActivityPart {
+  type: 'agentActivity';
+  summary: string;
+  status: 'running' | 'completed';
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  actorId?: string;
+  actorName?: string;
 }
 
 export interface QueueItemData {
@@ -177,16 +179,26 @@ export interface CitationPart {
   blockBBox?: CitationBBox;
 }
 
-export interface ToolInfoPart {
-  type: 'toolInfo';
-  title: string;
-  status: 'running' | 'completed' | 'failed';
-  /** JSON string of the tool-call arguments, e.g. '{"query":"..."}'. */
-  params?: string;
+export interface ToolActivityPart {
+  type: 'toolActivity';
+  toolName: string;
+  summary: string;
+  renderKind: 'run_code' | 'search' | 'read' | 'write' | 'file' | 'web' | 'generic';
+  status: 'running' | 'completed' | 'failed' | 'stopped';
+  displayKey?: string;
+  fallbackDisplayName?: string;
+  paramsJson?: string;
+  resultJson?: string;
   startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  actorId?: string;
+  actorName?: string;
+  primaryInput?: string;
+  primaryInputLanguage?: string;
 }
 
-export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | ChoicePart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolInfoPart;
+export type MessageContentPart = TextPart | CodePart | AgentActivityPart | QueuePart | PlanPart | CheckpointPart | ChartPart | ChoicePart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolActivityPart;
 
 // ============================================================================
 // AIMessageContent Component
@@ -205,7 +217,7 @@ export type AIMessageContentProps = HTMLAttributes<HTMLDivElement> & {
 
 type TaskActivityStep = {
   label: string;
-  status?: ToolInfoPart['status'];
+  status?: ToolActivityPart['status'];
 };
 
 function redactDiagnosticText(value: string): string {
@@ -226,7 +238,7 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, onComp
   const taskActivity: TaskActivityStep[] = [];
   const visibleParts = parts.filter((part) => {
     if (part.type === 'text' && choicePrompts.has(part.content.trim())) return false;
-    return !(taskDisplay === 'activity' && hasTask && part.type === 'toolInfo');
+    return !(taskDisplay === 'activity' && hasTask && part.type === 'toolActivity');
   });
 
   const pendingChoiceParts = visibleParts.filter(
@@ -275,8 +287,8 @@ const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInt
       return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} />;
     case 'code':
       return <CodePartRenderer content={part.content} language={part.language} filename={part.filename} />;
-    case 'reasoning':
-      return <ReasoningPartRenderer content={part.content} duration={part.duration} isStreaming={isStreaming} />;
+    case 'agentActivity':
+      return <AgentActivityPartRenderer part={part} isStreaming={isStreaming} />;
     case 'queue':
       return <QueuePartRenderer title={part.title} items={part.items} isStreaming={isStreaming} />;
     case 'plan':
@@ -301,8 +313,8 @@ const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInt
       return <ArtifactPartRenderer filePath={part.filePath} filename={part.filename} />;
     case 'citation':
       return <CitationPartRenderer citation={part} />;
-    case 'toolInfo':
-      return <ToolInfoPartRenderer title={part.title} status={part.status} params={part.params} />;
+    case 'toolActivity':
+      return <ToolActivityPartRenderer part={part} isStreaming={isStreaming} />;
     default:
       return null;
   }
@@ -511,12 +523,14 @@ const CitationPartRenderer = ({ citation }: { citation: CitationPart }) => (
 // Code Part
 const CodePartRenderer = ({ content, language, filename }: { content: string; language: string; filename?: string }) => <CodeArtifact code={content} language={language as BundledLanguage} filename={filename} className='my-2' />;
 
-// Reasoning Part
-const ReasoningPartRenderer = ({ content, duration, isStreaming = false }: { content: string; duration?: number; isStreaming?: boolean }) => (
-  <Reasoning duration={duration} isStreaming={isStreaming} defaultOpen={isStreaming}>
-    <ReasoningTrigger />
-    <ReasoningContent>{content}</ReasoningContent>
-  </Reasoning>
+const AgentActivityPartRenderer = ({ part, isStreaming }: { part: AgentActivityPart; isStreaming: boolean }) => (
+  <div className='flex min-h-8 items-center gap-2 text-sm text-muted-foreground'>
+    {isStreaming && part.status === 'running'
+      ? <Loader2 className='size-4 animate-spin text-primary' aria-hidden='true' />
+      : <Circle className='size-3 fill-primary/15 text-primary' aria-hidden='true' />}
+    <span>{part.summary}</span>
+    {part.durationMs !== undefined && <span className='ml-auto tabular-nums'>{part.durationMs} ms</span>}
+  </div>
 );
 
 // Queue Part
@@ -645,42 +659,18 @@ const CheckpointPartRenderer = ({ label }: { label: string }) => (
   </Checkpoint>
 );
 
-// Tool Info Part - reports a single tool execution and its status via the
-// ai-elements Tool component. Our proto only carries title + status, so we map
-// the status onto the Tool component's UI states and render the header only.
-const TOOL_INFO_STATE_MAP = {
-  running: 'input-available',
-  completed: 'output-available',
-  failed: 'output-error',
-} satisfies Record<'running' | 'completed' | 'failed', ToolUIPart['state']>;
-
-/** Parses the tool-call params JSON string; returns undefined when there's nothing to show. */
-function parseToolParams(params: string | undefined): unknown {
-  if (!params || typeof params !== 'string') return undefined;
-  const trimmed = params.trim();
-  if (!trimmed || trimmed === '{}' || trimmed === '[]') return undefined;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    // Not valid JSON — surface the raw string rather than dropping it.
-    return trimmed;
-  }
-}
-
-const ToolInfoPartRenderer = ({ title, status, params }: { title: string; status: 'running' | 'completed' | 'failed'; params?: string }) => {
-  const parsedParams = useMemo(() => parseToolParams(params), [params]);
-  const hasParams = parsedParams !== undefined;
-
+const ToolActivityPartRenderer = ({ part, isStreaming }: { part: ToolActivityPart; isStreaming: boolean }) => {
+  const label = part.fallbackDisplayName || formatLabel(part.toolName);
+  const failed = part.status === 'failed';
   return (
-    <Tool className='my-2'>
-      {/* No params → nothing to expand: drop the chevron and the toggle affordance. */}
-      <ToolHeader type={`tool-${title}`} title={formatLabel(title)} state={TOOL_INFO_STATE_MAP[status]} className={cn(!hasParams && 'cursor-default [&>svg]:hidden')} />
-      {hasParams && (
-        <ToolContent>
-          <ToolInput className='space-y-1 p-2 [&_pre]:p-2! [&_pre]:text-xs! [&_code]:text-xs!' input={parsedParams} />
-        </ToolContent>
-      )}
-    </Tool>
+    <div className='flex min-h-8 items-center gap-2 text-sm text-muted-foreground'>
+      {isStreaming && part.status === 'running' && <Loader2 className='size-4 animate-spin text-primary' aria-hidden='true' />}
+      {failed && <XCircle className='size-4 text-destructive' aria-hidden='true' />}
+      {(part.status === 'completed' || part.status === 'stopped') && <CheckCircle2 className='size-4 text-primary' aria-hidden='true' />}
+      <span className='font-medium text-foreground'>{label}</span>
+      {part.summary && <span className='truncate'>- {part.summary}</span>}
+      {part.durationMs !== undefined && <span className='ml-auto tabular-nums'>{part.durationMs} ms</span>}
+    </div>
   );
 };
 

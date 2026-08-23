@@ -118,21 +118,25 @@ describe('conversation utils', () => {
     expect(markdown).toContain('```ts');
   });
 
-  it('excludes internal execution payloads from conversation content and copies', () => {
+  it('renders safe activity while excluding it from copied answer markdown', () => {
     const components = [
-      { type: 'reasoning', data: { content: 'Internal system instructions' } },
-      { type: 'toolInfo', data: { toolName: 'activate_skill', paramsJson: '{"secret":"value"}' } },
+      { type: 'agentActivity', data: { summary: 'Preparing the answer', status: 'completed' } },
+      { type: 'toolActivity', data: { toolName: 'activate_skill', paramsJson: '{"secret":"value"}' } },
       { type: 'text', data: { content: 'Public answer' } },
       { type: 'unknown', data: { content: 'Unexpected payload' } },
     ] as never;
 
-    expect(mapConversationComponentsToContentParts(components)).toEqual([{ type: 'text', content: 'Public answer' }]);
+    expect(mapConversationComponentsToContentParts(components)).toEqual([
+      expect.objectContaining({ type: 'agentActivity', summary: 'Preparing the answer', status: 'completed' }),
+      expect.objectContaining({ type: 'toolActivity', toolName: 'activate_skill' }),
+      { type: 'text', content: 'Public answer' },
+    ]);
     expect(componentsToMarkdown(components)).toBe('Public answer');
   });
 
   it('uses generic activity states without exposing tool details', () => {
     expect(getConversationStreamActivity([])).toBe('thinking');
-    expect(getConversationStreamActivity([{ type: 'toolInfo', data: { title: 'activate_skill' } }] as never)).toBe('usingTools');
+    expect(getConversationStreamActivity([{ type: 'toolActivity', data: { title: 'activate_skill' } }] as never)).toBe('usingTools');
     expect(getConversationStreamActivity([{ type: 'text', data: { content: 'Public answer' } }] as never)).toBe('responding');
   });
 
@@ -152,7 +156,7 @@ describe('conversation utils', () => {
       } as never,
       {
         type: 'artifact',
-        data: { file_path: 'user/execution/ai_summary.docx', filename: 'ai_summary.docx' },
+        data: { artifactId: 'artifact-1', filename: 'ai_summary.docx', availability: 'ready' },
       } as never,
     ]);
 
@@ -162,7 +166,7 @@ describe('conversation utils', () => {
     });
     expect(parts[1]).toMatchObject({
       type: 'artifact',
-      filePath: 'user/execution/ai_summary.docx',
+      filePath: '',
       filename: 'ai_summary.docx',
     });
   });

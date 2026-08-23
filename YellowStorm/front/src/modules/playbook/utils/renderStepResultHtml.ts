@@ -58,7 +58,7 @@ function renderComponentToHtml(comp: MessageComponent): string {
       const langLabel = lang ? `<span style="font-size:11px;color:#9ca3af;margin-bottom:4px;display:inline-block;">${escapeHtml(lang)}</span>` : '';
       return `${header}${langLabel}${renderCodeBlock(content, lang)}`;
     }
-    case 'reasoning': {
+    case 'agentActivity': {
       const content = (data.content as string) || '';
       return `<blockquote style="border-left:3px solid #d1d5db;padding-left:12px;margin:8px 0;color:#4b5563;font-style:italic;">${escapeHtml(content)}</blockquote>`;
     }

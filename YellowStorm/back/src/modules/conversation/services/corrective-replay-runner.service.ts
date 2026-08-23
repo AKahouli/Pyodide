@@ -7,7 +7,7 @@ import { MessageService } from './message.service';
 import { StreamService, type ConversationHistoryEntry } from './stream.service';
 import { CorrectiveReplayPromptBuilder, CORRECTIVE_REPLAY_PROMPT_VERSION } from './corrective-replay-prompt.builder';
 
-const INTERNAL_COMPONENT_TYPES = new Set(['reasoning', 'queue', 'checkpoint', 'toolInfo']);
+const INTERNAL_COMPONENT_TYPES = new Set(['agentActivity', 'queue', 'checkpoint', 'toolActivity']);
 
 export interface CorrectiveReplayResult {
   components: MessageComponent[];

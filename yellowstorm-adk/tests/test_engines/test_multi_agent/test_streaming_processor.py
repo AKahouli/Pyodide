@@ -256,7 +256,7 @@ class TestStreamingEventProcessor:
 
     tool_events = [
       call.args[0] for call in queue.put.await_args_list
-      if isinstance(call.args[0], dict) and call.args[0].get("component", {}).get("type") == "tool_info"
+      if isinstance(call.args[0], dict) and call.args[0].get("component", {}).get("type") == "tool_activity"
     ]
     assert [event["component"]["id"] for event in tool_events] == [
       "tool-mgr-1-call-1", "tool-mgr-1-call-2", "tool-mgr-1-call-1", "tool-mgr-1-call-2",

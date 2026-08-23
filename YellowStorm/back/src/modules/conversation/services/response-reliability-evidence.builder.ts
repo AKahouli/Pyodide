@@ -138,7 +138,7 @@ export class ResponseReliabilityEvidenceBuilder {
           content: `Output:\n${output}`,
         });
       }
-      if (component.type === 'toolInfo' && data.status === 'completed') {
+      if (component.type === 'toolActivity' && data.status === 'completed') {
         const toolName = stringValue(data.toolName);
         const parsed = parseToolResult(data.resultJson);
         if (!toolName || parsed === undefined) continue;

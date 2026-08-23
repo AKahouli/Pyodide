@@ -6,9 +6,9 @@ import { cn } from '@/lib/utils';
 import { openFileViewerFromUrl } from '@/modules/file-viewer';
 import { useModuleTranslation } from '@/modules/localization';
 import { getArtifactDownloadUrl } from '../../api';
-import type { ArtifactActivityData, ChoiceInteractionMetadata, MessageComponent, ReasoningActivityData, ToolActivityData } from '../../types';
+import type { AgentActivityData, ArtifactActivityData, ChoiceInteractionMetadata, MessageComponent, ToolActivityData } from '../../types';
 import { mapConversationComponentsToContentParts } from '../../utils';
-import { formatActivityDuration, formatSanitizedToolText, humanizeToolTitle, resolveToolDisplayKey, resolveToolFallbackName, resolveToolSummary, sanitizeActivityActorName, sanitizeActivityFilename, sanitizeActivitySummary, sanitizeAssistantDisplayText } from '../../utils/tool-activity';
+import { formatActivityDuration, formatSanitizedToolText, humanizeToolTitle, resolveToolDisplayKey, resolveToolFallbackName, resolveToolSummary, sanitizeActivityActorName, sanitizeActivityFilename, sanitizeActivitySummary, sanitizeAssistantDisplayText, sanitizeRunCodeInput } from '../../utils/tool-activity';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 
 interface NarrativeProps {
@@ -45,9 +45,11 @@ function ToolRow({ component, isStreaming }: Readonly<{ component: MessageCompon
     : resolveToolFallbackName(data) || t('stream.activity.toolFallback');
   const summary = resolveToolSummary(data);
   const duration = formatActivityDuration(data.durationMs);
-  const output = formatSanitizedToolText(data.resultJson);
+  const isRunCode = data.renderKind === 'run_code' || displayKey === 'runCode';
+  const code = isRunCode ? sanitizeRunCodeInput(data.primaryInput) : undefined;
+  const output = isRunCode ? formatSanitizedToolText(data.resultJson) : undefined;
   const active = isStreaming && data.status === 'running';
-  const icon = data.renderKind === 'run_code' || displayKey === 'runCode'
+  const icon = isRunCode
     ? <Code2 className='size-4' />
     : data.renderKind === 'search' || data.renderKind === 'web' || displayKey?.toLowerCase().includes('search')
       ? <Search className='size-4' />
@@ -58,10 +60,10 @@ function ToolRow({ component, isStreaming }: Readonly<{ component: MessageCompon
       <span className='shrink-0 font-medium text-foreground'>{label}</span>
       {summary && <span className='min-w-0 flex-1 truncate'>- {summary}</span>}
       {duration && <span className='shrink-0 tabular-nums'>- {duration}</span>}
-      {output && <ChevronRight className='size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />}
+      {(code || output) && <ChevronRight className='size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />}
     </>
   );
-  if (!output) return <div className='flex min-h-9 items-center gap-2 px-1 text-sm text-muted-foreground'>{row}</div>;
+  if (!code && !output) return <div className='flex min-h-9 items-center gap-2 px-1 text-sm text-muted-foreground'>{row}</div>;
   return (
     <Collapsible>
       <CollapsibleTrigger asChild>
@@ -70,21 +72,32 @@ function ToolRow({ component, isStreaming }: Readonly<{ component: MessageCompon
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent className='ml-6 border-l pb-2 pl-4 pr-2'>
-        <p className='mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('stream.activity.output')}</p>
-        <pre className='max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-background/50 p-3 text-xs text-foreground'>{output}</pre>
+        {code && (
+          <div className='mb-3'>
+            <p className='mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('stream.activity.code')}</p>
+            <pre data-language={data.primaryInputLanguage || undefined} className='max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-background/50 p-3 text-xs text-foreground'>{code}</pre>
+          </div>
+        )}
+        {output && (
+          <div>
+            <p className='mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('stream.activity.output')}</p>
+            <pre className='max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-background/50 p-3 text-xs text-foreground'>{output}</pre>
+          </div>
+        )}
       </CollapsibleContent>
     </Collapsible>
   );
 }
 
-function ReasoningRow({ data, isStreaming }: Readonly<{ data: ReasoningActivityData; isStreaming: boolean }>) {
+function AgentActivityRow({ data, isStreaming }: Readonly<{ data: AgentActivityData; isStreaming: boolean }>) {
   const { t } = useModuleTranslation('conversation');
   const duration = formatActivityDuration(data.durationMs);
-  const summary = sanitizeActivitySummary(data.summary) || t('stream.activity.reasoningPlanning');
+  const summary = sanitizeActivitySummary(data.summary) || t('stream.activity.agentPlanning');
+  const active = isStreaming && data.status === 'running';
   return (
     <div className='flex min-h-9 items-center gap-2 px-1 text-sm text-muted-foreground'>
-      {isStreaming ? <Loader2 data-reasoning-spinner className='size-4 animate-spin text-primary' /> : <BrainCircuit className='size-4 text-primary' />}
-      <span className='shrink-0 font-medium text-foreground'>{t('stream.activity.thought')}</span>
+      {active ? <Loader2 data-agent-activity-spinner className='size-4 animate-spin text-primary' /> : <BrainCircuit className='size-4 text-primary' />}
+      <span className='shrink-0 font-medium text-foreground'>{t('stream.activity.agent')}</span>
       <span className='min-w-0 flex-1 truncate'>- {summary}</span>
       {duration && <span className='shrink-0 tabular-nums'>- {duration}</span>}
     </div>
@@ -119,7 +132,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const useOriginalAnswer = !props.answerComponents || props.answerComponents === props.components;
   const source = useOriginalAnswer
     ? props.components
-    : [...props.components.filter((component) => ['reasoning', 'toolInfo', 'artifact'].includes(component.type)), ...props.answerComponents!];
+    : [...props.components.filter((component) => ['agentActivity', 'toolActivity', 'artifact'].includes(component.type)), ...props.answerComponents!];
   const nodes: ReactNode[] = [];
   let answerBatch: MessageComponent[] = [];
   const flush = () => {
@@ -132,10 +145,10 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     answerBatch = [];
   };
   source.forEach((component, index) => {
-    if (component.type === 'reasoning' || component.type === 'toolInfo' || component.type === 'artifact') {
+    if (component.type === 'agentActivity' || component.type === 'toolActivity' || component.type === 'artifact') {
       flush();
-      if (component.type === 'reasoning') nodes.push(<ReasoningRow key={component.id || index} data={component.data as ReasoningActivityData} isStreaming={props.isStreaming} />);
-      if (component.type === 'toolInfo') nodes.push(<ToolRow key={component.id || index} component={component} isStreaming={props.isStreaming} />);
+      if (component.type === 'agentActivity') nodes.push(<AgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} />);
+      if (component.type === 'toolActivity') nodes.push(<ToolRow key={component.id || index} component={component} isStreaming={props.isStreaming} />);
       if (component.type === 'artifact') nodes.push(<ArtifactRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} data={component.data as ArtifactActivityData} enabled={!props.isStreaming} />);
     } else answerBatch.push(component);
   });
@@ -143,7 +156,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   if (!nodes.length && props.showWorking) nodes.push(<div key='working' className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>);
   if (!nodes.length) return null;
   const actorName = source.reduce<string>((name, component) => {
-    if (component.type !== 'toolInfo') return name;
+    if (component.type !== 'toolActivity') return name;
     const safeName = sanitizeActivityActorName((component.data as ToolActivityData).actorName);
     return safeName ? humanizeToolTitle(safeName) : name;
   }, '') || t('stream.activity.assistant');
