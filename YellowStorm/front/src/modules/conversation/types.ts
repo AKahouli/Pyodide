@@ -367,8 +367,17 @@ export interface StreamStartEvent {
   messageId: string;
 }
 
+export interface ActiveStreamSnapshot {
+  conversationId: string;
+  messageId: string;
+  revision: number;
+  components: StreamingComponent[];
+}
+
 export interface StreamChunkEvent {
   conversationId: string;
+  messageId?: string;
+  revision?: number;
   action: 'add' | 'update' | 'delete';
   component: StreamingComponent;
   metadata?: Record<string, unknown>;

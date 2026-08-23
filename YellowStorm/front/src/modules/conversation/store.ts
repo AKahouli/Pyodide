@@ -15,6 +15,20 @@ export const DEFAULT_CONVERSATIONS_LIMIT = 12;
 const DEFAULT_MESSAGES_LIMIT = 5;
 let currentConversationRequestSequence = 0;
 let currentMessagesRequestSequence = 0;
+let currentStreamRevision = 0;
+let currentRevisionStreamKey: string | null = null;
+let receivedCurrentStreamStart = false;
+let pendingRecoveryChunks: BufferedStreamChunk[] = [];
+let pendingStreamReconcileTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingStreamReconcileAttempts = 0;
+const PENDING_STREAM_RECONCILE_INTERVAL_MS = 2_000;
+const MAX_PENDING_STREAM_RECONCILE_ATTEMPTS = 150;
+
+type BufferedStreamChunk = {
+  action: 'add' | 'update' | 'delete';
+  component: StreamingComponent;
+  revision?: number;
+};
 
 // ===== Streaming Helper Functions =====
 
@@ -33,7 +47,7 @@ interface CachedStreamingState {
  */
 export function applyChunksToComponents(
   components: StreamingComponent[],
-  chunks: Array<{ action: 'add' | 'update' | 'delete'; component: StreamingComponent }>,
+  chunks: BufferedStreamChunk[],
 ): StreamingComponent[] {
   let result = [...components];
   for (const { action, component } of chunks) {
@@ -68,17 +82,17 @@ export function applyChunksToComponents(
  * If the queue grows too large the drain speed increases to prevent lag.
  */
 class StreamingBuffer {
-  private queue: Array<{ action: 'add' | 'update' | 'delete'; component: StreamingComponent }> = [];
+  private queue: BufferedStreamChunk[] = [];
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
-  private flushCallback: ((chunks: Array<{ action: 'add' | 'update' | 'delete'; component: StreamingComponent }>) => void) | null = null;
+  private flushCallback: ((chunks: BufferedStreamChunk[]) => void) | null = null;
   private readonly BASE_INTERVAL_MS = 30; // Base ms between each chunk render
 
-  setFlushCallback(callback: (chunks: Array<{ action: 'add' | 'update' | 'delete'; component: StreamingComponent }>) => void) {
+  setFlushCallback(callback: (chunks: BufferedStreamChunk[]) => void) {
     this.flushCallback = callback;
   }
 
-  addChunk(action: 'add' | 'update' | 'delete', component: StreamingComponent) {
-    this.queue.push({ action, component });
+  addChunk(action: 'add' | 'update' | 'delete', component: StreamingComponent, revision?: number) {
+    this.queue.push({ action, component, revision });
 
     // Safety cap: if queue grew too large (e.g. tab was backgrounded), flush everything
     if (this.queue.length > 500) {
@@ -101,6 +115,10 @@ class StreamingBuffer {
   clear() {
     this.queue = [];
     this.cancelDrain();
+  }
+
+  discardThrough(revision: number) {
+    this.queue = this.queue.filter((chunk) => chunk.revision === undefined || chunk.revision > revision);
   }
 
   // --- internals ---
@@ -140,6 +158,21 @@ class StreamingBuffer {
 }
 
 const streamingBuffer = new StreamingBuffer();
+
+function cancelPendingStreamReconciliation(): void {
+  if (pendingStreamReconcileTimer) clearTimeout(pendingStreamReconcileTimer);
+  pendingStreamReconcileTimer = null;
+  pendingStreamReconcileAttempts = 0;
+}
+
+function schedulePendingStreamReconciliation(reconcile: () => Promise<void>): void {
+  if (pendingStreamReconcileTimer || pendingStreamReconcileAttempts >= MAX_PENDING_STREAM_RECONCILE_ATTEMPTS) return;
+  pendingStreamReconcileAttempts += 1;
+  pendingStreamReconcileTimer = setTimeout(() => {
+    pendingStreamReconcileTimer = null;
+    void reconcile();
+  }, PENDING_STREAM_RECONCILE_INTERVAL_MS);
+}
 
 function isImmediateStreamingComponent(component: StreamingComponent): boolean {
   return component.type === 'reasoning' || component.type === 'toolInfo' || component.type === 'artifact';
@@ -810,7 +843,15 @@ export const useConversationStore = create<ConversationState>()(
       // ===== Message Actions =====
 
       fetchMessages: async (conversationId) => {
+        cancelPendingStreamReconciliation();
         const requestSequence = ++currentMessagesRequestSequence;
+        const existingStream = get();
+        if (!existingStream.isStreaming || existingStream.streamingConversationId !== conversationId) {
+          currentRevisionStreamKey = null;
+          currentStreamRevision = 0;
+          receivedCurrentStreamStart = false;
+          pendingRecoveryChunks = [];
+        }
         set({ messagesLoading: true, messages: [] });
 
         try {
@@ -837,14 +878,20 @@ export const useConversationStore = create<ConversationState>()(
           // This prevents the loader from disappearing before branches are ready.
           const userMsgsWithAnswers = messages.filter((m) => m.conversationType === 'user' && m.answerMessageId);
 
-          const branchResults = await Promise.allSettled(
-            userMsgsWithAnswers.map((m) =>
-              api.fetchBranches(conversationId, m.id).then((branches) => ({
-                userMessageId: m.id,
-                branches,
-              })),
+          const [branchResults, activeStream] = await Promise.all([
+            Promise.allSettled(
+              userMsgsWithAnswers.map((m) =>
+                api.fetchBranches(conversationId, m.id).then((branches) => ({
+                  userMessageId: m.id,
+                  branches,
+                })),
+              ),
             ),
-          );
+            api.fetchActiveStream(conversationId).catch((err) => {
+              console.error('[ConversationStore] active stream recovery error:', err);
+              return null;
+            }),
+          ]);
           if (requestSequence !== currentMessagesRequestSequence || get().currentConversationId !== conversationId) return;
 
           const newBranchCache = new Map(get().branchCache);
@@ -859,15 +906,24 @@ export const useConversationStore = create<ConversationState>()(
             }
           }
 
-          set({
-            messages,
-            messagesTotal: result.total || 0,
-            messagesHasMore: (result.totalPages || 1) > 1,
-            messagesLoading: false,
-            ...(lastUserModelId ? { selectedModelId: lastUserModelId } : {}),
-            ...(lastUserModelId ? { selectedReasoningEffort: lastUserReasoningEffort } : {}),
-            branchCache: newBranchCache,
-            activeBranches: newActiveBranches,
+          let hydratedMessages = messages;
+          set((s) => {
+            const completedDuringHydration = s.messages.filter((message) => message.isComplete === true);
+            const completedById = new Map(completedDuringHydration.map((message) => [message.id, message]));
+            hydratedMessages = messages.map((message) => completedById.get(message.id) ?? message);
+            for (const message of completedDuringHydration) {
+              if (!hydratedMessages.some((candidate) => candidate.id === message.id)) hydratedMessages.push(message);
+            }
+            return {
+              messages: hydratedMessages,
+              messagesTotal: Math.max(result.total || 0, hydratedMessages.length),
+              messagesHasMore: (result.totalPages || 1) > 1,
+              messagesLoading: false,
+              ...(lastUserModelId ? { selectedModelId: lastUserModelId } : {}),
+              ...(lastUserModelId ? { selectedReasoningEffort: lastUserReasoningEffort } : {}),
+              branchCache: newBranchCache,
+              activeBranches: newActiveBranches,
+            };
           });
 
           // Restore cached streaming state if this conversation is still streaming
@@ -880,7 +936,7 @@ export const useConversationStore = create<ConversationState>()(
             // A terminal SSE event may have been missed while this conversation
             // was in the background. Persistence wins over stale live cache.
             const persistedMessage = cachedState.streamingMessageId
-              ? messages.find((message) => message.id === cachedState.streamingMessageId)
+              ? hydratedMessages.find((message) => message.id === cachedState.streamingMessageId)
               : undefined;
             if (persistedMessage?.isComplete) {
               streamingBuffer.clear();
@@ -917,10 +973,72 @@ export const useConversationStore = create<ConversationState>()(
               streamingMessageId: cachedState.streamingMessageId || null,
               streamingQuestionMessageId: cachedState.streamingQuestionMessageId,
               streamingComponents: cachedState.streamingComponents,
-                isAwaitingFirstChunk: cachedState.isAwaitingFirstChunk,
-                awaitingConversationId: cachedState.isAwaitingFirstChunk ? conversationId : null,
-                streamingStateCache: newCache,
+              isAwaitingFirstChunk: cachedState.isAwaitingFirstChunk,
+              awaitingConversationId: cachedState.isAwaitingFirstChunk ? conversationId : null,
+              streamingStateCache: newCache,
             });
+          } else if (activeStream) {
+            const placeholder = hydratedMessages.find((message) => message.id === activeStream.messageId);
+            const current = get();
+            const alreadyLive = receivedCurrentStreamStart
+              && current.isStreaming
+              && current.streamingConversationId === conversationId
+              && current.streamingMessageId === activeStream.messageId;
+
+            if (!placeholder?.isComplete && !alreadyLive) {
+              streamingBuffer.setFlushCallback((chunks) => {
+                set((s) => ({
+                  streamingComponents: applyChunksToComponents(s.streamingComponents, chunks),
+                  ...(s.isAwaitingFirstChunk && chunks.length > 0
+                    ? { isAwaitingFirstChunk: false, awaitingConversationId: null }
+                    : {}),
+                }));
+              });
+
+              const snapshotRevision = activeStream.revision ?? 0;
+              const newerChunks = pendingRecoveryChunks.filter((chunk) =>
+                chunk.revision === undefined || chunk.revision > snapshotRevision,
+              );
+              pendingRecoveryChunks = [];
+              set(() => {
+                const components = applyChunksToComponents(activeStream.components, newerChunks);
+                return {
+                  isStreaming: true,
+                  streamingConversationId: conversationId,
+                  streamingMessageId: activeStream.messageId,
+                  streamingQuestionMessageId: placeholder?.questionMessageId ?? null,
+                  pendingAssistantMessageId: activeStream.messageId,
+                  streamingComponents: components,
+                  isAwaitingFirstChunk: components.length === 0,
+                  awaitingConversationId: components.length === 0 ? conversationId : null,
+                };
+              });
+              const snapshotKey = `${conversationId}:${activeStream.messageId}`;
+              if (currentRevisionStreamKey !== snapshotKey) currentStreamRevision = 0;
+              currentRevisionStreamKey = snapshotKey;
+              currentStreamRevision = Math.max(currentStreamRevision, snapshotRevision);
+              receivedCurrentStreamStart = true;
+              streamingBuffer.discardThrough(snapshotRevision);
+              streamingBuffer.flush();
+            }
+          }
+
+          const pendingMessage = activeStream
+            ? hydratedMessages.find((message) => message.id === activeStream.messageId)
+            : [...hydratedMessages].reverse().find((message) =>
+              message.conversationType === 'ai' && message.isStreaming === true && message.isComplete !== true,
+            );
+          if (pendingMessage && !pendingMessage.isComplete) {
+            const state = get();
+            if (state.streamingMessageId !== pendingMessage.id) {
+              set({
+                isStreaming: true,
+                streamingConversationId: conversationId,
+                streamingMessageId: pendingMessage.id,
+                pendingAssistantMessageId: pendingMessage.id,
+              });
+            }
+            await get().reconcilePendingStream();
           }
         } catch (err) {
           if (requestSequence !== currentMessagesRequestSequence || get().currentConversationId !== conversationId) return;
@@ -1196,6 +1314,7 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       onStreamStart: (event) => {
+        cancelPendingStreamReconciliation();
         const state = get();
 
         if (event.conversationId !== state.currentConversationId) {
@@ -1220,6 +1339,10 @@ export const useConversationStore = create<ConversationState>()(
         }
 
         // Current conversation — clear any pending chunks from previous stream
+        currentRevisionStreamKey = `${event.conversationId}:${event.messageId}`;
+        currentStreamRevision = 0;
+        receivedCurrentStreamStart = true;
+        pendingRecoveryChunks = [];
         streamingBuffer.clear();
 
         // Set up the flush callback to batch-apply chunks
@@ -1264,6 +1387,39 @@ export const useConversationStore = create<ConversationState>()(
           return;
         }
 
+        if (event.revision !== undefined) {
+          const messageId = event.messageId ?? state.streamingMessageId ?? '';
+          const streamKey = `${event.conversationId}:${messageId}`;
+          if (currentRevisionStreamKey !== streamKey) {
+            currentRevisionStreamKey = streamKey;
+            currentStreamRevision = 0;
+            receivedCurrentStreamStart = false;
+          }
+          if (event.revision <= currentStreamRevision) return;
+          currentStreamRevision = event.revision;
+        }
+
+        if (!state.isStreaming || state.streamingConversationId !== event.conversationId) {
+          const placeholder = state.messages.find((message) =>
+            message.conversationType === 'ai' && message.isStreaming === true && message.isComplete !== true,
+          );
+          set({
+            isStreaming: true,
+            streamingConversationId: event.conversationId,
+            streamingMessageId: placeholder?.id ?? null,
+            pendingAssistantMessageId: placeholder?.id ?? null,
+          });
+        }
+
+        if (event.revision !== undefined && !receivedCurrentStreamStart) {
+          pendingRecoveryChunks.push({
+            action: event.action,
+            component: event.component,
+            revision: event.revision,
+          });
+          return;
+        }
+
         if (isImmediateStreamingComponent(event.component)) {
           streamingBuffer.flush();
           set((current) => {
@@ -1279,10 +1435,17 @@ export const useConversationStore = create<ConversationState>()(
         }
 
         // Current conversation — buffer the chunk instead of immediately updating state
-        streamingBuffer.addChunk(event.action, event.component);
+        streamingBuffer.addChunk(event.action, event.component, event.revision);
       },
 
       onStreamComplete: async (event) => {
+        cancelPendingStreamReconciliation();
+        if (currentRevisionStreamKey === `${event.conversationId}:${event.messageId}`) {
+          currentRevisionStreamKey = null;
+          currentStreamRevision = 0;
+          receivedCurrentStreamStart = false;
+          pendingRecoveryChunks = [];
+        }
         const state = get();
 
         if (event.conversationId !== state.currentConversationId) {
@@ -1410,6 +1573,11 @@ export const useConversationStore = create<ConversationState>()(
       },
 
       onStreamError: (event) => {
+        cancelPendingStreamReconciliation();
+        currentRevisionStreamKey = null;
+        currentStreamRevision = 0;
+        receivedCurrentStreamStart = false;
+        pendingRecoveryChunks = [];
         const state = get();
 
         if (event.conversationId !== state.currentConversationId) {
@@ -1536,16 +1704,40 @@ export const useConversationStore = create<ConversationState>()(
         const state = get();
         if (event.conversationId !== state.currentConversationId) return;
 
+        const completesPendingStream = event.message.isComplete === true && (
+          state.streamingMessageId === event.messageId || state.pendingAssistantMessageId === event.messageId
+        );
+        if (completesPendingStream) {
+          cancelPendingStreamReconciliation();
+          streamingBuffer.flush();
+          streamingBuffer.clear();
+        }
+
         const existing = state.messages.find((message) => message.id === event.messageId);
         if (existing) {
-          set((s) => ({
-            messages: s.messages.map((message) => (message.id === event.messageId ? {
-              ...message,
-              ...event.message,
-              reliabilityEvaluation: event.message.reliabilityEvaluation ?? message.reliabilityEvaluation,
-              correctionWorkflow: event.message.correctionWorkflow ?? message.correctionWorkflow,
-            } : message)),
-          }));
+          set((s) => {
+            const cache = new Map(s.streamingStateCache);
+            if (completesPendingStream) cache.delete(event.conversationId);
+            return {
+              messages: s.messages.map((message) => (message.id === event.messageId ? {
+                ...message,
+                ...event.message,
+                reliabilityEvaluation: event.message.reliabilityEvaluation ?? message.reliabilityEvaluation,
+                correctionWorkflow: event.message.correctionWorkflow ?? message.correctionWorkflow,
+              } : message)),
+              ...(completesPendingStream ? {
+                isStreaming: false,
+                streamingConversationId: null,
+                streamingMessageId: null,
+                streamingQuestionMessageId: null,
+                streamingComponents: [],
+                isAwaitingFirstChunk: false,
+                awaitingConversationId: null,
+                pendingAssistantMessageId: null,
+                streamingStateCache: cache,
+              } : {}),
+            };
+          });
           return;
         }
 
@@ -1557,9 +1749,22 @@ export const useConversationStore = create<ConversationState>()(
           } as Message;
           set((s) => {
             const result = upsertMessage(s.messages, message);
+            const cache = new Map(s.streamingStateCache);
+            if (completesPendingStream) cache.delete(event.conversationId);
             return {
               messages: result.messages,
               messagesTotal: result.inserted ? s.messagesTotal + 1 : s.messagesTotal,
+              ...(completesPendingStream ? {
+                isStreaming: false,
+                streamingConversationId: null,
+                streamingMessageId: null,
+                streamingQuestionMessageId: null,
+                streamingComponents: [],
+                isAwaitingFirstChunk: false,
+                awaitingConversationId: null,
+                pendingAssistantMessageId: null,
+                streamingStateCache: cache,
+              } : {}),
             };
           });
           return;
@@ -1588,8 +1793,15 @@ export const useConversationStore = create<ConversationState>()(
 
         try {
           const message = await api.fetchMessage(conversationId, messageId);
-          if (!message.isComplete || get().currentConversationId !== conversationId) return;
+          const current = get();
+          const currentMessageId = current.streamingMessageId ?? current.pendingAssistantMessageId;
+          if (current.currentConversationId !== conversationId || currentMessageId !== messageId) return;
+          if (!message.isComplete) {
+            schedulePendingStreamReconciliation(() => get().reconcilePendingStream());
+            return;
+          }
 
+          cancelPendingStreamReconciliation();
           streamingBuffer.flush();
           streamingBuffer.clear();
           set((s) => {
@@ -1612,6 +1824,13 @@ export const useConversationStore = create<ConversationState>()(
           });
         } catch (err) {
           console.error('[ConversationStore] pending stream reconciliation error:', err);
+          const current = get();
+          if (
+            current.currentConversationId === conversationId
+            && (current.streamingMessageId ?? current.pendingAssistantMessageId) === messageId
+          ) {
+            schedulePendingStreamReconciliation(() => get().reconcilePendingStream());
+          }
         }
       },
 

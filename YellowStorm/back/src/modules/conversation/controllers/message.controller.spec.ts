@@ -100,6 +100,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       choiceInteractionService as any,
       { resolveRuntime: jest.fn(), assertRuntimeRequestAllowed: jest.fn(), resolveEffectiveAgents: jest.fn() } as any,
       responseReliabilityService as any,
+      {} as any,
     );
   });
 

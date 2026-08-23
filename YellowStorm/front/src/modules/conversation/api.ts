@@ -1,5 +1,5 @@
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload } from './types';
+import type { ActiveStreamSnapshot, Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload } from './types';
 
 // ===== Conversation APIs =====
 
@@ -81,6 +81,11 @@ export async function fetchMessages(conversationId: string, params?: MessageList
     limit: data.pagination.limit,
     totalPages: data.pagination.totalPages,
   };
+}
+
+export async function fetchActiveStream(conversationId: string): Promise<ActiveStreamSnapshot | null> {
+  const response = await apiClient.get<ApiResponse<ActiveStreamSnapshot | null>>(API_ENDPOINTS.conversations.activeStream(conversationId));
+  return response.data.data;
 }
 
 export async function sendMessage(conversationId: string, payload: SendMessagePayload): Promise<{ userMessage: Message; aiMessageId?: string }> {

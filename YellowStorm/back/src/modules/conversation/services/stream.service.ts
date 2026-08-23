@@ -81,6 +81,13 @@ export interface ConversationHistoryEntry {
   text: string;
 }
 
+export interface ActiveStreamSnapshot {
+  conversationId: string;
+  messageId: string;
+  revision: number;
+  components: MessageComponent[];
+}
+
 // Log every Nth chunk to avoid overwhelming logs
 const CHUNK_LOG_INTERVAL = 10;
 
@@ -92,6 +99,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   private lastCheckedAt?: Date;
   private activeStreams = new Map<string, Set<string>>(); // userId -> Set<conversationId>
   private componentBuffers = new Map<string, Map<string, MessageComponent>>(); // streamKey -> (componentId -> accumulated component)
+  private streamRevisions = new Map<string, number>(); // streamKey -> latest component-buffer revision
   private activeCalls = new Map<string, grpc.ClientReadableStream<any>>(); // streamKey -> gRPC call
   private streamExecutionLeases = new Map<string, string>(); // streamKey -> durable lease token
   private streamUsage = new Map<
@@ -175,7 +183,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const [, conversationId, messageId] = streamKey.split(':');
       if (messageId && buffer.size > 0) {
         try {
-          await this.finalizeRunningTools(buffer, 'stopped', conversationId, [], false);
+          await this.finalizeRunningTools(buffer, 'stopped', conversationId, [], { broadcast: false });
           await this.messageService.completeAIMessage({
             messageId,
             components: Array.from(buffer.values()),
@@ -191,6 +199,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     this.activeStreams.clear();
     this.componentBuffers.clear();
+    this.streamRevisions.clear();
 
     if (this.chatbotClient) {
       grpc.closeClient(this.chatbotClient);
@@ -708,6 +717,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }, 30_000);
     leaseHeartbeat.unref?.();
     this.componentBuffers.set(streamKey, new Map());
+    this.streamRevisions.set(streamKey, 0);
     this.streamUsage.set(streamKey, {
       inputTokens: 0,
       outputTokens: 0,
@@ -828,6 +838,22 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
   isConversationStreaming(userId: string, conversationId: string): boolean {
     return this.activeStreams.get(userId)?.has(conversationId) ?? false;
+  }
+
+  getActiveStreamSnapshot(conversationId: string): ActiveStreamSnapshot | null {
+    for (const [streamKey, buffer] of this.componentBuffers) {
+      const [, activeConversationId, messageId] = streamKey.split(':');
+      if (activeConversationId !== conversationId || !messageId) continue;
+
+      return {
+        conversationId,
+        messageId,
+        revision: this.streamRevisions.get(streamKey) ?? 0,
+        components: Array.from(buffer.values(), sanitizePublicComponent),
+      };
+    }
+
+    return null;
   }
 
   async buildAgentExecutionRequest(
@@ -1053,7 +1079,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     // Persist current buffer
     const buffer = this.componentBuffers.get(streamKey) || new Map();
-    await this.finalizeRunningTools(buffer, 'stopped', conversationId, await this.resolveMemberIds(conversationId));
+    await this.finalizeRunningTools(
+      buffer,
+      'stopped',
+      conversationId,
+      await this.resolveMemberIds(conversationId),
+      { streamKey, messageId },
+    );
     if (buffer.size > 0) {
         this.logger.debug('Persisting buffer on stop', {
         streamKey,
@@ -1252,10 +1284,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               }
 
               // Send chunk immediately to frontend (only id needed for delete)
+              const revision = this.nextStreamRevision(streamKey);
               this.streamGateway.broadcastToConversation(
                 memberIds, {
                 type: 'stream_chunk',
-                data: { conversationId, action, component: { id: comp.id } as MessageComponent },
+                data: { conversationId, messageId, revision, action, component: { id: comp.id } as MessageComponent },
               }).catch((err) => {
                 this.logger.error('Failed to broadcast delete chunk', { error: err.message, streamKey }, logOpts);
               });
@@ -1295,10 +1328,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
               // Send chunk immediately to frontend
               const publicComponent = sanitizePublicComponent({ id: comp.id, type, data });
+              const revision = this.nextStreamRevision(streamKey);
               this.streamGateway.broadcastToConversation(
                 memberIds, {
                 type: 'stream_chunk',
-                data: { conversationId, action, component: publicComponent },
+                data: { conversationId, messageId, revision, action, component: publicComponent },
               }).catch((err) => {
                 this.logger.error('Failed to broadcast stream chunk', { error: err.message, streamKey }, logOpts);
               });
@@ -1364,7 +1398,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
         try {
           const buffer = this.componentBuffers.get(streamKey) || new Map();
-          await this.finalizeRunningTools(buffer, 'failed', conversationId, memberIds);
+          await this.finalizeRunningTools(buffer, 'failed', conversationId, memberIds, { streamKey, messageId });
           const components = Array.from(buffer.values());
 
           this.logger.debug(
@@ -1547,7 +1581,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     // Persist partial buffer with an error component appended
     const buffer = this.componentBuffers.get(streamKey) || new Map();
-    await this.finalizeRunningTools(buffer, 'failed', conversationId, await this.resolveMemberIds(conversationId));
+    await this.finalizeRunningTools(
+      buffer,
+      'failed',
+      conversationId,
+      await this.resolveMemberIds(conversationId),
+      { streamKey, messageId },
+    );
 
     // Add an error component so the message itself shows the error visually
     const errorComponentId = `error-${randomUUID()}`;
@@ -1651,7 +1691,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     status: 'failed' | 'stopped',
     conversationId: string,
     memberIds: string[],
-    broadcast = true,
+    options: { streamKey?: string; messageId?: string; broadcast?: boolean } = {},
   ): Promise<void> {
     const completedAt = new Date().toISOString();
     for (const component of buffer.values()) {
@@ -1663,11 +1703,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         completedAt,
         ...(Number.isFinite(startedAt) ? { durationMs: Math.max(0, Date.now() - startedAt) } : {}),
       };
-      if (broadcast) {
+      if (options.broadcast !== false) {
+        const revision = options.streamKey ? this.nextStreamRevision(options.streamKey) : undefined;
         await this.streamGateway.broadcastToConversation(memberIds, {
           type: 'stream_chunk',
           data: {
             conversationId,
+            ...(options.messageId ? { messageId: options.messageId } : {}),
+            ...(revision !== undefined ? { revision } : {}),
             action: 'update',
             component: sanitizePublicComponent(component),
           },
@@ -1692,6 +1735,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   private cleanupStream(userId: string, conversationId: string, streamKey: string): void {
     this.activeCalls.delete(streamKey);
     this.componentBuffers.delete(streamKey);
+    this.streamRevisions.delete(streamKey);
     this.streamUsage.delete(streamKey);
     const userStreams = this.activeStreams.get(userId);
     if (userStreams) {
@@ -1700,6 +1744,12 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         this.activeStreams.delete(userId);
       }
     }
+  }
+
+  private nextStreamRevision(streamKey: string): number {
+    const revision = (this.streamRevisions.get(streamKey) ?? 0) + 1;
+    this.streamRevisions.set(streamKey, revision);
+    return revision;
   }
 
   private getComponentType(comp: any): ComponentType {

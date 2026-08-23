@@ -24,7 +24,7 @@ interface NarrativeProps {
 }
 
 function statusIcon(status: ToolActivityData['status'], active: boolean) {
-  if (status === 'running') return <Loader2 data-tool-spinner={active || undefined} className={cn('size-4 text-primary', active && 'animate-spin motion-reduce:animate-none')} />;
+  if (status === 'running') return <Loader2 data-tool-spinner={active || undefined} className={cn('size-4 text-primary', active && 'animate-spin')} />;
   if (status === 'failed') return <XCircle className='size-4 text-destructive' />;
   if (status === 'stopped') return <Square className='size-4 text-muted-foreground' />;
   return <CheckCircle2 className='size-4 text-primary' />;
@@ -83,7 +83,7 @@ function ReasoningRow({ data, isStreaming }: Readonly<{ data: ReasoningActivityD
   const summary = sanitizeActivitySummary(data.summary) || t('stream.activity.reasoningPlanning');
   return (
     <div className='flex min-h-9 items-center gap-2 px-1 text-sm text-muted-foreground'>
-      {isStreaming ? <Loader2 data-reasoning-spinner className='size-4 animate-spin text-primary motion-reduce:animate-none' /> : <BrainCircuit className='size-4 text-primary' />}
+      {isStreaming ? <Loader2 data-reasoning-spinner className='size-4 animate-spin text-primary' /> : <BrainCircuit className='size-4 text-primary' />}
       <span className='shrink-0 font-medium text-foreground'>{t('stream.activity.thought')}</span>
       <span className='min-w-0 flex-1 truncate'>- {summary}</span>
       {duration && <span className='shrink-0 tabular-nums'>- {duration}</span>}
@@ -140,7 +140,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     } else answerBatch.push(component);
   });
   flush();
-  if (!nodes.length && props.showWorking) nodes.push(<div key='working' className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin text-primary motion-reduce:animate-none' />{t('stream.activity.usingTools')}</div>);
+  if (!nodes.length && props.showWorking) nodes.push(<div key='working' className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>);
   if (!nodes.length) return null;
   const actorName = source.reduce<string>((name, component) => {
     if (component.type !== 'toolInfo') return name;
@@ -151,12 +151,12 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     <div data-message-role='assistant' data-testid='conversation-assistant-bubble' className={cn('w-full rounded-2xl rounded-tl-sm border border-border/70 bg-muted/45 px-4 py-4 text-sm text-foreground shadow-xs dark:bg-muted/30')}>
       <div data-agent-activity data-active={props.isStreaming || undefined} className='mb-3 flex min-w-0 items-center gap-2 overflow-hidden text-sm text-muted-foreground' role={props.isStreaming ? 'status' : undefined}>
         <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
-          {props.isStreaming && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s] motion-reduce:animate-none' />}
+          {props.isStreaming && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
           <Bot className={cn('relative size-4', props.isStreaming && 'text-running')} />
         </span>
         <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
         <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
-          {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent motion-reduce:animate-none' />}
+          {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />}
         </span>
       </div>
       <div className='space-y-2'>{nodes}</div>

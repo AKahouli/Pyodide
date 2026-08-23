@@ -19,6 +19,7 @@ import { ConversationQueryDto } from '../dto/conversation-query.dto';
 import { DocumentQueryDto } from '../../workspace/dto/document-query.dto';
 import { ConversationOwnerGuard } from '../guards/conversation-owner.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { StreamService } from '../services/stream.service';
 
 @ApiTags('Conversations')
 @Controller('conversations')
@@ -27,6 +28,7 @@ export class ConversationController {
   constructor(
     private readonly conversationService: ConversationService,
     private readonly conversationBranchService: ConversationBranchService,
+    private readonly streamService: StreamService,
   ) {}
 
   @Post()
@@ -49,6 +51,12 @@ export class ConversationController {
   @UseGuards(ConversationOwnerGuard)
   async findOne(@Param('id') id: string) {
     return this.conversationService.findById(id);
+  }
+
+  @Get(':id/active-stream')
+  @UseGuards(ConversationOwnerGuard)
+  getActiveStream(@Param('id') id: string) {
+    return this.streamService.getActiveStreamSnapshot(id);
   }
 
   @Post(':id/branches')

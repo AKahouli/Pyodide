@@ -193,6 +193,7 @@ export const API_ENDPOINTS = {
     join: (id: string) => `/conversations/${id}/join`,
     taggedAgents: (id: string) => `/conversations/${id}/tagged-agents`,
     messages: (id: string) => `/conversations/${id}/messages`,
+    activeStream: (id: string) => `/conversations/${id}/active-stream`,
     messageById: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}`,
     feedback: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/feedback`,
     rerunReliabilityEvaluation: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/reliability-evaluation/rerun`,

@@ -7,6 +7,7 @@ const fetchConversationsMock = vi.hoisted(() => vi.fn());
 const sendMessageMock = vi.hoisted(() => vi.fn());
 const fetchMessageMock = vi.hoisted(() => vi.fn());
 const fetchMessagesMock = vi.hoisted(() => vi.fn());
+const fetchActiveStreamMock = vi.hoisted(() => vi.fn());
 const fetchBranchesMock = vi.hoisted(() => vi.fn());
 const waitForConnectionMock = vi.hoisted(() => vi.fn());
 
@@ -21,6 +22,7 @@ vi.mock('./api', async (importOriginal) => ({
   sendMessage: sendMessageMock,
   fetchMessage: fetchMessageMock,
   fetchMessages: fetchMessagesMock,
+  fetchActiveStream: fetchActiveStreamMock,
   fetchBranches: fetchBranchesMock,
 }));
 
@@ -29,10 +31,13 @@ beforeEach(() => {
   fetchConversationsMock.mockReset();
   sendMessageMock.mockReset();
   fetchMessageMock.mockReset();
+  fetchMessageMock.mockResolvedValue({ isComplete: false });
   fetchMessagesMock.mockReset();
+  fetchActiveStreamMock.mockReset();
   fetchBranchesMock.mockReset();
   waitForConnectionMock.mockReset();
   fetchBranchesMock.mockResolvedValue([]);
+  fetchActiveStreamMock.mockResolvedValue(null);
   fetchConversationsMock.mockResolvedValue({ items: [], total: 0, page: 1, limit: 12, totalPages: 0 });
   waitForConnectionMock.mockResolvedValue(true);
   useConversationStore.setState({
@@ -362,6 +367,284 @@ describe('new conversation selections', () => {
 });
 
 describe('conversation streaming component updates', () => {
+  it('restores an active stream snapshot after refresh and keeps applying live chunks', async () => {
+    fetchMessagesMock.mockResolvedValue({
+      items: [{
+        id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+        questionMessageId: 'user-1', components: [], isStreaming: true, isComplete: false,
+      }],
+      total: 1,
+      totalPages: 1,
+    });
+    fetchActiveStreamMock.mockResolvedValue({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      revision: 1,
+      components: [{ id: 'text-1', type: 'text', data: { content: 'Recovered partial answer' } }],
+    });
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+    await useConversationStore.getState().fetchMessages('conv-1');
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'add',
+      component: { id: 'tool-1', type: 'toolInfo', data: { toolName: 'search', status: 'running' } },
+    });
+
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-1',
+      pendingAssistantMessageId: 'ai-1',
+      isAwaitingFirstChunk: false,
+    });
+    expect(useConversationStore.getState().streamingComponents).toEqual([
+      expect.objectContaining({ id: 'text-1', data: { content: 'Recovered partial answer' } }),
+      expect.objectContaining({ id: 'tool-1', data: expect.objectContaining({ status: 'running' }) }),
+    ]);
+  });
+
+  it('keeps a canonical completion that arrives during stale message hydration', async () => {
+    let resolveSnapshot: (value: Record<string, unknown>) => void = () => undefined;
+    fetchMessagesMock.mockResolvedValue({
+      items: [{ id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai', components: [], isStreaming: true, isComplete: false }],
+      total: 1,
+      totalPages: 1,
+    });
+    fetchActiveStreamMock.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+    const hydration = useConversationStore.getState().fetchMessages('conv-1');
+    await vi.waitFor(() => expect(fetchActiveStreamMock).toHaveBeenCalled());
+    useConversationStore.getState().onMessageUpdated({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      message: {
+        conversationType: 'ai', components: [{ id: 'text-1', type: 'text', data: { content: 'Complete' } }],
+        isStreaming: false, isComplete: true, createdAt: '2026-08-23T14:00:00.000Z',
+      },
+    });
+    resolveSnapshot({
+      conversationId: 'conv-1', messageId: 'ai-1', revision: 1,
+      components: [{ id: 'text-1', type: 'text', data: { content: 'Partial' } }],
+    });
+    await hydration;
+
+    expect(useConversationStore.getState().messages).toEqual([
+      expect.objectContaining({ id: 'ai-1', isComplete: true, components: [expect.objectContaining({ data: { content: 'Complete' } })] }),
+    ]);
+    expect(useConversationStore.getState().isStreaming).toBe(false);
+  });
+
+  it('reconciles completion when a stale placeholder is followed by no active snapshot', async () => {
+    let resolveSnapshot: (value: null) => void = () => undefined;
+    fetchMessagesMock.mockResolvedValue({
+      items: [{
+        id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+        questionMessageId: 'user-1', components: [], isStreaming: true, isComplete: false,
+      }],
+      total: 1,
+      totalPages: 1,
+    });
+    fetchActiveStreamMock.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    fetchMessageMock.mockResolvedValue({
+      id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+      questionMessageId: 'user-1',
+      components: [{ id: 'text-1', type: 'text', data: { content: 'Completed during recovery' } }],
+      isStreaming: false, isComplete: true, createdAt: '2026-08-23T15:00:00.000Z',
+    });
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+    const hydration = useConversationStore.getState().fetchMessages('conv-1');
+    await vi.waitFor(() => expect(fetchActiveStreamMock).toHaveBeenCalled());
+    resolveSnapshot(null);
+    await hydration;
+
+    expect(fetchMessageMock).toHaveBeenCalledWith('conv-1', 'ai-1');
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: false,
+      streamingMessageId: null,
+      pendingAssistantMessageId: null,
+    });
+    expect(useConversationStore.getState().messages).toEqual([
+      expect.objectContaining({
+        id: 'ai-1', isComplete: true,
+        components: [expect.objectContaining({ data: { content: 'Completed during recovery' } })],
+      }),
+    ]);
+  });
+
+  it('reconciles completion that occurs after the active snapshot is captured', async () => {
+    fetchMessagesMock.mockResolvedValue({
+      items: [{
+        id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+        components: [], isStreaming: true, isComplete: false,
+      }],
+      total: 1,
+      totalPages: 1,
+    });
+    fetchActiveStreamMock.mockResolvedValue({
+      conversationId: 'conv-1', messageId: 'ai-1', revision: 2,
+      components: [{ id: 'text-1', type: 'text', data: { content: 'Partial' } }],
+    });
+    fetchMessageMock.mockResolvedValue({
+      id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+      components: [{ id: 'text-1', type: 'text', data: { content: 'Complete' } }],
+      isStreaming: false, isComplete: true, createdAt: '2026-08-23T15:00:00.000Z',
+    });
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+    await useConversationStore.getState().fetchMessages('conv-1');
+
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: false,
+      streamingMessageId: null,
+      streamingComponents: [],
+    });
+    expect(useConversationStore.getState().messages[0]).toMatchObject({
+      id: 'ai-1', isComplete: true,
+      components: [{ data: { content: 'Complete' } }],
+    });
+  });
+
+  it('keeps reconciling when completion occurs after the first canonical recheck', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMessagesMock.mockResolvedValue({
+        items: [{
+          id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+          components: [], isStreaming: true, isComplete: false,
+        }],
+        total: 1,
+        totalPages: 1,
+      });
+      fetchActiveStreamMock.mockResolvedValue(null);
+      fetchMessageMock
+        .mockResolvedValueOnce({ id: 'ai-1', isStreaming: true, isComplete: false })
+        .mockResolvedValueOnce({
+          id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+          components: [{ id: 'text-1', type: 'text', data: { content: 'Eventually complete' } }],
+          isStreaming: false, isComplete: true, createdAt: '2026-08-23T15:00:00.000Z',
+        });
+      useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+      await useConversationStore.getState().fetchMessages('conv-1');
+      expect(fetchMessageMock).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(fetchMessageMock).toHaveBeenCalledTimes(2);
+      expect(useConversationStore.getState()).toMatchObject({
+        isStreaming: false,
+        streamingMessageId: null,
+        pendingAssistantMessageId: null,
+      });
+      expect(useConversationStore.getState().messages[0]).toMatchObject({
+        id: 'ai-1', isComplete: true,
+        components: [{ data: { content: 'Eventually complete' } }],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears recovered streaming state on a matching canonical completion update', () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-1',
+      pendingAssistantMessageId: 'ai-1',
+      streamingComponents: [{ id: 'text-1', type: 'text', data: { content: 'Partial' } }],
+      messages: [{
+        id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+        components: [], isStreaming: true, isComplete: false, createdAt: '2026-08-23T14:59:00.000Z',
+      }],
+    });
+
+    useConversationStore.getState().onMessageUpdated({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      message: {
+        conversationType: 'ai',
+        components: [{ id: 'text-1', type: 'text', data: { content: 'Complete' } }],
+        isStreaming: false,
+        isComplete: true,
+        createdAt: '2026-08-23T15:00:00.000Z',
+      },
+    });
+
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: false,
+      streamingMessageId: null,
+      pendingAssistantMessageId: null,
+      streamingComponents: [],
+    });
+    expect(useConversationStore.getState().messages[0]).toMatchObject({
+      isComplete: true,
+      components: [{ data: { content: 'Complete' } }],
+    });
+  });
+
+  it('deduplicates snapshot text from overlapping sequenced SSE chunks', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMessagesMock.mockResolvedValue({
+        items: [{ id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai', components: [], isStreaming: true, isComplete: false }],
+        total: 1,
+        totalPages: 1,
+      });
+      fetchActiveStreamMock.mockResolvedValue({
+        conversationId: 'conv-1', messageId: 'ai-1', revision: 1,
+        components: [{ id: 'text-1', type: 'text', data: { content: 'A' } }],
+      });
+      useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+      await useConversationStore.getState().fetchMessages('conv-1');
+      useConversationStore.getState().onStreamChunk({
+        conversationId: 'conv-1', messageId: 'ai-1', revision: 1, action: 'update',
+        component: { id: 'text-1', type: 'text', data: { content: 'A' } },
+      });
+      useConversationStore.getState().onStreamChunk({
+        conversationId: 'conv-1', messageId: 'ai-1', revision: 2, action: 'update',
+        component: { id: 'text-1', type: 'text', data: { content: 'B' } },
+      });
+      await vi.advanceTimersByTimeAsync(31);
+
+      expect(useConversationStore.getState().streamingComponents[0]?.data.content).toBe('AB');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('preserves a newer immediate artifact add that arrives before its snapshot', async () => {
+    let resolveSnapshot: (value: Record<string, unknown>) => void = () => undefined;
+    fetchMessagesMock.mockResolvedValue({
+      items: [{ id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai', components: [], isStreaming: true, isComplete: false }],
+      total: 1,
+      totalPages: 1,
+    });
+    fetchActiveStreamMock.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+    const hydration = useConversationStore.getState().fetchMessages('conv-1');
+    await vi.waitFor(() => expect(fetchActiveStreamMock).toHaveBeenCalled());
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1', messageId: 'ai-1', revision: 2, action: 'add',
+      component: { id: 'artifact-1', type: 'artifact', data: { artifactId: 'safe-artifact', filename: 'report.pdf', availability: 'ready' } },
+    });
+    resolveSnapshot({
+      conversationId: 'conv-1', messageId: 'ai-1', revision: 1,
+      components: [{ id: 'text-1', type: 'text', data: { content: 'Partial' } }],
+    });
+    await hydration;
+
+    expect(useConversationStore.getState().streamingComponents).toEqual([
+      expect.objectContaining({ id: 'text-1' }),
+      expect.objectContaining({ id: 'artifact-1', type: 'artifact' }),
+    ]);
+  });
+
   it('claims a new conversation before an early stream start arrives', () => {
     const conversation = { id: 'conv-1', title: 'New Conversation', workspaces: ['ws-1'] } as never;
 

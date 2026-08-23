@@ -93,6 +93,10 @@ describe('ConversationAssistantBubble', () => {
     expect(container.querySelector('[data-agent-scan]')).toBeInTheDocument();
     expect(container.querySelector('[data-reasoning-spinner]')).toBeInTheDocument();
     expect(container.querySelector('[data-tool-spinner]')).toBeInTheDocument();
+    expect(container.querySelector('[data-agent-spinner]')).not.toHaveClass('motion-reduce:animate-none');
+    expect(container.querySelector('[data-agent-scan]')).not.toHaveClass('motion-reduce:animate-none');
+    expect(container.querySelector('[data-reasoning-spinner]')).not.toHaveClass('motion-reduce:animate-none');
+    expect(container.querySelector('[data-tool-spinner]')).not.toHaveClass('motion-reduce:animate-none');
     expect(container).not.toHaveTextContent('private-agent-id');
     expect(container).not.toHaveTextContent('/tmp/private.txt');
 

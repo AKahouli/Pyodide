@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '@/lib/api';
-import { branchConversation, createConversation, deleteConversation, fetchConversations, fetchMessages, rerunReliabilityEvaluation, sendMessage } from './api';
+import { branchConversation, createConversation, deleteConversation, fetchActiveStream, fetchConversations, fetchMessages, rerunReliabilityEvaluation, sendMessage } from './api';
 
 vi.mock('@/lib/api', () => ({
   apiClient: {
@@ -16,6 +16,7 @@ vi.mock('@/lib/api', () => ({
       byId: (id: string) => `/conversations/${id}`,
       branch: (id: string) => `/conversations/${id}/branches`,
       messages: (id: string) => `/conversations/${id}/messages`,
+      activeStream: (id: string) => `/conversations/${id}/active-stream`,
       messageById: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}`,
       feedback: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/feedback`,
       rerunReliabilityEvaluation: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/reliability-evaluation/rerun`,
@@ -109,6 +110,17 @@ describe('conversation api', () => {
 
     expect(messages.items[0]?.id).toBe('m1');
     expect(sent.userMessage.id).toBe('m2');
+  });
+
+  it('fetches the active process-local stream snapshot', async () => {
+    vi.mocked(apiClient.get).mockResolvedValueOnce({
+      data: { data: { conversationId: 'c1', messageId: 'm1', revision: 2, components: [] } },
+    } as never);
+
+    await expect(fetchActiveStream('c1')).resolves.toEqual({
+      conversationId: 'c1', messageId: 'm1', revision: 2, components: [],
+    });
+    expect(apiClient.get).toHaveBeenCalledWith('/conversations/c1/active-stream');
   });
 
   it('deletes conversation', async () => {

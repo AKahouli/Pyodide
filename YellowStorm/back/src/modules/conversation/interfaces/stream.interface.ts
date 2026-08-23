@@ -31,6 +31,8 @@ export interface StreamChunkEvent {
   type: 'stream_chunk';
   data: {
     conversationId: string;
+    messageId?: string;
+    revision?: number;
     action: string;
     component: MessageComponent;
     metadata?: Record<string, unknown>;

@@ -2,6 +2,57 @@ import { StreamService } from './stream.service';
 import type { MessageComponent } from '../interfaces/message.interface';
 
 describe('StreamService guardrail metadata buffering', () => {
+  it('returns a sanitized process-local snapshot for an active conversation stream', () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    Object.assign(service as object, {
+      componentBuffers: new Map([['user-1:conversation-1:message-1', new Map([
+        ['reasoning-1', { id: 'reasoning-1', type: 'reasoning', data: { summary: 'Planning', detail: 'private trace' } }],
+        ['artifact-1', { id: 'artifact-1', type: 'artifact', data: { filename: 'report.pdf', storagePath: '/workspace/private/report.pdf' } }],
+      ])]]),
+      streamRevisions: new Map([['user-1:conversation-1:message-1', 7]]),
+    });
+
+    expect(service.getActiveStreamSnapshot('conversation-1')).toEqual({
+      conversationId: 'conversation-1',
+      messageId: 'message-1',
+      revision: 7,
+      components: [
+        { id: 'reasoning-1', type: 'reasoning', data: { summary: 'Planning' } },
+        { id: 'artifact-1', type: 'artifact', data: { filename: 'report.pdf' } },
+      ],
+    });
+    expect(service.getActiveStreamSnapshot('conversation-2')).toBeNull();
+  });
+
+  it('revisions terminal tool updates before broadcasting them', async () => {
+    const broadcastToConversation = jest.fn().mockResolvedValue(undefined);
+    const service = Object.create(StreamService.prototype) as StreamService;
+    const streamKey = 'user-1:conversation-1:message-1';
+    const buffer = new Map<string, MessageComponent>([['tool-1', {
+      id: 'tool-1', type: 'toolInfo', data: { toolName: 'search', status: 'running' },
+    }]]);
+    Object.assign(service as object, {
+      streamRevisions: new Map([[streamKey, 4]]),
+      streamGateway: { broadcastToConversation },
+    });
+
+    await (service as any).finalizeRunningTools(
+      buffer,
+      'failed',
+      'conversation-1',
+      ['user-1'],
+      { streamKey, messageId: 'message-1' },
+    );
+
+    expect(broadcastToConversation).toHaveBeenCalledWith(['user-1'], {
+      type: 'stream_chunk',
+      data: expect.objectContaining({
+        conversationId: 'conversation-1', messageId: 'message-1', revision: 5, action: 'update',
+        component: expect.objectContaining({ id: 'tool-1', data: expect.objectContaining({ status: 'failed' }) }),
+      }),
+    });
+  });
+
   it('terminalizes running tools before persisting active buffers on shutdown', async () => {
     const completeAIMessage = jest.fn().mockResolvedValue(undefined);
     const service = Object.create(StreamService.prototype) as StreamService;
@@ -13,6 +64,7 @@ describe('StreamService guardrail metadata buffering', () => {
           toolName: 'run_code', status: 'running', startedAt: new Date(Date.now() - 100).toISOString(),
         },
       }]])]]),
+      streamRevisions: new Map(),
       chatbotClient: null,
       messageService: { completeAIMessage },
       logger: { error: jest.fn() },
@@ -189,6 +241,7 @@ describe('StreamService guardrail metadata buffering', () => {
       activeStreams: new Map(),
       activeCalls: new Map(),
       componentBuffers: new Map(),
+      streamRevisions: new Map(),
       streamUsage: new Map(),
       streamExecutionLeases: new Map(),
       configService: { get: jest.fn((key: string, fallback: unknown) => key === 'conversation.maxConcurrentStreams' ? 5 : fallback) },
