@@ -100,7 +100,7 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
       onToolCall: async (calls) => {
         if (import.meta.env?.DEV) console.log('[voice] toolCall', calls.map((c) => c.name), calls);
         for (const call of calls) {
-          const res = await handleToolCall(streamId, call);
+          const res = await handleToolCall(streamId, call, envelope.toolEndpoints, envelope.streamIdTools);
           if (import.meta.env?.DEV) console.log('[voice] toolResponse', res);
           connRef.current?.sendToolResponse([res]);
         }
@@ -111,9 +111,11 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
       // answers by the worky manager (via the orchestrator). Persisting the
       // concierge's speech here would impersonate the manager in the transcript.
       onInputTranscript: (t) => {
+        if (import.meta.env?.DEV) console.log('[voice] you:', t);
         setTranscript((p) => ({ ...p, you: t }));
       },
       onOutputTranscript: (t) => {
+        if (import.meta.env?.DEV) console.log('[voice] concierge:', t);
         setTranscript((p) => ({ ...p, manager: t }));
       },
       onResumptionHandle: (h) => {
@@ -124,6 +126,14 @@ export function useRealtimeVoiceSession(streamId: string): VoiceSessionApi {
       },
       onClose: (ev) => {
         if (import.meta.env?.DEV) console.warn('[voice] ws closed', ev.code, ev.reason);
+        // Ignore closes from a connection that is no longer the active one:
+        // a stream switch (or hang-up) tears this socket down and opens a fresh
+        // session, so `connRef` already points elsewhere (or is null). The
+        // shared `closingRef` flag alone is unsafe here — the new session's
+        // connect() resets it to false before this old socket's async close
+        // fires, which would otherwise reconnect and resurrect the previous
+        // stream's conversation context.
+        if (connRef.current !== conn) return;
         // Intentional teardown (hang-up / unmount) — do not reconnect.
         if (closingRef.current) {
           setState('idle');

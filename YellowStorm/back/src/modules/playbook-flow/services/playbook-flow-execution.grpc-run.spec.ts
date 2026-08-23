@@ -144,6 +144,12 @@ describe('callGrpcRun router config serialization', () => {
       ['agent-1'],
       undefined,
       'exec-1',
+      {
+        userId: 'owner-1',
+        scopeType: 'playbook',
+        scopeId: 'playbook:exec-1',
+        laneId: 'main',
+      },
     );
   });
 

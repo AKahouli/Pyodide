@@ -66,12 +66,24 @@ class _PlannerStepOut(BaseModel):
     assignee: Optional[str] = None
 
 
+class _PlannerOp(BaseModel):
+    """An amend operation on an EXISTING step, used only by converse (see
+    _amend_message). `op` is "cancel" or "modify"; for "modify", `description`
+    is the step's new full instruction. Only PENDING steps can be amended —
+    _apply_ops enforces that; a completed/running step can't be safely touched
+    (see the cancel/modify feasibility note: it's the ADK replay barrier)."""
+    op: str
+    step_id: str
+    description: str = ""
+
+
 class _PlannerOutput(BaseModel):
     """Schema for the planner's whole JSON response — see _PlannerStepOut."""
     title: str = ""
     goal: str = ""
     answer: str = ""
     steps: List[_PlannerStepOut] = Field(default_factory=list)
+    ops: List[_PlannerOp] = Field(default_factory=list)
 
 PLANNER_INSTRUCTION = """You are a planning agent for a multi-agent assistant.
 First decide whether the user's message needs a PLAN or just a DIRECT REPLY.
@@ -910,9 +922,15 @@ class OrchestratorService:
         return SearchToolADK(create_task, schema)
 
     def _build_workflow(self, session_id: str, user_id: str, plan: Plan, model: str,
-                        connectors: Optional[List[dict]], executor_prompt: Optional[str]):
+                        connectors: Optional[List[dict]], executor_prompt: Optional[str],
+                        replay_completed: bool = False):
         """STEP 8, shared by plan_turn/resume_turn/continue_turn: connectors +
-        persona-delegation → executor tools, plan → ADK Workflow."""
+        persona-delegation → executor tools, plan → ADK Workflow.
+
+        `replay_completed`: rebuild already-COMPLETED steps as their stored result
+        (no re-execution) — set on the plain-message re-drive paths (continuation
+        loop, continue_turn) where ADK would otherwise re-run the whole graph.
+        Left False on resume_turn, whose resume_part genuinely replays history."""
         name_to_step = {graph.node_name(s.id): s.id for s in plan.steps}
         factory_holder: List = []
 
@@ -985,7 +1003,8 @@ class OrchestratorService:
             tools=self._tools_for(connectors, session_id, user_id),
             tools_for_step=tools_for_step,
             instruction_for_step=instruction_for_step,
-            custom_instruction=executor_prompt)
+            custom_instruction=executor_prompt,
+            replay_completed=replay_completed)
         factory_holder.append(factory)
 
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
@@ -1128,24 +1147,30 @@ class OrchestratorService:
             planner_model=planner_model, planner_prompt=planner_prompt,
             plan_session=f"{session_id}_conv_{uuid.uuid4().hex[:8]}")
         live = self._active.get(session_id)  # re-check: may have finished while planning
-        logger.info("[worky] converse ◄ session=%s steps=%d live=%s",
-                    session_id, len(plan.steps), live is not None)
-        if not plan.steps:
+        logger.info("[worky] converse ◄ session=%s steps=%d ops=%d live=%s",
+                    session_id, len(plan.steps), len(plan.ops), live is not None)
+        if not plan.steps and not plan.ops:
             await self._add_message(session_id, "assistant", plan.answer or "")
         elif live is not None:
+            # Ops (cancel/modify existing pending steps) first, then new steps.
+            op_notes = await self._apply_ops(session_id, live, plan.ops)
             # Grab titles BEFORE injecting (ids/deps are rewritten in place, but
             # titles are stable) so the reply names what was added.
             titles = [s.title or (s.description[:50] + "…" if len(s.description) > 50
                                   else s.description) for s in plan.steps]
-            n = await self._inject_steps(session_id, live, plan.steps)
+            n = await self._inject_steps(session_id, user_id, live, plan.steps)
             # Prefer the planner's own words if it wrote any; otherwise a
-            # content-aware line naming the added work — not a fixed "Added N
-            # steps" every time.
+            # content-aware line naming what changed — not a fixed line every time.
             reply = (plan.answer or "").strip()
             if not reply:
+                bits = list(op_notes)
                 joined = "; ".join(t for t in titles if t)
-                reply = (f"Got it — added to the running plan: {joined}." if joined
-                         else f"Got it — added {n} step{'s' if n != 1 else ''} to the running plan.")
+                if joined:
+                    bits.append(f"added: {joined}")
+                elif n:
+                    bits.append(f"added {n} step{'s' if n != 1 else ''}")
+                reply = f"Got it — {'; '.join(bits)}." if bits \
+                    else "Got it — nothing to change there."
             await self._add_message(session_id, "assistant", reply)
         else:
             # The plan finished between the routing check and now — nothing live
@@ -1175,14 +1200,24 @@ class OrchestratorService:
             "steps below already exist and their results (where produced) are "
             "shown — they are DONE. Do NOT recreate or restate them.\n\n"
             f"--- running plan ---\n{context}\n--- end plan ---\n\n"
-            "The user now says the following. Return ONLY the NEW step(s) needed "
-            "for it, as a normal plan. Where a new step needs an existing result, "
-            "paste that result directly into the step's description (do not refer "
-            "to it as 'the summary' — the executor can't see other steps). Give a "
-            "short, friendly `answer`.\n\n"
+            "The user now says the following. Usually you ADD work: return the "
+            "NEW step(s) needed for it as a normal plan. Where a new step needs an "
+            "existing result, paste that result directly into the step's "
+            "description (do not refer to it as 'the summary' — the executor can't "
+            "see other steps).\n\n"
+            "But if the user instead wants to CHANGE a step that is still "
+            "'pending' above, don't add a step — return an `ops` entry keyed by "
+            "that step's [id]:\n"
+            "  - to drop it:   {\"op\": \"cancel\", \"step_id\": \"<id>\"}\n"
+            "  - to reword it: {\"op\": \"modify\", \"step_id\": \"<id>\", "
+            "\"description\": \"<the step's full new instruction>\"}\n"
+            "Only a 'pending' step can be changed — a 'running' or 'completed' one "
+            "has already started, so amend it by adding a follow-up step instead. "
+            "You may combine `ops` and new `steps` in one response.\n\n"
+            "Give a short, friendly `answer`.\n\n"
             f"USER MESSAGE: {message}")
 
-    async def _inject_steps(self, session_id: str, live: Plan, new_steps: List[Step]) -> int:
+    async def _inject_steps(self, session_id: str, user_id: str, live: Plan, new_steps: List[Step]) -> int:
         """Append planner-produced steps to a LIVE, executing plan.
 
         The drive loop (_drive_until_quiescent) rebuilds the workflow each pass
@@ -1223,9 +1258,57 @@ class OrchestratorService:
         scheduler.assign_waves(live)
         for s in new_steps:
             await self._project_step(session_id, live, s)
+        # An await_reply step ADDED by an amend needs its own routing token, or
+        # the mail it waits on can never be matched and the step hangs forever.
+        # cancel_mail_waits (via _register_mail_waits) is NOT called here — that
+        # would drop the tokens the already-running steps depend on; only the new
+        # await_reply steps get minted.
+        await self._mint_mail_waits(session_id, user_id, new_steps)
         logger.info("[worky] converse injected %d step(s) into live plan session=%s: %s",
                     len(new_steps), session_id, [s.id for s in new_steps])
         return len(new_steps)
+
+    async def _apply_ops(self, session_id: str, live: Plan, ops: List[dict]) -> List[str]:
+        """Apply converse cancel/modify ops to a LIVE plan — PENDING steps only.
+
+        This is the whole "safe subset" of amending a running plan: it never
+        touches the graph topology, only what a not-yet-fired node will do. The
+        node factory closed over these same step objects and reads status/
+        description at model-call time (_skip_if_cancelled, the lazy task turn),
+        so mutating them here takes effect on the current drive pass with no
+        rebuild. A step that has already started (running/completed/blocked)
+        can't be safely re-touched — its events are in ADK's replay history —
+        so we refuse and say so, the same way the amend prompt tells the planner
+        to add a follow-up step instead.
+        """
+        notes: List[str] = []
+        for op in ops:
+            step = live.step(op.get("step_id", ""))
+            if step is None:
+                continue
+            label = step.title or (step.description[:40] if step.description else step.id)
+            if step.status != Status.PENDING:
+                notes.append(f"couldn't change '{label}' — it's already {step.status.value}")
+                continue
+            kind = op.get("op")
+            if kind == "cancel":
+                step.status = Status.CANCELLED
+                # A status change must go through set_step_status — upsert_steps
+                # (what _project_step uses) deliberately does NOT touch `status`
+                # on conflict, so projecting a cancelled step that way leaves the
+                # read-model row 'pending' (seen live: session e9adde, s2).
+                await self._project(self._rm and self._rm.set_step_status(
+                    session_id, step.id, Status.CANCELLED.value))
+                notes.append(f"cancelled '{label}'")
+            elif kind == "modify" and op.get("description"):
+                step.description = op["description"]
+                # Only the description changed; upsert_steps DOES update that.
+                await self._project_step(session_id, live, step)
+                notes.append(f"updated '{label}'")
+            else:
+                continue
+            logger.info("[worky] converse op=%s step=%s session=%s", kind, step.id, session_id)
+        return notes
 
     async def resume_turn(self, *, session_id: str, user_id: str, answer: str,
                           model: str, connectors: Optional[List[dict]] = None,
@@ -1341,7 +1424,10 @@ class OrchestratorService:
             await self._project(self._rm.set_session_status(session_id, plan.status.value))
             return plan
 
-        wf, name_to_step = self._build_workflow(session_id, user_id, plan, model, connectors, executor_prompt)
+        # Plain "continue" message → ADK re-runs the graph, so replay completed
+        # steps from their stored result instead of re-executing them.
+        wf, name_to_step = self._build_workflow(session_id, user_id, plan, model,
+                                                connectors, executor_prompt, replay_completed=True)
         runner = self._runner_factory(wf, f"orch_{session_id}")
         await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
         await self._project(self._rm.set_session_status(session_id, "running"))  # paused -> running
@@ -1407,8 +1493,12 @@ class OrchestratorService:
             logger.info("[worky] 9b. %d step(s) spawned mid-turn — continuing session=%s %s",
                         len(spawned), session_id, [s[:12] for s in spawned])
             in_graph = {s.id for s in plan.steps}
+            # replay_completed: this re-drive passes the same plain new_message, so
+            # ADK re-runs the whole graph — rebuild completed steps as their stored
+            # result so only the spawned/pending steps actually execute.
             wf, name_to_step = self._build_workflow(
-                session_id, user_id, plan, model, connectors, executor_prompt)
+                session_id, user_id, plan, model, connectors, executor_prompt,
+                replay_completed=True)
             runner = self._runner_factory(wf, f"orch_{session_id}")
             await _ensure_session(runner, f"orch_{session_id}", user_id, session_id)
             interrupts = await self._drive(
@@ -1431,6 +1521,13 @@ class OrchestratorService:
         started: set = set()
         interrupts: List[Tuple[str, Optional[str]]] = []
         seen: set = set()
+        # DIAGNOSTIC: what SHOULD replay (already terminal) vs run (pending) this
+        # pass. Cross-reference with the "⚡ REAL MODEL CALL" lines: a completed
+        # step here that also logs a real model call was re-executed, not replayed.
+        by_status: dict = {}
+        for s in plan.steps:
+            by_status.setdefault(s.status.value, []).append(s.id[:8])
+        logger.info("[worky] 9. drive pass session=%s statuses=%s", session_id, by_status)
         async for ev in runner.run_async(
                 user_id=user_id, session_id=session_id, new_message=new_message):
             await self._apply_event(session_id, plan, ev, name_to_step, started)
@@ -1574,7 +1671,8 @@ class OrchestratorService:
                               assignee=assignee_id, assignee_name=assignee_name,
                               assignee_role=assignee_role))
         return Plan(title=data.get("title", ""), goal=data.get("goal", ""),
-                    answer=data.get("answer") or None, steps=steps)
+                    answer=data.get("answer") or None, steps=steps,
+                    ops=[dict(o) for o in data.get("ops", []) if o.get("step_id")])
 
     def _build_planner_model(self, model_name: Optional[str] = None):
         # Always has the find_human_agents discovery tool now.
@@ -1625,8 +1723,21 @@ class OrchestratorService:
         """
         if self._rm is None:
             return
-        awaiting = [s for s in plan.steps if s.kind == "await_reply"]
+        # This plan supersedes any prior waits, so drop them first, then mint for
+        # every await_reply step. (A mid-run amend uses _mint_mail_waits directly
+        # so it does NOT cancel the running plan's live waits.)
         await self._project(self._rm.cancel_mail_waits(session_id))
+        await self._mint_mail_waits(session_id, user_id, plan.steps)
+
+    async def _mint_mail_waits(self, session_id: str, user_id: str, steps: List[Step]) -> None:
+        """Register a routing token for each await_reply step in `steps` — without
+        cancelling any existing wait. Shared by _register_mail_waits (whole plan,
+        after a cancel) and _inject_steps (amend-added steps only)."""
+        if self._rm is None:
+            return
+        awaiting = [s for s in steps if s.kind == "await_reply"]
+        if not awaiting:
+            return
         # Every wait gets a deadline. People do not always reply, and a step with
         # no deadline waits forever: the plan never finishes and nobody is told
         # why. On expiry the step asks the owner instead (see expire_mail_waits).
@@ -1650,6 +1761,12 @@ class OrchestratorService:
         if not step_id:
             return
         step = plan.step(step_id)
+        # A step the user cancelled mid-run (converse amend) still gets scheduled
+        # and emits a no-op event (_skip_if_cancelled short-circuits its model
+        # call). Ignore those events so its status stays CANCELLED instead of
+        # being flipped back to running/completed here.
+        if step is not None and step.status == Status.CANCELLED:
+            return
         # Which step called which tool, with what args — logged here (not at the
         # MCP call site) because that log line carries no step id, and during a
         # parallel wave several steps' calls interleave: log order alone cannot
@@ -1659,10 +1776,6 @@ class OrchestratorService:
             if fc is not None:
                 logger.info("[worky] 9. step=%s tool_call name=%s args=%s",
                             step_id, fc.name, dict(fc.args or {}))
-            fr = getattr(part, "function_response", None)
-            if fr is not None:
-                logger.info("[worky] 9. step=%s tool_response name=%s response=%s",
-                            step_id, fr.name, fr.response)
         # First event for a node → running; its output event → completed.
         # output_for alone is unreliable: confirmed empirically it's unset for
         # a plain FunctionNode regardless of downstream dependents (seen live:
@@ -1681,6 +1794,14 @@ class OrchestratorService:
                 and not ev.get_function_calls() and not ev.get_function_responses())
         if step_id not in started:
             started.add(step_id)
+            # DIAGNOSTIC: a step that was already terminal re-entering means ADK
+            # emitted events for it again this pass. On its own that can be a
+            # benign replay; pair it with the "⚡ REAL MODEL CALL" line for the
+            # same node to tell replay (no model call) from a true re-run.
+            if step.status.is_terminal():
+                logger.warning("[worky] 9. ⟲ completed step re-entered session=%s step=%s "
+                               "(was %s) — replay unless it also logs a REAL MODEL CALL",
+                               session_id, step_id, step.status.value)
             step.status = Status.RUNNING
             logger.info("[worky] 9. step running session=%s step=%s wave=%d",
                         session_id, step_id, step.wave)

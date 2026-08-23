@@ -1,5 +1,5 @@
 import { Types } from 'mongoose';
-import { WorkyTaskService } from './worky-task.service';
+import { WorkyTaskService, BOARD_LANES } from './worky-task.service';
 
 /**
  * Proxy-based query-chain stub: any method (find/sort/limit/lean/…) returns the
@@ -39,6 +39,34 @@ describe('WorkyTaskService.projectForBoard', () => {
     ]);
     const lanes = await service.projectForBoard(streamId, new Map());
     expect((lanes.ready[0] as { assigneeKey?: string | null }).assigneeKey).toBeNull();
+  });
+
+  // Terminal lanes must stay on the board so a stopped/failed run shows its
+  // canceled/failed tasks instead of the tasks silently vanishing. The status
+  // itself comes from the API via Electric; we only surface it.
+  it('keeps canceled tasks on the board in the canceled lane', async () => {
+    const service = makeService([
+      { _id: new Types.ObjectId(), streamId, title: 'Stopped task', lane: 'canceled' },
+    ]);
+    const lanes = await service.projectForBoard(streamId, new Map());
+    expect(lanes.canceled).toHaveLength(1);
+    expect((lanes.canceled[0] as { title: string }).title).toBe('Stopped task');
+  });
+
+  it('keeps failed tasks on the board in the failed lane', async () => {
+    const service = makeService([
+      { _id: new Types.ObjectId(), streamId, title: 'Broken task', lane: 'failed' },
+    ]);
+    const lanes = await service.projectForBoard(streamId, new Map());
+    expect(lanes.failed).toHaveLength(1);
+    expect((lanes.failed[0] as { title: string }).title).toBe('Broken task');
+  });
+
+  it('includes the terminal failed/canceled lanes in the board query set', () => {
+    // BOARD_LANES is the `$in` filter for the Mongo board query, so terminal
+    // lanes must be listed or the docs never load.
+    expect(BOARD_LANES).toContain('failed');
+    expect(BOARD_LANES).toContain('canceled');
   });
 });
 

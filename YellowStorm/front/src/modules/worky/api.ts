@@ -23,6 +23,7 @@ import type {
   WorkyMemoryEntry,
   WorkyMemoryProposal,
   WorkyMessage,
+  PaginatedStreams,
   WorkyStartValidation,
   WorkyStream,
   WorkyStreamQueryParams,
@@ -38,10 +39,13 @@ function unwrap<T>(response: { data: ApiResponse<T> }): T {
   return response.data.data;
 }
 
-export async function getStreams(params: WorkyStreamQueryParams = {}): Promise<WorkyStream[]> {
-  const response = await apiClient.get<ApiResponse<WorkyStream[]>>(API_ENDPOINTS.worky.streams, {
-    params,
-  });
+export async function getStreams(
+  params: WorkyStreamQueryParams = {},
+): Promise<PaginatedStreams> {
+  const response = await apiClient.get<ApiResponse<PaginatedStreams>>(
+    API_ENDPOINTS.worky.streams,
+    { params },
+  );
   return unwrap(response);
 }
 
@@ -431,6 +435,10 @@ export async function synthesizeSpeech(
 export interface VoiceSessionEnvelope {
   wsUrl: string;
   setup: Record<string, unknown>;
+  /** tool name -> the MCP URL that executes it (the browser relay routes by this). */
+  toolEndpoints?: Record<string, string>;
+  /** tools that take the session streamId as an argument; others must not get it. */
+  streamIdTools?: string[];
   expiresAt: string;
 }
 

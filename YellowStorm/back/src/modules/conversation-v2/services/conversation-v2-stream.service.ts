@@ -18,6 +18,7 @@ import { ConversationV2SessionService } from './conversation-v2-session.service'
 import { ConversationV2SessionAccessService } from './conversation-v2-session-access.service';
 import { ConversationV2StreamGatewayService } from './conversation-v2-stream-gateway.service';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
+import { SandboxRuntimeContext } from '@common/runtime/sandbox-scope';
 import { SkillService } from '@modules/skill/skill.service';
 import type { IGrpcSkill } from '@modules/skill/interfaces/skill.interface';
 import { ConnectorService } from '@modules/connector/connector.service';
@@ -197,8 +198,14 @@ export class ConversationV2StreamService implements OnModuleDestroy {
       : [];
     // Resolve the selected connectors into gRPC bindings with the current user's
     // auth (token + identity headers) resolved per request, exactly like v1.
+    const runtimeContext: SandboxRuntimeContext = {
+      userId,
+      scopeType: 'conversation',
+      scopeId: `conversation:${sessionId}`,
+      laneId: 'main',
+    };
     const connectors = req.connectorIds?.length
-      ? await this.connectorService.findByIdsForGrpc(req.connectorIds, userId)
+      ? await this.connectorService.findByIdsForGrpc(req.connectorIds, userId, runtimeContext)
       : [];
     // Persist the current selection on the session so it survives a reload
     // (mirrors v1's conversation-level `selectedSkills`). Refreshed every send.

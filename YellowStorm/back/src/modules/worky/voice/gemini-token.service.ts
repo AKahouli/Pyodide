@@ -1,11 +1,24 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GoogleGenAI } from '@google/genai';
-import { buildSetupMessage } from './voice-concierge.config';
+import { GoogleGenAI, type FunctionDeclaration } from '@google/genai';
+import {
+  buildSetupMessage,
+  browserReachableMcpUrl,
+  connectorActionsToFunctionDeclarations,
+  WORKY_CONCIERGE_CONNECTOR_SLUGS,
+} from './voice-concierge.config';
+import { ConnectorService } from '../../connector/connector.service';
 
 export interface VoiceSessionEnvelope {
   wsUrl: string;
   setup: Record<string, unknown>;
+  /** Map of tool name -> the MCP URL that executes it, so the browser relay can
+   *  route each tool call to the right MCP. */
+  toolEndpoints: Record<string, string>;
+  /** Tools that take the session streamId as an argument (worky task tools).
+   *  Tools NOT listed (e.g. human-agents lookup) must not get streamId injected,
+   *  or their MCP rejects the unexpected argument. */
+  streamIdTools: string[];
   expiresAt: string;
 }
 
@@ -19,7 +32,10 @@ export class GeminiTokenService implements OnModuleInit {
   private readonly tokenTtlSec: number;
   private readonly startTtlSec: number;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly connectors: ConnectorService,
+  ) {
     this.apiKey = this.config.get<string>('worky.voiceApiKey') ?? '';
     this.model = this.config.get<string>('worky.voiceModel') ?? 'gemini-3.1-flash-live-preview';
     this.voice = this.config.get<string>('worky.voiceName') ?? 'Kore';
@@ -60,13 +76,54 @@ export class GeminiTokenService implements OnModuleInit {
 
     if (!token?.name) throw new Error('Gemini token mint returned no token name');
 
+    // The concierge's tools are the MCP connectors' actions — the connectors are
+    // the source of truth, no hardcoded tool list. Each connector's tools route
+    // to that connector's MCP (toolEndpoints), which the browser relay honors.
+    const connectors = (
+      await Promise.all(WORKY_CONCIERGE_CONNECTOR_SLUGS.map((s) => this.connectors.findBySlug(s)))
+    ).filter((c): c is NonNullable<typeof c> => !!c && !!c.actions?.length);
+
+    if (!connectors.length) {
+      throw new Error(
+        `voice concierge tools unavailable: none of [${WORKY_CONCIERGE_CONNECTOR_SLUGS.join(', ')}] ` +
+          'is an active connector with actions',
+      );
+    }
+
+    const functionDeclarations: FunctionDeclaration[] = [];
+    const toolEndpoints: Record<string, string> = {};
+    const streamIdTools: string[] = [];
+    for (const c of connectors) {
+      const url = browserReachableMcpUrl(c.mcpServerUrl);
+      for (const action of c.actions) {
+        const props = (action.parameterSchema as Record<string, unknown>)?.properties as
+          | Record<string, unknown>
+          | undefined;
+        if (props && 'streamId' in props) streamIdTools.push(action.key);
+      }
+      for (const decl of connectorActionsToFunctionDeclarations(c.actions)) {
+        functionDeclarations.push(decl);
+        if (decl.name) toolEndpoints[decl.name] = url;
+      }
+    }
+
+    this.logger.log(
+      `[voice] concierge session created — tools from [${connectors.map((c) => c.slug).join(', ')}]: ` +
+        Object.entries(toolEndpoints)
+          .map(([t, u]) => `${t}→${u}`)
+          .join(', '),
+    );
+
     return {
       wsUrl: `${this.wsBaseUrl}?access_token=${token.name}`,
       // The backend authors the full session setup (model + modalities + voice +
       // concierge system prompt + tools) in raw-proto shape so the concierge
-      // reliably has its tools and persona. The client relays this opaque blob
-      // verbatim and authors nothing; the API key never leaves the server.
-      setup: buildSetupMessage(this.model, this.voice, opts),
+      // reliably has its tools and persona. Tools come from the connectors above.
+      // The client relays this opaque blob verbatim; the API key never leaves
+      // the server.
+      setup: buildSetupMessage(this.model, this.voice, functionDeclarations, opts),
+      toolEndpoints,
+      streamIdTools,
       expiresAt: new Date(expireMs).toISOString(),
     };
   }

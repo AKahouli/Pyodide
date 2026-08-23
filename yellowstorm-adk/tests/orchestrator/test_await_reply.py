@@ -118,6 +118,37 @@ def test_a_completed_dynamic_delegate_step_replays_its_stored_result_instead_of_
     assert outputs == ["James's original second opinion."]
 
 
+def test_replay_completed_short_circuits_any_completed_step_without_rerunning(monkeypatch):
+    """The continuation re-drive / continue_turn pass a plain 'run the plan'
+    message, which ADK treats as a fresh invocation and re-runs the WHOLE graph
+    (confirmed at the event level: session 1e8d0f72, a completed s1 re-ran its
+    entire GitHub backlog pull on the second pass). With replay_completed=True,
+    an already-COMPLETED plain step must emit its stored result and re-execute
+    nothing — no LLM call at all."""
+    def _must_not_build_a_real_llm(*a, **k):
+        raise AssertionError("a completed step must not re-call the LLM on a re-drive")
+    monkeypatch.setattr(nodes, "build_llm", _must_not_build_a_real_llm)
+
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[], replay_completed=True)
+    step = Step(id="s1", kind="execute", status=Status.COMPLETED,
+                result="## backlog summary (already produced)")
+
+    node = factory(step, "s1")
+    outputs = asyncio.run(_run_single_node(node, "s1"))
+    assert outputs == ["## backlog summary (already produced)"]
+
+
+def test_without_replay_completed_a_completed_step_is_still_a_live_llm_agent():
+    """resume_turn must NOT set replay_completed — there ADK's resume_part
+    genuinely replays completed nodes from history, and a FunctionNode swap
+    would diverge from that recorded shape. So a completed step still builds a
+    real LlmAgent (ADK, not us, decides not to re-invoke it)."""
+    from google.adk.agents import LlmAgent
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[])  # replay_completed defaults False
+    step = Step(id="s1", kind="execute", status=Status.COMPLETED, result="done")
+    assert isinstance(factory(step, "s1"), LlmAgent)
+
+
 def test_a_completed_dynamic_await_reply_step_replays_too_not_just_execute_ones():
     """The is_dynamic_delegate+COMPLETED short-circuit above must be checked
     BEFORE the kind=="await_reply" branch, not after it -- otherwise a

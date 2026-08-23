@@ -4,6 +4,11 @@ import { Model, FilterQuery, Types } from 'mongoose';
 import { LoggerService } from '../logger';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { escapeRegex, stripLeadingTrailingChar } from '../../common/utils';
+import {
+  SandboxRuntimeContext,
+  CODE_INTERPRETER_CONNECTOR_SLUG,
+  buildSandboxScopeHeaders,
+} from '../../common/runtime/sandbox-scope';
 import { BadRequestException, ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateConnectorDto, QueryConnectorDto, UpdateConnectorDto } from './dto';
@@ -225,7 +230,11 @@ export class ConnectorService {
    * parameter schema travels as a JSON string. Connectors with no enabled
    * action are dropped.
    */
-  async findByIdsForGrpc(ids: string[], userId: string): Promise<IGrpcConnector[]> {
+  async findByIdsForGrpc(
+    ids: string[],
+    userId: string,
+    ctx?: SandboxRuntimeContext,
+  ): Promise<IGrpcConnector[]> {
     const connectors = await this.findByIds(ids);
 
     const bindings: IGrpcConnector[] = [];
@@ -274,6 +283,12 @@ export class ConnectorService {
             error: (err as Error).message,
           });
         }
+      }
+
+      // Runtime scope identity for the Code Interpreter (MCP Manus) connector:
+      // stamp x-sandbox-* so MCP Manus forwards it to the Runtime Coordinator.
+      if (ctx && connector.slug === CODE_INTERPRETER_CONNECTOR_SLUG) {
+        authHeaders = { ...authHeaders, ...buildSandboxScopeHeaders(ctx) };
       }
 
       bindings.push({

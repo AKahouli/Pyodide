@@ -27,6 +27,7 @@ const WORKY_CONNECTOR_SLUGS = [
   WORKY_MAIL_CONNECTOR_SLUG,
   'sharepoint',
   'teams',
+  'githubpoc',
 ];
 
 /**

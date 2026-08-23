@@ -94,6 +94,7 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
         failed: [],
         blocked: [],
         done: [],
+        canceled: [],
       },
       pendingClarifications: [],
     };
@@ -151,6 +152,7 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
         failed: [],
         blocked: [],
         done: [],
+        canceled: [],
       },
       pendingClarifications: [],
     };
@@ -187,6 +189,7 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
         failed: [],
         blocked: [],
         done: [],
+        canceled: [],
       },
       pendingClarifications: [],
     };
