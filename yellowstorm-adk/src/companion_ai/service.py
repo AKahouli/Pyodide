@@ -20,6 +20,7 @@ whose nodes are per-step LlmAgents. Event→step mapping uses node_info.path
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -342,6 +343,24 @@ class OrchestratorService:
         # uses it to append steps to a plan mid-flight — the drive loop then runs
         # them on its next pass, exactly as create_task grows a plan.
         self._active: Dict[str, Plan] = {}
+        # One lock per session, serializing concurrent amends (converse_turn) so
+        # they run one at a time and each plans against the plan the previous one
+        # already changed — not from the same stale snapshot, which is what let
+        # two near-simultaneous "update the plan" messages conflict. Structural
+        # tearing is NOT the concern here: the in-memory step mutations are all
+        # await-free blocks (atomic under single-threaded asyncio), and the drive
+        # loop runs a pre-built graph, so it deliberately does NOT take this lock —
+        # plan execution keeps running while amends queue behind each other.
+        self._plan_locks: Dict[str, asyncio.Lock] = {}
+
+    def _plan_lock(self, session_id: str) -> asyncio.Lock:
+        # ponytail: grows one Lock per session, never evicted — fine at this scale;
+        # evict on session finish if the process runs long enough to matter.
+        lock = self._plan_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._plan_locks[session_id] = lock
+        return lock
 
     async def expire_mail_waits(self) -> int:
         """Let down every step whose reply never came: the wait becomes an
@@ -1188,45 +1207,52 @@ class OrchestratorService:
         # 3cd66578…). Still an EPHEMERAL planner session (no accumulated history),
         # so it never re-plans the existing work — the context is given
         # explicitly and framed as already-done.
-        live = self._active.get(session_id)
-        amend_message = self._amend_message(live, message) if live is not None else message
-        plan = await self._make_plan(
-            session_id, user_id, amend_message,
-            planner_model=planner_model, planner_prompt=planner_prompt,
-            plan_session=f"{session_id}_conv_{uuid.uuid4().hex[:8]}",
-            requester=requester)
-        live = self._active.get(session_id)  # re-check: may have finished while planning
-        logger.info("[worky] converse ◄ session=%s steps=%d ops=%d live=%s",
-                    session_id, len(plan.steps), len(plan.ops), live is not None)
-        if not plan.steps and not plan.ops:
-            await self._add_message(session_id, "assistant", plan.answer or "")
-        elif live is not None:
-            # Ops (cancel/modify existing pending steps) first, then new steps.
-            op_notes = await self._apply_ops(session_id, live, plan.ops)
-            # Grab titles BEFORE injecting (ids/deps are rewritten in place, but
-            # titles are stable) so the reply names what was added.
-            titles = [s.title or (s.description[:50] + "…" if len(s.description) > 50
-                                  else s.description) for s in plan.steps]
-            n = await self._inject_steps(session_id, user_id, live, plan.steps)
-            # Prefer the planner's own words if it wrote any; otherwise a
-            # content-aware line naming what changed — not a fixed line every time.
-            reply = (plan.answer or "").strip()
-            if not reply:
-                bits = list(op_notes)
-                joined = "; ".join(t for t in titles if t)
-                if joined:
-                    bits.append(f"added: {joined}")
-                elif n:
-                    bits.append(f"added {n} step{'s' if n != 1 else ''}")
-                reply = f"Got it — {'; '.join(bits)}." if bits \
-                    else "Got it — nothing to change there."
-            await self._add_message(session_id, "assistant", reply)
-        else:
-            # The plan finished between the routing check and now — nothing live
-            # to amend. Don't silently drop the request.
-            await self._add_message(
-                session_id, "assistant",
-                "The plan just finished — send that again and I'll start it fresh.")
+        # Serialize amends per session: hold the lock across the WHOLE turn —
+        # read the live plan, plan against it, apply — so a second amend waits and
+        # then plans against the plan that already includes this one's steps,
+        # instead of both planning from the same stale snapshot and conflicting.
+        # The drive loop does NOT take this lock, so plan execution keeps running;
+        # only concurrent amends queue behind each other (asyncio.Lock is FIFO).
+        async with self._plan_lock(session_id):
+            live = self._active.get(session_id)
+            amend_message = self._amend_message(live, message) if live is not None else message
+            plan = await self._make_plan(
+                session_id, user_id, amend_message,
+                planner_model=planner_model, planner_prompt=planner_prompt,
+                plan_session=f"{session_id}_conv_{uuid.uuid4().hex[:8]}",
+                requester=requester)
+            live = self._active.get(session_id)  # re-check: may have finished while planning
+            logger.info("[worky] converse ◄ session=%s steps=%d ops=%d live=%s",
+                        session_id, len(plan.steps), len(plan.ops), live is not None)
+            if not plan.steps and not plan.ops:
+                await self._add_message(session_id, "assistant", plan.answer or "")
+            elif live is not None:
+                # Ops (cancel/modify existing pending steps) first, then new steps.
+                op_notes = await self._apply_ops(session_id, live, plan.ops)
+                # Grab titles BEFORE injecting (ids/deps are rewritten in place, but
+                # titles are stable) so the reply names what was added.
+                titles = [s.title or (s.description[:50] + "…" if len(s.description) > 50
+                                      else s.description) for s in plan.steps]
+                n = await self._inject_steps(session_id, user_id, live, plan.steps)
+                # Prefer the planner's own words if it wrote any; otherwise a
+                # content-aware line naming what changed — not a fixed line every time.
+                reply = (plan.answer or "").strip()
+                if not reply:
+                    bits = list(op_notes)
+                    joined = "; ".join(t for t in titles if t)
+                    if joined:
+                        bits.append(f"added: {joined}")
+                    elif n:
+                        bits.append(f"added {n} step{'s' if n != 1 else ''}")
+                    reply = f"Got it — {'; '.join(bits)}." if bits \
+                        else "Got it — nothing to change there."
+                await self._add_message(session_id, "assistant", reply)
+            else:
+                # The plan finished between the routing check and now — nothing live
+                # to amend. Don't silently drop the request.
+                await self._add_message(
+                    session_id, "assistant",
+                    "The plan just finished — send that again and I'll start it fresh.")
         return plan
 
     @staticmethod
