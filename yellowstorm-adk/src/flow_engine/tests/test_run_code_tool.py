@@ -51,6 +51,33 @@ async def test_playbook_run_code_uses_execution_and_authoritative_workspace_path
     assert context.mounts[1].mode == "r"
 
 
+@pytest.mark.asyncio
+async def test_playbook_run_code_prefers_execution_over_stale_agent_session(monkeypatch):
+    monkeypatch.setattr(factory, "run_code_globally_enabled", lambda: True)
+    captured = {}
+
+    async def execute(_self, **kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "written_files": []}
+
+    monkeypatch.setattr(factory.RunCodeClient, "execute", execute)
+    tools, _collector = factory.create_langchain_tools(
+        agent_config={
+            "tools": [{"name": "run_code"}],
+            "agent_params": {"session_id": "stale-execution"},
+        },
+        user_id="caller-1",
+        execution_id="current-execution",
+    )
+
+    tool = next(item for item in tools if item.name == "run_code")
+    await tool.ainvoke({"code": "return 1;", "input": None})
+
+    context = captured["context"]
+    assert context.runId == "current-execution"
+    assert context.mounts[0].cephPrefix == "caller-1/system_current-execution"
+
+
 def test_playbook_run_code_is_absent_when_global_switch_is_off(monkeypatch):
     monkeypatch.setattr(factory, "run_code_globally_enabled", lambda: False)
     tools, _collector = factory.create_langchain_tools(

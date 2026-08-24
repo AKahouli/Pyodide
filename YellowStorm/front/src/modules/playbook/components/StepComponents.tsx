@@ -4,6 +4,7 @@ import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import type { MessageComponent } from '@/modules/conversation/types';
 import type { HumanFeedbackData, PlaybookComponent } from '../types';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
+import { PlaybookArtifactActions } from './PlaybookArtifactActions';
 
 function dedupeMirroredTextComponents(components: PlaybookComponent[]): PlaybookComponent[] {
   const syntheticTexts = components.filter(
@@ -27,21 +28,24 @@ function dedupeMirroredTextComponents(components: PlaybookComponent[]): Playbook
 export function StepComponents({
   components,
   taskId,
+  executionId,
 }: {
   components: PlaybookComponent[];
   taskId: string;
+  executionId?: string;
 }) {
   const visibleComponents = dedupeMirroredTextComponents(components);
-  const groups: Array<{ type: 'ai'; items: MessageComponent[] } | { type: 'hf'; data: HumanFeedbackData }> = [];
+  const groups: Array<{ type: 'ai'; items: MessageComponent[] } | { type: 'hf'; data: HumanFeedbackData } | { type: 'artifact'; data: Record<string, unknown> }> = [];
 
   let currentAiGroup: MessageComponent[] = [];
   for (const comp of visibleComponents) {
-    if (comp.type === 'humanFeedback') {
+    if (comp.type === 'humanFeedback' || comp.type === 'artifact') {
       if (currentAiGroup.length > 0) {
         groups.push({ type: 'ai', items: currentAiGroup });
         currentAiGroup = [];
       }
-      groups.push({ type: 'hf', data: comp.data as unknown as HumanFeedbackData });
+      if (comp.type === 'humanFeedback') groups.push({ type: 'hf', data: comp.data as unknown as HumanFeedbackData });
+      else groups.push({ type: 'artifact', data: comp.data as Record<string, unknown> });
     } else {
       currentAiGroup.push(comp as MessageComponent);
     }
@@ -55,8 +59,12 @@ export function StepComponents({
       {groups.map((group, i) =>
         group.type === 'ai' ? (
           <AIMessageContent key={i} parts={mapComponentsToContentParts(group.items)} />
-        ) : (
+        ) : group.type === 'hf' ? (
           <HumanFeedbackInline key={i} data={group.data} taskId={taskId} />
+        ) : executionId && typeof group.data.artifactId === 'string' ? (
+          <PlaybookArtifactActions key={i} card executionId={executionId} artifactId={group.data.artifactId} filename={String(group.data.filename || 'artifact')} mimeType={String(group.data.mimeType || '')} />
+        ) : (
+          <AIMessageContent key={i} parts={mapComponentsToContentParts([{ type: 'artifact', data: group.data } as MessageComponent])} />
         ),
       )}
     </MessageProvider>

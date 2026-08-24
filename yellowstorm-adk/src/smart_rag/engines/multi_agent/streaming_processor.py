@@ -31,7 +31,14 @@ from src.smart_rag.messaging.component_tracker import ComponentTracker
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
 from src.smart_rag.infrastructure.model_parameters import get_context_window_for_model
-from src.smart_rag.tool_activity_presenter import present_tool_call, sanitize_activity_summary, serialize_tool_value
+from src.smart_rag.run_code_artifacts import build_tool_result_artifacts
+from src.run_workspace import run_workspace_path
+from src.smart_rag.tool_activity_presenter import (
+    present_tool_call,
+    sanitize_activity_summary,
+    serialize_tool_args,
+    serialize_tool_value,
+)
 
 logger = get_logger("api.routers.agentic_rag.StreamingEventProcessor")
 
@@ -226,6 +233,7 @@ class StreamingEventProcessor:
                     current_agent,
                     component_tracker,
                     guarded_output,
+                    run_id=session_id,
                 )
         except (asyncio.CancelledError, GeneratorExit):
             should_close_stream = False
@@ -265,6 +273,7 @@ class StreamingEventProcessor:
         current_agent: str = None,
         component_tracker: ComponentTracker = None,
         guarded_output: bool = False,
+        run_id: str | None = None,
     ) -> tuple:
         """Handle individual event parts and update message_id if needed.
 
@@ -361,7 +370,7 @@ class StreamingEventProcessor:
                         component_data={
                             "tool_name": func_name,
                             "status": "running",
-                            "params_json": serialize_tool_value(tool_args),
+                            "params_json": serialize_tool_args(tool_args),
                             "started_at": started_at,
                             "display_key": presentation.display_key or "",
                             "fallback_display_name": presentation.fallback_display_name or "",
@@ -548,6 +557,19 @@ class StreamingEventProcessor:
                             component_id=tool_component_id,
                             action="update",
                         ))
+                        for artifact in build_tool_result_artifacts(
+                            response_payload,
+                            tool_component_id,
+                            run_workspace_path(self.config.user_id, run_id or ""),
+                        ):
+                            await q.put(self.streaming_formatter.format_component_event(
+                                agent_id=manager_id,
+                                component_type="artifact",
+                                component_data=artifact,
+                                message_id=current_message_id,
+                                component_id=f"artifact-{artifact['artifact_id']}",
+                                action="add",
+                            ))
                 if func_name == "generate_ui" and q:
                     await self._handle_dataviz_response(
                         part.function_response, current_message_id, q

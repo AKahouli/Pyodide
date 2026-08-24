@@ -102,15 +102,17 @@ describe('PlaybookFlowObservabilityService', () => {
     const payload = service.extractCompletedResultPayload({
       output: 'Iterator complete',
       iterator_iterations: [
-        { index: 0, status: 'completed', childResults: [{ taskId: 'child-1', status: 'completed' }] },
+        { index: 0, status: 'completed', childResults: [{ taskId: 'child-1', status: 'completed', file_path: '/mnt/workspace/private/report.pdf' }] },
         'invalid',
       ],
     }, { executionId: 'exec-1', taskId: 'iterator-1' });
 
     expect(payload.iteratorIterations).toEqual([
+      { index: 0, status: 'completed', childResults: [{ taskId: 'child-1', status: 'completed', file_path: '/mnt/workspace/private/report.pdf' }] },
+    ]);
+    expect(service.toStreamPayload(payload).iteratorIterations).toEqual([
       { index: 0, status: 'completed', childResults: [{ taskId: 'child-1', status: 'completed' }] },
     ]);
-    expect(service.toStreamPayload(payload).iteratorIterations).toEqual(payload.iteratorIterations);
   });
 
   it('maps playbook citation sources to conversation citation components', () => {

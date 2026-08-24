@@ -28,11 +28,14 @@ from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_d
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from src.logger.logging import get_logger
 from src.smart_rag.infrastructure.model_parameters import get_context_window_for_model
-from src.smart_rag.run_code_artifacts import build_run_code_artifacts
+from src.smart_rag.run_code_artifacts import build_run_code_artifacts, build_tool_result_artifacts
+from src.run_workspace import run_workspace_path
 from src.smart_rag.tool_activity_presenter import (
     present_tool_call,
     sanitize_activity_summary,
+    serialize_tool_args,
     serialize_tool_value,
+    tool_args_without_display_purpose,
 )
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
@@ -551,7 +554,7 @@ class AgentRunner:
                                 ),
                                 child=child_name,
                                 tool_name=func_name,
-                                args=dict(part.function_call.args),
+                                args=tool_args_without_display_purpose(tool_args),
                                 status="requested",
                             )
 
@@ -570,7 +573,7 @@ class AgentRunner:
                                 "started_at": started_at,
                                 "started_monotonic": time.monotonic(),
                                 "presentation": presentation,
-                                "params_json": serialize_tool_value(tool_args),
+                                "params_json": serialize_tool_args(tool_args),
                                 "actor_id": actor_id,
                                 "actor_name": str(agent_name or ""),
                             }
@@ -748,16 +751,20 @@ class AgentRunner:
                                         action="update",
                                     )
                                 )
-                                if func_name == "run_code":
-                                    for artifact in build_run_code_artifacts(response_payload, agent_config, tool_component_id):
-                                        await q.put(self.streaming_formatter.format_component_event(
-                                            agent_id=agent_id,
-                                            component_type="artifact",
-                                            component_data=artifact,
-                                            message_id=session_id,
-                                            component_id=f"artifact-{artifact['artifact_id']}",
-                                            action="add",
-                                        ))
+                                artifacts = build_run_code_artifacts(response_payload, agent_config, tool_component_id) if func_name == "run_code" else build_tool_result_artifacts(
+                                    response_payload,
+                                    tool_component_id,
+                                    run_workspace_path(user_id, session_id),
+                                )
+                                for artifact in artifacts:
+                                    await q.put(self.streaming_formatter.format_component_event(
+                                        agent_id=agent_id,
+                                        component_type="artifact",
+                                        component_data=artifact,
+                                        message_id=session_id,
+                                        component_id=f"artifact-{artifact['artifact_id']}",
+                                        action="add",
+                                    ))
 
                         if q and await self._handle_ui_tool_response(
                             func_name,

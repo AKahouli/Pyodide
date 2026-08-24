@@ -1,14 +1,15 @@
 import { useState, type ReactNode } from 'react';
-import { Bot, BrainCircuit, CheckCircle2, ChevronRight, Square, Code2, FileText, Loader2, Search, Wrench, XCircle } from 'lucide-react';
+import { Bot, BrainCircuit, CheckCircle2, ChevronRight, Square, Code2, Download, Eye, FileText, Loader2, Search, Wrench, XCircle } from 'lucide-react';
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
+import { showError } from '@/lib/notifications';
 import { openFileViewerFromUrl } from '@/modules/file-viewer';
 import { useModuleTranslation } from '@/modules/localization';
 import { getArtifactDownloadUrl } from '../../api';
 import type { AgentActivityData, ArtifactActivityData, ChoiceInteractionMetadata, MessageComponent, ToolActivityData } from '../../types';
 import { mapConversationComponentsToContentParts } from '../../utils';
-import { formatActivityDuration, formatSanitizedToolText, humanizeToolTitle, resolveToolDisplayKey, resolveToolFallbackName, resolveToolSummary, sanitizeActivityActorName, sanitizeActivityFilename, sanitizeActivitySummary, sanitizeAssistantDisplayText, sanitizeRunCodeInput } from '../../utils/tool-activity';
+import { formatActivityDuration, humanizeToolTitle, isCodeInterpreterActivity, resolveCodeInterpreterRequest, resolveCodeInterpreterResponse, resolveToolDisplayKey, resolveToolFallbackName, resolveToolSummary, sanitizeActivityActorName, sanitizeActivityFilename, sanitizeActivitySummary, sanitizeAssistantDisplayText } from '../../utils/tool-activity';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 
 interface NarrativeProps {
@@ -38,6 +39,8 @@ function ToolRow({ component, isStreaming }: Readonly<{ component: MessageCompon
     searchWeb: t('stream.activity.tool.searchWeb'), search: t('stream.activity.tool.search'),
     findFiles: t('stream.activity.tool.findFiles'), read: t('stream.activity.tool.read'),
     write: t('stream.activity.tool.write'), copy: t('stream.activity.tool.copy'),
+    createSandbox: t('stream.activity.tool.createSandbox'), runCommand: t('stream.activity.tool.runCommand'),
+    sendFile: t('stream.activity.tool.sendFile'),
   } as const;
   const displayKey = resolveToolDisplayKey(data);
   const label = displayKey && displayKey in labels
@@ -45,11 +48,11 @@ function ToolRow({ component, isStreaming }: Readonly<{ component: MessageCompon
     : resolveToolFallbackName(data) || t('stream.activity.toolFallback');
   const summary = resolveToolSummary(data);
   const duration = formatActivityDuration(data.durationMs);
-  const isRunCode = data.renderKind === 'run_code' || displayKey === 'runCode';
-  const code = isRunCode ? sanitizeRunCodeInput(data.primaryInput) : undefined;
-  const output = isRunCode ? formatSanitizedToolText(data.resultJson) : undefined;
+  const isCodeInterpreter = isCodeInterpreterActivity(data);
+  const request = isCodeInterpreter ? resolveCodeInterpreterRequest(data) : undefined;
+  const response = isCodeInterpreter ? resolveCodeInterpreterResponse(data) : undefined;
   const active = isStreaming && data.status === 'running';
-  const icon = isRunCode
+  const icon = isCodeInterpreter
     ? <Code2 className='size-4' />
     : data.renderKind === 'search' || data.renderKind === 'web' || displayKey?.toLowerCase().includes('search')
       ? <Search className='size-4' />
@@ -60,10 +63,10 @@ function ToolRow({ component, isStreaming }: Readonly<{ component: MessageCompon
       <span className='shrink-0 font-medium text-foreground'>{label}</span>
       {summary && <span className='min-w-0 flex-1 truncate'>- {summary}</span>}
       {duration && <span className='shrink-0 tabular-nums'>- {duration}</span>}
-      {(code || output) && <ChevronRight className='size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />}
+      {(request || response) && <ChevronRight className='size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />}
     </>
   );
-  if (!code && !output) return <div className='flex min-h-9 items-center gap-2 px-1 text-sm text-muted-foreground'>{row}</div>;
+  if (!request && !response) return <div className='flex min-h-9 items-center gap-2 px-1 text-sm text-muted-foreground'>{row}</div>;
   return (
     <Collapsible>
       <CollapsibleTrigger asChild>
@@ -72,16 +75,16 @@ function ToolRow({ component, isStreaming }: Readonly<{ component: MessageCompon
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent className='ml-6 border-l pb-2 pl-4 pr-2'>
-        {code && (
+        {request && (
           <div className='mb-3'>
-            <p className='mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('stream.activity.code')}</p>
-            <pre data-language={data.primaryInputLanguage || undefined} className='max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-background/50 p-3 text-xs text-foreground'>{code}</pre>
+            <p className='mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('stream.activity.request')}</p>
+            <pre data-language={data.primaryInputLanguage || undefined} className='max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-background/50 p-3 text-xs text-foreground'>{request}</pre>
           </div>
         )}
-        {output && (
+        {response && (
           <div>
-            <p className='mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('stream.activity.output')}</p>
-            <pre className='max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-background/50 p-3 text-xs text-foreground'>{output}</pre>
+            <p className='mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('stream.activity.response')}</p>
+            <pre className='max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-background/50 p-3 text-xs text-foreground'>{response}</pre>
           </div>
         )}
       </CollapsibleContent>
@@ -106,23 +109,51 @@ function AgentActivityRow({ data, isStreaming }: Readonly<{ data: AgentActivityD
 
 function ArtifactRow({ conversationId, messageId, data, enabled }: Readonly<{ conversationId: string; messageId: string; data: ArtifactActivityData; enabled: boolean }>) {
   const { t } = useModuleTranslation('conversation');
-  const [loading, setLoading] = useState(false);
+  const [loadingAction, setLoadingAction] = useState<'view' | 'download' | null>(null);
   const filename = sanitizeActivityFilename(data.filename) || t('stream.activity.generated');
-  const open = async () => {
-    if (!enabled || loading) return;
-    setLoading(true);
+  const view = async () => {
+    if (!enabled || loadingAction) return;
+    setLoadingAction('view');
     try {
-      const { downloadUrl } = await getArtifactDownloadUrl(conversationId, messageId, data.artifactId);
-      openFileViewerFromUrl(downloadUrl, filename, data.mimeType || 'application/octet-stream');
+      const { viewUrl } = await getArtifactDownloadUrl(conversationId, messageId, data.artifactId);
+      openFileViewerFromUrl(viewUrl, filename, data.mimeType || 'application/octet-stream');
+    } catch {
+      showError(t('stream.activity.artifactError'));
     } finally {
-      setLoading(false);
+      setLoadingAction(null);
     }
   };
+  const download = async () => {
+    if (!enabled || loadingAction) return;
+    setLoadingAction('download');
+    try {
+      const { downloadUrl } = await getArtifactDownloadUrl(conversationId, messageId, data.artifactId);
+      const anchor = document.createElement('a');
+      anchor.href = downloadUrl;
+      anchor.download = filename;
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    } catch {
+      showError(t('stream.activity.artifactError'));
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+  const disabled = !enabled || Boolean(loadingAction) || data.availability !== 'ready';
   return (
     <div className='flex items-center gap-3 rounded-lg border bg-background/50 px-3 py-2 text-sm'>
       <FileText className='size-4 text-primary' aria-hidden='true' />
       <span className='min-w-0 flex-1 truncate'>{filename}</span>
-      <button type='button' disabled={!enabled || loading || data.availability !== 'ready'} onClick={open} className='font-medium text-primary disabled:text-muted-foreground'>{t('stream.activity.openArtifact')}</button>
+      <button type='button' disabled={disabled} onClick={view} className='inline-flex items-center gap-1 font-medium text-primary disabled:text-muted-foreground'>
+        {loadingAction === 'view' ? <Loader2 className='size-3.5 animate-spin' aria-hidden='true' /> : <Eye className='size-3.5' aria-hidden='true' />}
+        {t('stream.activity.viewArtifact')}
+      </button>
+      <button type='button' disabled={disabled} onClick={download} className='inline-flex items-center gap-1 font-medium text-primary disabled:text-muted-foreground'>
+        {loadingAction === 'download' ? <Loader2 className='size-3.5 animate-spin' aria-hidden='true' /> : <Download className='size-3.5' aria-hidden='true' />}
+        {t('stream.activity.downloadArtifact')}
+      </button>
     </div>
   );
 }

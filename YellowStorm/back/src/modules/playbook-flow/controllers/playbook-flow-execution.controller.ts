@@ -3,6 +3,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiHeader } from '@nestjs/swagger';
 import { PlaybookFlowExecutionService } from '../services/playbook-flow-execution.service';
+import { PlaybookFlowArtifactService } from '../services/playbook-flow-artifact.service';
 import { PlaybookFlowReplayService } from '../services/playbook-flow-replay.service';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { RequirePermissions } from '@modules/authorization/decorators/require-permissions.decorator';
@@ -10,6 +11,7 @@ import { PermissionsGuard } from '@modules/authorization/guards/permissions.guar
 import { Permissions } from '@modules/authorization/constants/permissions';
 import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execution.dto';
 import { ResumePlaybookFlowApprovalDto } from '../dto/resume-playbook-flow-approval.dto';
+import { RequestPlaybookArtifactAccessDto } from '../dto/request-playbook-artifact-access.dto';
 import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 
 @ApiTags('Playbook Flow Executions')
@@ -20,6 +22,7 @@ export class PlaybookFlowExecutionController {
   constructor(
     private readonly executionService: PlaybookFlowExecutionService,
     private readonly replayService: PlaybookFlowReplayService,
+    private readonly artifactService: PlaybookFlowArtifactService,
   ) {}
 
   private async ensureExecutionBelongsToFlow(executionId: string, flowId: string, userId: string) {
@@ -77,6 +80,18 @@ export class PlaybookFlowExecutionController {
     @Param('executionId') executionId: string,
   ) {
     return this.executionService.findOne(executionId, userId);
+  }
+
+  @Post('executions/:executionId/artifacts/:artifactId/access')
+  @ApiOperation({ summary: 'Issue scoped access to a playbook artifact' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async artifactAccess(
+    @CurrentUser('_id') userId: string,
+    @Param('executionId') executionId: string,
+    @Param('artifactId') artifactId: string,
+    @Body() body: RequestPlaybookArtifactAccessDto,
+  ) {
+    return this.artifactService.issueAccess(executionId, artifactId, userId, body.action);
   }
 
   @Post('executions/:executionId/cancel')

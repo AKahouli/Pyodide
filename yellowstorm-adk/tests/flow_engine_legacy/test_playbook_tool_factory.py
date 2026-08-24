@@ -1171,6 +1171,102 @@ def test_connector_mcp_tools_preserve_explicit_auth_headers(
     }
 
 
+def test_connector_mcp_artifacts_require_publication_action_and_current_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = {
+        "file_write": {
+            "ceph_path": "owner-1/system_execution-1/script.py",
+            "path": "/tmp/script.py",
+        },
+        "send_file_to_user": {
+            "ceph_path": "owner-1/system_execution-1/report.pdf",
+            "path": "/tmp/report.pdf",
+        },
+        "file_download_base64": "cGRm",
+    }
+    captured_headers = []
+
+    async def fake_call_mcp_tool(_transport, _url, _config, action, _params, **kwargs):
+        captured_headers.append(kwargs["auth_headers"])
+        return responses[action]
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    async def fake_publish(**_kwargs):
+        return {
+            "artifactId": "a" * 32,
+            "filename": "report.pdf",
+            "mimeType": "application/pdf",
+            "size": 3,
+        }
+
+    monkeypatch.setattr(
+        "src.flow_engine.runtime.artifact_publication.publish_playbook_artifact",
+        fake_publish,
+    )
+    collector = ToolResultCollector()
+    tools = _create_connector_mcp_tools(
+        [{
+            "connector_id": "code-1",
+            "connector_name": "Code Interpreter",
+            "connector_slug": "code-interpreter",
+            "mcp_transport_type": "streamable_http",
+            "mcp_server_url": "https://example.com/mcp",
+            "auth_headers": {"X-Conversation-Id": "stale-execution"},
+            "actions": [
+                {"action_key": "file_write", "label": "Write"},
+                {"action_key": "send_file_to_user", "label": "Send"},
+                {"action_key": "file_download_base64", "label": "Download"},
+            ],
+        }],
+        collector,
+        user_id="owner-1",
+        session_id="stale-execution",
+        execution_id="execution-1",
+        platform_api_token="internal-token",
+    )
+
+    for tool in tools:
+        asyncio.run(tool.ainvoke({"params": {}}))
+
+    components = collector.get_and_clear()
+    assert [component["data"]["filename"] for component in components] == ["report.pdf"]
+    assert components[0]["data"]["artifactId"] == "a" * 32
+    assert all(headers["x-conversation-id"] == "execution-1" for headers in captured_headers)
+    assert all(headers["x-execution-id"] == "execution-1" for headers in captured_headers)
+    assert all("X-Conversation-Id" not in headers for headers in captured_headers)
+
+
+def test_connector_mcp_fails_closed_without_download_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_call_mcp_tool(*_args, **_kwargs):
+        return {
+            "ceph_path": "owner-1/system_execution-1/report.pdf",
+            "path": "/tmp/report.pdf",
+        }
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", fake_call_mcp_tool)
+    collector = ToolResultCollector()
+    [tool] = _create_connector_mcp_tools(
+        [{
+            "connector_id": "code-1",
+            "connector_name": "Code Interpreter",
+            "connector_slug": "code-interpreter",
+            "mcp_transport_type": "streamable_http",
+            "mcp_server_url": "https://example.com/mcp",
+            "actions": [{"action_key": "send_file_to_user", "label": "Send"}],
+        }],
+        collector,
+        user_id="owner-1",
+        execution_id="execution-1",
+    )
+
+    asyncio.run(tool.ainvoke({"params": {}}))
+
+    assert collector.get_and_clear() == []
+
+
 def test_connector_mcp_tool_definition_exposes_params_when_schema_is_missing() -> None:
     collector = ToolResultCollector()
     tools = _create_connector_mcp_tools(

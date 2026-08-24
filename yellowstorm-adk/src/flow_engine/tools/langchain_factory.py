@@ -608,6 +608,7 @@ def create_langchain_tools(
     agent_params = agent_config.get("agent_params") or {}
     session_id = str(agent_params.get("session_id") or "")
     user_id = str(agent_params.get("user_id") or user_id or "")
+    runtime_id = execution_id or session_id
     # Prefer the authoritative Ceph paths ("user_id/workspace_name") resolved by the
     # step node from the backend payload. Fall back to deriving them from document
     # filepaths only when the backend did not supply explicit paths.
@@ -617,7 +618,7 @@ def create_langchain_tools(
             workspace_context, code_interpreter_files, user_id
         )
     workspace_paths = with_run_workspace_path(
-        workspace_paths, user_id, session_id or execution_id
+        workspace_paths, user_id, runtime_id
     )
 
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
@@ -656,7 +657,7 @@ def create_langchain_tools(
             user_id=user_id,
             platform_api_token=str(agent_params.get("platform_api_token") or ""),
             external_ids=input_files,
-            session_id=session_id,
+            session_id=runtime_id,
             workspace_paths=workspace_paths,
             execution_id=execution_id,
         )
@@ -732,12 +733,13 @@ def create_langchain_tools(
             documents_by_port=documents_by_port,
             output_workspace_id=output_workspace_id,
             workspace_context_mode=workspace_context_mode,
+            execution_id=execution_id,
         )
         if code_tool:
             tools.append(code_tool)
 
     if "run_code" in tool_names and run_code_globally_enabled():
-        run_id = session_id or execution_id
+        run_id = runtime_id
         if user_id and run_id:
             if run_code_sources:
                 context = build_run_code_context_from_sources(
@@ -1423,6 +1425,7 @@ def _create_code_interpreter_tool(
     documents_by_port: Optional[Dict[str, List[str]]] = None,
     output_workspace_id: str = "",
     workspace_context_mode: str = "resolved_inputs_only",
+    execution_id: str = "",
 ) -> Optional[StructuredTool]:
     """Create a code interpreter LangChain tool.
 
@@ -1454,7 +1457,7 @@ def _create_code_interpreter_tool(
 
     # Extract session params from agent_params if available
     agent_params = agent_config.get("agent_params") or {}
-    session_id = agent_params.get("session_id")
+    session_id = execution_id or agent_params.get("session_id")
     user_id = agent_params.get("user_id")
     file_workspace_ids = {
         str(doc.get("workspace_id", "")).strip()
@@ -1771,6 +1774,7 @@ def _create_connector_mcp_tools(
         actions = [a for a in actions if a.get("action_key") != "search_relevant_documents"]
         if not actions:
             continue
+        available_action_keys = {str(action.get("action_key") or "") for action in actions}
 
         logger.info(
             "connector_binding_processing",
@@ -1816,6 +1820,8 @@ def _create_connector_mcp_tools(
                 eid: str = execution_id,
                 wsp: List[str] = list(workspace_paths or []),
                 fpths: List[str] = list(file_paths or []),
+                action_keys: set[str] = set(available_action_keys),
+                internal_token: str = platform_api_token,
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
@@ -1843,13 +1849,17 @@ def _create_connector_mcp_tools(
                             if params.get(filename_param) in (None, "", []):
                                 merged_params.pop(filename_param, None)
 
-                        effective_auth_headers = dict(ah)
+                        effective_auth_headers = {
+                            key: value
+                            for key, value in ah.items()
+                            if key.lower() not in {"x-conversation-id", "x-execution-id"}
+                        }
                         # Run/turn correlation applies to every HTTP MCP transport,
                         # not just streamable_http -- an sse connector is the same
                         # server behind a different stream.
                         if tt in ("streamable_http", "sse"):
-                            if sid:
-                                effective_auth_headers["x-conversation-id"] = sid
+                            if eid or sid:
+                                effective_auth_headers["x-conversation-id"] = eid or sid
                             if eid:
                                 effective_auth_headers["x-execution-id"] = eid
                         if tt == "streamable_http":
@@ -1884,23 +1894,51 @@ def _create_connector_mcp_tools(
                             merged_params,
                             auth_headers=effective_auth_headers,
                             auth_env=ae,
+                            log_payload=ak != "send_file_to_user",
                         )
-                        if isinstance(response, dict):
-                            if response.get("ceph_path"):
-                                ceph_path = response.get("ceph_path", "")
-                                filename = (response.get("path") or ceph_path).rstrip("/").split("/")[-1]
+                        if isinstance(response, dict) and ak == "send_file_to_user":
+                            source_path = response.get("path")
+                            if (
+                                isinstance(source_path, str)
+                                and source_path.strip()
+                                and "file_download_base64" in action_keys
+                            ):
+                                download_params = {"path": source_path}
+                                if "workspace_id" in merged_params:
+                                    download_params["workspace_id"] = merged_params["workspace_id"]
+                                encoded_file = await call_mcp_tool(
+                                    tt,
+                                    su,
+                                    sc,
+                                    "file_download_base64",
+                                    download_params,
+                                    auth_headers=effective_auth_headers,
+                                    auth_env=ae,
+                                    log_payload=False,
+                                )
+                                from src.flow_engine.runtime.artifact_publication import publish_playbook_artifact
+
+                                filename = source_path.rstrip("/").split("/")[-1]
+                                receipt = await publish_playbook_artifact(
+                                    payload=encoded_file,
+                                    filename=filename,
+                                    execution_id=eid,
+                                    user_id=str(_uid or ""),
+                                    internal_token=internal_token,
+                                )
                                 artifact_kind = infer_artifact_kind(filename) or "document"
                                 logger.info(
-                                    "mcp_file_artifact_detected connector_id=%s action_key=%s filename=%s artifact_kind=%s ceph_path=%s",
+                                    "mcp_file_artifact_detected connector_id=%s action_key=%s filename=%s artifact_kind=%s",
                                     cid,
                                     ak,
                                     filename,
                                     artifact_kind,
-                                    ceph_path,
                                 )
                                 collector.add_component("artifact", {
-                                    "file_path": ceph_path,
+                                    "artifactId": receipt["artifactId"],
                                     "filename": filename,
+                                    "mime_type": receipt["mimeType"],
+                                    "size": receipt["size"],
                                     "artifact_kind": artifact_kind,
                                     "output_port_id": "",
                                 })
@@ -1910,6 +1948,14 @@ def _create_connector_mcp_tools(
                                     filename,
                                     len(collector.components),
                                 )
+                                response = {
+                                    "status": "success",
+                                    "filename": filename,
+                                    "artifactId": receipt["artifactId"],
+                                }
+                            else:
+                                response = "Artifact publication failed: generated file could not be copied to platform storage."
+                        if isinstance(response, dict):
                             response = _collect_connector_response_components(
                                 collector,
                                 response,

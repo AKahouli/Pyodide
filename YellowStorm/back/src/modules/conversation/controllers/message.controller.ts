@@ -63,7 +63,7 @@ export class MessageController {
     @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
     @Param('artifactId') artifactId: string,
-  ): Promise<{ downloadUrl: string }> {
+  ): Promise<{ viewUrl: string; downloadUrl: string }> {
     return this.conversationArtifactService.resolveDownloadUrl(conversationId, messageId, artifactId);
   }
 

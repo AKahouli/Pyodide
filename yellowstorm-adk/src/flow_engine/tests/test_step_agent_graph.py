@@ -9,6 +9,7 @@ from langgraph.types import Command
 from pydantic import BaseModel
 
 from src.flow_engine.agent_runtime import StepRuntimeContext, run_step_agent
+from src.flow_engine.agent_runtime.tool_results import MCP_CONTENT_PARTS_KEY
 from src.flow_engine.agent_runtime.tool_wrapper import tool_request_fingerprint
 
 
@@ -85,6 +86,59 @@ async def test_step_agent_routes_model_tool_model(monkeypatch) -> None:
     assert len(calls) == 2
     assert calls[0]["parallel_tool_calls"] is False
     assert any(message.get("role") == "tool" and "echo:hello" in str(message.get("content")) for message in calls[1]["messages"])
+
+
+@pytest.mark.asyncio
+async def test_step_agent_allows_tool_rounds_beyond_default_recursion_limit(monkeypatch) -> None:
+    calls = []
+
+    async def completion(**kwargs):
+        calls.append(kwargs)
+        if len(calls) <= 13:
+            return Response("", [{"id": f"call-{len(calls)}", "function": {"name": "echo", "arguments": '{"value":"hello"}'}}])
+        return Response("final answer")
+
+    async def echo(value: str) -> str:
+        return f"echo:{value}"
+
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", completion)
+    tool = StructuredTool(name="echo", description="Echo", func=None, coroutine=echo, args_schema=EchoInput)
+    output = await run_step_agent(
+        system_prompt="system",
+        user_msg="user",
+        tools=[tool],
+        context=StepRuntimeContext(model_id="test", tools_enabled=True, max_tool_iterations=20),
+    )
+
+    assert output == "final answer"
+    assert len(calls) == 14
+
+
+@pytest.mark.asyncio
+async def test_step_agent_counts_vision_tool_rounds_toward_limit(monkeypatch) -> None:
+    calls = []
+
+    async def completion(**kwargs):
+        calls.append(kwargs)
+        return Response("", [{"id": f"call-{len(calls)}", "function": {"name": "vision", "arguments": '{"value":"image"}'}}])
+
+    async def vision(value: str) -> dict:
+        return {
+            "content": value,
+            MCP_CONTENT_PARTS_KEY: [{"type": "image", "data": "aW1hZ2U=", "mimeType": "image/png"}],
+        }
+
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", completion)
+    tool = StructuredTool(name="vision", description="Vision", func=None, coroutine=vision, args_schema=EchoInput)
+    output = await run_step_agent(
+        system_prompt="system",
+        user_msg="user",
+        tools=[tool],
+        context=StepRuntimeContext(model_id="test", tools_enabled=True, max_tool_iterations=3),
+    )
+
+    assert output == "Max tool iterations reached without a final response"
+    assert len(calls) == 3
 
 
 @pytest.mark.asyncio

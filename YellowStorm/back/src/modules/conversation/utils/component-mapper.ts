@@ -1,6 +1,7 @@
 import { ComponentType } from '../interfaces/message.interface';
 import { normalizeChoiceComponentData } from './choice-component-normalizer';
 import { redactTaskDiagnosticText } from './task-diagnostics';
+import { sanitizeSerializedToolValue } from './public-component-sanitizer';
 
 const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> = [
   { field: 'text', type: 'text' },
@@ -361,8 +362,8 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
         data: {
           toolName: toolActivity?.tool_name || '',
           status: toolActivity?.status || 'running',
-          paramsJson: toolActivity?.params_json || '',
-          ...(toolActivity?.result_json ? { resultJson: toolActivity.result_json } : {}),
+          paramsJson: sanitizeSerializedToolValue(toolActivity?.params_json || ''),
+          ...(toolActivity?.result_json ? { resultJson: sanitizeSerializedToolValue(toolActivity.result_json) } : {}),
           ...(toolActivity?.started_at ? { startedAt: toolActivity.started_at } : {}),
           ...(toolActivity?.completed_at ? { completedAt: toolActivity.completed_at } : {}),
           ...(toolActivity?.duration_ms !== undefined ? { durationMs: Number(toolActivity.duration_ms) } : {}),

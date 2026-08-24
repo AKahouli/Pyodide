@@ -5,7 +5,16 @@ from unittest.mock import MagicMock, patch, AsyncMock
 import json
 import base64
 
+from google.genai import types
+from google.adk.tools.mcp_tool.mcp_tool import McpTool
+from mcp.types import Tool
+
 from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
+from src.smart_rag.infrastructure.external.purpose_aware_mcp import (
+    DISPLAY_PURPOSE_KEY,
+    PurposeAwareMcpTool,
+    PurposeAwareMcpToolset,
+)
 
 
 class TestMCPHelper:
@@ -282,7 +291,7 @@ class TestMCPHelper:
         """Test creating MCP toolset successfully."""
         connection_params = MagicMock()
 
-        with patch('src.smart_rag.infrastructure.external.mcp_helper.MCPToolset') as mock_toolset_class:
+        with patch('src.smart_rag.infrastructure.external.mcp_helper.PurposeAwareMcpToolset') as mock_toolset_class:
             mock_toolset = MagicMock()
             mock_toolset_class.return_value = mock_toolset
 
@@ -296,7 +305,7 @@ class TestMCPHelper:
         """Test creating MCP toolset with default type."""
         connection_params = MagicMock()
 
-        with patch('src.smart_rag.infrastructure.external.mcp_helper.MCPToolset') as mock_toolset_class:
+        with patch('src.smart_rag.infrastructure.external.mcp_helper.PurposeAwareMcpToolset') as mock_toolset_class:
             mock_toolset = MagicMock()
             mock_toolset_class.return_value = mock_toolset
 
@@ -310,9 +319,123 @@ class TestMCPHelper:
         """Test creating MCP toolset with import error."""
         connection_params = MagicMock()
 
-        with patch('src.smart_rag.infrastructure.external.mcp_helper.MCPToolset', side_effect=ImportError("Module not found")):
+        with patch('src.smart_rag.infrastructure.external.mcp_helper.PurposeAwareMcpToolset', side_effect=ImportError("Module not found")):
             with pytest.raises(ImportError):
                 MCPHelper.create_mcp_toolset(connection_params)
+
+    @pytest.mark.asyncio
+    async def test_purpose_aware_tool_declares_metadata_but_strips_it_from_execution(self):
+        raw_tool = MagicMock()
+        raw_tool.inputSchema = {
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+            "additionalProperties": False,
+        }
+        wrapped = MagicMock()
+        wrapped.name = "shell_exec"
+        wrapped.description = "Execute a command"
+        wrapped.raw_mcp_tool = raw_tool
+        wrapped._mcp_session_manager = MagicMock()
+        wrapped._get_declaration.return_value = types.FunctionDeclaration(
+            name="shell_exec",
+            description="Execute a command",
+            parameters_json_schema=raw_tool.inputSchema,
+        )
+        wrapped.run_async = AsyncMock(return_value={"ok": True})
+        tool = PurposeAwareMcpTool(wrapped)
+
+        declaration = tool._get_declaration()
+        original_args = {
+            "command": "printf safe",
+            DISPLAY_PURPOSE_KEY: "Generate the report",
+        }
+        result = await tool.run_async(args=original_args, tool_context=MagicMock())
+
+        assert DISPLAY_PURPOSE_KEY in declaration.parameters_json_schema["properties"]
+        assert declaration.parameters_json_schema["required"] == [
+            "command",
+            DISPLAY_PURPOSE_KEY,
+        ]
+        assert declaration.parameters_json_schema["additionalProperties"] is False
+        assert DISPLAY_PURPOSE_KEY not in raw_tool.inputSchema["properties"]
+        assert original_args[DISPLAY_PURPOSE_KEY] == "Generate the report"
+        assert result == {"ok": True}
+        assert wrapped.run_async.await_args.kwargs["args"] == {"command": "printf safe"}
+
+    def test_purpose_aware_tool_supports_gemini_schema_declarations(self):
+        wrapped = MagicMock()
+        wrapped.name = "shell_exec"
+        wrapped.description = "Execute a command"
+        wrapped._get_declaration.return_value = types.FunctionDeclaration(
+            name="shell_exec",
+            description="Execute a command",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={"command": types.Schema(type=types.Type.STRING)},
+                required=["command"],
+            ),
+        )
+
+        declaration = PurposeAwareMcpTool(wrapped)._get_declaration()
+
+        assert DISPLAY_PURPOSE_KEY in declaration.parameters.properties
+        assert declaration.parameters.required == ["command", DISPLAY_PURPOSE_KEY]
+
+    @pytest.mark.asyncio
+    async def test_purpose_aware_tool_preserves_adk_confirmation_gate(self):
+        session_manager = MagicMock()
+        wrapped = McpTool(
+            mcp_tool=Tool(
+                name="shell_exec",
+                description="Execute a command",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                    "required": ["command"],
+                },
+            ),
+            mcp_session_manager=session_manager,
+            require_confirmation=True,
+        )
+        tool_context = MagicMock()
+        tool_context.tool_confirmation = None
+
+        result = await PurposeAwareMcpTool(wrapped).run_async(
+            args={
+                "command": "printf safe",
+                DISPLAY_PURPOSE_KEY: "Generate the report",
+            },
+            tool_context=tool_context,
+        )
+
+        assert "requires confirmation" in result["error"]
+        tool_context.request_confirmation.assert_called_once()
+        session_manager.create_session.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_purpose_aware_toolset_preserves_server_field_collision(self):
+        colliding = MagicMock()
+        colliding.name = "server_owned"
+        colliding.raw_mcp_tool.inputSchema = {
+            "type": "object",
+            "properties": {DISPLAY_PURPOSE_KEY: {"type": "number"}},
+        }
+        normal = MagicMock()
+        normal.name = "normal"
+        normal.description = "Normal tool"
+        normal.raw_mcp_tool.inputSchema = {"type": "object", "properties": {}}
+
+        with patch.object(
+            PurposeAwareMcpToolset.__mro__[1],
+            "get_tools",
+            new=AsyncMock(return_value=[colliding, normal]),
+        ):
+            toolset = object.__new__(PurposeAwareMcpToolset)
+            tools = await toolset.get_tools()
+
+        assert tools[0] is colliding
+        assert isinstance(tools[1], PurposeAwareMcpTool)
 
     def test_create_toolsets_success(self):
         """Test creating multiple toolsets successfully."""

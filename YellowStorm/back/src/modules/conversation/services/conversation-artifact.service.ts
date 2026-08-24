@@ -15,7 +15,7 @@ export class ConversationArtifactService {
     conversationId: string,
     messageId: string,
     artifactId: string,
-  ): Promise<{ downloadUrl: string }> {
+  ): Promise<{ viewUrl: string; downloadUrl: string }> {
     const message = await this.messageService.getMessageDocument(messageId);
     if (message.conversationId.toString() !== conversationId) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
@@ -31,11 +31,17 @@ export class ConversationArtifactService {
       throw new ServiceUnavailableException(undefined, 'Document service is currently unavailable');
     }
     const filename = typeof component.data.filename === 'string' ? component.data.filename : 'artifact';
-    const downloadUrl = await this.documentService.generateSasUrl(storagePath, {
-      expiryMinutes: 10,
-      contentDisposition: `attachment; filename="${filename.replace(/["\r\n]/g, '')}"`,
-      checkExists: true,
-    });
-    return { downloadUrl };
+    const [viewUrl, downloadUrl] = await Promise.all([
+      this.documentService.generateSasUrl(storagePath, {
+        expiryMinutes: 10,
+        checkExists: true,
+      }),
+      this.documentService.generateSasUrl(storagePath, {
+        expiryMinutes: 10,
+        contentDisposition: `attachment; filename="${filename.replace(/["\r\n]/g, '')}"`,
+        checkExists: true,
+      }),
+    ]);
+    return { viewUrl, downloadUrl };
   }
 }

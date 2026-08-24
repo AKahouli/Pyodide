@@ -8,6 +8,8 @@ import { PlaybookFlowExecutionAdvisorService } from '../../services/advisor/play
 import { PlaybookFlowObservabilityService } from '../../services/observability/playbook-flow-observability.service';
 import { PlaybookFlowStreamEventsService } from '../../services/playbook-flow-stream-events.service';
 import { PlaybookFlowTokenBufferService } from '../../services/playbook-flow-token-buffer.service';
+import { PlaybookFlowArtifactService } from '../../services/playbook-flow-artifact.service';
+import { PlaybookTokenStreamRedactor, publicPlaybookTaskResult, sanitizePlaybookPublicValue } from '../../utils/playbook-artifact';
 import { PlaybookExecutionReplayRuntimeService } from './playbook-execution-replay-runtime.service';
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
@@ -15,6 +17,7 @@ const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
 @Injectable()
 export class PlaybookExecutionNodeEventHandlerService {
   private readonly logger = new Logger(PlaybookExecutionNodeEventHandlerService.name);
+  private readonly directStreamRedactor = new PlaybookTokenStreamRedactor();
 
   constructor(
     @InjectModel(FlowExecution.name)
@@ -27,6 +30,7 @@ export class PlaybookExecutionNodeEventHandlerService {
     private readonly advisorService: PlaybookFlowExecutionAdvisorService,
     private readonly replayRuntime: PlaybookExecutionReplayRuntimeService,
     @Optional() private readonly tokenBufferService?: PlaybookFlowTokenBufferService,
+    @Optional() private readonly artifactService?: PlaybookFlowArtifactService,
   ) {}
 
   async handleStarted(executionId: string, taskNodeId: string, iteration: number, payload: Record<string, unknown> = {}): Promise<void> {
@@ -78,7 +82,8 @@ export class PlaybookExecutionNodeEventHandlerService {
       ],
       { upsert: true },
     );
-    this.streamEvents.emitStepUpdate(executionId, taskNodeId, token);
+    const publicToken = this.directStreamRedactor.push(this.tokenKey(executionId, taskNodeId, iteration), token);
+    if (publicToken) this.streamEvents.emitStepUpdate(executionId, taskNodeId, publicToken);
   }
 
   async handleTraceUpdate(executionId: string, taskNodeId: string, iteration: number, payload: Record<string, unknown>): Promise<void> {
@@ -124,7 +129,7 @@ export class PlaybookExecutionNodeEventHandlerService {
   }
 
   async handleCompleted(executionId: string, taskNodeId: string, iteration: number, payload: Record<string, unknown>): Promise<void> {
-    await this.tokenBufferService?.flushTask({ executionId, taskId: taskNodeId, iteration });
+    await this.flushTokenStream(executionId, taskNodeId, iteration);
     const resultPayload = this.observabilityService.extractCompletedResultPayload(payload, {
       executionId,
       taskId: taskNodeId,
@@ -166,18 +171,30 @@ export class PlaybookExecutionNodeEventHandlerService {
       { upsert: true },
     );
     await this.persistReplayDrift(executionId, taskNodeId, iteration, resultPayload);
+    const execDoc = await this.executionModel.findById(executionId, 'ownerId advisorAutopilotEnabled reflectionEnabled advisorScoringMode').lean().exec();
+    const rawPublicResult = { ...resultPayload, taskId: taskNodeId, iteration };
+    const publicResultPayload = (this.artifactService
+      ? await this.artifactService.projectPublicTaskResult(
+        rawPublicResult,
+        String(execDoc?.ownerId || ''),
+        executionId,
+      )
+      : publicPlaybookTaskResult(
+        rawPublicResult,
+        String(execDoc?.ownerId || ''),
+        executionId,
+      )) as unknown as FlowCompletedResultPayload;
     this.streamEvents.emitStepComplete(
       executionId,
       taskNodeId,
-      resultPayload.displayText ?? resultPayload.output,
+      publicResultPayload.displayText ?? publicResultPayload.output,
       undefined,
       iteration,
-      resultPayload.artifacts,
-      resultPayload.components,
-      this.observabilityService.toStreamPayload(resultPayload),
+      publicResultPayload.artifacts,
+      publicResultPayload.components,
+      this.observabilityService.toStreamPayload(publicResultPayload),
     );
 
-    const execDoc = await this.executionModel.findById(executionId, 'ownerId advisorAutopilotEnabled reflectionEnabled advisorScoringMode').lean().exec();
     if (!taskNodeId.includes('::dynamic-reasoning::') && execDoc?.ownerId && (execDoc.advisorAutopilotEnabled || execDoc.reflectionEnabled)) {
       this.advisorService.runTaskEvaluation(executionId, taskNodeId, String(execDoc.ownerId), {
         iteration,
@@ -189,8 +206,8 @@ export class PlaybookExecutionNodeEventHandlerService {
   }
 
   async handleFailed(executionId: string, taskNodeId: string, iteration: number, payload: Record<string, unknown>): Promise<void> {
-    await this.tokenBufferService?.flushTask({ executionId, taskId: taskNodeId, iteration });
-    const errorMessage = String(payload.error || 'Node execution failed');
+    await this.flushTokenStream(executionId, taskNodeId, iteration);
+    const errorMessage = String(sanitizePlaybookPublicValue(payload.error || 'Node execution failed'));
     await this.taskResultModel.updateOne(
       { executionId, taskId: taskNodeId, iteration },
       {
@@ -212,6 +229,7 @@ export class PlaybookExecutionNodeEventHandlerService {
   }
 
   async handleSkipped(executionId: string, taskNodeId: string, iteration: number): Promise<void> {
+    await this.flushTokenStream(executionId, taskNodeId, iteration);
     await this.taskResultModel.updateOne(
       { executionId, taskId: taskNodeId, iteration },
       {
@@ -229,6 +247,24 @@ export class PlaybookExecutionNodeEventHandlerService {
       { upsert: true },
     );
     this.streamEvents.emitStepComplete(executionId, taskNodeId, undefined, undefined, iteration);
+  }
+
+  discardExecutionTokens(executionId: string): void {
+    this.directStreamRedactor.discardExecution(executionId);
+  }
+
+  private async flushTokenStream(executionId: string, taskNodeId: string, iteration: number): Promise<void> {
+    const key = { executionId, taskId: taskNodeId, iteration };
+    if (this.tokenBufferService?.isEnabled()) {
+      await this.tokenBufferService.flushTask(key);
+      return;
+    }
+    const publicToken = this.directStreamRedactor.flush(this.tokenKey(executionId, taskNodeId, iteration));
+    if (publicToken) this.streamEvents.emitStepUpdate(executionId, taskNodeId, publicToken);
+  }
+
+  private tokenKey(executionId: string, taskNodeId: string, iteration: number): string {
+    return `${executionId}:${taskNodeId}:${iteration}`;
   }
 
   async handleSuspended(executionId: string, taskNodeId: string, iteration: number, payload: Record<string, unknown>): Promise<void> {

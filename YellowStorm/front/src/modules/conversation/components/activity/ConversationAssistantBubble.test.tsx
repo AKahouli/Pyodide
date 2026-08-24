@@ -1,6 +1,16 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConversationAssistantBubble } from './ConversationAssistantBubble';
+
+const mocks = vi.hoisted(() => ({
+  getArtifactDownloadUrl: vi.fn(),
+  openFileViewerFromUrl: vi.fn(),
+  showError: vi.fn(),
+}));
+
+vi.mock('../../api', () => ({ getArtifactDownloadUrl: mocks.getArtifactDownloadUrl }));
+vi.mock('@/modules/file-viewer', () => ({ openFileViewerFromUrl: mocks.openFileViewerFromUrl }));
+vi.mock('@/lib/notifications', () => ({ showError: mocks.showError }));
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string, options?: { tool?: string }) => ({
@@ -9,15 +19,22 @@ vi.mock('@/modules/localization', () => ({
     'stream.activity.assistant': 'Assistant',
     'stream.activity.tool.runCode': 'Run code',
     'stream.activity.tool.search': 'Search',
-    'stream.activity.output': 'Output',
-    'stream.activity.code': 'Code',
+    'stream.activity.request': 'Request',
+    'stream.activity.response': 'Response',
     'stream.activity.responseTitle': `Tool response: ${options?.tool || ''}`,
-    'stream.activity.openArtifact': 'Open',
+    'stream.activity.viewArtifact': 'View',
+    'stream.activity.downloadArtifact': 'Download',
+    'stream.activity.artifactError': 'Artifact error',
     'stream.activity.generated': 'Generated',
+    'stream.activity.tool.runCommand': 'Run command',
   }[key] || key) }),
 }));
 
 describe('ConversationAssistantBubble', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('renders activity, artifact, and answer in exact order inside one bubble', () => {
     render(<ConversationAssistantBubble
       conversationId='conversation-1'
@@ -143,11 +160,61 @@ describe('ConversationAssistantBubble', () => {
     fireEvent.click(trigger);
 
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('Code')).toBeInTheDocument();
-    expect(screen.getByText('Output')).toBeInTheDocument();
+    expect(screen.getByText('Request')).toBeInTheDocument();
+    expect(screen.getByText('Response')).toBeInTheDocument();
     expect(screen.getByText(/Execution stopped/)).toBeInTheDocument();
     expect(screen.queryByText(/private\.py|507f1f77bcf86cd799439011|print\(|"private"/)).not.toBeInTheDocument();
     expect(screen.getByText(/\[REDACTED\]/)).toBeInTheDocument();
+  });
+
+  it('drills into code-interpreter commands and output while redacting private values', () => {
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{
+        id: 'tool-shell',
+        type: 'toolActivity',
+        data: {
+          toolName: 'code_interpreter_shell_exec',
+          displayKey: 'runCommand',
+          summary: 'Convert the document to PDF',
+          status: 'completed',
+          renderKind: 'run_code',
+          paramsJson: JSON.stringify({ command: 'pandoc source.md -o output.pdf', authorization: 'Bearer private' }),
+          resultJson: JSON.stringify({ stdout: 'Created output.pdf', exit_code: 0, workspace_path: '/workspace/private/output.pdf' }),
+        },
+      }]}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tool response: Run command' }));
+
+    expect(screen.getByText(/pandoc source\.md -o output\.pdf/)).toBeInTheDocument();
+    expect(screen.getByText(/Created output\.pdf/)).toBeInTheDocument();
+    expect(screen.getByText(/"exit_code": 0/)).toBeInTheDocument();
+    expect(screen.queryByText(/Bearer private|\/workspace\/private/)).not.toBeInTheDocument();
+  });
+
+  it('provides independent view and download actions for generated artifacts', async () => {
+    mocks.getArtifactDownloadUrl.mockResolvedValue({
+      viewUrl: 'https://storage.example/view',
+      downloadUrl: 'https://storage.example/download',
+    });
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{ id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf', mimeType: 'application/pdf', availability: 'ready' } }]}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    await waitFor(() => expect(mocks.openFileViewerFromUrl).toHaveBeenCalledWith('https://storage.example/view', 'report.pdf', 'application/pdf'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(anchorClick).toHaveBeenCalled());
+    expect(mocks.getArtifactDownloadUrl).toHaveBeenCalledTimes(2);
+    anchorClick.mockRestore();
   });
 
   it('does not render attachment sentinels or internal workspace paths from answer text', () => {

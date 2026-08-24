@@ -50,6 +50,7 @@ import { PlaybookAssistantAttachment, PlaybookAssistantAttachmentSchema } from '
 
 import { PlaybookFlowController } from './controllers/playbook-flow.controller';
 import { PlaybookFlowExecutionController } from './controllers/playbook-flow-execution.controller';
+import { PlaybookFlowArtifactController } from './controllers/playbook-flow-artifact.controller';
 import { PlaybookFlowMailWebhookController } from './controllers/playbook-flow-mail-webhook.controller';
 import { PlaybookFlowTemplateController } from './controllers/playbook-flow-template.controller';
 import { PlaybookFlowRepeatabilityController } from './controllers/playbook-flow-repeatability.controller';
@@ -64,6 +65,7 @@ import { PlaybookFlowSettingsController } from './controllers/playbook-flow-sett
 import { PlaybookFlowHitlController } from './controllers/playbook-flow-hitl.controller';
 import { PlaybookShareController } from './controllers/playbook-share.controller';
 import { PlaybookAssistantInternalController } from './controllers/playbook-assistant-internal.controller';
+import { PlaybookFlowInternalArtifactController } from './controllers/playbook-flow-internal-artifact.controller';
 
 import { PlaybookFlowService } from './services/playbook-flow.service';
 import { PlaybookShareService } from './services/playbook-share.service';
@@ -74,6 +76,7 @@ import { PlaybookFlowScheduleService } from './services/playbook-flow-schedule.s
 import { PlaybookFlowValidatorService } from './services/playbook-flow-validator.service';
 import { PlaybookFlowBuilderService } from './services/playbook-flow-builder.service';
 import { PlaybookFlowExecutionService } from './services/playbook-flow-execution.service';
+import { PlaybookFlowArtifactService } from './services/playbook-flow-artifact.service';
 import { PlaybookFlowResultsService } from './services/playbook-flow-results.service';
 import { PlaybookFlowQueueService } from './services/playbook-flow-queue.service';
 import { PlaybookFlowIdempotencyService } from './services/playbook-flow-idempotency.service';
@@ -213,6 +216,7 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookFlowMailWebhookController,
     PlaybookFlowTemplateController,
     PlaybookFlowExecutionController,
+    PlaybookFlowArtifactController,
     PlaybookFlowController,
     PlaybookFlowRepeatabilityController,
     PlaybookFlowTriggerController,
@@ -226,6 +230,7 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookFlowHitlController,
     PlaybookShareController,
     PlaybookAssistantInternalController,
+    PlaybookFlowInternalArtifactController,
   ],
   providers: [
     PlaybookFlowService,
@@ -250,6 +255,7 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookFlowValidatorService,
     PlaybookFlowBuilderService,
     PlaybookFlowExecutionService,
+    PlaybookFlowArtifactService,
     PlaybookFlowResultsService,
     PlaybookFlowQueueService,
     PlaybookFlowIdempotencyService,

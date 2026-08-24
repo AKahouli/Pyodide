@@ -23,6 +23,7 @@ import {
   DocumentListOptions,
   DocumentListResult,
   DocumentInfo,
+  DocumentReadStream,
 } from './interfaces/document.interface';
 import { BadRequestException, InternalServerException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
@@ -137,7 +138,7 @@ export class DocumentService {
 
       this.logger.log('Document uploaded', {
         id,
-        objectKey,
+        objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
         size,
         mimeType,
       });
@@ -157,8 +158,8 @@ export class DocumentService {
     } catch (error) {
       const err = error as Error;
       this.logger.error('Failed to upload document', {
-        message: err.message,
-        objectKey,
+        errorName: err.name,
+        objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
       });
       throw new InternalServerException(err, 'Failed to upload document');
     }
@@ -200,8 +201,8 @@ export class DocumentService {
 
       const err = error as Error;
       this.logger.error('Failed to download document', {
-        message: err.message,
-        objectKey,
+        errorName: err.name,
+        objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
       });
       throw new InternalServerException(err, 'Failed to download document');
     }
@@ -215,12 +216,14 @@ export class DocumentService {
         new DeleteObjectCommand({ Bucket: this.getBucket(), Key: objectKey }),
       );
 
-      this.logger.log('Document deleted', { objectKey });
+      this.logger.log('Document deleted', {
+        objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
+      });
     } catch (error) {
       const err = error as Error;
       this.logger.error('Failed to delete document', {
-        message: err.message,
-        objectKey,
+        errorName: err.name,
+        objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
       });
       throw new InternalServerException(err, 'Failed to delete document');
     }
@@ -248,8 +251,7 @@ export class DocumentService {
         this.logger.warn(
           'S3 HeadObject still 403 Unknown after retries; assuming object present',
           {
-            objectKey,
-            bucket: this.getBucket(),
+            objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
           },
         );
         return true;
@@ -260,16 +262,45 @@ export class DocumentService {
         $metadata?: { httpStatusCode?: number };
       };
       this.logger.error('S3 HeadObject failed (not a 404)', {
-        objectKey,
-        bucket: this.getBucket(),
+        objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
         errorName: err?.name,
-        message: err?.message,
         httpStatusCode: err?.$metadata?.httpStatusCode,
       });
       throw new InternalServerException(
         error instanceof Error ? error : undefined,
         'Failed to verify document in storage',
       );
+    }
+  }
+
+  async openReadStream(objectKey: string, range?: string): Promise<DocumentReadStream> {
+    this.ensureAvailable();
+    if (range && !/^bytes=(?:\d+-\d*|-\d+)$/.test(range)) {
+      throw new BadRequestException('Invalid byte range');
+    }
+
+    try {
+      const response = await this.getS3Client().send(
+        new GetObjectCommand({ Bucket: this.getBucket(), Key: objectKey, Range: range }),
+      );
+      if (!response.Body) {
+        throw new BadRequestException('Document not found');
+      }
+      return {
+        body: response.Body as Readable,
+        contentType: response.ContentType,
+        contentLength: response.ContentLength,
+        contentRange: response.ContentRange,
+        acceptRanges: response.AcceptRanges,
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      if (this.isNotFoundError(error)) {
+        throw new BadRequestException('Document not found');
+      }
+      const err = error as Error;
+      this.logger.error('Failed to stream document', { errorName: err.name });
+      throw new InternalServerException(err, 'Failed to stream document');
     }
   }
 
@@ -352,8 +383,10 @@ export class DocumentService {
     } catch (error) {
       const err = error as Error;
       this.logger.error('Failed to list documents', {
-        message: err.message,
-        folder: options.folder,
+        errorName: err.name,
+        folderFingerprint: options.folder
+          ? this.storageKeyFingerprint(options.folder)
+          : undefined,
       });
       throw new InternalServerException(err, 'Failed to list documents');
     }
@@ -379,8 +412,8 @@ export class DocumentService {
       }
       const err = error as Error;
       this.logger.error('Failed to get document metadata', {
-        message: err.message,
-        objectKey,
+        errorName: err.name,
+        objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
       });
       return null;
     }
@@ -404,8 +437,8 @@ export class DocumentService {
       );
 
       this.logger.log('Document copied', {
-        source: sourceKey,
-        destination: destinationKey,
+        sourceFingerprint: this.storageKeyFingerprint(sourceKey),
+        destinationFingerprint: this.storageKeyFingerprint(destinationKey),
       });
 
       return destinationKey;
@@ -414,9 +447,9 @@ export class DocumentService {
 
       const err = error as Error;
       this.logger.error('Failed to copy document', {
-        message: err.message,
-        sourceKey,
-        destinationKey,
+        errorName: err.name,
+        sourceFingerprint: this.storageKeyFingerprint(sourceKey),
+        destinationFingerprint: this.storageKeyFingerprint(destinationKey),
       });
       throw new InternalServerException(err, 'Failed to copy document');
     }
@@ -493,6 +526,10 @@ export class DocumentService {
     return createHash('md5').update(buffer).digest('hex');
   }
 
+  private storageKeyFingerprint(objectKey: string): string {
+    return createHash('sha256').update(objectKey).digest('hex').slice(0, 12);
+  }
+
   private async streamToBuffer(stream: Readable): Promise<Buffer> {
     const chunks: Buffer[] = [];
 
@@ -520,8 +557,7 @@ export class DocumentService {
 
         const delayMs = 200 * attempt;
         this.logger.warn('S3 HeadObject transient error, retrying', {
-          objectKey,
-          bucket: this.getBucket(),
+          objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
           attempt,
           maxAttempts,
           delayMs,

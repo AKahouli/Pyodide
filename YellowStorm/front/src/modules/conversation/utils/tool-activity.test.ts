@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatSanitizedToolText } from './tool-activity';
+import { formatSanitizedToolText, isCodeInterpreterActivity, resolveCodeInterpreterRequest, resolveCodeInterpreterResponse } from './tool-activity';
 
 describe('formatSanitizedToolText', () => {
   it('keeps useful output while redacting nested private fields and unsafe strings', () => {
@@ -46,5 +46,46 @@ describe('formatSanitizedToolText', () => {
     expect(output).not.toContain('return userInput');
     expect(output).not.toContain('yield record');
     expect(output).not.toContain('exit 1');
+  });
+});
+
+describe('code interpreter activity details', () => {
+  it('preserves executable requests and output while redacting private metadata', () => {
+    const data = {
+      toolName: 'code_interpreter_shell_exec',
+      renderKind: 'run_code',
+      paramsJson: JSON.stringify({ command: 'pandoc source.md -o output.pdf', apiKey: 'private' }),
+      resultJson: JSON.stringify({ stdout: 'Created output.pdf', exit_code: 0, workspacePath: '/workspace/private/output.pdf' }),
+    };
+
+    expect(isCodeInterpreterActivity(data)).toBe(true);
+    expect(resolveCodeInterpreterRequest(data)).toBe('pandoc source.md -o output.pdf');
+    expect(resolveCodeInterpreterResponse(data)).toContain('Created output.pdf');
+    expect(resolveCodeInterpreterResponse(data)).toContain('"exit_code": 0');
+    expect(resolveCodeInterpreterResponse(data)).not.toContain('/workspace/private');
+  });
+
+  it('uses run-code primary input before serialized parameters', () => {
+    expect(resolveCodeInterpreterRequest({
+      toolName: 'run_code',
+      primaryInput: 'print("hello")',
+      paramsJson: JSON.stringify({ code: 'print("other")' }),
+    })).toBe('print("hello")');
+  });
+
+  it('redacts arbitrary paths and environment credentials in requests and output', () => {
+    const request = resolveCodeInterpreterRequest({
+      toolName: 'code_interpreter_shell_exec',
+      paramsJson: JSON.stringify({ command: 'cat /etc/yellowstorm/config' }),
+    });
+    const response = resolveCodeInterpreterResponse({
+      toolName: 'code_interpreter_shell_exec',
+      resultJson: JSON.stringify({ stdout: 'DB_PASSWORD=short-value', file: 'owner/system_run/private.txt' }),
+    });
+
+    expect(request).toBe('cat [REDACTED]');
+    expect(response).not.toContain('/etc/yellowstorm');
+    expect(response).not.toContain('short-value');
+    expect(response).not.toContain('owner/system_run');
   });
 });

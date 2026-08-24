@@ -4,6 +4,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow-task-result.schema';
 import { PlaybookFlowStreamEventsService } from './playbook-flow-stream-events.service';
+import { PlaybookTokenStreamRedactor } from '../utils/playbook-artifact';
 
 type TokenBufferKey = {
   executionId: string;
@@ -26,6 +27,8 @@ type TokenBufferEntry = TokenBufferKey & {
 export class PlaybookFlowTokenBufferService implements OnModuleDestroy {
   private readonly logger = new Logger(PlaybookFlowTokenBufferService.name);
   private readonly buffers = new Map<string, TokenBufferEntry>();
+  private readonly streamRedactor = new PlaybookTokenStreamRedactor();
+  private readonly publicTokenKeys = new Map<string, TokenBufferKey>();
 
   constructor(
     @InjectModel(FlowTaskResult.name)
@@ -40,7 +43,7 @@ export class PlaybookFlowTokenBufferService implements OnModuleDestroy {
 
   async appendToken(key: TokenBufferKey, token: string): Promise<void> {
     if (!token) return;
-    this.streamEvents.emitStepUpdate(key.executionId, key.taskId, token);
+    this.emitPublicToken(key, token);
 
     const maxTaskBytes = this.getMaxTaskBytes();
     if (Buffer.byteLength(token, 'utf8') >= maxTaskBytes) {
@@ -58,10 +61,13 @@ export class PlaybookFlowTokenBufferService implements OnModuleDestroy {
   }
 
   async flushTask(key: TokenBufferKey): Promise<void> {
+    this.flushPublicToken(key);
     await this.flushKey(this.keyOf(key));
   }
 
   async flushExecution(executionId: string): Promise<void> {
+    const publicKeys = Array.from(this.publicTokenKeys.values()).filter((entry) => entry.executionId === executionId);
+    publicKeys.forEach((entry) => this.flushPublicToken(entry));
     const keys = Array.from(this.buffers.keys()).filter((key) => key.startsWith(`${executionId}:`));
     for (const key of keys) {
       await this.flushKey(key);
@@ -69,6 +75,10 @@ export class PlaybookFlowTokenBufferService implements OnModuleDestroy {
   }
 
   discardExecution(executionId: string): void {
+    this.streamRedactor.discardExecution(executionId);
+    for (const [key, value] of this.publicTokenKeys.entries()) {
+      if (value.executionId === executionId) this.publicTokenKeys.delete(key);
+    }
     for (const [key, entry] of this.buffers.entries()) {
       if (entry.executionId === executionId) {
         this.clearEntryTimer(entry);
@@ -78,9 +88,24 @@ export class PlaybookFlowTokenBufferService implements OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
+    Array.from(this.publicTokenKeys.values()).forEach((key) => this.flushPublicToken(key));
     for (const key of Array.from(this.buffers.keys())) {
       await this.flushKey(key);
     }
+  }
+
+  emitPublicToken(key: TokenBufferKey, token: string): void {
+    const bufferKey = this.keyOf(key);
+    this.publicTokenKeys.set(bufferKey, key);
+    const publicToken = this.streamRedactor.push(bufferKey, token);
+    if (publicToken) this.streamEvents.emitStepUpdate(key.executionId, key.taskId, publicToken);
+  }
+
+  flushPublicToken(key: TokenBufferKey): void {
+    const bufferKey = this.keyOf(key);
+    this.publicTokenKeys.delete(bufferKey);
+    const publicToken = this.streamRedactor.flush(bufferKey);
+    if (publicToken) this.streamEvents.emitStepUpdate(key.executionId, key.taskId, publicToken);
   }
 
   private getOrCreateEntry(key: TokenBufferKey): TokenBufferEntry {

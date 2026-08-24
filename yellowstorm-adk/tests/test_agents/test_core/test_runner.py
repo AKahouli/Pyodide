@@ -410,7 +410,11 @@ class TestAgentRunner:
         function_call.function_call = MagicMock()
         function_call.function_call.name = "run_code"
         function_call.function_call.id = "call-1"
-        function_call.function_call.args = {"code": "print('safe')", "language": "python"}
+        function_call.function_call.args = {
+            "code": "print('safe')",
+            "language": "python",
+            "_display_purpose": "Calculate the requested result",
+        }
         mock_event.content.parts = [visible_narration, hidden_thought, function_call]
         mock_event.is_final_response.return_value = False
 
@@ -449,7 +453,8 @@ class TestAgentRunner:
              patch.object(agent_runner, '_handle_function_call', new_callable=AsyncMock) as mock_handle_func, \
              patch.object(agent_runner, '_handle_final_response', new_callable=AsyncMock) as mock_handle_final, \
              patch.object(agent_runner, '_handle_ui_tool_response', new_callable=AsyncMock, return_value=False), \
-             patch.object(agent_runner, '_handle_structured_tool_response', new_callable=AsyncMock):
+             patch.object(agent_runner, '_handle_structured_tool_response', new_callable=AsyncMock), \
+             patch('src.smart_rag.agents.core.runner.record_temporary_child_tool_call') as mock_record_child:
             mock_handle_final.return_value = "Final response"
 
             result = await agent_runner._run_standard_agent(
@@ -464,10 +469,18 @@ class TestAgentRunner:
                 task_order="1",
                 toolkit=None,
                 mcp_tools_used=[],
-                agent_id="agent_123"
+                agent_id="agent_123",
+                agent_config={
+                    "_is_temporary_child_agent": True,
+                    "agent_params": {"temporary_child_summary_session_id": "summary-session"},
+                },
             )
 
             mock_handle_func.assert_called_once()
+            assert mock_record_child.call_args.kwargs["args"] == {
+                "code": "print('safe')",
+                "language": "python",
+            }
             assert result[0] == "Final response"
             component_types = [call.kwargs["component_type"] for call in mock_streaming_formatter.format_component_event.call_args_list]
             assert component_types[:2] == ["agent_activity", "tool_activity"]
@@ -494,7 +507,7 @@ class TestAgentRunner:
                         "params_json": '{"code":"print(\'safe\')","language":"python"}',
                         "display_key": "runCode",
                         "fallback_display_name": "",
-                        "summary": "",
+                        "summary": "Calculate the requested result",
                         "render_kind": "run_code",
                         "actor_id": "agent_123",
                         "actor_name": "TestAgent",

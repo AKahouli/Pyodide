@@ -5,7 +5,7 @@ const MAX_DEPTH = 6;
 const MAX_COLLECTION_ITEMS = 100;
 const MAX_STRING_LENGTH = 20_000;
 
-const SENSITIVE_KEY = /^(?:authorization|cookie|set-cookie|password|passwd|secret|api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|client[-_]?secret|private[-_]?key|connection[-_]?string)$/i;
+const SENSITIVE_KEY = /^(?:authorization|cookie|set-cookie|[A-Za-z0-9_-]*(?:password|passwd|secret|token|api[-_]?key|access[-_]?key|private[-_]?key|connection[-_]?string)[A-Za-z0-9_-]*)$/i;
 
 function sanitizeString(value: string): string {
   const trimmed = value.trim();
@@ -21,14 +21,20 @@ function sanitizeString(value: string): string {
     .replace(/YELLOWSTORM_ATTACHMENT_SENTINEL_\d+(?:\\n)?/g, REDACTED)
     .replace(/\/workspace(?:\/[^\s"'`)<>{}\]]+)*/g, REDACTED)
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, `$1${REDACTED}`)
-    .replace(/\b(authorization)\b(\s*[:=]\s*)(?!Bearer\s+)([^\s,;]+)/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
+    .replace(/\b(authorization)\b(\s*[:=]\s*)(?:(?:Basic|Bearer)\s+\S+|[^\s,;]+)/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
     .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s/@]+@/gi, `$1${REDACTED}@`)
     .replace(/\b(password|passwd|secret|api[-_]?key|access[-_]?token|refresh[-_]?token|client[-_]?secret|connection[-_]?string)\b(\s*[:=]\s*)([^\s,;]+)/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
-    .replace(/(?:^|\s)[A-Za-z0-9_-]{8,}\/(?:runs?|workspaces?)\/[^\s"']+/gi, ` ${REDACTED}`);
+    .replace(/\b([A-Z][A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY|CONNECTION_STRING)[A-Z0-9_]*)\b(\s*=\s*)[^\s,;]+/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
+    .replace(/(^|[\s=:('"`])(?:[A-Za-z]:[\\/]|\/|\\\\)[^\s"'`]+/gi, (_match, boundary: string) => `${boundary}${REDACTED}`)
+    .replace(/(^|[\s=:('"`])(?:[A-Za-z0-9._-]+\/){2,}[^\s"'`]+/gi, (_match, boundary: string) => `${boundary}${REDACTED}`);
 
   return redacted.length > MAX_STRING_LENGTH
     ? `${redacted.slice(0, MAX_STRING_LENGTH)}... [truncated]`
     : redacted;
+}
+
+export function sanitizeSerializedToolValue(value: string): string {
+  return sanitizeString(value);
 }
 
 function sanitizeValue(value: unknown, depth: number): unknown {

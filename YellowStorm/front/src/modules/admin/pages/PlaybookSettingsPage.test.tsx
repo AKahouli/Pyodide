@@ -52,6 +52,13 @@ const settings: AdminPlaybookSettings = {
     maxParallelismPerExecution: 5,
     recursionLimitDefault: 25,
     recursionLimitMax: 50,
+    maxHitlRounds: 5,
+    pythonWorkerPoolSize: 8,
+    pythonWorkerMaxInflight: 4,
+    maxToolIterations: 40,
+    graphCacheEnabled: false,
+    graphCacheMaxEntries: 128,
+    graphCacheTtlSeconds: 900,
     dynamicReasoning: {
       plannerAgentId: 'planner-1',
       maxWorkNodes: 6,
@@ -131,5 +138,22 @@ describe('PlaybookSettingsPage', () => {
       description: 'The selected planner is unavailable.',
     });
     await waitFor(() => expect(updateAdminPlaybookSettings).toHaveBeenCalledWith(settings));
+  });
+
+  it('provides a dedicated information tooltip trigger for every runtime setting', async () => {
+    const { user } = renderWithProviders(<PlaybookSettingsPage />);
+    await user.click(screen.getByRole('button', { name: /Execution/ }));
+
+    const keys = [
+      'maxConcurrentPerUser', 'executionQueueMaxDepth', 'maxParallelismPerExecution',
+      'recursionLimitDefault', 'recursionLimitMax', 'maxHitlRounds', 'pythonWorkerPoolSize',
+      'pythonWorkerMaxInflight', 'maxToolIterations', 'graphCacheEnabled',
+      'graphCacheMaxEntries', 'graphCacheTtlSeconds',
+    ];
+    keys.forEach((key) => {
+      expect(screen.getByRole('button', {
+        name: `playbookSettings.execution.fields.${key}.tooltipLabel`,
+      })).toBeInTheDocument();
+    });
   });
 });

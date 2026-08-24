@@ -229,8 +229,8 @@ class TestStreamingEventProcessor:
       )
 
     events = [
-      event_for(SimpleNamespace(text=None, function_call=SimpleNamespace(id="call-1", name="search", args={"q": "one"}), function_response=None)),
-      event_for(SimpleNamespace(text=None, function_call=SimpleNamespace(id="call-2", name="search", args={"q": "two"}), function_response=None)),
+      event_for(SimpleNamespace(text=None, function_call=SimpleNamespace(id="call-1", name="search", args={"q": "one", "_display_purpose": "Find the first source"}), function_response=None)),
+      event_for(SimpleNamespace(text=None, function_call=SimpleNamespace(id="call-2", name="search", args={"q": "two", "_display_purpose": "Find the second source"}), function_response=None)),
       event_for(SimpleNamespace(text=None, function_call=None, function_response=SimpleNamespace(id="call-1", name="search", response={"matches": 1}, is_error=False))),
       event_for(SimpleNamespace(text=None, function_call=None, function_response=SimpleNamespace(id="call-2", name="search", response={"matches": 2}, is_error=False))),
     ]
@@ -262,6 +262,75 @@ class TestStreamingEventProcessor:
       "tool-mgr-1-call-1", "tool-mgr-1-call-2", "tool-mgr-1-call-1", "tool-mgr-1-call-2",
     ]
     assert [event["action"] for event in tool_events] == ["add", "add", "update", "update"]
+    assert [event["component"]["data"].get("summary") for event in tool_events[:2]] == [
+      "Find the first source", "Find the second source",
+    ]
+    assert all(
+      "_display_purpose" not in event["component"]["data"].get("params_json", "")
+      for event in tool_events[:2]
+    )
     assert [event["component"]["data"].get("result_json") for event in tool_events] == [
       None, None, '{"matches":1}', '{"matches":2}',
     ]
+
+  @pytest.mark.asyncio
+  async def test_manager_emits_artifact_for_file_in_conversation_run(self, processor):
+    queue = AsyncMock()
+    queue.include_tool_results = True
+    result = {
+      "path": "/home/ubuntu/ai_two_sentences.pdf",
+      "ceph_path": "user-1/system_conversation-1/ai_two_sentences.pdf",
+    }
+
+    def event_for(part):
+      return SimpleNamespace(
+        content=SimpleNamespace(parts=[part]),
+        usage_metadata=None,
+        is_final_response=MagicMock(return_value=False),
+      )
+
+    async def fake_stream():
+      yield event_for(SimpleNamespace(
+        text=None,
+        function_call=SimpleNamespace(id="call-file", name="code_interpreter_send_file_to_user", args={"path": result["path"]}),
+        function_response=None,
+      ))
+      yield event_for(SimpleNamespace(
+        text=None,
+        function_call=None,
+        function_response=SimpleNamespace(id="call-file", name="code_interpreter_send_file_to_user", response=result, is_error=False),
+      ))
+
+    agent_runner = MagicMock()
+    agent_runner.run_async.return_value = fake_stream()
+    with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
+    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client", MagicMock()
+    ):
+      await processor.process_streaming_events(
+        session_id="conversation-1",
+        user_prompt="create a PDF",
+        manager_agent=SimpleNamespace(id="mgr-1", name="Team Manager"),
+        agent_runner=agent_runner,
+        q=queue,
+      )
+
+    artifacts = [
+      call.args[0]["component"] for call in queue.put.await_args_list
+      if call.args[0].get("component", {}).get("type") == "artifact"
+    ]
+    assert len(artifacts) == 1
+    assert artifacts[0]["type"] == "artifact"
+    assert artifacts[0]["id"].startswith("artifact-")
+    assert artifacts[0]["data"] == {
+      "artifact_kind": "document",
+      "artifact_id": artifacts[0]["id"].removeprefix("artifact-"),
+      "filename": "ai_two_sentences.pdf",
+      "mime_type": "application/pdf",
+      "size_bytes": 0,
+      "availability": "ready",
+      "file_path": "user-1/system_conversation-1/ai_two_sentences.pdf",
+      "producer_tool_id": "tool-mgr-1-call-file",
+      "output_port_id": "",
+    }

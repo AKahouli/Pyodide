@@ -5,11 +5,13 @@ describe('public component sanitizer', () => {
     expect(sanitizePublicToolData({
       authorization: 'Bearer secret-token',
       nested: { apiKey: 'private', query: 'safe' },
+      env: { DB_PASSWORD: 'structured-secret', SERVICE_API_KEY: 'structured-key' },
       message: 'Authorization: Bearer abc.def',
     })).toEqual({
       authorization: '[REDACTED]',
       nested: { apiKey: '[REDACTED]', query: 'safe' },
-      message: 'Authorization: Bearer [REDACTED]',
+      env: { DB_PASSWORD: '[REDACTED]', SERVICE_API_KEY: '[REDACTED]' },
+      message: 'Authorization: [REDACTED]',
     });
   });
 
@@ -27,6 +29,21 @@ describe('public component sanitizer', () => {
       paramsJson: '{"query":"safe","password":"[REDACTED]"}',
       resultJson: '{"access_token":"[REDACTED]","count":2}',
     });
+  });
+
+  it('redacts arbitrary paths and environment-style credentials', () => {
+    const component = sanitizePublicComponent({
+      id: 'tool-2',
+      type: 'toolActivity',
+      data: {
+        paramsJson: '{"command":"cat /etc/yellowstorm/config"}',
+        resultJson: '{"stdout":"DB_PASSWORD=short-value","ceph_path":"owner/system_run/private.pdf"}',
+      },
+    });
+
+    expect(component.data.paramsJson).not.toContain('/etc/yellowstorm');
+    expect(component.data.resultJson).not.toContain('short-value');
+    expect(component.data.resultJson).not.toContain('owner/system_run');
   });
 
   it('removes attachment sentinels and redacts workspace paths from answer text', () => {

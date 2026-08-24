@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '@/lib/api';
-import { branchConversation, createConversation, deleteConversation, fetchActiveStream, fetchConversations, fetchMessages, rerunReliabilityEvaluation, sendMessage } from './api';
+import { branchConversation, createConversation, deleteConversation, fetchActiveStream, fetchConversations, fetchMessages, getArtifactDownloadUrl, rerunReliabilityEvaluation, sendMessage } from './api';
 
 vi.mock('@/lib/api', () => ({
   apiClient: {
@@ -24,7 +24,7 @@ vi.mock('@/lib/api', () => ({
       regenerate: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/regenerate`,
       branches: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/branches`,
       report: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/report`,
-      artifactUrl: '/conversations/artifact-url',
+      artifactUrl: (cid: string, mid: string, aid: string) => `/conversations/${cid}/messages/${mid}/artifacts/${aid}/url`,
       workspaceDocuments: (cid: string) => `/conversations/${cid}/workspace-documents`,
       fileUploadUrl: (cid: string) => `/conversations/${cid}/files/upload-url`,
       fileConfirm: (cid: string) => `/conversations/${cid}/files/confirm`,
@@ -56,6 +56,18 @@ describe('conversation api', () => {
 
     expect(result.items).toHaveLength(1);
     expect(result.total).toBe(1);
+  });
+
+  it('returns separate artifact view and download URLs', async () => {
+    vi.mocked(apiClient.post).mockResolvedValueOnce({
+      data: { data: { viewUrl: 'https://storage.example/view', downloadUrl: 'https://storage.example/download' } },
+    } as never);
+
+    await expect(getArtifactDownloadUrl('conversation-1', 'message-1', 'artifact-1')).resolves.toEqual({
+      viewUrl: 'https://storage.example/view',
+      downloadUrl: 'https://storage.example/download',
+    });
+    expect(apiClient.post).toHaveBeenCalledWith('/conversations/conversation-1/messages/message-1/artifacts/artifact-1/url');
   });
 
   it('forwards the platform-copilot history filter', async () => {

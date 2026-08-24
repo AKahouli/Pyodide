@@ -381,8 +381,9 @@ describe('E2E: Linear Flow — 3 steps with ExecutionCompleted', () => {
     await flushPromises();
 
     expect(ctx.streamEvents.emitStepStart).toHaveBeenCalledWith('exec-e2e', 'step-1');
-    expect(ctx.streamEvents.emitStepUpdate).toHaveBeenCalledTimes(2);
-    expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith('exec-e2e', 'step-1', 'Hello', undefined, 0, undefined, undefined, expect.any(Object));
+    expect(ctx.streamEvents.emitStepUpdate).toHaveBeenCalledTimes(1);
+    expect(ctx.streamEvents.emitStepUpdate).toHaveBeenCalledWith('exec-e2e', 'step-1', 'Hello');
+    expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith('exec-e2e', 'step-1', 'Hello', undefined, 0, [], [], expect.any(Object));
   });
 
   it('handles NodeToken when token is empty string without emitting', async () => {
@@ -398,7 +399,7 @@ describe('E2E: Linear Flow — 3 steps with ExecutionCompleted', () => {
     await flushPromises();
 
     expect(ctx.streamEvents.emitStepUpdate).not.toHaveBeenCalled();
-    expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith('exec-e2e', 'step-1', 'done', undefined, 0, undefined, undefined, expect.any(Object));
+    expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith('exec-e2e', 'step-1', 'done', undefined, 0, [], [], expect.any(Object));
   });
 });
 
@@ -1059,8 +1060,8 @@ describe('E2E: Edge cases', () => {
       expect.any(String),
       undefined,
       0,
-      undefined,
-      undefined,
+      [],
+      [],
       expect.any(Object),
     );
     expect(ctx.streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-e2e', 'completed');

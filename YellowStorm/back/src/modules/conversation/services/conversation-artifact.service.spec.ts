@@ -12,12 +12,23 @@ describe('ConversationArtifactService', () => {
       conversationId: { toString: () => 'conversation-1' },
       components: [{ type: 'artifact', data: { artifactId: 'artifact-1', filename: 'report.pdf', storagePath: 'owner/system_run/report.pdf' } }],
     });
-    documentService.generateSasUrl.mockResolvedValue('https://storage.example/report');
+    documentService.generateSasUrl
+      .mockResolvedValueOnce('https://storage.example/view-report')
+      .mockResolvedValueOnce('https://storage.example/download-report');
 
     await expect(service.resolveDownloadUrl('conversation-1', 'message-1', 'artifact-1')).resolves.toEqual({
-      downloadUrl: 'https://storage.example/report',
+      viewUrl: 'https://storage.example/view-report',
+      downloadUrl: 'https://storage.example/download-report',
     });
-    expect(documentService.generateSasUrl).toHaveBeenCalledWith('owner/system_run/report.pdf', expect.objectContaining({ expiryMinutes: 10, checkExists: true }));
+    expect(documentService.generateSasUrl).toHaveBeenNthCalledWith(1, 'owner/system_run/report.pdf', {
+      expiryMinutes: 10,
+      checkExists: true,
+    });
+    expect(documentService.generateSasUrl).toHaveBeenNthCalledWith(2, 'owner/system_run/report.pdf', expect.objectContaining({
+      expiryMinutes: 10,
+      checkExists: true,
+      contentDisposition: 'attachment; filename="report.pdf"',
+    }));
   });
 
   it('does not resolve artifacts from another conversation', async () => {

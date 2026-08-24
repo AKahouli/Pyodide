@@ -1042,6 +1042,13 @@ export interface PlaybookExecutionAdminSettings {
   maxParallelismPerExecution: number;
   recursionLimitDefault: number;
   recursionLimitMax: number;
+  maxHitlRounds: number;
+  pythonWorkerPoolSize: number;
+  pythonWorkerMaxInflight: number;
+  maxToolIterations: number;
+  graphCacheEnabled: boolean;
+  graphCacheMaxEntries: number;
+  graphCacheTtlSeconds: number;
   dynamicReasoning: {
     plannerAgentId: string | null;
     maxWorkNodes: number;

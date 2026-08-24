@@ -1,6 +1,6 @@
 import json
 
-from src.smart_rag.run_code_artifacts import build_run_code_artifacts
+from src.smart_rag.run_code_artifacts import build_run_code_artifacts, build_tool_result_artifacts
 
 
 def _agent_config() -> dict:
@@ -42,3 +42,33 @@ def test_rejects_traversal_and_non_run_paths() -> None:
         {"name": "source.txt", "path": "/workspace/sources/source.txt", "sizeBytes": 1},
     ]}
     assert build_run_code_artifacts(result, _agent_config(), "tool-1") == []
+
+
+def test_builds_artifact_from_code_interpreter_send_file_result() -> None:
+    artifacts = build_tool_result_artifacts({
+        "ceph_path": "owner/system_run/report.pdf",
+        "path": "/home/ubuntu/report.pdf",
+        "mime_type": "application/pdf",
+        "size": 123,
+    }, "tool-shell", "owner/system_run")
+
+    assert len(artifacts) == 1
+    artifact = {**artifacts[0], "artifact_id": "ignored"}
+    assert artifact == {
+        "file_path": "owner/system_run/report.pdf",
+        "filename": "report.pdf",
+        "artifact_kind": "document",
+        "mime_type": "application/pdf",
+        "artifact_id": "ignored",
+        "producer_tool_id": "tool-shell",
+        "size_bytes": 123,
+        "availability": "ready",
+        "output_port_id": "",
+    }
+
+
+def test_rejects_tool_artifact_outside_trusted_run_prefix() -> None:
+    assert build_tool_result_artifacts({
+        "ceph_path": "another-user/system_run/private.pdf",
+        "path": "/home/ubuntu/private.pdf",
+    }, "tool-shell", "owner/system_run") == []

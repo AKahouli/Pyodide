@@ -862,12 +862,13 @@ function normalizeTaskArtifact(raw: unknown): import('./types').TaskArtifact | n
 
   return {
     portId: toNullableString(record.portId ?? record.port_id) ?? 'default',
+    artifactId: toNullableString(record.artifactId ?? record.artifact_id) ?? undefined,
     artifactKind: (toNullableString(record.artifactKind ?? record.artifact_kind) ?? 'text') as import('./types').ArtifactKind,
     content: toNullableString(record.content) ?? undefined,
-    url: toNullableString(record.url ?? record.ref ?? record.filePath ?? record.file_path) ?? undefined,
     filename: toNullableString(record.filename) ?? undefined,
     mimeType: toNullableString(record.mimeType ?? record.mime_type) ?? undefined,
     size: toNullableNumber(record.size) ?? undefined,
+    availability: toNullableString(record.availability) ?? undefined,
     metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
   };
 }
@@ -1010,6 +1011,22 @@ function normalizeTaskResult(raw: any, index: number): import('./types').TaskRes
     runtimeSubgraphId: toNullableString(raw.runtimeSubgraphId ?? raw.runtime_subgraph_id) ?? undefined,
     generatedLocalNodeId: toNullableString(raw.generatedLocalNodeId ?? raw.generated_local_node_id) ?? undefined,
     generatedNodeTitle: toNullableString(raw.generatedNodeTitle ?? raw.generated_node_title) ?? undefined,
+  };
+}
+
+export async function requestPlaybookArtifactAccess(
+  executionId: string,
+  artifactId: string,
+  action: 'view' | 'download',
+): Promise<{ url: string; expiresAt: string }> {
+  const response = await apiClient.post<ApiResponse<{ token: string; expiresAt: string }>>(
+    API_ENDPOINTS.playbookFlows.executionArtifactAccess(executionId, artifactId),
+    { action },
+  );
+  const { token, expiresAt } = response.data.data;
+  return {
+    url: `${API_CONFIG.baseURL}${API_ENDPOINTS.playbookFlows.artifactContent}?token=${encodeURIComponent(token)}`,
+    expiresAt,
   };
 }
 

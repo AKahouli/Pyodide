@@ -877,6 +877,21 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       controlEdges: [],
       dataBindings: [],
       settings: { recursionLimit: 25, maxParallelism: 5 },
+      playbookExecutionSettings: {
+        maxConcurrentPerUser: 7,
+        executionQueueMaxDepth: 0,
+        maxParallelismPerExecution: 6,
+        effectiveExecutionParallelism: 5,
+        recursionLimitDefault: 30,
+        recursionLimitMax: 60,
+        maxHitlRounds: 0,
+        pythonWorkerPoolSize: 3,
+        pythonWorkerMaxInflight: 2,
+        maxToolIterations: 25,
+        graphCacheEnabled: false,
+        graphCacheMaxEntries: 64,
+        graphCacheTtlSeconds: 120,
+      },
     };
     const { service, agentService } = createExecutionServiceForTests({
       hitlMemoryModel: {
@@ -916,8 +931,15 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     );
 
     const sentContext = runFromCheckpoint.mock.calls[0][0].input_context.fields;
+    const sentRuntimeSettings = runFromCheckpoint.mock.calls[0][0].settings.runtime_settings;
     expect(sentContext.brief).toEqual(expect.any(Object));
     expect(sentContext.__playbook_hitl_memory.listValue.values).toHaveLength(1);
+    expect(sentRuntimeSettings).toMatchObject({
+      execution_queue_max_depth: 0,
+      max_hitl_rounds: 0,
+      graph_cache_enabled: false,
+      max_tool_iterations: 25,
+    });
   });
 
   it('adds task-scoped connector runtime metadata to replay checkpoints', async () => {

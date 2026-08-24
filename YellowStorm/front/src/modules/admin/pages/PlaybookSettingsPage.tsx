@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ChevronDown, Loader2, Save, Sparkles, Wand2 } from 'lucide-react';
+import { ChevronDown, HelpCircle, Loader2, Save, Sparkles, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
@@ -39,6 +40,13 @@ const DEFAULT_PLAYBOOK_EXECUTION_SETTINGS = {
   maxParallelismPerExecution: 5,
   recursionLimitDefault: 25,
   recursionLimitMax: 50,
+  maxHitlRounds: 5,
+  pythonWorkerPoolSize: 8,
+  pythonWorkerMaxInflight: 4,
+  maxToolIterations: 40,
+  graphCacheEnabled: false,
+  graphCacheMaxEntries: 128,
+  graphCacheTtlSeconds: 900,
   dynamicReasoning: { plannerAgentId: null, maxWorkNodes: 6, maxParallelism: 3, maxDepth: 1, maxRepairAttempts: 1 },
 };
 
@@ -52,7 +60,35 @@ const EXECUTION_FIELD_KEYS = [
   'maxParallelismPerExecution',
   'recursionLimitDefault',
   'recursionLimitMax',
+  'maxHitlRounds',
+  'pythonWorkerPoolSize',
+  'pythonWorkerMaxInflight',
+  'maxToolIterations',
+  'graphCacheMaxEntries',
+  'graphCacheTtlSeconds',
 ] as const;
+
+const RUNTIME_TOOLTIP_KEYS = [
+  'maxConcurrentPerUser', 'executionQueueMaxDepth', 'maxParallelismPerExecution',
+  'recursionLimitDefault', 'recursionLimitMax', 'maxHitlRounds', 'pythonWorkerPoolSize',
+  'pythonWorkerMaxInflight', 'maxToolIterations', 'graphCacheEnabled',
+  'graphCacheMaxEntries', 'graphCacheTtlSeconds',
+] as const;
+
+type RuntimeTooltipKey = (typeof RUNTIME_TOOLTIP_KEYS)[number];
+
+function hasRuntimeTooltip(key: string): key is RuntimeTooltipKey {
+  return (RUNTIME_TOOLTIP_KEYS as readonly string[]).includes(key);
+}
+
+const EXECUTION_FIELD_MAX: Partial<Record<(typeof EXECUTION_FIELD_KEYS)[number], number>> = {
+  maxHitlRounds: 100,
+  pythonWorkerPoolSize: 100,
+  pythonWorkerMaxInflight: 20,
+  maxToolIterations: 500,
+  graphCacheMaxEntries: 10000,
+  graphCacheTtlSeconds: 86400,
+};
 
 const DYNAMIC_REASONING_FIELD_KEYS = ['maxWorkNodes', 'maxParallelism', 'maxDepth', 'maxRepairAttempts'] as const;
 
@@ -99,6 +135,25 @@ function SettingsPane({ title, description, icon, contentClassName = 'space-y-6'
         </CollapsibleContent>
       </Card>
     </Collapsible>
+  );
+}
+
+function FieldLabel({ fieldKey, children }: Readonly<{ fieldKey: string; children: ReactNode }>) {
+  const { t } = useModuleTranslation('admin');
+  return (
+    <span className="flex items-center gap-1.5">
+      {children}
+      {hasRuntimeTooltip(fieldKey) && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={t(`playbookSettings.execution.fields.${fieldKey}.tooltipLabel`)}>
+              <HelpCircle className="h-3.5 w-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs">{t(`playbookSettings.execution.fields.${fieldKey}.tooltip`)}</TooltipContent>
+        </Tooltip>
+      )}
+    </span>
   );
 }
 
@@ -362,19 +417,35 @@ export function PlaybookSettingsPage() {
         title={t('playbookSettings.execution.title')}
         description={t('playbookSettings.execution.description')}
       >
+        <TooltipProvider>
+          <div className="space-y-6">
           <div className="grid gap-4 md:grid-cols-2">
             {EXECUTION_FIELD_KEYS.map((key) => (
               <div key={key} className="space-y-2">
-                <Label htmlFor={`execution-${key}`}>{t(`playbookSettings.execution.fields.${key}.label`)}</Label>
+                <Label htmlFor={`execution-${key}`}><FieldLabel fieldKey={key}>{t(`playbookSettings.execution.fields.${key}.label`)}</FieldLabel></Label>
                 <Input
                   id={`execution-${key}`}
                   type="number"
                   min={key === 'executionQueueMaxDepth' ? 0 : 1}
+                  max={EXECUTION_FIELD_MAX[key]}
                   value={settings.playbookExecution[key]}
                   onChange={(event) => updateExecutionField(key, event.target.value)}
                 />
               </div>
             ))}
+          </div>
+          <div className="flex items-center justify-between gap-4 rounded-md border border-border/60 p-4">
+            <Label htmlFor="execution-graphCacheEnabled">
+              <FieldLabel fieldKey="graphCacheEnabled">{t('playbookSettings.execution.fields.graphCacheEnabled.label')}</FieldLabel>
+            </Label>
+            <Switch
+              id="execution-graphCacheEnabled"
+              checked={settings.playbookExecution.graphCacheEnabled}
+              onCheckedChange={(graphCacheEnabled) => setSettings((previous) => ({
+                ...previous,
+                playbookExecution: { ...previous.playbookExecution, graphCacheEnabled },
+              }))}
+            />
           </div>
           <div className="space-y-3 rounded-md border border-border/60 p-4">
             <div>
@@ -446,6 +517,8 @@ export function PlaybookSettingsPage() {
               {t('playbookSettings.actions.save')}
             </Button>
           </div>
+          </div>
+        </TooltipProvider>
       </SettingsPane>
 
       <SettingsPane

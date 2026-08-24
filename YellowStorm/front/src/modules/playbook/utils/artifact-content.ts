@@ -20,7 +20,10 @@ function stringifyStructuredValue(value: unknown): string | null {
 }
 
 export function getArtifactDisplayContent(artifact: TaskArtifact): string | null {
-  return stringifyStructuredValue(artifact.content ?? artifact.metadata?.data);
+  const metadataContent = ['text', 'code', 'data', 'dashboard'].includes(artifact.artifactKind)
+    ? artifact.metadata?.data
+    : undefined;
+  return stringifyStructuredValue(artifact.content ?? metadataContent);
 }
 
 export function getArtifactPreviewContent(artifact: TaskArtifact, maxLength = 500): string | null {

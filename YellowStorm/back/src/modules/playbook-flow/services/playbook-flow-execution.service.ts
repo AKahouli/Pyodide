@@ -83,6 +83,8 @@ import {
 import { FlowHitlMemory, FlowHitlMemoryDocument } from '../schemas/playbook-flow-hitl-memory.schema';
 import { FlowAccessService } from '../domain/flow-access.service';
 import { PlaybookExecutionSettingsResolverService } from './playbook-execution-settings-resolver.service';
+import { publicPlaybookTaskResult, sanitizePlaybookPublicValue } from '../utils/playbook-artifact';
+import { PlaybookFlowArtifactService } from './playbook-flow-artifact.service';
 import { FlowDynamicReasoningAttempt, FlowDynamicReasoningAttemptDocument } from '../schemas/playbook-flow-dynamic-reasoning-attempt.schema';
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
@@ -121,6 +123,7 @@ export function sanitizeExecutionForResponse(
   const { playbookPlannerSnapshot: _plannerSnapshot, ...safeExecution } = execution;
   return {
     ...safeExecution,
+    error: sanitizePlaybookPublicValue(safeExecution.error) as string | null | undefined,
     ...(safeExecution.snapshot
       ? { snapshot: sanitizeExecutionSnapshotForResponse(safeExecution.snapshot) }
       : {}),
@@ -280,6 +283,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     @Optional()
     @InjectModel(FlowDynamicReasoningAttempt.name)
     private readonly dynamicReasoningAttemptModel?: Model<FlowDynamicReasoningAttemptDocument>,
+    @Optional() private readonly artifactService?: PlaybookFlowArtifactService,
   ) {
     this.hitlResumeService?.bindExecutionHost({
       isRuntimeAvailable: () => this.isRuntimeAvailable(),
@@ -1574,6 +1578,20 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             max_repair_attempts: effectiveExecutionSettings.dynamicReasoning.maxRepairAttempts,
           } : undefined,
           playbook_planner: plannerSnapshot,
+          runtime_settings: effectiveExecutionSettings ? {
+            max_concurrent_per_user: effectiveExecutionSettings.maxConcurrentPerUser,
+            execution_queue_max_depth: effectiveExecutionSettings.executionQueueMaxDepth,
+            max_parallelism_per_execution: effectiveExecutionSettings.maxParallelismPerExecution,
+            recursion_limit_default: effectiveExecutionSettings.recursionLimitDefault,
+            recursion_limit_max: effectiveExecutionSettings.recursionLimitMax,
+            max_hitl_rounds: effectiveExecutionSettings.maxHitlRounds,
+            python_worker_pool_size: effectiveExecutionSettings.pythonWorkerPoolSize,
+            python_worker_max_inflight: effectiveExecutionSettings.pythonWorkerMaxInflight,
+            max_tool_iterations: effectiveExecutionSettings.maxToolIterations,
+            graph_cache_enabled: effectiveExecutionSettings.graphCacheEnabled,
+            graph_cache_max_entries: effectiveExecutionSettings.graphCacheMaxEntries,
+            graph_cache_ttl_seconds: effectiveExecutionSettings.graphCacheTtlSeconds,
+          } : undefined,
         },
         seeded_task_outputs: seededTaskOutputs.map((entry) => ({
           node_id: entry.nodeId,
@@ -1814,42 +1832,53 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       return {
         ...executionJson,
         replayPlanningByTask: executionJson.replayPlanningByTask ?? null,
-        taskResults: taskResults.map((r): IFlowTaskResultResponse => {
-        const doc = r as unknown as Record<string, unknown>;
+        taskResults: await Promise.all(taskResults.map(async (r): Promise<IFlowTaskResultResponse> => {
+        const rawTaskResult = r as unknown as Record<string, unknown>;
+        const doc = this.artifactService
+          ? await this.artifactService.projectPublicTaskResult(
+            rawTaskResult,
+            String(execution.ownerId),
+            executionId,
+          )
+          : publicPlaybookTaskResult(
+            rawTaskResult,
+            String(execution.ownerId),
+            executionId,
+          );
         return {
           id: doc._id as string,
           executionId: r.executionId,
           taskId: r.taskId,
           iteration: r.iteration,
           status: r.status,
-          output: r.output,
-          displayText: r.displayText,
-          outputs: (r as any).outputs,
-          artifacts: r.artifacts,
-          components: r.components,
-          iteratorIterations: (r as any).iteratorIterations,
-          error: r.error,
+          output: doc.output as string | null | undefined,
+          displayText: (doc.displayText as string | null | undefined) ?? undefined,
+          outputs: doc.outputs as Record<string, unknown> | undefined,
+          artifacts: doc.artifacts as Array<Record<string, unknown>>,
+          components: doc.components as Array<Record<string, unknown>>,
+          iteratorIterations: doc.iteratorIterations as Array<Record<string, unknown>> | undefined,
+          error: doc.error == null ? undefined : String(doc.error),
           startedAt: r.startedAt,
           endedAt: r.endedAt,
-          toolTrace: r.toolTrace as unknown as FlowToolTraceItem[] | undefined,
-          reasoningChain: ((r as any).reasoningChain as PublicReasoningTraceItem[] | undefined) ?? [],
-          llmPromptTrace: r.llmPromptTrace as unknown as FlowLlmPromptTraceItem[] | undefined,
+          toolTrace: doc.toolTrace as FlowToolTraceItem[] | undefined,
+          reasoningChain: (doc.reasoningChain as PublicReasoningTraceItem[] | undefined) ?? [],
+          llmPromptTrace: doc.llmPromptTrace as FlowLlmPromptTraceItem[] | undefined,
           usage: r.usage as unknown as FlowUsageSummary | null | undefined,
           ...flattenUsage({ usage: r.usage as unknown as FlowUsageSummary | null | undefined }),
-          semanticMatch: r.semanticMatch as unknown as FlowSemanticMatchSummary | null | undefined,
-          traceMetadata: r.traceMetadata as Record<string, unknown> ?? {},
+          semanticMatch: doc.semanticMatch as FlowSemanticMatchSummary | null | undefined,
+          traceMetadata: doc.traceMetadata as Record<string, unknown> ?? {},
           judgeStatus: (r as any).judgeStatus ?? 'idle',
           judgeScoringMode: (r as any).judgeScoringMode ?? null,
-          judgeResult: (r as any).judgeResult ?? null,
-          judgeError: (r as any).judgeError ?? null,
-          judgeHistory: Array.isArray((r as any).judgeHistory) ? (r as any).judgeHistory : [],
+          judgeResult: (doc.judgeResult as IFlowTaskResultResponse['judgeResult']) ?? null,
+          judgeError: doc.judgeError == null ? null : String(doc.judgeError),
+          judgeHistory: (Array.isArray(doc.judgeHistory) ? doc.judgeHistory : []) as IFlowTaskResultResponse['judgeHistory'],
           hitlHistory: hitlEvents.filter((event) => event.nodeId === r.taskId && event.iteration === r.iteration),
           parentTaskId: r.parentTaskId,
           runtimeSubgraphId: r.runtimeSubgraphId,
           generatedLocalNodeId: r.generatedLocalNodeId,
           generatedNodeTitle: r.generatedNodeTitle,
         };
-      }),
+      })),
       routerDecisions: routerDecisions.map((r) => ({
         id: (r as unknown as Record<string, unknown>)._id as string,
         executionId: r.executionId,
@@ -2165,8 +2194,21 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const snapshotSettings = snapshot.settings && typeof snapshot.settings === 'object'
       ? snapshot.settings as Record<string, unknown>
       : {};
-    const recursionLimit = Number(snapshotSettings.recursionLimit) || 25;
-    const maxParallelism = Number(snapshotSettings.maxParallelism) || 5;
+    const requestedRecursionLimit = Number(snapshotSettings.recursionLimit) || 25;
+    const requestedMaxParallelism = Number(snapshotSettings.maxParallelism) || 5;
+    const effectiveExecutionSettings = this.executionSettingsResolver
+      ? await this.executionSettingsResolver.resolve({
+        recursionLimit: requestedRecursionLimit,
+        maxParallelism: requestedMaxParallelism,
+      })
+      : undefined;
+    const recursionLimit = effectiveExecutionSettings
+      ? Math.min(requestedRecursionLimit, effectiveExecutionSettings.recursionLimitMax)
+      : requestedRecursionLimit;
+    const maxParallelism = effectiveExecutionSettings?.effectiveExecutionParallelism ?? requestedMaxParallelism;
+    if (effectiveExecutionSettings) {
+      snapshot.playbookExecutionSettings = effectiveExecutionSettings;
+    }
 
     const sourceInputContext = structuredClone(sourceExecution.inputContext ?? {});
     delete sourceInputContext.__playbook_resume;
@@ -2192,10 +2234,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       `Created replay execution ${newExecution.id} from source ${sourceExecution.id} task ${payload.taskId} iteration ${iteration}`,
     );
 
-    const maxConcurrent = this.executionSettingsResolver
-      ? (await this.executionSettingsResolver.resolve()).maxConcurrentPerUser
-      : this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
-    const maxDepth = this.configService.get<number>('playbook-flow.executionQueueMaxDepth', 50);
+    const maxConcurrent = effectiveExecutionSettings?.maxConcurrentPerUser
+      ?? this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
+    const maxDepth = effectiveExecutionSettings?.executionQueueMaxDepth
+      ?? this.configService.get<number>('playbook-flow.executionQueueMaxDepth', 50);
     await this.queueService.admit(
       ownerId,
       (newExecution as any).id || (newExecution as any)._id?.toString(),
@@ -2221,6 +2263,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const normalizedOwnerId = typeof ownerId === 'string' ? ownerId : String(ownerId);
     const recursionLimit = snapshot.settings?.recursionLimit || 25;
     const maxParallelism = snapshot.settings?.maxParallelism || 5;
+    const effectiveExecutionSettings = snapshot.playbookExecutionSettings
+      ?? (this.executionSettingsResolver
+        ? await this.executionSettingsResolver.resolve({ recursionLimit, maxParallelism })
+        : undefined);
     const taskNodeIds = (snapshot.nodes as any[])
       .filter((node) => node.kind === 'step' || node.kind === 'task')
       .map((node) => String(node.id));
@@ -2315,7 +2361,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         source_output_port_id: e.sourceOutputPortId || '', target_input_port_id: e.targetInputPortId || '',
       })),
       data_bindings: dataBindingsProto,
-      settings: { recursion_limit: recursionLimit, max_parallelism: maxParallelism },
+      settings: {
+        recursion_limit: recursionLimit,
+        max_parallelism: maxParallelism,
+      },
     };
 
     const request = {
@@ -2325,7 +2374,26 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       owner_id: normalizedOwnerId,
       snapshot: snapshotProto,
       input_context: toGrpcStruct(runtimeInputContext),
-      settings: { recursion_limit: recursionLimit, max_parallelism: maxParallelism },
+      settings: {
+        recursion_limit: effectiveExecutionSettings
+          ? Math.min(recursionLimit, effectiveExecutionSettings.recursionLimitMax)
+          : recursionLimit,
+        max_parallelism: effectiveExecutionSettings?.effectiveExecutionParallelism ?? maxParallelism,
+        runtime_settings: effectiveExecutionSettings ? {
+          max_concurrent_per_user: effectiveExecutionSettings.maxConcurrentPerUser,
+          execution_queue_max_depth: effectiveExecutionSettings.executionQueueMaxDepth,
+          max_parallelism_per_execution: effectiveExecutionSettings.maxParallelismPerExecution,
+          recursion_limit_default: effectiveExecutionSettings.recursionLimitDefault,
+          recursion_limit_max: effectiveExecutionSettings.recursionLimitMax,
+          max_hitl_rounds: effectiveExecutionSettings.maxHitlRounds,
+          python_worker_pool_size: effectiveExecutionSettings.pythonWorkerPoolSize,
+          python_worker_max_inflight: effectiveExecutionSettings.pythonWorkerMaxInflight,
+          max_tool_iterations: effectiveExecutionSettings.maxToolIterations,
+          graph_cache_enabled: effectiveExecutionSettings.graphCacheEnabled,
+          graph_cache_max_entries: effectiveExecutionSettings.graphCacheMaxEntries,
+          graph_cache_ttl_seconds: effectiveExecutionSettings.graphCacheTtlSeconds,
+        } : undefined,
+      },
       target_node_id: targetNodeId,
       target_iteration: targetIteration,
     };

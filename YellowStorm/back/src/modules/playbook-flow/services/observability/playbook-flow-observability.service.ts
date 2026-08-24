@@ -13,6 +13,7 @@ import {
 import { normalizePlaybookComponents } from './playbook-flow-citation.mapper';
 import { PlaybookFlowPublicReasoningParserService } from './playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './playbook-flow-trace-redaction.service';
+import { sanitizePlaybookPublicValue } from '../../utils/playbook-artifact';
 
 export interface FlowTraceUpdatePayload {
   toolTrace?: FlowCompletedResultPayload['toolTrace'];
@@ -111,7 +112,7 @@ export class PlaybookFlowObservabilityService {
   }
 
   toStreamPayload(payload: FlowCompletedResultPayload) {
-    return {
+    return sanitizePlaybookPublicValue({
       ...flattenUsage(payload),
       toolTrace: payload.toolTrace,
       reasoningChain: payload.reasoningChain ?? [],
@@ -119,7 +120,7 @@ export class PlaybookFlowObservabilityService {
       semanticMatch: payload.semanticMatch ?? null,
       traceMetadata: payload.traceMetadata ?? {},
       iteratorIterations: payload.iteratorIterations,
-    };
+    }) as ReturnType<typeof flattenUsage> & Record<string, unknown>;
   }
 
   extractTraceUpdatePayload(

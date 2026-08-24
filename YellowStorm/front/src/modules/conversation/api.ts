@@ -140,8 +140,8 @@ export async function reportMessage(conversationId: string, messageId: string, p
   await apiClient.post(API_ENDPOINTS.conversations.report(conversationId, messageId), payload);
 }
 
-export async function getArtifactDownloadUrl(conversationId: string, messageId: string, artifactId: string): Promise<{ downloadUrl: string }> {
-  const response = await apiClient.post<ApiResponse<{ downloadUrl: string }>>(
+export async function getArtifactDownloadUrl(conversationId: string, messageId: string, artifactId: string): Promise<{ viewUrl: string; downloadUrl: string }> {
+  const response = await apiClient.post<ApiResponse<{ viewUrl: string; downloadUrl: string }>>(
     API_ENDPOINTS.conversations.artifactUrl(conversationId, messageId, artifactId),
   );
   return response.data.data;

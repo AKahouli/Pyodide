@@ -604,6 +604,8 @@ export const API_ENDPOINTS = {
     execute: (id: string) => `/playbooks/${id}/executions`,
     executions: (id: string) => `/playbooks/${id}/executions`,
     executionDetail: (executionId: string) => `/executions/${executionId}`,
+    executionArtifactAccess: (executionId: string, artifactId: string) => `/executions/${executionId}/artifacts/${artifactId}/access`,
+    artifactContent: '/executions/artifacts/content',
     hitlPolicy: (id: string) => `/playbooks/${id}/hitl/policy`,
     hitlBlockers: (id: string) => `/playbooks/${id}/hitl/blockers`,
     hitlBlocker: (id: string, blockerId: string) => `/playbooks/${id}/hitl/blockers/${blockerId}`,

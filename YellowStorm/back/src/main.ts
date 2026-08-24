@@ -110,8 +110,9 @@ async function bootstrap() {
       'Cache-Control',
       'Connection',
       'Last-Event-ID',
+      'Range',
     ],
-    exposedHeaders: ['Set-Cookie'],
+    exposedHeaders: ['Set-Cookie', 'Accept-Ranges', 'Content-Disposition', 'Content-Length', 'Content-Range'],
     preflightContinue: false,
     optionsSuccessStatus: 204,
   });

@@ -1205,6 +1205,12 @@ export function ExecutionStepDetail({
   }, [portInspection, execution, inputPortEntries]);
 
   const selectedStepExecutionText = getPreferredStepResultText(selectedStepExecution);
+  const selectedStepComponents = selectedStepExecution?.components || [];
+  const selectedStepArtifactComponents = selectedStepComponents.filter((component) => component.type === 'artifact');
+  const selectedStepNonArtifactComponents = selectedStepComponents.filter((component) => component.type !== 'artifact');
+  const supplementalStepComponents = selectedStepExecutionText && !isHtmlResultText(selectedStepExecutionText)
+    ? selectedStepArtifactComponents
+    : selectedStepComponents;
   const comparisonCandidates = evaluationHistory.filter((entry) => entry.id !== selectedEvaluation?.id);
   const comparisonEvaluation = comparisonCandidates.find((entry) => entry.id === comparisonEvaluationId) || comparisonCandidates[0] || null;
   const semanticMatchToDisplay = selectedEvaluation?.semanticMatch || step?.semanticMatch || null;
@@ -1477,12 +1483,12 @@ export function ExecutionStepDetail({
                     {selectedStepExecutionText && (() => {
                       const isHtml = isHtmlResultText(selectedStepExecutionText);
                       const parts = isHtml
-                        ? [{ type: 'webPreview' as const, content: selectedStepExecutionText }]
-                        : mapComponentsToContentParts(buildResultComponentsWithText(
-                            selectedStepExecutionText,
-                            selectedStepExecution?.components,
-                            step.taskId,
-                          ) as never);
+                         ? [{ type: 'webPreview' as const, content: selectedStepExecutionText }]
+                         : mapComponentsToContentParts(buildResultComponentsWithText(
+                             selectedStepExecutionText,
+                             selectedStepNonArtifactComponents,
+                             step.taskId,
+                           ) as never);
                       return (
                         <div
                           data-testid="step-result-markdown"
@@ -1497,10 +1503,9 @@ export function ExecutionStepDetail({
                         </div>
                       );
                     })()}
-                    {(!selectedStepExecutionText || isHtmlResultText(selectedStepExecutionText))
-                      && selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (
+                    {supplementalStepComponents.length > 0 && (
                       <div className="prose prose-sm max-w-none dark:prose-invert">
-                        <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
+                        <StepComponents components={supplementalStepComponents} taskId={step.taskId} executionId={execution?.id} />
                       </div>
                     )}
                   </>
@@ -1555,6 +1560,7 @@ export function ExecutionStepDetail({
                               portName={group.portName}
                               portKind={group.portKind}
                               artifacts={group.artifacts}
+                              executionId={execution?.id}
                               onInspectArtifact={(artifact) => handlePortInspection([artifact], artifact.filename || group.portName, artifact.artifactKind, step.taskId)}
                             />
                           ))}
@@ -1570,6 +1576,7 @@ export function ExecutionStepDetail({
                               portName={entry.sourceLabel ? `${entry.portName} ← ${entry.sourceLabel}` : entry.portName}
                               portKind={entry.portKind}
                               artifacts={entry.artifacts}
+                              executionId={execution?.id}
                               defaultOpen={false}
                               onInspectArtifact={entry.artifacts.length > 0 ? (artifact) => handlePortInspection([artifact], entry.portName, entry.portKind, step.taskId) : undefined}
                             />

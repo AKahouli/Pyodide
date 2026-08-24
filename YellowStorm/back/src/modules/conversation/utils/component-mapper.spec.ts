@@ -319,4 +319,19 @@ describe('component-mapper choice extraction', () => {
       },
     });
   });
+
+  it('sanitizes tool payloads before they enter the persistence buffer', () => {
+    const result = extractComponentData({
+      id: 'tool-private',
+      tool_activity: {
+        tool_name: 'code_interpreter_shell_exec',
+        status: 'completed',
+        params_json: '{"command":"cat /etc/yellowstorm/config"}',
+        result_json: '{"stdout":"DB_PASSWORD=short-value"}',
+      },
+    });
+
+    expect(result.data.paramsJson).not.toContain('/etc/yellowstorm');
+    expect(result.data.resultJson).not.toContain('short-value');
+  });
 });

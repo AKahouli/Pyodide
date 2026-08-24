@@ -27,7 +27,7 @@ describe('PlaybookFlowExecutionService event handling', () => {
 
   it('flushes buffered task tokens before persisting a completed node result', async () => {
     const tokenBufferService = {
-      isEnabled: jest.fn(),
+      isEnabled: jest.fn().mockReturnValue(true),
       appendToken: jest.fn(),
       flushTask: jest.fn().mockResolvedValue(undefined),
       flushExecution: jest.fn(),
@@ -112,6 +112,27 @@ describe('PlaybookFlowExecutionService event handling', () => {
     );
   });
 
+  it('redacts private paths from failed node persistence and stream events', async () => {
+    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
+    taskResultModel.updateOne.mockResolvedValue(undefined);
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'NodeFailed',
+      node_id: 'step-1',
+      iteration: 0,
+      payload: { error: 'Failed while reading /mnt/workspace/private/report.pdf' },
+    });
+
+    expect(taskResultModel.updateOne).toHaveBeenCalledWith(
+      { executionId: 'exec-1', taskId: 'step-1', iteration: 0 },
+      expect.objectContaining({ $set: expect.objectContaining({ error: 'Failed while reading [REDACTED]' }) }),
+      { upsert: true },
+    );
+    expect(streamEvents.emitStepComplete).toHaveBeenCalledWith(
+      'exec-1', 'step-1', undefined, 'Failed while reading [REDACTED]', 0,
+    );
+  });
+
   it('ignores replayed HITL interrupts that were already answered', async () => {
     const executionModel = {
       exists: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ _id: 'exec-1' }) })),
@@ -176,12 +197,39 @@ describe('PlaybookFlowExecutionService event handling', () => {
       'Executive summary',
       undefined,
       0,
-      [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }],
+      [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf' }],
       [{ type: 'text', data: { content: 'Executive summary' } }],
       expect.objectContaining({
         reasoningChain: [{ id: 'step_1', type: 'observation', label: 'Identify', description: 'Picked the answer.' }],
       }),
     );
+  });
+
+  it('preserves public source links and redacts signed links in completed SSE', async () => {
+    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
+    taskResultModel.updateOne.mockResolvedValue(undefined);
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'NodeCompleted',
+      node_id: 'step-1',
+      iteration: 0,
+      payload: {
+        output: 'Research complete',
+        components: [{
+          type: 'sources',
+          data: {
+            sources: [
+              { title: 'Public source', url: 'https://example.com/article' },
+              { title: 'Storage source', url: 'https://storage.example/private.pdf?X-Amz-Signature=secret' },
+            ],
+          },
+        }],
+      },
+    });
+
+    const components = streamEvents.emitStepComplete.mock.calls[0][6];
+    expect(components[0].data.sources[0].url).toBe('https://example.com/article');
+    expect(components[0].data.sources[1].url).toBe('[REDACTED]');
   });
 
   it('does not fail task completion when public reasoning JSON is malformed', async () => {

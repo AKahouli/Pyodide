@@ -7,6 +7,7 @@ import { PORT_COLORS } from '../utils/port-colors';
 import { getSafeArtifactUrl } from '../utils/safe-artifact-url';
 import { getArtifactDisplayContent, getArtifactPreviewContent } from '../utils/artifact-content';
 import type { TaskArtifact, ArtifactKind } from '../types';
+import { PlaybookArtifactActions } from './PlaybookArtifactActions';
 
 function getContentPreview(artifact: TaskArtifact): string | null {
   return getArtifactPreviewContent(artifact);
@@ -15,9 +16,11 @@ function getContentPreview(artifact: TaskArtifact): string | null {
 function ArtifactRow({
   artifact,
   onInspect,
+  executionId,
 }: {
   artifact: TaskArtifact;
   onInspect?: () => void;
+  executionId?: string;
 }) {
   const { t } = useModuleTranslation('playbook');
   const colors = PORT_COLORS[artifact.artifactKind];
@@ -46,7 +49,8 @@ function ArtifactRow({
   };
 
   const contentPreview = getContentPreview(artifact);
-  const hasDownload = !!(getSafeArtifactUrl(artifact.url) || artifact.content || artifact.metadata?.data);
+  const hasInspectableContent = !!(getSafeArtifactUrl(artifact.url) || getArtifactDisplayContent(artifact));
+  const hasDownload = hasInspectableContent;
   const kindLabel = t(`artifactKind.${artifact.artifactKind}`);
 
   return (
@@ -71,7 +75,9 @@ function ArtifactRow({
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        {onInspect && (
+        {artifact.artifactId && executionId ? (
+          <PlaybookArtifactActions executionId={executionId} artifactId={artifact.artifactId} filename={artifact.filename || 'artifact'} mimeType={artifact.mimeType} />
+        ) : onInspect && hasInspectableContent && (
           <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onInspect}>
             <Search className="mr-1 h-3 w-3" />
             {t('artifacts.view' as any)}
@@ -95,6 +101,7 @@ interface PortArtifactPaneProps {
   artifacts: TaskArtifact[];
   defaultOpen?: boolean;
   onInspectArtifact?: (artifact: TaskArtifact) => void;
+  executionId?: string;
 }
 
 export function PortArtifactPane({
@@ -104,6 +111,7 @@ export function PortArtifactPane({
   artifacts,
   defaultOpen = false,
   onInspectArtifact,
+  executionId,
 }: PortArtifactPaneProps) {
   const colors = PORT_COLORS[portKind];
   const PortIcon = colors?.icon || FileText;
@@ -126,6 +134,7 @@ export function PortArtifactPane({
           <ArtifactRow
             key={artifact.filename || artifact.url || idx}
             artifact={artifact}
+            executionId={executionId}
             onInspect={onInspectArtifact ? () => onInspectArtifact(artifact) : undefined}
           />
         ))}

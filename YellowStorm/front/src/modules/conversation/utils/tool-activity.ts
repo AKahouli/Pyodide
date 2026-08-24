@@ -6,6 +6,7 @@ const SENSITIVE_KEY = /^(?:authorization|cookie|set-cookie|credentials?|password
 const UNSAFE_SUMMARY = /YELLOWSTORM_ATTACHMENT_SENTINEL_\d+|(?:^|[\s=:('\\"])(?:[A-Za-z]:[\\/]|\/|\\\\)\S+|(?:^|[\s=:('\\"])(?:[A-Za-z0-9._-]+\/){2,}[^\s"']+|\b(?:const|let|var|def|class|import|from)\s+[A-Za-z_$]|=>|[{};]/i;
 const OPAQUE_IDENTIFIER = /(?:[a-f0-9]{24}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})/i;
 const CREDENTIAL_VALUE = /(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{20,}|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b|\b(?:gh[opsu]_|sk-|xox[baprs]-)[A-Za-z0-9_-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b[A-Za-z0-9_+/=-]{32,}\b/;
+const CREDENTIAL_VALUE_GLOBAL = new RegExp(CREDENTIAL_VALUE.source, 'g');
 const URI_VALUE = /\b(?:[a-z][a-z0-9+.-]*:\/\/|www\.)\S+/i;
 const CODE_VALUE = /\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\([^()\r\n]*\)|\b[A-Za-z_$][\w$]*\s*=\s*[^,\r\n]+|<\/?(?:script|style|html)\b|\b(?:SELECT|INSERT|UPDATE|DELETE)\b[\s\S]+\b(?:FROM|INTO|SET)\b/i;
 
@@ -22,9 +23,10 @@ function isPrivateToolDetailKey(key: string): boolean {
 function sanitizeText(value: string): string {
   const redacted = value
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, `$1${REDACTED}`)
-    .replace(/\b(authorization)\b(\s*[:=]\s*)(?!Bearer\s+)([^\s,;]+)/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
+    .replace(/\b(authorization)\b(\s*[:=]\s*)(?:(?:Basic|Bearer)\s+\S+|[^\s,;]+)/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
     .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s/@]+@/gi, `$1${REDACTED}@`)
     .replace(/\b(password|passwd|secret|api[-_]?key|access[-_]?token|refresh[-_]?token|client[-_]?secret|connection[-_]?string)\b(\s*[:=]\s*)([^\s,;]+)/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
+    .replace(/\b([A-Z][A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY|CONNECTION_STRING)[A-Z0-9_]*)\b(\s*=\s*)[^\s,;]+/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
     .replace(/(?:^|\s)[A-Za-z0-9_-]{8,}\/(?:runs?|workspaces?)\/[^\s"']+/gi, ` ${REDACTED}`);
   return redacted.length > MAX_TEXT_LENGTH ? `${redacted.slice(0, MAX_TEXT_LENGTH)}... [truncated]` : redacted;
 }
@@ -67,10 +69,70 @@ export function formatSanitizedToolText(value: string | undefined): string | und
 export function sanitizeRunCodeInput(value: unknown): string | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined;
   const sanitized = sanitizeText(value)
-    .replace(/(?:[A-Za-z]:[\\/]|\/(?:home|tmp|workspace|users?)\/|\\\\)[^\s"'`]+/gi, REDACTED)
+    .replace(/(^|[\s=:('"`])(?:[A-Za-z]:[\\/]|\/|\\\\)[^\s"'`]+/gi, (_match, boundary: string) => `${boundary}${REDACTED}`)
+    .replace(/(^|[\s=:('"`])(?:[A-Za-z0-9._-]+\/){2,}[^\s"'`]+/gi, (_match, boundary: string) => `${boundary}${REDACTED}`)
     .replace(/\b(?:s3|ceph|azure|file):\/\/[^\s"'`]+/gi, REDACTED)
-    .replace(OPAQUE_IDENTIFIER, REDACTED);
+    .replace(URI_VALUE, REDACTED)
+    .replace(OPAQUE_IDENTIFIER, REDACTED)
+    .replace(CREDENTIAL_VALUE_GLOBAL, REDACTED);
   return sanitized.trim() || undefined;
+}
+
+function isPrivateCodeInterpreterKey(key: string, preserveExecutableFields: boolean): boolean {
+  const normalized = normalizeToolDetailKey(key);
+  return SENSITIVE_KEY.test(key)
+    || (!preserveExecutableFields && ['code', 'source_code', 'script', 'command'].includes(normalized))
+    || /(?:^|_)(?:id|prompt|reasoning|thought|chain_of_thought|path|uri|url|stack|traceback|cwd|env|environment)(?:_|$)/.test(normalized);
+}
+
+function sanitizeCodeInterpreterValue(value: unknown, preserveExecutableFields: boolean, depth = 0): unknown {
+  if (typeof value === 'string') return sanitizeRunCodeInput(value) ?? '';
+  if (value === null || typeof value !== 'object') return value;
+  if (depth >= MAX_DEPTH) return '[truncated]';
+  if (Array.isArray(value)) {
+    const items = value.slice(0, MAX_ITEMS).map((item) => sanitizeCodeInterpreterValue(item, preserveExecutableFields, depth + 1));
+    if (value.length > MAX_ITEMS) items.push('[truncated]');
+    return items;
+  }
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).slice(0, MAX_ITEMS).map(([key, item]) => [
+    key,
+    isPrivateCodeInterpreterKey(key, preserveExecutableFields) ? REDACTED : sanitizeCodeInterpreterValue(item, preserveExecutableFields, depth + 1),
+  ]));
+}
+
+function formatCodeInterpreterPayload(value: string | undefined, preserveExecutableFields = false): string | undefined {
+  if (!value) return undefined;
+  try {
+    const sanitized = sanitizeCodeInterpreterValue(JSON.parse(value), preserveExecutableFields);
+    if (sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized) && !Object.keys(sanitized).length) return undefined;
+    return typeof sanitized === 'string' ? sanitized : JSON.stringify(sanitized, null, 2);
+  } catch {
+    return sanitizeRunCodeInput(value);
+  }
+}
+
+export function isCodeInterpreterActivity(data: Record<string, unknown>): boolean {
+  const name = normalizeToolName(asNonEmptyString(data.toolName) || asNonEmptyString(data.title) || '');
+  return data.renderKind === 'run_code'
+    || name === 'run_code'
+    || name === 'python_interpreter'
+    || name.startsWith('code_interpreter_');
+}
+
+export function resolveCodeInterpreterRequest(data: Record<string, unknown>): string | undefined {
+  const primaryInput = sanitizeRunCodeInput(data.primaryInput);
+  if (primaryInput) return primaryInput;
+  const params = parseToolParams(data.paramsJson ?? data.params);
+  if (!params) return formatCodeInterpreterPayload(asNonEmptyString(data.paramsJson));
+  for (const key of ['code', 'source_code', 'script', 'command']) {
+    const executable = sanitizeRunCodeInput(params[key]);
+    if (executable) return executable;
+  }
+  return formatCodeInterpreterPayload(JSON.stringify(params), true);
+}
+
+export function resolveCodeInterpreterResponse(data: Record<string, unknown>): string | undefined {
+  return formatCodeInterpreterPayload(asNonEmptyString(data.resultJson));
 }
 
 export type ToolRenderKind = 'generic' | 'run_code' | 'search' | 'document' | 'file' | 'web';

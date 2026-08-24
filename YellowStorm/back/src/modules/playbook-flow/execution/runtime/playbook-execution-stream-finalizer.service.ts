@@ -12,6 +12,7 @@ import {
 import { PlaybookFlowStreamEventsService } from '../../services/playbook-flow-stream-events.service';
 import { PlaybookFlowExecutionLeaseService } from '../../services/playbook-flow-execution-lease.service';
 import { PlaybookFlowTokenBufferService } from '../../services/playbook-flow-token-buffer.service';
+import { sanitizePlaybookPublicValue } from '../../utils/playbook-artifact';
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
 
@@ -34,16 +35,17 @@ export class PlaybookExecutionStreamFinalizerService {
   ) {}
 
   async finalizeErroredStream(executionId: string, errorMessage: string): Promise<void> {
+    const publicErrorMessage = String(sanitizePlaybookPublicValue(errorMessage));
     await this.executionModel
       .findByIdAndUpdate(executionId, {
         status: 'failed',
         endedAt: new Date(),
-        error: errorMessage,
+        error: publicErrorMessage,
       })
       .exec();
     await this.tokenBufferService?.flushExecution(executionId);
     await this.executionLeaseService?.release(executionId);
-    this.streamEvents.emitExecutionComplete(executionId, 'failed', errorMessage);
+    this.streamEvents.emitExecutionComplete(executionId, 'failed', publicErrorMessage);
   }
 
   async finalizeEndedStream(executionId: string, allowFailedTaskFallback: boolean): Promise<boolean> {
@@ -59,7 +61,7 @@ export class PlaybookExecutionStreamFinalizerService {
         .sort({ endedAt: -1 })
         .lean();
       if (failedTask) {
-        const errorMessage = String(failedTask.error || 'Execution failed');
+        const errorMessage = String(sanitizePlaybookPublicValue(failedTask.error || 'Execution failed'));
         const failedResult = await this.executionModel
           .updateOne(
             { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },

@@ -29,12 +29,14 @@ export interface TaskInputPort {
 
 export interface TaskArtifact {
   portId: string;
+  artifactId?: string;
   artifactKind: ArtifactKind;
   content?: string;
   url?: string;
   filename?: string;
   mimeType?: string;
   size?: number;
+  availability?: string;
   metadata?: Record<string, unknown>;
 }
 

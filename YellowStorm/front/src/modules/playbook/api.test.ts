@@ -8,6 +8,7 @@ import {
   getFlowNodeTemplates,
   getPlaybookTriggers,
   getExecution,
+  requestPlaybookArtifactAccess,
   runAdvisorEvaluation,
   runPlaybookAssistantTurn,
   getPlaybookAssistantMessages,
@@ -42,6 +43,22 @@ vi.mock('@/lib/api/client', () => ({
   __esModule: true,
   default: apiClientMock,
 }));
+
+describe('playbook artifact API', () => {
+  it('requests action-scoped access and constructs an application proxy URL', async () => {
+    apiClientMock.post.mockResolvedValueOnce({ data: { data: { token: 'opaque+/token', expiresAt: '2026-08-24T13:10:00.000Z' } } });
+
+    const access = await requestPlaybookArtifactAccess('execution-1', 'artifact-1', 'view');
+    expect(access).toEqual({
+      url: expect.stringContaining('/executions/artifacts/content?token=opaque%2B%2Ftoken'),
+      expiresAt: '2026-08-24T13:10:00.000Z',
+    });
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      '/executions/execution-1/artifacts/artifact-1/access',
+      { action: 'view' },
+    );
+  });
+});
 
 describe('sanitizePlaybookUpdate', () => {
   it('keeps iterator layout dimensions in task payloads', () => {
@@ -1472,6 +1489,7 @@ describe('getExecution', () => {
               port_id: 'report',
               artifact_kind: 'document',
               filename: 'report.pdf',
+              artifact_id: 'opaque-report',
               url: 'https://example.com/report.pdf',
               mime_type: 'application/pdf',
             }],
@@ -1491,7 +1509,7 @@ describe('getExecution', () => {
         portId: 'report',
         artifactKind: 'document',
         filename: 'report.pdf',
-        url: 'https://example.com/report.pdf',
+        artifactId: 'opaque-report',
         mimeType: 'application/pdf',
       }],
     });

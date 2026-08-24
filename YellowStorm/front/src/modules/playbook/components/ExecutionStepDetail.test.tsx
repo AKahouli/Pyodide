@@ -183,19 +183,63 @@ describe('ExecutionStepDetail', () => {
           components: [{
             type: 'artifact',
             data: {
-              filePath: 'generated/intelligence_artificielle.pdf',
+              artifactId: 'opaque-pdf',
               filename: 'intelligence_artificielle.pdf',
+              availability: 'ready',
             },
           } as any],
         }}
+        execution={{ id: 'exec-1', taskResults: [] } as any}
       />,
     );
 
     expect(screen.getByText('intelligence_artificielle.pdf')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'actionView' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'actionDownload' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'artifacts.view intelligence_artificielle.pdf' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'artifacts.download intelligence_artificielle.pdf' })).toBeInTheDocument();
 
     storeState.currentPlaybook = null;
+  });
+
+  it('shows secure actions for a verified upstream input artifact', () => {
+    storeState.currentPlaybook = {
+      id: 'p1',
+      tasks: [{
+        id: 't1',
+        title: 'Analyze Data',
+        inputPorts: [{ id: 'report', name: 'Report', artifactKind: 'document' }],
+      }],
+      dataBindings: [{
+        targetNode: 't1',
+        targetPort: 'report',
+        sourceNode: 'source-task',
+        sourcePort: 'default',
+      }],
+    };
+
+    render(
+      <ExecutionStepDetail
+        step={baseStep}
+        execution={{
+          id: 'exec-1',
+          taskResults: [{
+            ...baseStep,
+            taskId: 'source-task',
+            nodeTitle: 'Generate PDF',
+            artifacts: [{
+              portId: 'default',
+              artifactId: 'opaque-input-pdf',
+              artifactKind: 'document',
+              filename: 'upstream.pdf',
+              availability: 'ready',
+            }],
+          }],
+        } as any}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Report/ }));
+    expect(screen.getByRole('button', { name: 'artifacts.view upstream.pdf' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'artifacts.download upstream.pdf' })).toBeInTheDocument();
   });
 
   it('uses the planner title for generated Dynamic Reasoning steps', () => {
