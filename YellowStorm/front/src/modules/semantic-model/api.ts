@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { KnowledgeBinding, Paginated, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticVersion, ValidationIssue } from './types';
+import type { AgeGraphEdge, AgeGraphNode, KnowledgeBinding, MappingProposalJob, Paginated, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticVersion, ValidationIssue } from './types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
 
@@ -30,6 +30,45 @@ export const semanticModelApi = {
   },
   async validate(id: string): Promise<{ issues: ValidationIssue[] }> {
     return unwrap(await apiClient.post<ApiResponse<{ issues: ValidationIssue[] }>>(API_ENDPOINTS.semanticModels.validate(id)));
+  },
+  async generateOntology(id: string, businessRequirements: string[]): Promise<{ modelId: string; generatedAt: string }> {
+    return unwrap(await apiClient.post<ApiResponse<{ modelId: string; generatedAt: string }>>(API_ENDPOINTS.semanticModels.generateOntology(id), { businessRequirements }, { timeout: 0 }));
+  },
+  async searchEvidence(id: string): Promise<SemanticEvidenceSearchResponse> {
+    return unwrap(await apiClient.post<ApiResponse<SemanticEvidenceSearchResponse>>(API_ENDPOINTS.semanticModels.evidenceSearch(id), {}, { timeout: 0 }));
+  },
+  async startMappingProposalJob(id: string): Promise<{ jobId: string; status: 'running' }> {
+    return unwrap(await apiClient.post<ApiResponse<{ jobId: string; status: 'running' }>>(
+      API_ENDPOINTS.semanticModels.mappingProposals(id),
+      {},
+      { timeout: 0 },
+    ));
+  },
+  async listMappingProposalJobs(id: string): Promise<MappingProposalJob[]> {
+    return unwrap(await apiClient.get<ApiResponse<MappingProposalJob[]>>(
+      API_ENDPOINTS.semanticModels.mappingProposalJobs(id),
+    ));
+  },
+  async getMappingProposalJob(id: string, jobId: string): Promise<MappingProposalJob> {
+    return unwrap(await apiClient.get<ApiResponse<MappingProposalJob>>(
+      API_ENDPOINTS.semanticModels.mappingProposalJob(id, jobId),
+    ));
+  },
+  async applyMappingPlan(
+    id: string,
+    jobId: string,
+    mode: 'replace' | 'incremental' = 'incremental',
+  ): Promise<{ appliedNodeCount: number; updatedNodeCount: number; deletedNodeCount: number; appliedEdgeCount: number; graphViewerWarning: string | null }> {
+    return unwrap(await apiClient.post<ApiResponse<{ appliedNodeCount: number; updatedNodeCount: number; deletedNodeCount: number; appliedEdgeCount: number; graphViewerWarning: string | null }>>(
+      `${API_ENDPOINTS.semanticModels.mappingPlanApply(id, jobId)}?mode=${mode}`,
+      {},
+      { timeout: 0 },
+    ));
+  },
+  async getAgeGraph(id: string): Promise<{ nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }> {
+    return unwrap(await apiClient.get<ApiResponse<{ nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }>>(
+      API_ENDPOINTS.semanticModels.ageGraph(id),
+    ));
   },
   async bindings(id: string): Promise<KnowledgeBinding[]> {
     return unwrap(await apiClient.get<ApiResponse<KnowledgeBinding[]>>(API_ENDPOINTS.semanticModels.bindings(id)));

@@ -82,6 +82,20 @@ export interface SemanticRecordRelation {
   values: Record<string, unknown>;
 }
 
+export interface AgeGraphNode {
+  id: string;
+  label: string;
+  properties: Record<string, unknown>;
+}
+
+export interface AgeGraphEdge {
+  id: string;
+  label: string;
+  sourceId: string;
+  targetId: string;
+  properties: Record<string, unknown>;
+}
+
 export interface SemanticGraph {
   modelId: string;
   versionId: string;
@@ -140,6 +154,84 @@ export interface SemanticVersion {
   publishedBy: string | null;
   publishedAt: string | null;
   createdAt: string;
+}
+
+export interface SemanticEvidenceSearchTask {
+  bindingId: string;
+  target: {
+    kind: KnowledgeBinding['targetKind'];
+    id?: string;
+    label: string;
+  };
+  workspaceId: string;
+  text: string;
+  evidence: Array<{
+    source: string;
+    fileName: string;
+    page?: string;
+    quote?: string;
+    workspaceId?: string;
+    reference?: string;
+  }>;
+  toolResults: Array<{ name: string; status: 'completed' | 'failed'; result: unknown }>;
+}
+
+export interface SemanticEvidenceSearchResponse {
+  modelId: string;
+  searchedAt: string;
+  tasks: SemanticEvidenceSearchTask[];
+  summary: {
+    searchedBindingCount: number;
+    candidateDocumentCount: number;
+  };
+}
+
+export interface MappingProposalJob {
+  jobId: string;
+  modelId: string;
+  status: 'running' | 'completed' | 'failed';
+  startedAt: string;
+  completedAt?: string;
+  result?: SemanticModelMappingProposalResponse;
+  error?: string;
+}
+
+export interface SemanticModelMappingProposalResponse {
+  modelId: string;
+  generatedAt: string;
+  search: {
+    searchedBindingCount: number;
+    candidateDocumentCount: number;
+  };
+  plan: {
+    nodes: Array<{
+      id: string;
+      nodeTypeId: string;
+      label: string;
+      attributes: Array<{ key: string; value: string | number | boolean; evidenceReferences: string[] }>;
+      evidenceReferences: string[];
+      confidence: number;
+    }>;
+    edges: Array<{
+      id: string;
+      relationTypeId: string;
+      sourceNodeId: string;
+      targetNodeId: string;
+      evidenceReferences: string[];
+      confidence: number;
+    }>;
+    mergeGroups: Array<{ canonicalNodeId: string; mergedNodeIds: string[]; reason: string }>;
+  };
+  proposals: SemanticModelMappingProposal[];
+}
+
+export interface SemanticModelMappingProposal {
+  id: string;
+  target: { nodeTypeLabel: string; attributeLabel: string };
+  value: string | number | boolean;
+  normalizedValue?: string | number | boolean;
+  normalization: { status: 'valid' | 'invalid'; reason: 'normalized' | 'empty_value' | 'invalid_number' | 'invalid_boolean' | 'invalid_date' | 'invalid_enum' };
+  evidence: { fileName: string; page?: string; quote: string };
 }
 
 export interface Paginated<T> {

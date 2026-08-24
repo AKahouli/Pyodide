@@ -12,4 +12,7 @@ export default registerAs('semanticModel', () => ({
   poolMax: Number.parseInt(process.env.SEMANTIC_PG_POOL_MAX || '10', 10),
   schema: 'semantic_model',
   ageGraph: process.env.SEMANTIC_AGE_GRAPH || 'semantic_model_graph',
+  searchAgentId: process.env.SEMANTIC_MODEL_SEARCH_AGENT_ID || '',
+  evidenceSearchTimeoutMs: Number.parseInt(process.env.SEMANTIC_MODEL_EVIDENCE_SEARCH_TIMEOUT_MS || '180000', 10),
+  evidenceSearchConcurrency: Math.max(1, Number.parseInt(process.env.SEMANTIC_MODEL_EVIDENCE_SEARCH_CONCURRENCY || '4', 10)),
 }));

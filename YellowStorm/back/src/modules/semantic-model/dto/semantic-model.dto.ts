@@ -240,3 +240,28 @@ export class PublishSemanticModelDto extends ExpectedModelRevisionDto {
   @Min(0)
   expectedGraphRevision!: number;
 }
+
+export class GenerateSemanticModelOntologyDto {
+  @ApiProperty({ type: [String], maxItems: 50, required: false, default: [] })
+  @IsArray()
+  @ArrayMinSize(0)
+  @ArrayMaxSize(50)
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(4000, { each: true })
+  businessRequirements: string[] = [];
+}
+
+export class UpdateBusinessRequirementsDto {
+  @ApiProperty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedGraphRevision!: number;
+
+  @ApiProperty({ type: [Object] })
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsObject({ each: true })
+  businessRequirements!: Record<string, unknown>[];
+}

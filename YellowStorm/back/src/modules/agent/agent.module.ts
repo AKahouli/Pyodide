@@ -30,6 +30,7 @@ import { UsageModule } from '../usage/usage.module';
 import playbookFlowConfig from '@config/playbook-flow.config';
 import { PlaybookAssistantConnectorReconcilerService } from './services/playbook-assistant-connector-reconciler.service';
 import { AgentRepositoryModule } from './repositories/agent-repository.module';
+import { AGENT_TASK_EXECUTOR } from '@common/tokens/agent-task-execution.token';
 
 @Module({
   imports: [
@@ -54,7 +55,7 @@ import { AgentRepositoryModule } from './repositories/agent-repository.module';
     AgentRepositoryModule,
   ],
   controllers: [AgentController, PublicAgentController, AdminAgentController, AgentA2AController, AgentShareController],
-  providers: [AgentService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, PlaybookAssistantConnectorReconcilerService,AgentConnectorRuntimeService],
+  providers: [AgentService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, { provide: AGENT_TASK_EXECUTOR, useExisting: AgentTaskExecutionService }, PlaybookAssistantConnectorReconcilerService,AgentConnectorRuntimeService],
   exports: [
     AgentService,
     AgentShareService,
@@ -63,6 +64,7 @@ import { AgentRepositoryModule } from './repositories/agent-repository.module';
     A2AAdminGrpcClientService,
     A2APublishService,
     AgentTaskExecutionService,
+    AGENT_TASK_EXECUTOR,
   ],
 })
 export class AgentModule {}

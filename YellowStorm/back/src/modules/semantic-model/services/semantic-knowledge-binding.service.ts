@@ -7,6 +7,21 @@ import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-d
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticModelWorkspaceService } from './semantic-model-workspace.service';
 
+export interface SemanticKnowledgeBinding {
+  id: string;
+  targetKind: 'model' | 'node_type' | 'relation_type' | 'record';
+  targetId?: string;
+  resourceKind: 'workspace' | 'document';
+  workspaceId: string;
+  documentId?: string;
+  inclusionMode: 'dynamic' | 'explicit';
+  retrievalMode: 'broad' | 'targeted' | 'evidence_only';
+  priority: number;
+  enabled: boolean;
+  protected: boolean;
+  availability: 'available' | 'indexing' | 'unavailable';
+}
+
 @Injectable()
 export class SemanticKnowledgeBindingService {
   constructor(
@@ -15,9 +30,9 @@ export class SemanticKnowledgeBindingService {
     private readonly workspaceService: SemanticModelWorkspaceService,
   ) {}
 
-  async list(userId: string, modelId: string) {
+  async list(userId: string, modelId: string): Promise<SemanticKnowledgeBinding[]> {
     await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
-    const result = await this.database.query(
+    const result = await this.database.query<SemanticKnowledgeBinding>(
       `SELECT id,target_kind AS "targetKind",target_id AS "targetId",resource_kind AS "resourceKind",
        workspace_id AS "workspaceId",document_id AS "documentId",inclusion_mode AS "inclusionMode",
        retrieval_mode AS "retrievalMode",priority,enabled,protected,availability

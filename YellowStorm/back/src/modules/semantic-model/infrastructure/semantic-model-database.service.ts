@@ -56,7 +56,6 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
     const client = await this.getPool().connect();
     try {
       await client.query('BEGIN');
-      await this.prepareConnection(client);
       const result = await work(client);
       await client.query('COMMIT');
       return result;
@@ -84,6 +83,10 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
     };
   }
 
+  async acquireClient(): Promise<PoolClient> {
+    return this.getPool().connect();
+  }
+
   graphName(): string {
     return this.config.ageGraph;
   }
@@ -98,8 +101,4 @@ export class SemanticModelDatabaseService implements OnModuleInit, OnModuleDestr
     return this.pool;
   }
 
-  private async prepareConnection(client: PoolClient): Promise<void> {
-    await client.query("LOAD 'age'");
-    await client.query('SET LOCAL search_path = ag_catalog, "$user", public');
-  }
 }

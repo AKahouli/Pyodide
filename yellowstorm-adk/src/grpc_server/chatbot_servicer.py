@@ -63,8 +63,15 @@ def _json_log_payload(payload: Dict[str, Any]) -> str:
 
 
 def _grpc_in_log_message(label: str, payload: Dict[str, Any]) -> str:
-    """Put raw JSON in the message so it can be copied directly from console logs."""
-    return f"[gRPC IN] {label} request_json={_json_log_payload(payload)}"
+    """Log request shape without serializing prompts, documents, or credentials."""
+    summary = {
+        "query_length": len(str(payload.get("query") or "")),
+        "workspace_count": len(payload.get("workspace_context") or []),
+        "agent_count": len(payload.get("agents") or []),
+        "has_agent": bool(payload.get("agent")),
+        "attached_file_count": len(payload.get("attached_files") or []),
+    }
+    return f"[gRPC IN] {label} request_summary={_json_log_payload(summary)}"
 
 
 def _grpc_skill_summaries(skills: Any) -> List[Dict[str, Any]]:

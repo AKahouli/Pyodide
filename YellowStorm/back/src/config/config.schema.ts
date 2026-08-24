@@ -66,6 +66,9 @@ export const configValidationSchema = Joi.object({
   SEMANTIC_PG_SSL: Joi.boolean().default(false),
   SEMANTIC_PG_POOL_MAX: Joi.number().min(1).max(50).default(10),
   SEMANTIC_AGE_GRAPH: Joi.string().pattern(/^[a-z][a-z0-9_]{0,62}$/).default('semantic_model_graph'),
+  SEMANTIC_MODEL_SEARCH_AGENT_ID: Joi.string().length(24).allow('').optional(),
+  SEMANTIC_MODEL_EVIDENCE_SEARCH_TIMEOUT_MS: Joi.number().min(5000).max(600000).default(180000),
+  SEMANTIC_MODEL_EVIDENCE_SEARCH_CONCURRENCY: Joi.number().integer().min(1).max(16).default(4),
 
   // Encryption
   ENCRYPTION_KEY: Joi.string().hex().length(64).when('NODE_ENV', {
