@@ -1438,3 +1438,45 @@ def test_with_requester_appends_but_preserves_the_base_prompt():
     assert out.startswith("BASE\n\n") and "r@x.fr" in out
     # no base prompt -> just the context
     assert svc._with_requester(None, {"email": "r@x.fr"}).startswith("You are working for")
+
+
+async def test_concurrent_amends_on_one_session_are_serialized():
+    """Two 'update the plan' messages racing on the same session must NOT plan
+    concurrently: the per-session lock serializes them so the second plans
+    against the first's already-applied steps, not the same stale snapshot.
+    Without the lock both would enter _make_plan at once (max_concurrent == 2)."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   register_mail_wait=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    live = Plan(id="p", title="t", executor_id="e", executor_name="W",
+                steps=[Step(id="s1", kind="execute", status=Status.RUNNING)])
+    service._active["sess"] = live
+    service._add_message = AsyncMock()
+
+    inside = 0
+    max_concurrent = 0
+    seen_steps_at_plan = []
+
+    async def fake_make_plan(session_id, user_id, message, **kw):
+        nonlocal inside, max_concurrent
+        inside += 1
+        max_concurrent = max(max_concurrent, inside)
+        # how many steps the live plan already has when THIS amend plans
+        seen_steps_at_plan.append(len(service._active["sess"].steps))
+        await asyncio.sleep(0)            # yield: a second coroutine runs here if unlocked
+        await asyncio.sleep(0)
+        inside -= 1
+        return Plan(id="x", steps=[Step(id="n", kind="execute", description="added")])
+
+    service._make_plan = fake_make_plan
+
+    await asyncio.gather(
+        service.converse_turn(session_id="sess", user_id="u", message="A"),
+        service.converse_turn(session_id="sess", user_id="u", message="B"),
+    )
+
+    assert max_concurrent == 1                 # never overlapped -> serialized
+    assert len(live.steps) == 3                # both amends applied (1 orig + 2 injected)
+    # The second amend planned AFTER the first applied its step, so it saw a
+    # bigger plan — proof it wasn't working from the same stale snapshot.
+    assert seen_steps_at_plan == [1, 2]
