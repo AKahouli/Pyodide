@@ -63,6 +63,12 @@ message RunRequest {
   repeated Skill skills = 5;
   repeated ConnectorBinding connectors = 6;
   repeated chatbot.Agent agents = 11;
+  // Who the turn is for. user_id is an opaque id; these let the planner and
+  // executor know the requester by name, so they address them directly and
+  // never email or delegate a task back to the person who asked for it.
+  string user_name  = 12;
+  string user_email = 13;
+  string user_role  = 14;
 }
 
 message RunResponse {
@@ -94,8 +100,10 @@ message DeliverMailReplyRequest {
   // The reply body — becomes the parked step's answer, exactly as if the owner
   // had typed it in the chat.
   string reply_body = 2;
-  // Who replied, for the audit line. Not used for routing: the token is, since
-  // a sender may reply from an alias or forward the thread on.
+  // Who replied. The token routes to the wait, but the sender is verified
+  // against the awaited mail's recipients: a reply only resolves the wait if it
+  // came from one of them, so a stranger's mail — or worky's own outgoing copy
+  // carrying the token — cannot answer a question meant for someone else.
   string reply_from = 3;
   repeated ConnectorBinding connectors = 5;
   repeated chatbot.Agent agents = 7;

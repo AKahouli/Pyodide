@@ -4,6 +4,8 @@ import { WorkyStreamService } from '../services/worky-stream.service';
 import { WorkyOrchestratorGrpcClientService } from '../services/worky-orchestrator.grpc-client.service';
 import { WorkyTurnContextService } from '../services/worky-turn-context.service';
 import { WorkyTaskService } from '../services/worky-task.service';
+import { UserService } from '../../user/user.service';
+import { requesterOpts } from '../worky-requester.util';
 import { NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 
@@ -51,6 +53,7 @@ export class VoiceToolService {
     private readonly orchestrator: WorkyOrchestratorGrpcClientService,
     private readonly turnContext: WorkyTurnContextService,
     private readonly tasks: WorkyTaskService,
+    private readonly users: UserService,
   ) {}
 
   async dispatchTask(
@@ -60,11 +63,16 @@ export class VoiceToolService {
   ): Promise<{ runId: string; sessionId: string; accepted: boolean }> {
     await this.planning.appendOwnerMessage(userId, streamId, { content: message });
     const ctx = await this.streamService.ensureKickoffContext(streamId, userId);
-    const [agents, connectors] = await Promise.all([
+    const [agents, connectors, user] = await Promise.all([
       this.turnContext.resolveWorkyAgents(userId),
       this.turnContext.resolveConnectors(userId),
+      this.users.findById(userId),
     ]);
-    const res = await this.orchestrator.runTask(userId, ctx.aiSessionId, message, { agents, connectors });
+    const res = await this.orchestrator.runTask(userId, ctx.aiSessionId, message, {
+      agents,
+      connectors,
+      ...(user ? requesterOpts(user) : {}),
+    });
     this.logger.log(`[voice] dispatched task run=${res.runId} session=${res.sessionId}`);
     return { runId: res.runId, sessionId: res.sessionId, accepted: res.accepted };
   }

@@ -15,6 +15,7 @@ else's step.
 from __future__ import annotations
 
 import hashlib
+from email.utils import parseaddr
 from typing import List, Optional, Tuple
 
 import asyncpg
@@ -340,6 +341,21 @@ class ReadModel:
             """, token, session_id, step_id, interrupt_id, user_id, mailbox_app_key,
                  expected_from, expires_at)
 
+    async def set_mail_wait_expected_from(self, token: str, expected_from: str) -> None:
+        """Record who the reply to `token`'s mail is expected from, once the mail
+        is actually sent (the recipients are only known then). `expected_from` is a
+        comma-joined list of the mail's recipient addresses — a reply from any of
+        them resolves the wait. Set once, and only while the wait is still open — a
+        matched/expired wait must not change, and a wait that already has an
+        expected sender is not overwritten."""
+        if not expected_from:
+            return
+        async with self._pool.acquire() as con:
+            await con.execute(f"""
+                UPDATE {_q(self._schema,'mail_waits')} SET expected_from=$2
+                WHERE token=$1 AND status='waiting' AND expected_from IS NULL
+            """, token, expected_from)
+
     async def bind_mail_wait_interrupt(self, session_id: str, step_id: str,
                                        interrupt_id: str) -> None:
         """The step parked: from here its wait is deliverable."""
@@ -381,10 +397,18 @@ class ReadModel:
                 f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
                 session_id, step_id)
 
-    async def claim_mail_wait(self, token: str) -> Optional[dict]:
+    async def claim_mail_wait(self, token: str, reply_from: Optional[str] = None) -> Optional[dict]:
         """Atomically claim the wait for `token`: the row if this delivery is the
         first to match it, None if unknown, already matched, expired, cancelled —
         or not yet parked, since there is no interrupt to resume before then.
+
+        Sender check: when the wait was registered with `expected_from` (a comma
+        list of the mail's recipient addresses), a reply only resolves it if it
+        came from one of them — otherwise a reply from the wrong person, or worky's
+        own outgoing message carrying the token, would answer a question meant for
+        someone else. `reply_from` may be a full header ("Name <a@b>"); the bare
+        address is compared, case-insensitively. A wait with no `expected_from`
+        keeps the old token-only behaviour.
 
         Atomic because Graph retries a notification it thinks failed, and a
         duplicate must not resume the step twice — the second resume would answer
@@ -392,12 +416,15 @@ class ReadModel:
         A single `UPDATE ... RETURNING`, so this holds across restarts and
         multiple replicas.
         """
+        addr = parseaddr(reply_from or "")[1].lower()
         async with self._pool.acquire() as con:
             row = await con.fetchrow(f"""
                 UPDATE {_q(self._schema,'mail_waits')} SET status='matched'
                 WHERE token=$1 AND status='waiting' AND interrupt_id IS NOT NULL
+                  AND (expected_from IS NULL
+                       OR $2 = ANY(string_to_array(lower(expected_from), ',')))
                 RETURNING *
-            """, token)
+            """, token, addr)
         return dict(row) if row else None
 
     async def cancel_mail_waits(self, session_id: str) -> None:

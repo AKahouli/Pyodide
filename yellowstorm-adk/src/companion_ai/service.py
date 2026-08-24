@@ -290,6 +290,39 @@ def _extract_json(text: str) -> dict:
     return json.loads(m.group(0))
 
 
+def requester_context(requester: Optional[dict]) -> str:
+    """A short preamble naming who the turn is for, so the planner and executor
+    address the requester directly and never email or delegate a task back to the
+    person who asked for it. Empty when we have no name/email to give.
+
+    `requester` is {name, email, role} — as carried on RunRequest.user_* and
+    passed down from the servicer."""
+    if not requester:
+        return ""
+    name = (requester.get("name") or "").strip()
+    email = (requester.get("email") or "").strip()
+    role = (requester.get("role") or "").strip()
+    if not (name or email):
+        return ""
+    who = f"{name} <{email}>" if name and email else (name or email)
+    if role:
+        who += f", {role}"
+    return (
+        f"You are working for {who}. They are the requester — the person who asked "
+        f"for this. Address them directly, and NEVER create a step that emails them "
+        f"or delegates/assigns a task to them: they are not a colleague to hand work "
+        f"to. If the task needs input from them, that is an 'ask' step, not an email."
+    )
+
+
+def _with_requester(prompt: Optional[str], requester: Optional[dict]) -> Optional[str]:
+    """Append the requester preamble to a prompt (executor/planner), if any."""
+    ctx = requester_context(requester)
+    if not ctx:
+        return prompt
+    return f"{prompt}\n\n{ctx}" if prompt else ctx
+
+
 class OrchestratorService:
     def __init__(self, runner_factory, read_model: Optional[ReadModel] = None,
                  *, planner_model: str, max_concurrency: int = 4,
@@ -441,7 +474,13 @@ class OrchestratorService:
             if await_step_id:
                 async def token_provider(_step_id=await_step_id):
                     return await rm.mail_token_for(session_id, _step_id)
-                return [nodes.stamp_send_email_tool(t, token_provider=token_provider)
+                # The wait already exists (minted at projection); the recipients
+                # are only known now, at send — record them so the reply's sender
+                # is verified (against any recipient) when it arrives.
+                async def on_sent(token, recipients):
+                    if recipients:
+                        await rm.set_mail_wait_expected_from(token, ",".join(recipients))
+                return [nodes.stamp_send_email_tool(t, token_provider=token_provider, on_sent=on_sent)
                         if nodes.is_send_email_tool(t) else t
                         for t in tools]
             pending_id = f"__pending__:{step.id}"
@@ -453,12 +492,13 @@ class OrchestratorService:
             async def eager_token_provider():
                 return mail_token.mint()
 
-            async def eager_on_sent(token, _pending_id=pending_id):
+            async def eager_on_sent(token, recipients, _pending_id=pending_id):
                 expires_at = datetime.now(timezone.utc) + timedelta(
                     hours=self._mail_wait_timeout_hours)
                 await rm.register_mail_wait(
                     token, session_id=session_id, step_id=_pending_id,
-                    user_id=user_id, expires_at=expires_at)
+                    user_id=user_id, expected_from=(",".join(recipients) or None),
+                    expires_at=expires_at)
             return [nodes.stamp_send_email_tool(
                         t, token_provider=eager_token_provider, on_sent=eager_on_sent)
                     if nodes.is_send_email_tool(t) else t
@@ -1040,15 +1080,22 @@ class OrchestratorService:
                         planner_model: Optional[str] = None, planner_prompt: Optional[str] = None,
                         executor_prompt: Optional[str] = None,
                         executor_name: Optional[str] = None,
-                        executor_id: Optional[str] = None) -> Plan:
-        logger.info("[worky] 5. plan_turn ◄ session=%s model=%s connectors=%d",
-                    session_id, model, len(connectors or []))
+                        executor_id: Optional[str] = None,
+                        requester: Optional[dict] = None) -> Plan:
+        logger.info("[worky] 5. plan_turn ◄ session=%s model=%s connectors=%d requester=%r",
+                    session_id, model, len(connectors or []), (requester or {}).get("name"))
         await self._project(self._rm and self._rm.ensure_session(session_id, user_id, None, "running"))
+        # The executor must know who it is working for too (for how it addresses
+        # the person and who it may/ may not email), so fold the requester context
+        # into its prompt once here — it flows to both the workflow build and the
+        # drive loop below.
+        executor_prompt = _with_requester(executor_prompt, requester)
 
         # STEP 5 — planner LLM → Plan. Zero steps means it chose a direct reply
         # (chit-chat): answer and finish the turn here, no graph is ever built.
         plan = await self._make_plan(session_id, user_id, message,
-                                     planner_model=planner_model, planner_prompt=planner_prompt)
+                                     planner_model=planner_model, planner_prompt=planner_prompt,
+                                     requester=requester)
         logger.info("[worky] 5. planner LLM → Plan session=%s title=%r steps=%d",
                     session_id, plan.title, len(plan.steps))
         if not plan.steps:
@@ -1116,7 +1163,8 @@ class OrchestratorService:
 
     async def converse_turn(self, *, session_id: str, user_id: str, message: str,
                             planner_model: Optional[str] = None,
-                            planner_prompt: Optional[str] = None) -> Plan:
+                            planner_prompt: Optional[str] = None,
+                            requester: Optional[dict] = None) -> Plan:
         """A message that arrives WHILE a plan is executing.
 
         This is deliberately NOT the old supersede (cancel the running turn and
@@ -1145,7 +1193,8 @@ class OrchestratorService:
         plan = await self._make_plan(
             session_id, user_id, amend_message,
             planner_model=planner_model, planner_prompt=planner_prompt,
-            plan_session=f"{session_id}_conv_{uuid.uuid4().hex[:8]}")
+            plan_session=f"{session_id}_conv_{uuid.uuid4().hex[:8]}",
+            requester=requester)
         live = self._active.get(session_id)  # re-check: may have finished while planning
         logger.info("[worky] converse ◄ session=%s steps=%d ops=%d live=%s",
                     session_id, len(plan.steps), len(plan.ops), live is not None)
@@ -1619,7 +1668,8 @@ class OrchestratorService:
     async def _make_plan(self, session_id: str, user_id: str, message: str, *,
                          planner_model: Optional[str] = None,
                          planner_prompt: Optional[str] = None,
-                         plan_session: Optional[str] = None) -> Plan:
+                         plan_session: Optional[str] = None,
+                         requester: Optional[dict] = None) -> Plan:
         # The planner's ADK session accumulates history across calls. The main
         # flow shares one ("<id>_plan") on purpose, so the planner keeps context
         # across a user's turns. converse passes an EPHEMERAL session instead:
@@ -1642,10 +1692,16 @@ class OrchestratorService:
         )
         runner = self._runner_factory(planner, f"planner_{session_id}")
         await _ensure_session(runner, f"planner_{session_id}", user_id, plan_session)
+        # Tell the planner who it is planning for, so it addresses the requester
+        # directly and never assigns work or emails back to them. Kept as a
+        # per-turn preamble on the message (not the DB instruction) so it works
+        # whatever prompt the agentstore supplies.
+        ctx = requester_context(requester)
+        planner_message = f"{ctx}\n\n---\nUser's request:\n{message}" if ctx else message
         text = ""
         async for ev in runner.run_async(
             user_id=user_id, session_id=plan_session,
-            new_message=types.Content(role="user", parts=[types.Part(text=message)])):
+            new_message=types.Content(role="user", parts=[types.Part(text=planner_message)])):
             if ev.content and ev.content.parts:
                 for p in ev.content.parts:
                     if getattr(p, "text", None):

@@ -21,7 +21,7 @@ from src.grpc_generated import companion_ai_pb2 as pb
 from src.grpc_generated import companion_ai_pb2_grpc as pb_grpc
 from src.companion_ai import mail_token
 from src.companion_ai.readmodel import ReadModel
-from src.companion_ai.service import OrchestratorService
+from src.companion_ai.service import OrchestratorService, _with_requester
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,18 @@ def _agent_by_type(agents, agent_type: str):
     any other agent_type is reserved for a future named persona a plan step
     can be assigned to."""
     return next((a for a in agents if a.agent_type == agent_type), None)
+
+
+def _requester(request) -> Optional[dict]:
+    """The turn's requester {name, email, role} from RunRequest.user_*, or None
+    when the client sent no identity (older backend) — then behaviour is
+    unchanged."""
+    name = (getattr(request, "user_name", "") or "").strip()
+    email = (getattr(request, "user_email", "") or "").strip()
+    role = (getattr(request, "user_role", "") or "").strip()
+    if not (name or email):
+        return None
+    return {"name": name, "email": email, "role": role}
 
 
 def _describe_request(request) -> str:
@@ -197,7 +209,8 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 session_id=request.session_id, user_id=request.user_id,
                 message=request.message,
                 planner_model=planner.chatbot.model if planner else None,
-                planner_prompt=planner.prompt if planner else None)
+                planner_prompt=planner.prompt if planner else None,
+                requester=_requester(request))
             logger.info("[worky] converse turn done (session=%s run=%s)",
                         request.session_id, run_id)
         except asyncio.CancelledError:
@@ -252,15 +265,20 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
             logger.info("[worky] 4. %s (session=%s)", mode, request.session_id)
             executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
             executor_prompt = executor.prompt if executor else None
+            # Who the turn is for. RunRequest carries the requester's identity so
+            # the planner/executor address them directly and never delegate or
+            # email work back to the person who asked for it.
+            requester = _requester(request)
             if interrupt_id:
                 await self._svc.resume_turn(
                     session_id=request.session_id, user_id=request.user_id,
                     answer=request.message, model=model, connectors=connectors,
-                    executor_prompt=executor_prompt)
+                    executor_prompt=_with_requester(executor_prompt, requester))
             elif status == "paused":
                 await self._svc.continue_turn(
                     session_id=request.session_id, user_id=request.user_id,
-                    model=model, connectors=connectors, executor_prompt=executor_prompt)
+                    model=model, connectors=connectors,
+                    executor_prompt=_with_requester(executor_prompt, requester))
             else:
                 planner = _agent_by_type(request.agents, PLANNER_AGENT_TYPE)
                 await self._svc.plan_turn(
@@ -270,7 +288,8 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                     planner_prompt=planner.prompt if planner else None,
                     executor_prompt=executor_prompt,
                     executor_name=executor.name if executor else None,
-                    executor_id=executor.id if executor else None)
+                    executor_id=executor.id if executor else None,
+                    requester=requester)
             logger.info("RunTask turn done (session=%s run=%s)", request.session_id, run_id)
         except asyncio.CancelledError:
             logger.info("RunTask turn superseded/cancelled (session=%s)", request.session_id)
@@ -377,10 +396,10 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         # Claim before anything else: this is what makes a duplicate delivery a
         # no-op instead of a second resume. Graph retries whatever it thinks
         # failed, so this path is walked twice as a matter of course.
-        wait = await self._rm.claim_mail_wait(request.token)
+        wait = await self._rm.claim_mail_wait(request.token, reply_from=request.reply_from)
         if wait is None:
-            logger.info("[worky] DeliverMailReply ignored — token unknown, already "
-                        "delivered, expired or cancelled")
+            logger.info("[worky] DeliverMailReply ignored — token unknown, wrong sender, "
+                        "already delivered, expired or cancelled")
             return pb.DeliverMailReplyResponse(delivered=False)
 
         session_id, user_id = wait["session_id"], wait["user_id"]

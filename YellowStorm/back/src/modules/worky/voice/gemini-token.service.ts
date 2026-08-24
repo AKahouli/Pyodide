@@ -51,7 +51,11 @@ export class GeminiTokenService implements OnModuleInit {
   }
 
   async mintSessionToken(
-    opts: { resumptionHandle?: string; prompt?: string } = {},
+    opts: {
+      resumptionHandle?: string;
+      prompt?: string;
+      requester?: { name?: string; email?: string; role?: string };
+    } = {},
   ): Promise<VoiceSessionEnvelope> {
     if (!this.apiKey) throw new Error('Gemini voice is not configured (WORKY_VOICE_API_KEY missing)');
 
