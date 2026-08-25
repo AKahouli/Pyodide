@@ -27,8 +27,44 @@ export class SemanticAgeGraphRepository {
 
   constructor(private readonly database: SemanticModelDatabaseService) {}
 
+  graphNameForModel(modelId: string): string {
+    return `sem_${modelId.replace(/-/g, '_')}`;
+  }
+
+  async ensureGraph(modelId: string): Promise<void> {
+    const graphName = this.graphNameForModel(modelId);
+    const client = await this.database.acquireClient();
+    try {
+      await client.query(`LOAD 'age'`);
+      await client.query(`SET search_path = ag_catalog, "$user", public`);
+      await client.query(
+        `SELECT ag_catalog.create_graph($1) WHERE NOT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = $1)`,
+        [graphName],
+      );
+    } catch (err) {
+      this.logger.warn(`AGE ensureGraph failed for model ${modelId}: ${(err as Error).message}`);
+    } finally {
+      client.release();
+    }
+  }
+
+  async dropGraph(modelId: string): Promise<void> {
+    const graphName = this.graphNameForModel(modelId);
+    const client = await this.database.acquireClient();
+    try {
+      await client.query(`LOAD 'age'`);
+      await client.query(`SET search_path = ag_catalog, "$user", public`);
+      await client.query(`SELECT ag_catalog.drop_graph($1, true)`, [graphName]);
+    } catch (err) {
+      this.logger.warn(`AGE dropGraph failed for model ${modelId}: ${(err as Error).message}`);
+    } finally {
+      client.release();
+    }
+  }
+
   async buildGraph(graph: SemanticGraph, modelId: string): Promise<{ vertexCount: number; edgeCount: number; failedVertexCount: number; failedEdgeCount: number }> {
-    const graphName = this.database.graphName();
+    await this.ensureGraph(modelId);
+    const graphName = this.graphNameForModel(modelId);
     const nodeTypeMap = new Map(graph.nodes.map((n) => [n.id, n]));
     const relationTypeMap = new Map(graph.relations.map((r) => [r.id, r]));
 
@@ -121,7 +157,7 @@ export class SemanticAgeGraphRepository {
   }
 
   async readGraph(modelId: string): Promise<AgeGraphData> {
-    const graphName = this.database.graphName();
+    const graphName = this.graphNameForModel(modelId);
     const nodes: AgeGraphNode[] = [];
     const edges: AgeGraphEdge[] = [];
 
@@ -130,13 +166,15 @@ export class SemanticAgeGraphRepository {
       await client.query(`LOAD 'age'`);
       await client.query(`SET search_path = ag_catalog, "$user", public`);
 
+      const graphExists = await client.query<{ exists: boolean }>(
+        `SELECT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = $1) AS exists`,
+        [graphName],
+      );
+      if (!graphExists.rows[0]?.exists) return { nodes, edges };
+
       try {
         const vRows = await client.query(
-          ageCypherSql(
-            graphName,
-            `MATCH (n) WHERE n.model_id = '${esc(modelId)}' RETURN n`,
-            'v ag_catalog.agtype',
-          ),
+          ageCypherSql(graphName, `MATCH (n) RETURN n`, 'v ag_catalog.agtype'),
         );
         for (const row of vRows.rows) {
           const parsed = parseAgtypeObj(String(row.v));
@@ -156,7 +194,7 @@ export class SemanticAgeGraphRepository {
         const eRows = await client.query(
           ageCypherSql(
             graphName,
-            `MATCH (s)-[r]->(t) WHERE s.model_id = '${esc(modelId)}' AND t.model_id = '${esc(modelId)}' RETURN r, s.record_id, t.record_id`,
+            `MATCH (s)-[r]->(t) RETURN r, s.record_id, t.record_id`,
             'r ag_catalog.agtype, src ag_catalog.agtype, tgt ag_catalog.agtype',
           ),
         );
