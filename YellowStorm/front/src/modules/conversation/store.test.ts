@@ -231,7 +231,12 @@ describe('conversation live activity', () => {
     store.onStreamChunk({
       conversationId: 'conv-1',
       action: 'add',
-      component: { id: 'tool-1', type: 'toolActivity', data: { toolName: 'run_code', status: 'running', summary: 'Read the research explanation' } },
+      component: { id: 'tool-1', type: 'toolActivity', data: { toolName: 'run_code', status: 'running', summary: 'Read the research explanation', renderKind: 'code' } },
+    });
+    store.onStreamChunk({
+      conversationId: 'conv-1',
+      action: 'update',
+      component: { id: 'tool-1', type: 'toolActivity', data: { toolName: 'run_code', status: 'completed', summary: '', renderKind: 'generic', resultJson: '{"ok":true}' } },
     });
     store.onStreamChunk({
       conversationId: 'conv-1',
@@ -241,7 +246,17 @@ describe('conversation live activity', () => {
 
     expect(useConversationStore.getState().streamingComponents).toEqual([
       { id: 'activity-1', type: 'agentActivity', data: { summary: '', status: 'completed' } },
-      { id: 'tool-1', type: 'toolActivity', data: { toolName: 'run_code', status: 'running', summary: 'Read the research explanation' } },
+      {
+        id: 'tool-1',
+        type: 'toolActivity',
+        data: expect.objectContaining({
+          toolName: 'run_code',
+          status: 'completed',
+          summary: 'Read the research explanation',
+          renderKind: 'code',
+          resultJson: '{"ok":true}',
+        }),
+      },
     ]);
     expect(useConversationStore.getState().isAwaitingFirstChunk).toBe(false);
     useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'message-2' });

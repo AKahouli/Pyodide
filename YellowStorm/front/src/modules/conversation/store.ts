@@ -311,6 +311,14 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
         status: existingIsTerminal ? existingStatus : incomingStatus,
         paramsJson: (incoming.paramsJson as string) || (existing.paramsJson as string) || '',
         startedAt: (incoming.startedAt as string) || (existing.startedAt as string) || '',
+        ...(incoming.summary || existing.summary ? {
+          summary: (incoming.summary as string) || (existing.summary as string),
+        } : {}),
+        ...(incoming.renderKind || existing.renderKind ? { renderKind: (
+          existing.renderKind && existing.renderKind !== 'generic'
+            ? existing.renderKind
+            : incoming.renderKind || existing.renderKind || 'generic'
+        ) } : {}),
       };
       return merged;
     case 'chart': {

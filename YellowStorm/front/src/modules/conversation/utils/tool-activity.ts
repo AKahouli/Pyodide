@@ -20,55 +20,66 @@ function isPrivateToolDetailKey(key: string): boolean {
     || /(?:^|_)(?:id|code|source_code|script|prompt|reasoning|thought|chain_of_thought|path|uri|url|stack|traceback|command|cwd|env|environment)(?:_|$)/.test(normalized);
 }
 
-function sanitizeText(value: string): string {
-  const redacted = value
-    .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, `$1${REDACTED}`)
-    .replace(/\b(authorization)\b(\s*[:=]\s*)(?:(?:Basic|Bearer)\s+\S+|[^\s,;]+)/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
-    .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s/@]+@/gi, `$1${REDACTED}@`)
-    .replace(/\b(password|passwd|secret|api[-_]?key|access[-_]?token|refresh[-_]?token|client[-_]?secret|connection[-_]?string)\b(\s*[:=]\s*)([^\s,;]+)/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
-    .replace(/\b([A-Z][A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY|CONNECTION_STRING)[A-Z0-9_]*)\b(\s*=\s*)[^\s,;]+/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
-    .replace(/(?:^|\s)[A-Za-z0-9_-]{8,}\/(?:runs?|workspaces?)\/[^\s"']+/gi, ` ${REDACTED}`);
-  return redacted.length > MAX_TEXT_LENGTH ? `${redacted.slice(0, MAX_TEXT_LENGTH)}... [truncated]` : redacted;
+function boundText(value: string): string {
+  return value.length > MAX_TEXT_LENGTH ? `${value.slice(0, MAX_TEXT_LENGTH)}... [truncated]` : value;
 }
 
-function sanitizeToolDetailText(value: string): string {
-  const sanitized = sanitizeText(value);
+function sanitizeText(value: string, redactSensitiveText = true): string {
+  const redacted = value
+    .replace(/YELLOWSTORM_ATTACHMENT_SENTINEL_\d+(?:\\n)?/gi, REDACTED)
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, `$1${REDACTED}`)
+    .replace(/\b(authorization|cookie|set-cookie|password|passwd|secret|api[-_]?key|access[-_]?key|(?:access|refresh|id|client|api|session)[-_]?token|token|private[-_]?key|connection[-_]?string)\b(\s*[:=]\s*)(?:(?:Basic|Bearer)\s+)?[^\s,;]+/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
+    .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s/@]+@/gi, `$1${REDACTED}@`)
+    .replace(/([?&](?:x-amz-(?:signature|credential|security-token)|x-goog-(?:signature|credential)|sig|signature|credential)=)[^&#\s]+/gi, `$1${REDACTED}`)
+    .replace(/\b([A-Z][A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY|CONNECTION_STRING)[A-Z0-9_]*)\b(\s*=\s*)[^\s,;]+/gi, (_match, key: string, separator: string) => `${key}${separator}${REDACTED}`)
+    .replace(CREDENTIAL_VALUE_GLOBAL, REDACTED);
+  if (!redactSensitiveText) return boundText(redacted);
+  const displayRedacted = redacted
+    .replace(/(?:^|\s)[A-Za-z0-9_-]{8,}\/(?:runs?|workspaces?)\/[^\s"']+/gi, ` ${REDACTED}`);
+  return boundText(displayRedacted);
+}
+
+function sanitizeToolDetailText(value: string, redactSensitiveText = true): string {
+  const sanitized = sanitizeText(value, redactSensitiveText);
+  if (!redactSensitiveText) return sanitized;
   return sanitized.includes(REDACTED) || UNSAFE_SUMMARY.test(sanitized) || OPAQUE_IDENTIFIER.test(sanitized)
     || CREDENTIAL_VALUE.test(sanitized) || URI_VALUE.test(sanitized) || CODE_VALUE.test(sanitized)
     ? REDACTED
     : sanitized;
 }
 
-export function sanitizeToolValue(value: unknown, depth = 0): unknown {
-  if (typeof value === 'string') return sanitizeToolDetailText(value);
+export function sanitizeToolValue(value: unknown, depth = 0, redactSensitiveText = true): unknown {
+  if (typeof value === 'string') return sanitizeToolDetailText(value, redactSensitiveText);
   if (value === null || typeof value !== 'object') return value;
   if (depth >= MAX_DEPTH) return '[truncated]';
   if (Array.isArray(value)) {
-    const items: unknown[] = value.slice(0, MAX_ITEMS).map((item) => sanitizeToolValue(item, depth + 1));
+    const items: unknown[] = value.slice(0, MAX_ITEMS).map((item) => sanitizeToolValue(item, depth + 1, redactSensitiveText));
     if (value.length > MAX_ITEMS) items.push('[truncated]');
     return items;
   }
   const record = value as Record<string, unknown>;
   return Object.fromEntries(Object.entries(record).slice(0, MAX_ITEMS).map(([key, item]) => [
     key,
-    isPrivateToolDetailKey(key) ? REDACTED : sanitizeToolValue(item, depth + 1),
+    SENSITIVE_KEY.test(key) || (redactSensitiveText && isPrivateToolDetailKey(key)) ? REDACTED : sanitizeToolValue(item, depth + 1, redactSensitiveText),
   ]));
 }
 
-export function formatSanitizedToolText(value: string | undefined): string | undefined {
+export function formatSanitizedToolText(value: string | undefined, redactSensitiveText = true): string | undefined {
   if (!value) return undefined;
   try {
-    const sanitized = sanitizeToolValue(JSON.parse(value));
+    const sanitized = sanitizeToolValue(JSON.parse(value), 0, redactSensitiveText);
     if (sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized) && !Object.keys(sanitized).length) return undefined;
     return typeof sanitized === 'string' ? sanitized : JSON.stringify(sanitized, null, 2);
   } catch {
-    return sanitizeToolDetailText(value);
+    return sanitizeToolDetailText(value, redactSensitiveText);
   }
 }
 
-export function sanitizeRunCodeInput(value: unknown): string | undefined {
+export function sanitizeRunCodeInput(value: unknown, redactSensitiveText = true): string | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined;
-  const sanitized = sanitizeText(value)
+  const sanitizedText = sanitizeText(value, redactSensitiveText);
+  if (!redactSensitiveText) return sanitizedText.trim() || undefined;
+  const sanitized = sanitizedText
     .replace(/(^|[\s=:('"`])(?:[A-Za-z]:[\\/]|\/|\\\\)[^\s"'`]+/gi, (_match, boundary: string) => `${boundary}${REDACTED}`)
     .replace(/(^|[\s=:('"`])(?:[A-Za-z0-9._-]+\/){2,}[^\s"'`]+/gi, (_match, boundary: string) => `${boundary}${REDACTED}`)
     .replace(/\b(?:s3|ceph|azure|file):\/\/[^\s"'`]+/gi, REDACTED)
@@ -85,29 +96,29 @@ function isPrivateCodeInterpreterKey(key: string, preserveExecutableFields: bool
     || /(?:^|_)(?:id|prompt|reasoning|thought|chain_of_thought|path|uri|url|stack|traceback|cwd|env|environment)(?:_|$)/.test(normalized);
 }
 
-function sanitizeCodeInterpreterValue(value: unknown, preserveExecutableFields: boolean, depth = 0): unknown {
-  if (typeof value === 'string') return sanitizeRunCodeInput(value) ?? '';
+function sanitizeCodeInterpreterValue(value: unknown, preserveExecutableFields: boolean, redactSensitiveText: boolean, depth = 0): unknown {
+  if (typeof value === 'string') return sanitizeRunCodeInput(value, redactSensitiveText) ?? '';
   if (value === null || typeof value !== 'object') return value;
   if (depth >= MAX_DEPTH) return '[truncated]';
   if (Array.isArray(value)) {
-    const items = value.slice(0, MAX_ITEMS).map((item) => sanitizeCodeInterpreterValue(item, preserveExecutableFields, depth + 1));
+    const items = value.slice(0, MAX_ITEMS).map((item) => sanitizeCodeInterpreterValue(item, preserveExecutableFields, redactSensitiveText, depth + 1));
     if (value.length > MAX_ITEMS) items.push('[truncated]');
     return items;
   }
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).slice(0, MAX_ITEMS).map(([key, item]) => [
     key,
-    isPrivateCodeInterpreterKey(key, preserveExecutableFields) ? REDACTED : sanitizeCodeInterpreterValue(item, preserveExecutableFields, depth + 1),
+    SENSITIVE_KEY.test(key) || (redactSensitiveText && isPrivateCodeInterpreterKey(key, preserveExecutableFields)) ? REDACTED : sanitizeCodeInterpreterValue(item, preserveExecutableFields, redactSensitiveText, depth + 1),
   ]));
 }
 
-function formatCodeInterpreterPayload(value: string | undefined, preserveExecutableFields = false): string | undefined {
+function formatCodeInterpreterPayload(value: string | undefined, preserveExecutableFields = false, redactSensitiveText = true): string | undefined {
   if (!value) return undefined;
   try {
-    const sanitized = sanitizeCodeInterpreterValue(JSON.parse(value), preserveExecutableFields);
+    const sanitized = sanitizeCodeInterpreterValue(JSON.parse(value), preserveExecutableFields, redactSensitiveText);
     if (sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized) && !Object.keys(sanitized).length) return undefined;
     return typeof sanitized === 'string' ? sanitized : JSON.stringify(sanitized, null, 2);
   } catch {
-    return sanitizeRunCodeInput(value);
+    return sanitizeRunCodeInput(value, redactSensitiveText);
   }
 }
 
@@ -119,20 +130,20 @@ export function isCodeInterpreterActivity(data: Record<string, unknown>): boolea
     || name.startsWith('code_interpreter_');
 }
 
-export function resolveCodeInterpreterRequest(data: Record<string, unknown>): string | undefined {
-  const primaryInput = sanitizeRunCodeInput(data.primaryInput);
+export function resolveCodeInterpreterRequest(data: Record<string, unknown>, redactSensitiveText = true): string | undefined {
+  const primaryInput = sanitizeRunCodeInput(data.primaryInput, redactSensitiveText);
   if (primaryInput) return primaryInput;
   const params = parseToolParams(data.paramsJson ?? data.params);
-  if (!params) return formatCodeInterpreterPayload(asNonEmptyString(data.paramsJson));
+  if (!params) return formatCodeInterpreterPayload(asNonEmptyString(data.paramsJson), false, redactSensitiveText);
   for (const key of ['code', 'source_code', 'script', 'command']) {
-    const executable = sanitizeRunCodeInput(params[key]);
+    const executable = sanitizeRunCodeInput(params[key], redactSensitiveText);
     if (executable) return executable;
   }
-  return formatCodeInterpreterPayload(JSON.stringify(params), true);
+  return formatCodeInterpreterPayload(JSON.stringify(params), true, redactSensitiveText);
 }
 
-export function resolveCodeInterpreterResponse(data: Record<string, unknown>): string | undefined {
-  return formatCodeInterpreterPayload(asNonEmptyString(data.resultJson));
+export function resolveCodeInterpreterResponse(data: Record<string, unknown>, redactSensitiveText = true): string | undefined {
+  return formatCodeInterpreterPayload(asNonEmptyString(data.resultJson), false, redactSensitiveText);
 }
 
 export type ToolRenderKind = 'generic' | 'run_code' | 'search' | 'document' | 'file' | 'web';
@@ -153,6 +164,11 @@ export function humanizeToolTitle(value: string): string {
 const TOOL_DISPLAY_KEYS: Record<string, string> = {
   run_code: 'runCode',
   python_interpreter: 'runCode',
+  code_interpreter_file_find: 'findFiles',
+  code_interpreter_file_list: 'findFiles',
+  code_interpreter_sandbox_create: 'createSandbox',
+  code_interpreter_shell_exec: 'runCommand',
+  code_interpreter_send_file_to_user: 'sendFile',
   perform_document_search: 'searchKnowledge',
   perform_filtered_search: 'searchKnowledge',
   preform_all_brain_search: 'searchKnowledge',
@@ -179,10 +195,10 @@ function parseToolParams(value: unknown): Record<string, unknown> | undefined {
   }
 }
 
-export function sanitizeActivitySummary(value: unknown): string | undefined {
+export function sanitizeActivitySummary(value: unknown, redactSensitiveText = true): string | undefined {
   const text = asNonEmptyString(value);
-  if (!text || UNSAFE_SUMMARY.test(text) || OPAQUE_IDENTIFIER.test(text)) return undefined;
-  const sanitized = sanitizeAssistantDisplayText(String(sanitizeToolValue(text)))
+  if (!text || (redactSensitiveText && (UNSAFE_SUMMARY.test(text) || OPAQUE_IDENTIFIER.test(text)))) return undefined;
+  const sanitized = sanitizeAssistantDisplayText(String(sanitizeToolValue(text, 0, redactSensitiveText)), redactSensitiveText)
     .replace(/[\r\n\t]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -204,30 +220,15 @@ export function resolveToolDisplayKey(data: Record<string, unknown>): string | u
   return undefined;
 }
 
-export function resolveToolFallbackName(data: Record<string, unknown>): string | undefined {
+export function resolveToolFallbackName(data: Record<string, unknown>, redactSensitiveText = true): string | undefined {
   const explicit = asNonEmptyString(data.fallbackDisplayName);
-  if (explicit) return sanitizeActivitySummary(explicit);
+  if (explicit) return sanitizeActivitySummary(explicit, redactSensitiveText);
   const name = asNonEmptyString(data.toolName) || asNonEmptyString(data.title);
-  return name ? sanitizeActivitySummary(humanizeToolTitle(name)) : undefined;
+  return name ? sanitizeActivitySummary(humanizeToolTitle(name), redactSensitiveText) : undefined;
 }
 
-export function resolveToolSummary(data: Record<string, unknown>): string | undefined {
-  const explicit = sanitizeActivitySummary(data.summary) || sanitizeActivitySummary(data.description);
-  if (explicit) return explicit;
-
-  const name = normalizeToolName(asNonEmptyString(data.toolName) || asNonEmptyString(data.title) || '');
-  const params = parseToolParams(data.paramsJson ?? data.params);
-  if (!params) return undefined;
-  if (name === 'run_code' || name === 'python_interpreter') return sanitizeActivitySummary(params.description);
-  if (name.includes('search')) return sanitizeActivitySummary(params.query);
-  if (name.includes('glob') || name.includes('find_file') || name.includes('list_file')) {
-    return sanitizeActivitySummary(params.pattern ?? params.query);
-  }
-  if (name.includes('read') || name.includes('write') || name.includes('copy')) {
-    const path = asNonEmptyString(params.path) || asNonEmptyString(params.file_path) || asNonEmptyString(params.source);
-    return path ? sanitizeActivitySummary(path.replace(/\\/g, '/').split('/').at(-1)) : undefined;
-  }
-  return undefined;
+export function resolveToolSummary(data: Record<string, unknown>, redactSensitiveText = true): string | undefined {
+  return sanitizeActivitySummary(data.summary, redactSensitiveText);
 }
 
 export function sanitizeActivityActorName(value: unknown): string | undefined {
@@ -248,9 +249,11 @@ export function formatActivityDuration(durationMs: number | undefined): string |
   return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
 }
 
-export function sanitizeAssistantDisplayText(value: string): string {
-  return value
+export function sanitizeAssistantDisplayText(value: string, redactSensitiveText = true): string {
+  const withoutSentinels = value
     .replace(/\{[^{}\r\n]*"content"\s*:\s*"YELLOWSTORM_ATTACHMENT_SENTINEL_\d+(?:\\n)?"[^{}\r\n]*\}/g, '')
-    .replace(/YELLOWSTORM_ATTACHMENT_SENTINEL_\d+(?:\\n)?/g, '')
-    .replace(/\/workspace(?:\/[^\s"'`)<>{}\]]+)*/g, REDACTED);
+    .replace(/YELLOWSTORM_ATTACHMENT_SENTINEL_\d+(?:\\n)?/g, '');
+  return redactSensitiveText
+    ? withoutSentinels.replace(/\/workspace(?:\/[^\s"'`)<>{}\]]+)*/g, REDACTED)
+    : sanitizeText(withoutSentinels, false);
 }

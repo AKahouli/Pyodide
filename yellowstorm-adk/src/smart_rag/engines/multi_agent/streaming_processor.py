@@ -36,8 +36,9 @@ from src.run_workspace import run_workspace_path
 from src.smart_rag.tool_activity_presenter import (
     present_tool_call,
     sanitize_activity_summary,
+    sanitize_tool_result_value,
     serialize_tool_args,
-    serialize_tool_value,
+    serialize_tool_result,
 )
 
 logger = get_logger("api.routers.agentic_rag.StreamingEventProcessor")
@@ -379,7 +380,7 @@ class StreamingEventProcessor:
                             "actor_id": manager_id,
                             "actor_name": manager_name,
                             **({
-                                "primary_input": tool_args.get("code", ""),
+                                "primary_input": sanitize_tool_result_value(tool_args.get("code", "")),
                                 "primary_input_language": tool_args.get("language", ""),
                             } if func_name == "run_code" else {}),
                         },
@@ -426,7 +427,7 @@ class StreamingEventProcessor:
                     code = ""
                     if hasattr(part.function_call, "args") and part.function_call.args:
                         args_dict = dict(part.function_call.args)
-                        code = args_dict.get("code", "")
+                        code = sanitize_tool_result_value(args_dict.get("code", ""))
 
                     # Use function_call.id as component_id for tracking
                     call_id = (
@@ -501,9 +502,7 @@ class StreamingEventProcessor:
                     name=func_name,
                     input={
                         "function_name": func_name,
-                        "arguments": dict(part.function_call.args)
-                        if part.function_call.args
-                        else {},
+                        "arguments": sanitize_tool_result_value(tool_args),
                         "delegation_order": delegation_count,
                     },
                 )
@@ -535,7 +534,7 @@ class StreamingEventProcessor:
                         metadata = self._manager_pending_tool_metadata.pop(tool_component_id, {})
                         result_json = ""
                         if getattr(q, "include_tool_results", False) and func_name != "generate_web_preview" and not func_name.startswith("delegate_to_"):
-                            result_json = serialize_tool_value(part.function_response.response)
+                            result_json = serialize_tool_result(part.function_response.response)
                         manager_id, _ = self._get_manager_info(manager_agent)
                         failed = getattr(part.function_response, "is_error", False)
                         response_payload = part.function_response.response

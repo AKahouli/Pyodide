@@ -138,6 +138,23 @@ describe('MessageService createUserMessage agent tagging', () => {
     });
   });
 
+  it('preserves tool paths but removes credentials when authenticated display redaction is disabled', () => {
+    (service as any).conversationSettings = { shouldRedactSensitiveText: () => false };
+    const response = (service as any).mapToResponse({
+      _id: new Types.ObjectId(),
+      conversationId: new Types.ObjectId(conversationId),
+      conversationType: 'ai',
+      components: [{
+        id: 'tool-private',
+        type: 'toolActivity',
+        data: { toolName: 'run_code', resultJson: '{"password":"private","path":"/workspace/run/file.txt"}' },
+      }],
+    });
+
+    expect(response.components[0].data.resultJson).toContain('"password":"[REDACTED]"');
+    expect(response.components[0].data.resultJson).toContain('/workspace/run/file.txt');
+  });
+
   it('strips persisted artifact paths and private activity detail from message responses', () => {
     const response = (service as any).mapToResponse({
       _id: new Types.ObjectId(),

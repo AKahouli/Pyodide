@@ -229,9 +229,9 @@ class TestStreamingEventProcessor:
       )
 
     events = [
-      event_for(SimpleNamespace(text=None, function_call=SimpleNamespace(id="call-1", name="search", args={"q": "one", "_display_purpose": "Find the first source"}), function_response=None)),
-      event_for(SimpleNamespace(text=None, function_call=SimpleNamespace(id="call-2", name="search", args={"q": "two", "_display_purpose": "Find the second source"}), function_response=None)),
-      event_for(SimpleNamespace(text=None, function_call=None, function_response=SimpleNamespace(id="call-1", name="search", response={"matches": 1}, is_error=False))),
+      event_for(SimpleNamespace(text=None, function_call=SimpleNamespace(id="call-1", name="search", args={"q": "one", "path": "/mnt/workspace", "url": "https://user:password@example.test/private/report", "signed_url": "https://storage.example/private/report?X-Amz-Credential=private-scope&X-Amz-Signature=private-signature", "authorization": "Bearer private", "display_purpose": "Find the first source"}), function_response=None)),
+      event_for(SimpleNamespace(text=None, function_call=SimpleNamespace(id="call-2", name="search", args={"q": "two", "display_purpose": "Find the second source"}), function_response=None)),
+      event_for(SimpleNamespace(text=None, function_call=None, function_response=SimpleNamespace(id="call-1", name="search", response={"matches": 1, "url": "ws://sandbox.internal/session/abc123", "detail": "api_token=private"}, is_error=False))),
       event_for(SimpleNamespace(text=None, function_call=None, function_response=SimpleNamespace(id="call-2", name="search", response={"matches": 2}, is_error=False))),
     ]
 
@@ -241,10 +241,11 @@ class TestStreamingEventProcessor:
 
     agent_runner = MagicMock()
     agent_runner.run_async.return_value = fake_stream()
+    mock_langfuse = MagicMock()
     with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
       "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
     ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"), patch(
-      "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client", MagicMock()
+      "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client", mock_langfuse
     ):
       await processor.process_streaming_events(
         session_id="sess-tools",
@@ -266,11 +267,20 @@ class TestStreamingEventProcessor:
       "Find the first source", "Find the second source",
     ]
     assert all(
-      "_display_purpose" not in event["component"]["data"].get("params_json", "")
+      "display_purpose" not in event["component"]["data"].get("params_json", "")
+      and "_display_purpose" not in event["component"]["data"].get("params_json", "")
       for event in tool_events[:2]
     )
+    assert "/mnt/workspace" in tool_events[0]["component"]["data"]["params_json"]
+    assert "Bearer private" not in tool_events[0]["component"]["data"]["params_json"]
+    assert "private-signature" not in tool_events[0]["component"]["data"]["params_json"]
+    telemetry_call = next(call for call in mock_langfuse.event.call_args_list if call.kwargs.get("name") == "search")
+    assert telemetry_call.kwargs["input"]["arguments"]["path"] == "/mnt/workspace"
+    assert telemetry_call.kwargs["input"]["arguments"]["url"] == "https://user:[REDACTED]@example.test/private/report"
+    assert telemetry_call.kwargs["input"]["arguments"]["signed_url"] == "https://storage.example/private/report?X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED]"
+    assert telemetry_call.kwargs["input"]["arguments"]["authorization"] == "[REDACTED]"
     assert [event["component"]["data"].get("result_json") for event in tool_events] == [
-      None, None, '{"matches":1}', '{"matches":2}',
+      None, None, '{"matches":1,"url":"ws://sandbox.internal/session/abc123","detail":"api_token=[REDACTED]"}', '{"matches":2}',
     ]
 
   @pytest.mark.asyncio
@@ -303,10 +313,11 @@ class TestStreamingEventProcessor:
 
     agent_runner = MagicMock()
     agent_runner.run_async.return_value = fake_stream()
+    mock_langfuse = MagicMock()
     with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
       "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
     ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"), patch(
-      "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client", MagicMock()
+      "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client", mock_langfuse
     ):
       await processor.process_streaming_events(
         session_id="conversation-1",

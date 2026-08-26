@@ -1,7 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { formatSanitizedToolText, isCodeInterpreterActivity, resolveCodeInterpreterRequest, resolveCodeInterpreterResponse } from './tool-activity';
+import {
+  formatSanitizedToolText,
+  isCodeInterpreterActivity,
+  resolveCodeInterpreterRequest,
+  resolveCodeInterpreterResponse,
+  resolveToolDisplayKey,
+  resolveToolSummary,
+  sanitizeRunCodeInput,
+} from './tool-activity';
 
 describe('formatSanitizedToolText', () => {
+  it('preserves paths and endpoints but always removes credentials when display redaction is disabled', () => {
+    const output = formatSanitizedToolText(JSON.stringify({
+      password: 'private',
+      path: '/workspace/run/file.txt',
+      signedUrl: 'https://storage.example/private/report?X-Amz-Credential=private-scope&X-Amz-Signature=private-signature',
+      result: 'VNC: ws://sandbox.internal/session/abc123\nCDP: http://sandbox.internal/session/abc123',
+      message: 'Cookie: session=private YELLOWSTORM_ATTACHMENT_SENTINEL_42',
+    }), false);
+
+    expect(output).toContain('"password": "[REDACTED]"');
+    expect(output).toContain('ws://sandbox.internal/session/abc123');
+    expect(output).toContain('http://sandbox.internal/session/abc123');
+    expect(output).toContain('https://storage.example/private/report?X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED]');
+    expect(output).not.toContain('private-signature');
+    expect(output).not.toContain('session=private');
+    expect(output).not.toContain('YELLOWSTORM_ATTACHMENT_SENTINEL');
+  });
+
+  it('keeps code paths but removes credentials from run-code input when display redaction is disabled', () => {
+    const input = sanitizeRunCodeInput("password='private'; print('/workspace/report.pdf')", false);
+
+    expect(input).toContain('/workspace/report.pdf');
+    expect(input).not.toContain('private');
+    expect(input).toContain('password=[REDACTED]');
+  });
   it('keeps useful output while redacting nested private fields and unsafe strings', () => {
     const output = formatSanitizedToolText(JSON.stringify({
       status: 'failed',
@@ -87,5 +120,34 @@ describe('code interpreter activity details', () => {
     expect(response).not.toContain('/etc/yellowstorm');
     expect(response).not.toContain('short-value');
     expect(response).not.toContain('owner/system_run');
+  });
+});
+
+describe('resolveToolSummary', () => {
+  it('uses only the authoritative dynamic summary', () => {
+    expect(resolveToolSummary({
+      summary: 'Find the requested revenue evidence',
+      description: 'ignored description',
+      paramsJson: JSON.stringify({ query: 'ignored query' }),
+    })).toBe('Find the requested revenue evidence');
+  });
+
+  it.each([
+    { toolName: 'run_code', description: 'fallback description', paramsJson: JSON.stringify({ description: 'argument description' }) },
+    { toolName: 'perform_document_search', paramsJson: JSON.stringify({ query: 'quarterly revenue' }) },
+    { toolName: 'find_file', paramsJson: JSON.stringify({ pattern: '*.pdf' }) },
+    { toolName: 'read_file', paramsJson: JSON.stringify({ path: '/workspace/private/report.pdf' }) },
+  ])('does not reconstruct a missing summary from tool arguments', (data) => {
+    expect(resolveToolSummary({ ...data, summary: '' })).toBeUndefined();
+  });
+});
+
+describe('resolveToolDisplayKey', () => {
+  it.each([
+    ['code-interpreter_file_list', 'findFiles'],
+    ['code-interpreter_file_find', 'findFiles'],
+    ['code-interpreter_shell_exec', 'runCommand'],
+  ])('maps %s to %s for mixed-version activities', (toolName, displayKey) => {
+    expect(resolveToolDisplayKey({ toolName })).toBe(displayKey);
   });
 });

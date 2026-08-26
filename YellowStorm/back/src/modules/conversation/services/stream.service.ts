@@ -46,6 +46,7 @@ import { ResponseReliabilityService } from './response-reliability.service';
 import { ConversationAgentRequestBuilder, type BuiltAgentExecutionRequest } from './conversation-agent-request.builder';
 import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
 import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
+import { ConversationSettingsService } from '../../system/conversation-settings.service';
 
 export interface StreamRequest {
   content: string;
@@ -124,6 +125,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly skillService: SkillService,
     private readonly responseReliabilityService: ResponseReliabilityService,
     private readonly agentRequestBuilder: ConversationAgentRequestBuilder,
+    private readonly conversationSettings: ConversationSettingsService,
   ) {
     this.logger.setContext('StreamService');
   }
@@ -849,7 +851,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         conversationId,
         messageId,
         revision: this.streamRevisions.get(streamKey) ?? 0,
-        components: Array.from(buffer.values(), sanitizePublicComponent),
+        components: Array.from(buffer.values(), (component) => this.sanitizeComponent(component)),
       };
     }
 
@@ -1327,7 +1329,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               }
 
               // Send chunk immediately to frontend
-              const publicComponent = sanitizePublicComponent({ id: comp.id, type, data });
+              const publicComponent = this.sanitizeComponent({ id: comp.id, type, data });
               const revision = this.nextStreamRevision(streamKey);
               this.streamGateway.broadcastToConversation(
                 memberIds, {
@@ -1712,7 +1714,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             ...(options.messageId ? { messageId: options.messageId } : {}),
             ...(revision !== undefined ? { revision } : {}),
             action: 'update',
-            component: sanitizePublicComponent(component),
+            component: this.sanitizeComponent(component),
           },
         });
       }
@@ -2286,6 +2288,12 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             reject(error);
           });
       });
+    });
+  }
+
+  private sanitizeComponent(component: MessageComponent): MessageComponent {
+    return sanitizePublicComponent(component, {
+      redactSensitiveText: this.conversationSettings?.shouldRedactSensitiveText() !== false,
     });
   }
 }

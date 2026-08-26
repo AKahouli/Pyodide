@@ -89,4 +89,14 @@ describe('AIMessageContent task activity', () => {
     expect(screen.queryByRole('button', { name: 'ai.task.diagnostics.open' })).not.toBeInTheDocument();
     expect(screen.queryByText('Raw context')).not.toBeInTheDocument();
   });
+
+  it('shows original diagnostics when redaction is explicitly disabled', async () => {
+    render(<AIMessageContent taskDisplay='activity' redactTaskDiagnostics={false} parts={[{
+      type: 'task', title: 'smart_agent', status: 'completed', items: ['password=private'],
+    }]} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'ai.task.diagnostics.open' }));
+    expect(screen.getByText('password=private')).toBeInTheDocument();
+    expect(screen.queryByText(/\[REDACTED\]/)).not.toBeInTheDocument();
+  });
 });

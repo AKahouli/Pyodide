@@ -1827,5 +1827,14 @@
   "catalogTransfer.selectVisibleSkills": "Sélectionner les compétences visibles ({{count}} sélectionnées)",
   "catalogTransfer.selectItem": "Sélectionner {{name}}",
   "catalogTransfer.refreshConnectors": "Actualiser les connecteurs",
-  "catalogTransfer.refreshSkills": "Actualiser les compétences"
+  "catalogTransfer.refreshSkills": "Actualiser les compétences",
+  "system.redaction.title": "Texte sensible des conversations",
+  "system.redaction.description": "Contrôlez le remplacement des valeurs sensibles dans les conversations authentifiées et les activités d'outils.",
+  "system.redaction.toggle": "Masquer le texte sensible",
+  "system.redaction.toggleDescription": "Remplace les identifiants, chemins internes et valeurs similaires par [REDACTED]. Les partages publics restent protégés.",
+  "system.redaction.warningTitle": "Des valeurs sensibles peuvent être exposées",
+  "system.redaction.warningDescription": "Les participants authentifiés peuvent voir des identifiants, chemins internes, entrées et sorties d'outils. Les enregistrements déjà masqués ne peuvent pas être restaurés.",
+  "system.redaction.saved": "Paramètre de masquage mis à jour",
+  "system.redaction.loadError": "Impossible de charger le paramètre de masquage",
+  "system.redaction.saveError": "Impossible de mettre à jour le paramètre de masquage"
 }

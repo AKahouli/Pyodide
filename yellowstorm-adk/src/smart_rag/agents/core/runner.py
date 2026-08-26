@@ -33,8 +33,9 @@ from src.run_workspace import run_workspace_path
 from src.smart_rag.tool_activity_presenter import (
     present_tool_call,
     sanitize_activity_summary,
+    sanitize_tool_result_value,
     serialize_tool_args,
-    serialize_tool_value,
+    serialize_tool_result,
     tool_args_without_display_purpose,
 )
 
@@ -554,7 +555,7 @@ class AgentRunner:
                                 ),
                                 child=child_name,
                                 tool_name=func_name,
-                                args=tool_args_without_display_purpose(tool_args),
+                                args=sanitize_tool_result_value(tool_args_without_display_purpose(tool_args)),
                                 status="requested",
                             )
 
@@ -593,7 +594,7 @@ class AgentRunner:
                                         "actor_id": actor_id,
                                         "actor_name": str(agent_name or ""),
                                         **({
-                                            "primary_input": tool_args.get("code", ""),
+                                            "primary_input": sanitize_tool_result_value(tool_args.get("code", "")),
                                             "primary_input_language": tool_args.get("language", ""),
                                         } if func_name == "run_code" else {}),
                                     },
@@ -622,7 +623,7 @@ class AgentRunner:
                                 and part.function_call.args
                             ):
                                 args_dict = dict(part.function_call.args)
-                                code = args_dict.get("code", "")
+                                code = sanitize_tool_result_value(args_dict.get("code", ""))
 
                             # Use function_call.id as component_id for tracking
                             call_id = (
@@ -728,7 +729,7 @@ class AgentRunner:
                                 metadata = pending_tool_metadata.pop(tool_component_id, {})
                                 result_json = ""
                                 if getattr(q, "include_tool_results", False) and func_name != "generate_web_preview":
-                                    result_json = serialize_tool_value(part.function_response.response)
+                                    result_json = serialize_tool_result(part.function_response.response)
                                 response_payload = part.function_response.response
                                 if func_name == "run_code" and isinstance(response_payload, dict) and response_payload.get("ok") is False:
                                     success = False

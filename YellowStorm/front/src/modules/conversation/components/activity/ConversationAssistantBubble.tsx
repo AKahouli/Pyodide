@@ -11,6 +11,7 @@ import type { AgentActivityData, ArtifactActivityData, ChoiceInteractionMetadata
 import { mapConversationComponentsToContentParts } from '../../utils';
 import { formatActivityDuration, humanizeToolTitle, isCodeInterpreterActivity, resolveCodeInterpreterRequest, resolveCodeInterpreterResponse, resolveToolDisplayKey, resolveToolFallbackName, resolveToolSummary, sanitizeActivityActorName, sanitizeActivityFilename, sanitizeActivitySummary, sanitizeAssistantDisplayText } from '../../utils/tool-activity';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
+import { useConversationSettings } from '../../hooks/useConversationSettings';
 
 interface NarrativeProps {
   conversationId: string;
@@ -31,7 +32,7 @@ function statusIcon(status: ToolActivityData['status'], active: boolean) {
   return <CheckCircle2 className='size-4 text-primary' />;
 }
 
-function ToolRow({ component, isStreaming }: Readonly<{ component: MessageComponent; isStreaming: boolean }>) {
+function ToolRow({ component, isStreaming, redactSensitiveText }: Readonly<{ component: MessageComponent; isStreaming: boolean; redactSensitiveText: boolean }>) {
   const { t } = useModuleTranslation('conversation');
   const data = component.data as ToolActivityData;
   const labels = {
@@ -45,12 +46,12 @@ function ToolRow({ component, isStreaming }: Readonly<{ component: MessageCompon
   const displayKey = resolveToolDisplayKey(data);
   const label = displayKey && displayKey in labels
     ? labels[displayKey as keyof typeof labels]
-    : resolveToolFallbackName(data) || t('stream.activity.toolFallback');
-  const summary = resolveToolSummary(data);
+    : resolveToolFallbackName(data, redactSensitiveText) || t('stream.activity.toolFallback');
+  const summary = resolveToolSummary(data, redactSensitiveText);
   const duration = formatActivityDuration(data.durationMs);
   const isCodeInterpreter = isCodeInterpreterActivity(data);
-  const request = isCodeInterpreter ? resolveCodeInterpreterRequest(data) : undefined;
-  const response = isCodeInterpreter ? resolveCodeInterpreterResponse(data) : undefined;
+  const request = isCodeInterpreter ? resolveCodeInterpreterRequest(data, redactSensitiveText) : undefined;
+  const response = isCodeInterpreter ? resolveCodeInterpreterResponse(data, redactSensitiveText) : undefined;
   const active = isStreaming && data.status === 'running';
   const icon = isCodeInterpreter
     ? <Code2 className='size-4' />
@@ -160,6 +161,8 @@ function ArtifactRow({ conversationId, messageId, data, enabled }: Readonly<{ co
 
 export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const { t } = useModuleTranslation('conversation');
+  const settings = useConversationSettings();
+  const redactSensitiveText = settings?.redactSensitiveText !== false;
   const useOriginalAnswer = !props.answerComponents || props.answerComponents === props.components;
   const source = useOriginalAnswer
     ? props.components
@@ -169,17 +172,17 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const flush = () => {
     if (!answerBatch.length) return;
     const parts = mapConversationComponentsToContentParts(answerBatch).map((part) =>
-      part.type === 'text' ? { ...part, content: sanitizeAssistantDisplayText(part.content) } : part,
+      part.type === 'text' ? { ...part, content: sanitizeAssistantDisplayText(part.content, redactSensitiveText) } : part,
     );
     if (props.isStreaming && parts.at(-1)?.type === 'text') (parts.at(-1) as { showCursor?: boolean }).showCursor = true;
-    if (parts.length) nodes.push(<AIMessageContent key={`answer-${nodes.length}`} parts={parts} isStreaming={props.isStreaming} onComponentAction={props.onComponentAction} onSubmitQuestions={props.onSubmitQuestions} choiceInteractions={props.choiceInteractions} taskDisplay='activity' />);
+    if (parts.length) nodes.push(<AIMessageContent key={`answer-${nodes.length}`} parts={parts} isStreaming={props.isStreaming} onComponentAction={props.onComponentAction} onSubmitQuestions={props.onSubmitQuestions} choiceInteractions={props.choiceInteractions} taskDisplay='activity' redactTaskDiagnostics={redactSensitiveText} />);
     answerBatch = [];
   };
   source.forEach((component, index) => {
     if (component.type === 'agentActivity' || component.type === 'toolActivity' || component.type === 'artifact') {
       flush();
       if (component.type === 'agentActivity') nodes.push(<AgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} />);
-      if (component.type === 'toolActivity') nodes.push(<ToolRow key={component.id || index} component={component} isStreaming={props.isStreaming} />);
+      if (component.type === 'toolActivity') nodes.push(<ToolRow key={component.id || index} component={component} isStreaming={props.isStreaming} redactSensitiveText={redactSensitiveText} />);
       if (component.type === 'artifact') nodes.push(<ArtifactRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} data={component.data as ArtifactActivityData} enabled={!props.isStreaming} />);
     } else answerBatch.push(component);
   });

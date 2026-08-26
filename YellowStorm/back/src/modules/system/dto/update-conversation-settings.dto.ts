@@ -42,10 +42,21 @@ export class UpdateComposerSuggestionSettingsDto {
 }
 
 export class UpdateConversationSettingsDto {
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  redactSensitiveText?: boolean;
+
   @ApiProperty({ type: UpdateComposerSuggestionSettingsDto })
   @IsDefined()
   @IsObject()
   @ValidateNested()
   @Type(() => UpdateComposerSuggestionSettingsDto)
   composerSuggestions!: UpdateComposerSuggestionSettingsDto;
+}
+
+export class UpdateSensitiveTextRedactionDto {
+  @ApiProperty({ default: true })
+  @IsBoolean()
+  redactSensitiveText!: boolean;
 }

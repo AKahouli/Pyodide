@@ -10,7 +10,8 @@ from src.logger.logging import get_logger
 
 logger = get_logger("api.smart_rag.purpose_aware_mcp")
 
-DISPLAY_PURPOSE_KEY = "_display_purpose"
+DISPLAY_PURPOSE_KEY = "display_purpose"
+LEGACY_DISPLAY_PURPOSE_KEY = "_display_purpose"
 DISPLAY_PURPOSE_DESCRIPTION = (
     "Always provide a short user-facing reason for this tool call. Describe the goal, not the "
     "arguments. Do not include code, commands, paths, URLs, identifiers, "
@@ -25,7 +26,10 @@ def _raw_mcp_tool(tool: BaseTool) -> Any:
 def _server_defines_display_purpose(tool: BaseTool) -> bool:
     raw_tool = _raw_mcp_tool(tool)
     schema = getattr(raw_tool, "inputSchema", None)
-    return isinstance(schema, dict) and DISPLAY_PURPOSE_KEY in (schema.get("properties") or {})
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    return isinstance(properties, dict) and any(
+        key in properties for key in (DISPLAY_PURPOSE_KEY, LEGACY_DISPLAY_PURPOSE_KEY)
+    )
 
 
 class PurposeAwareMcpTool(BaseTool):
@@ -79,6 +83,7 @@ class PurposeAwareMcpTool(BaseTool):
     async def run_async(self, *, args: dict[str, Any], tool_context: Any) -> Any:
         forwarded_args = dict(args)
         forwarded_args.pop(DISPLAY_PURPOSE_KEY, None)
+        forwarded_args.pop(LEGACY_DISPLAY_PURPOSE_KEY, None)
         return await self._wrapped_tool.run_async(
             args=forwarded_args,
             tool_context=tool_context,

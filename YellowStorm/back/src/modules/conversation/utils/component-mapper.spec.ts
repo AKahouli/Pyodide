@@ -312,15 +312,38 @@ describe('component-mapper choice extraction', () => {
         paramsJson: '{"query":"contract"}',
         resultJson: '{"matches":2}',
         startedAt: '2026-07-21T10:13:42Z',
-        summary: '',
-        renderKind: 'generic',
         primaryInput: 'return normalize(input);',
         primaryInputLanguage: 'typescript',
       },
     });
   });
 
-  it('sanitizes tool payloads before they enter the persistence buffer', () => {
+  it('preserves optional tool presentation metadata absence on terminal updates', () => {
+    const running = extractComponentData({
+      tool_activity: {
+        tool_name: 'search_documents',
+        status: 'running',
+        summary: 'Find the relevant financial reports',
+        render_kind: 'search',
+      },
+    });
+    const completed = extractComponentData({
+      tool_activity: {
+        tool_name: 'search_documents',
+        status: 'completed',
+        result_json: '{"matches":2}',
+      },
+    });
+
+    expect(running.data).toMatchObject({
+      summary: 'Find the relevant financial reports',
+      renderKind: 'search',
+    });
+    expect(completed.data).not.toHaveProperty('summary');
+    expect(completed.data).not.toHaveProperty('renderKind');
+  });
+
+  it('retains tool payloads for conditional sanitization at the output boundary', () => {
     const result = extractComponentData({
       id: 'tool-private',
       tool_activity: {
@@ -331,7 +354,7 @@ describe('component-mapper choice extraction', () => {
       },
     });
 
-    expect(result.data.paramsJson).not.toContain('/etc/yellowstorm');
-    expect(result.data.resultJson).not.toContain('short-value');
+    expect(result.data.paramsJson).toContain('/etc/yellowstorm');
+    expect(result.data.resultJson).toContain('short-value');
   });
 });

@@ -363,6 +363,27 @@ class TestMCPHelper:
         assert result == {"ok": True}
         assert wrapped.run_async.await_args.kwargs["args"] == {"command": "printf safe"}
 
+    def test_purpose_aware_real_mcp_tool_exposes_model_facing_purpose(self):
+        wrapped = McpTool(
+            mcp_tool=Tool(
+                name="code-interpreter_file_list",
+                description="List files",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            ),
+            mcp_session_manager=MagicMock(),
+        )
+
+        declaration = PurposeAwareMcpTool(wrapped)._get_declaration()
+
+        assert DISPLAY_PURPOSE_KEY == "display_purpose"
+        assert declaration.parameters_json_schema["required"] == ["path", DISPLAY_PURPOSE_KEY]
+        assert declaration.parameters_json_schema["properties"][DISPLAY_PURPOSE_KEY]["type"] == "string"
+        assert DISPLAY_PURPOSE_KEY not in wrapped.raw_mcp_tool.inputSchema["properties"]
+
     def test_purpose_aware_tool_supports_gemini_schema_declarations(self):
         wrapped = MagicMock()
         wrapped.name = "shell_exec"

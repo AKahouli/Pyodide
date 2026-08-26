@@ -1,7 +1,5 @@
 import { ComponentType } from '../interfaces/message.interface';
 import { normalizeChoiceComponentData } from './choice-component-normalizer';
-import { redactTaskDiagnosticText } from './task-diagnostics';
-import { sanitizeSerializedToolValue } from './public-component-sanitizer';
 
 const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> = [
   { field: 'text', type: 'text' },
@@ -267,7 +265,7 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
         type,
         data: {
           title: comp.task?.title || '',
-          items: (comp.task?.items || []).map((item: any) => redactTaskDiagnosticText(item.text || '')),
+          items: (comp.task?.items || []).map((item: any) => item.text || ''),
           status: comp.task?.status || 'pending',
         },
       };
@@ -362,15 +360,15 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
         data: {
           toolName: toolActivity?.tool_name || '',
           status: toolActivity?.status || 'running',
-          paramsJson: sanitizeSerializedToolValue(toolActivity?.params_json || ''),
-          ...(toolActivity?.result_json ? { resultJson: sanitizeSerializedToolValue(toolActivity.result_json) } : {}),
+          paramsJson: toolActivity?.params_json || '',
+          ...(toolActivity?.result_json ? { resultJson: toolActivity.result_json } : {}),
           ...(toolActivity?.started_at ? { startedAt: toolActivity.started_at } : {}),
           ...(toolActivity?.completed_at ? { completedAt: toolActivity.completed_at } : {}),
           ...(toolActivity?.duration_ms !== undefined ? { durationMs: Number(toolActivity.duration_ms) } : {}),
           ...(toolActivity?.display_key ? { displayKey: toolActivity.display_key } : {}),
           ...(toolActivity?.fallback_display_name ? { fallbackDisplayName: toolActivity.fallback_display_name } : {}),
-          summary: toolActivity?.summary || '',
-          renderKind: toolActivity?.render_kind || 'generic',
+          ...(toolActivity?.summary ? { summary: toolActivity.summary } : {}),
+          ...(toolActivity?.render_kind ? { renderKind: toolActivity.render_kind } : {}),
           ...(toolActivity?.actor_id ? { actorId: toolActivity.actor_id } : {}),
           ...(toolActivity?.actor_name ? { actorName: toolActivity.actor_name } : {}),
           ...(toolActivity?.primary_input ? { primaryInput: toolActivity.primary_input } : {}),

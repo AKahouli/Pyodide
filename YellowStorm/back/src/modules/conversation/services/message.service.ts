@@ -27,6 +27,7 @@ import { sanitizeTaskDiagnosticItems } from '../utils/task-diagnostics';
 import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import { StreamEvent } from '../interfaces/stream.interface';
 import { EmailService } from '../../email/email.service';
+import { ConversationSettingsService } from '../../system/conversation-settings.service';
 
 @Injectable()
 export class MessageService {
@@ -42,6 +43,7 @@ export class MessageService {
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     private readonly emailService: EmailService,
+    private readonly conversationSettings?: ConversationSettingsService,
   ) {
     this.logger.setContext('MessageService');
     this.appUrl = this.configService.get<string>(
@@ -1065,20 +1067,25 @@ export class MessageService {
 
   private publicComponents(components: unknown, includeToolResults = false): MessageComponent[] | undefined {
     if (!Array.isArray(components)) return undefined;
+    const redactSensitiveText = this.conversationSettings?.shouldRedactSensitiveText() !== false;
+    const options = { redactSensitiveText };
     return components.map((component) => {
       if (component?.type === 'task' && component.data) {
         return sanitizePublicComponent({
           id: component.id,
           type: component.type,
-          data: { ...component.data, items: sanitizeTaskDiagnosticItems(component.data.items) },
-        });
+          data: {
+            ...component.data,
+            items: redactSensitiveText ? sanitizeTaskDiagnosticItems(component.data.items) : component.data.items,
+          },
+        }, options);
       }
       if (!component?.data) return component;
       if (component.type !== 'toolActivity' || includeToolResults) {
-        return sanitizePublicComponent({ id: component.id, type: component.type, data: { ...component.data } });
+        return sanitizePublicComponent({ id: component.id, type: component.type, data: { ...component.data } }, options);
       }
       const { resultJson: _resultJson, result_json: _resultJsonSnake, ...publicData } = component.data;
-      return sanitizePublicComponent({ id: component.id, type: component.type, data: publicData });
+      return sanitizePublicComponent({ id: component.id, type: component.type, data: publicData }, options);
     });
   }
 

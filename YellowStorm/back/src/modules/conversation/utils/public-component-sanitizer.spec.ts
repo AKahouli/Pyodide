@@ -65,4 +65,34 @@ describe('public component sanitizer', () => {
 
     expect(component.data).toEqual({ artifactId: 'opaque', filename: 'report.pdf' });
   });
+
+  it('preserves paths but always removes credentials when display redaction is disabled', () => {
+    const component = sanitizePublicComponent({
+      id: 'tool-3',
+      type: 'toolActivity',
+      data: {
+        paramsJson: '{"command":"cat /etc/yellowstorm/config","password":"private","message":"Cookie: session=private YELLOWSTORM_ATTACHMENT_SENTINEL_42"}',
+        resultJson: '{"result":"VNC: ws://sandbox.internal/session/abc123\\nCDP: http://sandbox.internal/session/abc123\\nFile: https://storage.example/private/report?X-Amz-Credential=private-scope&X-Amz-Signature=private-signature"}',
+      },
+    }, { redactSensitiveText: false });
+
+    expect(component.data.paramsJson).toContain('/etc/yellowstorm/config');
+    expect(component.data.paramsJson).toContain('"password":"[REDACTED]"');
+    expect(component.data.paramsJson).not.toContain('session=private');
+    expect(component.data.paramsJson).not.toContain('YELLOWSTORM_ATTACHMENT_SENTINEL');
+    expect(component.data.resultJson).toContain('ws://sandbox.internal/session/abc123');
+    expect(component.data.resultJson).toContain('http://sandbox.internal/session/abc123');
+    expect(component.data.resultJson).toContain('X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED]');
+    expect(component.data.resultJson).not.toContain('private-signature');
+  });
+
+  it('keeps hard-omitted artifact paths private when display redaction is disabled', () => {
+    const component = sanitizePublicComponent({
+      id: 'artifact-2',
+      type: 'artifact',
+      data: { artifactId: 'opaque', filename: 'report.pdf', storagePath: '/workspace/run/report.pdf' },
+    }, { redactSensitiveText: false });
+
+    expect(component.data).toEqual({ artifactId: 'opaque', filename: 'report.pdf' });
+  });
 });

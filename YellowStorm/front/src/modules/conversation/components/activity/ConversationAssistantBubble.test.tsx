@@ -6,11 +6,15 @@ const mocks = vi.hoisted(() => ({
   getArtifactDownloadUrl: vi.fn(),
   openFileViewerFromUrl: vi.fn(),
   showError: vi.fn(),
+  redactSensitiveText: true,
 }));
 
 vi.mock('../../api', () => ({ getArtifactDownloadUrl: mocks.getArtifactDownloadUrl }));
 vi.mock('@/modules/file-viewer', () => ({ openFileViewerFromUrl: mocks.openFileViewerFromUrl }));
 vi.mock('@/lib/notifications', () => ({ showError: mocks.showError }));
+vi.mock('../../hooks/useConversationSettings', () => ({
+  useConversationSettings: () => ({ redactSensitiveText: mocks.redactSensitiveText }),
+}));
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string, options?: { tool?: string }) => ({
@@ -33,6 +37,7 @@ vi.mock('@/modules/localization', () => ({
 describe('ConversationAssistantBubble', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.redactSensitiveText = true;
   });
 
   it('renders activity, artifact, and answer in exact order inside one bubble', () => {
@@ -228,6 +233,19 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.queryByText(/YELLOWSTORM_ATTACHMENT_SENTINEL/)).not.toBeInTheDocument();
     expect(screen.queryByText(/\/workspace/)).not.toBeInTheDocument();
     expect(screen.getByText(/\[REDACTED\]/)).toBeInTheDocument();
+  });
+
+  it('renders internal paths when sensitive text redaction is disabled', () => {
+    mocks.redactSensitiveText = false;
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{ id: 'text-1', type: 'text', data: { content: 'Read /workspace/sources/id/private.pdf' } }]}
+    />);
+
+    expect(screen.getByText(/\/workspace\/sources\/id\/private.pdf/)).toBeInTheDocument();
+    expect(screen.queryByText(/\[REDACTED\]/)).not.toBeInTheDocument();
   });
 
   it('suppresses unsafe tool summaries and reduces file paths to a filename', () => {

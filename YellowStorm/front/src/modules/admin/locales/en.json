@@ -1829,5 +1829,14 @@
   "catalogTransfer.selectVisibleSkills": "Select visible skills ({{count}} selected)",
   "catalogTransfer.selectItem": "Select {{name}}",
   "catalogTransfer.refreshConnectors": "Refresh connectors",
-  "catalogTransfer.refreshSkills": "Refresh skills"
+  "catalogTransfer.refreshSkills": "Refresh skills",
+  "system.redaction.title": "Conversation sensitive text",
+  "system.redaction.description": "Control whether sensitive values are replaced in authenticated conversations and tool activities.",
+  "system.redaction.toggle": "Redact sensitive text",
+  "system.redaction.toggleDescription": "Replace credentials, internal paths, and similar values with [REDACTED]. Public shares remain protected.",
+  "system.redaction.warningTitle": "Sensitive values may be exposed",
+  "system.redaction.warningDescription": "Authenticated conversation participants may see credentials, internal paths, tool inputs, and tool outputs. Previously redacted records cannot be restored.",
+  "system.redaction.saved": "Sensitive text setting updated",
+  "system.redaction.loadError": "Unable to load the sensitive text setting",
+  "system.redaction.saveError": "Unable to update the sensitive text setting"
 }

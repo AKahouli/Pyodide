@@ -69,6 +69,7 @@ export interface ComposerSuggestionSettings {
 
 export interface ConversationSettings {
   composerSuggestions: ComposerSuggestionSettings;
+  redactSensitiveText?: boolean;
   updatedAt?: string;
 }
 

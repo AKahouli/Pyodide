@@ -399,7 +399,7 @@ class TestAgentRunner:
         mock_queue = AsyncMock()
         mock_content = types.Content(role="user", parts=[types.Part(text="test")])
 
-        mock_queue.include_tool_results = False
+        mock_queue.include_tool_results = True
 
         # Mock event with function call
         mock_event = MagicMock()
@@ -428,7 +428,11 @@ class TestAgentRunner:
         mock_response_event.content.parts[0].function_response.name = "run_code"
         mock_response_event.content.parts[0].function_response.id = "call-1"
         mock_response_event.content.parts[0].function_response.is_error = False
-        mock_response_event.content.parts[0].function_response.response = {}
+        mock_response_event.content.parts[0].function_response.response = {
+            "result": "VNC: ws://sandbox.internal/session/abc123",
+            "authorization": "Bearer private",
+            "message": "Cookie: session=private",
+        }
         mock_response_event.is_final_response.return_value = False
 
         # Mock final event
@@ -526,6 +530,7 @@ class TestAgentRunner:
                         "status": "completed",
                         "completed_at": ANY,
                         "duration_ms": ANY,
+                        "result_json": '{"result":"VNC: ws://sandbox.internal/session/abc123","authorization":"[REDACTED]","message":"Cookie: [REDACTED]"}',
                     },
                     "message_id": "session_123",
                     "component_id": "tool-agent_123-call-1",

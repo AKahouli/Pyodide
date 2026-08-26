@@ -109,6 +109,7 @@ import type {
   ConversationSettingsResponse,
   UpdateConversationSettingsRequest,
   ConversationSettingsAgentOption,
+  UpdateSensitiveTextRedactionRequest,
   CatalogExportRequest,
   CatalogConflictPolicy,
   CatalogImportResult,
@@ -1277,6 +1278,14 @@ export async function getAdminConversationSettingsAgents(): Promise<Conversation
 
 export async function updateAdminConversationSettings(data: UpdateConversationSettingsRequest): Promise<ConversationSettingsResponse> {
   const response = await apiClient.put<ApiResponse<ConversationSettingsResponse>>(API_ENDPOINTS.adminConversationSettings.base, data);
+  return response.data.data;
+}
+
+export async function updateSensitiveTextRedaction(data: UpdateSensitiveTextRedactionRequest): Promise<ConversationSettingsResponse> {
+  const response = await apiClient.patch<ApiResponse<ConversationSettingsResponse>>(
+    API_ENDPOINTS.adminConversationSettings.sensitiveTextRedaction,
+    data,
+  );
   return response.data.data;
 }
 

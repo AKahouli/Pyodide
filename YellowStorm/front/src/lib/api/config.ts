@@ -89,6 +89,7 @@ export const API_ENDPOINTS = {
   adminConversationSettings: {
     base: '/admin/conversation-settings',
     agents: '/admin/conversation-settings/agents',
+    sensitiveTextRedaction: '/admin/conversation-settings/sensitive-text-redaction',
   },
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',

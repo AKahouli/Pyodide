@@ -30,6 +30,15 @@ _ENV_CREDENTIAL = re.compile(
     r"\b([A-Z][A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|ACCESS_KEY|PRIVATE_KEY|CONNECTION_STRING)[A-Z0-9_]*)\b(\s*=\s*)[^\s,;]+",
     re.IGNORECASE,
 )
+_URL_USERINFO_PASSWORD = re.compile(
+    r"(\b[A-Za-z][A-Za-z0-9+.-]*://[^\s/@:]+:)[^\s/@]+(?=@)",
+    re.IGNORECASE,
+)
+_SIGNED_URL_QUERY_VALUE = re.compile(
+    r"([?&](?:x-amz-(?:signature|credential|security-token)|"
+    r"x-goog-(?:signature|credential)|sig|signature|credential)=)[^&#\s]+",
+    re.IGNORECASE,
+)
 _COMMAND_LIKE_PURPOSE = re.compile(
     r"(?:&&|\|\||[|`$])|"
     r"\b(?:sudo|cd|ls|cat|cp|mv|rm|chmod|chown|mkdir|touch|grep|sed|"
@@ -39,7 +48,8 @@ _COMMAND_LIKE_PURPOSE = re.compile(
     re.IGNORECASE,
 )
 _MAX_RESULT_BYTES = 64 * 1024
-DISPLAY_PURPOSE_KEY = "_display_purpose"
+DISPLAY_PURPOSE_KEY = "display_purpose"
+LEGACY_DISPLAY_PURPOSE_KEY = "_display_purpose"
 
 
 @dataclass(frozen=True)
@@ -50,20 +60,16 @@ class ToolPresentation:
     render_kind: str
 
 
-_KNOWN: dict[str, tuple[str, str, tuple[str, ...], str]] = {
-    "run_code": ("runCode", "run_code", ("description",), ""),
-    "code_interpreter_sandbox_create": (
-        "createSandbox", "generic", ("description",), "Prepare the execution environment"
-    ),
-    "code_interpreter_shell_exec": (
-        "runCommand", "run_code", ("description",), "Execute a command in the sandbox"
-    ),
-    "code_interpreter_send_file_to_user": (
-        "sendFile", "file", ("description",), "Make the generated file available"
-    ),
-    "perform_document_search": ("searchKnowledge", "search", ("query",), ""),
-    "perform_web_search": ("searchWeb", "web", ("query",), ""),
-    "perform_standard_search": ("search", "search", ("query",), ""),
+_TOOL_STYLES: dict[str, tuple[str, str]] = {
+    "run_code": ("runCode", "run_code"),
+    "code_interpreter_sandbox_create": ("createSandbox", "generic"),
+    "code_interpreter_file_find": ("findFiles", "file"),
+    "code_interpreter_file_list": ("findFiles", "file"),
+    "code_interpreter_shell_exec": ("runCommand", "run_code"),
+    "code_interpreter_send_file_to_user": ("sendFile", "file"),
+    "perform_document_search": ("searchKnowledge", "search"),
+    "perform_web_search": ("searchWeb", "web"),
+    "perform_standard_search": ("search", "search"),
 }
 
 
@@ -95,13 +101,6 @@ def sanitize_activity_summary(value: Any) -> str:
     return text[:137] + "..." if len(text) > 140 else text
 
 
-def _safe_file_label(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    filename = value.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
-    return sanitize_activity_summary(filename)
-
-
 def _safe_tool_summary(value: Any) -> str:
     summary = sanitize_activity_summary(value)
     if not summary:
@@ -116,54 +115,37 @@ def _safe_tool_summary(value: Any) -> str:
 
 
 def present_tool_call(tool_name: str, args: dict[str, Any]) -> ToolPresentation:
-    purpose = _safe_tool_summary(args.get(DISPLAY_PURPOSE_KEY))
     normalized = tool_name.strip().lower().replace("-", "_")
-    known = _KNOWN.get(normalized)
-    if known:
-        display_key, render_kind, summary_keys, default_summary = known
-        summary = purpose or next(
-            (_safe_tool_summary(args.get(key)) for key in summary_keys if _safe_tool_summary(args.get(key))),
-            default_summary,
-        )
-        return ToolPresentation(display_key, None, summary, render_kind)
+    purpose_value = args.get(DISPLAY_PURPOSE_KEY, args.get(LEGACY_DISPLAY_PURPOSE_KEY))
+    if normalized == "run_code" and purpose_value is None:
+        purpose_value = args.get("description")
+    purpose = _safe_tool_summary(purpose_value)
+    style = _TOOL_STYLES.get(normalized)
+    if style:
+        display_key, render_kind = style
+        return ToolPresentation(display_key, None, purpose, render_kind)
 
     if any(token in normalized for token in ("glob", "find_file", "list_file")):
-        return ToolPresentation(
-            "findFiles",
-            None,
-            purpose or _safe_file_label(args.get("pattern") or args.get("query")),
-            "file",
-        )
-    for token, display_key, kind, keys in (
-        ("read", "read", "read", ("path", "file_path")),
-        ("write", "write", "write", ("path", "file_path")),
-        ("copy", "copy", "file", ("source", "path")),
+        return ToolPresentation("findFiles", None, purpose, "file")
+    for token, display_key, kind in (
+        ("read", "read", "read"),
+        ("write", "write", "write"),
+        ("copy", "copy", "file"),
     ):
         if token in normalized:
-            summary = purpose or next(
-                (_safe_file_label(args.get(key)) for key in keys if _safe_file_label(args.get(key))),
-                "",
-            )
-            return ToolPresentation(display_key, None, summary, kind)
+            return ToolPresentation(display_key, None, purpose, kind)
 
-    summary = purpose or next(
-        (
-            _safe_tool_summary(args.get(key))
-            for key in ("description", "query", "path")
-            if _safe_tool_summary(args.get(key))
-        ),
-        "",
-    )
-    return ToolPresentation(None, _humanize(tool_name), summary, "generic")
+    return ToolPresentation(None, _humanize(tool_name), purpose, "generic")
 
 
 def serialize_tool_args(args: dict[str, Any]) -> str:
-    return serialize_tool_value(tool_args_without_display_purpose(args))
+    return serialize_tool_result(tool_args_without_display_purpose(args))
 
 
 def tool_args_without_display_purpose(args: dict[str, Any]) -> dict[str, Any]:
     forwarded_args = dict(args)
     forwarded_args.pop(DISPLAY_PURPOSE_KEY, None)
+    forwarded_args.pop(LEGACY_DISPLAY_PURPOSE_KEY, None)
     return forwarded_args
 
 
@@ -171,10 +153,12 @@ def sanitize_tool_value(value: Any, depth: int = 0) -> Any:
     if depth >= 6:
         return "[truncated]"
     if isinstance(value, str):
-        redacted = re.sub(r"Bearer\s+\S+", "Bearer [REDACTED]", value, flags=re.IGNORECASE)
+        redacted = _URL_USERINFO_PASSWORD.sub(r"\1[REDACTED]", value)
+        redacted = _SIGNED_URL_QUERY_VALUE.sub(r"\1[REDACTED]", redacted)
+        redacted = re.sub(r"Bearer\s+\S+", "Bearer [REDACTED]", redacted, flags=re.IGNORECASE)
         redacted = re.sub(
             r"\b(authorization)\b(\s*[:=]\s*)(?:(?:Basic|Bearer)\s+\S+|[^\s,;]+)",
-            rf"\1\2[REDACTED]",
+            r"\1\2[REDACTED]",
             redacted,
             flags=re.IGNORECASE,
         )
@@ -199,9 +183,47 @@ def sanitize_tool_value(value: Any, depth: int = 0) -> Any:
     return value
 
 
+def sanitize_tool_result_value(value: Any, depth: int = 0) -> Any:
+    if depth >= 6:
+        return "[truncated]"
+    if isinstance(value, str):
+        redacted = _URL_USERINFO_PASSWORD.sub(r"\1[REDACTED]", value)
+        redacted = _SIGNED_URL_QUERY_VALUE.sub(r"\1[REDACTED]", redacted)
+        redacted = re.sub(r"Bearer\s+\S+", "Bearer [REDACTED]", redacted, flags=re.IGNORECASE)
+        redacted = re.sub(
+            r"\b(authorization|cookie|set-cookie|password|passwd|secret|api[-_]?key|"
+            r"access[-_]?key|(?:access|refresh|id|client|api|session)[-_]?token|token|"
+            r"private[-_]?key|connection[-_]?string)\b(\s*[:=]\s*)"
+            r"(?:(?:Basic|Bearer)\s+)?[^\s,;]+",
+            r"\1\2[REDACTED]",
+            redacted,
+            flags=re.IGNORECASE,
+        )
+        redacted = _ENV_CREDENTIAL.sub(r"\1\2[REDACTED]", redacted)
+        redacted = _CREDENTIAL_VALUE.sub("[REDACTED]", redacted)
+        redacted = _ATTACHMENT_SENTINEL.sub("[REDACTED]", redacted)
+        return redacted[:20_000] + ("... [truncated]" if len(redacted) > 20_000 else "")
+    if isinstance(value, list):
+        return [sanitize_tool_result_value(item, depth + 1) for item in value[:100]]
+    if isinstance(value, dict):
+        return {
+            str(key): "[REDACTED]" if _SENSITIVE_KEY.match(str(key)) else sanitize_tool_result_value(item, depth + 1)
+            for key, item in list(value.items())[:100]
+        }
+    return value
+
+
 def serialize_tool_value(value: Any) -> str:
     try:
         encoded = json.dumps(sanitize_tool_value(value), default=str, separators=(",", ":"), ensure_ascii=False)
+    except (TypeError, ValueError):
+        return ""
+    return encoded if len(encoded.encode("utf-8")) <= _MAX_RESULT_BYTES else ""
+
+
+def serialize_tool_result(value: Any) -> str:
+    try:
+        encoded = json.dumps(sanitize_tool_result_value(value), default=str, separators=(",", ":"), ensure_ascii=False)
     except (TypeError, ValueError):
         return ""
     return encoded if len(encoded.encode("utf-8")) <= _MAX_RESULT_BYTES else ""

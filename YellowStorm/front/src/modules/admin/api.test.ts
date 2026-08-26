@@ -10,12 +10,14 @@ import {
   setMaintenanceMode,
   updatePlan,
   updateFeatureVisibility,
+  updateSensitiveTextRedaction,
 } from './api';
 
 const getMock = vi.hoisted(() => vi.fn());
 const postMock = vi.hoisted(() => vi.fn());
 const putMock = vi.hoisted(() => vi.fn());
 const deleteMock = vi.hoisted(() => vi.fn());
+const patchMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/api/client', () => ({
   default: {
@@ -23,6 +25,7 @@ vi.mock('@/lib/api/client', () => ({
     post: postMock,
     put: putMock,
     delete: deleteMock,
+    patch: patchMock,
   },
 }));
 
@@ -42,6 +45,9 @@ vi.mock('@/lib/api/config', () => ({
     adminPlaybookSettings: {
       plannerAgents: '/admin/playbook-settings/planner-agents',
       suggestorAgents: '/admin/playbook-settings/suggestor-agents',
+    },
+    adminConversationSettings: {
+      sensitiveTextRedaction: '/admin/conversation-settings/sensitive-text-redaction',
     },
   },
 }));
@@ -122,5 +128,16 @@ describe('admin api', () => {
     expect(deleteMock).toHaveBeenCalledWith('/usage/plans/p1');
     expect(plans).toEqual([{ id: 'p1' }]);
     expect(plan).toEqual({ id: 'p1', name: 'pro' });
+  });
+
+  it('updates sensitive text redaction through the dedicated endpoint', async () => {
+    patchMock.mockResolvedValue({ data: { data: { redactSensitiveText: false, composerSuggestions: {} } } });
+
+    await expect(updateSensitiveTextRedaction({ redactSensitiveText: false }))
+      .resolves.toMatchObject({ redactSensitiveText: false });
+    expect(patchMock).toHaveBeenCalledWith(
+      '/admin/conversation-settings/sensitive-text-redaction',
+      { redactSensitiveText: false },
+    );
   });
 });
