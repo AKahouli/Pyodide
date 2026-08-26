@@ -9,8 +9,8 @@ export default registerAs('litellm', () => ({
 
   // Embeddings (used to index humain-agent roles via pgvector)
   embeddingsEndpoint: '/v1/embeddings',
-  embeddingModel: process.env.EMBEDDING_MODEL || 'text-embedding-3-large',
-  embeddingDimension: Number.parseInt(process.env.EMBEDDING_DIMENSION || '3072', 10),
+  embeddingModel: process.env.EMBEDDING_MODEL || 'qwen3-embedding',
+  embeddingDimension: Number.parseInt(process.env.EMBEDDING_DIMENSION || '2560', 10),
 
   // Connection health check settings
   healthCheck: {
