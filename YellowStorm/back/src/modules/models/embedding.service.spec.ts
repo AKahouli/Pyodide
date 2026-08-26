@@ -12,8 +12,8 @@ const config = {
     const m: Record<string, unknown> = {
       'litellm.apiUrl': 'http://litellm',
       'litellm.embeddingsEndpoint': '/v1/embeddings',
-      'litellm.embeddingModel': 'text-embedding-3-large',
-      'litellm.embeddingDimension': 3072,
+      'litellm.embeddingModel': 'qwen3-embedding',
+      'litellm.embeddingDimension': 2560,
       'litellm.timeoutMs': 10000,
       'litellm.apiKey': 'k',
     };
@@ -25,13 +25,14 @@ describe('EmbeddingService', () => {
   beforeEach(() => jest.clearAllMocks());
 
   it('returns the embedding vector from the LiteLLM response', async () => {
-    mockedAxios.post.mockResolvedValue({ data: { data: [{ embedding: [0.1, 0.2, 0.3] }] } });
+    const embedding = Array.from({ length: 2560 }, (_, index) => index / 2560);
+    mockedAxios.post.mockResolvedValue({ data: { data: [{ embedding }] } });
     const svc = new EmbeddingService(config, loggerStub());
 
-    await expect(svc.embed('Alice. Support agent')).resolves.toEqual([0.1, 0.2, 0.3]);
+    await expect(svc.embed('Alice. Support agent')).resolves.toEqual(embedding);
     expect(mockedAxios.post).toHaveBeenCalledWith(
       'http://litellm/v1/embeddings',
-      { model: 'text-embedding-3-large', input: 'Alice. Support agent', dimensions: 3072 },
+      { model: 'qwen3-embedding', input: 'Alice. Support agent' },
       expect.objectContaining({ headers: { Authorization: 'Bearer k' } }),
     );
   });
@@ -46,6 +47,27 @@ describe('EmbeddingService', () => {
   it('returns null (never throws) when the request fails', async () => {
     mockedAxios.post.mockRejectedValue(new Error('down'));
     const svc = new EmbeddingService(config, loggerStub());
+    await expect(svc.embed('x')).resolves.toBeNull();
+  });
+
+  it('returns null when LiteLLM returns the wrong number of dimensions', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { data: [{ embedding: [0.1, 0.2] }] } });
+    const logger = loggerStub();
+    const svc = new EmbeddingService(config, logger);
+
+    await expect(svc.embed('x')).resolves.toBeNull();
+    expect(logger.error).toHaveBeenCalledWith('Embedding response has an invalid vector shape', {
+      expectedDimensions: 2560,
+      actualDimensions: 2,
+    });
+  });
+
+  it('returns null when LiteLLM returns a non-finite vector value', async () => {
+    const embedding = Array.from({ length: 2560 }, () => 0.1);
+    embedding[42] = Number.NaN;
+    mockedAxios.post.mockResolvedValue({ data: { data: [{ embedding }] } });
+    const svc = new EmbeddingService(config, loggerStub());
+
     await expect(svc.embed('x')).resolves.toBeNull();
   });
 });

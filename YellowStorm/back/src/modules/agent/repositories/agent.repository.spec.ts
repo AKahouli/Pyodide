@@ -219,10 +219,10 @@ describeIntegration('AgentRepository plan-4 methods (integration)', () => {
     expect((await repo.findById(strip.id))!.connectorActionSelections).toEqual([]);
   });
 
-  it('setRoleEmbedding stores a 3072-dim halfvec on the agent', async () => {
+  it('setRoleEmbedding stores a 2560-dim halfvec on the agent', async () => {
     const input = createInput({});
     created.push(input.id); await repo.create(input);
-    const vec = Array.from({ length: 3072 }, (_, i) => (i % 7) / 10);
+    const vec = Array.from({ length: 2560 }, (_, i) => (i % 7) / 10);
     await repo.setRoleEmbedding(input.id, vec);
     const rows = await (db as never as { execute: (q: unknown) => Promise<{ rows: Array<{ has: boolean }> }> })
       .execute(sqlTag`SELECT role_embedding IS NOT NULL AS has FROM agents WHERE id = ${input.id}`);

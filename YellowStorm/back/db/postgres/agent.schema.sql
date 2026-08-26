@@ -81,9 +81,9 @@ CREATE TABLE IF NOT EXISTS agents (
   a2a_published_at              timestamptz,
 
   -- Semantic index of the agent role. Populated ONLY for humain-type agents
-  -- (embedding of `name. role`, text-embedding-3-large, 3072-dim). halfvec is
+  -- (embedding of `name. role`, qwen3-embedding, 2560-dim). halfvec is
   -- required because pgvector's index types cap plain `vector` at 2000 dims.
-  role_embedding                halfvec(3072),
+  role_embedding                halfvec(2560),
 
   -- Timestamps (Mongoose `timestamps: true`)
   created_at                    timestamptz  NOT NULL DEFAULT now(),

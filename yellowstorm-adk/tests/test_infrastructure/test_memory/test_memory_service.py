@@ -42,7 +42,8 @@ def mock_settings():
     mock.QDRANT_URL = "https://test-qdrant-url.com"
     mock.QDRANT_COLLECTION_NAME = "test-qdrant-collection"
     mock.QDRANT_API_KEY = "test-qdrant-api-key"
-    mock.EMBEDDING_DIMS = 3072
+    mock.EMBEDDING_DIMS = 2560
+    mock.EMBEDDING_MODEL = "qwen3-embedding"
     mock.LITELLM_API_SECRET_KEY = "test-litellm-key"
     mock.LITELLM_API_BASE_URL = "https://test-litellm-url.com"
     mock.MEMORY_MODEL = "gpt-4o-mini"
@@ -98,6 +99,7 @@ class TestMemoryService:
         assert config["vector_store"]["provider"] == "qdrant"
         assert "url" in config["vector_store"]["config"]
         assert "collection_name" in config["vector_store"]["config"]
+        assert config["vector_store"]["config"]["collection_name"] == "test-qdrant-collection-d2560"
         assert "api_key" in config["vector_store"]["config"]
         assert config["vector_store"]["config"]["embedding_model_dims"] == mock_settings.EMBEDDING_DIMS
 
@@ -109,8 +111,15 @@ class TestMemoryService:
 
         # Test embedder config
         assert config["embedder"]["provider"] == "openai"
-        assert config["embedder"]["config"]["model"] == "azure/text-embedding-3-large"
-        assert config["embedder"]["config"]["embedding_dims"] == 3072
+        assert config["embedder"]["config"]["model"] == mock_settings.EMBEDDING_MODEL
+        assert "embedding_dims" not in config["embedder"]["config"]
+
+    @pytest.mark.unit
+    def test_rejects_invalid_embedding_dimensions(self, mock_settings):
+        mock_settings.EMBEDDING_DIMS = 0
+
+        with pytest.raises(ValueError, match="EMBEDDING_DIMS must be a positive integer"):
+            MemoryService(mock_settings)
 
     @pytest.mark.unit
     @pytest.mark.asyncio
