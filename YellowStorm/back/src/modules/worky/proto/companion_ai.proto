@@ -49,6 +49,13 @@ service CompanionAi {
   // resuming the step a second time. Acks immediately like RunTask, so the
   // caller's webhook can answer Graph inside its timeout.
   rpc DeliverMailReply (DeliverMailReplyRequest) returns (DeliverMailReplyResponse);
+
+  // The Teams chats worky is waiting on a reply in. Teams carries no routing
+  // token and worky cannot subscribe to a chat it does not know, so the backend
+  // polls: it asks which chats are open, reads each for a human reply, and hands
+  // any back via DeliverMailReply(chat_id=...). A claimed wait drops off the
+  // list, which is what stops the poll.
+  rpc ListOpenChatWaits (ListOpenChatWaitsRequest) returns (ListOpenChatWaitsResponse);
 }
 
 // ===================== Commands =====================
@@ -107,6 +114,11 @@ message DeliverMailReplyRequest {
   string reply_from = 3;
   repeated ConnectorBinding connectors = 5;
   repeated chatbot.Agent agents = 7;
+  // Set INSTEAD of `token` when the reply came over Teams: Teams messages carry
+  // no routing token (Graph correlates by chat identity), so the caller passes
+  // the 1:1 chat id and worky resolves it to the parked step. Exactly one of
+  // `token` / `chat_id` is set.
+  string chat_id = 8;
 }
 
 message DeliverMailReplyResponse {
@@ -116,6 +128,18 @@ message DeliverMailReplyResponse {
   bool   delivered  = 1;
   string session_id = 2;
   string step_id    = 3;
+}
+
+message ListOpenChatWaitsRequest {}
+
+message ListOpenChatWaitsResponse {
+  repeated ChatWait waits = 1;
+}
+
+message ChatWait {
+  string chat_id    = 1;   // the 1:1 chat to read for a reply
+  string user_id    = 2;   // whose M365 token can read that chat
+  string session_id = 3;
 }
 
 // ===================== Plan (the core UX object) =====================
