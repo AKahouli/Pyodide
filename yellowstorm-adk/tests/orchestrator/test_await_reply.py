@@ -730,6 +730,30 @@ def test_only_send_email_is_recognised_among_a_connectors_tools():
                   "microsoft365_create_meeting", "linkup_linkup_search"):
         assert not nodes.is_send_email_tool(_tool(other)), other
 
+    # The Teams sibling recognises only send_teams_message, and never the mail tool.
+    assert nodes.is_send_teams_tool(_tool("microsoft365_send_teams_message"))
+    for other in ("microsoft365_send_email", "microsoft365_search_documents",
+                  "microsoft365_create_meeting"):
+        assert not nodes.is_send_teams_tool(_tool(other)), other
+
+
+def test_teams_chat_id_is_read_from_the_send_result():
+    """The Teams wait is bound to the chat the message landed in — parsed from
+    send_teams_message's JSON result. A channel send (no chatId) or a failure
+    yields None, so the wrapper knows the reply cannot be routed."""
+    import json
+    # Explicit top-level chat_id (what send_teams_message surfaces).
+    explicit = json.dumps({"status": "success", "chat_id": "19:abc@thread.v2", "data": {"id": "1"}})
+    assert nodes._teams_chat_id(explicit) == "19:abc@thread.v2"
+    # Fallback: Graph echoed chatId on the message resource.
+    echoed = json.dumps({"status": "success", "data": {"id": "1", "chatId": "19:def@thread.v2"}})
+    assert nodes._teams_chat_id(echoed) == "19:def@thread.v2"
+    # Neither present (channel send / no chat) → None so the wrapper warns.
+    assert nodes._teams_chat_id(json.dumps({"status": "success", "data": {"id": "1"}})) is None
+    assert nodes._teams_chat_id('{"status":"error","message":"nope"}') is None
+    assert nodes._teams_chat_id("not json") is None
+    assert nodes._teams_chat_id(None) is None
+
 
 if __name__ == "__main__":
     test_await_reply_parks_then_resumes_with_the_reply_body()

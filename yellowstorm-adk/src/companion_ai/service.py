@@ -488,6 +488,19 @@ class OrchestratorService:
                     await_step_for.setdefault(dep, s.id)
         rm = self._rm
 
+        def wrap(t, token_provider, mail_on_sent, teams_on_sent):
+            # A send step carries the token/chat of the reply its await sibling
+            # waits on. Mail stamps the token into the message; Teams stamps
+            # nothing (the chat id, learned from the send result, is the
+            # correlation). Every other tool passes through untouched.
+            if nodes.is_send_email_tool(t):
+                return nodes.stamp_send_email_tool(t, token_provider=token_provider,
+                                                   on_sent=mail_on_sent)
+            if nodes.is_send_teams_tool(t):
+                return nodes.record_send_teams_tool(t, token_provider=token_provider,
+                                                    on_sent=teams_on_sent)
+            return t
+
         def tools_for_step(step: Step, tools: List) -> List:
             await_step_id = await_step_for.get(step.id)
             if await_step_id:
@@ -499,9 +512,12 @@ class OrchestratorService:
                 async def on_sent(token, recipients):
                     if recipients:
                         await rm.set_mail_wait_expected_from(token, ",".join(recipients))
-                return [nodes.stamp_send_email_tool(t, token_provider=token_provider, on_sent=on_sent)
-                        if nodes.is_send_email_tool(t) else t
-                        for t in tools]
+                # Teams: bind the wait to the chat the message was sent in; the
+                # chat membership is the trust boundary, so there is no recipient
+                # list to record.
+                async def on_sent_teams(token, chat_id):
+                    await rm.bind_teams_wait_target(token, chat_id)
+                return [wrap(t, token_provider, on_sent, on_sent_teams) for t in tools]
             pending_id = f"__pending__:{step.id}"
 
             # Mint only — pure, no DB. The token has to be in the mail, so
@@ -518,9 +534,14 @@ class OrchestratorService:
                     token, session_id=session_id, step_id=_pending_id,
                     user_id=user_id, expected_from=(",".join(recipients) or None),
                     expires_at=expires_at)
-            return [nodes.stamp_send_email_tool(
-                        t, token_provider=eager_token_provider, on_sent=eager_on_sent)
-                    if nodes.is_send_email_tool(t) else t
+
+            async def eager_on_sent_teams(token, chat_id, _pending_id=pending_id):
+                expires_at = datetime.now(timezone.utc) + timedelta(
+                    hours=self._mail_wait_timeout_hours)
+                await rm.register_mail_wait(
+                    token, session_id=session_id, step_id=_pending_id,
+                    user_id=user_id, conversation_id=chat_id, expires_at=expires_at)
+            return [wrap(t, eager_token_provider, eager_on_sent, eager_on_sent_teams)
                     for t in tools]
 
         return tools_for_step

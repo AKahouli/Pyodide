@@ -317,4 +317,73 @@ export class WorkyOrchestratorGrpcClientService
       );
     });
   }
+
+  /**
+   * Hand a Teams reply to whichever step was waiting for it. Same resume as
+   * mail, but the message carried no routing token — Teams correlates a reply by
+   * chat identity — so we pass the chat id and worky resolves it. `delivered:
+   * false` is normal (already resumed by an earlier poll tick, or not-a-reply).
+   */
+  async deliverChatReply(input: {
+    chatId: string;
+    replyBody: string;
+    replyFrom?: string;
+    agents?: unknown[];
+    connectors?: unknown[];
+  }): Promise<{ delivered: boolean; sessionId: string; stepId: string }> {
+    return new Promise((resolve, reject) => {
+      this.client.DeliverMailReply(
+        {
+          chat_id: input.chatId,
+          reply_body: input.replyBody,
+          reply_from: input.replyFrom ?? '',
+          agents: input.agents ?? [],
+          connectors: input.connectors ?? [],
+        },
+        createGrpcMetadata(this.config, WORKY_ORCHESTRATOR_GRPC_SECURITY_NS),
+        this.unaryDeadline,
+        (
+          err: grpc.ServiceError | null,
+          response: { delivered: boolean; session_id: string; step_id: string },
+        ) => {
+          if (err) return reject(err);
+          resolve({
+            delivered: !!response.delivered,
+            sessionId: response.session_id ?? '',
+            stepId: response.step_id ?? '',
+          });
+        },
+      );
+    });
+  }
+
+  /**
+   * The Teams chats worky is currently waiting on a reply in. The poller reads
+   * each and forwards any human reply via deliverChatReply. Empty is the common
+   * answer (nothing waiting).
+   */
+  async listOpenChatWaits(): Promise<
+    Array<{ chatId: string; userId: string; sessionId: string }>
+  > {
+    return new Promise((resolve, reject) => {
+      this.client.ListOpenChatWaits(
+        {},
+        createGrpcMetadata(this.config, WORKY_ORCHESTRATOR_GRPC_SECURITY_NS),
+        this.unaryDeadline,
+        (
+          err: grpc.ServiceError | null,
+          response: { waits?: Array<{ chat_id: string; user_id: string; session_id: string }> },
+        ) => {
+          if (err) return reject(err);
+          resolve(
+            (response.waits ?? []).map((w) => ({
+              chatId: w.chat_id,
+              userId: w.user_id,
+              sessionId: w.session_id,
+            })),
+          );
+        },
+      );
+    });
+  }
 }

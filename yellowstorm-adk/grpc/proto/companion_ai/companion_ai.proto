@@ -38,17 +38,27 @@ service CompanionAi {
   // (worky re-drives the remaining steps). Unlike Stop, this is not terminal.
   rpc PauseSession (PauseSessionRequest) returns (PauseSessionResponse);
 
-  // Hand an email reply to the step waiting for it. The routing token travelled
-  // in the outbound mail and came back on the reply; only worky can turn it into
-  // a session/step/interrupt, so the caller passes the token and worky resolves
-  // and resumes internally — it does NOT reimplement continuation, it delegates
-  // to the same resume the RunTask path uses.
+  // Hand a reply (email OR Teams) to the step waiting for it. Mail carries a
+  // routing token that travelled in the outbound message; Teams carries none —
+  // Graph correlates the reply structurally, so the caller passes the chat id
+  // instead. Either way only worky can turn the identifier into a
+  // session/step/interrupt: the caller passes token OR chat_id and worky
+  // resolves and resumes internally, delegating to the same resume the RunTask
+  // path uses rather than reimplementing continuation.
   //
-  // Claim-once: a token resolves for exactly one delivery. A duplicate (Graph
-  // retries anything it thinks failed) returns delivered=false rather than
-  // resuming the step a second time. Acks immediately like RunTask, so the
+  // Claim-once: an identifier resolves for exactly one delivery. A duplicate
+  // (Graph retries anything it thinks failed) returns delivered=false rather
+  // than resuming the step a second time. Acks immediately like RunTask, so the
   // caller's webhook can answer Graph inside its timeout.
   rpc DeliverMailReply (DeliverMailReplyRequest) returns (DeliverMailReplyResponse);
+
+  // The Teams chats worky is currently waiting on a reply in. Teams carries no
+  // routing token and worky cannot subscribe to a chat it does not know, so the
+  // backend polls: it asks which chats are open, reads each for a human reply,
+  // and hands any back via DeliverMailReply(chat_id=...). Only waits that are
+  // deliverable (message sent -> chat known, and step parked -> interrupt bound)
+  // are listed; a claimed wait drops off the list, which is what stops the poll.
+  rpc ListOpenChatWaits (ListOpenChatWaitsRequest) returns (ListOpenChatWaitsResponse);
 }
 
 // ===================== Commands =====================
@@ -107,6 +117,12 @@ message DeliverMailReplyRequest {
   string reply_from = 3;
   repeated ConnectorBinding connectors = 5;
   repeated chatbot.Agent agents = 7;
+  // Set INSTEAD of `token` when the reply came over Teams: Teams messages carry
+  // no routing token (Graph correlates a reply by chat identity), so the caller
+  // passes the 1:1 chat id and worky resolves it to the parked step. Exactly one
+  // of `token` / `chat_id` is set. reply_from is still verified against the
+  // wait's expected recipient.
+  string chat_id = 8;
 }
 
 message DeliverMailReplyResponse {
@@ -116,6 +132,20 @@ message DeliverMailReplyResponse {
   bool   delivered  = 1;
   string session_id = 2;
   string step_id    = 3;
+}
+
+message ListOpenChatWaitsRequest {}
+
+message ListOpenChatWaitsResponse {
+  repeated ChatWait waits = 1;
+}
+
+message ChatWait {
+  // The 1:1 chat id the reply is expected in; the backend reads it for a reply.
+  string chat_id    = 1;
+  // Whose M365 token can read that chat (the account that sent the message).
+  string user_id    = 2;
+  string session_id = 3;
 }
 
 // ===================== Plan (the core UX object) =====================

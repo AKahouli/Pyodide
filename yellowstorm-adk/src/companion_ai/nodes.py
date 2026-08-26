@@ -9,6 +9,7 @@ Reuses the project's LLMFactory so model/proxy config stays in one place.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from email.utils import parseaddr
@@ -315,6 +316,13 @@ def is_send_email_tool(tool) -> bool:
     return name.endswith("_send_email")
 
 
+def is_send_teams_tool(tool) -> bool:
+    """True for a connector's send_teams_message action tool, whatever connector
+    it came from. The Teams sibling of is_send_email_tool."""
+    name = getattr(getattr(tool, "func", None), "__name__", "") or ""
+    return name.endswith("_send_teams_message")
+
+
 def artifacts_from_tool_result(result) -> List[dict]:
     """Every file a connector tool just produced — none, one, or several.
 
@@ -479,6 +487,52 @@ def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Option
     stamped.__signature__ = original.__signature__
     stamped.__annotations__ = original.__annotations__
     return SearchToolADK(stamped, {"function": tool.custom_schema})
+
+
+def _teams_chat_id(result) -> Optional[str]:
+    """The 1:1 chat id of the message send_teams_message just posted, from its
+    JSON result — or None (a channel send has no chat id; that path is not
+    resumable yet, backlog #4). The reply is correlated by this chat id, so a
+    missing one means the reply can never route back."""
+    try:
+        top = json.loads(result) if isinstance(result, str) else (result or {})
+        # Prefer the id the send tool surfaces explicitly; fall back to the one
+        # Graph echoes on the created message (not always present).
+        return top.get("chat_id") or (top.get("data") or {}).get("chatId")
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def record_send_teams_tool(tool, *, token_provider: Callable[[], Awaitable[Optional[str]]],
+                           on_sent: Optional[Callable[[str, Optional[str]], Awaitable[None]]] = None):
+    """Wrap a send_teams_message tool so its wait learns which chat to resume on.
+
+    Unlike mail, NOTHING is stamped into the message: Teams correlates a reply
+    structurally (the Graph chat id), so there is no routing token in the
+    payload and the executor's message goes out untouched. `on_sent(token,
+    chat_id)` runs only after a successful send — chat_id comes from the send
+    result — for the caller to bind the wait to that chat. A send that raises
+    leaves no chat bound, so no reply can resume a message that never went out.
+    """
+    from src.smart_rag.tools.search.tools import SearchToolADK
+
+    original = tool.func
+
+    async def recorded(**kwargs):
+        result = await original(**kwargs)
+        token = await token_provider()
+        if token and on_sent is not None:
+            chat_id = _teams_chat_id(result)
+            if not chat_id:
+                logger.warning("send_teams_message: no chat id in the send result — a "
+                               "reply cannot resume this step (channel send, or send failed)")
+            await on_sent(token, chat_id)
+        return result
+
+    recorded.__name__ = original.__name__
+    recorded.__signature__ = original.__signature__
+    recorded.__annotations__ = original.__annotations__
+    return SearchToolADK(recorded, {"function": tool.custom_schema})
 
 
 def _stored_result_node(name: str, text: str):

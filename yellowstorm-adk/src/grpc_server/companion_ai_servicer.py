@@ -100,6 +100,16 @@ def _describe_request(request) -> str:
     )
 
 
+def _agent_models(request) -> str:
+    """Just the model each incoming agent will run on — the field most often
+    worth eyeballing when a completion is rejected for a bad model name
+    (e.g. a proxy alias that doesn't match). Greppable on its own line."""
+    if not request.agents:
+        return "(no agents — using built-in defaults)"
+    return ", ".join(f"{a.agent_type or a.name or a.id}→{a.chatbot.model or '(default)'}"
+                     for a in request.agents)
+
+
 def _connectors_to_dicts(connectors) -> list:
     """proto ConnectorBinding[] -> the binding dict create_connector_tools wants.
 
@@ -153,6 +163,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         # this one request; the RPC itself only ever returns an ack.
         run_id = uuid.uuid4().hex
         logger.info("[worky] 1. RunTask ◄ incoming request: %s", _describe_request(request))
+        logger.info("[worky] 1. RunTask ◄ models: %s", _agent_models(request))
 
         # A message that arrives WHILE a plan is executing is NOT a supersede.
         # The old behaviour cancelled the running turn and replanned — which
@@ -396,15 +407,22 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         # Claim before anything else: this is what makes a duplicate delivery a
         # no-op instead of a second resume. Graph retries whatever it thinks
         # failed, so this path is walked twice as a matter of course.
-        wait = await self._rm.claim_mail_wait(request.token, reply_from=request.reply_from)
+        # Teams passes chat_id (no routing token in the payload — Graph correlates
+        # the reply by chat identity); mail passes the token. Both resolve to a
+        # parked wait and resume identically from here.
+        if request.chat_id:
+            wait = await self._rm.claim_chat_wait(request.chat_id, reply_from=request.reply_from)
+        else:
+            wait = await self._rm.claim_mail_wait(request.token, reply_from=request.reply_from)
         if wait is None:
-            logger.info("[worky] DeliverMailReply ignored — token unknown, wrong sender, "
+            logger.info("[worky] DeliverMailReply ignored — token/chat unknown, wrong sender, "
                         "already delivered, expired or cancelled")
             return pb.DeliverMailReplyResponse(delivered=False)
 
         session_id, user_id = wait["session_id"], wait["user_id"]
-        logger.info("[worky] DeliverMailReply ◄ session=%s step=%s from=%s (%d chars)",
-                    session_id, wait["step_id"], request.reply_from or "?",
+        channel = "Teams" if request.chat_id else "Email"
+        logger.info("[worky] DeliverMailReply ◄ %s session=%s step=%s from=%s (%d chars)",
+                    channel, session_id, wait["step_id"], request.reply_from or "?",
                     len(request.reply_body))
 
         # Ack immediately and resume in the background: the caller is answering a
@@ -412,7 +430,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
         model = (executor.chatbot.model if executor else "") or DEFAULT_MODEL
         prev = self._running.get(session_id)
-        task = asyncio.create_task(self._resume_with_reply(request, wait, model, prev))
+        task = asyncio.create_task(self._resume_with_reply(request, wait, model, prev, channel=channel))
         self._bg.add(task)
         task.add_done_callback(self._bg.discard)
         task.add_done_callback(self._forget_running(session_id))
@@ -420,8 +438,22 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         return pb.DeliverMailReplyResponse(
             delivered=True, session_id=session_id, step_id=wait["step_id"])
 
+    async def ListOpenChatWaits(self, request: pb.ListOpenChatWaitsRequest,
+                                context) -> pb.ListOpenChatWaitsResponse:
+        """The Teams chats worky is waiting on a reply in. The backend poller reads
+        each one and hands any human reply back via DeliverMailReply(chat_id=...).
+        Read-only; empty when nothing is waiting or the read model is absent."""
+        if self._rm is None:
+            return pb.ListOpenChatWaitsResponse()
+        waits = await self._rm.open_chat_waits()
+        return pb.ListOpenChatWaitsResponse(waits=[
+            pb.ChatWait(chat_id=w["conversation_id"], user_id=w["user_id"],
+                        session_id=w["session_id"])
+            for w in waits])
+
     async def _resume_with_reply(self, request: pb.DeliverMailReplyRequest, wait: dict,
-                                 model: str, prev: Optional[asyncio.Task] = None) -> None:
+                                 model: str, prev: Optional[asyncio.Task] = None,
+                                 channel: str = "Email") -> None:
         session_id = wait["session_id"]
         try:
             # Same last-answer-wins handshake as RunTask: never let two turns run
@@ -456,9 +488,9 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
             # override it.
             sender = (request.reply_from or "").strip()
             answer = mail_token.scrub(request.reply_body)
-            answer = (f"Email reply from {sender}, answering the message this step was "
+            answer = (f"{channel} reply from {sender}, answering the message this step was "
                       f"waiting on:\n\n{answer}" if sender else
-                      f"Email reply answering the message this step was waiting on:"
+                      f"{channel} reply answering the message this step was waiting on:"
                       f"\n\n{answer}")
             await self._svc.resume_turn(
                 session_id=session_id, user_id=wait["user_id"],
