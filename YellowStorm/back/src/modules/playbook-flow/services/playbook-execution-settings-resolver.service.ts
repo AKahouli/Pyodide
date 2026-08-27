@@ -1,8 +1,13 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import playbookFlowConfig from '@config/playbook-flow.config';
 import { SystemService } from '@modules/system/system.service';
 import type { PlaybookExecutionAdminSettings } from '@modules/system/interfaces/playbook-settings.interface';
+import type { FlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
+import {
+  PlaybookFlowSettingsService,
+  type ResolvedPlaybookPlannerAgentConfig,
+} from './playbook-flow-settings.service';
 
 export interface EffectivePlaybookExecutionSettings extends PlaybookExecutionAdminSettings {
   dynamicReasoningEnabled: boolean;
@@ -15,7 +20,18 @@ export class PlaybookExecutionSettingsResolverService {
     private readonly systemService: SystemService,
     @Inject(playbookFlowConfig.KEY)
     private readonly config: ConfigType<typeof playbookFlowConfig>,
+    @Optional() private readonly settingsService?: PlaybookFlowSettingsService,
   ) {}
+
+  async resolvePlanner(
+    agentId: string,
+    flowSettings?: Partial<FlowDesignSettings> | Record<string, unknown> | null,
+  ): Promise<ResolvedPlaybookPlannerAgentConfig> {
+    if (!this.settingsService) {
+      throw new Error('PlaybookFlowSettingsService is required for planner model resolution');
+    }
+    return this.settingsService.resolvePlaybookPlanner(agentId, flowSettings);
+  }
 
   async resolve(flowSettings?: { recursionLimit?: number; maxParallelism?: number }): Promise<EffectivePlaybookExecutionSettings> {
     const stored = (await this.systemService.getPlaybookSettings()).playbookExecution;

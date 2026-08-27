@@ -83,4 +83,15 @@ describe('PlaybookExecutionSettingsResolverService', () => {
       graphCacheEnabled: true,
     });
   });
+
+  it('delegates planner model resolution with flow settings', async () => {
+    const settingsService = {
+      resolvePlaybookPlanner: jest.fn().mockResolvedValue({ model: 'resolved-model' }),
+    };
+    const service = new PlaybookExecutionSettingsResolverService({} as never, {} as never, settingsService as never);
+    const flowSettings = { inferenceModelId: 'flow-model' };
+
+    await expect(service.resolvePlanner('planner-1', flowSettings)).resolves.toEqual({ model: 'resolved-model' });
+    expect(settingsService.resolvePlaybookPlanner).toHaveBeenCalledWith('planner-1', flowSettings);
+  });
 });

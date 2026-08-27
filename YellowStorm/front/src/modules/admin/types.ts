@@ -1062,10 +1062,12 @@ export interface PlaybookPlannerAgentOption {
   id: string;
   name: string;
   description?: string;
-  model: string;
+  model: string | null;
 }
 
-export type PlaybookSuggestorAgentOption = PlaybookPlannerAgentOption;
+export interface PlaybookSuggestorAgentOption extends Omit<PlaybookPlannerAgentOption, 'model'> {
+  model: string;
+}
 
 export interface UpdateAdminPlaybookSettingsRequest {
   playbookSuggestorAgentId?: string | null;

@@ -958,8 +958,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const hasDynamicReasoningNode = ((snapshot.nodes ?? []) as FlowNode[])
       .some((node) => node.dynamicReasoning?.enabled === true);
     const planner = effectiveExecutionSettings?.dynamicReasoningEnabled && hasDynamicReasoningNode
-      ? await this.agentService.findPlaybookPlannerById(
+      ? await this.resolvePlaybookPlanner(
         effectiveExecutionSettings.dynamicReasoning.plannerAgentId || '',
+        snapshot.settings as Record<string, unknown> | undefined,
       )
       : null;
     const playbookPlannerSnapshot = planner ? {
@@ -968,7 +969,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       model: planner.model,
       systemPrompt: planner.instruction,
       temperature: planner.temperature,
-      omitTemperature: false,
+      omitTemperature: planner.omitTemperature,
       promptHash: `sha256:${createHash('sha256').update(planner.instruction).digest('hex')}`,
       agentRevision: planner.agentRevision,
       planningContractVersion: '1',
@@ -1185,8 +1186,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
       const persistedPlanner = snapshot.playbookPlanner as Record<string, unknown> | undefined;
       const planner = !persistedPlanner && effectiveExecutionSettings?.dynamicReasoningEnabled && hasDynamicReasoningNode
-        ? await this.agentService.findPlaybookPlannerById(
+        ? await this.resolvePlaybookPlanner(
           effectiveExecutionSettings.dynamicReasoning.plannerAgentId || '',
+          snapshot.settings as Record<string, unknown> | undefined,
         )
         : null;
       const plannerSnapshot = persistedPlanner ? {
@@ -1204,7 +1206,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         model: planner.model,
         system_prompt: planner.instruction,
         temperature: planner.temperature,
-        omit_temperature: false,
+        omit_temperature: planner.omitTemperature,
         prompt_hash: `sha256:${createHash('sha256').update(planner.instruction).digest('hex')}`,
         agent_revision: planner.agentRevision,
       } : undefined;

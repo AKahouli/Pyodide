@@ -89,6 +89,42 @@ describe('PlaybookFlowSettingsService inference model resolution', () => {
     expect(modelsService.validateModelActive).not.toHaveBeenCalled();
   });
 
+  it('uses the effective inference model for a model-less planner', async () => {
+    const { service, agentService, modelsService } = createService('admin-model');
+    agentService.findPlaybookPlannerById.mockResolvedValue({
+      agentId: '507f1f77bcf86cd799439011',
+      model: null,
+      instruction: 'Plan safely',
+    });
+    modelsService.validateModelActive.mockResolvedValue({
+      valid: true,
+      model: { id: 'admin-model', litellmModel: 'azure/admin-model', omitTemperature: true },
+    });
+
+    await expect(service.resolvePlaybookPlanner('507f1f77bcf86cd799439011')).resolves.toEqual(
+      expect.objectContaining({ model: 'azure/admin-model', omitTemperature: true }),
+    );
+    expect(modelsService.validateModelActive).toHaveBeenCalledWith('admin-model');
+  });
+
+  it('uses and validates a planner-owned model before inference fallback', async () => {
+    const { service, agentService, modelsService } = createService('admin-model');
+    agentService.findPlaybookPlannerById.mockResolvedValue({
+      agentId: '507f1f77bcf86cd799439011',
+      model: 'planner-model',
+      instruction: 'Plan safely',
+    });
+    modelsService.validateModelActive.mockResolvedValue({
+      valid: true,
+      model: { id: 'planner-model', litellmModel: 'azure/planner-model', omitTemperature: false },
+    });
+
+    await expect(service.resolvePlaybookPlanner('507f1f77bcf86cd799439011')).resolves.toEqual(
+      expect.objectContaining({ model: 'azure/planner-model', omitTemperature: false }),
+    );
+    expect(modelsService.validateModelActive).toHaveBeenCalledWith('planner-model', 'chat');
+  });
+
   it('requires and validates an explicit planner selection before saving', async () => {
     const { service, agentService, systemService } = createService();
     const plannerAgentId = '507f1f77bcf86cd799439011';

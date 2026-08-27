@@ -33,6 +33,7 @@ export function createExecutionServiceForTests(overrides?: {
   workspaceService?: Record<string, any>;
   hitlMemoryModel?: Record<string, any>;
   accessService?: Record<string, any>;
+  executionSettingsResolver?: Record<string, any>;
 }) {
   const executionModel = {
     exists: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(null) })),
@@ -255,6 +256,7 @@ export function createExecutionServiceForTests(overrides?: {
     accessService as any,
     hitlResumeService,
     singleStepPrepService,
+    overrides?.executionSettingsResolver as any,
   );
 
   return {

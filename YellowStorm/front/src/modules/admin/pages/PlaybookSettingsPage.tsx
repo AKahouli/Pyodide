@@ -478,7 +478,9 @@ export function PlaybookSettingsPage() {
                     </SelectItem>
                   )}
                   {plannerAgents.map((agent) => (
-                    <SelectItem key={agent.id} value={agent.id}>{agent.name} · {agent.model}</SelectItem>
+                    <SelectItem key={agent.id} value={agent.id}>
+                      {agent.name} · {agent.model || t('playbookSettings.execution.dynamicReasoning.planner.inferenceFallback')}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -486,7 +488,7 @@ export function PlaybookSettingsPage() {
                 {selectedPlannerAgent
                   ? t('playbookSettings.execution.dynamicReasoning.planner.selectedHelp', {
                     agent: selectedPlannerAgent.name,
-                    model: selectedPlannerAgent.model,
+                    model: selectedPlannerAgent.model || t('playbookSettings.execution.dynamicReasoning.planner.inferenceFallback'),
                   })
                   : plannerAgents.length === 0
                     ? t('playbookSettings.execution.dynamicReasoning.planner.noOptions')

@@ -19,6 +19,7 @@ const translateMock = vi.hoisted(() => (
     'playbookSettings.suggestor.title': 'Suggestor',
     'playbookSettings.execution.title': 'Execution',
     'playbookSettings.execution.dynamicReasoning.planner.label': 'Planner agent',
+    'playbookSettings.execution.dynamicReasoning.planner.inferenceFallback': 'Playbook inference model',
     'playbookSettings.inference.title': 'Inference',
     'playbookSettings.intentNormalization.title': 'Intent normalization',
     'playbookSettings.replay.title': 'Replay',
@@ -158,15 +159,15 @@ describe('PlaybookSettingsPage', () => {
     });
   });
 
-  it('offers an eligible agent without requiring the playbook planner type', async () => {
+  it('offers a model-less agent using the Playbook inference fallback', async () => {
     vi.mocked(getPlaybookPlannerAgents).mockResolvedValue([
-      { id: 'planner-1', name: 'General Assistant', model: 'general-model' },
+      { id: 'planner-1', name: 'Playbook Planner', model: null },
     ]);
 
     const { user } = renderWithProviders(<PlaybookSettingsPage />);
     await user.click(screen.getByRole('button', { name: /Execution/ }));
     await user.click(await screen.findByRole('combobox', { name: 'Planner agent' }));
 
-    expect(await screen.findByRole('option', { name: 'General Assistant · general-model' })).toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: 'Playbook Planner · Playbook inference model' })).toBeInTheDocument();
   });
 });

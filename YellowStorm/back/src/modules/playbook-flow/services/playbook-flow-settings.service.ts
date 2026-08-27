@@ -3,6 +3,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { ModelsService } from '@modules/models/models.service';
 import {
   AgentService,
+  type PlaybookPlannerAgentConfig,
   type PlaybookPlannerAgentOption,
   type PlaybookSuggestorAgentConfig,
   type PlaybookSuggestorAgentOption,
@@ -16,6 +17,11 @@ import {
   DEFAULT_FLOW_DESIGN_SETTINGS,
 } from '../interfaces/playbook-flow-settings.interface';
 import { UpdateAdminPlaybookSettingsDto } from '../dto/update-admin-playbook-settings.dto';
+
+export interface ResolvedPlaybookPlannerAgentConfig extends Omit<PlaybookPlannerAgentConfig, 'model'> {
+  model: string;
+  omitTemperature: boolean;
+}
 
 @Injectable()
 export class PlaybookFlowSettingsService {
@@ -35,6 +41,29 @@ export class PlaybookFlowSettingsService {
 
   async listSuggestorAgents(): Promise<PlaybookSuggestorAgentOption[]> {
     return this.agentService.listPlaybookSuggestorAgentOptions();
+  }
+
+  async resolvePlaybookPlanner(
+    agentId: string,
+    playbookSettings?: Partial<FlowDesignSettings> | Record<string, unknown> | null,
+  ): Promise<ResolvedPlaybookPlannerAgentConfig> {
+    const planner = await this.agentService.findPlaybookPlannerById(agentId);
+    if (!planner.model) {
+      return { ...planner, ...(await this.resolveInferenceModelConfig(playbookSettings)) };
+    }
+
+    const validation = await this.modelsService.validateModelActive(planner.model, 'chat');
+    const identifier = validation.valid && validation.model
+      ? this.modelsService.getModelIdentifier(validation.model)
+      : '';
+    if (!identifier) {
+      throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The Playbook Planner model is unavailable');
+    }
+    return {
+      ...planner,
+      model: identifier,
+      omitTemperature: validation.model?.omitTemperature === true,
+    };
   }
 
   async resolvePlaybookSuggestor(): Promise<PlaybookSuggestorAgentConfig> {

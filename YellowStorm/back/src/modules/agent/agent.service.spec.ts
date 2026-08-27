@@ -827,7 +827,7 @@ describe('AgentService connector skill inheritance', () => {
     });
   });
 
-  it('lists active default agents with a configured model regardless of agent type', async () => {
+  it('lists active default agents regardless of agent type or model configuration', async () => {
     const { service, agentRepository } = createService();
     const plannerTypeId = new Types.ObjectId().toString();
     agentRepository.findActiveDefaults.mockResolvedValue([
@@ -839,7 +839,29 @@ describe('AgentService connector skill inheritance', () => {
     await expect(service.listPlaybookPlannerAgentOptions()).resolves.toEqual([
       expect.objectContaining({ name: 'Planner', model: 'planner-model' }),
       expect.objectContaining({ name: 'Other', model: 'other-model' }),
+      expect.objectContaining({ name: 'No Model', model: null }),
     ]);
+  });
+
+  it('resolves a model-less active default agent for inference fallback', async () => {
+    const { service, agentRepository, agentTypeService } = createService();
+    const agentId = new Types.ObjectId().toString();
+    const agentTypeId = new Types.ObjectId().toString();
+    agentRepository.findById.mockResolvedValue(makeRecord({
+      _id: agentId,
+      agentType: agentTypeId,
+      isDefault: true,
+      isActive: true,
+      llmModel: ' ',
+    }));
+    agentTypeService.getManyForHydration.mockResolvedValue(new Map([[
+      agentTypeId,
+      { id: agentTypeId, name: 'Planner', slug: 'general_assistant', skills: [] },
+    ]]));
+
+    await expect(service.findPlaybookPlannerById(agentId)).resolves.toEqual(
+      expect.objectContaining({ agentId, model: null }),
+    );
   });
 
   it('rejects an invalid explicit playbook planner id', async () => {

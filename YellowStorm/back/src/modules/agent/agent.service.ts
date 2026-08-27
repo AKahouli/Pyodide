@@ -47,7 +47,7 @@ export interface PlaybookPlannerAgentConfig {
   agentTypeSlug: string;
   agentId: string;
   agentRevision: string;
-  model: string;
+  model: string | null;
   temperature: number;
   instruction: string;
 }
@@ -56,11 +56,16 @@ export interface PlaybookPlannerAgentOption {
   id: string;
   name: string;
   description?: string;
+  model: string | null;
+}
+
+export interface PlaybookSuggestorAgentConfig extends Omit<PlaybookPlannerAgentConfig, 'model'> {
   model: string;
 }
 
-export type PlaybookSuggestorAgentConfig = PlaybookPlannerAgentConfig;
-export type PlaybookSuggestorAgentOption = PlaybookPlannerAgentOption;
+export interface PlaybookSuggestorAgentOption extends Omit<PlaybookPlannerAgentOption, 'model'> {
+  model: string;
+}
 
 @Injectable()
 export class AgentService {
@@ -1500,14 +1505,14 @@ export class AgentService {
 
   async listPlaybookPlannerAgentOptions(): Promise<PlaybookPlannerAgentOption[]> {
     const agents = await this.agentRepository.findActiveDefaults();
-    return agents.flatMap((agent) => {
-      const model = agent.llmModel?.trim();
-      return model ? [{
+    return agents.map((agent) => {
+      const model = agent.llmModel?.trim() || null;
+      return {
         id: agent._id,
         name: agent.name,
         description: agent.description || undefined,
         model,
-      }] : [];
+      };
     });
   }
 
@@ -1525,7 +1530,6 @@ export class AgentService {
       || !record.isDefault
       || !record.isActive
       || !agentType
-      || !model
     ) {
       throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is unavailable or has no model configured');
     }
@@ -1534,7 +1538,7 @@ export class AgentService {
       agentTypeSlug: agentType.slug,
       agentId: record._id,
       agentRevision: record.updatedAt?.toISOString() ?? record._id,
-      model,
+      model: model || null,
       temperature: record.temperature,
       instruction: record.instruction,
     };
