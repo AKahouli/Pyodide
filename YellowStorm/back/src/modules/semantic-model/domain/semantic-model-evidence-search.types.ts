@@ -23,12 +23,21 @@ export interface SemanticModelEvidenceSearchTask {
   }>;
 }
 
+export interface SemanticModelEvidenceSearchFailedUnit {
+  bindingId: string;
+  sourceDocumentId: string;
+  fileName: string;
+  error: string;
+}
+
 export interface SemanticModelEvidenceSearchResponse {
   modelId: string;
   searchedAt: string;
   tasks: SemanticModelEvidenceSearchTask[];
+  failedUnits: SemanticModelEvidenceSearchFailedUnit[];
   summary: {
     searchedBindingCount: number;
     candidateDocumentCount: number;
+    failedUnitCount: number;
   };
 }

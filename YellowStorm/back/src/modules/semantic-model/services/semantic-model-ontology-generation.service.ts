@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigService, ConfigType } from '@nestjs/config';
 import axios from 'axios';
+import semanticModelConfig from '@config/semantic-model.config';
 import { ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { GenerateSemanticModelOntologyDto } from '../dto';
@@ -18,6 +19,8 @@ export class SemanticModelOntologyGenerationService {
   private readonly logger = new Logger(SemanticModelOntologyGenerationService.name);
 
   constructor(
+    @Inject(semanticModelConfig.KEY)
+    private readonly smConfig: ConfigType<typeof semanticModelConfig>,
     private readonly config: ConfigService,
     private readonly models: SemanticModelService,
     private readonly graph: SemanticGraphCommandService,
@@ -53,7 +56,7 @@ export class SemanticModelOntologyGenerationService {
         },
         {
           headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
-          timeout: 120_000,
+          timeout: this.smConfig.ontologyTimeoutMs,
         },
       );
       if (!data || typeof data.ontologyDefinition !== 'object' || Array.isArray(data.ontologyDefinition)

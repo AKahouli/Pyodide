@@ -15,4 +15,6 @@ export default registerAs('semanticModel', () => ({
   searchAgentId: process.env.SEMANTIC_MODEL_SEARCH_AGENT_ID || '',
   evidenceSearchTimeoutMs: Number.parseInt(process.env.SEMANTIC_MODEL_EVIDENCE_SEARCH_TIMEOUT_MS || '180000', 10),
   evidenceSearchConcurrency: Math.max(1, Number.parseInt(process.env.SEMANTIC_MODEL_EVIDENCE_SEARCH_CONCURRENCY || '4', 10)),
+  ontologyTimeoutMs: Number.parseInt(process.env.SEMANTIC_MODEL_ONTOLOGY_TIMEOUT_MS || '0', 10),
+  mappingTimeoutMs: Number.parseInt(process.env.SEMANTIC_MODEL_MAPPING_TIMEOUT_MS || '0', 10),
 }));

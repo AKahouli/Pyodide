@@ -67,8 +67,10 @@ export const configValidationSchema = Joi.object({
   SEMANTIC_PG_POOL_MAX: Joi.number().min(1).max(50).default(10),
   SEMANTIC_AGE_GRAPH: Joi.string().pattern(/^[a-z][a-z0-9_]{0,62}$/).default('semantic_model_graph'),
   SEMANTIC_MODEL_SEARCH_AGENT_ID: Joi.string().length(24).allow('').optional(),
-  SEMANTIC_MODEL_EVIDENCE_SEARCH_TIMEOUT_MS: Joi.number().min(5000).max(600000).default(180000),
+  SEMANTIC_MODEL_EVIDENCE_SEARCH_TIMEOUT_MS: Joi.number().min(5000).max(1800000).default(180000),
   SEMANTIC_MODEL_EVIDENCE_SEARCH_CONCURRENCY: Joi.number().integer().min(1).max(16).default(4),
+  SEMANTIC_MODEL_ONTOLOGY_TIMEOUT_MS: Joi.number().min(0).max(7200000).default(0),
+  SEMANTIC_MODEL_MAPPING_TIMEOUT_MS: Joi.number().min(0).max(7200000).default(0),
 
   // Encryption
   ENCRYPTION_KEY: Joi.string().hex().length(64).when('NODE_ENV', {

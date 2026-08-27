@@ -123,7 +123,7 @@ export class SemanticModelMappingProposalService {
       const { data } = await axios.post<SemanticModelMappingPlan>(
         `${adkUrl}/semantic-model/mappings/generate`,
         { modelId, graphDesignerCanvas: graph as SemanticGraph, searchTasks, existingEntities },
-        { headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey }, timeout: 900_000 },
+        { headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey }, timeout: this.config.get<number>('semanticModel.mappingTimeoutMs') ?? 1_800_000 },
       );
       return { modelId, generatedAt: new Date().toISOString(), search: search.summary, plan: data, proposals: [], _evidenceTasks: search.tasks };
     } catch (error) {

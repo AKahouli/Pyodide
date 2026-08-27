@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { ConfigType } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
@@ -6,7 +6,7 @@ import semanticModelConfig from '@config/semantic-model.config';
 import { AGENT_TASK_EXECUTOR } from '@common/tokens/agent-task-execution.token';
 import { ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { SemanticModelEvidenceSearchResponse, SemanticModelEvidenceSearchTask } from '../domain/semantic-model-evidence-search.types';
+import { SemanticModelEvidenceSearchFailedUnit, SemanticModelEvidenceSearchResponse, SemanticModelEvidenceSearchTask } from '../domain/semantic-model-evidence-search.types';
 import { SemanticGraph } from '../domain/semantic-model.types';
 import { SelectedCorpusBinding } from '../domain/selected-corpus-manifest.types';
 import { SemanticModelCorpusPreparationService } from './semantic-model-corpus-preparation.service';
@@ -41,6 +41,8 @@ interface AgentTaskExecutor {
 
 @Injectable()
 export class SemanticModelEvidenceSearchService {
+  private readonly logger = new Logger(SemanticModelEvidenceSearchService.name);
+
   constructor(
     @Inject(semanticModelConfig.KEY)
     private readonly config: ConfigType<typeof semanticModelConfig>,
@@ -68,76 +70,93 @@ export class SemanticModelEvidenceSearchService {
     const searchUnits = bindings.flatMap((binding) =>
       binding.documents.map((document) => ({ binding, document })),
     );
-    const runUnit = async ({ binding, document }: { binding: typeof bindings[number]; document: typeof binding.documents[number] }) => {
+    const failedUnits: SemanticModelEvidenceSearchFailedUnit[] = [];
+    const runUnit = async ({ binding, document }: { binding: typeof bindings[number]; document: typeof binding.documents[number] }): Promise<SemanticModelEvidenceSearchTask | null> => {
       // ADK persists conversationId in a varchar(128) column, so we cannot
       // fit modelId + bindingId + documentId + runId (~147 chars). Use a
       // fresh UUID for isolation and rely on correlationId + logs for tracing.
       const conversationId = `sm-e:${randomUUID()}`;
-      const result = await agentTasks.runSingleAgentTask({
-        userId,
-        agentId: searchAgentId,
-        query: this.buildSearchTask(binding, graph, document),
-        attachedFiles: [],
-        workspaceContext: [{
-          workspace_id: binding.workspaceId,
-          workspace_name: binding.workspaceId,
-        }],
-        correlationId: `semantic-model-evidence:${modelId}:${binding.bindingId}:${document.sourceDocumentId}:${searchRunId}`,
-        conversationId,
-        timeoutMs: this.config.evidenceSearchTimeoutMs,
-        usageEndpoint: 'semantic-model-evidence-search',
-      });
-      // search_native results don't go through citation_sources registration so
-      // result.citations is empty. Extract passages directly from toolResults.
-      const toolEvidence = result.toolResults
-        .filter((tr) => tr.status === 'completed' && String(tr.name).includes('search_native'))
-        .flatMap((tr) => {
-          const payload = tr.result as Record<string, unknown> | null;
-          const sections: unknown[] = Array.isArray(payload?.result) ? (payload!.result as unknown[])
-            : Array.isArray(payload) ? (payload as unknown[]) : [];
-          return sections.flatMap((section) => {
-            if (!section || typeof section !== 'object') return [];
-            const s = section as Record<string, unknown>;
-            const quote = String(s['content'] || '').trim();
-            if (!quote) return [];
-            return [{
-              source: String(s['file_name'] || ''),
-              fileName: String(s['file_name'] || document.originalName),
-              page: s['page_range'] ? String(s['page_range']) : undefined,
-              quote,
-              workspaceId: String(s['workspace_id'] || binding.workspaceId),
-              reference: s['section_id'] != null ? String(s['section_id']) : undefined,
-            }];
-          });
+      try {
+        const result = await agentTasks.runSingleAgentTask({
+          userId,
+          agentId: searchAgentId,
+          query: this.buildSearchTask(binding, graph, document),
+          attachedFiles: [],
+          workspaceContext: [{
+            workspace_id: binding.workspaceId,
+            workspace_name: binding.workspaceId,
+          }],
+          correlationId: `semantic-model-evidence:${modelId}:${binding.bindingId}:${document.sourceDocumentId}:${searchRunId}`,
+          conversationId,
+          timeoutMs: this.config.evidenceSearchTimeoutMs,
+          usageEndpoint: 'semantic-model-evidence-search',
         });
-      const citationEvidence = result.citations.map((citation) => ({
-        source: citation.source,
-        fileName: citation.fileName,
-        page: citation.page,
-        quote: citation.highlightText || citation.pageContent,
-        workspaceId: citation.workspaceId,
-        reference: citation.reference,
-      }));
-      return {
-        bindingId: binding.bindingId,
-        target: binding.target,
-        workspaceId: binding.workspaceId,
-        sourceDocumentId: document.sourceDocumentId,
-        fileName: document.originalName,
-        text: result.text,
-        evidence: this.uniqueEvidence([...toolEvidence, ...citationEvidence]),
-        toolResults: result.toolResults,
-      };
+        // search_native results don't go through citation_sources registration so
+        // result.citations is empty. Extract passages directly from toolResults.
+        const toolEvidence = result.toolResults
+          .filter((tr) => tr.status === 'completed' && String(tr.name).includes('search_native'))
+          .flatMap((tr) => {
+            const payload = tr.result as Record<string, unknown> | null;
+            const sections: unknown[] = Array.isArray(payload?.result) ? (payload!.result as unknown[])
+              : Array.isArray(payload) ? (payload as unknown[]) : [];
+            return sections.flatMap((section) => {
+              if (!section || typeof section !== 'object') return [];
+              const s = section as Record<string, unknown>;
+              const quote = String(s['content'] || '').trim();
+              if (!quote) return [];
+              return [{
+                source: String(s['file_name'] || ''),
+                fileName: String(s['file_name'] || document.originalName),
+                page: s['page_range'] ? String(s['page_range']) : undefined,
+                quote,
+                workspaceId: String(s['workspace_id'] || binding.workspaceId),
+                reference: s['section_id'] != null ? String(s['section_id']) : undefined,
+              }];
+            });
+          });
+        const citationEvidence = result.citations.map((citation) => ({
+          source: citation.source,
+          fileName: citation.fileName,
+          page: citation.page,
+          quote: citation.highlightText || citation.pageContent,
+          workspaceId: citation.workspaceId,
+          reference: citation.reference,
+        }));
+        return {
+          bindingId: binding.bindingId,
+          target: binding.target,
+          workspaceId: binding.workspaceId,
+          sourceDocumentId: document.sourceDocumentId,
+          fileName: document.originalName,
+          text: result.text,
+          evidence: this.uniqueEvidence([...toolEvidence, ...citationEvidence]),
+          toolResults: result.toolResults,
+        };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300);
+        this.logger.warn('Evidence search unit failed — skipping, continuing with partial results', {
+          modelId,
+          bindingId: binding.bindingId,
+          sourceDocumentId: document.sourceDocumentId,
+          fileName: document.originalName,
+          error: errorMessage,
+        });
+        failedUnits.push({ bindingId: binding.bindingId, sourceDocumentId: document.sourceDocumentId, fileName: document.originalName, error: errorMessage });
+        return null;
+      }
     };
-    const tasks = await this.runWithConcurrency(searchUnits, this.config.evidenceSearchConcurrency, runUnit);
+    const rawResults = await this.runWithConcurrency(searchUnits, this.config.evidenceSearchConcurrency, runUnit);
+    const tasks = rawResults.filter((t): t is SemanticModelEvidenceSearchTask => t !== null);
 
     return {
       modelId,
       searchedAt: new Date().toISOString(),
       tasks,
+      failedUnits,
       summary: {
         searchedBindingCount: tasks.length,
         candidateDocumentCount: bindings.reduce((count, binding) => count + binding.documents.length, 0),
+        failedUnitCount: failedUnits.length,
       },
     };
   }
