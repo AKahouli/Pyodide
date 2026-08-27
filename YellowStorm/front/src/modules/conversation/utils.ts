@@ -151,6 +151,7 @@ function buildCitationData(data: Record<string, unknown>): {
   parentId: string;
   sourceType: 'text' | 'image';
   source: string;
+  fileName?: string;
   externalId: string;
   page: string;
   pageContent: string;
@@ -172,6 +173,7 @@ function buildCitationData(data: Record<string, unknown>): {
     parentId: (data.parentId as string) || (data.parent_id as string) || '',
     sourceType,
     source: (sourceData.source as string) || (sourceData.fileName as string) || (sourceData.file_name as string) || '',
+    fileName: (sourceData.fileName as string) || (sourceData.file_name as string) || undefined,
     externalId: (sourceData.externalId as string) || (sourceData.external_id as string) || '',
     page: (sourceData.page as string) || '',
     pageContent: (sourceData.highlightText as string) || (sourceData.highlight_text as string) || (sourceData.pageContent as string) || (sourceData.page_content as string) || (sourceData.content as string) || '',

@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { downloadCode } from '@/lib/download';
 import { toast } from 'sonner';
 import { useState, useMemo, useCallback, useEffect, useRef, type HTMLAttributes } from 'react';
-import { useShouldAutoOpenPreview } from './message-context';
+import { useFileViewerDisplayMode, useShouldAutoOpenPreview } from './message-context';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CodeArtifact } from './code-artifact';
@@ -43,6 +43,7 @@ export interface CitationData {
   parentId: string;
   sourceType: 'text' | 'image';
   source: string;
+  fileName?: string;
   externalId: string;
   page: string;
   pageContent: string;
@@ -166,6 +167,7 @@ export interface CitationPart {
   parentId: string;
   sourceType: 'text' | 'image';
   source: string;
+  fileName?: string;
   externalId: string;
   page: string;
   pageContent: string;
@@ -214,6 +216,7 @@ export type AIMessageContentProps = HTMLAttributes<HTMLDivElement> & {
   taskDisplay?: 'raw' | 'activity';
   showTaskDiagnostics?: boolean;
   redactTaskDiagnostics?: boolean;
+  citationScope?: { conversationId: string; messageId: string };
 };
 
 type TaskActivityStep = {
@@ -233,7 +236,7 @@ function redactDiagnosticText(value: string): string {
 /**
  * AIMessageContent - Renders structured AI message content using ai-sdk components
  */
-export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, onSubmitQuestions, choiceInteractions, taskDisplay = 'raw', showTaskDiagnostics = true, redactTaskDiagnostics = true, ...props }: AIMessageContentProps) => {
+export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, onSubmitQuestions, choiceInteractions, taskDisplay = 'raw', showTaskDiagnostics = true, redactTaskDiagnostics = true, citationScope, ...props }: AIMessageContentProps) => {
   const choicePrompts = new Set(parts.filter((part): part is ChoicePart => part.type === 'choice' && part.status === 'ready').map((part) => part.prompt.trim()).filter(Boolean));
   const hasTask = parts.some((part) => part.type === 'task');
   const taskActivity: TaskActivityStep[] = [];
@@ -261,7 +264,7 @@ export const AIMessageContent = ({ parts, className, isStreaming = false, onComp
       {visibleParts.map((part, index) => {
         if (part.type === 'choice' && groupedChoiceIds.has(part.componentId)) return null;
         return (
-          <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} redactTaskDiagnostics={redactTaskDiagnostics} />
+          <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} redactTaskDiagnostics={redactTaskDiagnostics} citationScope={citationScope} />
         );
       })}
     </div>
@@ -281,12 +284,13 @@ type AIMessagePartProps = {
   taskActivity?: TaskActivityStep[];
   showTaskDiagnostics?: boolean;
   redactTaskDiagnostics?: boolean;
+  citationScope?: { conversationId: string; messageId: string };
 };
 
-const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', taskActivity = [], showTaskDiagnostics = true, redactTaskDiagnostics = true }: AIMessagePartProps) => {
+const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', taskActivity = [], showTaskDiagnostics = true, redactTaskDiagnostics = true, citationScope }: AIMessagePartProps) => {
   switch (part.type) {
     case 'text':
-      return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} />;
+      return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} citationScope={citationScope} />;
     case 'code':
       return <CodePartRenderer content={part.content} language={part.language} filename={part.filename} />;
     case 'agentActivity':
@@ -314,7 +318,7 @@ const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInt
     case 'artifact':
       return <ArtifactPartRenderer filePath={part.filePath} filename={part.filename} />;
     case 'citation':
-      return <CitationPartRenderer citation={part} />;
+      return <CitationPartRenderer citation={part} citationScope={citationScope} />;
     case 'toolActivity':
       return <ToolActivityPartRenderer part={part} isStreaming={isStreaming} />;
     default:
@@ -394,8 +398,50 @@ function getCitationTriggerLabel(citation: CitationData, fallback: string): stri
   return normalizeCitationReference(citation.reference) || citation.source || fallback;
 }
 
+async function openCitationSource(
+  citation: CitationData,
+  displayMode: ReturnType<typeof useFileViewerDisplayMode>,
+  defaultLabel: string,
+  citationScope?: { conversationId: string; messageId: string },
+): Promise<void> {
+  const objectKey = (citation.sourceType === 'image' ? citation.path : citation.source) || '';
+  if (!objectKey) return;
+
+  const { openFileViewerFromUrl, getMimeTypeFromFilename } = await import('@/modules/file-viewer');
+  let displayName = citation.fileName ||
+    (citation.sourceType === 'image' ? citation.source : '') ||
+    objectKey.split('/').pop() ||
+    defaultLabel;
+  let mimeType = getMimeTypeFromFilename(displayName) ?? 'application/octet-stream';
+  let url: string;
+  if (citationScope) {
+    const { getCitationViewUrl } = await import('@/modules/conversation/api');
+    const resolved = await getCitationViewUrl(
+      citationScope.conversationId,
+      citationScope.messageId,
+      { source: objectKey, fileName: citation.fileName, reference: normalizeCitationReference(citation.reference) },
+    );
+    url = resolved.url;
+    displayName = resolved.fileName;
+    mimeType = resolved.mimeType;
+  } else {
+    const { conversationV2Api } = await import('@/modules/conversation-v2/api');
+    ({ url } = await conversationV2Api.getFileSignedUrl(objectKey));
+  }
+  const pageNumbers = citation.page?.match(/\d+/g);
+  const page = pageNumbers?.length ? Number(pageNumbers.at(-1)) : undefined;
+
+  openFileViewerFromUrl(url, displayName, mimeType, {
+    displayMode,
+    closeOnOutsideClick: displayMode === 'floating',
+    page,
+    highlightText: citation.highlightText || citation.pageContent || undefined,
+    highlightBBox: citation.highlightBBox || citation.blockBBox,
+  });
+}
+
 // Text Part with Markdown support
-const TextPartRenderer = ({ content, showCursor, citations }: { content: string; showCursor?: boolean; citations?: CitationData[] }) => {
+const TextPartRenderer = ({ content, showCursor, citations, citationScope }: { content: string; showCursor?: boolean; citations?: CitationData[]; citationScope?: { conversationId: string; messageId: string } }) => {
   // Split citations: those with a reference AND a matching [n] marker in the text are inline
   // (rendered at [n] positions by rehype), all others are trailing (rendered as badges after text).
   // This ensures citations with a reference but no matching marker are not silently lost.
@@ -434,28 +480,39 @@ const TextPartRenderer = ({ content, showCursor, citations }: { content: string;
         if (ref == null) return null;
         const c = citationMapRef.current.get(ref);
         if (!c) return <>[{ref}]</>;
-        return <SingleInlineCitation citation={c} />;
+        return <SingleInlineCitation citation={c} citationScope={citationScope} />;
       },
     };
-  }, [hasInline]);
+  }, [citationScope, hasInline]);
 
   return (
     <div className={cn(showCursor && "[&>*:last-child]:after:content-[''] [&>*:last-child]:after:inline-block [&>*:last-child]:after:w-[3px] [&>*:last-child]:after:h-4 [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:ml-0.5 [&>*:last-child]:after:animate-pulse [&>*:last-child]:after:align-text-bottom", hasTrailing && '[&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):inline [&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):mb-0')}>
       <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={hasInline ? rehypeCitationPlugins : undefined} components={componentsWithCite}>
         {content}
       </ReactMarkdown>
-      {hasTrailing && <CitationsInline citations={trailingCitations} />}
+      {hasTrailing && <CitationsInline citations={trailingCitations} citationScope={citationScope} />}
     </div>
   );
 };
 
-const SingleInlineCitation = ({ citation: c }: { citation: CitationData }) => {
+const SingleInlineCitation = ({ citation: c, citationScope }: { citation: CitationData; citationScope?: { conversationId: string; messageId: string } }) => {
   const { t: tCommon } = useModuleTranslation('common');
+  const fileViewerDisplayMode = useFileViewerDisplayMode();
+
+  const handleClick = useCallback(async () => {
+    try {
+      await openCitationSource(c, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'), citationScope);
+    } catch {
+      toast.error(tCommon('ai.errors.openFileTitle'), {
+        description: tCommon('ai.errors.openFileDescription'),
+      });
+    }
+  }, [c, citationScope, fileViewerDisplayMode, tCommon]);
 
   return (
     <InlineCitation>
       <InlineCitationCard>
-        <InlineCitationCardTrigger sources={[getCitationTriggerLabel(c, tCommon('ai.citations.defaultSource'))]} />
+        <InlineCitationCardTrigger sources={[getCitationTriggerLabel(c, tCommon('ai.citations.defaultSource'))]} className='cursor-pointer' onClick={handleClick} />
         <InlineCitationCardBody>
           <InlineCitationCarousel>
             <InlineCitationCarouselContent>
@@ -472,15 +529,26 @@ const SingleInlineCitation = ({ citation: c }: { citation: CitationData }) => {
 };
 
 // Citations Inline - renders citation badges after text content
-const CitationsInline = ({ citations }: { citations: CitationData[] }) => {
+const CitationsInline = ({ citations, citationScope }: { citations: CitationData[]; citationScope?: { conversationId: string; messageId: string } }) => {
   const { t: tCommon } = useModuleTranslation('common');
+  const fileViewerDisplayMode = useFileViewerDisplayMode();
+
+  const handleCitationClick = async (citation: CitationData) => {
+    try {
+      await openCitationSource(citation, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'), citationScope);
+    } catch {
+      toast.error(tCommon('ai.errors.openFileTitle'), {
+        description: tCommon('ai.errors.openFileDescription'),
+      });
+    }
+  };
 
   return (
     <span className='inline-flex flex-wrap gap-1 ml-1'>
       {citations.map((c, i) => (
         <InlineCitation key={i}>
           <InlineCitationCard>
-            <InlineCitationCardTrigger sources={[getCitationTriggerLabel(c, tCommon('ai.citations.defaultSource'))]} />
+            <InlineCitationCardTrigger sources={[getCitationTriggerLabel(c, tCommon('ai.citations.defaultSource'))]} className='cursor-pointer' onClick={() => handleCitationClick(c)} />
             <InlineCitationCardBody>
               <InlineCitationCarousel>
                 <InlineCitationCarouselContent>
@@ -499,13 +567,15 @@ const CitationsInline = ({ citations }: { citations: CitationData[] }) => {
 };
 
 // Citation Part - standalone citation (no parent text)
-const CitationPartRenderer = ({ citation }: { citation: CitationPart }) => (
+const CitationPartRenderer = ({ citation, citationScope }: { citation: CitationPart; citationScope?: { conversationId: string; messageId: string } }) => (
   <CitationsInline
+    citationScope={citationScope}
     citations={[
       {
         parentId: citation.parentId,
         sourceType: citation.sourceType,
         source: citation.source,
+        fileName: citation.fileName,
         externalId: citation.externalId,
         page: citation.page,
         pageContent: citation.pageContent,

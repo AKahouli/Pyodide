@@ -146,6 +146,18 @@ export function resolveCodeInterpreterResponse(data: Record<string, unknown>, re
   return formatCodeInterpreterPayload(asNonEmptyString(data.resultJson), false, redactSensitiveText);
 }
 
+export function resolveToolRequest(data: Record<string, unknown>, redactSensitiveText = true): string | undefined {
+  return isCodeInterpreterActivity(data)
+    ? resolveCodeInterpreterRequest(data, redactSensitiveText)
+    : formatSanitizedToolText(asNonEmptyString(data.paramsJson), redactSensitiveText);
+}
+
+export function resolveToolResponse(data: Record<string, unknown>, redactSensitiveText = true): string | undefined {
+  return isCodeInterpreterActivity(data)
+    ? resolveCodeInterpreterResponse(data, redactSensitiveText)
+    : formatSanitizedToolText(asNonEmptyString(data.resultJson), redactSensitiveText);
+}
+
 export type ToolRenderKind = 'generic' | 'run_code' | 'search' | 'document' | 'file' | 'web';
 
 export function resolveToolRenderKind(title: string): ToolRenderKind {

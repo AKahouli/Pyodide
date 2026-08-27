@@ -98,6 +98,7 @@ describe('conversation utils', () => {
     if (parts[0]?.type === 'text') {
       expect(parts[0].citations?.[0]).toMatchObject({
         source: 'user-1/codeinterpreter/contract.docx',
+        fileName: 'contract.docx',
         page: '2',
         pageContent: 'Clause de penalites exacte',
         highlightText: 'Clause de penalites exacte',

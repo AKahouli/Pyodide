@@ -85,6 +85,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   choiceInteractions: Map<string, ChoiceInteractionMetadata>;
 }) {
   const sendMessage = useConversationStore((s) => s.sendMessage);
+  const regenerateMessage = useConversationStore((s) => s.regenerateMessage);
   const handleComponentAction = useCallback(async (action: ChoiceComponentAction) => {
     await sendMessage(conversationId, { content: action.submitText, interaction: { ...action.interaction, sourceMessageId: message.id } });
   }, [conversationId, message.id, sendMessage]);
@@ -94,6 +95,9 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
       interactions: actions.map((action) => ({ ...action.interaction, sourceMessageId: message.id })),
     });
   }, [conversationId, message.id, sendMessage]);
+  const handleRetry = useCallback(() => {
+    void regenerateMessage(conversationId, message.id);
+  }, [conversationId, message.id, regenerateMessage]);
   const chatMessage = useMemo(() => {
     const chatMsg = messageToChat(message);
     // Force the role to 'assistant' for other members' messages so ChatMessageBubble renders them on the left
@@ -191,7 +195,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
                 <div className="flex justify-start min-w-0">
                   {isUser
                     ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} className='[&>div:first-child]:w-auto [&>div:first-child]:min-w-0' />
-                    : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} isStreaming={false} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} />}
+                    : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} isStreaming={false} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} />}
                 </div>
               </>
             )}

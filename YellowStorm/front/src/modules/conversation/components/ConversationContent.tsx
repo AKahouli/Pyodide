@@ -77,6 +77,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
   const displayedMessage = useMemo(() => ({ ...message, components: activeComponents }), [message, activeComponents]);
   const chatMessage = useMemo(() => messageToChat(displayedMessage), [displayedMessage]);
   const sendMessage = useConversationStore((s) => s.sendMessage);
+  const regenerateMessage = useConversationStore((s) => s.regenerateMessage);
   const branchCache = useBranchCache();
   const activeBranches = useActiveBranches();
   const editingMessageId = useEditingMessageId();
@@ -93,6 +94,9 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
       interactions: actions.map((action) => ({ ...action.interaction, sourceMessageId: message.id })),
     });
   }, [conversationId, message.id, sendMessage]);
+  const handleRetry = useCallback(() => {
+    void regenerateMessage(conversationId, message.id);
+  }, [conversationId, message.id, regenerateMessage]);
   chatMessage.onComponentAction = handleComponentAction;
   chatMessage.onSubmitQuestions = handleSubmitQuestions;
   chatMessage.choiceInteractions = choiceInteractions;
@@ -118,7 +122,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
           ? <EditableUserMessage message={message} conversationId={conversationId} />
           : isUser
             ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} />
-            : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} />}
+            : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} />}
       </MessageProvider>
       {!isUser && (hasToolCall || hasRerunnableAnswer) && <MessageReliabilityCard conversationId={conversationId} messageId={message.id} evaluation={getAnswerEvaluation(message, displayedVersion)} originalEvaluation={message.reliabilityEvaluation} correctionWorkflow={message.correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={setDisplayedVersion} />}
       {isUser && !isEditing && <UserMessageActions message={message} isLastUserMessage={isLastUserMessage} />}

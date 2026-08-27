@@ -798,7 +798,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(controlWhitespaceName).toBe('workspace_search__9e54e0e3d98b6a49');
   });
 
-  it('resolves the explicitly selected active playbook planner', async () => {
+  it('resolves an explicitly selected active default agent as the playbook planner', async () => {
     const { service, agentRepository, agentTypeService } = createService();
     const agentId = new Types.ObjectId().toString();
     const agentTypeId = new Types.ObjectId().toString();
@@ -811,11 +811,14 @@ describe('AgentService connector skill inheritance', () => {
       instruction: 'Plan safely',
       updatedAt: new Date('2026-08-06T00:00:00.000Z'),
     }));
-    agentTypeService.findBySlug.mockResolvedValue({ id: agentTypeId, slug: 'playbook_planner' });
+    agentTypeService.getManyForHydration.mockResolvedValue(new Map([[
+      agentTypeId,
+      { id: agentTypeId, name: 'General Assistant', slug: 'general_assistant', skills: [] },
+    ]]));
 
     await expect(service.findPlaybookPlannerById(agentId)).resolves.toEqual({
       agentTypeId,
-      agentTypeSlug: 'playbook_planner',
+      agentTypeSlug: 'general_assistant',
       agentId,
       agentRevision: '2026-08-06T00:00:00.000Z',
       model: 'planner-model',
@@ -824,17 +827,18 @@ describe('AgentService connector skill inheritance', () => {
     });
   });
 
-  it('lists only active playbook planner agents with a configured model', async () => {
-    const { service, agentRepository, agentTypeService } = createService();
+  it('lists active default agents with a configured model regardless of agent type', async () => {
+    const { service, agentRepository } = createService();
     const plannerTypeId = new Types.ObjectId().toString();
-    agentTypeService.findBySlug.mockResolvedValue({ id: plannerTypeId, slug: 'playbook_planner' });
     agentRepository.findActiveDefaults.mockResolvedValue([
       makeRecord({ name: 'Planner', description: 'Plans generated tasks', llmModel: ' planner-model ', agentType: plannerTypeId, isDefault: true }),
       makeRecord({ name: 'Other', llmModel: 'other-model', agentType: new Types.ObjectId().toString(), isDefault: true }),
+      makeRecord({ name: 'No Model', llmModel: ' ', agentType: plannerTypeId, isDefault: true }),
     ]);
 
     await expect(service.listPlaybookPlannerAgentOptions()).resolves.toEqual([
       expect.objectContaining({ name: 'Planner', model: 'planner-model' }),
+      expect.objectContaining({ name: 'Other', model: 'other-model' }),
     ]);
   });
 

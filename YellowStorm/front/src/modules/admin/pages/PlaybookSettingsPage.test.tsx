@@ -18,6 +18,7 @@ const translateMock = vi.hoisted(() => (
     'playbookSettings.actions.save': 'Save',
     'playbookSettings.suggestor.title': 'Suggestor',
     'playbookSettings.execution.title': 'Execution',
+    'playbookSettings.execution.dynamicReasoning.planner.label': 'Planner agent',
     'playbookSettings.inference.title': 'Inference',
     'playbookSettings.intentNormalization.title': 'Intent normalization',
     'playbookSettings.replay.title': 'Replay',
@@ -155,5 +156,17 @@ describe('PlaybookSettingsPage', () => {
         name: `playbookSettings.execution.fields.${key}.tooltipLabel`,
       })).toBeInTheDocument();
     });
+  });
+
+  it('offers an eligible agent without requiring the playbook planner type', async () => {
+    vi.mocked(getPlaybookPlannerAgents).mockResolvedValue([
+      { id: 'planner-1', name: 'General Assistant', model: 'general-model' },
+    ]);
+
+    const { user } = renderWithProviders(<PlaybookSettingsPage />);
+    await user.click(screen.getByRole('button', { name: /Execution/ }));
+    await user.click(await screen.findByRole('combobox', { name: 'Planner agent' }));
+
+    expect(await screen.findByRole('option', { name: 'General Assistant · general-model' })).toBeInTheDocument();
   });
 });

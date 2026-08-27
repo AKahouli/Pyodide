@@ -41,7 +41,6 @@ const MANAGER_SLUG = 'manager';
 const MONO_AGENT_SLUG = 'mono-agent';
 /** Agent-type slug for human agents exposed to third-party integrations. */
 const HUMAIN_AGENT_TYPE_SLUG = 'humain';
-export const PLAYBOOK_PLANNER_AGENT_TYPE_SLUG = 'playbook_planner';
 
 export interface PlaybookPlannerAgentConfig {
   agentTypeId: string;
@@ -1500,12 +1499,10 @@ export class AgentService {
   }
 
   async listPlaybookPlannerAgentOptions(): Promise<PlaybookPlannerAgentOption[]> {
-    const plannerType = await this.agentTypeService.findBySlug(PLAYBOOK_PLANNER_AGENT_TYPE_SLUG);
-    if (!plannerType) return [];
     const agents = await this.agentRepository.findActiveDefaults();
     return agents.flatMap((agent) => {
       const model = agent.llmModel?.trim();
-      return agent.agentType === plannerType.id && model ? [{
+      return model ? [{
         id: agent._id,
         name: agent.name,
         description: agent.description || undefined,
@@ -1518,27 +1515,23 @@ export class AgentService {
     if (!Types.ObjectId.isValid(agentId)) {
       throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is invalid');
     }
-    const [record, plannerType] = await Promise.all([
-      this.agentRepository.findById(agentId),
-      this.agentTypeService.findBySlug(PLAYBOOK_PLANNER_AGENT_TYPE_SLUG),
-    ]);
+    const record = await this.agentRepository.findById(agentId);
+    const agentType = record
+      ? (await this.agentTypeService.getManyForHydration([record.agentType])).get(record.agentType)
+      : undefined;
     const model = record?.llmModel?.trim();
     if (
       !record
       || !record.isDefault
       || !record.isActive
-      || record.agentType !== plannerType?.id
+      || !agentType
       || !model
     ) {
       throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is unavailable or has no model configured');
     }
-    // The planner agent type must itself be active (findBySlug filters on isActive).
-    if (!plannerType) {
-      throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is unavailable or has no model configured');
-    }
     return {
-      agentTypeId: plannerType.id,
-      agentTypeSlug: plannerType.slug,
+      agentTypeId: agentType.id,
+      agentTypeSlug: agentType.slug,
       agentId: record._id,
       agentRevision: record.updatedAt?.toISOString() ?? record._id,
       model,

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConversationAssistantBubble } from './ConversationAssistantBubble';
 
@@ -17,7 +17,7 @@ vi.mock('../../hooks/useConversationSettings', () => ({
 }));
 
 vi.mock('@/modules/localization', () => ({
-  useModuleTranslation: () => ({ t: (key: string, options?: { tool?: string }) => ({
+  useModuleTranslation: () => ({ t: (key: string, options?: { tool?: string; status?: string; current?: number; total?: number }) => ({
     'stream.activity.agent': 'Activity',
     'stream.activity.agentPlanning': 'Preparing your request',
     'stream.activity.assistant': 'Assistant',
@@ -26,6 +26,17 @@ vi.mock('@/modules/localization', () => ({
     'stream.activity.request': 'Request',
     'stream.activity.response': 'Response',
     'stream.activity.responseTitle': `Tool response: ${options?.tool || ''}`,
+    'stream.activity.toolRowAria': `Tool response: ${options?.tool || ''} (${options?.status || ''})`,
+    'stream.activity.toolStatus.running': 'Running',
+    'stream.activity.toolStatus.completed': 'Completed',
+    'stream.activity.toolStatus.failed': 'Failed',
+    'stream.activity.toolStatus.stopped': 'Stopped',
+    'stream.activity.requestUnavailable': 'No request data was recorded.',
+    'stream.activity.responsePending': 'Waiting for the tool response.',
+    'stream.activity.responseUnavailable': 'No response data was recorded.',
+    'stream.activity.retry': 'Retry response',
+    'stream.activity.stepProgress': `${options?.current} of ${options?.total} steps`,
+    'stream.activity.mobileDetailsAria': `Show all activity steps (${options?.status || ''})`,
     'stream.activity.viewArtifact': 'View',
     'stream.activity.downloadArtifact': 'Download',
     'stream.activity.artifactError': 'Artifact error',
@@ -54,10 +65,11 @@ describe('ConversationAssistantBubble', () => {
     />);
 
     const bubble = screen.getByTestId('conversation-assistant-bubble');
+    const desktop = bubble.querySelector('[data-desktop-activity]') as HTMLElement;
     const nodes = [
-      screen.getByText(/Preparing workspace analysis/),
-      screen.getByText(/Compare selected files/),
-      screen.getByText('revenue-variance.xlsx'),
+      within(desktop).getByText(/Preparing workspace analysis/),
+      within(desktop).getByText(/Compare selected files/),
+      within(desktop).getByText('revenue-variance.xlsx'),
       screen.getByText(/Revenue is below forecast/),
     ];
     nodes.forEach((node) => expect(bubble).toContainElement(node));
@@ -93,7 +105,7 @@ describe('ConversationAssistantBubble', () => {
 
     expect(screen.getByText(/Preparing your request/)).toBeInTheDocument();
     expect(screen.getByText(/quarterly revenue/)).toBeInTheDocument();
-    expect(screen.getByText(/Calculate the totals/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Calculate the totals/)).not.toHaveLength(0);
     expect(screen.queryByText('stream.activity.toolFallback')).not.toBeInTheDocument();
     expect(screen.queryByText(/private code/)).not.toBeInTheDocument();
   });
@@ -134,7 +146,8 @@ describe('ConversationAssistantBubble', () => {
     expect(container.querySelector('[data-agent-spinner]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-agent-scan]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-agent-activity-spinner]')).not.toBeInTheDocument();
-    expect(container.querySelector('[data-tool-spinner]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-tool-spinner]')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Tool response: Run code (Running)' })).toBeInTheDocument();
   });
 
   it('opens a sanitized tool response without exposing private payload fields', () => {
@@ -158,7 +171,7 @@ describe('ConversationAssistantBubble', () => {
       }]}
     />);
 
-    const trigger = screen.getByRole('button', { name: 'Tool response: Run code' });
+    const trigger = screen.getByRole('button', { name: 'Tool response: Run code (Failed)' });
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText(/Execution stopped/)).not.toBeInTheDocument();
 
@@ -192,12 +205,72 @@ describe('ConversationAssistantBubble', () => {
       }]}
     />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tool response: Run command' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tool response: Run command (Completed)' }));
 
     expect(screen.getByText(/pandoc source\.md -o output\.pdf/)).toBeInTheDocument();
     expect(screen.getByText(/Created output\.pdf/)).toBeInTheDocument();
     expect(screen.getByText(/"exit_code": 0/)).toBeInTheDocument();
     expect(screen.queryByText(/Bearer private|\/workspace\/private/)).not.toBeInTheDocument();
+  });
+
+  it('expands request and response details for a generic tool', () => {
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{
+        id: 'tool-search',
+        type: 'toolActivity',
+        data: {
+          toolName: 'perform_standard_search', summary: 'Find revenue', status: 'completed', renderKind: 'search',
+          paramsJson: JSON.stringify({ query: 'annual revenue' }), resultJson: JSON.stringify({ matches: 4 }),
+        },
+      }]}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tool response: Search (Completed)' }));
+
+    expect(screen.getByText(/annual revenue/)).toBeInTheDocument();
+    expect(screen.getByText(/"matches": 4/)).toBeInTheDocument();
+  });
+
+  it('omits narration text emitted before activity and keeps the final answer', () => {
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        { id: 'narration', type: 'text', data: { content: 'I will inspect the reports.' } },
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'perform_standard_search', summary: 'Inspect reports', status: 'completed', renderKind: 'search' } },
+        { id: 'answer', type: 'text', data: { content: 'Revenue increased.' } },
+      ]}
+    />);
+
+    expect(screen.queryByText(/I will inspect/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Revenue increased/)).toBeInTheDocument();
+  });
+
+  it('shows tool states, mobile progress, and retry for a failed response', () => {
+    const retry = vi.fn();
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      onRetry={retry}
+      components={[
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'First step', status: 'completed', renderKind: 'search' } },
+        { id: 'tool-2', type: 'toolActivity', data: { toolName: 'search', summary: 'Second step', status: 'stopped', renderKind: 'search' } },
+        { id: 'tool-3', type: 'toolActivity', data: { toolName: 'search', summary: 'Final step', status: 'failed', renderKind: 'search' } },
+      ]}
+    />);
+
+    expect(container.querySelector('[data-tool-status="completed"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-tool-status="stopped"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-tool-status="failed"]')).toBeInTheDocument();
+    expect(screen.getByText('3 of 3 steps')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Tool response: Search (Failed)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry response' }));
+    expect(retry).toHaveBeenCalledOnce();
   });
 
   it('provides independent view and download actions for generated artifacts', async () => {
@@ -279,7 +352,7 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.queryByText(/507f1f77bcf86cd799439011/)).not.toBeInTheDocument();
     expect(screen.getByText('Assistant')).toBeInTheDocument();
     expect(screen.getByText(/Preparing your request/)).toBeInTheDocument();
-    expect(screen.getByText('report.csv')).toBeInTheDocument();
+    expect(screen.getAllByText('report.csv')).not.toHaveLength(0);
     expect(screen.queryByText(/\/tmp\/private\/report/)).not.toBeInTheDocument();
     expect(document.querySelector('[id*="opaque-artifact"]')).not.toBeInTheDocument();
   });

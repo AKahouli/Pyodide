@@ -34,8 +34,9 @@ def valid_plan() -> GeneratedExecutionPlan:
 def planner_snapshot() -> PlannerSnapshot:
     return PlannerSnapshot(
         agentId="planner-1",
-        agentTypeSlug="playbook_planner",
+        agentTypeSlug="general_assistant",
         model="planner-model",
+        systemPrompt="Use concise, evidence-based planning.",
     )
 
 
@@ -86,6 +87,9 @@ async def test_planner_supplies_decision_schema_and_accepts_complete_direct_resp
 
     assert decision.mode == "direct"
     assert captured["response_format"] == {"type": "json_object"}
+    assert captured["messages"][0]["content"].startswith(
+        "Use concise, evidence-based planning.\n\nReturn only one top-level JSON object"
+    )
     assert '"reasonSummary"' in captured["messages"][0]["content"]
     assert '"directSafe"' in captured["messages"][0]["content"]
 

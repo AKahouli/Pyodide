@@ -211,6 +211,8 @@ export const API_ENDPOINTS = {
     stream: '/conversations/stream',
     artifactUrl: (conversationId: string, messageId: string, artifactId: string) =>
       `/conversations/${conversationId}/messages/${messageId}/artifacts/${artifactId}/url`,
+    citationUrl: (conversationId: string, messageId: string) =>
+      `/conversations/${conversationId}/messages/${messageId}/citations/url`,
     composerSuggestions: '/conversations/suggestions',
     settings: '/conversations/settings',
     // Share endpoints

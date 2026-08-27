@@ -34,6 +34,7 @@ describe('MessageController.sendMessage sticky routing', () => {
   let requestContext: { getRequestId: jest.Mock };
   let choiceInteractionService: { canonicalize: jest.Mock; canonicalizeMany: jest.Mock };
   let responseReliabilityService: { rerun: jest.Mock };
+  let conversationArtifactService: { resolveDownloadUrl: jest.Mock; resolveCitationUrl: jest.Mock };
   let logger: {
     setContext: jest.Mock;
     log: jest.Mock;
@@ -82,6 +83,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     requestContext = { getRequestId: jest.fn().mockReturnValue('req-1') };
     choiceInteractionService = { canonicalize: jest.fn(), canonicalizeMany: jest.fn() };
     responseReliabilityService = { rerun: jest.fn().mockResolvedValue({ messageId: 'ai-1', reliabilityEvaluation: { status: 'pending' } }) };
+    conversationArtifactService = { resolveDownloadUrl: jest.fn(), resolveCitationUrl: jest.fn() };
     logger = {
       setContext: jest.fn(),
       log: jest.fn(),
@@ -100,7 +102,20 @@ describe('MessageController.sendMessage sticky routing', () => {
       choiceInteractionService as any,
       { resolveRuntime: jest.fn(), assertRuntimeRequestAllowed: jest.fn(), resolveEffectiveAgents: jest.fn() } as any,
       responseReliabilityService as any,
-      {} as any,
+      conversationArtifactService as any,
+    );
+  });
+
+  it('forwards scoped citation URL resolution', async () => {
+    conversationArtifactService.resolveCitationUrl.mockResolvedValue({
+      url: 'https://storage.example/report', fileName: 'report.pdf', mimeType: 'application/pdf',
+    });
+
+    await expect(controller.getCitationUrl(conversationId, 'message-1', {
+      source: 'deepsearch', fileName: 'report.pdf',
+    })).resolves.toEqual(expect.objectContaining({ fileName: 'report.pdf' }));
+    expect(conversationArtifactService.resolveCitationUrl).toHaveBeenCalledWith(
+      conversationId, 'message-1', { source: 'deepsearch', fileName: 'report.pdf' },
     );
   });
 

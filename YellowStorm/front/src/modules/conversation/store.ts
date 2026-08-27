@@ -271,9 +271,10 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
       // Append content for streaming text types
       const existingContent = (existing.content as string) || '';
       const newContent = (incoming.content as string) || '';
+      const sentenceGap = /[.!?][\])"']?$/.test(existingContent) && /^\p{Lu}/u.test(newContent) ? ' ' : '';
       return {
         ...existing,
-        content: existingContent + newContent,
+        content: existingContent + sentenceGap + newContent,
       };
     }
     case 'agentActivity':

@@ -4,6 +4,8 @@ import {
   isCodeInterpreterActivity,
   resolveCodeInterpreterRequest,
   resolveCodeInterpreterResponse,
+  resolveToolRequest,
+  resolveToolResponse,
   resolveToolDisplayKey,
   resolveToolSummary,
   sanitizeRunCodeInput,
@@ -120,6 +122,21 @@ describe('code interpreter activity details', () => {
     expect(response).not.toContain('/etc/yellowstorm');
     expect(response).not.toContain('short-value');
     expect(response).not.toContain('owner/system_run');
+  });
+});
+
+describe('generic tool activity details', () => {
+  it('sanitizes serialized requests and responses', () => {
+    const data = {
+      toolName: 'perform_standard_search',
+      paramsJson: JSON.stringify({ query: 'annual revenue', password: 'private' }),
+      resultJson: JSON.stringify({ matches: 4, path: '/workspace/private/result.json' }),
+    };
+
+    expect(resolveToolRequest(data)).toContain('annual revenue');
+    expect(resolveToolRequest(data)).not.toContain('private');
+    expect(resolveToolResponse(data)).toContain('"matches": 4');
+    expect(resolveToolResponse(data)).not.toContain('/workspace/private');
   });
 });
 

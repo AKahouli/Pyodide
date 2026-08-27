@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '@/lib/api';
-import { branchConversation, createConversation, deleteConversation, fetchActiveStream, fetchConversations, fetchMessages, getArtifactDownloadUrl, rerunReliabilityEvaluation, sendMessage } from './api';
+import { branchConversation, createConversation, deleteConversation, fetchActiveStream, fetchConversations, fetchMessages, getArtifactDownloadUrl, getCitationViewUrl, rerunReliabilityEvaluation, sendMessage } from './api';
 
 vi.mock('@/lib/api', () => ({
   apiClient: {
@@ -25,6 +25,7 @@ vi.mock('@/lib/api', () => ({
       branches: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/branches`,
       report: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/report`,
       artifactUrl: (cid: string, mid: string, aid: string) => `/conversations/${cid}/messages/${mid}/artifacts/${aid}/url`,
+      citationUrl: (cid: string, mid: string) => `/conversations/${cid}/messages/${mid}/citations/url`,
       workspaceDocuments: (cid: string) => `/conversations/${cid}/workspace-documents`,
       fileUploadUrl: (cid: string) => `/conversations/${cid}/files/upload-url`,
       fileConfirm: (cid: string) => `/conversations/${cid}/files/confirm`,
@@ -68,6 +69,20 @@ describe('conversation api', () => {
       downloadUrl: 'https://storage.example/download',
     });
     expect(apiClient.post).toHaveBeenCalledWith('/conversations/conversation-1/messages/message-1/artifacts/artifact-1/url');
+  });
+
+  it('resolves a citation through its scoped message route', async () => {
+    vi.mocked(apiClient.post).mockResolvedValueOnce({
+      data: { data: { url: 'https://storage.example/report', fileName: 'report.pdf', mimeType: 'application/pdf' } },
+    } as never);
+
+    await expect(getCitationViewUrl('conversation-1', 'message-1', {
+      source: 'deepsearch', fileName: 'report.pdf', reference: '2',
+    })).resolves.toEqual({ url: 'https://storage.example/report', fileName: 'report.pdf', mimeType: 'application/pdf' });
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/conversations/conversation-1/messages/message-1/citations/url',
+      { source: 'deepsearch', fileName: 'report.pdf', reference: '2' },
+    );
   });
 
   it('forwards the platform-copilot history filter', async () => {

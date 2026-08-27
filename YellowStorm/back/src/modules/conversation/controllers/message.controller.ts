@@ -37,6 +37,7 @@ import { createHash } from 'node:crypto';
 import { ConflictException } from '../../exceptions';
 import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
 import { ConversationArtifactService } from '../services/conversation-artifact.service';
+import { ResolveCitationUrlDto } from '../dto/resolve-citation-url.dto';
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -65,6 +66,15 @@ export class MessageController {
     @Param('artifactId') artifactId: string,
   ): Promise<{ viewUrl: string; downloadUrl: string }> {
     return this.conversationArtifactService.resolveDownloadUrl(conversationId, messageId, artifactId);
+  }
+
+  @Post(':messageId/citations/url')
+  async getCitationUrl(
+    @Param('conversationId') conversationId: string,
+    @Param('messageId') messageId: string,
+    @Body() dto: ResolveCitationUrlDto,
+  ): Promise<{ url: string; fileName: string; mimeType: string }> {
+    return this.conversationArtifactService.resolveCitationUrl(conversationId, messageId, dto);
   }
 
   /**

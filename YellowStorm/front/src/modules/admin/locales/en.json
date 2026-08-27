@@ -48,7 +48,7 @@
   "playbookSettings.execution.dynamicReasoning.planner.label": "Planner agent",
   "playbookSettings.execution.dynamicReasoning.planner.placeholder": "Select a planner agent",
   "playbookSettings.execution.dynamicReasoning.planner.required": "A planner agent is required.",
-  "playbookSettings.execution.dynamicReasoning.planner.noOptions": "No active playbook_planner agent with a configured model is available.",
+  "playbookSettings.execution.dynamicReasoning.planner.noOptions": "No active default agent with a configured model is available.",
   "playbookSettings.execution.dynamicReasoning.planner.unavailable": "Previously selected planner is unavailable",
   "playbookSettings.execution.dynamicReasoning.planner.selectedHelp": "{{agent}} will plan new Dynamic Reasoning executions using {{model}}.",
   "playbookSettings.execution.dynamicReasoning.fields.maxWorkNodes": "Maximum generated work nodes",

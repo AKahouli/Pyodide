@@ -1000,6 +1000,28 @@ describe('conversation streaming component updates', () => {
     ]);
   });
 
+  it('inserts a missing space between streamed sentences', () => {
+    const components = applyChunksToComponents([], [
+      { action: 'add', component: { id: 'text-1', type: 'text', data: { content: 'The index does not reference it.' } } },
+      { action: 'update', component: { id: 'text-1', type: 'text', data: { content: 'The libraries are available.' } } },
+    ] as never);
+
+    expect(components[0].data.content).toBe('The index does not reference it. The libraries are available.');
+  });
+
+  it.each([
+    ['3.', '14', '3.14'],
+    ['v2.', '1', 'v2.1'],
+    ['word', ' continuation', 'word continuation'],
+  ])('does not alter ordinary token boundaries: %s + %s', (existing, incoming, expected) => {
+    const components = applyChunksToComponents([], [
+      { action: 'add', component: { id: 'text-1', type: 'text', data: { content: existing } } },
+      { action: 'update', component: { id: 'text-1', type: 'text', data: { content: incoming } } },
+    ] as never);
+
+    expect(components[0].data.content).toBe(expected);
+  });
+
   it('upserts out-of-order tools without collapsing repeated names or regressing status', () => {
     const components = applyChunksToComponents([], [
       { action: 'update', component: { id: 'tool-agent-call-1', type: 'toolActivity', data: { toolName: 'search', status: 'completed', resultJson: '{"matches":1}' } } },
