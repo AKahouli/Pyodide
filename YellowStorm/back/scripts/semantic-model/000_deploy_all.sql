@@ -1,7 +1,7 @@
 -- =============================================================================
 -- SEMANTIC MODEL — Script de déploiement complet
 -- =============================================================================
--- Consolide les scripts 001 → 006 dans l'ordre d'application.
+-- Consolide les scripts 001 → 007 dans l'ordre d'application.
 -- Tous les statements sont idempotents (IF NOT EXISTS / IF EXISTS).
 --
 -- PRÉREQUIS :
@@ -310,6 +310,17 @@ CREATE TABLE IF NOT EXISTS semantic_model.mapping_runs (
 
 CREATE INDEX IF NOT EXISTS mapping_runs_model_id_idx
   ON semantic_model.mapping_runs (model_id, started_at DESC);
+
+
+-- =============================================================================
+-- 007 — Informations utilisateur dénormalisées dans les memberships
+-- =============================================================================
+-- Permet de lister les membres partagés sans lookup cross-DB vers MongoDB.
+
+ALTER TABLE semantic_model.memberships
+  ADD COLUMN IF NOT EXISTS email      TEXT,
+  ADD COLUMN IF NOT EXISTS first_name TEXT,
+  ADD COLUMN IF NOT EXISTS last_name  TEXT;
 
 
 -- =============================================================================

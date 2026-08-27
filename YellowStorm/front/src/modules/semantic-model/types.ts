@@ -1,3 +1,21 @@
+export type SemanticModelShareRole = 'viewer' | 'editor';
+
+export interface SemanticModelMember {
+  userId: string;
+  email: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  role: SemanticModelShareRole;
+  createdAt: string;
+}
+
+export interface SemanticModelShareResult {
+  shared: { userId: string; email: string; role: SemanticModelShareRole }[];
+  notFound: string[];
+  alreadyOwner: string[];
+  alreadyShared: string[];
+}
+
 export type SemanticModelKind = 'workspace_default' | 'designed';
 export type SemanticModelStatus = 'draft' | 'published' | 'archived';
 export type SemanticModelMaturity = 'automatic' | 'structured' | 'structured_with_records' | 'operational';

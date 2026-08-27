@@ -375,6 +375,8 @@ export const API_ENDPOINTS = {
     workspaceDefault: (workspaceId: string) => `/workspaces/${workspaceId}/semantic-model`,
     workspaceModels: (workspaceId: string) => `/workspaces/${workspaceId}/semantic-models`,
     ensureWorkspaceDefault: (workspaceId: string) => `/workspaces/${workspaceId}/semantic-model/ensure`,
+    shares: (id: string) => `/semantic-models/${id}/shares`,
+    share: (id: string, targetUserId: string) => `/semantic-models/${id}/shares/${targetUserId}`,
   },
   adminCatalogTransfer: {
     exportConnectors: '/admin/catalog-transfer/connectors/export',

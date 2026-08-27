@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import semanticModelConfig from '@config/semantic-model.config';
 import { AuthorizationModule } from '@modules/authorization';
 import { LoggerModule } from '@modules/logger';
+import { UserModule } from '@modules/user';
 import { WorkspaceModule } from '@modules/workspace';
 import { SemanticModelController } from './controllers/semantic-model.controller';
 import { WorkspaceSemanticModelController } from './controllers/workspace-semantic-model.controller';
@@ -22,9 +23,10 @@ import { SemanticModelMappingProposalService } from './services/semantic-model-m
 import { SemanticModelValidationService } from './services/semantic-model-validation.service';
 import { SemanticModelVersionService } from './services/semantic-model-version.service';
 import { SemanticModelWorkspaceService } from './services/semantic-model-workspace.service';
+import { SemanticModelShareService } from './services/semantic-model-share.service';
 
 @Module({
-  imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,forwardRef(() => WorkspaceModule)],
+  imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,forwardRef(() => WorkspaceModule)],
   controllers: [SemanticModelController,WorkspaceSemanticModelController],
   providers: [
     SemanticModelDatabaseService,SemanticModelRepository,SemanticGraphRepository,SemanticModelOntologyRepository,SemanticAgeGraphRepository,SemanticModelService,
@@ -34,6 +36,7 @@ import { SemanticModelWorkspaceService } from './services/semantic-model-workspa
     SemanticModelCorpusPreparationService,
     SemanticModelEvidenceSearchService,
     SemanticModelMappingProposalService,
+    SemanticModelShareService,
   ],
   exports: [SemanticModelDatabaseService,SemanticModelProvisioningService],
 })

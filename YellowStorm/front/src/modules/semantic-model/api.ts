@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { AgeGraphEdge, AgeGraphNode, KnowledgeBinding, MappingProposalJob, Paginated, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticVersion, ValidationIssue } from './types';
+import type { AgeGraphEdge, AgeGraphNode, KnowledgeBinding, MappingProposalJob, Paginated, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticModelMember, SemanticModelShareResult, SemanticModelShareRole, SemanticVersion, ValidationIssue } from './types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
 
@@ -107,5 +107,19 @@ export const semanticModelApi = {
   },
   async ensureWorkspaceDefault(workspaceId: string): Promise<SemanticModel> {
     return unwrap(await apiClient.post<ApiResponse<SemanticModel>>(API_ENDPOINTS.semanticModels.ensureWorkspaceDefault(workspaceId)));
+  },
+
+  // ── Sharing ────────────────────────────────────────────────────────────────
+  async listShares(id: string): Promise<SemanticModelMember[]> {
+    return unwrap(await apiClient.get<ApiResponse<SemanticModelMember[]>>(API_ENDPOINTS.semanticModels.shares(id)));
+  },
+  async share(id: string, shares: Array<{ email: string; role: SemanticModelShareRole }>): Promise<SemanticModelShareResult> {
+    return unwrap(await apiClient.post<ApiResponse<SemanticModelShareResult>>(API_ENDPOINTS.semanticModels.shares(id), { shares }));
+  },
+  async updateShareRole(id: string, targetUserId: string, role: SemanticModelShareRole): Promise<void> {
+    await apiClient.patch(API_ENDPOINTS.semanticModels.share(id, targetUserId), { role });
+  },
+  async revokeShare(id: string, targetUserId: string): Promise<void> {
+    await apiClient.delete(API_ENDPOINTS.semanticModels.share(id, targetUserId));
   },
 };

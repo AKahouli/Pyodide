@@ -17,6 +17,8 @@ import {
   UpdateBindingDto,
   UpdateSemanticModelDto,
 } from '../dto';
+import { ShareSemanticModelDto, UpdateSemanticModelShareDto } from '../dto/semantic-model-share.dto';
+import { SemanticModelShareService } from '../services/semantic-model-share.service';
 import { SemanticGraphCommandService } from '../services/semantic-graph-command.service';
 import { SemanticKnowledgeBindingService } from '../services/semantic-knowledge-binding.service';
 import { SemanticModelService } from '../services/semantic-model.service';
@@ -42,6 +44,7 @@ export class SemanticModelController {
     private readonly corpusPreparation: SemanticModelCorpusPreparationService,
     private readonly evidenceSearch: SemanticModelEvidenceSearchService,
     private readonly mappingProposals: SemanticModelMappingProposalService,
+    private readonly shares: SemanticModelShareService,
   ) {}
 
   @Get()
@@ -253,5 +256,36 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   restore(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('versionId') versionId: string,@Body() dto: PublishSemanticModelDto) {
     return this.versions.restore(user._id.toString(),modelId,versionId,dto.expectedRevision,dto.expectedGraphRevision);
+  }
+
+  // ── Sharing ────────────────────────────────────────────────────────────────
+
+  @Get(':modelId/shares')
+  @ApiOperation({ summary: 'List all members with access to a semantic model (owner-only management, all members can view)' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  listShares(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string) {
+    return this.shares.list(user._id.toString(),modelId);
+  }
+
+  @Post(':modelId/shares')
+  @ApiOperation({ summary: 'Share a semantic model with one or more users by email' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  share(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Body() dto: ShareSemanticModelDto) {
+    return this.shares.share(user._id.toString(),modelId,dto);
+  }
+
+  @Patch(':modelId/shares/:targetUserId')
+  @ApiOperation({ summary: 'Update the role of a shared member' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  updateShare(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('targetUserId') targetUserId: string,@Body() dto: UpdateSemanticModelShareDto) {
+    return this.shares.updateRole(user._id.toString(),modelId,targetUserId,dto);
+  }
+
+  @Delete(':modelId/shares/:targetUserId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revoke access for a shared member' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  revokeShare(@CurrentUser() user: UserDocument,@Param('modelId') modelId: string,@Param('targetUserId') targetUserId: string) {
+    return this.shares.revoke(user._id.toString(),modelId,targetUserId);
   }
 }

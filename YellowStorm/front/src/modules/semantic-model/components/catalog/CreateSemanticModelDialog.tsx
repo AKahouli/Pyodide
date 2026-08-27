@@ -95,19 +95,10 @@ export function CreateSemanticModelDialog({ open, onOpenChange, onCreated }: Rea
               />
             </div>
             <div className='max-h-52 overflow-y-auto rounded-xl border p-2'>
-              {/* Own workspaces */}
-              {filteredOwn.map((workspace) => (
-                <label key={workspace.id} className='flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 hover:bg-muted'>
-                  <Checkbox checked={selected.includes(workspace.id)} onCheckedChange={(checked) => toggleSelect(workspace.id, checked)} />
-                  <Network className='h-4 w-4 shrink-0 text-muted-foreground' />
-                  <span className='truncate text-sm'>{workspace.name}</span>
-                </label>
-              ))}
-
-              {/* Shared workspaces section */}
+              {/* Shared workspaces section — first */}
               {filteredShared.length > 0 && (
                 <>
-                  <div className='my-2.5 flex items-center gap-2'>
+                  <div className='mb-2.5 flex items-center gap-2'>
                     <div className='h-px flex-1 bg-border' />
                     <div className='flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-blue-500/10 px-2.5 py-0.5'>
                       <Share2 className='h-3 w-3 text-blue-400' />
@@ -126,6 +117,26 @@ export function CreateSemanticModelDialog({ open, onOpenChange, onCreated }: Rea
                       <span className='ml-auto shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-400 border border-blue-500/30 bg-blue-500/10'>
                         partagé
                       </span>
+                    </label>
+                  ))}
+                </>
+              )}
+
+              {/* Own workspaces — after shared */}
+              {filteredOwn.length > 0 && (
+                <>
+                  {filteredShared.length > 0 && (
+                    <div className='my-2.5 flex items-center gap-2'>
+                      <div className='h-px flex-1 bg-border' />
+                      <span className='text-[10px] text-muted-foreground'>Mes workspaces</span>
+                      <div className='h-px flex-1 bg-border' />
+                    </div>
+                  )}
+                  {filteredOwn.map((workspace) => (
+                    <label key={workspace.id} className='flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 hover:bg-muted'>
+                      <Checkbox checked={selected.includes(workspace.id)} onCheckedChange={(checked) => toggleSelect(workspace.id, checked)} />
+                      <Network className='h-4 w-4 shrink-0 text-muted-foreground' />
+                      <span className='truncate text-sm'>{workspace.name}</span>
                     </label>
                   ))}
                 </>
