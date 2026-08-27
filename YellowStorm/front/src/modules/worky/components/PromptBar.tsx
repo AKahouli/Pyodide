@@ -132,7 +132,10 @@ export function PromptBar({
             placeholder={t('promptBar.placeholder')}
             rows={1}
             disabled={isDisabled}
-            className='min-h-[44px] py-2 text-xs'
+            // flex-none: the block-end addon makes InputGroup a column flex
+            // container, and the inherited `flex-1` (flex-basis:0%) would
+            // otherwise override our inline height and keep the box collapsed.
+            className='flex-none min-h-[44px] py-2 text-xs'
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
