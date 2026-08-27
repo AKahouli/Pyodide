@@ -1,5 +1,5 @@
 import { Loader2, MessageCircle, Send, Square } from 'lucide-react';
-import { useEffect, useState, type JSX } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSendMessage } from '../query/hooks';
@@ -33,6 +33,7 @@ export function PromptBar({
 }: PromptBarProps): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const [value, setValue] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const send = useSendMessage(streamId);
   const streaming = useWorkyStreaming();
   const setStreamError = useWorkyStore((s) => s.setStreamError);
@@ -43,6 +44,35 @@ export function PromptBar({
   const { stop, isStopping } = useStopSession(streamId);
 
   const isDisabled = send.isPending || status === 'archived';
+
+  // Grow the composer to fit its content, but cap it at 40% of the chat
+  // sidebar's height (falling back to 40vh when the composer is not inside the
+  // desktop rail, e.g. the mobile sheet). Past that the height is fixed and the
+  // textarea scrolls instead of pushing the message thread off-screen.
+  const autoResize = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const sidebar = el.closest<HTMLElement>('[data-testid="worky-chat-sidebar"]');
+    const maxHeight = Math.round(
+      (sidebar?.clientHeight ?? window.innerHeight) * 0.4,
+    );
+    // Reset first so shrinking (deleting text) is measured correctly.
+    el.style.height = 'auto';
+    const next = Math.min(el.scrollHeight, maxHeight);
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, []);
+
+  useLayoutEffect(() => {
+    autoResize();
+  }, [value, autoResize]);
+
+  // The 40% cap is derived from the sidebar height, so recompute on viewport
+  // resize (which is what changes the sidebar's height).
+  useEffect(() => {
+    window.addEventListener('resize', autoResize);
+    return () => window.removeEventListener('resize', autoResize);
+  }, [autoResize]);
 
   // Reset the draft and any in-flight error on stream switch so the
   // composer never carries text or stale failure toasts across streams.
@@ -93,6 +123,7 @@ export function PromptBar({
       <form onSubmit={submit}>
         <InputGroup className='bg-background/60'>
           <InputGroupTextarea
+            ref={textareaRef}
             id='worky-prompt-content'
             name='content'
             data-testid='worky-prompt-content'
@@ -101,7 +132,7 @@ export function PromptBar({
             placeholder={t('promptBar.placeholder')}
             rows={1}
             disabled={isDisabled}
-            className='max-h-40 min-h-[44px] py-2 text-xs'
+            className='min-h-[44px] py-2 text-xs'
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
