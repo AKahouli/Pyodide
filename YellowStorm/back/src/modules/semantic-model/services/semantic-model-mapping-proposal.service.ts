@@ -355,6 +355,7 @@ export class SemanticModelMappingProposalService {
     await this.graphCommands.apply(userId, modelId, { expectedRevision: graph.revision, operations } as never);
 
     const updatedGraph = await this.graphCommands.getGraph(userId, modelId);
+    await this.ageGraph.dropGraph(modelId);
     const { vertexCount, edgeCount, failedVertexCount, failedEdgeCount } = await this.ageGraph.buildGraph(updatedGraph, modelId);
 
     const ageHadFailures = failedVertexCount > 0 || failedEdgeCount > 0;

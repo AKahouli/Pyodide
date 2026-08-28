@@ -36,6 +36,7 @@ class SemanticModelMappingAgent:
             model=settings.SEMANTIC_MODEL_ONTOLOGY_MODEL,
             api_key=settings.LITELLM_API_SECRET_KEY,
             api_base=settings.LITELLM_API_BASE_URL,
+            timeout=settings.SEMANTIC_MODEL_LLM_TIMEOUT_SECONDS,
         )
 
         # Stage 1 — extract raw nodes (one LLM call per node_type × document)

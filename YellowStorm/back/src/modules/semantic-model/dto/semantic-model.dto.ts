@@ -107,7 +107,7 @@ export class GraphOperationsDto {
   @Type(() => Object)
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(100)
+  @ArrayMaxSize(2000)
   @IsObject({ each: true })
   operations!: Record<string, unknown>[];
 }

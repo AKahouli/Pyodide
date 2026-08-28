@@ -170,7 +170,8 @@ export class SemanticModelEvidenceSearchService {
     return [
       'Collect evidence for the Semantic Model using ONLY the search_native connector tool. Do not use any other retrieval tool (no get_document_strategy, no read_content, no read_blocks, no search, no web search, no Deep Search).',
       `Workspace ID: ${binding.workspaceId}`,
-      `Document file name: ${document.originalName} (sourceDocumentId: ${document.sourceDocumentId})`,
+      `Document file name: ${document.originalName}`,
+      `(Internal trace only — do NOT pass to any tool parameter: sourceDocumentId=${document.sourceDocumentId})`,
       `Ontology target: ${binding.target.kind} "${binding.target.label}".`,
       `Ontology search scope: ${JSON.stringify(ontologySearchScope)}.`,
       'For EACH attribute declared in the ontology search scope, call search_native exactly once with: workspace_id, file_name, and a query that is ALWAYS scoped to the concept — combine the concept label with the attribute label and description. Example: for concept "Skill" and attribute "name", the query must be "Skill: name of the skill, competency or technology" — NEVER just "name". Scoping the query to the concept prevents the tool from returning passages about unrelated entity types that happen to share the same field name.',

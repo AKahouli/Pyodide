@@ -84,7 +84,7 @@ export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onSuc
 
       // Step 3 — apply mapping plan to SQL + build AGE graph
       updateStep("apply", "running");
-      const applyResult = await semanticModelApi.applyMappingPlan(modelId, completedJob.jobId);
+      const applyResult = await semanticModelApi.applyMappingPlan(modelId, completedJob.jobId, 'replace');
       updateStep("apply", "done");
 
       if (applyResult.graphViewerWarning) {
