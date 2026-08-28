@@ -405,7 +405,10 @@ class TestAgentRunner:
         mock_event = MagicMock()
         mock_event.content = MagicMock()
         visible_narration = MagicMock(text="I'll inspect the selected file.", thought=False, function_call=None, function_response=None)
-        hidden_thought = MagicMock(text="Private chain of thought", thought=True, function_call=None, function_response=None)
+        hidden_thoughts = [
+            MagicMock(text=text, thought=True, function_call=None, function_response=None)
+            for text in ["Private", " chain", " of", " thought"]
+        ]
         function_call = MagicMock(text=None, function_response=None)
         function_call.function_call = MagicMock()
         function_call.function_call.name = "run_code"
@@ -415,7 +418,8 @@ class TestAgentRunner:
             "language": "python",
             "_display_purpose": "Calculate the requested result",
         }
-        mock_event.content.parts = [visible_narration, hidden_thought, function_call]
+        mock_event.content.parts = [visible_narration, *hidden_thoughts, function_call]
+        mock_event.partial = True
         mock_event.is_final_response.return_value = False
 
         # Matching function response transitions the same tool component.
@@ -487,13 +491,29 @@ class TestAgentRunner:
             }
             assert result[0] == "Final response"
             component_types = [call.kwargs["component_type"] for call in mock_streaming_formatter.format_component_event.call_args_list]
-            assert component_types[:2] == ["agent_activity", "tool_activity"]
+            assert component_types[:6] == [
+                "agent_activity", "agent_activity", "agent_activity",
+                "agent_activity", "agent_activity", "tool_activity",
+            ]
             activity_events = [
                 call.kwargs
                 for call in mock_streaming_formatter.format_component_event.call_args_list
                 if call.kwargs["component_type"] == "agent_activity"
             ]
-            assert [event["component_data"]["summary"] for event in activity_events] == ["I'll inspect the selected file."]
+            assert [event["component_data"]["summary"] for event in activity_events] == [
+                "I'll inspect the selected file.",
+                "Private",
+                "Private chain",
+                "Private chain of",
+                "Private chain of thought",
+            ]
+            assert [event["action"] for event in activity_events] == [
+                "add", "add", "update", "update", "update",
+            ]
+            assert len({event["component_id"] for event in activity_events[1:]}) == 1
+            assert activity_events[-1]["component_data"]["detail"] == "Private chain of thought"
+            assert "started_at" in activity_events[0]["component_data"]
+            assert len({event["component_data"]["started_at"] for event in activity_events[1:]}) == 1
             tool_events = [
                 call.kwargs
                 for call in mock_streaming_formatter.format_component_event.call_args_list

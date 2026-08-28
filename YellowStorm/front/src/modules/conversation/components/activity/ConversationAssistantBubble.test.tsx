@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getArtifactDownloadUrl: vi.fn(),
   openFileViewerFromUrl: vi.fn(),
   showError: vi.fn(),
+  writeClipboard: vi.fn(),
   redactSensitiveText: true,
 }));
 
@@ -17,16 +18,22 @@ vi.mock('../../hooks/useConversationSettings', () => ({
 }));
 
 vi.mock('@/modules/localization', () => ({
-  useModuleTranslation: () => ({ t: (key: string, options?: { tool?: string; status?: string; current?: number; total?: number }) => ({
+  useModuleTranslation: () => ({ language: 'en', t: (key: string, options?: { sequence?: number; tool?: string; status?: string; current?: number; total?: number }) => ({
     'stream.activity.agent': 'Activity',
+    'stream.activity.agentRowAria': `Activity, ${options?.status || ''}. Show full reasoning`,
     'stream.activity.agentPlanning': 'Preparing your request',
     'stream.activity.assistant': 'Assistant',
+    'stream.activity.usingTools': 'Using tools',
     'stream.activity.tool.runCode': 'Run code',
     'stream.activity.tool.search': 'Search',
     'stream.activity.request': 'Request',
     'stream.activity.response': 'Response',
+    'stream.activity.description': 'Description',
+    'stream.activity.timestamp': 'Timestamp',
+    'stream.activity.timestampUnavailable': 'Timestamp unavailable',
+    'stream.activity.copyToolDetails': 'Copy tool details',
     'stream.activity.responseTitle': `Tool response: ${options?.tool || ''}`,
-    'stream.activity.toolRowAria': `Tool response: ${options?.tool || ''} (${options?.status || ''})`,
+    'stream.activity.toolRowAria': `${options?.sequence}. Tool response: ${options?.tool || ''} (${options?.status || ''})`,
     'stream.activity.toolStatus.running': 'Running',
     'stream.activity.toolStatus.completed': 'Completed',
     'stream.activity.toolStatus.failed': 'Failed',
@@ -49,17 +56,32 @@ describe('ConversationAssistantBubble', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.redactSensitiveText = true;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: mocks.writeClipboard } });
   });
 
-  it('renders activity, artifact, and answer in exact order inside one bubble', () => {
+  it('shows the working fallback on mobile before the first component arrives', () => {
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming
+      showWorking
+      components={[]}
+    />);
+
+    expect(container.querySelector('[data-mobile-working]')).toHaveClass('md:hidden');
+    expect(screen.getAllByText('Using tools')).toHaveLength(2);
+  });
+
+  it('renders activity in arrival order and keeps the answer outside the activity pane', () => {
     render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
       isStreaming={false}
       components={[
-        { id: 'activity-1', type: 'agentActivity', data: { summary: 'Preparing workspace analysis', status: 'completed' } },
-        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'run_code', displayKey: 'runCode', summary: 'Compare selected files', renderKind: 'run_code', status: 'completed', durationMs: 1400 } },
+        { id: 'activity-1', type: 'agentActivity', data: { summary: 'Preparing workspace analysis', status: 'completed', startedAt: '2026-08-27T10:00:00Z' } },
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'run_code', displayKey: 'runCode', summary: 'Compare selected files', renderKind: 'run_code', status: 'completed', startedAt: '2026-08-27T10:01:00Z', completedAt: '2026-08-27T10:02:00Z', durationMs: 1400 } },
         { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'revenue-variance.xlsx', producerToolId: 'tool-1', availability: 'ready' } },
+        { id: 'tool-2', type: 'toolActivity', data: { toolName: 'search', summary: 'Verify the late event', renderKind: 'search', status: 'completed', startedAt: '2026-08-27T09:00:00Z', completedAt: '2026-08-27T09:01:00Z' } },
         { id: 'text-1', type: 'text', data: { content: 'Revenue is below forecast.' } },
       ]}
     />);
@@ -70,6 +92,7 @@ describe('ConversationAssistantBubble', () => {
       within(desktop).getByText(/Preparing workspace analysis/),
       within(desktop).getByText(/Compare selected files/),
       within(desktop).getByText('revenue-variance.xlsx'),
+      within(desktop).getByText(/Verify the late event/),
       screen.getByText(/Revenue is below forecast/),
     ];
     nodes.forEach((node) => expect(bubble).toContainElement(node));
@@ -77,6 +100,85 @@ describe('ConversationAssistantBubble', () => {
       expect(nodes[index - 1].compareDocumentPosition(nodes[index]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
     expect(bubble.textContent).not.toContain('storagePath');
+    expect([...desktop.querySelectorAll('[data-tool-sequence]')].map((node) => node.textContent)).toEqual(['1.', '2.']);
+    expect(bubble.querySelector('[data-activity-pane]')).toHaveClass('h-[13.333rem]', 'overflow-y-auto');
+    expect(bubble.querySelector('[data-activity-pane]')).not.toContainElement(nodes.at(-1) as HTMLElement);
+  });
+
+  it('autoscrolls the activity pane when a row arrives', async () => {
+    const { container, rerender } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming
+      components={[{ id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'First step', status: 'completed', renderKind: 'search' } }]}
+    />);
+    const pane = container.querySelector('[data-activity-pane]') as HTMLElement;
+    Object.defineProperty(pane, 'scrollHeight', { configurable: true, value: 480 });
+    pane.scrollTop = 0;
+
+    rerender(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming
+      components={[
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'First step', status: 'completed', renderKind: 'search' } },
+        { id: 'tool-2', type: 'toolActivity', data: { toolName: 'search', summary: 'Second step', status: 'running', renderKind: 'search' } },
+      ]}
+    />);
+
+    await waitFor(() => expect(pane.scrollTop).toBe(480));
+    expect([...container.querySelectorAll('[data-tool-sequence]')].map((node) => node.textContent)).toEqual(['1.', '2.']);
+  });
+
+  it('expands an activity row to show complete multiline reasoning', () => {
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{
+        id: 'activity-1',
+        type: 'agentActivity',
+        data: {
+          summary: 'Inspect the reports',
+          detail: 'First inspect the complete 2023 report.\nThen compare every 2025 ratio without truncation.',
+          status: 'completed',
+        },
+      }]}
+    />);
+
+    const trigger = screen.getByRole('button', { name: 'Activity, Completed. Show full reasoning' });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText(/Then compare every 2025 ratio/)).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText(/First inspect the complete 2023 report.*Then compare every 2025 ratio/s)).toHaveClass('whitespace-pre-wrap');
+  });
+
+  it('projects historical snapshot replays as one reasoning row per tool segment', () => {
+    const repeatedDetail = 'Inspect the 2023 report. Inspect the revenue table.';
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        { id: 'initial', type: 'agentActivity', data: { summary: '', status: 'completed' } },
+        { id: 'activity-1', type: 'agentActivity', data: { summary: '', detail: repeatedDetail + repeatedDetail, status: 'completed', actorId: 'agent-1' } },
+        { id: 'narration', type: 'text', data: { content: 'I will inspect the report.' } },
+        { id: 'activity-2', type: 'agentActivity', data: { summary: '', detail: repeatedDetail, status: 'completed', actorId: 'agent-1' } },
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'Search report', status: 'completed', renderKind: 'search' } },
+        { id: 'activity-3', type: 'agentActivity', data: { summary: '', detail: repeatedDetail, status: 'completed', actorId: 'agent-1' } },
+        { id: 'answer', type: 'text', data: { content: 'Revenue was found.' } },
+      ]}
+    />);
+
+    const activityRows = screen.getAllByRole('button', { name: 'Activity, Completed. Show full reasoning' });
+    expect(activityRows).toHaveLength(2);
+    fireEvent.click(activityRows[0]);
+    expect(screen.getByText(repeatedDetail)).toBeInTheDocument();
+    expect(screen.queryByText(repeatedDetail + repeatedDetail)).not.toBeInTheDocument();
+    expect(screen.getByText('Revenue was found.')).toBeInTheDocument();
   });
 
   it('uses authoritative duration formatting and renders stopped state without a success label', () => {
@@ -146,8 +248,8 @@ describe('ConversationAssistantBubble', () => {
     expect(container.querySelector('[data-agent-spinner]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-agent-scan]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-agent-activity-spinner]')).not.toBeInTheDocument();
-    expect(container.querySelector('[data-tool-spinner]')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Tool response: Run code (Running)' })).toBeInTheDocument();
+    expect(container.querySelector('[data-tool-spinner]')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '1. Tool response: Run code (Running)' })).toBeInTheDocument();
   });
 
   it('opens a sanitized tool response without exposing private payload fields', () => {
@@ -171,7 +273,7 @@ describe('ConversationAssistantBubble', () => {
       }]}
     />);
 
-    const trigger = screen.getByRole('button', { name: 'Tool response: Run code (Failed)' });
+    const trigger = screen.getByRole('button', { name: '1. Tool response: Run code (Failed)' });
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText(/Execution stopped/)).not.toBeInTheDocument();
 
@@ -205,7 +307,7 @@ describe('ConversationAssistantBubble', () => {
       }]}
     />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tool response: Run command (Completed)' }));
+    fireEvent.click(screen.getByRole('button', { name: '1. Tool response: Run command (Completed)' }));
 
     expect(screen.getByText(/pandoc source\.md -o output\.pdf/)).toBeInTheDocument();
     expect(screen.getByText(/Created output\.pdf/)).toBeInTheDocument();
@@ -228,26 +330,80 @@ describe('ConversationAssistantBubble', () => {
       }]}
     />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tool response: Search (Completed)' }));
+    fireEvent.click(screen.getByRole('button', { name: '1. Tool response: Search (Completed)' }));
 
     expect(screen.getByText(/annual revenue/)).toBeInTheDocument();
     expect(screen.getByText(/"matches": 4/)).toBeInTheDocument();
   });
 
-  it('omits narration text emitted before activity and keeps the final answer', () => {
-    render(<ConversationAssistantBubble
+  it('shows the full tool description and timestamp and copies expanded details', async () => {
+    const summary = 'Locate every citation for the financial comparison across both annual reports, verify each source passage, and preserve the complete description so the final clause remains visible after expansion.';
+    const completedAt = '2026-08-27T10:02:00Z';
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{
+        id: 'tool-search',
+        type: 'toolActivity',
+        data: {
+          toolName: 'perform_standard_search', summary, status: 'completed', renderKind: 'search', completedAt,
+          paramsJson: JSON.stringify({ query: 'annual revenue' }), resultJson: JSON.stringify({ matches: 4 }),
+        },
+      }]}
+    />);
+
+    const trigger = screen.getByRole('button', { name: '1. Tool response: Search (Completed)' });
+    expect(trigger).not.toHaveTextContent('final clause remains visible after expansion');
+    fireEvent.click(trigger);
+
+    expect(container.querySelector('[data-tool-full-description]')).toHaveTextContent(summary);
+    expect(container.querySelector('[data-tool-timestamp]')).toHaveTextContent(
+      new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(completedAt)),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy tool details' }));
+    await waitFor(() => expect(mocks.writeClipboard).toHaveBeenCalledWith(expect.stringContaining(summary)));
+    expect(mocks.writeClipboard).toHaveBeenCalledWith(expect.stringContaining('annual revenue'));
+  });
+
+  it('falls back to the valid start timestamp when completion time is invalid', () => {
+    const startedAt = '2026-08-27T09:58:00Z';
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{
+        id: 'tool-search',
+        type: 'toolActivity',
+        data: { toolName: 'perform_standard_search', summary: 'Find revenue', status: 'completed', renderKind: 'search', completedAt: 'invalid', startedAt },
+      }]}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: '1. Tool response: Search (Completed)' }));
+
+    expect(container.querySelector('[data-tool-timestamp]')).toHaveTextContent(
+      new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(startedAt)),
+    );
+  });
+
+  it('keeps visible text when tool and punctuation-only activity components follow it', () => {
+    const { container } = render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
       isStreaming={false}
       components={[
-        { id: 'narration', type: 'text', data: { content: 'I will inspect the reports.' } },
-        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'perform_standard_search', summary: 'Inspect reports', status: 'completed', renderKind: 'search' } },
-        { id: 'answer', type: 'text', data: { content: 'Revenue increased.' } },
+        { id: 'punctuation-1', type: 'agentActivity', data: { summary: '.', detail: '.', status: 'completed' } },
+        { id: 'answer', type: 'text', data: { content: 'Your AI summary is ready.' } },
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'run_code', summary: 'Generate the PDF', status: 'completed', renderKind: 'run_code' } },
+        { id: 'artifact-1', type: 'artifact', data: { artifactId: 'artifact-1', filename: 'AI_Summary.pdf', availability: 'ready' } },
+        { id: 'punctuation-2', type: 'agentActivity', data: { summary: '.', detail: '.', status: 'completed' } },
       ]}
     />);
 
-    expect(screen.queryByText(/I will inspect/)).not.toBeInTheDocument();
-    expect(screen.getByText(/Revenue increased/)).toBeInTheDocument();
+    expect(screen.getByText('Your AI summary is ready.')).toBeInTheDocument();
+    expect(screen.getAllByText('AI_Summary.pdf')).not.toHaveLength(0);
+    expect(container.querySelectorAll('[data-desktop-activity] button[aria-label^="Activity,"]')).toHaveLength(0);
   });
 
   it('shows tool states, mobile progress, and retry for a failed response', () => {
@@ -267,8 +423,12 @@ describe('ConversationAssistantBubble', () => {
     expect(container.querySelector('[data-tool-status="completed"]')).toBeInTheDocument();
     expect(container.querySelector('[data-tool-status="stopped"]')).toBeInTheDocument();
     expect(container.querySelector('[data-tool-status="failed"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-tool-spinner]')).not.toBeInTheDocument();
     expect(screen.getByText('3 of 3 steps')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Tool response: Search (Failed)' }));
+    expect(container.querySelector('[data-activity-pane]')).toHaveClass('h-[13.333rem]', 'overflow-y-auto');
+    expect([...container.querySelectorAll('[data-tool-sequence]')].map((node) => node.textContent)).toEqual(['1.', '2.', '3.']);
+    expect(container.querySelectorAll('[data-tool-spinner]')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '3. Tool response: Search (Failed)' }));
     fireEvent.click(screen.getByRole('button', { name: 'Retry response' }));
     expect(retry).toHaveBeenCalledOnce();
   });

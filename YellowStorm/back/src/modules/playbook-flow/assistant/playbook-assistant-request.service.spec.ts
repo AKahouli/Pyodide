@@ -123,13 +123,18 @@ describe('PlaybookAssistantRequestService', () => {
       conversationId: 'conversation-1', correlationId: 'ai-message-1',
     };
 
-    await expect(service.claimGenerationForTurn({ actor, text: 'Build lead generation' }))
+    await expect(service.claimGenerationForTurn({
+      actor,
+      text: 'Build lead generation',
+      requestedName: 'Lead pipeline',
+    }))
       .resolves.toEqual({ requestId: 'created-request' });
     expect(model.create).toHaveBeenCalledWith(expect.objectContaining({
       requestId: expect.stringMatching(/^platform-generation:/),
       ...actor,
       operationKind: 'generation',
       originalText: 'Build lead generation',
+      requestedName: 'Lead pipeline',
     }));
   });
 
@@ -348,6 +353,24 @@ describe('PlaybookAssistantRequestService', () => {
       { requestId: 'request-1', assessmentVersion: 2, status: 'processing' },
       expect.any(Object),
       { new: true },
+    );
+  });
+
+  it('keeps an assessed generation ready after resetting a safely removed failed draft', async () => {
+    const model = {
+      updateOne: jest.fn().mockReturnValue(query({ modifiedCount: 1 })),
+    };
+    const service = new PlaybookAssistantRequestService(model as never);
+
+    await expect(service.resetMutation('request-1', 'operation-1')).resolves.toBe(true);
+    expect(model.updateOne).toHaveBeenCalledWith(
+      { requestId: 'request-1', mutationOperationId: 'operation-1' },
+      { $set: {
+        mutationOperationId: null,
+        playbookId: null,
+        expectedDefinitionRevision: null,
+        status: 'ready',
+      } },
     );
   });
 });

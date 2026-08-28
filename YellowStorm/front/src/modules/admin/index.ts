@@ -94,7 +94,6 @@ export type {
   SyncModelsResponse,
   AdminPlaybookSettings,
   PlaybookPlannerAgentOption,
-  PlaybookSuggestorAgentOption,
   UpdateAdminPlaybookSettingsRequest,
   WorkspaceUploadSettingsResponse,
   UpdateWorkspaceUploadSettingsRequest,

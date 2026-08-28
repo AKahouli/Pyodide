@@ -10,6 +10,7 @@ const SENSITIVE_KEY = /^(?:authorization|cookie|set-cookie|[A-Za-z0-9_-]*(?:pass
 
 interface SanitizerOptions {
   redactSensitiveText?: boolean;
+  includeAgentDetail?: boolean;
 }
 
 function boundString(value: string): string {
@@ -93,8 +94,10 @@ export function sanitizePublicComponent(component: MessageComponent, options: Sa
     };
   }
   if (component.type === 'agentActivity') {
-    const { detail: _detail, ...publicData } = component.data;
-    return { id: component.id, type: component.type, data: sanitizePublicToolData(publicData, options) };
+    const { detail, ...publicData } = component.data;
+    const sanitized = sanitizePublicToolData(publicData, options);
+    if (options.includeAgentDetail && typeof detail === 'string') sanitized.detail = detail;
+    return { id: component.id, type: component.type, data: sanitized };
   }
   return {
     id: component.id,

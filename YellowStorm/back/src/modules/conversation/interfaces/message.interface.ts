@@ -20,6 +20,7 @@ export type ComponentType =
 
 export interface AgentActivityData extends Record<string, unknown> {
   summary: string;
+  detail?: string;
   status: 'running' | 'completed';
   startedAt?: string;
   completedAt?: string;

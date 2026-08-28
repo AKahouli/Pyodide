@@ -5,8 +5,6 @@ import {
   AgentService,
   type PlaybookPlannerAgentConfig,
   type PlaybookPlannerAgentOption,
-  type PlaybookSuggestorAgentConfig,
-  type PlaybookSuggestorAgentOption,
 } from '@modules/agent/agent.service';
 import { SystemService } from '@modules/system/system.service';
 import type { AdminPlaybookSettings } from '@modules/system/interfaces/playbook-settings.interface';
@@ -39,10 +37,6 @@ export class PlaybookFlowSettingsService {
     return this.agentService.listPlaybookPlannerAgentOptions();
   }
 
-  async listSuggestorAgents(): Promise<PlaybookSuggestorAgentOption[]> {
-    return this.agentService.listPlaybookSuggestorAgentOptions();
-  }
-
   async resolvePlaybookPlanner(
     agentId: string,
     playbookSettings?: Partial<FlowDesignSettings> | Record<string, unknown> | null,
@@ -56,35 +50,18 @@ export class PlaybookFlowSettingsService {
     const identifier = validation.valid && validation.model
       ? this.modelsService.getModelIdentifier(validation.model)
       : '';
-    if (!identifier) {
-      throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The Playbook Planner model is unavailable');
+    if (identifier) {
+      return {
+        ...planner,
+        model: identifier,
+        omitTemperature: validation.model?.omitTemperature === true,
+      };
     }
-    return {
-      ...planner,
-      model: identifier,
-      omitTemperature: validation.model?.omitTemperature === true,
-    };
-  }
-
-  async resolvePlaybookSuggestor(): Promise<PlaybookSuggestorAgentConfig> {
-    const settings = await this.getAdminSettings();
-    const agentId = settings.playbookSuggestorAgentId?.trim();
-    if (!agentId) {
-      throw new BadRequestException(ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE, 'A Playbook Suggestor agent must be configured');
-    }
-    const suggestor = await this.agentService.findPlaybookSuggestorById(agentId);
-    const modelValidation = await this.modelsService.validateModelActive(suggestor.model, 'chat');
-    if (!modelValidation.valid) {
-      throw new BadRequestException(ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE, 'The Playbook Suggestor model is unavailable');
-    }
-    return suggestor;
+    return { ...planner, ...(await this.resolveInferenceModelConfig(playbookSettings)) };
   }
 
   async updateAdminSettings(patch: UpdateAdminPlaybookSettingsDto): Promise<AdminPlaybookSettings> {
     const current = await this.getAdminSettings();
-    const playbookSuggestorAgentId = patch.playbookSuggestorAgentId === undefined
-      ? current.playbookSuggestorAgentId
-      : patch.playbookSuggestorAgentId?.trim() || null;
     const inferenceModelId = patch.inferenceModelId === undefined
       ? current.inferenceModelId
       : patch.inferenceModelId?.trim() || null;
@@ -98,18 +75,11 @@ export class PlaybookFlowSettingsService {
       ? current.playbookExecution.dynamicReasoning.plannerAgentId
       : patch.playbookExecution.dynamicReasoning.plannerAgentId.trim();
 
-    if (!plannerAgentId) {
-      throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'A Playbook Planner agent must be selected');
-    }
-    await this.agentService.findPlaybookPlannerById(plannerAgentId);
-
-    if (!playbookSuggestorAgentId) {
-      throw new BadRequestException(ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE, 'A Playbook Suggestor agent must be selected');
-    }
-    const suggestor = await this.agentService.findPlaybookSuggestorById(playbookSuggestorAgentId);
-    const suggestorModelValidation = await this.modelsService.validateModelActive(suggestor.model, 'chat');
-    if (!suggestorModelValidation.valid) {
-      throw new BadRequestException(ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE, 'The Playbook Suggestor model is unavailable');
+    if (patch.playbookExecution?.dynamicReasoning?.plannerAgentId !== undefined) {
+      if (!plannerAgentId) {
+        throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'A Playbook Planner agent must be selected');
+      }
+      await this.agentService.findPlaybookPlannerById(plannerAgentId);
     }
 
     if (patch.inferenceModelId !== undefined && inferenceModelId) {
@@ -128,7 +98,6 @@ export class PlaybookFlowSettingsService {
     }
 
     return this.systemService.setPlaybookSettings({
-      playbookSuggestorAgentId,
       inferenceModelId,
       advisorEvaluationModelId,
       replayEvaluationModelId,
@@ -141,7 +110,6 @@ export class PlaybookFlowSettingsService {
         maxIteratorBodySteps: patch.intentNormalizationLimits?.maxIteratorBodySteps ?? current.intentNormalizationLimits.maxIteratorBodySteps,
         maxIteratorBodyEdges: patch.intentNormalizationLimits?.maxIteratorBodyEdges ?? current.intentNormalizationLimits.maxIteratorBodyEdges,
       },
-      replayEligibilityConfidenceThreshold: patch.replayEligibilityConfidenceThreshold ?? current.replayEligibilityConfidenceThreshold,
       useDeterministicBlueprintBuilder: patch.useDeterministicBlueprintBuilder ?? current.useDeterministicBlueprintBuilder,
       playbookExecution: {
         ...current.playbookExecution,
@@ -257,7 +225,6 @@ export class PlaybookFlowSettingsService {
     const resolvedInferenceModelId = normalized.inferenceModelId || adminSettings.inferenceModelId || null;
 
     return {
-      playbookSuggestorAgentId: adminSettings.playbookSuggestorAgentId,
       inferenceModelId: resolvedInferenceModelId,
       advisorEvaluationModelId: adminSettings.advisorEvaluationModelId,
       replayEvaluationModelId: adminSettings.replayEvaluationModelId,
@@ -266,7 +233,6 @@ export class PlaybookFlowSettingsService {
       approvalSuggestionMode: normalized.approvalSuggestionMode === 'inherit'
         ? adminSettings.approvalSuggestionMode : normalized.approvalSuggestionMode,
       intentNormalizationLimits: adminSettings.intentNormalizationLimits,
-      replayEligibilityConfidenceThreshold: adminSettings.replayEligibilityConfidenceThreshold,
       useDeterministicBlueprintBuilder: adminSettings.useDeterministicBlueprintBuilder,
       playbookExecution: adminSettings.playbookExecution,
       resolvedInferenceModelId,
@@ -284,10 +250,15 @@ export class PlaybookFlowSettingsService {
   async resolveInferenceModelConfig(
     playbookSettings?: Partial<FlowDesignSettings> | Record<string, unknown> | null,
   ): Promise<{ model: string; omitTemperature: boolean }> {
-    const effectiveSettings = await this.resolveEffectiveSettings(playbookSettings);
+    const normalized = this.normalizePlaybookSettings(playbookSettings);
+    const adminSettings = await this.getAdminSettings();
+    const candidateIds = [...new Set([
+      normalized.inferenceModelId,
+      adminSettings.inferenceModelId?.trim() || null,
+    ].filter((modelId): modelId is string => Boolean(modelId)))];
 
-    if (effectiveSettings.resolvedInferenceModelId) {
-      const validation = await this.modelsService.validateModelActive(effectiveSettings.resolvedInferenceModelId);
+    for (const modelId of candidateIds) {
+      const validation = await this.modelsService.validateModelActive(modelId);
       if (validation.valid && validation.model) {
         const identifier = this.modelsService.getModelIdentifier(validation.model);
         if (identifier) return { model: identifier, omitTemperature: validation.model.omitTemperature === true };

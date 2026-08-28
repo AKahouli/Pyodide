@@ -14,7 +14,6 @@ import { WorkspaceModule } from '@modules/workspace/workspace.module';
 import { ConnectedAppModule } from '@modules/connected-app/connected-app.module';
 import { UserModule } from '@modules/user';
 import { ConversationModule } from '@modules/conversation/conversation.module';
-import { ChatCompletionModule } from '@modules/chat-completion/chat-completion.module';
 import { WorkspaceSchema, Workspace } from '@modules/workspace/schemas/workspace.schema';
 import {
   WorkspaceSetting,
@@ -127,7 +126,6 @@ import { PlaybookFlowReplayArtifactService } from './services/playbook-flow-repl
 import { PlaybookFlowReplayPromptService } from './services/playbook-flow-replay-prompt.service';
 import { PlaybookFlowReplayHashService } from './services/playbook-flow-replay-hash.service';
 import { PlaybookFlowReplayBaselineService } from './services/playbook-flow-replay-baseline.service';
-import { PlaybookFlowReplayEligibilityService } from './services/playbook-flow-replay-eligibility.service';
 import { PlaybookFlowReplayReportService } from './services/playbook-flow-replay-report.service';
 import { PlaybookFlowReplayDriftService } from './services/playbook-flow-replay-drift.service';
 import { PlaybookFlowReplayPlanService } from './services/playbook-flow-replay-plan.service';
@@ -160,7 +158,6 @@ import { PlaybookAssistantContextService } from './assistant/playbook-assistant-
 import { PlaybookAssistantService } from './assistant/playbook-assistant.service';
 import { PlaybookAssistantOperationService } from './assistant/playbook-assistant-operation.service';
 import { PlaybookPlanValidationClientService } from './assistant/playbook-plan-validation-client.service';
-import { ConversationPlaybookBuilderService } from './services/conversation-playbook-builder.service';
 import { PlaybookAssistantRequestService } from './assistant/playbook-assistant-request.service';
 import { PlaybookAssistantHistoryService } from './assistant/playbook-assistant-history.service';
 import { PlaybookAssistantActorGuard } from './guards/playbook-assistant-actor.guard';
@@ -210,7 +207,6 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     ConnectedAppModule,
     UserModule,
     ConversationModule,
-    ChatCompletionModule,
   ],
   controllers: [
     PlaybookFlowMailWebhookController,
@@ -310,7 +306,6 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookFlowReplayPromptService,
     PlaybookFlowReplayHashService,
     PlaybookFlowReplayBaselineService,
-    PlaybookFlowReplayEligibilityService,
     PlaybookFlowReplayReportService,
     PlaybookFlowReplayDriftService,
     PlaybookFlowReplayPlanService,
@@ -326,7 +321,6 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookAssistantService,
     PlaybookAssistantOperationService,
     PlaybookPlanValidationClientService,
-    ConversationPlaybookBuilderService,
     PlaybookAssistantRequestService,
     PlaybookAssistantHistoryService,
     PlaybookAssistantActorGuard,

@@ -871,55 +871,6 @@ describe('AgentService connector skill inheritance', () => {
     expect(agentRepository.findById).not.toHaveBeenCalled();
   });
 
-  it('resolves the explicitly selected active playbook suggestor', async () => {
-    const { service, agentRepository, agentTypeService } = createService();
-    const agentId = new Types.ObjectId().toString();
-    const agentTypeId = new Types.ObjectId().toString();
-    agentRepository.findById.mockResolvedValue(makeRecord({
-      _id: agentId,
-      agentType: agentTypeId,
-      isDefault: true,
-      llmModel: 'suggestor-model',
-      temperature: 0.1,
-      instruction: 'Find the workflow use case',
-      updatedAt: new Date('2026-08-06T00:00:00.000Z'),
-    }));
-    agentTypeService.getManyForHydration.mockResolvedValue(new Map([[
-      agentTypeId,
-      { id: agentTypeId, name: 'General Assistant', slug: 'general_assistant', skills: [] },
-    ]]));
-
-    await expect(service.findPlaybookSuggestorById(agentId)).resolves.toEqual({
-      agentTypeId,
-      agentTypeSlug: 'general_assistant',
-      agentId,
-      agentRevision: '2026-08-06T00:00:00.000Z',
-      model: 'suggestor-model',
-      temperature: 0.1,
-      instruction: 'Find the workflow use case',
-    });
-  });
-
-  it('lists active default agents with a configured model regardless of agent type', async () => {
-    const { service, agentRepository, agentTypeService } = createService();
-    const generalTypeId = new Types.ObjectId().toString();
-    const plannerTypeId = new Types.ObjectId().toString();
-    agentRepository.findActiveDefaults.mockResolvedValue([
-      makeRecord({ name: 'General Assistant', llmModel: ' general-model ', agentType: generalTypeId, isDefault: true }),
-      makeRecord({ name: 'Planner', llmModel: 'planner-model', agentType: plannerTypeId, isDefault: true }),
-      makeRecord({ name: 'No Model', agentType: generalTypeId, isDefault: true }),
-    ]);
-    agentTypeService.getManyForHydration.mockResolvedValue(new Map([
-      [generalTypeId, { id: generalTypeId, name: 'General', slug: 'general', skills: [] }],
-      [plannerTypeId, { id: plannerTypeId, name: 'Planner', slug: 'playbook_planner', skills: [] }],
-    ]));
-
-    await expect(service.listPlaybookSuggestorAgentOptions()).resolves.toEqual([
-      expect.objectContaining({ name: 'General Assistant', model: 'general-model' }),
-      expect.objectContaining({ name: 'Planner', model: 'planner-model' }),
-    ]);
-  });
-
   it('rejects technical identity changes for the reserved Platform Copilot Agent', async () => {
     const { service, agentRepository } = createService();
     const reserved = makeRecord({

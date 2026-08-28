@@ -48,35 +48,33 @@ export class PlaybookExecutionStreamFinalizerService {
     this.streamEvents.emitExecutionComplete(executionId, 'failed', publicErrorMessage);
   }
 
-  async finalizeEndedStream(executionId: string, allowFailedTaskFallback: boolean): Promise<boolean> {
+  async finalizeEndedStream(executionId: string): Promise<boolean> {
     const execution = await this.executionModel.findById(executionId).lean();
     const status = String((execution as Record<string, unknown> | null)?.status || '');
     if (!this.shouldFinalize(status)) {
       return false;
     }
 
-    if (allowFailedTaskFallback) {
-      const failedTask = await this.taskResultModel
-        .findOne({ executionId, status: 'failed' })
-        .sort({ endedAt: -1 })
-        .lean();
-      if (failedTask) {
-        const errorMessage = String(sanitizePlaybookPublicValue(failedTask.error || 'Execution failed'));
-        const failedResult = await this.executionModel
-          .updateOne(
-            { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
-            { status: 'failed', error: errorMessage, endedAt: new Date() },
-          )
-          .exec();
-        if ((failedResult as { modifiedCount?: number }).modifiedCount) {
-          await this.executionLeaseService?.release(executionId);
-          this.streamEvents.emitExecutionComplete(executionId, 'failed', errorMessage);
-          return true;
-        }
-
-        this.logger.warn(`Stream failure finalization skipped for execution ${executionId} because the execution was already terminal`);
-        return false;
+    const failedTask = await this.taskResultModel
+      .findOne({ executionId, status: 'failed' })
+      .sort({ endedAt: -1 })
+      .lean();
+    if (failedTask) {
+      const errorMessage = String(sanitizePlaybookPublicValue(failedTask.error || 'Execution failed'));
+      const failedResult = await this.executionModel
+        .updateOne(
+          { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
+          { status: 'failed', error: errorMessage, endedAt: new Date() },
+        )
+        .exec();
+      if ((failedResult as { modifiedCount?: number }).modifiedCount) {
+        await this.executionLeaseService?.release(executionId);
+        this.streamEvents.emitExecutionComplete(executionId, 'failed', errorMessage);
+        return true;
       }
+
+      this.logger.warn(`Stream failure finalization skipped for execution ${executionId} because the execution was already terminal`);
+      return false;
     }
 
     const completedResult = await this.executionModel

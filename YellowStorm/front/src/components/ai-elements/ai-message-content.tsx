@@ -1,6 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
+import { getMimeTypeFromFilename, openFileViewerFromUrlLoader } from '@/modules/file-viewer';
 import { downloadCode } from '@/lib/download';
 import { toast } from 'sonner';
 import { useState, useMemo, useCallback, useEffect, useRef, type HTMLAttributes } from 'react';
@@ -407,31 +408,31 @@ async function openCitationSource(
   const objectKey = (citation.sourceType === 'image' ? citation.path : citation.source) || '';
   if (!objectKey) return;
 
-  const { openFileViewerFromUrl, getMimeTypeFromFilename } = await import('@/modules/file-viewer');
-  let displayName = citation.fileName ||
+  const displayName = citation.fileName ||
     (citation.sourceType === 'image' ? citation.source : '') ||
     objectKey.split('/').pop() ||
     defaultLabel;
-  let mimeType = getMimeTypeFromFilename(displayName) ?? 'application/octet-stream';
-  let url: string;
-  if (citationScope) {
-    const { getCitationViewUrl } = await import('@/modules/conversation/api');
-    const resolved = await getCitationViewUrl(
-      citationScope.conversationId,
-      citationScope.messageId,
-      { source: objectKey, fileName: citation.fileName, reference: normalizeCitationReference(citation.reference) },
-    );
-    url = resolved.url;
-    displayName = resolved.fileName;
-    mimeType = resolved.mimeType;
-  } else {
-    const { conversationV2Api } = await import('@/modules/conversation-v2/api');
-    ({ url } = await conversationV2Api.getFileSignedUrl(objectKey));
-  }
+  const mimeType = getMimeTypeFromFilename(displayName) ?? 'application/octet-stream';
   const pageNumbers = citation.page?.match(/\d+/g);
   const page = pageNumbers?.length ? Number(pageNumbers.at(-1)) : undefined;
+  const reference = normalizeCitationReference(citation.reference);
+  const tabKey = citationScope
+    ? JSON.stringify([citationScope.conversationId, citationScope.messageId, objectKey])
+    : objectKey;
 
-  openFileViewerFromUrl(url, displayName, mimeType, {
+  await openFileViewerFromUrlLoader(tabKey, displayName, mimeType, async () => {
+    if (citationScope) {
+      const { getCitationViewUrl } = await import('@/modules/conversation/api');
+      return getCitationViewUrl(
+        citationScope.conversationId,
+        citationScope.messageId,
+        { source: objectKey, fileName: citation.fileName, reference },
+      );
+    }
+    const { conversationV2Api } = await import('@/modules/conversation-v2/api');
+    const { url } = await conversationV2Api.getFileSignedUrl(objectKey);
+    return { url, fileName: displayName, mimeType };
+  }, {
     displayMode,
     closeOnOutsideClick: displayMode === 'floating',
     page,

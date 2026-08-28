@@ -216,8 +216,16 @@ async def start_playbook_construction(
 @mcp.tool()
 async def start_playbook_generation(
     name: str | None = None,
+    continuation_id: str | None = None,
+    answers: list[dict[str, Any]] | str | None = None,
+    skip_clarification: bool = False,
 ) -> PlaybookMcpResultV1:
-    """Start one idempotent operation-owned draft; the Playbook canvas applies it automatically once the returned handoff is opened."""
+    """Assess and start one operation-owned draft from the trusted current turn.
+
+    The first call may return typed clarification questions. Follow up with the returned continuation_id
+    and answers. Set skip_clarification=true only when the user explicitly skips remaining questions.
+    Draft creation starts only after the request is ready.
+    """
     def add_canvas_handoff(result: dict[str, Any]) -> dict[str, Any]:
         operation_id = result.get("operationId")
         playbook_id = result.get("playbookId")
@@ -234,7 +242,12 @@ async def start_playbook_generation(
         backend().post(
             "/api/v1/internal/playbook-assistant/generation",
             require_acting_user_id(),
-            {"name": name},
+            {
+                "name": name,
+                "continuationId": continuation_id,
+                "answers": coerce_answers(answers),
+                "skip": skip_clarification,
+            },
         ),
         add_canvas_handoff,
     )

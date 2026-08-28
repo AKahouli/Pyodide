@@ -103,23 +103,6 @@ export class PlaybookFlowReplayBaselineService {
     };
   }
 
-  buildCurrentReplayFingerprints(params: {
-    inputContext?: unknown;
-    flowSnapshot?: unknown;
-    nodeSnapshot?: Record<string, unknown> | null;
-    outputContract?: FlowReplayOutputContract | null;
-  }): FlowReplayFingerprints {
-    return this.replayHashService.buildReplayFingerprints({
-      inputContext: params.inputContext,
-      flowSnapshot: params.flowSnapshot,
-      nodeSnapshot: params.nodeSnapshot,
-      agentConfig: this.extractAgentConfig(params.nodeSnapshot),
-      modelConfig: this.extractModelConfig(params.nodeSnapshot),
-      toolConfig: this.extractToolConfig(params.nodeSnapshot),
-      outputContract: params.outputContract ?? null,
-    });
-  }
-
   buildReplayIntent(params: {
     taskId: string;
     taskTitle?: string | null;

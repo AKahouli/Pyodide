@@ -27,7 +27,6 @@ import {
   getPlaybookUpdateTelemetry,
   updatePlaybook,
   validateTaskReplay,
-  buildPlaybookFromConversation,
 } from './api';
 import { makeTask } from './test-utils';
 
@@ -2060,21 +2059,4 @@ describe('getExecution', () => {
     expect(execution.dynamicReasoningAttempts?.[0]?.acceptedPlan?.nodes[0].title).toBe('Calculate Risk Metrics');
   });
 
-  it('builds a playbook from a persisted conversation response', async () => {
-    apiClientMock.post.mockReset();
-    apiClientMock.post.mockResolvedValueOnce({ data: { data: { id: 'playbook-1' } } });
-    const payload = {
-      conversationId: 'conversation-1',
-      assistantMessageId: 'message-1',
-      answerVersion: 'original',
-      name: 'Incident response',
-    };
-
-    await expect(buildPlaybookFromConversation(payload)).resolves.toEqual({ id: 'playbook-1' });
-    expect(apiClientMock.post).toHaveBeenCalledWith(
-      '/playbooks/from-conversation',
-      payload,
-      { timeout: 0 },
-    );
-  });
 });

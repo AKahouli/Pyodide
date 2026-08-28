@@ -37,14 +37,12 @@ export interface PlaybookExecutionAdminSettings {
 }
 
 export interface AdminPlaybookSettings {
-  playbookSuggestorAgentId: string | null;
   inferenceModelId: string | null;
   advisorEvaluationModelId: string | null;
   replayEvaluationModelId: string | null;
   nodeSuggestionsMode: SuggestionMode;
   approvalSuggestionMode: SuggestionMode;
   intentNormalizationLimits: PlaybookIntentNormalizationLimits;
-  replayEligibilityConfidenceThreshold: number;
   useDeterministicBlueprintBuilder: boolean;
   playbookExecution: PlaybookExecutionAdminSettings;
 }
@@ -84,14 +82,12 @@ export const DEFAULT_PLAYBOOK_EXECUTION_SETTINGS: PlaybookExecutionAdminSettings
 };
 
 export const DEFAULT_ADMIN_PLAYBOOK_SETTINGS: AdminPlaybookSettings = {
-  playbookSuggestorAgentId: null,
   inferenceModelId: null,
   advisorEvaluationModelId: null,
   replayEvaluationModelId: null,
   nodeSuggestionsMode: 'manual',
   approvalSuggestionMode: 'auto',
   intentNormalizationLimits: DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS,
-  replayEligibilityConfidenceThreshold: 70,
   useDeterministicBlueprintBuilder: true,
   playbookExecution: DEFAULT_PLAYBOOK_EXECUTION_SETTINGS,
 };

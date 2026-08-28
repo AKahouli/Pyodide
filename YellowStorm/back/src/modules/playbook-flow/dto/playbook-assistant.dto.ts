@@ -268,6 +268,25 @@ export class StartPlaybookGenerationDto {
   @IsString()
   @MaxLength(100)
   name?: string;
+
+  @ApiPropertyOptional({ maxLength: 200 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  continuationId?: string;
+
+  @ApiPropertyOptional({ type: [PlaybookClarificationAnswerDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => PlaybookClarificationAnswerDto)
+  answers?: PlaybookClarificationAnswerDto[];
+
+  @ApiPropertyOptional({ description: 'Skip the remaining clarification questions and generate with the collected answers only.' })
+  @IsOptional()
+  @IsBoolean()
+  skip?: boolean;
 }
 
 export class RunCurrentTurnPlaybookModificationDto {

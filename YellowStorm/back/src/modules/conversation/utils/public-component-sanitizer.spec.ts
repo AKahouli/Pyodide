@@ -95,4 +95,16 @@ describe('public component sanitizer', () => {
 
     expect(component.data).toEqual({ artifactId: 'opaque', filename: 'report.pdf' });
   });
+
+  it('preserves full agent detail only for authenticated conversation responses', () => {
+    const activity = {
+      id: 'activity-1',
+      type: 'agentActivity' as const,
+      data: { summary: 'Inspecting reports', detail: 'Private reasoning with /workspace/source.pdf', status: 'completed' },
+    };
+
+    expect(sanitizePublicComponent(activity).data).not.toHaveProperty('detail');
+    expect(sanitizePublicComponent(activity, { includeAgentDetail: true }).data.detail)
+      .toBe('Private reasoning with /workspace/source.pdf');
+  });
 });

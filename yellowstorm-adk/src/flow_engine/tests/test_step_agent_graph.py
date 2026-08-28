@@ -10,11 +10,21 @@ from pydantic import BaseModel
 
 from src.flow_engine.agent_runtime import StepRuntimeContext, run_step_agent
 from src.flow_engine.agent_runtime.tool_results import MCP_CONTENT_PARTS_KEY
-from src.flow_engine.agent_runtime.tool_wrapper import tool_request_fingerprint
+from src.flow_engine.agent_runtime.tool_wrapper import _normalize_tool_args, tool_request_fingerprint
+from src.flow_engine.observability.trace_collector import TraceCollector
 
 
 class EchoInput(BaseModel):
     value: str
+
+
+class PathInput(BaseModel):
+    path: str
+    pattern: str
+
+
+class SecretInput(BaseModel):
+    authorization: str
 
 
 class Response:
@@ -263,6 +273,47 @@ def test_parallel_tool_calls_have_independent_request_fingerprints() -> None:
     sibling = tool_request_fingerprint({"id": "call-2", "name": "search", "args": {"q": "one"}}, metadata, context)
     changed = tool_request_fingerprint({"id": "call-1", "name": "search", "args": {"q": "two"}}, metadata, context)
     assert len({first, sibling, changed}) == 3
+
+
+def test_tool_args_unwrap_model_generated_params_for_flat_schema() -> None:
+    tool = StructuredTool(
+        name="file_find",
+        description="Find files",
+        func=lambda path, pattern: f"{path}:{pattern}",
+        args_schema=PathInput,
+    )
+
+    assert _normalize_tool_args(tool, {"params": {"path": "/mnt/workspace", "pattern": "*.docx"}}) == {
+        "path": "/mnt/workspace",
+        "pattern": "*.docx",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tool_wrapper_records_raw_arguments_for_backend_policy(monkeypatch) -> None:
+    responses = [
+        Response("", [{"id": "call-1", "function": {"name": "request", "arguments": '{"authorization":"Bearer abc"}'}}]),
+        Response("complete"),
+    ]
+
+    async def completion(**_kwargs):
+        return responses.pop(0)
+
+    async def request(authorization: str) -> str:
+        return authorization
+
+    monkeypatch.setattr("src.flow_engine.agent_runtime.model.litellm.acompletion", completion)
+    collector = TraceCollector()
+    tool = StructuredTool(name="request", description="Request", func=None, coroutine=request, args_schema=SecretInput)
+
+    await run_step_agent(
+        system_prompt="system",
+        user_msg="user",
+        tools=[tool],
+        context=StepRuntimeContext(model_id="test", tools_enabled=True, trace_collector=collector),
+    )
+
+    assert collector.build_payload()["tool_trace"][0]["args"] == {"authorization": "Bearer abc"}
 
 
 @pytest.mark.asyncio

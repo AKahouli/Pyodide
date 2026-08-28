@@ -42,7 +42,16 @@ describe('PlaybookAssistantService.runTurn', () => {
           mutationOperationId: null,
         },
       }),
-      claimGenerationForTurn: jest.fn().mockResolvedValue({ requestId: 'generation-request-1' }),
+      claimGenerationForTurn: jest.fn().mockResolvedValue({
+        requestId: 'generation-request-1',
+        ownerId: 'user-1',
+        operationKind: 'generation',
+        status: 'processing',
+        originalText: 'Build lead generation',
+        requestedName: 'Lead generation',
+        answers: [],
+        mutationOperationId: null,
+      }),
       claimCurrentTurnModification: jest.fn().mockResolvedValue({
         requestId: 'request-1',
         status: 'processing',
@@ -72,6 +81,7 @@ describe('PlaybookAssistantService.runTurn', () => {
         ownerId: 'user-1',
         playbookId: 'playbook-1',
         expectedDefinitionRevision: 7,
+        operationKind: 'existing_construction',
         originalText: 'Build lead scoring',
         selectedTaskId: null,
         attachmentIds: [],
@@ -115,13 +125,17 @@ describe('PlaybookAssistantService.runTurn', () => {
       removeAssistantDraftIfUnchanged: jest.fn().mockResolvedValue(true),
     };
     const executionService = { start: jest.fn().mockResolvedValue({ id: 'execution-1' }) };
-    const intentService = { assessDesign: jest.fn().mockResolvedValue(overrides.assessment ?? {
+    const defaultAssessment = overrides.assessment ?? {
       status: 'ready_for_review',
       detectedIntent: 'Add a review task',
       brief: { goal: 'Review', trigger: 'Existing flow', datasources: [], steps: ['Review'], outputs: [], hitlRules: [] },
       assumptions: [],
       riskFlags: [],
-    }) };
+    };
+    const intentService = {
+      assessDesign: jest.fn().mockResolvedValue(defaultAssessment),
+      assessNewDesign: jest.fn().mockResolvedValue(defaultAssessment),
+    };
     const conversationService = { getConversationDocument: jest.fn().mockResolvedValue({
       createdBy: 'user-1', runtimePurpose: 'platform_copilot', pinnedAgentId: 'agent-1',
     }) };
@@ -135,6 +149,8 @@ describe('PlaybookAssistantService.runTurn', () => {
     const featureVisibility = {
       getVisibility: jest.fn().mockResolvedValue({ platformCopilot: overrides.platformCopilotEnabled ?? true }),
     };
+    const workspaceDocumentService = { findByIds: jest.fn().mockResolvedValue([]) };
+    const workspaceShareService = { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) };
     const service = new PlaybookAssistantService(
       { mcpAssistantEnabled: true } as any,
       {} as any,
@@ -152,8 +168,10 @@ describe('PlaybookAssistantService.runTurn', () => {
       conversationService as any,
       messageService as any,
       featureVisibility as any,
+      workspaceDocumentService as any,
+      workspaceShareService as any,
     );
-    return { service, accessService, constructionService, flowService, executionService, agentService, requestService, historyService, intentService, attachmentService, conversationService, messageService, featureVisibility };
+    return { service, accessService, constructionService, flowService, executionService, agentService, requestService, historyService, intentService, attachmentService, conversationService, messageService, featureVisibility, workspaceDocumentService, workspaceShareService };
   };
 
   it('returns a focused canvas handoff when it starts an execution', async () => {
@@ -360,7 +378,9 @@ describe('PlaybookAssistantService.runTurn', () => {
       requestId: 'request-1',
       ownerId: 'user-1',
       operationKind: 'generation',
+      status: 'ready',
       originalText: 'Build a lead scoring workflow',
+      answers: [],
     });
     constructionService.start.mockRejectedValueOnce(new Error('construction unavailable'));
 
@@ -383,9 +403,13 @@ describe('PlaybookAssistantService.runTurn', () => {
 
   it('creates a bound generation request from the canonical platform conversation turn', async () => {
     const { service, requestService, flowService } = createService();
-    requestService.getBound.mockResolvedValueOnce({
-      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation', originalText: 'Build lead generation',
-    });
+    const generationRequest = {
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation' as const,
+      status: 'ready' as const, originalText: 'Build lead generation', requestedName: 'Lead generation',
+      assessment: { status: 'ready_to_construct' }, answers: [], mutationOperationId: null,
+    };
+    requestService.claimGenerationForTurn.mockResolvedValueOnce({ ...generationRequest, status: 'processing' });
+    requestService.getBound.mockResolvedValue(generationRequest);
     const actor = {
       ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-1',
@@ -396,11 +420,170 @@ describe('PlaybookAssistantService.runTurn', () => {
     expect(requestService.claimGenerationForTurn).toHaveBeenCalledWith({
       actor,
       text: 'Build lead generation',
+      requestedName: 'Lead generation',
     });
     expect(flowService.create).toHaveBeenCalledWith('user-1', expect.objectContaining({
       name: 'Lead generation',
       description: 'Build lead generation',
     }), expect.any(Object));
+  });
+
+  it('returns generation clarification without creating a draft', async () => {
+    const { service, requestService, flowService, constructionService } = createService({
+      assessment: {
+        status: 'needs_clarification',
+        detectedIntent: 'Build lead generation',
+        questions: [{ id: 'source', question: 'Which source?', required: true }],
+      },
+    });
+    const generationRequest = {
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation' as const,
+      status: 'processing' as const, originalText: 'Build lead generation', requestedName: 'Lead generation',
+      answers: [], mutationOperationId: null,
+    };
+    requestService.claimGenerationForTurn.mockResolvedValueOnce(generationRequest);
+    requestService.getBound.mockResolvedValueOnce(generationRequest);
+    requestService.saveAssessment.mockResolvedValueOnce({ continuationId: 'continuation-1' });
+
+    const result = await service.startCurrentTurnGeneration({
+      ownerId: 'user-1', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-1',
+    }, { name: 'Lead generation' });
+
+    expect(result).toEqual(expect.objectContaining({
+      status: 'needs_clarification',
+      continuationId: 'continuation-1',
+      questions: [expect.objectContaining({ id: 'source' })],
+    }));
+    expect(result).not.toHaveProperty('requestId');
+    expect(result).not.toHaveProperty('assessmentId');
+    expect(flowService.create).not.toHaveBeenCalled();
+    expect(constructionService.start).not.toHaveBeenCalled();
+  });
+
+  it('continues generation clarification and preserves its original name and resource answer', async () => {
+    const { service, requestService, flowService, constructionService } = createService();
+    const workspaceId = '507f1f77bcf86cd799439011';
+    requestService.getByContinuation.mockResolvedValueOnce({
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation',
+      status: 'awaiting_clarification', originalText: 'Build lead generation', requestedName: 'Lead generation',
+      expectedDefinitionRevision: null, playbookId: null,
+      assessment: { status: 'needs_clarification', questions: [{ id: 'source', required: true, resourceSelector: 'workspace_or_document' }] },
+      answers: [], attachmentIds: [],
+    });
+    requestService.getBound.mockResolvedValue({
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation',
+      status: 'ready', originalText: 'Build lead generation', requestedName: 'Lead generation',
+      assessment: { status: 'ready_to_construct' },
+      answers: [{ questionId: 'source', resource: { kind: 'workspace', id: workspaceId } }],
+      mutationOperationId: null,
+    });
+
+    await expect(service.startCurrentTurnGeneration({
+      ownerId: 'user-1', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-2',
+    }, {
+      continuationId: 'continuation-1',
+      answers: [{ questionId: 'source', resource: { kind: 'workspace', id: workspaceId } }],
+    })).resolves.toEqual(expect.objectContaining({ status: 'planning' }));
+
+    expect(flowService.create).toHaveBeenCalledWith('user-1', expect.objectContaining({
+      name: 'Lead generation',
+    }), expect.any(Object));
+    expect(constructionService.start.mock.calls[0][2].intent).toContain(workspaceId);
+  });
+
+  it('rejects a generation clarification resource outside the acting user access', async () => {
+    const { service, requestService, workspaceShareService } = createService();
+    const workspaceId = '507f1f77bcf86cd799439011';
+    requestService.getByContinuation.mockResolvedValueOnce({
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation',
+      status: 'awaiting_clarification', originalText: 'Build lead generation',
+      assessment: { questions: [{ id: 'source', required: true, resourceSelector: 'workspace_or_document' }] },
+      answers: [],
+    });
+    workspaceShareService.assertUserHasAccess.mockRejectedValueOnce(new Error('forbidden workspace'));
+
+    await expect(service.startCurrentTurnGeneration({
+      ownerId: 'user-1', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-2',
+    }, {
+      continuationId: 'continuation-1',
+      answers: [{ questionId: 'source', resource: { kind: 'workspace', id: workspaceId } }],
+    })).rejects.toThrow('forbidden workspace');
+
+    expect(requestService.claimContinuation).not.toHaveBeenCalled();
+  });
+
+  it('rejects a document answer for a destination-workspace question', async () => {
+    const { service, requestService, workspaceDocumentService } = createService();
+    requestService.getByContinuation.mockResolvedValueOnce({
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation',
+      status: 'awaiting_clarification', originalText: 'Build lead generation',
+      assessment: { questions: [{ id: 'destination', required: true, resourceSelector: 'destination_workspace' }] },
+      answers: [],
+    });
+
+    await expect(service.startCurrentTurnGeneration({
+      ownerId: 'user-1', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-2',
+    }, {
+      continuationId: 'continuation-1',
+      answers: [{
+        questionId: 'destination',
+        resource: { kind: 'document', id: '507f1f77bcf86cd799439011' },
+      }],
+    })).rejects.toThrow('does not match the active question');
+
+    expect(workspaceDocumentService.findByIds).not.toHaveBeenCalled();
+    expect(requestService.claimContinuation).not.toHaveBeenCalled();
+  });
+
+  it('preserves authorized document workspace metadata through generation construction', async () => {
+    const { service, requestService, constructionService, workspaceDocumentService } = createService();
+    const documentId = '507f1f77bcf86cd799439011';
+    const workspaceId = '507f191e810c19729de860ea';
+    requestService.getByContinuation.mockResolvedValueOnce({
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation',
+      status: 'awaiting_clarification', originalText: 'Build invoice processing',
+      assessment: { questions: [{ id: 'source', required: true, resourceSelector: 'workspace_or_document' }] },
+      answers: [],
+    });
+    workspaceDocumentService.findByIds.mockResolvedValueOnce([{
+      id: documentId,
+      workspaceId,
+      originalName: 'Invoices.pdf',
+      mimeType: 'application/pdf',
+      path: '/Finance/Invoices.pdf',
+      isFolder: false,
+    }]);
+    requestService.claimContinuation.mockImplementationOnce(async (input: { answers: Record<string, unknown>[] }) => {
+      requestService.getBound.mockResolvedValue({
+        requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation',
+        status: 'ready', originalText: 'Build invoice processing', assessment: { status: 'ready_to_construct' },
+        answers: input.answers, mutationOperationId: null,
+      });
+    });
+
+    await service.startCurrentTurnGeneration({
+      ownerId: 'user-1', agentId: 'agent-1',
+      conversationId: 'conversation-1', correlationId: 'ai-message-2',
+    }, {
+      continuationId: 'continuation-1',
+      answers: [{ questionId: 'source', resource: { kind: 'document', id: documentId } }],
+    });
+
+    const persistedAnswers = requestService.claimContinuation.mock.calls[0][0].answers;
+    expect(persistedAnswers).toEqual([expect.objectContaining({
+      resource: expect.objectContaining({
+        kind: 'document',
+        id: documentId,
+        documentId,
+        workspaceId,
+      }),
+    })]);
+    expect(constructionService.start.mock.calls[0][2].intent).toContain(`"workspaceId":"${workspaceId}"`);
+    expect(constructionService.start.mock.calls[0][2].intent).toContain(`"documentId":"${documentId}"`);
   });
 
   it('rejects a platform generation turn whose pinned agent does not match', async () => {
@@ -593,15 +776,27 @@ describe('PlaybookAssistantService.runTurn', () => {
 
   it('compensates a failed generated draft and starts a fresh generation operation on retry', async () => {
     const { service, constructionService, flowService, requestService } = createService();
-    requestService.getBound.mockResolvedValue({
+    const requestState = {
       requestId: 'request-1',
       ownerId: 'user-1',
       operationKind: 'generation',
+      status: 'ready',
+      mutationOperationId: 'failed-operation' as string | null,
       originalText: 'Build lead scoring',
-    });
+      answers: [],
+    };
+    requestService.getBound.mockImplementation(async () => ({ ...requestState }));
     requestService.claimMutation
       .mockResolvedValueOnce('failed-operation')
-      .mockImplementationOnce(async (_requestId: string, operationId: string) => operationId);
+      .mockImplementationOnce(async (_requestId: string, operationId: string) => {
+        requestState.mutationOperationId = operationId;
+        return operationId;
+      });
+    requestService.resetMutation.mockImplementationOnce(async () => {
+      requestState.mutationOperationId = null;
+      requestState.status = 'ready';
+      return true;
+    });
     flowService.findByAssistantOperationId.mockResolvedValueOnce({ id: 'failed-playbook' });
     constructionService.getStatus.mockResolvedValueOnce({
       operationId: 'failed-operation',
@@ -641,6 +836,7 @@ describe('PlaybookAssistantService.runTurn', () => {
       requestId: 'request-1',
       ownerId: 'user-1',
       operationKind: 'generation',
+      mutationOperationId: 'failed-operation',
       originalText: 'Build lead scoring',
     });
     requestService.claimMutation.mockResolvedValueOnce('failed-operation');

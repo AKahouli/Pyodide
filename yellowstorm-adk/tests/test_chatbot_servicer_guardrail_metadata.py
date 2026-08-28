@@ -84,7 +84,27 @@ def test_artifact_component_serializes_opaque_identity_and_linkage() -> None:
     assert decoded.artifact.file_path == "user/session/hello_world.py"
 
 
-def test_initial_agent_activity_chunk_is_display_safe_progress_only() -> None:
+def test_agent_activity_serializes_full_reasoning_detail() -> None:
+    field = chatbot_pb2.AgentActivityComponent.DESCRIPTOR.fields_by_name["detail"]
+    assert field.number == 2
+
+    component = ChatbotServicer(agent_team_service=None)._build_component(
+        "activity-1",
+        "agent_activity",
+        {
+            "summary": "Inspecting reports",
+            "detail": "Full private reasoning",
+            "status": "completed",
+            "started_at": "2026-08-27T10:00:00Z",
+        },
+    )
+
+    decoded = chatbot_pb2.Component.FromString(component.SerializeToString())
+    assert decoded.agent_activity.detail == "Full private reasoning"
+    assert decoded.agent_activity.started_at == "2026-08-27T10:00:00Z"
+
+
+def test_initial_agent_activity_chunk_is_empty_progress_only() -> None:
     chunk = ChatbotServicer(agent_team_service=None)._build_initial_agent_activity_chunk("conversation-1")
 
     assert chunk.action == "add"
@@ -92,4 +112,4 @@ def test_initial_agent_activity_chunk_is_display_safe_progress_only() -> None:
     assert chunk.component.WhichOneof("data") == "agent_activity"
     assert chunk.component.agent_activity.summary == ""
     assert chunk.component.agent_activity.status == "completed"
-    assert not hasattr(chunk.component.agent_activity, "detail")
+    assert chunk.component.agent_activity.detail == ""

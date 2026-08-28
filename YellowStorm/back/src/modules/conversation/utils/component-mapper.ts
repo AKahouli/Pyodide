@@ -198,6 +198,7 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
         type,
         data: {
           summary: comp.agent_activity?.summary || '',
+          ...(comp.agent_activity?.detail ? { detail: comp.agent_activity.detail } : {}),
           status: comp.agent_activity?.status || 'running',
           ...(comp.agent_activity?.started_at ? { startedAt: comp.agent_activity.started_at } : {}),
           ...(comp.agent_activity?.completed_at ? { completedAt: comp.agent_activity.completed_at } : {}),

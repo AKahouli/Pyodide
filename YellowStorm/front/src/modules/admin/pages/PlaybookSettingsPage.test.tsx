@@ -7,7 +7,6 @@ import {
   getAdminPlaybookSettings,
   getAllModels,
   getPlaybookPlannerAgents,
-  getPlaybookSuggestorAgents,
   updateAdminPlaybookSettings,
 } from '../api';
 import type { AdminPlaybookSettings } from '../types';
@@ -16,20 +15,17 @@ import { PlaybookSettingsPage } from './PlaybookSettingsPage';
 const translateMock = vi.hoisted(() => (
   (key: string) => ({
     'playbookSettings.actions.save': 'Save',
-    'playbookSettings.suggestor.title': 'Suggestor',
     'playbookSettings.execution.title': 'Execution',
     'playbookSettings.execution.dynamicReasoning.planner.label': 'Planner agent',
     'playbookSettings.execution.dynamicReasoning.planner.inferenceFallback': 'Playbook inference model',
     'playbookSettings.inference.title': 'Inference',
     'playbookSettings.intentNormalization.title': 'Intent normalization',
-    'playbookSettings.replay.title': 'Replay',
     'playbookSettings.intent.title': 'Intent',
     'playbookSettings.toasts.saveError.title': 'Settings were not saved',
   }[key] ?? key)
 ));
 
 const settings: AdminPlaybookSettings = {
-  playbookSuggestorAgentId: 'suggestor-1',
   inferenceModelId: null,
   advisorEvaluationModelId: null,
   replayEvaluationModelId: null,
@@ -42,7 +38,6 @@ const settings: AdminPlaybookSettings = {
     maxIteratorBodySteps: 13,
     maxIteratorBodyEdges: 25,
   },
-  replayEligibilityConfidenceThreshold: 70,
   useDeterministicBlueprintBuilder: true,
   playbookExecution: {
     availableCapacity: 50,
@@ -98,7 +93,6 @@ vi.mock('../api', () => ({
   getAdminPlaybookSettings: vi.fn(),
   getAllModels: vi.fn(),
   getPlaybookPlannerAgents: vi.fn(),
-  getPlaybookSuggestorAgents: vi.fn(),
   updateAdminPlaybookSettings: vi.fn(),
 }));
 
@@ -109,9 +103,6 @@ describe('PlaybookSettingsPage', () => {
     vi.mocked(getPlaybookPlannerAgents).mockResolvedValue([
       { id: 'planner-1', name: 'Planner', model: 'planner-model' },
     ]);
-    vi.mocked(getPlaybookSuggestorAgents).mockResolvedValue([
-      { id: 'suggestor-1', name: 'Suggestor', model: 'suggestor-model' },
-    ]);
     vi.mocked(updateAdminPlaybookSettings).mockReset();
     vi.mocked(showError).mockReset();
   });
@@ -120,17 +111,17 @@ describe('PlaybookSettingsPage', () => {
     renderWithProviders(<PlaybookSettingsPage />);
 
     const paneTriggers = screen.getAllByRole('button').filter((button) => button.hasAttribute('aria-expanded'));
-    expect(paneTriggers).toHaveLength(6);
+    expect(paneTriggers).toHaveLength(4);
     paneTriggers.forEach((button) => expect(button).toHaveAttribute('aria-expanded', 'false'));
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
-    await waitFor(() => expect(getPlaybookSuggestorAgents).toHaveBeenCalled());
+    await waitFor(() => expect(getPlaybookPlannerAgents).toHaveBeenCalled());
   });
 
   it('keeps a failed save visible and reports the parsed API error', async () => {
     vi.mocked(updateAdminPlaybookSettings).mockRejectedValue(new Error('request failed'));
 
     const { user } = renderWithProviders(<PlaybookSettingsPage />);
-    await user.click(screen.getByRole('button', { name: /Suggestor/ }));
+    await user.click(screen.getByRole('button', { name: /Execution/ }));
     await user.click(await screen.findByRole('button', { name: 'Save' }));
 
     const alert = await screen.findByRole('alert');
@@ -139,7 +130,9 @@ describe('PlaybookSettingsPage', () => {
     expect(showError).toHaveBeenCalledWith('Settings were not saved', {
       description: 'The selected planner is unavailable.',
     });
-    await waitFor(() => expect(updateAdminPlaybookSettings).toHaveBeenCalledWith(settings));
+    await waitFor(() => expect(updateAdminPlaybookSettings).toHaveBeenCalledWith({
+      playbookExecution: settings.playbookExecution,
+    }));
   });
 
   it('provides a dedicated information tooltip trigger for every runtime setting', async () => {
@@ -169,5 +162,23 @@ describe('PlaybookSettingsPage', () => {
     await user.click(await screen.findByRole('combobox', { name: 'Planner agent' }));
 
     expect(await screen.findByRole('option', { name: 'Playbook Planner · Playbook inference model' })).toBeInTheDocument();
+  });
+
+  it('saves valid execution settings', async () => {
+    vi.mocked(getPlaybookPlannerAgents).mockResolvedValue([
+      { id: 'planner-1', name: 'Playbook Planner', model: null },
+    ]);
+    vi.mocked(updateAdminPlaybookSettings).mockResolvedValue(settings);
+
+    const { user } = renderWithProviders(<PlaybookSettingsPage />);
+    await user.click(screen.getByRole('button', { name: /Execution/ }));
+
+    const saveButton = await screen.findByRole('button', { name: 'Save' });
+    expect(saveButton).toBeEnabled();
+    await user.click(saveButton);
+
+    await waitFor(() => expect(updateAdminPlaybookSettings).toHaveBeenCalledWith({
+      playbookExecution: settings.playbookExecution,
+    }));
   });
 });

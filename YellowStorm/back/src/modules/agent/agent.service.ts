@@ -59,14 +59,6 @@ export interface PlaybookPlannerAgentOption {
   model: string | null;
 }
 
-export interface PlaybookSuggestorAgentConfig extends Omit<PlaybookPlannerAgentConfig, 'model'> {
-  model: string;
-}
-
-export interface PlaybookSuggestorAgentOption extends Omit<PlaybookPlannerAgentOption, 'model'> {
-  model: string;
-}
-
 @Injectable()
 export class AgentService {
   private fallbackConnectorRuntimeService?: AgentConnectorRuntimeService;
@@ -1541,48 +1533,6 @@ export class AgentService {
       model: model || null,
       temperature: record.temperature,
       instruction: record.instruction,
-    };
-  }
-
-  async listPlaybookSuggestorAgentOptions(): Promise<PlaybookSuggestorAgentOption[]> {
-    const agents = await this.listActiveDefaultAgentOptions();
-    return agents.flatMap((agent) => {
-      const model = agent.model?.trim();
-      return model ? [{
-        id: agent.id,
-        name: agent.name,
-        description: agent.description,
-        model,
-      }] : [];
-    });
-  }
-
-  async findPlaybookSuggestorById(agentId: string): Promise<PlaybookSuggestorAgentConfig> {
-    if (!Types.ObjectId.isValid(agentId)) {
-      throw new BadRequestException(ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE, 'The selected Playbook Suggestor agent is invalid');
-    }
-    const record = await this.agentRepository.findById(agentId);
-    const agent = record?.isDefault && record.isActive ? await this.hydrateOne(record) : null;
-    const agentType = agent?.agentType as unknown as {
-      _id?: { toString(): string };
-      slug?: string;
-    } | undefined;
-    const model = (agent?.llmModel as string | undefined)?.trim();
-    if (
-      !agent
-      || !agent.isActive
-      || !model
-    ) {
-      throw new BadRequestException(ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE, 'The selected Playbook Suggestor agent is unavailable or has no model configured');
-    }
-    return {
-      agentTypeId: agentType?._id?.toString() ?? '',
-      agentTypeSlug: agentType?.slug ?? '',
-      agentId: agent._id as string,
-      agentRevision: (agent.updatedAt as Date | undefined)?.toISOString() ?? agent._id as string,
-      model,
-      temperature: agent.temperature as number,
-      instruction: agent.instruction as string,
     };
   }
 

@@ -207,7 +207,7 @@ function parseToolParams(value: unknown): Record<string, unknown> | undefined {
   }
 }
 
-export function sanitizeActivitySummary(value: unknown, redactSensitiveText = true): string | undefined {
+export function sanitizeActivityDescription(value: unknown, redactSensitiveText = true): string | undefined {
   const text = asNonEmptyString(value);
   if (!text || (redactSensitiveText && (UNSAFE_SUMMARY.test(text) || OPAQUE_IDENTIFIER.test(text)))) return undefined;
   const sanitized = sanitizeAssistantDisplayText(String(sanitizeToolValue(text, 0, redactSensitiveText)), redactSensitiveText)
@@ -215,6 +215,12 @@ export function sanitizeActivitySummary(value: unknown, redactSensitiveText = tr
     .replace(/\s+/g, ' ')
     .trim();
   if (!sanitized || sanitized.includes(REDACTED)) return undefined;
+  return sanitized;
+}
+
+export function sanitizeActivitySummary(value: unknown, redactSensitiveText = true): string | undefined {
+  const sanitized = sanitizeActivityDescription(value, redactSensitiveText);
+  if (!sanitized) return undefined;
   return sanitized.length > 140 ? `${sanitized.slice(0, 137)}...` : sanitized;
 }
 
@@ -241,6 +247,10 @@ export function resolveToolFallbackName(data: Record<string, unknown>, redactSen
 
 export function resolveToolSummary(data: Record<string, unknown>, redactSensitiveText = true): string | undefined {
   return sanitizeActivitySummary(data.summary, redactSensitiveText);
+}
+
+export function resolveToolDescription(data: Record<string, unknown>, redactSensitiveText = true): string | undefined {
+  return sanitizeActivityDescription(data.summary, redactSensitiveText);
 }
 
 export function sanitizeActivityActorName(value: unknown): string | undefined {

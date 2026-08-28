@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ChevronDown, HelpCircle, Loader2, Save, Sparkles, Wand2 } from 'lucide-react';
+import { ChevronDown, HelpCircle, Loader2, Save, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -17,8 +17,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
-import { getAdminPlaybookSettings, getAllModels, getPlaybookPlannerAgents, getPlaybookSuggestorAgents, updateAdminPlaybookSettings } from '../api';
-import type { AdminModelResponse, AdminPlaybookSettings, PlaybookPlannerAgentOption, PlaybookSuggestorAgentOption } from '../types';
+import { getAdminPlaybookSettings, getAllModels, getPlaybookPlannerAgents, updateAdminPlaybookSettings } from '../api';
+import type { AdminModelResponse, AdminPlaybookSettings, PlaybookPlannerAgentOption, UpdateAdminPlaybookSettingsRequest } from '../types';
 
 const GLOBAL_DEFAULT_MODEL = '__global_default__';
 
@@ -178,16 +178,13 @@ export function PlaybookSettingsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [models, setModels] = useState<AdminModelResponse[]>([]);
   const [plannerAgents, setPlannerAgents] = useState<PlaybookPlannerAgentOption[]>([]);
-  const [suggestorAgents, setSuggestorAgents] = useState<PlaybookSuggestorAgentOption[]>([]);
   const [settings, setSettings] = useState<AdminPlaybookSettings>({
-    playbookSuggestorAgentId: null,
     inferenceModelId: null,
     advisorEvaluationModelId: null,
     replayEvaluationModelId: null,
     nodeSuggestionsMode: 'manual',
     approvalSuggestionMode: 'auto',
     intentNormalizationLimits: DEFAULT_INTENT_NORMALIZATION_LIMITS,
-    replayEligibilityConfidenceThreshold: 70,
     useDeterministicBlueprintBuilder: true,
     playbookExecution: DEFAULT_PLAYBOOK_EXECUTION_SETTINGS,
   });
@@ -197,11 +194,10 @@ export function PlaybookSettingsPage() {
     const load = async () => {
       setLoading(true);
       try {
-        const [settingsResult, modelsResult, plannerAgentsResult, suggestorAgentsResult] = await Promise.all([
+        const [settingsResult, modelsResult, plannerAgentsResult] = await Promise.all([
           getAdminPlaybookSettings(),
           getAllModels(),
           getPlaybookPlannerAgents(),
-          getPlaybookSuggestorAgents(),
         ]);
 
         if (cancelled) return;
@@ -219,7 +215,6 @@ export function PlaybookSettingsPage() {
         });
         setModels(modelsResult.models);
         setPlannerAgents(plannerAgentsResult);
-        setSuggestorAgents(suggestorAgentsResult);
       } catch (error) {
         if (!cancelled) {
           showError(t('playbookSettings.toasts.loadError.title'), {
@@ -268,16 +263,11 @@ export function PlaybookSettingsPage() {
     () => plannerAgents.find((agent) => agent.id === settings.playbookExecution.dynamicReasoning.plannerAgentId) || null,
     [plannerAgents, settings.playbookExecution.dynamicReasoning.plannerAgentId],
   );
-  const selectedSuggestorAgent = useMemo(
-    () => suggestorAgents.find((agent) => agent.id === settings.playbookSuggestorAgentId) || null,
-    [settings.playbookSuggestorAgentId, suggestorAgents],
-  );
-
-  const handleSave = async () => {
+  const handleSave = async (patch: UpdateAdminPlaybookSettingsRequest) => {
     setSaving(true);
     setSaveError(null);
     try {
-      const result = await updateAdminPlaybookSettings(settings);
+      const result = await updateAdminPlaybookSettings(patch);
       setSettings(result);
       showSuccess(t('playbookSettings.toasts.saved.title'), {
         description: t('playbookSettings.toasts.saved.description'),
@@ -323,7 +313,6 @@ export function PlaybookSettingsPage() {
     && settings.playbookExecution.dynamicReasoning.maxParallelism <= settings.playbookExecution.maxParallelismPerExecution
     && settings.playbookExecution.dynamicReasoning.maxDepth === 1
     && selectedPlannerAgent !== null;
-  const settingsValid = executionSettingsValid && selectedSuggestorAgent !== null;
 
   const updateExecutionField = (key: (typeof EXECUTION_FIELD_KEYS)[number], value: string) => {
     const parsed = Number.parseInt(value, 10);
@@ -363,55 +352,6 @@ export function PlaybookSettingsPage() {
           <p>{saveError}</p>
         </div>
       )}
-
-      <SettingsPane
-        title={t('playbookSettings.suggestor.title')}
-        description={t('playbookSettings.suggestor.description')}
-        icon={<Wand2 className="h-4 w-4" />}
-        contentClassName="space-y-4"
-      >
-          <div className="space-y-2">
-            <Label htmlFor="playbook-suggestor-agent">{t('playbookSettings.suggestor.agent.label')}</Label>
-            <Select
-              value={settings.playbookSuggestorAgentId ?? ''}
-              onValueChange={(playbookSuggestorAgentId) => setSettings((previous) => ({
-                ...previous,
-                playbookSuggestorAgentId,
-              }))}
-              disabled={loading || suggestorAgents.length === 0}
-            >
-              <SelectTrigger id="playbook-suggestor-agent">
-                <SelectValue placeholder={t('playbookSettings.suggestor.agent.placeholder')} />
-              </SelectTrigger>
-              <SelectContent>
-                {settings.playbookSuggestorAgentId && !selectedSuggestorAgent && (
-                  <SelectItem value={settings.playbookSuggestorAgentId} disabled>
-                    {t('playbookSettings.suggestor.agent.unavailable')}
-                  </SelectItem>
-                )}
-                {suggestorAgents.map((agent) => (
-                  <SelectItem key={agent.id} value={agent.id}>{agent.name} · {agent.model}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className={selectedSuggestorAgent ? 'text-xs text-muted-foreground' : 'text-xs text-destructive'}>
-              {selectedSuggestorAgent
-                ? t('playbookSettings.suggestor.agent.selectedHelp', {
-                  agent: selectedSuggestorAgent.name,
-                  model: selectedSuggestorAgent.model,
-                })
-                : suggestorAgents.length === 0
-                  ? t('playbookSettings.suggestor.agent.noOptions')
-                  : t('playbookSettings.suggestor.agent.required')}
-            </p>
-          </div>
-          <div className="flex justify-end">
-            <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
-              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-              {t('playbookSettings.actions.save')}
-            </Button>
-          </div>
-      </SettingsPane>
 
       <SettingsPane
         title={t('playbookSettings.execution.title')}
@@ -514,7 +454,11 @@ export function PlaybookSettingsPage() {
           {!executionSettingsValid && <p className="text-sm text-destructive">{t('playbookSettings.execution.validationError')}</p>}
           <p className="text-xs text-muted-foreground">{t('playbookSettings.execution.newExecutionsOnly')}</p>
           <div className="flex justify-end">
-            <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
+            <Button
+              type="button"
+              onClick={() => void handleSave({ playbookExecution: settings.playbookExecution })}
+              disabled={saving || !executionSettingsValid}
+            >
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
               {t('playbookSettings.actions.save')}
             </Button>
@@ -661,7 +605,17 @@ export function PlaybookSettingsPage() {
               </div>
 
               <div className="flex justify-end">
-                <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
+                <Button
+                  type="button"
+                  onClick={() => void handleSave({
+                    inferenceModelId: settings.inferenceModelId,
+                    advisorEvaluationModelId: settings.advisorEvaluationModelId,
+                    replayEvaluationModelId: settings.replayEvaluationModelId,
+                    nodeSuggestionsMode: settings.nodeSuggestionsMode,
+                    approvalSuggestionMode: settings.approvalSuggestionMode,
+                  })}
+                  disabled={saving}
+                >
                   {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   {t('playbookSettings.actions.save')}
                 </Button>
@@ -701,49 +655,11 @@ export function PlaybookSettingsPage() {
               </div>
 
               <div className="flex justify-end">
-                <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
-                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                  {t('playbookSettings.actions.save')}
-                </Button>
-              </div>
-            </>
-          )}
-      </SettingsPane>
-
-      <SettingsPane
-        title={t('playbookSettings.replay.title')}
-        description={t('playbookSettings.replay.description')}
-      >
-          {loading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>{t('playbookSettings.loading')}</span>
-            </div>
-          ) : (
-            <>
-              <div className="space-y-2">
-                <Label htmlFor="replay-eligibility-threshold">{t('playbookSettings.fields.replayEligibilityThreshold.label')}</Label>
-                <Input
-                  id="replay-eligibility-threshold"
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={settings.replayEligibilityConfidenceThreshold}
-                  onChange={(event) => {
-                    const parsed = Number.parseInt(event.target.value, 10);
-                    const clamped = Number.isFinite(parsed)
-                      ? Math.min(100, Math.max(0, parsed))
-                      : 70;
-                    setSettings((prev) => ({ ...prev, replayEligibilityConfidenceThreshold: clamped }));
-                  }}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {t('playbookSettings.fields.replayEligibilityThreshold.help')}
-                </p>
-              </div>
-
-              <div className="flex justify-end">
-                <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
+                <Button
+                  type="button"
+                  onClick={() => void handleSave({ intentNormalizationLimits: settings.intentNormalizationLimits })}
+                  disabled={saving}
+                >
                   {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   {t('playbookSettings.actions.save')}
                 </Button>
@@ -782,7 +698,13 @@ export function PlaybookSettingsPage() {
               </div>
 
               <div className="flex justify-end">
-                <Button type="button" onClick={() => void handleSave()} disabled={saving || !settingsValid}>
+                <Button
+                  type="button"
+                  onClick={() => void handleSave({
+                    useDeterministicBlueprintBuilder: settings.useDeterministicBlueprintBuilder,
+                  })}
+                  disabled={saving}
+                >
                   {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   {t('playbookSettings.actions.save')}
                 </Button>

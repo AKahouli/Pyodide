@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { ResolvedReplayArtifacts } from '../interfaces/playbook-flow-replay-artifact.interface';
 import { FlowReplayOutputContractType, type ReplayMode } from '../schemas/playbook-flow-validated-replay.schema';
-import type { ReplayEligibilityResult } from '../interfaces/playbook-flow-replay-eligibility.interface';
 import type { ReplayPlanningSummary } from '../interfaces/playbook-flow-replay-plan.interface';
 
 @Injectable()
@@ -9,13 +8,9 @@ export class PlaybookFlowReplayPromptService {
   buildReplayPromptSection(params: {
     artifacts: ResolvedReplayArtifacts;
     mode?: ReplayMode;
-    eligibility?: ReplayEligibilityResult;
     planning?: ReplayPlanningSummary | null;
   }): string {
     const { artifacts } = params;
-    if (params.eligibility && !params.eligibility.applied) {
-      return '';
-    }
     const mode = params.mode ?? artifacts.mode;
     const sections: string[] = [];
 

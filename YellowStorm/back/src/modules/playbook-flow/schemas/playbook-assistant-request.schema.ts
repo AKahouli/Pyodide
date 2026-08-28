@@ -40,6 +40,9 @@ export class PlaybookAssistantRequest {
   originalText!: string;
 
   @Prop({ required: false, type: String, default: null })
+  requestedName?: string | null;
+
+  @Prop({ required: false, type: String, default: null })
   selectedTaskId?: string | null;
 
   @Prop({ required: false, type: String, default: null })

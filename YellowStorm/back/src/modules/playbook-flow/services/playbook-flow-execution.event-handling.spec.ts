@@ -91,6 +91,46 @@ describe('PlaybookFlowExecutionService event handling', () => {
     );
   });
 
+  it('preserves sensitive trace text while always removing storage paths', async () => {
+    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
+    jest.spyOn((service as any).observabilityService, 'shouldRedactSensitiveText').mockResolvedValue(false);
+    taskResultModel.updateOne.mockResolvedValue(undefined);
+    const trace = {
+      tool_trace: [{
+        tool_name: 'shell',
+        args: {
+          authorization: 'Bearer abc',
+          command: 'cat /mnt/workspace/cv.docx then ceph://private/report.pdf',
+          storagePath: 'owner/system_exec-1/private/report.pdf',
+        },
+        output_summary: 'See https://host/file?x-amz-signature=secret',
+      }],
+      llm_prompt_trace: [{ stage: 'initial_request', model: 'test', prompt: 'Bearer abc', generated_output: 'token=abc' }],
+    };
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'NodeTraceUpdate', node_id: 'step-1', iteration: 0, payload: trace,
+    });
+
+    const persistedTrace = taskResultModel.updateOne.mock.calls[0][1].$set;
+    expect(persistedTrace.toolTrace[0].args).toEqual({
+      authorization: 'Bearer abc',
+      command: 'cat /mnt/workspace/cv.docx then [REDACTED]',
+    });
+    expect(persistedTrace.toolTrace[0].outputSummary).toBe('See [REDACTED]');
+    expect(persistedTrace.llmPromptTrace[0].prompt).toBe('Bearer abc');
+    expect(streamEvents.emitStepUpdate.mock.calls[0][3].toolTrace).toEqual(persistedTrace.toolTrace);
+
+    taskResultModel.updateOne.mockClear();
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'NodeCompleted', node_id: 'step-1', iteration: 0, payload: { output: 'done', ...trace },
+    });
+
+    const completedTrace = taskResultModel.updateOne.mock.calls[0][1].$set;
+    expect(completedTrace.toolTrace).toEqual(persistedTrace.toolTrace);
+    expect(completedTrace.llmPromptTrace[0].prompt).toBe('Bearer abc');
+  });
+
   it('flushes buffered execution tokens before marking execution failed', async () => {
     const tokenBufferService = {
       isEnabled: jest.fn(),
@@ -290,5 +330,26 @@ describe('PlaybookFlowExecutionService event handling', () => {
       'cancelled',
       'Router router-1 returned __cancelled__',
     );
+  });
+
+  it('marks the execution failed when the runtime completes after a task failure', async () => {
+    const { service, taskResultModel, executionModel, streamEvents } = createExecutionServiceForTests();
+    taskResultModel.findOne.mockReturnValue({
+      sort: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue({ error: 'upstream failed' }),
+    });
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'ExecutionCompleted',
+      node_id: '',
+      iteration: 0,
+      payload: {},
+    });
+
+    expect(executionModel.updateOne).toHaveBeenCalledWith(
+      { _id: 'exec-1', status: { $nin: ['completed', 'failed', 'cancelled'] } },
+      { status: 'failed', error: 'upstream failed', endedAt: expect.any(Date) },
+    );
+    expect(streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-1', 'failed', 'upstream failed');
   });
 });

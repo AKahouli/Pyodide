@@ -225,9 +225,8 @@ message CodeComponent {
 }
 
 message AgentActivityComponent {
-    string summary = 1;          // Display-safe progress summary; never private chain-of-thought
-    reserved 2;
-    reserved "detail";
+    string summary = 1;          // Compact progress summary
+    optional string detail = 2;  // Full reasoning text for authenticated conversation viewers
     string status = 3;           // running | completed
     optional string started_at = 4;
     optional string completed_at = 5;

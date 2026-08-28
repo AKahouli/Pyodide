@@ -10,7 +10,7 @@ from src.smart_rag.engines.multi_agent.streaming_processor import StreamingEvent
 from src.smart_rag.messaging.formatters import StreamingFormatter
 
 
-def _usage_event(text="hello", is_final=False):
+def _usage_event(text="hello", is_final=False, thought=False, function_call=None, partial=None):
   usage = SimpleNamespace(
     prompt_token_count=10,
     candidates_token_count=5,
@@ -18,7 +18,8 @@ def _usage_event(text="hello", is_final=False):
   )
   part = SimpleNamespace(
     text=text,
-    function_call=None,
+    thought=thought,
+    function_call=function_call,
     function_response=None,
   )
   content = SimpleNamespace(parts=[part])
@@ -26,6 +27,7 @@ def _usage_event(text="hello", is_final=False):
     content=content,
     usage_metadata=usage,
     model_version="gpt-test",
+    partial=partial,
     is_final_response=MagicMock(return_value=is_final),
   )
   return event
@@ -97,6 +99,51 @@ class TestStreamingEventProcessor:
     ]
     assert len(usage_puts) == 2
     assert usage_puts[0]["usage"]["input_tokens"] == 10
+
+  @pytest.mark.asyncio
+  async def test_process_streaming_events_coalesces_thought_tokens_until_tool_boundary(self, processor):
+    queue = AsyncMock()
+    events = [
+      _usage_event("The", thought=True, partial=True),
+      _usage_event(" user", thought=True, partial=True),
+      _usage_event(" just", thought=True, partial=True),
+      _usage_event(" said", thought=True, partial=True),
+      _usage_event("Visible answer", partial=True),
+      _usage_event("The user just said", thought=True, partial=False),
+      _usage_event(None, function_call=SimpleNamespace(id="call-1", name="search", args={"q": "docs"}), partial=False),
+    ]
+
+    async def fake_stream():
+      for event in events:
+        yield event
+
+    agent_runner = MagicMock()
+    agent_runner.run_async.return_value = fake_stream()
+    with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
+    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client"
+    ):
+      result = await processor.process_streaming_events(
+        session_id="thoughts",
+        user_prompt="Hi",
+        manager_agent=SimpleNamespace(id="mgr-1", name="Team Manager"),
+        agent_runner=agent_runner,
+        q=queue,
+      )
+
+    activity_events = [
+      call.args[0] for call in queue.put.await_args_list
+      if isinstance(call.args[0], dict) and call.args[0].get("component", {}).get("type") == "agent_activity"
+    ]
+    first_span = activity_events[:4]
+    assert result == "Visible answer"
+    assert [event["action"] for event in activity_events] == ["add", "update", "update", "update"]
+    assert len({event["component"]["id"] for event in first_span}) == 1
+    assert [event["component"]["data"]["detail"] for event in first_span] == [
+      "The", "The user", "The user just", "The user just said",
+    ]
+    assert len({event["component"]["data"]["started_at"] for event in first_span}) == 1
 
   @pytest.mark.asyncio
   async def test_guarded_output_emits_only_validated_final_text(self, processor):

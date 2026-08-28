@@ -4,14 +4,12 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
 describe('PlaybookFlowSettingsService inference model resolution', () => {
   const adminSettings = {
-    playbookSuggestorAgentId: null,
     inferenceModelId: null,
     advisorEvaluationModelId: null,
     replayEvaluationModelId: null,
     nodeSuggestionsMode: 'auto',
     approvalSuggestionMode: 'auto',
     intentNormalizationLimits: {},
-    replayEligibilityConfidenceThreshold: 0,
     useDeterministicBlueprintBuilder: true,
     playbookExecution: DEFAULT_PLAYBOOK_EXECUTION_SETTINGS,
   };
@@ -25,18 +23,13 @@ describe('PlaybookFlowSettingsService inference model resolution', () => {
       setPlaybookSettings: jest.fn((settings) => Promise.resolve(settings)),
     };
     const modelsService = {
-      validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: { id: 'suggestor-model' } }),
+      validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: { id: 'model' } }),
       getDefaultModel: jest.fn(),
       getModelIdentifier: jest.fn((model) => model?.litellmModel || model?.id || ''),
     };
     const agentService = {
       findPlaybookPlannerById: jest.fn().mockResolvedValue({ agentId: '507f1f77bcf86cd799439011' }),
       listPlaybookPlannerAgentOptions: jest.fn().mockResolvedValue([]),
-      findPlaybookSuggestorById: jest.fn().mockResolvedValue({
-        agentId: '507f1f77bcf86cd799439012',
-        model: 'suggestor-model',
-      }),
-      listPlaybookSuggestorAgentOptions: jest.fn().mockResolvedValue([]),
     };
     return {
       service: new PlaybookFlowSettingsService(systemService as any, modelsService as any, agentService as any),
@@ -125,12 +118,49 @@ describe('PlaybookFlowSettingsService inference model resolution', () => {
     expect(modelsService.validateModelActive).toHaveBeenCalledWith('planner-model', 'chat');
   });
 
+  it('falls back when the planner-owned model is unavailable', async () => {
+    const { service, agentService, modelsService } = createService('admin-model');
+    agentService.findPlaybookPlannerById.mockResolvedValue({
+      agentId: '507f1f77bcf86cd799439011',
+      model: 'inactive-planner-model',
+      instruction: 'Plan safely',
+    });
+    modelsService.validateModelActive
+      .mockResolvedValueOnce({ valid: false, model: null })
+      .mockResolvedValueOnce({
+        valid: true,
+        model: { id: 'admin-model', litellmModel: 'azure/admin-model', omitTemperature: true },
+      });
+
+    await expect(service.resolvePlaybookPlanner('507f1f77bcf86cd799439011')).resolves.toEqual(
+      expect.objectContaining({ model: 'azure/admin-model', omitTemperature: true }),
+    );
+    expect(modelsService.validateModelActive).toHaveBeenNthCalledWith(1, 'inactive-planner-model', 'chat');
+    expect(modelsService.validateModelActive).toHaveBeenNthCalledWith(2, 'admin-model');
+  });
+
+  it('tries the admin inference model after a stale flow model', async () => {
+    const { service, modelsService } = createService('admin-model');
+    modelsService.validateModelActive
+      .mockResolvedValueOnce({ valid: false, model: null })
+      .mockResolvedValueOnce({
+        valid: true,
+        model: { id: 'admin-model', litellmModel: 'azure/admin-model', omitTemperature: true },
+      });
+
+    await expect(service.resolveInferenceModelConfig({ inferenceModelId: 'stale-flow-model' })).resolves.toEqual({
+      model: 'azure/admin-model',
+      omitTemperature: true,
+    });
+    expect(modelsService.validateModelActive).toHaveBeenNthCalledWith(1, 'stale-flow-model');
+    expect(modelsService.validateModelActive).toHaveBeenNthCalledWith(2, 'admin-model');
+  });
+
   it('requires and validates an explicit planner selection before saving', async () => {
     const { service, agentService, systemService } = createService();
     const plannerAgentId = '507f1f77bcf86cd799439011';
 
     await service.updateAdminSettings({
-      playbookSuggestorAgentId: '507f1f77bcf86cd799439012',
       playbookExecution: { dynamicReasoning: { plannerAgentId } },
     });
 
@@ -142,26 +172,12 @@ describe('PlaybookFlowSettingsService inference model resolution', () => {
     }));
   });
 
-  it('requires and validates an explicit suggestor selection before saving', async () => {
-    const { service, agentService, systemService, modelsService } = createService();
-    const suggestorAgentId = '507f1f77bcf86cd799439012';
-
-    await service.updateAdminSettings({
-      playbookSuggestorAgentId: suggestorAgentId,
-      playbookExecution: { dynamicReasoning: { plannerAgentId: '507f1f77bcf86cd799439011' } },
-    });
-
-    expect(agentService.findPlaybookSuggestorById).toHaveBeenCalledWith(suggestorAgentId);
-    expect(modelsService.validateModelActive).toHaveBeenCalledWith('suggestor-model', 'chat');
-    expect(systemService.setPlaybookSettings).toHaveBeenCalledWith(expect.objectContaining({
-      playbookSuggestorAgentId: suggestorAgentId,
-    }));
-  });
-
-  it('rejects saving when no planner is selected', async () => {
+  it('rejects an explicitly empty planner selection', async () => {
     const { service, agentService, systemService } = createService();
 
-    await expect(service.updateAdminSettings({})).rejects.toThrow(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE);
+    await expect(service.updateAdminSettings({
+      playbookExecution: { dynamicReasoning: { plannerAgentId: '' } },
+    })).rejects.toThrow(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE);
     expect(agentService.findPlaybookPlannerById).not.toHaveBeenCalled();
     expect(systemService.setPlaybookSettings).not.toHaveBeenCalled();
   });

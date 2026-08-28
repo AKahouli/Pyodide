@@ -154,7 +154,12 @@ async def test_generation_uses_the_current_trusted_turn_without_a_request_id(mon
         async def post(self, path, user_id, payload):
             assert path == "/api/v1/internal/playbook-assistant/generation"
             assert user_id == "user-1"
-            assert payload == {"name": "Lead generation"}
+            assert payload == {
+                "name": "Lead generation",
+                "continuationId": None,
+                "answers": [],
+                "skip": False,
+            }
             return {"operationId": "operation-1", "playbookId": "playbook-1"}
 
     monkeypatch.setattr(server, "backend", lambda: BackendStub())
@@ -174,6 +179,63 @@ async def test_generation_uses_the_current_trusted_turn_without_a_request_id(mon
         "surface": "playbook.editor.assistant",
         "params": {"playbookId": "playbook-1", "operationId": "operation-1"},
     }
+
+
+@pytest.mark.asyncio
+async def test_generation_returns_clarification_without_a_canvas_handoff(monkeypatch):
+    class BackendStub:
+        async def post(self, path, user_id, payload):
+            assert path == "/api/v1/internal/playbook-assistant/generation"
+            assert user_id == "user-1"
+            assert payload == {"name": None, "continuationId": None, "answers": [], "skip": False}
+            return {
+                "status": "needs_clarification",
+                "continuationId": "continuation-1",
+                "questions": [{"id": "source", "question": "Which source?"}],
+            }
+
+    monkeypatch.setattr(server, "backend", lambda: BackendStub())
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "ai-message-1"))
+    try:
+        async with Client(mcp) as client:
+            response = await client.call_tool("start_playbook_generation", {})
+    finally:
+        actor_context.reset(token)
+
+    result = result_dict(response)
+    assert result["data"]["status"] == "needs_clarification"
+    assert "uiTarget" not in result["data"]
+    assert "publicationStatus" not in result["data"]
+
+
+@pytest.mark.asyncio
+async def test_generation_continues_with_typed_resource_answers(monkeypatch):
+    class BackendStub:
+        async def post(self, path, user_id, payload):
+            assert path == "/api/v1/internal/playbook-assistant/generation"
+            assert user_id == "user-1"
+            assert payload == {
+                "name": None,
+                "continuationId": "continuation-1",
+                "answers": [{"questionId": "source", "resource": {"kind": "workspace", "id": "workspace-1"}}],
+                "skip": True,
+            }
+            return {"operationId": "operation-1", "playbookId": "playbook-1"}
+
+    monkeypatch.setattr(server, "backend", lambda: BackendStub())
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "ai-message-2"))
+    try:
+        async with Client(mcp) as client:
+            response = await client.call_tool("start_playbook_generation", {
+                "continuation_id": "continuation-1",
+                "answers": [{"questionId": "source", "resource": {"kind": "workspace", "id": "workspace-1"}}],
+                "skip_clarification": True,
+            })
+    finally:
+        actor_context.reset(token)
+
+    result = result_dict(response)
+    assert result["data"]["publicationStatus"] == "draft"
 
 
 @pytest.mark.asyncio

@@ -175,6 +175,36 @@ async def test_run_step_applies_generated_work_node_output_contract(monkeypatch)
     assert result["task_outputs"][("parent", 0)]["output"] == "final"
 
 
+@pytest.mark.anyio
+async def test_run_step_re_raises_execution_failure(monkeypatch):
+    emitted = []
+
+    async def _fail_execute_step(*_args, **_kwargs):
+        raise RuntimeError("tool failed")
+
+    monkeypatch.setattr("src.flow_engine.nodes.step._execute_step", _fail_execute_step)
+    monkeypatch.setattr("src.flow_engine.nodes.step.get_stream_writer", lambda: emitted.append)
+
+    with pytest.raises(RuntimeError, match="tool failed"):
+        await run_step(
+            node_id="step-1",
+            node_config={"label": "Step 1"},
+            state={
+                "execution_id": "exec-1",
+                "flow_id": "flow-1",
+                "inputs": {},
+                "task_outputs": {},
+                "iterations": {},
+                "router_decisions": {},
+                "errors": [],
+                "pending_approval": None,
+                "cancelled": False,
+            },
+        )
+
+    assert [event["type"] for event in emitted].count("NodeFailed") == 1
+
+
 def test_available_file_context_leaves_filename_choice_to_model():
     context = _build_available_file_context(["Dragged.pdf", "Deep-search.pdf"])
 

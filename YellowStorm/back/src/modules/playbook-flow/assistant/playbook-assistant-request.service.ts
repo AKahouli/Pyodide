@@ -116,8 +116,10 @@ export class PlaybookAssistantRequestService {
   async claimGenerationForTurn(input: {
     actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string };
     text: string;
+    requestedName?: string;
   }): Promise<PlaybookAssistantRequest> {
     const text = input.text.trim();
+    const requestedName = input.requestedName?.trim() || null;
     const requestId = `platform-generation:${createHash('sha256')
       .update(JSON.stringify(this.canonicalize(input.actor)))
       .digest('hex')}`;
@@ -128,12 +130,30 @@ export class PlaybookAssistantRequestService {
       ...input.actor,
       operationKind: 'generation',
       text,
+      requestedName,
     };
     const messageHash = this.createRequestFingerprint(fingerprintInput);
     const legacyMessageHash = this.createRequestFingerprint({
       ...fingerprintInput,
       tenantId: LEGACY_DEFAULT_TENANT,
     });
+    const preNameMessageHash = this.createRequestFingerprint({
+      ...input.actor,
+      operationKind: 'generation',
+      text,
+    });
+    const legacyPreNameMessageHash = this.createRequestFingerprint({
+      ...input.actor,
+      tenantId: LEGACY_DEFAULT_TENANT,
+      operationKind: 'generation',
+      text,
+    });
+    const acceptedMessageHashes = [
+      messageHash,
+      legacyMessageHash,
+      preNameMessageHash,
+      legacyPreNameMessageHash,
+    ];
     const existingBeforeInsert = await this.requestModel.findOne({
       requestId: { $in: [requestId, legacyRequestId] },
     }).lean().exec();
@@ -141,7 +161,7 @@ export class PlaybookAssistantRequestService {
       return this.assertMatchingCurrentTurnRequest(
         existingBeforeInsert,
         input.actor,
-        [messageHash, legacyMessageHash],
+        acceptedMessageHashes,
       );
     }
     try {
@@ -154,6 +174,7 @@ export class PlaybookAssistantRequestService {
         contextId: randomUUID(),
         messageHash,
         originalText: text,
+        requestedName,
         selectedTaskId: null,
         executionId: null,
         attachmentIds: [],
@@ -167,7 +188,7 @@ export class PlaybookAssistantRequestService {
       const existing = await this.requestModel.findOne({
         requestId: { $in: [requestId, legacyRequestId] },
       }).lean().exec();
-      return this.assertMatchingCurrentTurnRequest(existing, input.actor, [messageHash, legacyMessageHash]);
+      return this.assertMatchingCurrentTurnRequest(existing, input.actor, acceptedMessageHashes);
     }
   }
 
@@ -392,7 +413,7 @@ export class PlaybookAssistantRequestService {
   async resetMutation(requestId: string, operationId: string): Promise<boolean> {
     const result = await this.requestModel.updateOne(
       { requestId, mutationOperationId: operationId },
-      { $set: { mutationOperationId: null, playbookId: null, expectedDefinitionRevision: null, status: 'processing' } },
+      { $set: { mutationOperationId: null, playbookId: null, expectedDefinitionRevision: null, status: 'ready' } },
     ).exec();
     return result.modifiedCount === 1;
   }

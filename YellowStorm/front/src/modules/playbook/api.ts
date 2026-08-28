@@ -2618,20 +2618,6 @@ export async function generateFlow(data: { name: string; prompt: string; workspa
   return response.data.data;
 }
 
-export async function buildPlaybookFromConversation(data: {
-  conversationId: string;
-  assistantMessageId: string;
-  answerVersion: string;
-  name?: string;
-}): Promise<{ id: string }> {
-  const response = await apiClient.post<ApiResponse<{ id: string }>>(
-    API_ENDPOINTS.playbookFlows.fromConversation,
-    data,
-    { timeout: 0 },
-  );
-  return response.data.data;
-}
-
 export async function rewriteFlowPrompt(data: { prompt: string }): Promise<{ prompt: string }> {
   const response = await apiClient.post<ApiResponse<{ prompt: string }>>(
     API_ENDPOINTS.playbookFlows.rewritePrompt,

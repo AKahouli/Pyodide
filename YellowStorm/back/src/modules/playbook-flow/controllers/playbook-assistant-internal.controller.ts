@@ -162,7 +162,7 @@ export class PlaybookAssistantInternalController {
   }
 
   @Post('generation')
-  @ApiOperation({ summary: 'Generate a draft Playbook from the current trusted Conversation turn' })
+  @ApiOperation({ summary: 'Assess or continue draft Playbook generation from the current trusted Conversation turn' })
   async startCurrentTurnGeneration(
     @Headers() headers: Record<string, string | undefined>,
     @Body() dto: StartPlaybookGenerationDto,

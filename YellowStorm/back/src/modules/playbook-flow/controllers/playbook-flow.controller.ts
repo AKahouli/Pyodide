@@ -23,8 +23,6 @@ import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { PlaybookAssistantService } from '../assistant/playbook-assistant.service';
 import { InitializePlaybookAssistantAttachmentDto, RunPlaybookAssistantTurnDto, StartAdvisorRemediationConstructionDto } from '../dto/playbook-assistant.dto';
-import { BuildPlaybookFromConversationDto } from '../dto/build-playbook-from-conversation.dto';
-import { ConversationPlaybookBuilderService } from '../services/conversation-playbook-builder.service';
 import { RateLimit } from '@modules/rate-limiter';
 
 @ApiTags('Playbook Flows')
@@ -42,7 +40,6 @@ export class PlaybookFlowController {
     private readonly playbookFlowIntentService: PlaybookFlowIntentService,
     private readonly playbookFlowIntentConstructionService: PlaybookFlowIntentConstructionService,
     private readonly playbookAssistantService: PlaybookAssistantService,
-    private readonly conversationPlaybookBuilderService: ConversationPlaybookBuilderService,
     @Inject(playbookFlowConfig.KEY)
     private readonly playbookFlowSettings: ConfigType<typeof playbookFlowConfig>,
   ) {}
@@ -427,22 +424,6 @@ export class PlaybookFlowController {
     @Body() body: CancelIntentConstructionDto,
   ) {
     return this.playbookFlowIntentConstructionService.cancel(id, userId, constructionId, body?.reason);
-  }
-
-  @Post('from-conversation')
-  @ApiOperation({ summary: 'Suggest and generate a playbook from a conversation response' })
-  @RequirePermissions(Permissions.PLAYBOOK_CREATE)
-  async buildFromConversation(
-    @CurrentUser('_id') userId: string,
-    @Body() body: BuildPlaybookFromConversationDto,
-  ) {
-    return this.conversationPlaybookBuilderService.build(
-      userId,
-      body.conversationId,
-      body.assistantMessageId,
-      body.answerVersion,
-      body.name,
-    );
   }
 
   @Post(':id/assistant/turns')

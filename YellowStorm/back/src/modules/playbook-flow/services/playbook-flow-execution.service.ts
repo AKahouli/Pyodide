@@ -41,17 +41,13 @@ import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
 import { PlaybookFlowReplayArtifactService } from './playbook-flow-replay-artifact.service';
 import { PlaybookFlowReplayPromptService } from './playbook-flow-replay-prompt.service';
-import { PlaybookFlowReplayBaselineService } from './playbook-flow-replay-baseline.service';
-import { PlaybookFlowReplayEligibilityService } from './playbook-flow-replay-eligibility.service';
 import { PlaybookFlowReplayReportService } from './playbook-flow-replay-report.service';
 import { PlaybookFlowReplayDriftService } from './playbook-flow-replay-drift.service';
 import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.service';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
 import { PlaybookFlowOutputFormatService } from './playbook-flow-output-format.service';
 import { ModelsService } from '@modules/models/models.service';
-import { SystemService } from '@modules/system/system.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
-import type { ReplayEligibilityResult } from '../interfaces/playbook-flow-replay-eligibility.interface';
 import type { ResolvedReplayArtifacts } from '../interfaces/playbook-flow-replay-artifact.interface';
 import type { ReplayPlanningSummary } from '../interfaces/playbook-flow-replay-plan.interface';
 import {
@@ -255,8 +251,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     private readonly advisorService: PlaybookFlowExecutionAdvisorService,
     private readonly replayArtifactService: PlaybookFlowReplayArtifactService,
     private readonly replayPromptService: PlaybookFlowReplayPromptService,
-    private readonly replayBaselineService: PlaybookFlowReplayBaselineService,
-    private readonly replayEligibilityService: PlaybookFlowReplayEligibilityService,
     private readonly replayReportService: PlaybookFlowReplayReportService,
     private readonly outputContractService: PlaybookFlowOutputContractService,
     private readonly modelsService: ModelsService,
@@ -264,7 +258,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     @Optional() private readonly replayPlanService?: PlaybookFlowReplayPlanService,
     @Optional() private readonly replayDriftService?: PlaybookFlowReplayDriftService,
     @Optional() private readonly postRunEvaluationService?: PlaybookFlowReplayPostRunEvaluationService,
-    @Optional() private readonly systemService?: SystemService,
     @Optional() private readonly tokenBufferService?: PlaybookFlowTokenBufferService,
     @Optional() private readonly executionLeaseService?: PlaybookFlowExecutionLeaseService,
     @Optional() private readonly graphSanitizerService?: FlowGraphSanitizerService,
@@ -314,6 +307,20 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         this.postRunEvaluationService,
       );
     return this.fallbackReplayRuntimeService;
+  }
+
+  private async resolvePlaybookPlanner(
+    agentId: string,
+    flowSettings?: Record<string, unknown>,
+  ) {
+    if (this.executionSettingsResolver) {
+      return this.executionSettingsResolver.resolvePlanner(agentId, flowSettings);
+    }
+    const planner = await this.agentService.findPlaybookPlannerById(agentId);
+    if (!planner.model) {
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+    return { ...planner, omitTemperature: false };
   }
 
   private getEventHandler(): PlaybookExecutionEventHandlerService {
@@ -552,44 +559,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     });
   }
 
-  private applyReplayPlanningEligibility(
-    mode: 'replay_strict' | 'replay_flex' | 'replay_adaptive',
-    eligibility: ReplayEligibilityResult,
-    planning: ReplayPlanningSummary | null,
-  ): ReplayEligibilityResult {
-    if (!planning || !this.hasUnresolvedRequiredContext(planning)) {
-      return eligibility;
-    }
-
-    const invalidationReasons = Array.from(new Set([
-      ...eligibility.invalidationReasons,
-      'required_context_unresolved',
-    ]));
-
-    return {
-      ...eligibility,
-      applied: false,
-      invalidationReasons,
-      skippedSections: Array.from(new Set([
-        ...eligibility.skippedSections,
-        'decision_invariants',
-        'reasoning_chain',
-        'tool_policy',
-        'tool_trace',
-        'output_contract',
-        'output_format',
-        'quality_checks',
-        'known_failure_modes',
-      ])),
-      appliedSections: mode === 'replay_adaptive' ? eligibility.appliedSections : [],
-    };
-  }
-
-  private hasUnresolvedRequiredContext(planning: ReplayPlanningSummary): boolean {
-    const replayPlanService = this.replayPlanService ?? new PlaybookFlowReplayPlanService();
-    return replayPlanService.hasUnresolvedRequiredContext(planning.contextMapping);
-  }
-
   private resolveStepExecutionMode(
     node: { id: string; metadata?: Record<string, unknown> },
     stepModes: Record<string, string>,
@@ -648,24 +617,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       ...safeInputContext,
       __playbook_hitl_memory: activeHitlMemories,
     };
-  }
-
-  private buildCurrentHitlContextFingerprints(params: {
-    artifacts: ResolvedReplayArtifacts;
-    inputContext: Record<string, unknown>;
-    nodeSnapshot: Record<string, unknown>;
-  }): Record<string, string> {
-    const result: Record<string, string> = {};
-    for (const snapshot of params.artifacts.hitlMemorySnapshots ?? []) {
-      result[snapshot.interruptId] = this.replayBaselineService.buildHitlContextFingerprint({
-        inputContext: params.inputContext,
-        nodeSnapshot: params.nodeSnapshot,
-        reasonCode: snapshot.reasonCode,
-        prompt: snapshot.prompt,
-        downstreamNodeIds: snapshot.downstreamNodeIds,
-      });
-    }
-    return result;
   }
 
   private async recoverQueuedExecutions(): Promise<void> {
@@ -1292,25 +1243,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const stepModes: Record<string, string> = (executionMeta?.stepExecutionModes as Record<string, string>) || {};
       const VALID_STEP_MODES = new Set(['live', 'replay_strict', 'replay_flex', 'replay_adaptive']);
       const REPLAY_MODES = new Set(['replay_strict', 'replay_flex', 'replay_adaptive']);
-      const replayFingerprintNodes = ((snapshot.nodes as Array<Record<string, unknown>> | undefined) || []).map((node) => {
-        if (!executionModelIdOverride || typeof executionModelIdOverride !== 'string') {
-          return { ...node };
-        }
-
-        const metadata = node.metadata && typeof node.metadata === 'object'
-          ? { ...(node.metadata as Record<string, unknown>), agent_model: executionModelIdOverride }
-          : { agent_model: executionModelIdOverride };
-
-        return {
-          ...node,
-          modelId: executionModelIdOverride,
-          metadata,
-        };
-      });
-      const replayComparableRuntimeFlowSnapshot = this.getReplayRuntime().buildComparableFlowSnapshot({
-        ...(snapshot as FlowSnapshot),
-        nodes: replayFingerprintNodes as unknown as FlowSnapshot['nodes'],
-      });
       const replayModeNodeIds = enrichedNodes
         .filter((node: any) => REPLAY_MODES.has(this.resolveStepExecutionMode(node, stepModes, globalExecMode, VALID_STEP_MODES)))
         .map((node: any) => node.id);
@@ -1338,9 +1270,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         __playbook_workspace_paths: workspacePathsById,
         __playbook_default_workspace_path: workspacePathsById[defaultWorkspaceId] || '',
       }, activeHitlMemories);
-      const replayFingerprintNodesById = new Map(
-        replayFingerprintNodes.map((entry) => [String((entry as any).id || ''), entry]),
-      );
 
       const replayPlanningByTask: Record<string, ReplayPlanningSummary> = {};
       for (const node of enrichedNodes) {
@@ -1360,32 +1289,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           this.logger.warn(`Replay skipped for task ${taskId}: missing_replay_baseline`);
           continue;
         }
-        const currentNodeSnapshot = replayFingerprintNodesById.get(taskId) ?? { ...node };
-        const eligibilityThreshold = this.systemService
-          ? (await this.systemService.getPlaybookSettings().catch(() => null))?.replayEligibilityConfidenceThreshold
-          : undefined;
-        const initialEligibility = this.replayEligibilityService.evaluateReplayEligibility({
-          mode: stepMode as 'replay_strict' | 'replay_flex' | 'replay_adaptive',
-          artifacts,
-          isStale: artifacts.isStale,
-          staleReasons: artifacts.staleReasons,
-          eligibilityThreshold,
-          currentHitlContextFingerprints: this.buildCurrentHitlContextFingerprints({
-            artifacts,
-            inputContext: replayInputContext,
-            nodeSnapshot: currentNodeSnapshot,
-          }),
-          currentFingerprints: this.replayBaselineService.buildCurrentReplayFingerprints({
-            inputContext: replayInputContext,
-            flowSnapshot: replayComparableRuntimeFlowSnapshot,
-            nodeSnapshot: currentNodeSnapshot,
-            outputContract: this.buildCurrentReplayOutputContract({
-              artifacts,
-              currentFormatGuide: activeOutputFormatTemplates.get(taskId)?.formatGuide ?? null,
-              hasActiveTemplate: activeOutputFormatTemplates.has(taskId),
-            }),
-          }),
-        });
         const replayPlanning = isReplayMode
           ? this.buildReplayPlanning(artifacts, {
               taskId,
@@ -1403,11 +1306,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             replay_planning: replayPlanning,
           };
         }
-        const eligibility = this.applyReplayPlanningEligibility(
-          stepMode as 'replay_strict' | 'replay_flex' | 'replay_adaptive',
-          initialEligibility,
-          replayPlanning,
-        );
         await this.getReplayRuntime().persistPreRunReport({
           executionId,
           flowId,
@@ -1416,13 +1314,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           referenceExecutionId: artifacts.referenceExecutionId,
           validationVersion: artifacts.validationVersion,
           mode: stepMode as 'replay_strict' | 'replay_flex' | 'replay_adaptive',
-          eligibility,
         });
         this.trackReplayTask(executionId, taskId);
-        if (!eligibility.applied) {
-          this.logger.warn(`Replay skipped for task ${taskId}: ${eligibility.invalidationReasons.join(', ')}`);
-          continue;
-        }
         this.cacheSelectedReplayArtifacts(executionId, taskId, artifacts);
         const activeTemplate = activeOutputFormatTemplates.get(taskId);
         const mergedArtifacts = (!artifacts.outputFormatGuide && activeTemplate?.formatGuide && artifacts.replayConfig.replayOutputFormat)
@@ -1431,7 +1324,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         const replayPrompt = this.replayPromptService.buildReplayPromptSection({
           artifacts: mergedArtifacts,
           mode: stepMode as 'replay_strict' | 'replay_flex' | 'replay_adaptive',
-          eligibility,
           planning: replayPlanning,
         });
         if (replayPrompt) {
@@ -1664,7 +1556,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         this.logger.log(`gRPC stream ended for execution ${executionId}`);
         await waitForHandledEvents();
         if (!completionEmitted) {
-          completionEmitted = await this.getStreamFinalizer().finalizeEndedStream(executionId, true);
+          completionEmitted = await this.getStreamFinalizer().finalizeEndedStream(executionId);
         }
         releaseOnce();
       })().catch((err) => {
@@ -1693,23 +1585,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       event,
       releaseExecutionLease: () => this.releaseExecutionLease(executionId),
       scheduleQueueDrain: (ownerId) => this.scheduleQueueDrain(ownerId),
-    });
-  }
-
-  private buildCurrentReplayOutputContract(params: {
-    artifacts: Pick<ResolvedReplayArtifacts, 'outputContract' | 'referenceOutput' | 'replayConfig'>;
-    currentFormatGuide: string | null;
-    hasActiveTemplate: boolean;
-  }) {
-    if (typeof this.replayBaselineService.buildOutputContractFromReplay !== 'function') {
-      return params.artifacts.outputContract;
-    }
-
-    return this.replayBaselineService.buildOutputContractFromReplay({
-      output: params.artifacts.referenceOutput,
-      preserveOutputFormat: params.hasActiveTemplate || params.artifacts.replayConfig.replayOutputFormat,
-      outputFormatGuide: params.currentFormatGuide,
-      existingOutputContract: params.artifacts.outputContract,
     });
   }
 
@@ -1823,6 +1698,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       .sort({ decidedAt: 1 })
       .lean();
     const hitlEvents = execution.hitlEvents ?? [];
+    const redactSensitiveText = await this.observabilityService.shouldRedactSensitiveText();
     const dynamicReasoningAttempts = this.dynamicReasoningAttemptModel
       ? await this.dynamicReasoningAttemptModel.find({ executionId }).sort({ createdAt: 1 }).lean().exec()
       : [];
@@ -1838,15 +1714,18 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         const rawTaskResult = r as unknown as Record<string, unknown>;
         const doc = this.artifactService
           ? await this.artifactService.projectPublicTaskResult(
-            rawTaskResult,
-            String(execution.ownerId),
-            executionId,
-          )
+             rawTaskResult,
+             String(execution.ownerId),
+             executionId,
+             redactSensitiveText,
+           )
           : publicPlaybookTaskResult(
-            rawTaskResult,
-            String(execution.ownerId),
-            executionId,
-          );
+             rawTaskResult,
+             String(execution.ownerId),
+             executionId,
+             new Set(),
+             redactSensitiveText,
+           );
         return {
           id: doc._id as string,
           executionId: r.executionId,
@@ -2269,6 +2148,35 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       ?? (this.executionSettingsResolver
         ? await this.executionSettingsResolver.resolve({ recursionLimit, maxParallelism })
         : undefined);
+    const hasDynamicReasoningNode = (snapshot.nodes as any[]).some(
+      (node) => node.dynamicReasoning?.enabled === true,
+    );
+    const persistedPlanner = snapshot.playbookPlanner as Record<string, unknown> | undefined;
+    const planner = !persistedPlanner && effectiveExecutionSettings?.dynamicReasoningEnabled && hasDynamicReasoningNode
+      ? await this.resolvePlaybookPlanner(
+        effectiveExecutionSettings.dynamicReasoning.plannerAgentId || '',
+        snapshot.settings as Record<string, unknown> | undefined,
+      )
+      : null;
+    const plannerSnapshot = persistedPlanner ? {
+      agent_id: persistedPlanner.agentId,
+      agent_type_slug: persistedPlanner.agentTypeSlug,
+      model: persistedPlanner.model,
+      system_prompt: persistedPlanner.systemPrompt,
+      temperature: persistedPlanner.temperature,
+      omit_temperature: persistedPlanner.omitTemperature,
+      prompt_hash: persistedPlanner.promptHash,
+      agent_revision: persistedPlanner.agentRevision,
+    } : planner ? {
+      agent_id: planner.agentId,
+      agent_type_slug: planner.agentTypeSlug,
+      model: planner.model,
+      system_prompt: planner.instruction,
+      temperature: planner.temperature,
+      omit_temperature: planner.omitTemperature,
+      prompt_hash: `sha256:${createHash('sha256').update(planner.instruction).digest('hex')}`,
+      agent_revision: planner.agentRevision,
+    } : undefined;
     const taskNodeIds = (snapshot.nodes as any[])
       .filter((node) => node.kind === 'step' || node.kind === 'task')
       .map((node) => String(node.id));
@@ -2356,6 +2264,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         retry_policy: n.retryPolicy ? { max_retries: n.retryPolicy.maxRetries || 0, delay_ms: n.retryPolicy.delayMs || 0 } : undefined,
         model_id: n.modelId || '',
         metadata: toGrpcStruct(buildGrpcNodeMetadata(n, snapshot as Record<string, unknown>)),
+        dynamic_reasoning: n.dynamicReasoning ? { enabled: n.dynamicReasoning.enabled === true } : undefined,
       })),
       control_edges: (snapshot.controlEdges as any[]).map((e) => ({
         id: e.id, kind: e.kind, source: e.source, target: e.target,
@@ -2381,6 +2290,13 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           ? Math.min(recursionLimit, effectiveExecutionSettings.recursionLimitMax)
           : recursionLimit,
         max_parallelism: effectiveExecutionSettings?.effectiveExecutionParallelism ?? maxParallelism,
+        dynamic_reasoning_policy: effectiveExecutionSettings?.dynamicReasoningEnabled ? {
+          max_work_nodes: effectiveExecutionSettings.dynamicReasoning.maxWorkNodes,
+          max_parallelism: effectiveExecutionSettings.dynamicReasoning.maxParallelism,
+          max_depth: effectiveExecutionSettings.dynamicReasoning.maxDepth,
+          max_repair_attempts: effectiveExecutionSettings.dynamicReasoning.maxRepairAttempts,
+        } : undefined,
+        playbook_planner: plannerSnapshot,
         runtime_settings: effectiveExecutionSettings ? {
           max_concurrent_per_user: effectiveExecutionSettings.maxConcurrentPerUser,
           execution_queue_max_depth: effectiveExecutionSettings.executionQueueMaxDepth,
@@ -2446,7 +2362,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         this.logger.log(`gRPC RunFromCheckpoint stream ended for execution ${executionId}`);
         await waitForHandledEvents();
         if (!completionEmitted) {
-          completionEmitted = await this.getStreamFinalizer().finalizeEndedStream(executionId, false);
+          completionEmitted = await this.getStreamFinalizer().finalizeEndedStream(executionId);
         }
         releaseOnce();
       })().catch((err) => {

@@ -2,11 +2,18 @@ import json
 
 from src.smart_rag.tool_activity_presenter import (
     present_tool_call,
+    sanitize_activity_summary,
     serialize_tool_args,
     serialize_tool_result,
     serialize_tool_value,
     tool_args_without_display_purpose,
 )
+
+
+def test_activity_summary_rejects_standalone_punctuation() -> None:
+    assert sanitize_activity_summary(".") == ""
+    assert sanitize_activity_summary(" -- ") == ""
+    assert sanitize_activity_summary("Report ready.") == "Report ready."
 
 
 def test_presents_known_tools_with_dynamic_invocation_purpose() -> None:

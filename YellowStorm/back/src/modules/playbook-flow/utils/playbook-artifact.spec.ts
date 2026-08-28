@@ -148,6 +148,22 @@ describe('playbook artifact projection', () => {
       .toEqual(new Date('2026-08-24T12:00:00.000Z'));
   });
 
+  it('preserves local sandbox trace text when sensitive-text redaction is disabled', () => {
+    const projected = publicPlaybookTaskResult({
+      taskId: 'inspect',
+      iteration: 0,
+      toolTrace: [{
+        args: { command: 'cat /mnt/workspace/cv/template.docx' },
+        outputSummary: 'Read /mnt/workspace/cv/template.docx',
+      }],
+    }, 'owner-1', 'execution-1', new Set(), false);
+
+    expect(projected.toolTrace).toEqual([{
+      args: { command: 'cat /mnt/workspace/cv/template.docx' },
+      outputSummary: 'Read /mnt/workspace/cv/template.docx',
+    }]);
+  });
+
   it('redacts canonical paths split across direct stream chunks', () => {
     const redactor = new PlaybookTokenStreamRedactor();
     const key = 'execution-1:task-1:0';

@@ -45,7 +45,8 @@ describe('PlatformCopilotBootstrapService', () => {
       knowledgeBases: [],
       createdBy: '000000000000000000000000',
     }));
-    expect(PLATFORM_COPILOT_DEFAULT_INSTRUCTION).toContain('call start_playbook_generation exactly once');
+    expect(PLATFORM_COPILOT_DEFAULT_INSTRUCTION).toContain('call start_playbook_generation to assess the current turn');
+    expect(PLATFORM_COPILOT_DEFAULT_INSTRUCTION).toContain('At most one draft construction');
     expect(PLATFORM_COPILOT_DEFAULT_INSTRUCTION).toContain('skip_clarification=true');
     expect(PLATFORM_COPILOT_DEFAULT_INSTRUCTION).toContain('Never answer or resume runtime HITL');
   });

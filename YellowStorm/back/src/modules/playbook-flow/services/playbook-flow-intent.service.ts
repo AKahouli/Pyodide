@@ -432,8 +432,29 @@ export class PlaybookFlowIntentService {
   }
 
   async assessDesign(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentDesignResponse> {
-    const startedAt = Date.now();
     const context = await this.buildIntentAnalysisContext(flowId, ownerId, dto, 'assessment');
+    return this.assessDesignWithContext(flowId, ownerId, dto, context);
+  }
+
+  async assessNewDesign(scopeId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentDesignResponse> {
+    const context = await this.buildIntentAnalysisContextForFlow(scopeId, ownerId, dto, 'assessment', {
+      name: 'New Playbook',
+      description: '',
+      nodes: [],
+      controlEdges: [],
+      dataBindings: [],
+      designSettings: null,
+    });
+    return this.assessDesignWithContext(scopeId, ownerId, dto, context);
+  }
+
+  private async assessDesignWithContext(
+    scopeId: string,
+    ownerId: string,
+    dto: RequestPlaybookFlowIntentDto,
+    context: PlaybookIntentAnalysisContext,
+  ): Promise<PlaybookIntentDesignResponse> {
+    const startedAt = Date.now();
     const prompt = await this.promptService.findByKey('intent.design_assessment');
     const userPrompt = prompt?.userTemplate?.trim()
       ? this.promptRenderer.render(prompt.userTemplate, this.withClarificationTemplateFallback(context.promptVariables, prompt.userTemplate))
@@ -449,8 +470,8 @@ export class PlaybookFlowIntentService {
       ],
     });
     const rawOutput = this.extractChatCompletionText(responseData);
-    this.logger.log(`playbook_intent_assessment_completed playbookId=${flowId} model=${context.model} llmCalls=1 catalogChars=${String(context.promptVariables.available_design_catalog ?? '').length} durationMs=${Date.now() - startedAt}`);
-    const lastTrace = this.recordTrace(flowId, ownerId, 'intent.design_assessment', context, rawOutput, {
+    this.logger.log(`playbook_intent_assessment_completed scopeId=${scopeId} model=${context.model} llmCalls=1 catalogChars=${String(context.promptVariables.available_design_catalog ?? '').length} durationMs=${Date.now() - startedAt}`);
+    const lastTrace = this.recordTrace(scopeId, ownerId, 'intent.design_assessment', context, rawOutput, {
       systemPromptOverride: systemPrompt,
       userPromptOverride: userPrompt,
     });
@@ -501,12 +522,22 @@ export class PlaybookFlowIntentService {
     dto: RequestPlaybookFlowIntentDto,
     catalogPhase: 'assessment' | 'construction' = 'construction',
   ): Promise<PlaybookIntentAnalysisContext> {
+    const flow = await this.flowService.findOne(flowId, ownerId);
+    return this.buildIntentAnalysisContextForFlow(flowId, ownerId, dto, catalogPhase, flow);
+  }
+
+  private async buildIntentAnalysisContextForFlow(
+    _scopeId: string,
+    ownerId: string,
+    dto: RequestPlaybookFlowIntentDto,
+    catalogPhase: 'assessment' | 'construction',
+    flow: any,
+  ): Promise<PlaybookIntentAnalysisContext> {
     const httpClient = this.liteLLMConnectionService.getHttpClient();
     if (!httpClient) {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
     }
 
-    const flow = await this.flowService.findOne(flowId, ownerId);
     const selectedNode = dto.selectedTaskId
       ? (flow.nodes as Array<{ id: string; label?: string; description?: string; metadata?: Record<string, unknown> }>).find((n) => n.id === dto.selectedTaskId) || null
       : null;

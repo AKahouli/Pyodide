@@ -22,6 +22,11 @@ const MIN_HEIGHT = 360;
 const URL_EXPIRY_SAFETY_MARGIN_MS = 60_000;
 const SIDEBAR_MIN_VIEWPORT_WIDTH = 768;
 
+type UrlLoaderResult = { url: string; fileName?: string; mimeType?: string };
+type PendingUrlLoad = { token: symbol; promise: Promise<void> };
+
+const pendingUrlLoads = new Map<string, PendingUrlLoad>();
+
 type FileViewerTranslationKey = ModuleTranslationKey<'file-viewer'>;
 
 function translateFileViewer(key: FileViewerTranslationKey, params?: TranslationParams) {
@@ -93,6 +98,13 @@ interface FileViewerActions {
     options?: FileOpenOptions,
   ) => Promise<void>;
   openFileFromUrl: (url: string, fileName: string, mimeType: string, options?: Pick<FileOpenOptions, 'displayMode' | 'closeOnOutsideClick' | 'page' | 'highlightText' | 'highlightBBox' | 'spreadsheet'>) => void;
+  openFileFromUrlLoader: (
+    key: string,
+    fileName: string,
+    mimeType: string,
+    load: () => Promise<UrlLoaderResult>,
+    options?: Pick<FileOpenOptions, 'displayMode' | 'closeOnOutsideClick' | 'page' | 'highlightText' | 'highlightBBox' | 'spreadsheet'>,
+  ) => Promise<void>;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   updatePdfState: (tabId: string, currentPage: number, pageCount: number) => void;
@@ -291,6 +303,72 @@ export const useFileViewerStore = create<FileViewerStore>()(
               }
             : {}),
         }));
+      },
+
+      openFileFromUrlLoader: async (key, fileName, mimeType, load, options) => {
+        const tabId = `loader:${key}`;
+        const existingTab = get().tabs.find((tab) => tab.id === tabId);
+        const existingLoad = pendingUrlLoads.get(tabId);
+        const resolved = resolveDisplayMode(options?.displayMode);
+        const pending = createPendingNavigation(tabId, options as FileOpenOptions | undefined);
+
+        set((state) => ({
+          tabs: existingTab
+            ? state.tabs.map((tab) => tab.id === tabId ? { ...tab, fileName, mimeType, isLoading: true } : tab)
+            : [...state.tabs, { id: tabId, fileName, mimeType, url: '', isLoading: true }],
+          activeTabId: tabId,
+          mode: 'open',
+          pendingNavigation: pending,
+          closeOnOutsideClick: options?.closeOnOutsideClick ?? false,
+          ...(resolved
+            ? { displayMode: resolved }
+            : state.mode === 'closed'
+              ? { displayMode: 'floating' as const }
+              : {}),
+        }));
+
+        if (existingLoad && existingTab?.isLoading) {
+          return existingLoad.promise;
+        }
+
+        const token = Symbol(tabId);
+        const pendingLoad: PendingUrlLoad = { token, promise: Promise.resolve() };
+        pendingUrlLoads.set(tabId, pendingLoad);
+        pendingLoad.promise = (async () => {
+          try {
+            const loaded = await load();
+            if (pendingUrlLoads.get(tabId)?.token !== token) return;
+            set((state) => ({
+              tabs: state.tabs.map((tab) => tab.id === tabId ? {
+                ...tab,
+                url: loaded.url,
+                fileName: loaded.fileName || fileName,
+                mimeType: loaded.mimeType || mimeType,
+                isLoading: false,
+              } : tab),
+            }));
+          } catch (error) {
+            if (pendingUrlLoads.get(tabId)?.token !== token) return;
+            set((state) => {
+              if (existingTab) {
+                return { tabs: state.tabs.map((tab) => tab.id === tabId ? { ...tab, isLoading: false } : tab) };
+              }
+              const tabs = state.tabs.filter((tab) => tab.id !== tabId);
+              return {
+                tabs,
+                activeTabId: state.activeTabId === tabId ? tabs.at(-1)?.id || null : state.activeTabId,
+                mode: tabs.length === 0 ? 'closed' as const : state.mode,
+                pendingNavigation: state.pendingNavigation?.tabId === tabId ? null : state.pendingNavigation,
+              };
+            });
+            throw error;
+          } finally {
+            if (pendingUrlLoads.get(tabId)?.token === token) {
+              pendingUrlLoads.delete(tabId);
+            }
+          }
+        })();
+        return pendingLoad.promise;
       },
 
       closeTab: (tabId) => {

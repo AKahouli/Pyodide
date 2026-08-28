@@ -4,7 +4,6 @@ import {
   getAllPlans,
   getMaintenanceStatus,
   getPlaybookPlannerAgents,
-  getPlaybookSuggestorAgents,
   getFeatureVisibility,
   getUserAnalytics,
   setMaintenanceMode,
@@ -44,7 +43,6 @@ vi.mock('@/lib/api/config', () => ({
     },
     adminPlaybookSettings: {
       plannerAgents: '/admin/playbook-settings/planner-agents',
-      suggestorAgents: '/admin/playbook-settings/suggestor-agents',
     },
     adminConversationSettings: {
       sensitiveTextRedaction: '/admin/conversation-settings/sensitive-text-redaction',
@@ -84,14 +82,6 @@ describe('admin api', () => {
 
     await expect(getPlaybookPlannerAgents()).resolves.toEqual(agents);
     expect(getMock).toHaveBeenCalledWith('/admin/playbook-settings/planner-agents');
-  });
-
-  it('lists eligible playbook suggestor agents', async () => {
-    const agents = [{ id: 'suggestor-1', name: 'Suggestor', model: 'model-1' }];
-    getMock.mockResolvedValue({ data: { data: agents } });
-
-    await expect(getPlaybookSuggestorAgents()).resolves.toEqual(agents);
-    expect(getMock).toHaveBeenCalledWith('/admin/playbook-settings/suggestor-agents');
   });
 
   it('gets and updates feature visibility', async () => {

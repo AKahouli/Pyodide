@@ -87,10 +87,15 @@ export class PlaybookExecutionNodeEventHandlerService {
   }
 
   async handleTraceUpdate(executionId: string, taskNodeId: string, iteration: number, payload: Record<string, unknown>): Promise<void> {
-    const tracePayload = this.observabilityService.extractTraceUpdatePayload(payload, {
-      executionId,
-      taskId: taskNodeId,
-    });
+    const redactSensitiveText = await this.observabilityService.shouldRedactSensitiveText();
+    const tracePayload = sanitizePlaybookPublicValue(
+      this.observabilityService.extractTraceUpdatePayload(payload, {
+        executionId,
+        taskId: taskNodeId,
+      }, redactSensitiveText),
+      false,
+      redactSensitiveText,
+    ) as ReturnType<PlaybookFlowObservabilityService['extractTraceUpdatePayload']>;
 
     await this.taskResultModel.updateOne(
       { executionId, taskId: taskNodeId, iteration },
@@ -130,10 +135,20 @@ export class PlaybookExecutionNodeEventHandlerService {
 
   async handleCompleted(executionId: string, taskNodeId: string, iteration: number, payload: Record<string, unknown>): Promise<void> {
     await this.flushTokenStream(executionId, taskNodeId, iteration);
-    const resultPayload = this.observabilityService.extractCompletedResultPayload(payload, {
+    const redactSensitiveText = await this.observabilityService.shouldRedactSensitiveText();
+    const extractedResultPayload = this.observabilityService.extractCompletedResultPayload(payload, {
       executionId,
       taskId: taskNodeId,
-    });
+    }, redactSensitiveText);
+    const sanitizedTrace = sanitizePlaybookPublicValue({
+      toolTrace: extractedResultPayload.toolTrace,
+      llmPromptTrace: extractedResultPayload.llmPromptTrace,
+      traceMetadata: extractedResultPayload.traceMetadata,
+    }, false, redactSensitiveText) as Pick<FlowCompletedResultPayload, 'toolTrace' | 'llmPromptTrace' | 'traceMetadata'>;
+    const resultPayload: FlowCompletedResultPayload = {
+      ...extractedResultPayload,
+      ...sanitizedTrace,
+    };
 
     await this.taskResultModel.updateOne(
       { executionId, taskId: taskNodeId, iteration },
@@ -178,11 +193,14 @@ export class PlaybookExecutionNodeEventHandlerService {
         rawPublicResult,
         String(execDoc?.ownerId || ''),
         executionId,
+        redactSensitiveText,
       )
       : publicPlaybookTaskResult(
         rawPublicResult,
         String(execDoc?.ownerId || ''),
         executionId,
+        new Set(),
+        redactSensitiveText,
       )) as unknown as FlowCompletedResultPayload;
     this.streamEvents.emitStepComplete(
       executionId,
@@ -192,7 +210,7 @@ export class PlaybookExecutionNodeEventHandlerService {
       iteration,
       publicResultPayload.artifacts,
       publicResultPayload.components,
-      this.observabilityService.toStreamPayload(publicResultPayload),
+      this.observabilityService.toStreamPayload(publicResultPayload, redactSensitiveText),
     );
 
     if (!taskNodeId.includes('::dynamic-reasoning::') && execDoc?.ownerId && (execDoc.advisorAutopilotEnabled || execDoc.reflectionEnabled)) {

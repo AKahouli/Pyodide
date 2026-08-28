@@ -78,7 +78,6 @@ export {
   createFlow,
   updateFlow,
   deleteFlow,
-  buildPlaybookFromConversation,
   startFlowExecution,
   getFlowExecutions,
   getFlowExecutionDetail,

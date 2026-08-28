@@ -1068,7 +1068,7 @@ export class MessageService {
   private publicComponents(components: unknown, includeToolResults = false): MessageComponent[] | undefined {
     if (!Array.isArray(components)) return undefined;
     const redactSensitiveText = this.conversationSettings?.shouldRedactSensitiveText() !== false;
-    const options = { redactSensitiveText };
+    const options = { redactSensitiveText, includeAgentDetail: true };
     return components.map((component) => {
       if (component?.type === 'task' && component.data) {
         return sanitizePublicComponent({

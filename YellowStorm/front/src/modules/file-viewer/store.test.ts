@@ -3,6 +3,16 @@ import { useFileViewerStore } from './store';
 
 const apiGetMock = vi.hoisted(() => vi.fn());
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 vi.mock('@/lib/api', () => ({
   apiClient: { get: apiGetMock },
   API_ENDPOINTS: {
@@ -42,6 +52,123 @@ describe('file-viewer store', () => {
     expect(state.mode).toBe('open');
     expect(state.tabs).toHaveLength(1);
     expect(state.activeTabId).toBe('url:https://example.test/a.txt');
+  });
+
+  it('opens a loading tab before an asynchronous url resolves', async () => {
+    let resolveUrl!: (value: { url: string; fileName: string; mimeType: string }) => void;
+    const load = vi.fn(() => new Promise<{ url: string; fileName: string; mimeType: string }>((resolve) => {
+      resolveUrl = resolve;
+    }));
+
+    const opening = useFileViewerStore.getState().openFileFromUrlLoader(
+      'citation-1', 'report.pdf', 'application/pdf', load, { displayMode: 'sidebar', page: 4 },
+    );
+
+    expect(useFileViewerStore.getState()).toMatchObject({
+      mode: 'open',
+      displayMode: 'sidebar',
+      activeTabId: 'loader:citation-1',
+      tabs: [{ id: 'loader:citation-1', url: '', isLoading: true }],
+      pendingNavigation: { tabId: 'loader:citation-1', page: 4 },
+    });
+
+    resolveUrl({ url: 'https://example.test/report.pdf', fileName: 'report.pdf', mimeType: 'application/pdf' });
+    await opening;
+
+    expect(useFileViewerStore.getState().tabs[0]).toMatchObject({
+      url: 'https://example.test/report.pdf',
+      isLoading: false,
+    });
+  });
+
+  it('reuses an in-flight url load for repeated opens', async () => {
+    const deferred = createDeferred<{ url: string }>();
+    const load = vi.fn(() => deferred.promise);
+
+    const first = useFileViewerStore.getState().openFileFromUrlLoader(
+      'citation-1', 'report.pdf', 'application/pdf', load, { page: 4 },
+    );
+    const second = useFileViewerStore.getState().openFileFromUrlLoader(
+      'citation-1', 'report.pdf', 'application/pdf', load, { page: 7 },
+    );
+
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(useFileViewerStore.getState()).toMatchObject({
+      tabs: [{ id: 'loader:citation-1', isLoading: true }],
+      pendingNavigation: { tabId: 'loader:citation-1', page: 7 },
+    });
+
+    deferred.resolve({ url: 'https://example.test/report.pdf' });
+    await Promise.all([first, second]);
+  });
+
+  it('ignores an older completion after closing and reopening a loader tab', async () => {
+    const older = createDeferred<{ url: string }>();
+    const newer = createDeferred<{ url: string }>();
+    const load = vi.fn()
+      .mockImplementationOnce(() => older.promise)
+      .mockImplementationOnce(() => newer.promise);
+
+    const first = useFileViewerStore.getState().openFileFromUrlLoader(
+      'citation-1', 'report.pdf', 'application/pdf', load,
+    );
+    useFileViewerStore.getState().closeTab('loader:citation-1');
+    const second = useFileViewerStore.getState().openFileFromUrlLoader(
+      'citation-1', 'report.pdf', 'application/pdf', load,
+    );
+
+    expect(load).toHaveBeenCalledTimes(2);
+    newer.resolve({ url: 'https://example.test/newer.pdf' });
+    await second;
+    older.resolve({ url: 'https://example.test/older.pdf' });
+    await first;
+
+    expect(useFileViewerStore.getState().tabs[0]).toMatchObject({
+      id: 'loader:citation-1',
+      url: 'https://example.test/newer.pdf',
+      isLoading: false,
+    });
+  });
+
+  it('ignores an older rejection after a reopened tab succeeds', async () => {
+    const older = createDeferred<{ url: string }>();
+    const newer = createDeferred<{ url: string }>();
+    const load = vi.fn()
+      .mockImplementationOnce(() => older.promise)
+      .mockImplementationOnce(() => newer.promise);
+
+    const first = useFileViewerStore.getState().openFileFromUrlLoader(
+      'citation-1', 'report.pdf', 'application/pdf', load,
+    );
+    useFileViewerStore.getState().closeTab('loader:citation-1');
+    const second = useFileViewerStore.getState().openFileFromUrlLoader(
+      'citation-1', 'report.pdf', 'application/pdf', load,
+    );
+
+    newer.resolve({ url: 'https://example.test/newer.pdf' });
+    await second;
+    older.reject(new Error('expired request'));
+    await expect(first).resolves.toBeUndefined();
+
+    expect(useFileViewerStore.getState().tabs[0]).toMatchObject({
+      id: 'loader:citation-1',
+      url: 'https://example.test/newer.pdf',
+      isLoading: false,
+    });
+  });
+
+  it('rejects and closes a new tab when its current load fails', async () => {
+    const load = vi.fn().mockRejectedValue(new Error('signing failed'));
+
+    await expect(useFileViewerStore.getState().openFileFromUrlLoader(
+      'citation-1', 'report.pdf', 'application/pdf', load,
+    )).rejects.toThrow('signing failed');
+
+    expect(useFileViewerStore.getState()).toMatchObject({
+      mode: 'closed',
+      tabs: [],
+      activeTabId: null,
+    });
   });
 
   it('opens a workspace document using the scoped download response', async () => {

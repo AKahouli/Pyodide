@@ -1014,7 +1014,6 @@ export interface SyncModelsResponse {
 }
 
 export interface AdminPlaybookSettings {
-  playbookSuggestorAgentId: string | null;
   inferenceModelId: string | null;
   advisorEvaluationModelId: string | null;
   replayEvaluationModelId: string | null;
@@ -1027,7 +1026,6 @@ export interface AdminPlaybookSettings {
     maxIteratorBodySteps: number;
     maxIteratorBodyEdges: number;
   };
-  replayEligibilityConfidenceThreshold: number;
   useDeterministicBlueprintBuilder: boolean;
   playbookExecution: PlaybookExecutionAdminSettings;
 }
@@ -1065,19 +1063,13 @@ export interface PlaybookPlannerAgentOption {
   model: string | null;
 }
 
-export interface PlaybookSuggestorAgentOption extends Omit<PlaybookPlannerAgentOption, 'model'> {
-  model: string;
-}
-
 export interface UpdateAdminPlaybookSettingsRequest {
-  playbookSuggestorAgentId?: string | null;
   inferenceModelId?: string | null;
   advisorEvaluationModelId?: string | null;
   replayEvaluationModelId?: string | null;
   nodeSuggestionsMode?: 'auto' | 'manual';
   approvalSuggestionMode?: 'auto' | 'manual';
   intentNormalizationLimits?: Partial<AdminPlaybookSettings['intentNormalizationLimits']>;
-  replayEligibilityConfidenceThreshold?: number;
   useDeterministicBlueprintBuilder?: boolean;
   playbookExecution?: Partial<Omit<PlaybookExecutionAdminSettings, 'dynamicReasoning'>> & {
     dynamicReasoning?: Partial<PlaybookExecutionAdminSettings['dynamicReasoning']>;

@@ -82,6 +82,8 @@ def sanitize_activity_summary(value: Any) -> str:
         return ""
     text = _CONTROL.sub(" ", value).replace("\r", " ").replace("\n", " ")
     text = re.sub(r"\s+", " ", text).strip()
+    if not any(char.isalnum() for char in text):
+        return ""
     text = re.sub(r"Bearer\s+\S+", "Bearer [REDACTED]", text, flags=re.IGNORECASE)
     text = re.sub(
         r"\b(authorization|cookie|password|secret|api[-_]?key|access[-_]?token|refresh[-_]?token)\b\s*[:=]\s*\S+",

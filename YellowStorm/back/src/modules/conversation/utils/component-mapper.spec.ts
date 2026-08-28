@@ -42,6 +42,26 @@ describe('component-mapper text extraction', () => {
     });
   });
 
+  it('maps full agent reasoning detail and execution timestamps', () => {
+    expect(extractComponentData({
+      data: 'agent_activity',
+      agent_activity: {
+        summary: 'Inspecting reports',
+        detail: 'Full private reasoning',
+        status: 'completed',
+        started_at: '2026-08-27T10:00:00Z',
+      },
+    })).toEqual({
+      type: 'agentActivity',
+      data: {
+        summary: 'Inspecting reports',
+        detail: 'Full private reasoning',
+        status: 'completed',
+        startedAt: '2026-08-27T10:00:00Z',
+      },
+    });
+  });
+
   it('supports legacy component.type + component.data shape from ADK formatter', () => {
     const result = extractComponentData({
       id: 'comp-3',

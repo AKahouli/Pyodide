@@ -40,6 +40,7 @@ from src.smart_rag.tool_activity_presenter import (
     serialize_tool_args,
     serialize_tool_result,
 )
+from src.smart_rag.thought_activity_tracker import ThoughtActivityTracker
 
 logger = get_logger("api.routers.agentic_rag.StreamingEventProcessor")
 
@@ -140,6 +141,7 @@ class StreamingEventProcessor:
 
         accumulated_manager_text = ""
         delegation_count = 0
+        thought_activity_tracker = ThoughtActivityTracker()
 
         # Token usage tracking
         total_prompt_tokens = 0
@@ -235,6 +237,7 @@ class StreamingEventProcessor:
                     component_tracker,
                     guarded_output,
                     run_id=session_id,
+                    thought_activity_tracker=thought_activity_tracker,
                 )
         except (asyncio.CancelledError, GeneratorExit):
             should_close_stream = False
@@ -275,6 +278,7 @@ class StreamingEventProcessor:
         component_tracker: ComponentTracker = None,
         guarded_output: bool = False,
         run_id: str | None = None,
+        thought_activity_tracker: Optional[ThoughtActivityTracker] = None,
     ) -> tuple:
         """Handle individual event parts and update message_id if needed.
 
@@ -306,9 +310,45 @@ class StreamingEventProcessor:
             )
 
         has_function_call = any(part.function_call for part in event.content.parts)
+        thought_activity_tracker = thought_activity_tracker or ThoughtActivityTracker()
 
         for part in event.content.parts:
-            if (
+            is_thought = (
+                part.text
+                and getattr(part, "thought", False) is True
+                and not guarded_output
+            )
+            if not is_thought and part.text:
+                thought_activity_tracker.end_for_visible_text()
+            if part.function_call or part.function_response:
+                thought_activity_tracker.end_for_tool_boundary()
+
+            if is_thought:
+                manager_id, manager_name = self._get_manager_info(manager_agent)
+                observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                update = thought_activity_tracker.observe(
+                    part.text,
+                    getattr(event, "partial", None),
+                    observed_at,
+                )
+                if q and update:
+                    await q.put(self.streaming_formatter.format_component_event(
+                        agent_id=manager_id,
+                        component_type="agent_activity",
+                        component_data={
+                            "summary": sanitize_activity_summary(update.detail),
+                            "detail": update.detail,
+                            "status": "completed",
+                            "started_at": update.started_at,
+                            "completed_at": observed_at,
+                            "actor_id": manager_id,
+                            "actor_name": manager_name,
+                        },
+                        message_id=current_message_id,
+                        component_id=update.component_id,
+                        action=update.action,
+                    ))
+            elif (
                 part.text
                 and getattr(part, "thought", False) is not True
                 and has_function_call
@@ -318,12 +358,15 @@ class StreamingEventProcessor:
                 summary = sanitize_activity_summary(part.text)
                 if summary and q:
                     manager_id, manager_name = self._get_manager_info(manager_agent)
+                    observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
                     await q.put(self.streaming_formatter.format_component_event(
                         agent_id=manager_id,
                         component_type="agent_activity",
                         component_data={
                             "summary": summary,
                             "status": "completed",
+                            "started_at": observed_at,
+                            "completed_at": observed_at,
                             "actor_id": manager_id,
                             "actor_name": manager_name,
                         },

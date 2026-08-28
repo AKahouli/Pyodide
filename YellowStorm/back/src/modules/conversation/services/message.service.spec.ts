@@ -155,7 +155,7 @@ describe('MessageService createUserMessage agent tagging', () => {
     expect(response.components[0].data.resultJson).toContain('/workspace/run/file.txt');
   });
 
-  it('strips persisted artifact paths and private activity detail from message responses', () => {
+  it('strips persisted artifact paths and preserves activity detail in authenticated responses', () => {
     const response = (service as any).mapToResponse({
       _id: new Types.ObjectId(),
       conversationId: new Types.ObjectId(conversationId),
@@ -168,7 +168,7 @@ describe('MessageService createUserMessage agent tagging', () => {
 
     expect(response.components).toEqual([
       { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf' } },
-      { id: 'activity-1', type: 'agentActivity', data: { summary: 'Reviewing evidence', status: 'completed' } },
+      { id: 'activity-1', type: 'agentActivity', data: { summary: 'Reviewing evidence', detail: 'private reasoning', status: 'completed' } },
     ]);
   });
 

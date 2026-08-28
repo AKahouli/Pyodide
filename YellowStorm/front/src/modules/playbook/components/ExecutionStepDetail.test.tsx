@@ -51,7 +51,6 @@ vi.mock('@/modules/localization', () => ({
         'replayReport.postRun.detailsTitle': 'Advanced diagnostics',
         'replayReport.advancedHint': 'Open technical scores and raw judge output.',
         'replayReport.section.verdict': 'Replay verdict',
-        'replayReport.section.eligibility': 'Eligibility',
         'replayReport.section.semantic': 'Semantic match',
         'replayReport.section.structuralTooling': 'Structural & tooling',
         'replayReport.verdictReasons': 'Verdict reasons',
@@ -1811,12 +1810,6 @@ describe('ExecutionStepDetail', () => {
       replayId: 'replay-1',
       validationVersion: 3,
       mode: 'replay_strict',
-      applied: true,
-      confidenceScore: 100,
-      appliedSections: ['output_contract'],
-      skippedSections: [],
-      invalidationReasons: ['node_snapshot_mismatch'],
-      confidenceFactors: { nodeSnapshotHash: 30 },
       outputContractEvaluated: true,
       outputContractPassed: true,
       structuralDriftScore: 100,
@@ -1869,7 +1862,6 @@ describe('ExecutionStepDetail', () => {
     expect((await screen.findAllByText('Reference Check')).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: /Advanced diagnostics/i }));
     expect(screen.getByText('Replay verdict')).toBeInTheDocument();
-    expect(screen.getByText('Eligibility')).toBeInTheDocument();
     expect(screen.getByText('Semantic match')).toBeInTheDocument();
     expect(screen.getByText('Structural & tooling')).toBeInTheDocument();
     expect(screen.getByText(/replayReport.verdict: replayReport.verdictValue.warning/)).toBeInTheDocument();
@@ -1878,7 +1870,6 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getAllByText(/Structural drift was detected./).length).toBeGreaterThan(0);
     expect(screen.getByText(/Replay output matches the captured intent/)).toBeInTheDocument();
     expect(screen.getAllByText(/minor citation detail/).length).toBeGreaterThan(0);
-    expect(document.body).toHaveTextContent('node snapshot changed.');
     expect(document.body).toHaveTextContent('Missing required section: Summary.');
   });
 

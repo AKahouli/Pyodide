@@ -266,7 +266,7 @@ export interface ChoiceInteractionMetadata {
 
 export type ToolRenderKind = 'run_code' | 'search' | 'read' | 'write' | 'file' | 'web' | 'generic';
 export interface AgentActivityData extends Record<string, unknown> {
-  summary: string; status: 'running' | 'completed'; startedAt?: string; completedAt?: string; durationMs?: number;
+  summary: string; detail?: string; status: 'running' | 'completed'; startedAt?: string; completedAt?: string; durationMs?: number;
   actorId?: string; actorName?: string;
 }
 export interface ToolActivityData extends Record<string, unknown> {

@@ -138,11 +138,6 @@ class UpdatePlaybookExecutionAdminSettingsDto {
 }
 
 export class UpdateAdminPlaybookSettingsDto {
-  @ApiPropertyOptional({ description: 'Required default agent used to suggest a playbook from a conversation turn.' })
-  @IsOptional()
-  @IsMongoId()
-  playbookSuggestorAgentId?: string | null;
-
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -173,14 +168,6 @@ export class UpdateAdminPlaybookSettingsDto {
   @ValidateNested()
   @Type(() => UpdatePlaybookIntentNormalizationLimitsDto)
   intentNormalizationLimits?: UpdatePlaybookIntentNormalizationLimitsDto;
-
-  @ApiPropertyOptional({ minimum: 0, maximum: 100 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  @Max(100)
-  replayEligibilityConfidenceThreshold?: number;
 
   @ApiPropertyOptional({ description: 'Use the deterministic blueprint builder path for intent.analyze and realtime construction.' })
   @IsOptional()

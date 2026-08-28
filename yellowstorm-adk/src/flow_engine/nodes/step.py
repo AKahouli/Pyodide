@@ -799,10 +799,7 @@ async def run_step(
                 "iteration": iteration,
                 "payload": {"error": str(exc)},
             })
-            return {
-                "errors": [{"node_id": node_id, "iteration": iteration, "message": f"Step execution error: {exc}"}],
-                "iterations": {node_id: iteration + 1},
-            }
+            raise
 
     else:
         full_output = checkpoint.get("llm_output", "")

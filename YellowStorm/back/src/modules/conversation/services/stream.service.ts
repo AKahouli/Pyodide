@@ -2294,6 +2294,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   private sanitizeComponent(component: MessageComponent): MessageComponent {
     return sanitizePublicComponent(component, {
       redactSensitiveText: this.conversationSettings?.shouldRedactSensitiveText() !== false,
+      includeAgentDetail: true,
     });
   }
 }

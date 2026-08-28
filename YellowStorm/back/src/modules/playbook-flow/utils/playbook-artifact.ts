@@ -77,20 +77,22 @@ export function trustedPlaybookArtifacts(
   return trusted;
 }
 
-function sanitizeResultText(value: unknown): unknown {
+function sanitizeResultText(value: unknown, redactSensitiveText: boolean): unknown {
   if (typeof value !== 'string') return value;
-  return value
+  const sanitized = value
     .replace(/(?:https?:)?\/\/[^\s"'`<>)\]},]+/gi, (url) => (
       /[?&](?:x-amz-[^=&\s]+|awsaccesskeyid|signature|sig)=?/i.test(url) ? '[REDACTED]' : url
     ))
     .replace(/\b(?:s3|ceph|azure):\/\/[^\s"'`<>)\]},]+/gi, '[REDACTED]')
-    .replace(/(?:\/mnt\/workspace|\/workspace|\/home\/[^/\s]+)\/[^\s"'`<>)]+/g, '[REDACTED]')
     .replace(/[A-Za-z0-9_-]+\/system_[A-Za-z0-9_-]+\/[^\s"'`<>)\]},]+/g, '[REDACTED]');
+  return redactSensitiveText
+    ? sanitized.replace(/(?:\/mnt\/workspace|\/workspace|\/home\/[^/\s]+)\/[^\s"'`<>)]+/g, '[REDACTED]')
+    : sanitized;
 }
 
-export function sanitizePlaybookPublicValue(value: unknown, preservePublicLinks = false): unknown {
-  if (typeof value === 'string') return sanitizeResultText(value);
-  if (Array.isArray(value)) return value.map((item) => sanitizePlaybookPublicValue(item, preservePublicLinks));
+export function sanitizePlaybookPublicValue(value: unknown, preservePublicLinks = false, redactSensitiveText = true): unknown {
+  if (typeof value === 'string') return sanitizeResultText(value, redactSensitiveText);
+  if (Array.isArray(value)) return value.map((item) => sanitizePlaybookPublicValue(item, preservePublicLinks, redactSensitiveText));
   if (value && typeof value === 'object') {
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== null && prototype.constructor?.name !== 'Object') return value;
@@ -102,7 +104,7 @@ export function sanitizePlaybookPublicValue(value: unknown, preservePublicLinks 
   return Object.fromEntries(
     Object.entries(record)
       .filter(([key]) => !PATH_KEYS.has(key) || (allowPublicLinks && PUBLIC_LINK_KEYS.has(key)))
-      .map(([key, nested]) => [key, sanitizePlaybookPublicValue(nested, allowPublicLinks)]),
+      .map(([key, nested]) => [key, sanitizePlaybookPublicValue(nested, allowPublicLinks, redactSensitiveText)]),
   );
 }
 
@@ -141,6 +143,7 @@ export function publicPlaybookTaskResult(
   ownerId: string,
   executionId: string,
   verifiedArtifactIds: ReadonlySet<string> = new Set(),
+  redactSensitiveText = true,
 ): Record<string, unknown> {
   const trusted = trustedPlaybookArtifacts(taskResult, ownerId, executionId);
   const byComponentIndex = new Map(trusted.map((artifact) => [artifact.componentIndex, artifact]));
@@ -150,7 +153,7 @@ export function publicPlaybookTaskResult(
   });
   const components = Array.isArray(taskResult.components)
     ? taskResult.components.map((candidate, index) => {
-      const component = asRecord(sanitizePlaybookPublicValue(candidate)) || {};
+      const component = asRecord(sanitizePlaybookPublicValue(candidate, false, redactSensitiveText)) || {};
       const data = asRecord(component.data);
       if (component.type !== 'artifact' || !data) return component;
       const artifact = byComponentIndex.get(index);
@@ -171,7 +174,7 @@ export function publicPlaybookTaskResult(
     : [];
   const artifacts = Array.isArray(taskResult.artifacts)
     ? taskResult.artifacts.map((candidate) => {
-      const record = asRecord(sanitizePlaybookPublicValue(candidate)) || {};
+      const record = asRecord(sanitizePlaybookPublicValue(candidate, false, redactSensitiveText)) || {};
       const queue = byFilename.get(safeFilename(record.filename)) || [];
       const artifact = queue.shift();
       const { artifactId: _artifactId, artifact_id: _artifactIdSnake, availability: _availability, ...safeRecord } = record;
@@ -189,7 +192,7 @@ export function publicPlaybookTaskResult(
     : [];
 
   return {
-    ...asRecord(sanitizePlaybookPublicValue(taskResult)),
+    ...asRecord(sanitizePlaybookPublicValue(taskResult, false, redactSensitiveText)),
     artifacts,
     components,
   };

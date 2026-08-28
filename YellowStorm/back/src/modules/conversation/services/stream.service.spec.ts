@@ -17,7 +17,7 @@ describe('StreamService guardrail metadata buffering', () => {
       messageId: 'message-1',
       revision: 7,
       components: [
-        { id: 'activity-1', type: 'agentActivity', data: { summary: 'Planning' } },
+        { id: 'activity-1', type: 'agentActivity', data: { summary: 'Planning', detail: 'private trace' } },
         { id: 'artifact-1', type: 'artifact', data: { filename: 'report.pdf' } },
       ],
     });

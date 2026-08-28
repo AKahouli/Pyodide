@@ -141,6 +141,7 @@ export class PlaybookFlowArtifactService {
     taskResult: Record<string, unknown>,
     ownerId: string,
     executionId: string,
+    redactSensitiveText = true,
   ): Promise<Record<string, unknown>> {
     const trusted = trustedPlaybookArtifacts(taskResult, ownerId, executionId);
     const verifiedArtifactIds = new Set<string>();
@@ -156,7 +157,7 @@ export class PlaybookFlowArtifactService {
         if (availablePaths.has(artifact.storagePath)) verifiedArtifactIds.add(artifact.artifactId);
       });
     }
-    return publicPlaybookTaskResult(taskResult, ownerId, executionId, verifiedArtifactIds);
+    return publicPlaybookTaskResult(taskResult, ownerId, executionId, verifiedArtifactIds, redactSensitiveText);
   }
 
   private async resolveArtifact(executionId: string, artifactId: string, ownerId: string) {

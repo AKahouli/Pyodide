@@ -1623,7 +1623,7 @@ export interface PlaybookExecutionSummary {
 
 export type ReplayMode = 'replay_strict' | 'replay_flex' | 'replay_adaptive';
 
-export type ReplayRunVerdict = 'pass' | 'warning' | 'fail' | 'skipped' | 'unknown';
+export type ReplayRunVerdict = 'pass' | 'warning' | 'fail' | 'unknown';
 export type ReplaySignalEvaluationStatus = 'not_evaluated' | 'not_applicable' | 'passed' | 'warning' | 'failed';
 
 export type ReplayPostRunVerdict = 'match' | 'minor_drift' | 'major_drift' | 'not_comparable';
@@ -1683,12 +1683,6 @@ export interface ReplayRunReport {
   replayId: string;
   validationVersion: number;
   mode: ReplayMode;
-  applied: boolean;
-  confidenceScore: number;
-  appliedSections: string[];
-  skippedSections: string[];
-  invalidationReasons: string[];
-  confidenceFactors: Record<string, number>;
   outputContractEvaluated: boolean;
   outputContractPassed: boolean;
   structuralDriftScore: number | null;

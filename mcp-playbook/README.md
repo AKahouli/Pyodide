@@ -20,7 +20,7 @@ The same MCP server supports the authenticated Yellowmind Playbook-only vertical
 
 Yellowmind receives only this runtime-enforced allowlist: `search_playbooks`, `open_playbook_context`, `get_playbook_summary`, `get_task_details`, `get_task_dependencies`, `validate_playbook`, `start_playbook_generation`, `start_playbook_execution`, `list_recent_executions`, `get_playbook_execution`, and `get_execution_diagnostics`. Other tools remain available for approved existing consumers but are not attached to Yellowmind.
 
-`start_playbook_generation` binds to the trusted current Conversation turn and accepts only an optional name; callers never supply an internal request ID. `start_playbook_execution` requires server-side authorization and a runtime-provided idempotency key. The MCP does not own authorization or confirmation state.
+`start_playbook_generation` binds to the trusted current Conversation turn and accepts an optional name. It may return typed clarification questions before any draft is created; callers continue with the returned `continuation_id`, typed answers, and optional explicit skip flag. Callers never supply an internal request ID. `start_playbook_execution` requires server-side authorization and a runtime-provided idempotency key. The MCP does not own authorization or confirmation state.
 
 Semantic UI targets contain only allowlisted Yellowmind surfaces and identifiers. The frontend resolves local route templates and enforces unsaved-change guards. This server never operates the DOM, emits arbitrary URLs, or performs mouse/keyboard automation.
 

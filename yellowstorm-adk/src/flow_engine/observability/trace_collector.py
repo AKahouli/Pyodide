@@ -7,8 +7,8 @@ from typing import Any
 from src.flow_engine.observability.redaction import (
     MAX_OUTPUT_SUMMARY_LENGTH,
     MAX_PROMPT_LENGTH,
-    redact_string,
-    redact_value,
+    bound_string,
+    bound_value,
 )
 from src.flow_engine.observability.trace_types import (
     LLMPromptTraceItem,
@@ -39,7 +39,7 @@ class TraceCollector:
             LLMPromptTraceItem(
                 stage=stage,
                 model=model,
-                prompt=redact_string(prompt, MAX_PROMPT_LENGTH),
+                prompt=bound_string(prompt, MAX_PROMPT_LENGTH),
             )
         )
 
@@ -47,7 +47,7 @@ class TraceCollector:
         if not self._llm_prompt_trace:
             logger.warning("Dropped LLM generated output: no prompt trace item exists")
             return
-        self._llm_prompt_trace[-1].generated_output = redact_string(generated_output, MAX_PROMPT_LENGTH)
+        self._llm_prompt_trace[-1].generated_output = bound_string(generated_output, MAX_PROMPT_LENGTH)
 
     def record_tool_call(
         self,
@@ -67,12 +67,12 @@ class TraceCollector:
             ToolTraceItem(
                 call_index=call_index,
                 tool_name=tool_name,
-                args=redact_value(args),
-                output_summary=redact_string(output_summary or "", MAX_OUTPUT_SUMMARY_LENGTH) if output_summary is not None else None,
+                args=bound_value(args),
+                output_summary=bound_string(output_summary or "", MAX_OUTPUT_SUMMARY_LENGTH) if output_summary is not None else None,
                 status=status,
                 duration_ms=duration_ms,
-                error=redact_string(error, MAX_OUTPUT_SUMMARY_LENGTH) if error else None,
-                agent_name=redact_string(agent_name, MAX_OUTPUT_SUMMARY_LENGTH) if agent_name else None,
+                error=bound_string(error, MAX_OUTPUT_SUMMARY_LENGTH) if error else None,
+                agent_name=bound_string(agent_name, MAX_OUTPUT_SUMMARY_LENGTH) if agent_name else None,
                 agent_role=agent_role,
             )
         )

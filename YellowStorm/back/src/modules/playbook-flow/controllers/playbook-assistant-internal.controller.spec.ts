@@ -130,12 +130,18 @@ describe('PlaybookAssistantInternalController', () => {
       'x-correlation-id': 'ai-message-1',
     };
 
-    await expect(controller.startCurrentTurnGeneration(headers, { name: 'Lead generation' }))
+    const dto = {
+      name: 'Lead generation',
+      continuationId: 'continuation-1',
+      answers: [{ questionId: 'source', resource: { kind: 'workspace' as const, id: 'workspace-1' } }],
+      skip: true,
+    };
+    await expect(controller.startCurrentTurnGeneration(headers, dto))
       .resolves.toEqual({ playbookId: 'playbook-1' });
     expect(assistantService.startCurrentTurnGeneration).toHaveBeenCalledWith({
       ownerId: 'user-1', agentId: 'agent-1',
       conversationId: 'conversation-1', correlationId: 'ai-message-1',
-    }, { name: 'Lead generation' });
+    }, dto);
   });
 
   it('starts current-turn modification only after resolving playbook.update', async () => {

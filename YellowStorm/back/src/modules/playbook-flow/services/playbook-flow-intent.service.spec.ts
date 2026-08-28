@@ -174,6 +174,48 @@ describe('PlaybookFlowIntentService normalization', () => {
     }), { timeout: 180000 });
   });
 
+  it('assesses a new design without loading or creating a Playbook', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"needs_clarification","detectedIntent":"Lead generation","questions":[{"id":"source","question":"Which source?","required":true}]}' } }] },
+      }),
+    };
+    const flowService = { findOne: jest.fn() } as unknown as PlaybookFlowService;
+    const promptService = {
+      findByKey: jest.fn().mockImplementation(async (key: string) => key === 'intent.design_assessment'
+        ? { systemTemplate: 'Assess the new design' }
+        : { userTemplate: 'Intent={intent_text}; workflow={workflow_summary}' }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({
+      flowService,
+      promptService,
+      promptRenderer: new PlaybookFlowPromptRendererService(),
+      settingsService: {
+        resolveEffectiveSettings: jest.fn().mockResolvedValue({ intentNormalizationLimits: DEFAULT_LIMITS }),
+        resolveInferenceModelConfig: jest.fn().mockResolvedValue({ model: 'model-1', omitTemperature: true }),
+      } as unknown as PlaybookFlowSettingsService,
+      liteLLMConnectionService: {
+        getHttpClient: jest.fn().mockReturnValue(httpClient),
+      } as unknown as LiteLLMConnectionService,
+      agentService: {
+        findDefaultAgents: jest.fn().mockResolvedValue({ data: [] }),
+      } as unknown as AgentService,
+      nodeTemplateService: {
+        findEnabled: jest.fn().mockResolvedValue({ items: [] }),
+      } as unknown as PlaybookFlowNodeTemplateService,
+    });
+
+    const result = await service.assessNewDesign('request-1', 'owner-1', { intent: 'Build lead generation' });
+
+    expect(result.status).toBe('needs_clarification');
+    expect(flowService.findOne).not.toHaveBeenCalled();
+    expect(httpClient.post).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+      messages: expect.arrayContaining([
+        expect.objectContaining({ role: 'user', content: expect.stringContaining('"taskCount": 0') }),
+      ]),
+    }), { timeout: 180000 });
+  });
+
   it('omits temperature when the inference model rejects that parameter', async () => {
     const httpClient = {
       post: jest.fn().mockResolvedValue({

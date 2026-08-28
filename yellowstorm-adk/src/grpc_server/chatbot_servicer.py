@@ -34,6 +34,7 @@ except ImportError:
     chatbot_pb2_grpc = None
 
 from src.smart_rag.core import AgentTeamService
+from src.smart_rag.tools.infrastructure.common_helpers import CommonHelpers
 from src.evaluation.semantic_match import evaluate_semantic_match
 from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
 from src.temporary_child_summary import pop_temporary_child_summary
@@ -749,7 +750,7 @@ class ChatbotServicer(
     # ========== CONVERSION HELPERS ==========
 
     def _build_initial_agent_activity_chunk(self, message_id: str) -> "chatbot_pb2.StreamChunk":
-        """Emit public progress without exposing model chain-of-thought."""
+        """Emit the initial progress row before model reasoning is available."""
         return self._dict_to_stream_chunk({
             "action": "add",
             "component": {
@@ -1522,14 +1523,17 @@ class ChatbotServicer(
     async def _download_and_encode_images(
         self, filepaths: List[str]
     ) -> List[Dict[str, str]]:
-        """Download images from Azure Datalake to temp files, then base64 encode.
+        """Download chat images from object storage, then base64 encode.
 
-        Uses tempfile.mkdtemp() for per-request isolation. Images are written
-        to disk first so that raw bytes are never held in memory alongside
-        the base64 string, reducing peak memory under concurrency.
+        Routes through CommonHelpers.async_download_from_storage so images
+        resolve from the same store the backend uploads to (Ceph S3 when
+        configured, Azure Data Lake fallback). Uses tempfile.mkdtemp() for
+        per-request isolation. Images are written to disk first so that raw
+        bytes are never held in memory alongside the base64 string, reducing
+        peak memory under concurrency.
 
         Args:
-            filepaths: List of Datalake file paths (e.g., "workspaceId/image.png").
+            filepaths: Object-storage keys (e.g., "workspaceId/image.png").
 
         Returns:
             List of dicts like [{"image 1": "data:image/png;base64,..."}, ...].
@@ -1547,59 +1551,39 @@ class ChatbotServicer(
         tmp_dir = tempfile.mkdtemp()
 
         try:
-            async with DataLakeServiceClient.from_connection_string(
-                app_settings.AZURE_DATALAKE_CONNECTION_STRING
-            ) as service_client:
-                fs_client = service_client.get_file_system_client(
-                    app_settings.AZURE_DATALAKE_FILE_SYSTEM_NAME
-                )
+            helpers = CommonHelpers(file_path=tmp_dir)
 
-                for idx, filepath in enumerate(filepaths, start=1):
-                    try:
-                        file_client = fs_client.get_file_client(filepath)
-                        download = await file_client.download_file()
-                        raw_bytes = await download.readall()
+            for idx, filepath in enumerate(filepaths, start=1):
+                try:
+                    tmp_path = await helpers.async_download_from_storage(filepath)
 
-                        if len(raw_bytes) > app_settings.MAX_IMAGE_SIZE:
-                            logger.warning(
-                                f"[gRPC] Image {filepath} too large ({len(raw_bytes)} bytes), skipping (max {app_settings.MAX_IMAGE_SIZE})"
-                            )
-                            continue
+                    async with aiofiles.open(tmp_path, "rb") as f:
+                        file_bytes = await f.read()
 
-                        # Write to temp file and release raw_bytes from memory
-                        tmp_path = os.path.join(
-                            tmp_dir, f"image_{idx}{os.path.splitext(filepath)[1]}"
+                    if len(file_bytes) > app_settings.MAX_IMAGE_SIZE:
+                        logger.warning(
+                            f"[gRPC] Image {filepath} too large ({len(file_bytes)} bytes), skipping (max {app_settings.MAX_IMAGE_SIZE})"
                         )
-                        async with aiofiles.open(tmp_path, "wb") as f:
-                            await f.write(raw_bytes)
-                        file_size = len(raw_bytes)
-                        del raw_bytes  # free memory before encoding
+                        continue
 
-                        # Read back from disk and encode to base64
-                        async with aiofiles.open(tmp_path, "rb") as f:
-                            file_bytes = await f.read()
-                        b64_data = base64.b64encode(file_bytes).decode("utf-8")
-                        del file_bytes  # free raw bytes immediately
+                    file_size = len(file_bytes)
+                    b64_data = base64.b64encode(file_bytes).decode("utf-8")
+                    del file_bytes  # free raw bytes immediately
 
-                        # Detect MIME type from extension
-                        ext = os.path.splitext(filepath)[1].lower()
-                        mime_type = mimetypes.types_map.get(ext, "image/jpeg")
+                    # Detect MIME type from the original object key extension
+                    ext = os.path.splitext(filepath)[1].lower()
+                    mime_type = mimetypes.types_map.get(ext, "image/jpeg")
 
-                        data_uri = f"data:{mime_type};base64,{b64_data}"
-                        del b64_data  # only keep the final data_uri string
+                    data_uri = f"data:{mime_type};base64,{b64_data}"
+                    del b64_data  # only keep the final data_uri string
 
-                        image_input.append({f"image {idx}": data_uri})
-                        logger.info(
-                            f"[gRPC] Downloaded and encoded image {idx}: {filepath} ({file_size} bytes)"
-                        )
+                    image_input.append({f"image {idx}": data_uri})
+                    logger.info(
+                        f"[gRPC] Downloaded and encoded image {idx}: {filepath} ({file_size} bytes)"
+                    )
 
-                    except Exception as e:
-                        logger.error(f"[gRPC] Failed to download image {filepath}: {e}")
-
-        except Exception as e:
-            logger.error(
-                f"[gRPC] Failed to connect to Azure Datalake for image download: {e}"
-            )
+                except Exception as e:
+                    logger.error(f"[gRPC] Failed to download image {filepath}: {e}")
 
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1873,7 +1857,7 @@ class ChatbotServicer(
                 summary=component_data.get("summary", ""),
                 status=component_data.get("status", "running"),
             )
-            for field in ("started_at", "completed_at", "duration_ms", "actor_id", "actor_name"):
+            for field in ("detail", "started_at", "completed_at", "duration_ms", "actor_id", "actor_name"):
                 value = component_data.get(field)
                 if value is not None and value != "":
                     setattr(agent_activity, field, value)

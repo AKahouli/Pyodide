@@ -184,6 +184,16 @@ export class PlaybookExecutionEventHandlerService {
     const { executionId } = context;
     await this.tokenBufferService?.flushExecution(executionId);
     this.getNodeHandler().discardExecutionTokens(executionId);
+    const failedTask = await this.taskResultModel
+      .findOne({ executionId, status: 'failed' })
+      .sort({ endedAt: -1 })
+      .lean();
+    if (failedTask) {
+      await this.handleExecutionFailed(context, {
+        error: failedTask.error || 'Execution failed because a task failed',
+      });
+      return;
+    }
     const result = await this.executionModel
       .updateOne(
         { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },

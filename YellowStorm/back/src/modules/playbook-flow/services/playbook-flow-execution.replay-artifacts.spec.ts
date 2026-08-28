@@ -11,7 +11,6 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
         taskId: 'step-1',
         replayId: 'replay-1',
         validationVersion: 2,
-        applied: true,
       }),
     };
     const replayArtifactService = {
@@ -88,7 +87,7 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
     }));
   });
 
-  it('does not resolve replay artifacts on completion when no applied replay report exists', async () => {
+  it('does not resolve replay artifacts on completion when no replay report exists', async () => {
     const replayReportService = {
       createPreRunReport: jest.fn().mockResolvedValue(undefined),
       updateStructuralDrift: jest.fn().mockResolvedValue(undefined),
@@ -120,7 +119,7 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
     expect(replayReportService.updateSemanticMatch).not.toHaveBeenCalled();
   });
 
-  it('backfills semanticMatch on non-applied replay report when step produces semantic evaluation', async () => {
+  it('backfills semanticMatch on the replay report when step produces semantic evaluation without resolvable artifacts', async () => {
     const replayReportService = {
       createPreRunReport: jest.fn().mockResolvedValue(undefined),
       updateStructuralDrift: jest.fn().mockResolvedValue(undefined),
@@ -131,7 +130,6 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
         taskId: 'step-1',
         replayId: 'replay-1',
         validationVersion: 2,
-        applied: false,
       }),
     };
     const replayArtifactService = {
@@ -188,7 +186,6 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
         taskId: 'step-1',
         replayId: 'replay-1',
         validationVersion: 2,
-        applied: true,
       }),
     };
     const replayArtifactService = {
@@ -254,7 +251,7 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
     }));
   });
 
-  it('tracks skipped replay tasks without resolving artifacts on completion', async () => {
+  it('resolves tracked replay artifacts by identity when the completion cache misses', async () => {
     const replayReportService = {
       createPreRunReport: jest.fn().mockResolvedValue(undefined),
       updateStructuralDrift: jest.fn().mockResolvedValue(undefined),
@@ -264,7 +261,6 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
         taskId: 'step-1',
         replayId: 'replay-1',
         validationVersion: 2,
-        applied: false,
       }),
     };
     const replayArtifactService = {
@@ -285,7 +281,12 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
     });
 
     expect(replayReportService.findLatestReportForExecutionTask).toHaveBeenCalledWith('exec-1', 'step-1', 0);
-    expect(replayArtifactService.resolveReplayArtifactByIdentity).not.toHaveBeenCalled();
+    expect(replayArtifactService.resolveReplayArtifactByIdentity).toHaveBeenCalledWith({
+      flowId: 'flow-1',
+      taskId: 'step-1',
+      replayId: 'replay-1',
+      validationVersion: 2,
+    });
     expect(replayReportService.updateStructuralDrift).not.toHaveBeenCalled();
   });
 
@@ -299,7 +300,6 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
         taskId: 'step-1',
         replayId: 'replay-1',
         validationVersion: 2,
-        applied: true,
       }),
     };
     const replayPromptService = { buildReplayPromptSection: jest.fn().mockReturnValue('APPLY_REPLAY') };
@@ -368,7 +368,6 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
         taskId: 'step-1',
         replayId: 'replay-1',
         validationVersion: 2,
-        applied: true,
       }),
     };
     const { service, taskResultModel } = createExecutionServiceForTests({ replayReportService });
@@ -408,8 +407,8 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
       'Completed',
       undefined,
       0,
-      undefined,
-      undefined,
+      [],
+      [],
       expect.objectContaining({
         semanticMatch: null,
         toolTrace: [],

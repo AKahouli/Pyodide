@@ -38,6 +38,7 @@ from src.smart_rag.tool_activity_presenter import (
     serialize_tool_result,
     tool_args_without_display_purpose,
 )
+from src.smart_rag.thought_activity_tracker import ThoughtActivityTracker
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
 APP_NAME = "manager_app"
@@ -361,6 +362,7 @@ class AgentRunner:
         pending_tool_components_by_name: Dict[str, List[str]] = {}
         pending_tool_metadata: Dict[str, Dict[str, Any]] = {}
         seen_tool_component_ids: set[str] = set()
+        thought_activity_tracker = ThoughtActivityTracker()
 
         runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_helper)
         guarded_output = agent_tree_has_output_guardrail(agent)
@@ -398,6 +400,44 @@ class AgentRunner:
                 has_function_call = any(part.function_call for part in event.content.parts)
 
                 for part in event.content.parts:
+                    is_thought = (
+                        agent_type != "html"
+                        and part.text
+                        and getattr(part, "thought", False) is True
+                        and not guarded_output
+                    )
+                    if not is_thought and part.text:
+                        thought_activity_tracker.end_for_visible_text()
+                    if part.function_call or part.function_response:
+                        thought_activity_tracker.end_for_tool_boundary()
+
+                    if is_thought:
+                        observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                        update = thought_activity_tracker.observe(
+                            part.text,
+                            getattr(event, "partial", None),
+                            observed_at,
+                        )
+                        if q and update:
+                            await q.put(
+                                self.streaming_formatter.format_component_event(
+                                    agent_id=agent_id,
+                                    component_type="agent_activity",
+                                    component_data={
+                                        "summary": sanitize_activity_summary(update.detail),
+                                        "detail": update.detail,
+                                        "status": "completed",
+                                        "started_at": update.started_at,
+                                        "completed_at": observed_at,
+                                        "actor_id": str(agent_id or ""),
+                                        "actor_name": str(agent_name or ""),
+                                    },
+                                    message_id=session_id,
+                                    component_id=update.component_id,
+                                    action=update.action,
+                                )
+                            )
+                        continue
                     if (
                         agent_type != "html"
                         and part.text
@@ -408,6 +448,7 @@ class AgentRunner:
                     ):
                         summary = sanitize_activity_summary(part.text)
                         if summary and q:
+                            observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
                             await q.put(
                                 self.streaming_formatter.format_component_event(
                                     agent_id=agent_id,
@@ -415,6 +456,8 @@ class AgentRunner:
                                     component_data={
                                         "summary": summary,
                                         "status": "completed",
+                                        "started_at": observed_at,
+                                        "completed_at": observed_at,
                                         "actor_id": str(agent_id or ""),
                                         "actor_name": str(agent_name or ""),
                                     },
