@@ -68,7 +68,7 @@
   "resetPassword.noToken.description": "Aucun jeton de réinitialisation n'a été fourni. Vérifiez votre email pour le lien de réinitialisation.",
   "resetPassword.noToken.submit": "Aller à la connexion",
   "register.title": "Créer un compte",
-  "register.description": "Commencez avec YellowMind aujourd'hui",
+  "register.description": "Commencez avec Yellowmind aujourd'hui",
   "register.email.label": "Email",
   "register.email.placeholder": "Entrez votre email",
   "register.password.label": "Mot de passe",

@@ -11,25 +11,28 @@ const SENSITIVE_KEY_PATTERN = /token|secret|password|authorization|cookie|api[_-
 
 @Injectable()
 export class PlaybookFlowTraceRedactionService {
-  redactToolTrace(items: FlowToolTraceItem[]): FlowToolTraceItem[] {
+  redactToolTrace(items: FlowToolTraceItem[], redactSensitiveText = true): FlowToolTraceItem[] {
     return items.map((item) => ({
       ...item,
-      args: this.redactRecord(item.args),
+      args: redactSensitiveText ? this.redactRecord(item.args) : item.args,
       outputSummary: this.truncateString(item.outputSummary, MAX_OUTPUT_SUMMARY_LENGTH),
       error: this.truncateString(item.error, MAX_OUTPUT_SUMMARY_LENGTH),
     }));
   }
 
-  redactPromptTrace(items: FlowLlmPromptTraceItem[]): FlowLlmPromptTraceItem[] {
+  redactPromptTrace(items: FlowLlmPromptTraceItem[], redactSensitiveText = true): FlowLlmPromptTraceItem[] {
     return items.map((item) => ({
       ...item,
-      prompt: this.truncateString(this.redactString(item.prompt), MAX_PROMPT_LENGTH) ?? '',
-      generatedOutput: this.truncateString(this.redactString(item.generatedOutput ?? ''), MAX_PROMPT_LENGTH) || null,
+      prompt: this.truncateString(redactSensitiveText ? this.redactString(item.prompt) : item.prompt, MAX_PROMPT_LENGTH) ?? '',
+      generatedOutput: this.truncateString(
+        redactSensitiveText ? this.redactString(item.generatedOutput ?? '') : item.generatedOutput ?? '',
+        MAX_PROMPT_LENGTH,
+      ) || null,
     }));
   }
 
-  redactRecord(value: Record<string, unknown>): Record<string, unknown> {
-    return this.redactValue(value) as Record<string, unknown>;
+  redactRecord(value: Record<string, unknown>, redactSensitiveText = true): Record<string, unknown> {
+    return redactSensitiveText ? this.redactValue(value) as Record<string, unknown> : value;
   }
 
   private redactValue(value: unknown, key?: string): unknown {

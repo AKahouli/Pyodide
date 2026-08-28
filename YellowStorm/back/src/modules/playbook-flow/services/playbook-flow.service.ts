@@ -242,8 +242,6 @@ export class PlaybookFlowService implements OnModuleInit {
     const dataBindings = dto.dataBindings || [];
     const workspaces = this.workspacePolicy.normalizeWorkspaces(dto.workspaces);
 
-    this.workspacePolicy.ensureWorkspaceSelection(workspaces);
-
     this.validatorService.validate(nodes as any, controlEdges as any, dataBindings as any, { allowDraftRouters: true });
 
     const resolvedName = await this.resolveUniqueName(ownerId, dto.name);
@@ -289,6 +287,16 @@ export class PlaybookFlowService implements OnModuleInit {
     const flow = await this.flowModel.findOne({ ownerId, assistantOperationId }).exec();
     if (!flow) return null;
     return this.responseAssembler.toBaseFlowResponse(flow);
+  }
+
+  async removeAssistantDraftIfUnchanged(ownerId: string, playbookId: string, assistantOperationId: string, expectedDefinitionRevision: number): Promise<boolean> {
+    const result = await this.flowModel.deleteOne({
+      _id: playbookId,
+      ownerId,
+      assistantOperationId,
+      definitionRevision: expectedDefinitionRevision,
+    }).exec();
+    return result.deletedCount === 1;
   }
 
   async findAll(ownerId: string, query: PlaybookFlowQueryDto): Promise<IFlowListResponse> {
@@ -563,12 +571,6 @@ export class PlaybookFlowService implements OnModuleInit {
     if (dto.hitlPolicy !== undefined) existing.hitlPolicy = dto.hitlPolicy as any;
     if (dto.hitlBlockers !== undefined) existing.hitlBlockers = dto.hitlBlockers as any[];
     if (dto.nodes !== undefined) {
-      const dsNodes = (dto.nodes as any[]).filter((n: any) => n.deepSearch);
-      if (dsNodes.length > 0) {
-        this.logger.warn(`[deep-search-debug] PATCH received ${dsNodes.length} node(s) with deepSearch=true: ${dsNodes.map((n: any) => n.id).join(',')}`);
-      } else {
-        this.logger.warn(`[deep-search-debug] PATCH received ${dto.nodes.length} nodes, NONE have deepSearch=true`);
-      }
       existing.nodes = dto.nodes as any[];
     }
     if (dto.controlEdges !== undefined) existing.controlEdges = dto.controlEdges as any[];
@@ -579,9 +581,6 @@ export class PlaybookFlowService implements OnModuleInit {
     if (dto.advisorAutopilotTargetScore !== undefined) existing.advisorAutopilotTargetScore = dto.advisorAutopilotTargetScore;
     if (dto.advisorAutopilotMaxTurns !== undefined) existing.advisorAutopilotMaxTurns = dto.advisorAutopilotMaxTurns;
     const normalizedWorkspaces = this.workspacePolicy.normalizeWorkspaces(dto.workspaces ?? existing.workspaces);
-    if (dto.workspaces !== undefined || existing.workspaces.length > 1) {
-      this.workspacePolicy.ensureWorkspaceSelection(normalizedWorkspaces);
-    }
     existing.workspaces = normalizedWorkspaces;
 
     const sanitizedGraph = this.graphSanitizer.sanitize({
@@ -834,8 +833,6 @@ export class PlaybookFlowService implements OnModuleInit {
   ): Promise<IFlowResponse> {
     const normalizedWorkspaces = this.workspacePolicy.normalizeWorkspaces(workspaces);
 
-    this.workspacePolicy.ensureWorkspaceSelection(normalizedWorkspaces);
-
     this.validatorService.validate(nodes as any, controlEdges as any, dataBindings as any, { allowDraftRouters: true });
 
     const flow = new this.flowModel({
@@ -871,7 +868,6 @@ export class PlaybookFlowService implements OnModuleInit {
       if (update.controlEdges) existing.controlEdges = update.controlEdges;
       if (update.dataBindings) existing.dataBindings = update.dataBindings;
       existing.workspaces = this.workspacePolicy.normalizeWorkspaces(existing.workspaces);
-      this.workspacePolicy.ensureWorkspaceSelection(existing.workspaces);
 
       const sanitizedGraph = this.graphSanitizer.sanitize({
         nodes: existing.nodes as any,

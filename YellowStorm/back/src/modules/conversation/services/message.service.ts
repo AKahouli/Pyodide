@@ -20,12 +20,14 @@ import { ConversationService } from './conversation.service';
 import { StreamGatewayService } from './stream-gateway.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { LoggerService } from '../../logger';
-import { NotFoundException } from '../../exceptions';
+import { ConflictException, NotFoundException } from '../../exceptions';
 import { AppException } from '../../exceptions/exceptions/base.exception';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { sanitizeTaskDiagnosticItems } from '../utils/task-diagnostics';
+import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import { StreamEvent } from '../interfaces/stream.interface';
 import { EmailService } from '../../email/email.service';
+import { ConversationSettingsService } from '../../system/conversation-settings.service';
 
 @Injectable()
 export class MessageService {
@@ -41,6 +43,7 @@ export class MessageService {
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     private readonly emailService: EmailService,
+    private readonly conversationSettings?: ConversationSettingsService,
   ) {
     this.logger.setContext('MessageService');
     this.appUrl = this.configService.get<string>(
@@ -100,12 +103,14 @@ export class MessageService {
       attachedFileIds: data.attachedFileIds?.map((id) => new Types.ObjectId(id)),
       webSearchEnabled: data.webSearchEnabled || false,
       modelId: data.modelId,
+      reasoningEffort: data.reasoningEffort,
       agentIds: data.agentIds?.map((id) => new Types.ObjectId(id)),
       memberIds: data.memberIds?.map((id) => new Types.ObjectId(id)),
       isStreaming: false,
       isComplete: true,
       requestId: data.requestId,
       interaction: data.interaction,
+      interactions: data.interactions,
       replayContext: data.replayContext,
     });
 
@@ -158,7 +163,9 @@ export class MessageService {
     const message = await this.messageModel.create({
       conversationId: new Types.ObjectId(data.conversationId),
       conversationType: 'ai',
+      senderId: data.senderId ? new Types.ObjectId(data.senderId) : undefined,
       modelId: data.modelId,
+      reasoningEffort: data.reasoningEffort,
       questionMessageId: new Types.ObjectId(data.questionMessageId),
       isStreaming: true,
       isComplete: false,
@@ -204,29 +211,58 @@ export class MessageService {
       durationMs: data.durationMs,
     });
 
-    const message = await this.messageModel.findById(data.messageId);
+    const guardrailDecision = (data.guardrailDecision ?? this.findGuardrailDecision(data.components)) as Record<string, unknown> | undefined;
+    let message: MessageDocument | null;
+    if (data.streamExecutionLeaseId) {
+      message = await this.messageModel.findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(data.messageId),
+          streamExecutionLeaseId: data.streamExecutionLeaseId,
+          isComplete: { $ne: true },
+        },
+        {
+          $set: {
+            components: data.components,
+            isStreaming: false,
+            isComplete: true,
+            inputTokens: data.inputTokens,
+            outputTokens: data.outputTokens,
+            durationMs: data.durationMs,
+            timeToFirstChunk: data.timeToFirstChunk,
+            timeToFirstToken: data.timeToFirstToken,
+            modelRequestTelemetry: data.modelRequestTelemetry,
+            guardrailDecision,
+          },
+        },
+        { new: true },
+      ).exec();
+    } else {
+      message = await this.messageModel.findById(data.messageId);
+    }
 
     if (!message) {
       this.logger.error('AI message not found for completion', {
         messageId: data.messageId,
       });
-      throw new NotFoundException(
-        ErrorCode.CHAT_MESSAGE_NOT_FOUND,
-        'AI message not found',
-      );
+      if (data.streamExecutionLeaseId) {
+        throw new ConflictException(ErrorCode.CONFLICT, 'Stream execution lease no longer owns this response');
+      }
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'AI message not found');
     }
 
-    message.components = data.components as any;
-    message.isStreaming = false;
-    message.isComplete = true;
-    message.inputTokens = data.inputTokens;
-    message.outputTokens = data.outputTokens;
-    message.durationMs = data.durationMs;
-    message.timeToFirstChunk = data.timeToFirstChunk;
-    message.timeToFirstToken = data.timeToFirstToken;
-    message.guardrailDecision = (data.guardrailDecision ?? this.findGuardrailDecision(data.components)) as Record<string, unknown> | undefined;
-
-    await message.save();
+    if (!data.streamExecutionLeaseId) {
+      message.components = data.components as any;
+      message.isStreaming = false;
+      message.isComplete = true;
+      message.inputTokens = data.inputTokens;
+      message.outputTokens = data.outputTokens;
+      message.durationMs = data.durationMs;
+      message.timeToFirstChunk = data.timeToFirstChunk;
+      message.timeToFirstToken = data.timeToFirstToken;
+      message.modelRequestTelemetry = data.modelRequestTelemetry;
+      message.guardrailDecision = guardrailDecision;
+      await message.save();
+    }
 
     // mention notification
     this.extractAndNotifyMentions(message, message.conversationId.toString())
@@ -520,6 +556,71 @@ export class MessageService {
     return response;
   }
 
+  async claimStreamExecution(messageId: string, leaseId: string, leaseDurationMs: number): Promise<boolean> {
+    const now = new Date();
+    const claimed = await this.messageModel.findOneAndUpdate(
+      {
+        _id: new Types.ObjectId(messageId),
+        conversationType: 'ai',
+        isComplete: { $ne: true },
+        $or: [
+          { streamExecutionLeaseExpiresAt: { $exists: false } },
+          { streamExecutionLeaseExpiresAt: null },
+          { streamExecutionLeaseExpiresAt: { $lte: now } },
+        ],
+      },
+      {
+        $set: {
+          streamExecutionLeaseId: leaseId,
+          streamExecutionLeaseExpiresAt: new Date(now.getTime() + leaseDurationMs),
+        },
+      },
+      { new: true },
+    ).lean().exec();
+    return Boolean(claimed);
+  }
+
+  async renewStreamExecution(messageId: string, leaseId: string, leaseDurationMs: number): Promise<boolean> {
+    const result = await this.messageModel.updateOne(
+      { _id: new Types.ObjectId(messageId), streamExecutionLeaseId: leaseId, isComplete: { $ne: true } },
+      { $set: { streamExecutionLeaseExpiresAt: new Date(Date.now() + leaseDurationMs) } },
+    ).exec();
+    return result.modifiedCount === 1;
+  }
+
+  async releaseStreamExecution(messageId: string, leaseId: string): Promise<void> {
+    await this.messageModel.updateOne(
+      { _id: new Types.ObjectId(messageId), streamExecutionLeaseId: leaseId },
+      { $unset: { streamExecutionLeaseId: '', streamExecutionLeaseExpiresAt: '' } },
+    ).exec();
+  }
+
+  async findTurnByRequestId(
+    conversationId: string,
+    senderId: string,
+    requestId: string,
+  ): Promise<{ userMessage: MessageResponse; aiMessageId?: string; requestFingerprint?: string } | null> {
+    const userMessage = await this.messageModel.findOne({
+      conversationId: new Types.ObjectId(conversationId),
+      senderId: new Types.ObjectId(senderId),
+      conversationType: 'user',
+      requestId,
+    }).exec();
+    if (!userMessage) return null;
+    const aiMessage = await this.messageModel.findOne({
+      conversationId: new Types.ObjectId(conversationId),
+      senderId: new Types.ObjectId(senderId),
+      conversationType: 'ai',
+      questionMessageId: userMessage._id,
+      requestId,
+    }).select('_id').lean().exec();
+    return {
+      userMessage: this.mapToResponse(userMessage),
+      aiMessageId: aiMessage?._id?.toString(),
+      requestFingerprint: userMessage.replayContext?.requestFingerprint,
+    };
+  }
+
   async claimReliabilityEvaluation(conversationId: string, messageId: string, manual: boolean): Promise<MessageResponse | null> {
     if (!Types.ObjectId.isValid(conversationId) || !Types.ObjectId.isValid(messageId)) {
       if (!manual) return null;
@@ -774,11 +875,17 @@ export class MessageService {
       .exec() as Promise<MessageDocument[]>;
   }
 
-  async markStreamFailed(messageId: string): Promise<void> {
-    await this.messageModel.findByIdAndUpdate(messageId, {
-      isStreaming: false,
-      isComplete: false,
-    });
+  async markStreamFailed(messageId: string, streamExecutionLeaseId?: string): Promise<void> {
+    const update = { isStreaming: false, isComplete: false };
+    if (streamExecutionLeaseId) {
+      await this.messageModel.findOneAndUpdate({
+        _id: new Types.ObjectId(messageId),
+        streamExecutionLeaseId,
+        isComplete: { $ne: true },
+      }, update);
+      return;
+    }
+    await this.messageModel.findByIdAndUpdate(messageId, update);
   }
 
   async cleanupStaleStreams(olderThanMinutes: number): Promise<number> {
@@ -916,6 +1023,7 @@ export class MessageService {
       components: this.publicComponents(message.components, true) as any,
       attachedFileIds: message.attachedFileIds?.map((id: any) => toStr(id)),
       modelId: message.modelId,
+      reasoningEffort: message.reasoningEffort,
       webSearchEnabled: message.webSearchEnabled,
       questionMessageId: toStr(message.questionMessageId),
       answerMessageId: toStr(message.answerMessageId),
@@ -927,12 +1035,14 @@ export class MessageService {
       isComplete: message.isComplete,
       inputTokens: message.inputTokens,
       outputTokens: message.outputTokens,
+      modelRequestTelemetry: message.modelRequestTelemetry,
       durationMs: message.durationMs,
       timeToFirstChunk: message.timeToFirstChunk,
       timeToFirstToken: message.timeToFirstToken,
       requestId: message.requestId,
       guardrailDecision: message.guardrailDecision as any,
       interaction: message.interaction as Record<string, unknown> | undefined,
+      interactions: message.interactions as Record<string, unknown>[] | undefined,
       reliabilityEvaluation: message.reliabilityEvaluation as ReliabilityEvaluation | undefined,
       correctionWorkflow: message.correctionWorkflow ? {
         ...message.correctionWorkflow,
@@ -957,20 +1067,25 @@ export class MessageService {
 
   private publicComponents(components: unknown, includeToolResults = false): MessageComponent[] | undefined {
     if (!Array.isArray(components)) return undefined;
+    const redactSensitiveText = this.conversationSettings?.shouldRedactSensitiveText() !== false;
+    const options = { redactSensitiveText, includeAgentDetail: true };
     return components.map((component) => {
       if (component?.type === 'task' && component.data) {
-        return {
+        return sanitizePublicComponent({
           id: component.id,
           type: component.type,
-          data: { ...component.data, items: sanitizeTaskDiagnosticItems(component.data.items) },
-        };
+          data: {
+            ...component.data,
+            items: redactSensitiveText ? sanitizeTaskDiagnosticItems(component.data.items) : component.data.items,
+          },
+        }, options);
       }
-      if (component?.type !== 'toolInfo' || !component.data) return component;
-      if (includeToolResults) {
-        return { id: component.id, type: component.type, data: { ...component.data } };
+      if (!component?.data) return component;
+      if (component.type !== 'toolActivity' || includeToolResults) {
+        return sanitizePublicComponent({ id: component.id, type: component.type, data: { ...component.data } }, options);
       }
       const { resultJson: _resultJson, result_json: _resultJsonSnake, ...publicData } = component.data;
-      return { id: component.id, type: component.type, data: publicData };
+      return sanitizePublicComponent({ id: component.id, type: component.type, data: publicData }, options);
     });
   }
 

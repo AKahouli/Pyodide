@@ -46,6 +46,8 @@ export interface Conversation {
   groupMeta?: GroupConversationMeta;
   projectId?: string | null;
   runtimeMode?: 'standard' | 'governed';
+  runtimePurpose?: 'chat' | 'platform_copilot';
+  pinnedAgentId?: string | null;
   governanceContext?: { programId: string; scopeId: string; deploymentId: string; revisionId: string; revisionNumber: number; pinnedAt: string; runtimeDefinition: { primaryAgentId: string; allowedAgentIds: string[]; workspaceIds: string[] } };
   branchProvenance?: { sourceConversationId: string; sourceTargetMessageId: string; branchedAt: string };
 }
@@ -67,6 +69,7 @@ export interface ComposerSuggestionSettings {
 
 export interface ConversationSettings {
   composerSuggestions: ComposerSuggestionSettings;
+  redactSensitiveText?: boolean;
   updatedAt?: string;
 }
 
@@ -177,9 +180,11 @@ export interface Message {
   content?: string;
   components?: MessageComponent[];
   interaction?: ChoiceInteractionMetadata;
+  interactions?: ChoiceInteractionMetadata[];
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];
   modelId?: string;
+  reasoningEffort?: string;
   /** Agents used for this turn (mentions or sticky reuse from backend). */
   agentIds?: string[];
   memberIds?: string[];
@@ -193,6 +198,11 @@ export interface Message {
   isComplete?: boolean;
   inputTokens?: number;
   outputTokens?: number;
+  modelRequestTelemetry?: {
+    usedTokens: number;
+    contextWindow: number;
+    model: string;
+  };
   durationMs?: number;
   timeToFirstChunk?: number;
   timeToFirstToken?: number;
@@ -254,9 +264,25 @@ export interface ChoiceInteractionMetadata {
   selectedOptions: Array<{ optionId: string; label: string; value?: string }>; customAnswer?: string; dismissed?: boolean; displayText?: string;
 }
 
+export type ToolRenderKind = 'run_code' | 'search' | 'read' | 'write' | 'file' | 'web' | 'generic';
+export interface AgentActivityData extends Record<string, unknown> {
+  summary: string; detail?: string; status: 'running' | 'completed'; startedAt?: string; completedAt?: string; durationMs?: number;
+  actorId?: string; actorName?: string;
+}
+export interface ToolActivityData extends Record<string, unknown> {
+  toolName: string; displayKey?: string; fallbackDisplayName?: string; summary: string; renderKind: ToolRenderKind;
+  status: 'running' | 'completed' | 'failed' | 'stopped'; paramsJson?: string; resultJson?: string;
+  startedAt?: string; completedAt?: string; durationMs?: number; actorId?: string; actorName?: string;
+  primaryInput?: string; primaryInputLanguage?: string;
+}
+export interface ArtifactActivityData extends Record<string, unknown> {
+  artifactId: string; filename: string; artifactKind?: string; mimeType?: string; sizeBytes?: number;
+  producerToolId?: string; availability: 'pending' | 'ready' | 'failed';
+}
+
 export interface MessageComponent {
   id?: string;
-  type: 'text' | 'code' | 'reasoning' | 'plan' | 'queue' | 'checkpoint' | 'chart' | 'task' | 'error' | 'sources' | 'sandbox' | 'webPreview' | 'artifact' | 'citation' | 'toolInfo' | 'chainOfThought' | 'choice';
+  type: 'text' | 'code' | 'agentActivity' | 'plan' | 'queue' | 'checkpoint' | 'chart' | 'task' | 'error' | 'sources' | 'sandbox' | 'webPreview' | 'artifact' | 'citation' | 'toolActivity' | 'choice';
   data: Record<string, unknown> | ChartComponentData | ChoiceComponentData;
 }
 
@@ -271,6 +297,20 @@ export interface ConversationListParams {
   isArchived?: boolean;
   projectId?: string | 'none';
   searchScope?: 'title' | 'fulltext';
+  runtimePurpose?: 'chat' | 'platform_copilot';
+  sortBy?: 'lastMessageAt' | 'createdAt' | 'title';
+  sortOrder?: 'asc' | 'desc';
+}
+
+export interface CreateConversationPayload {
+  title?: string;
+  workspaces?: string[];
+  participantEmails?: string[];
+  participants?: Array<{ email: string; job?: string }>;
+  ownerJob?: string;
+  projectId?: string;
+  runtimePurpose?: 'chat' | 'platform_copilot';
+  creationRequestId?: string;
 }
 
 export interface MessageListParams {
@@ -287,12 +327,14 @@ export interface PaginatedResponse<T> {
 }
 
 export interface SendMessagePayload {
+  requestId?: string;
   content: string;
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];
   webSearchEnabled?: boolean;
   deepSearchEnabled?: boolean;
   modelId?: string;
+  reasoningEffort?: string;
   agentIds?: string[];
   memberIds?: string[];
   /** Mentioned team IDs; the backend expands each into its agents at send time. */
@@ -301,6 +343,20 @@ export interface SendMessagePayload {
   connectorRepo?: { connectorId: string; connectorName: string; repoId: string; repoName: string; repoUrl?: string };
   skillIds?: string[];
   interaction?: ChoiceInteractionMetadata;
+  interactions?: ChoiceInteractionMetadata[];
+  clientContext?: ConversationClientContextV1;
+}
+
+export interface ConversationClientContextV1 {
+  contextVersion: 1;
+  route: string;
+  module: 'playbooks' | 'executions' | 'other';
+  surface: string;
+  entity?: { type: 'playbook' | 'execution' | 'task'; id: string };
+  selection?: { type: 'playbook' | 'execution' | 'task'; id: string };
+  availableActions: string[];
+  hasUnsavedChanges: boolean;
+  locale: string;
 }
 
 export interface CreateReportPayload {
@@ -314,8 +370,17 @@ export interface StreamStartEvent {
   messageId: string;
 }
 
+export interface ActiveStreamSnapshot {
+  conversationId: string;
+  messageId: string;
+  revision: number;
+  components: StreamingComponent[];
+}
+
 export interface StreamChunkEvent {
   conversationId: string;
+  messageId?: string;
+  revision?: number;
   action: 'add' | 'update' | 'delete';
   component: StreamingComponent;
   metadata?: Record<string, unknown>;

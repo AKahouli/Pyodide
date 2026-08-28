@@ -29,12 +29,14 @@ export interface TaskInputPort {
 
 export interface TaskArtifact {
   portId: string;
+  artifactId?: string;
   artifactKind: ArtifactKind;
   content?: string;
   url?: string;
   filename?: string;
   mimeType?: string;
   size?: number;
+  availability?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -372,7 +374,6 @@ export interface PlaybookTask {
   expectedResult?: string | null;
   disableAdvisorEvaluation?: boolean;
   advisorOptimizedAt?: string | null;
-  deepSearch?: boolean;
   dynamicReasoning?: { enabled: boolean };
 }
 
@@ -758,9 +759,26 @@ export type PlaybookIntentDesignResponse = (
       assumptions: string[];
       riskFlags: string[];
     }
+  | {
+      status: 'ready_to_construct';
+      detectedIntent: string;
+      assumptions: string[];
+      riskFlags: string[];
+    }
 ) & {
   lastTrace?: PlaybookIntentTraceEntry;
+  requestId?: string;
+  assessmentId?: string;
+  continuationId?: string | null;
+  definitionRevision?: number;
 };
+
+export interface PlaybookClarificationAnswer {
+  questionId: string;
+  choice?: string;
+  text?: string;
+  resource?: { kind: 'workspace' | 'document'; id: string };
+}
 
 export type PlaybookIntentTraceStage = 'intent.analyze' | 'intent.design_assessment';
 
@@ -797,11 +815,38 @@ export interface PlaybookAssistantTurnRequest {
   expectedDefinitionRevision: number;
   selectedTaskId?: string;
   executionId?: string;
+  requestId?: string;
+  conversationId?: string;
+  attachmentIds?: string[];
+  continuationId?: string;
+  answers?: PlaybookClarificationAnswer[];
 }
 
 export interface PlaybookAssistantTurnResponse {
+  requestId: string;
+  conversationId: string;
   answer: string;
+  assessment: PlaybookIntentDesignResponse | null;
   operation: PlaybookIntentConstructionStartResponse | null;
+}
+
+export interface PlaybookAssistantMessage {
+  messageId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  operationId: string | null;
+  createdAt: string | null;
+}
+
+export interface PlaybookAssistantHistory {
+  conversationId: string | null;
+  messages: PlaybookAssistantMessage[];
+}
+
+export interface PlaybookAssistantAttachmentUpload {
+  attachmentId: string;
+  uploadUrl: string;
+  expiresAt: string;
 }
 
 export type PlaybookIntentConstructionStatus = 'idle' | 'starting' | 'streaming' | 'completed' | 'failed' | 'cancelled';
@@ -1078,7 +1123,6 @@ export interface Playbook {
   controlEdges?: ControlEdge[];
   dataBindings?: DataBinding[];
   settings?: FlowSettings;
-  deepSearch?: boolean;
 }
 
 export interface CloneShareResult {
@@ -1555,7 +1599,6 @@ export interface PlaybookExecution {
   routerDecisions?: RouterDecision[];
   dynamicReasoningAttempts?: DynamicReasoningAttempt[];
   playbookExecutionSettings?: Record<string, unknown>;
-  deepSearch?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -1580,7 +1623,7 @@ export interface PlaybookExecutionSummary {
 
 export type ReplayMode = 'replay_strict' | 'replay_flex' | 'replay_adaptive';
 
-export type ReplayRunVerdict = 'pass' | 'warning' | 'fail' | 'skipped' | 'unknown';
+export type ReplayRunVerdict = 'pass' | 'warning' | 'fail' | 'unknown';
 export type ReplaySignalEvaluationStatus = 'not_evaluated' | 'not_applicable' | 'passed' | 'warning' | 'failed';
 
 export type ReplayPostRunVerdict = 'match' | 'minor_drift' | 'major_drift' | 'not_comparable';
@@ -1640,12 +1683,6 @@ export interface ReplayRunReport {
   replayId: string;
   validationVersion: number;
   mode: ReplayMode;
-  applied: boolean;
-  confidenceScore: number;
-  appliedSections: string[];
-  skippedSections: string[];
-  invalidationReasons: string[];
-  confidenceFactors: Record<string, number>;
   outputContractEvaluated: boolean;
   outputContractPassed: boolean;
   structuralDriftScore: number | null;
@@ -2142,7 +2179,6 @@ export interface CreatePlaybookData {
   name: string;
   description?: string;
   workspaces?: string[];
-  deepSearch?: boolean;
 }
 
 export interface GeneratePlaybookData {
@@ -2232,7 +2268,6 @@ export interface UpdatePlaybookData {
   clientMutationId?: string;
   assistantOperationId?: string;
   assistantOperationTarget?: 'canonical' | 'advisor_preview';
-  deepSearch?: boolean;
 }
 
 export interface ExecutePlaybookData {
@@ -2872,7 +2907,6 @@ export interface FlowNode {
   retryPolicy?: RetryPolicy;
   hitlPolicy?: HitlPolicy;
   modelId?: string;
-  deepSearch?: boolean;
   dynamicReasoning?: { enabled: boolean };
   metadata?: Record<string, unknown>;
 }
@@ -2986,7 +3020,6 @@ export interface UpdateFlowData {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
-  deepSearch?: boolean;
   expectedDefinitionRevision?: number;
   expectedUpdatedAt?: string;
   clientMutationId?: string;
@@ -3015,7 +3048,6 @@ export interface PlaybookDeltaPatchFields {
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
   workspaces?: string[];
-  deepSearch?: boolean;
 }
 
 export interface PatchPlaybookFlowDeltaData {

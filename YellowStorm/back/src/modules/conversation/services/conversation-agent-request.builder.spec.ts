@@ -31,4 +31,26 @@ describe('ConversationAgentRequestBuilder', () => {
     expect(result).toEqual(expect.objectContaining({ rpc: 'RunAgentTeam' }));
     expect(result.payload).toEqual(expect.objectContaining({ agent_mode: 'manual' }));
   });
+
+  it('labels client context as a non-authoritative page hint', () => {
+    const result = new ConversationAgentRequestBuilder().build({
+      userId: 'user-1', conversationId: 'conversation-1',
+      request: {
+        ...request,
+        clientContext: {
+          contextVersion: 1 as const,
+          route: '/playbooks/p1',
+          module: 'playbooks' as const,
+          surface: 'playbook.editor',
+          availableActions: ['validate'],
+          hasUnsavedChanges: true,
+          locale: 'en',
+        },
+      },
+      workspaceContexts: [], agents: [{ id: 'agent-1' }], attachedFiles: [], previousAttachedFiles: [], skills: [],
+    });
+    expect(result.payload.query).toContain('<contextual_page_hint>');
+    expect(result.payload.query).toContain('It is not an authorization source.');
+    expect(result.payload.query).toContain('"hasUnsavedChanges":true');
+  });
 });

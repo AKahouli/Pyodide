@@ -218,6 +218,22 @@ describe('execution.utils', () => {
       expect(result[0].data.content).toBe('[truncated]');
     });
 
+    it('redacts tool credentials before playbook persistence and streaming', () => {
+      mockExtractComponentData.mockReturnValueOnce({
+        type: 'toolActivity' as any,
+        data: {
+          toolName: 'search_documents',
+          paramsJson: '{"authorization":"Bearer private-token"}',
+          resultJson: '{"password":"private-password"}',
+        },
+      });
+
+      const [component] = mapGrpcComponents([{}], 'task-1');
+
+      expect(component.data.paramsJson).toBe('{"authorization":"[REDACTED]"}');
+      expect(component.data.resultJson).toBe('{"password":"[REDACTED]"}');
+    });
+
     it('should use defaults for maxComponents and maxDataBytes', () => {
       // Verify the defaults are exported and reasonable
       expect(MAX_COMPONENTS_PER_TASK_DEFAULT).toBe(200);

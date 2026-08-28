@@ -171,7 +171,7 @@ async def test_child_result_queue_forwards_only_tool_activity():
             forwarded.append(item)
 
     queue = _ChildResultQueue(ActivityQueue())
-    tool_event = {"action": "add", "component": {"id": "tool-child-call", "type": "tool_info", "data": {"title": "search"}}}
+    tool_event = {"action": "add", "component": {"id": "tool-child-call", "type": "tool_activity", "data": {"title": "search"}}}
     await queue.put(tool_event)
     await queue.put({"action": "add", "component": {"id": "text", "type": "text", "data": {"content": "private child text"}}})
 

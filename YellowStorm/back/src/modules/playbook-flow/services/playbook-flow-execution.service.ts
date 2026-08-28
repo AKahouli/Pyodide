@@ -41,17 +41,13 @@ import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
 import { PlaybookFlowReplayArtifactService } from './playbook-flow-replay-artifact.service';
 import { PlaybookFlowReplayPromptService } from './playbook-flow-replay-prompt.service';
-import { PlaybookFlowReplayBaselineService } from './playbook-flow-replay-baseline.service';
-import { PlaybookFlowReplayEligibilityService } from './playbook-flow-replay-eligibility.service';
 import { PlaybookFlowReplayReportService } from './playbook-flow-replay-report.service';
 import { PlaybookFlowReplayDriftService } from './playbook-flow-replay-drift.service';
 import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.service';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
 import { PlaybookFlowOutputFormatService } from './playbook-flow-output-format.service';
 import { ModelsService } from '@modules/models/models.service';
-import { SystemService } from '@modules/system/system.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
-import type { ReplayEligibilityResult } from '../interfaces/playbook-flow-replay-eligibility.interface';
 import type { ResolvedReplayArtifacts } from '../interfaces/playbook-flow-replay-artifact.interface';
 import type { ReplayPlanningSummary } from '../interfaces/playbook-flow-replay-plan.interface';
 import {
@@ -83,6 +79,8 @@ import {
 import { FlowHitlMemory, FlowHitlMemoryDocument } from '../schemas/playbook-flow-hitl-memory.schema';
 import { FlowAccessService } from '../domain/flow-access.service';
 import { PlaybookExecutionSettingsResolverService } from './playbook-execution-settings-resolver.service';
+import { publicPlaybookTaskResult, sanitizePlaybookPublicValue } from '../utils/playbook-artifact';
+import { PlaybookFlowArtifactService } from './playbook-flow-artifact.service';
 import { FlowDynamicReasoningAttempt, FlowDynamicReasoningAttemptDocument } from '../schemas/playbook-flow-dynamic-reasoning-attempt.schema';
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
@@ -121,6 +119,7 @@ export function sanitizeExecutionForResponse(
   const { playbookPlannerSnapshot: _plannerSnapshot, ...safeExecution } = execution;
   return {
     ...safeExecution,
+    error: sanitizePlaybookPublicValue(safeExecution.error) as string | null | undefined,
     ...(safeExecution.snapshot
       ? { snapshot: sanitizeExecutionSnapshotForResponse(safeExecution.snapshot) }
       : {}),
@@ -200,7 +199,6 @@ export function buildGrpcNodeMetadata(node: Record<string, unknown>, snapshot: R
       : {}),
     ...(flowHitlPolicy || nodeHitlPolicy ? { hitl_policy: nodeHitlPolicy ?? flowHitlPolicy } : {}),
     ...(hitlBlockers.length ? { hitl_blockers: hitlBlockers } : {}),
-    deep_search: node.deepSearch === true,
   };
 }
 
@@ -253,8 +251,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     private readonly advisorService: PlaybookFlowExecutionAdvisorService,
     private readonly replayArtifactService: PlaybookFlowReplayArtifactService,
     private readonly replayPromptService: PlaybookFlowReplayPromptService,
-    private readonly replayBaselineService: PlaybookFlowReplayBaselineService,
-    private readonly replayEligibilityService: PlaybookFlowReplayEligibilityService,
     private readonly replayReportService: PlaybookFlowReplayReportService,
     private readonly outputContractService: PlaybookFlowOutputContractService,
     private readonly modelsService: ModelsService,
@@ -262,7 +258,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     @Optional() private readonly replayPlanService?: PlaybookFlowReplayPlanService,
     @Optional() private readonly replayDriftService?: PlaybookFlowReplayDriftService,
     @Optional() private readonly postRunEvaluationService?: PlaybookFlowReplayPostRunEvaluationService,
-    @Optional() private readonly systemService?: SystemService,
     @Optional() private readonly tokenBufferService?: PlaybookFlowTokenBufferService,
     @Optional() private readonly executionLeaseService?: PlaybookFlowExecutionLeaseService,
     @Optional() private readonly graphSanitizerService?: FlowGraphSanitizerService,
@@ -281,6 +276,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     @Optional()
     @InjectModel(FlowDynamicReasoningAttempt.name)
     private readonly dynamicReasoningAttemptModel?: Model<FlowDynamicReasoningAttemptDocument>,
+    @Optional() private readonly artifactService?: PlaybookFlowArtifactService,
   ) {
     this.hitlResumeService?.bindExecutionHost({
       isRuntimeAvailable: () => this.isRuntimeAvailable(),
@@ -311,6 +307,20 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         this.postRunEvaluationService,
       );
     return this.fallbackReplayRuntimeService;
+  }
+
+  private async resolvePlaybookPlanner(
+    agentId: string,
+    flowSettings?: Record<string, unknown>,
+  ) {
+    if (this.executionSettingsResolver) {
+      return this.executionSettingsResolver.resolvePlanner(agentId, flowSettings);
+    }
+    const planner = await this.agentService.findPlaybookPlannerById(agentId);
+    if (!planner.model) {
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+    return { ...planner, omitTemperature: false };
   }
 
   private getEventHandler(): PlaybookExecutionEventHandlerService {
@@ -549,44 +559,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     });
   }
 
-  private applyReplayPlanningEligibility(
-    mode: 'replay_strict' | 'replay_flex' | 'replay_adaptive',
-    eligibility: ReplayEligibilityResult,
-    planning: ReplayPlanningSummary | null,
-  ): ReplayEligibilityResult {
-    if (!planning || !this.hasUnresolvedRequiredContext(planning)) {
-      return eligibility;
-    }
-
-    const invalidationReasons = Array.from(new Set([
-      ...eligibility.invalidationReasons,
-      'required_context_unresolved',
-    ]));
-
-    return {
-      ...eligibility,
-      applied: false,
-      invalidationReasons,
-      skippedSections: Array.from(new Set([
-        ...eligibility.skippedSections,
-        'decision_invariants',
-        'reasoning_chain',
-        'tool_policy',
-        'tool_trace',
-        'output_contract',
-        'output_format',
-        'quality_checks',
-        'known_failure_modes',
-      ])),
-      appliedSections: mode === 'replay_adaptive' ? eligibility.appliedSections : [],
-    };
-  }
-
-  private hasUnresolvedRequiredContext(planning: ReplayPlanningSummary): boolean {
-    const replayPlanService = this.replayPlanService ?? new PlaybookFlowReplayPlanService();
-    return replayPlanService.hasUnresolvedRequiredContext(planning.contextMapping);
-  }
-
   private resolveStepExecutionMode(
     node: { id: string; metadata?: Record<string, unknown> },
     stepModes: Record<string, string>,
@@ -645,24 +617,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       ...safeInputContext,
       __playbook_hitl_memory: activeHitlMemories,
     };
-  }
-
-  private buildCurrentHitlContextFingerprints(params: {
-    artifacts: ResolvedReplayArtifacts;
-    inputContext: Record<string, unknown>;
-    nodeSnapshot: Record<string, unknown>;
-  }): Record<string, string> {
-    const result: Record<string, string> = {};
-    for (const snapshot of params.artifacts.hitlMemorySnapshots ?? []) {
-      result[snapshot.interruptId] = this.replayBaselineService.buildHitlContextFingerprint({
-        inputContext: params.inputContext,
-        nodeSnapshot: params.nodeSnapshot,
-        reasonCode: snapshot.reasonCode,
-        prompt: snapshot.prompt,
-        downstreamNodeIds: snapshot.downstreamNodeIds,
-      });
-    }
-    return result;
   }
 
   private async recoverQueuedExecutions(): Promise<void> {
@@ -955,8 +909,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const hasDynamicReasoningNode = ((snapshot.nodes ?? []) as FlowNode[])
       .some((node) => node.dynamicReasoning?.enabled === true);
     const planner = effectiveExecutionSettings?.dynamicReasoningEnabled && hasDynamicReasoningNode
-      ? await this.agentService.findPlaybookPlannerById(
+      ? await this.resolvePlaybookPlanner(
         effectiveExecutionSettings.dynamicReasoning.plannerAgentId || '',
+        snapshot.settings as Record<string, unknown> | undefined,
       )
       : null;
     const playbookPlannerSnapshot = planner ? {
@@ -965,7 +920,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       model: planner.model,
       systemPrompt: planner.instruction,
       temperature: planner.temperature,
-      omitTemperature: false,
+      omitTemperature: planner.omitTemperature,
       promptHash: `sha256:${createHash('sha256').update(planner.instruction).digest('hex')}`,
       agentRevision: planner.agentRevision,
       planningContractVersion: '1',
@@ -1172,8 +1127,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   ): Promise<void> {
     try {
       const snapshot = (snapshotOverride || this.builderService.buildSnapshot((flow || {}) as any)) as any;
-      const dsSnapshotNodes = (snapshot.nodes || []).filter((n: any) => n.deepSearch);
-      this.logger.warn(`[deep-search-debug] snapshot has ${snapshot.nodes?.length ?? 0} nodes, ${dsSnapshotNodes.length} with deepSearch=true: ${dsSnapshotNodes.map((n: any) => n.id).join(',')}`);
       const recursionLimit = snapshot.settings?.recursionLimit || 25;
       const maxParallelism = snapshot.settings?.maxParallelism || 5;
       const normalizedOwnerId = typeof ownerId === 'string' ? ownerId : String(ownerId);
@@ -1184,8 +1137,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
       const persistedPlanner = snapshot.playbookPlanner as Record<string, unknown> | undefined;
       const planner = !persistedPlanner && effectiveExecutionSettings?.dynamicReasoningEnabled && hasDynamicReasoningNode
-        ? await this.agentService.findPlaybookPlannerById(
+        ? await this.resolvePlaybookPlanner(
           effectiveExecutionSettings.dynamicReasoning.plannerAgentId || '',
+          snapshot.settings as Record<string, unknown> | undefined,
         )
         : null;
       const plannerSnapshot = persistedPlanner ? {
@@ -1203,7 +1157,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         model: planner.model,
         system_prompt: planner.instruction,
         temperature: planner.temperature,
-        omit_temperature: false,
+        omit_temperature: planner.omitTemperature,
         prompt_hash: `sha256:${createHash('sha256').update(planner.instruction).digest('hex')}`,
         agent_revision: planner.agentRevision,
       } : undefined;
@@ -1295,25 +1249,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const stepModes: Record<string, string> = (executionMeta?.stepExecutionModes as Record<string, string>) || {};
       const VALID_STEP_MODES = new Set(['live', 'replay_strict', 'replay_flex', 'replay_adaptive']);
       const REPLAY_MODES = new Set(['replay_strict', 'replay_flex', 'replay_adaptive']);
-      const replayFingerprintNodes = ((snapshot.nodes as Array<Record<string, unknown>> | undefined) || []).map((node) => {
-        if (!executionModelIdOverride || typeof executionModelIdOverride !== 'string') {
-          return { ...node };
-        }
-
-        const metadata = node.metadata && typeof node.metadata === 'object'
-          ? { ...(node.metadata as Record<string, unknown>), agent_model: executionModelIdOverride }
-          : { agent_model: executionModelIdOverride };
-
-        return {
-          ...node,
-          modelId: executionModelIdOverride,
-          metadata,
-        };
-      });
-      const replayComparableRuntimeFlowSnapshot = this.getReplayRuntime().buildComparableFlowSnapshot({
-        ...(snapshot as FlowSnapshot),
-        nodes: replayFingerprintNodes as unknown as FlowSnapshot['nodes'],
-      });
       const replayModeNodeIds = enrichedNodes
         .filter((node: any) => REPLAY_MODES.has(this.resolveStepExecutionMode(node, stepModes, globalExecMode, VALID_STEP_MODES)))
         .map((node: any) => node.id);
@@ -1341,9 +1276,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         __playbook_workspace_paths: workspacePathsById,
         __playbook_default_workspace_path: workspacePathsById[defaultWorkspaceId] || '',
       }, activeHitlMemories);
-      const replayFingerprintNodesById = new Map(
-        replayFingerprintNodes.map((entry) => [String((entry as any).id || ''), entry]),
-      );
 
       const replayPlanningByTask: Record<string, ReplayPlanningSummary> = {};
       for (const node of enrichedNodes) {
@@ -1363,32 +1295,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           this.logger.warn(`Replay skipped for task ${taskId}: missing_replay_baseline`);
           continue;
         }
-        const currentNodeSnapshot = replayFingerprintNodesById.get(taskId) ?? { ...node };
-        const eligibilityThreshold = this.systemService
-          ? (await this.systemService.getPlaybookSettings().catch(() => null))?.replayEligibilityConfidenceThreshold
-          : undefined;
-        const initialEligibility = this.replayEligibilityService.evaluateReplayEligibility({
-          mode: stepMode as 'replay_strict' | 'replay_flex' | 'replay_adaptive',
-          artifacts,
-          isStale: artifacts.isStale,
-          staleReasons: artifacts.staleReasons,
-          eligibilityThreshold,
-          currentHitlContextFingerprints: this.buildCurrentHitlContextFingerprints({
-            artifacts,
-            inputContext: replayInputContext,
-            nodeSnapshot: currentNodeSnapshot,
-          }),
-          currentFingerprints: this.replayBaselineService.buildCurrentReplayFingerprints({
-            inputContext: replayInputContext,
-            flowSnapshot: replayComparableRuntimeFlowSnapshot,
-            nodeSnapshot: currentNodeSnapshot,
-            outputContract: this.buildCurrentReplayOutputContract({
-              artifacts,
-              currentFormatGuide: activeOutputFormatTemplates.get(taskId)?.formatGuide ?? null,
-              hasActiveTemplate: activeOutputFormatTemplates.has(taskId),
-            }),
-          }),
-        });
         const replayPlanning = isReplayMode
           ? this.buildReplayPlanning(artifacts, {
               taskId,
@@ -1406,11 +1312,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             replay_planning: replayPlanning,
           };
         }
-        const eligibility = this.applyReplayPlanningEligibility(
-          stepMode as 'replay_strict' | 'replay_flex' | 'replay_adaptive',
-          initialEligibility,
-          replayPlanning,
-        );
         await this.getReplayRuntime().persistPreRunReport({
           executionId,
           flowId,
@@ -1419,13 +1320,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           referenceExecutionId: artifacts.referenceExecutionId,
           validationVersion: artifacts.validationVersion,
           mode: stepMode as 'replay_strict' | 'replay_flex' | 'replay_adaptive',
-          eligibility,
         });
         this.trackReplayTask(executionId, taskId);
-        if (!eligibility.applied) {
-          this.logger.warn(`Replay skipped for task ${taskId}: ${eligibility.invalidationReasons.join(', ')}`);
-          continue;
-        }
         this.cacheSelectedReplayArtifacts(executionId, taskId, artifacts);
         const activeTemplate = activeOutputFormatTemplates.get(taskId);
         const mergedArtifacts = (!artifacts.outputFormatGuide && activeTemplate?.formatGuide && artifacts.replayConfig.replayOutputFormat)
@@ -1434,7 +1330,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         const replayPrompt = this.replayPromptService.buildReplayPromptSection({
           artifacts: mergedArtifacts,
           mode: stepMode as 'replay_strict' | 'replay_flex' | 'replay_adaptive',
-          eligibility,
           planning: replayPlanning,
         });
         if (replayPrompt) {
@@ -1583,6 +1478,20 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             max_repair_attempts: effectiveExecutionSettings.dynamicReasoning.maxRepairAttempts,
           } : undefined,
           playbook_planner: plannerSnapshot,
+          runtime_settings: effectiveExecutionSettings ? {
+            max_concurrent_per_user: effectiveExecutionSettings.maxConcurrentPerUser,
+            execution_queue_max_depth: effectiveExecutionSettings.executionQueueMaxDepth,
+            max_parallelism_per_execution: effectiveExecutionSettings.maxParallelismPerExecution,
+            recursion_limit_default: effectiveExecutionSettings.recursionLimitDefault,
+            recursion_limit_max: effectiveExecutionSettings.recursionLimitMax,
+            max_hitl_rounds: effectiveExecutionSettings.maxHitlRounds,
+            python_worker_pool_size: effectiveExecutionSettings.pythonWorkerPoolSize,
+            python_worker_max_inflight: effectiveExecutionSettings.pythonWorkerMaxInflight,
+            max_tool_iterations: effectiveExecutionSettings.maxToolIterations,
+            graph_cache_enabled: effectiveExecutionSettings.graphCacheEnabled,
+            graph_cache_max_entries: effectiveExecutionSettings.graphCacheMaxEntries,
+            graph_cache_ttl_seconds: effectiveExecutionSettings.graphCacheTtlSeconds,
+          } : undefined,
         },
         seeded_task_outputs: seededTaskOutputs.map((entry) => ({
           node_id: entry.nodeId,
@@ -1653,7 +1562,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         this.logger.log(`gRPC stream ended for execution ${executionId}`);
         await waitForHandledEvents();
         if (!completionEmitted) {
-          completionEmitted = await this.getStreamFinalizer().finalizeEndedStream(executionId, true);
+          completionEmitted = await this.getStreamFinalizer().finalizeEndedStream(executionId);
         }
         releaseOnce();
       })().catch((err) => {
@@ -1682,23 +1591,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       event,
       releaseExecutionLease: () => this.releaseExecutionLease(executionId),
       scheduleQueueDrain: (ownerId) => this.scheduleQueueDrain(ownerId),
-    });
-  }
-
-  private buildCurrentReplayOutputContract(params: {
-    artifacts: Pick<ResolvedReplayArtifacts, 'outputContract' | 'referenceOutput' | 'replayConfig'>;
-    currentFormatGuide: string | null;
-    hasActiveTemplate: boolean;
-  }) {
-    if (typeof this.replayBaselineService.buildOutputContractFromReplay !== 'function') {
-      return params.artifacts.outputContract;
-    }
-
-    return this.replayBaselineService.buildOutputContractFromReplay({
-      output: params.artifacts.referenceOutput,
-      preserveOutputFormat: params.hasActiveTemplate || params.artifacts.replayConfig.replayOutputFormat,
-      outputFormatGuide: params.currentFormatGuide,
-      existingOutputContract: params.artifacts.outputContract,
     });
   }
 
@@ -1812,6 +1704,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       .sort({ decidedAt: 1 })
       .lean();
     const hitlEvents = execution.hitlEvents ?? [];
+    const redactSensitiveText = await this.observabilityService.shouldRedactSensitiveText();
     const dynamicReasoningAttempts = this.dynamicReasoningAttemptModel
       ? await this.dynamicReasoningAttemptModel.find({ executionId }).sort({ createdAt: 1 }).lean().exec()
       : [];
@@ -1823,42 +1716,56 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       return {
         ...executionJson,
         replayPlanningByTask: executionJson.replayPlanningByTask ?? null,
-        taskResults: taskResults.map((r): IFlowTaskResultResponse => {
-        const doc = r as unknown as Record<string, unknown>;
+        taskResults: await Promise.all(taskResults.map(async (r): Promise<IFlowTaskResultResponse> => {
+        const rawTaskResult = r as unknown as Record<string, unknown>;
+        const doc = this.artifactService
+          ? await this.artifactService.projectPublicTaskResult(
+             rawTaskResult,
+             String(execution.ownerId),
+             executionId,
+             redactSensitiveText,
+           )
+          : publicPlaybookTaskResult(
+             rawTaskResult,
+             String(execution.ownerId),
+             executionId,
+             new Set(),
+             redactSensitiveText,
+           );
         return {
           id: doc._id as string,
           executionId: r.executionId,
           taskId: r.taskId,
           iteration: r.iteration,
           status: r.status,
-          output: r.output,
-          displayText: r.displayText,
-          outputs: (r as any).outputs,
-          artifacts: r.artifacts,
-          components: r.components,
-          iteratorIterations: (r as any).iteratorIterations,
-          error: r.error,
+          output: doc.output as string | null | undefined,
+          displayText: (doc.displayText as string | null | undefined) ?? undefined,
+          outputs: doc.outputs as Record<string, unknown> | undefined,
+          artifacts: doc.artifacts as Array<Record<string, unknown>>,
+          components: doc.components as Array<Record<string, unknown>>,
+          iteratorIterations: doc.iteratorIterations as Array<Record<string, unknown>> | undefined,
+          error: doc.error == null ? undefined : String(doc.error),
           startedAt: r.startedAt,
           endedAt: r.endedAt,
-          toolTrace: r.toolTrace as unknown as FlowToolTraceItem[] | undefined,
-          reasoningChain: ((r as any).reasoningChain as PublicReasoningTraceItem[] | undefined) ?? [],
-          llmPromptTrace: r.llmPromptTrace as unknown as FlowLlmPromptTraceItem[] | undefined,
+          toolTrace: doc.toolTrace as FlowToolTraceItem[] | undefined,
+          reasoningChain: (doc.reasoningChain as PublicReasoningTraceItem[] | undefined) ?? [],
+          llmPromptTrace: doc.llmPromptTrace as FlowLlmPromptTraceItem[] | undefined,
           usage: r.usage as unknown as FlowUsageSummary | null | undefined,
           ...flattenUsage({ usage: r.usage as unknown as FlowUsageSummary | null | undefined }),
-          semanticMatch: r.semanticMatch as unknown as FlowSemanticMatchSummary | null | undefined,
-          traceMetadata: r.traceMetadata as Record<string, unknown> ?? {},
+          semanticMatch: doc.semanticMatch as FlowSemanticMatchSummary | null | undefined,
+          traceMetadata: doc.traceMetadata as Record<string, unknown> ?? {},
           judgeStatus: (r as any).judgeStatus ?? 'idle',
           judgeScoringMode: (r as any).judgeScoringMode ?? null,
-          judgeResult: (r as any).judgeResult ?? null,
-          judgeError: (r as any).judgeError ?? null,
-          judgeHistory: Array.isArray((r as any).judgeHistory) ? (r as any).judgeHistory : [],
+          judgeResult: (doc.judgeResult as IFlowTaskResultResponse['judgeResult']) ?? null,
+          judgeError: doc.judgeError == null ? null : String(doc.judgeError),
+          judgeHistory: (Array.isArray(doc.judgeHistory) ? doc.judgeHistory : []) as IFlowTaskResultResponse['judgeHistory'],
           hitlHistory: hitlEvents.filter((event) => event.nodeId === r.taskId && event.iteration === r.iteration),
           parentTaskId: r.parentTaskId,
           runtimeSubgraphId: r.runtimeSubgraphId,
           generatedLocalNodeId: r.generatedLocalNodeId,
           generatedNodeTitle: r.generatedNodeTitle,
         };
-      }),
+      })),
       routerDecisions: routerDecisions.map((r) => ({
         id: (r as unknown as Record<string, unknown>)._id as string,
         executionId: r.executionId,
@@ -2174,8 +2081,21 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const snapshotSettings = snapshot.settings && typeof snapshot.settings === 'object'
       ? snapshot.settings as Record<string, unknown>
       : {};
-    const recursionLimit = Number(snapshotSettings.recursionLimit) || 25;
-    const maxParallelism = Number(snapshotSettings.maxParallelism) || 5;
+    const requestedRecursionLimit = Number(snapshotSettings.recursionLimit) || 25;
+    const requestedMaxParallelism = Number(snapshotSettings.maxParallelism) || 5;
+    const effectiveExecutionSettings = this.executionSettingsResolver
+      ? await this.executionSettingsResolver.resolve({
+        recursionLimit: requestedRecursionLimit,
+        maxParallelism: requestedMaxParallelism,
+      })
+      : undefined;
+    const recursionLimit = effectiveExecutionSettings
+      ? Math.min(requestedRecursionLimit, effectiveExecutionSettings.recursionLimitMax)
+      : requestedRecursionLimit;
+    const maxParallelism = effectiveExecutionSettings?.effectiveExecutionParallelism ?? requestedMaxParallelism;
+    if (effectiveExecutionSettings) {
+      snapshot.playbookExecutionSettings = effectiveExecutionSettings;
+    }
 
     const sourceInputContext = structuredClone(sourceExecution.inputContext ?? {});
     delete sourceInputContext.__playbook_resume;
@@ -2201,10 +2121,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       `Created replay execution ${newExecution.id} from source ${sourceExecution.id} task ${payload.taskId} iteration ${iteration}`,
     );
 
-    const maxConcurrent = this.executionSettingsResolver
-      ? (await this.executionSettingsResolver.resolve()).maxConcurrentPerUser
-      : this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
-    const maxDepth = this.configService.get<number>('playbook-flow.executionQueueMaxDepth', 50);
+    const maxConcurrent = effectiveExecutionSettings?.maxConcurrentPerUser
+      ?? this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
+    const maxDepth = effectiveExecutionSettings?.executionQueueMaxDepth
+      ?? this.configService.get<number>('playbook-flow.executionQueueMaxDepth', 50);
     await this.queueService.admit(
       ownerId,
       (newExecution as any).id || (newExecution as any)._id?.toString(),
@@ -2230,6 +2150,39 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const normalizedOwnerId = typeof ownerId === 'string' ? ownerId : String(ownerId);
     const recursionLimit = snapshot.settings?.recursionLimit || 25;
     const maxParallelism = snapshot.settings?.maxParallelism || 5;
+    const effectiveExecutionSettings = snapshot.playbookExecutionSettings
+      ?? (this.executionSettingsResolver
+        ? await this.executionSettingsResolver.resolve({ recursionLimit, maxParallelism })
+        : undefined);
+    const hasDynamicReasoningNode = (snapshot.nodes as any[]).some(
+      (node) => node.dynamicReasoning?.enabled === true,
+    );
+    const persistedPlanner = snapshot.playbookPlanner as Record<string, unknown> | undefined;
+    const planner = !persistedPlanner && effectiveExecutionSettings?.dynamicReasoningEnabled && hasDynamicReasoningNode
+      ? await this.resolvePlaybookPlanner(
+        effectiveExecutionSettings.dynamicReasoning.plannerAgentId || '',
+        snapshot.settings as Record<string, unknown> | undefined,
+      )
+      : null;
+    const plannerSnapshot = persistedPlanner ? {
+      agent_id: persistedPlanner.agentId,
+      agent_type_slug: persistedPlanner.agentTypeSlug,
+      model: persistedPlanner.model,
+      system_prompt: persistedPlanner.systemPrompt,
+      temperature: persistedPlanner.temperature,
+      omit_temperature: persistedPlanner.omitTemperature,
+      prompt_hash: persistedPlanner.promptHash,
+      agent_revision: persistedPlanner.agentRevision,
+    } : planner ? {
+      agent_id: planner.agentId,
+      agent_type_slug: planner.agentTypeSlug,
+      model: planner.model,
+      system_prompt: planner.instruction,
+      temperature: planner.temperature,
+      omit_temperature: planner.omitTemperature,
+      prompt_hash: `sha256:${createHash('sha256').update(planner.instruction).digest('hex')}`,
+      agent_revision: planner.agentRevision,
+    } : undefined;
     const taskNodeIds = (snapshot.nodes as any[])
       .filter((node) => node.kind === 'step' || node.kind === 'task')
       .map((node) => String(node.id));
@@ -2317,6 +2270,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         retry_policy: n.retryPolicy ? { max_retries: n.retryPolicy.maxRetries || 0, delay_ms: n.retryPolicy.delayMs || 0 } : undefined,
         model_id: n.modelId || '',
         metadata: toGrpcStruct(buildGrpcNodeMetadata(n, snapshot as Record<string, unknown>)),
+        dynamic_reasoning: n.dynamicReasoning ? { enabled: n.dynamicReasoning.enabled === true } : undefined,
       })),
       control_edges: (snapshot.controlEdges as any[]).map((e) => ({
         id: e.id, kind: e.kind, source: e.source, target: e.target,
@@ -2324,7 +2278,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         source_output_port_id: e.sourceOutputPortId || '', target_input_port_id: e.targetInputPortId || '',
       })),
       data_bindings: dataBindingsProto,
-      settings: { recursion_limit: recursionLimit, max_parallelism: maxParallelism },
+      settings: {
+        recursion_limit: recursionLimit,
+        max_parallelism: maxParallelism,
+      },
     };
 
     const request = {
@@ -2334,7 +2291,33 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       owner_id: normalizedOwnerId,
       snapshot: snapshotProto,
       input_context: toGrpcStruct(runtimeInputContext),
-      settings: { recursion_limit: recursionLimit, max_parallelism: maxParallelism },
+      settings: {
+        recursion_limit: effectiveExecutionSettings
+          ? Math.min(recursionLimit, effectiveExecutionSettings.recursionLimitMax)
+          : recursionLimit,
+        max_parallelism: effectiveExecutionSettings?.effectiveExecutionParallelism ?? maxParallelism,
+        dynamic_reasoning_policy: effectiveExecutionSettings?.dynamicReasoningEnabled ? {
+          max_work_nodes: effectiveExecutionSettings.dynamicReasoning.maxWorkNodes,
+          max_parallelism: effectiveExecutionSettings.dynamicReasoning.maxParallelism,
+          max_depth: effectiveExecutionSettings.dynamicReasoning.maxDepth,
+          max_repair_attempts: effectiveExecutionSettings.dynamicReasoning.maxRepairAttempts,
+        } : undefined,
+        playbook_planner: plannerSnapshot,
+        runtime_settings: effectiveExecutionSettings ? {
+          max_concurrent_per_user: effectiveExecutionSettings.maxConcurrentPerUser,
+          execution_queue_max_depth: effectiveExecutionSettings.executionQueueMaxDepth,
+          max_parallelism_per_execution: effectiveExecutionSettings.maxParallelismPerExecution,
+          recursion_limit_default: effectiveExecutionSettings.recursionLimitDefault,
+          recursion_limit_max: effectiveExecutionSettings.recursionLimitMax,
+          max_hitl_rounds: effectiveExecutionSettings.maxHitlRounds,
+          python_worker_pool_size: effectiveExecutionSettings.pythonWorkerPoolSize,
+          python_worker_max_inflight: effectiveExecutionSettings.pythonWorkerMaxInflight,
+          max_tool_iterations: effectiveExecutionSettings.maxToolIterations,
+          graph_cache_enabled: effectiveExecutionSettings.graphCacheEnabled,
+          graph_cache_max_entries: effectiveExecutionSettings.graphCacheMaxEntries,
+          graph_cache_ttl_seconds: effectiveExecutionSettings.graphCacheTtlSeconds,
+        } : undefined,
+      },
       target_node_id: targetNodeId,
       target_iteration: targetIteration,
     };
@@ -2385,7 +2368,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         this.logger.log(`gRPC RunFromCheckpoint stream ended for execution ${executionId}`);
         await waitForHandledEvents();
         if (!completionEmitted) {
-          completionEmitted = await this.getStreamFinalizer().finalizeEndedStream(executionId, false);
+          completionEmitted = await this.getStreamFinalizer().finalizeEndedStream(executionId);
         }
         releaseOnce();
       })().catch((err) => {

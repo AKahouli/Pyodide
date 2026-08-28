@@ -44,6 +44,7 @@ export interface ChatMessage {
   timestamp?: Date;
   isEdited?: boolean;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
+  onSubmitQuestions?: (actions: ChoiceComponentAction[]) => Promise<void>;
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
 }
 
@@ -81,7 +82,7 @@ export type ChatMessageBubbleProps = HTMLAttributes<HTMLDivElement> & {
 /**
  * ChatMessageBubble - Individual message bubble
  * User messages appear on the right, AI messages on the left
- * AI messages support structured content with reasoning, queues, plans, etc.
+ * AI messages support structured activity, queues, plans, and answer content.
  */
 export const ChatMessageBubble = ({ message, className, showAvatar = true, userAvatar, assistantAvatar, isStreaming = false, showTaskDiagnostics = true, density = 'comfortable', ...props }: ChatMessageBubbleProps) => {
   const { t: tCommon, language } = useModuleTranslation('common');
@@ -103,31 +104,12 @@ export const ChatMessageBubble = ({ message, className, showAvatar = true, userA
   return (
     <div data-message-role={message.role} className={cn('flex w-full', dense ? 'gap-1.5' : 'gap-2 md:gap-3', isUser ? 'flex-row-reverse' : 'flex-row', className)} {...props}>
       <div className={cn('flex min-w-0 flex-col gap-1', isUser ? (dense ? 'max-w-[85%]' : 'max-w-[92%] md:max-w-[72%]') : 'w-full')}>
-        {/* Logic to separate reasoning from other content for AI messages */}
-        {isStructuredContent &&
-          !isUser &&
-          (() => {
-            const contentParts = message.content as MessageContentPart[];
-            const reasoningParts = contentParts.filter((p) => p.type === 'reasoning');
-            const otherParts = contentParts.filter((p) => p.type !== 'reasoning');
-            return (
-              <>
-                {reasoningParts.length > 0 && (
-                  <div className='px-1'>
-                    <AIMessageContent parts={reasoningParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} taskDisplay='activity' showTaskDiagnostics={showTaskDiagnostics} />
-                  </div>
-                )}
-
-                {/* Only render bubble if there are other parts */}
-                {otherParts.length > 0 && (
-                  <div className={assistantBubbleClass}>
-                    <AIMessageContent parts={otherParts} isStreaming={isStreaming} onComponentAction={message.onComponentAction} choiceInteractions={message.choiceInteractions} taskDisplay='activity' showTaskDiagnostics={showTaskDiagnostics} />
-                    {message.timestamp && <time className='mt-2 block text-xs text-muted-foreground'>{formatMessageTimestamp(message.timestamp, language)}</time>}
-                  </div>
-                )}
-              </>
-            );
-          })()}
+        {isStructuredContent && !isUser && (
+          <div className={assistantBubbleClass}>
+            <AIMessageContent parts={message.content as MessageContentPart[]} isStreaming={isStreaming} onComponentAction={message.onComponentAction} onSubmitQuestions={message.onSubmitQuestions} choiceInteractions={message.choiceInteractions} taskDisplay='activity' showTaskDiagnostics={showTaskDiagnostics} />
+            {message.timestamp && <time className='mt-2 block text-xs text-muted-foreground'>{formatMessageTimestamp(message.timestamp, language)}</time>}
+          </div>
+        )}
 
         {/* Legacy handling for unstructured or user messages, or fallback */}
         {(!isStructuredContent || isUser) && (

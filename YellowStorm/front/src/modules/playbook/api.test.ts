@@ -8,8 +8,11 @@ import {
   getFlowNodeTemplates,
   getPlaybookTriggers,
   getExecution,
+  requestPlaybookArtifactAccess,
   runAdvisorEvaluation,
   runPlaybookAssistantTurn,
+  getPlaybookAssistantMessages,
+  uploadPlaybookAssistantAttachment,
   getPlaybookRepeatability,
   getTaskRepeatability,
   sanitizePlaybookUpdate,
@@ -24,7 +27,6 @@ import {
   getPlaybookUpdateTelemetry,
   updatePlaybook,
   validateTaskReplay,
-  buildPlaybookFromConversation,
 } from './api';
 import { makeTask } from './test-utils';
 
@@ -40,6 +42,22 @@ vi.mock('@/lib/api/client', () => ({
   __esModule: true,
   default: apiClientMock,
 }));
+
+describe('playbook artifact API', () => {
+  it('requests action-scoped access and constructs an application proxy URL', async () => {
+    apiClientMock.post.mockResolvedValueOnce({ data: { data: { token: 'opaque+/token', expiresAt: '2026-08-24T13:10:00.000Z' } } });
+
+    const access = await requestPlaybookArtifactAccess('execution-1', 'artifact-1', 'view');
+    expect(access).toEqual({
+      url: expect.stringContaining('/executions/artifacts/content?token=opaque%2B%2Ftoken'),
+      expiresAt: '2026-08-24T13:10:00.000Z',
+    });
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      '/executions/execution-1/artifacts/artifact-1/access',
+      { action: 'view' },
+    );
+  });
+});
 
 describe('sanitizePlaybookUpdate', () => {
   it('keeps iterator layout dimensions in task payloads', () => {
@@ -1253,6 +1271,72 @@ describe('design message API', () => {
     expect(result).toEqual({ answer: 'Two tasks.', operation: null });
   });
 
+  it('loads server-owned assistant messages for a conversation', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: { data: { conversationId: 'conversation-1', messages: [{ messageId: 'message-1', role: 'assistant', content: 'Two tasks.' }] } },
+    });
+
+    await expect(getPlaybookAssistantMessages('playbook-1', 'conversation-1')).resolves.toEqual({
+      conversationId: 'conversation-1',
+      messages: [{ messageId: 'message-1', role: 'assistant', content: 'Two tasks.' }],
+    });
+    expect(apiClientMock.get).toHaveBeenCalledWith('/playbooks/playbook-1/assistant/messages', {
+      params: { conversationId: 'conversation-1' },
+    });
+  });
+
+  it('initializes, uploads, and confirms a trusted assistant attachment in order', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.post
+      .mockResolvedValueOnce({ data: { data: { attachmentId: 'attachment-1', uploadUrl: 'https://storage.example/upload' } } })
+      .mockResolvedValueOnce({ data: { data: { attachmentId: 'attachment-1', status: 'confirmed' } } });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    const file = new File(['image-bytes'], 'diagram.png', { type: 'image/png' });
+
+    try {
+      await expect(uploadPlaybookAssistantAttachment('playbook-1', 'request-1', 7, file))
+        .resolves.toBe('attachment-1');
+      expect(apiClientMock.post).toHaveBeenNthCalledWith(1, '/playbooks/playbook-1/assistant/attachments', {
+        requestId: 'request-1',
+        expectedDefinitionRevision: 7,
+        mediaType: 'image/png',
+        size: file.size,
+      });
+      expect(fetchMock).toHaveBeenCalledWith('https://storage.example/upload', { method: 'PUT', body: file });
+      expect(apiClientMock.post).toHaveBeenNthCalledWith(
+        2,
+        '/playbooks/playbook-1/assistant/attachments/attachment-1/confirm',
+        {},
+      );
+      expect(apiClientMock.post.mock.invocationCallOrder[0]).toBeLessThan(fetchMock.mock.invocationCallOrder[0]);
+      expect(fetchMock.mock.invocationCallOrder[0]).toBeLessThan(apiClientMock.post.mock.invocationCallOrder[1]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not confirm an assistant attachment when object upload fails', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.post.mockResolvedValueOnce({
+      data: { data: { attachmentId: 'attachment-1', uploadUrl: 'https://storage.example/upload' } },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
+
+    try {
+      await expect(uploadPlaybookAssistantAttachment(
+        'playbook-1',
+        'request-1',
+        7,
+        new File(['image-bytes'], 'diagram.png', { type: 'image/png' }),
+      )).rejects.toThrow('Assistant image upload failed');
+      expect(apiClientMock.post).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('appends a designer sidebar interaction', async () => {
     apiClientMock.post.mockReset();
     apiClientMock.post.mockResolvedValueOnce({
@@ -1404,6 +1488,7 @@ describe('getExecution', () => {
               port_id: 'report',
               artifact_kind: 'document',
               filename: 'report.pdf',
+              artifact_id: 'opaque-report',
               url: 'https://example.com/report.pdf',
               mime_type: 'application/pdf',
             }],
@@ -1423,7 +1508,7 @@ describe('getExecution', () => {
         portId: 'report',
         artifactKind: 'document',
         filename: 'report.pdf',
-        url: 'https://example.com/report.pdf',
+        artifactId: 'opaque-report',
         mimeType: 'application/pdf',
       }],
     });
@@ -1974,21 +2059,4 @@ describe('getExecution', () => {
     expect(execution.dynamicReasoningAttempts?.[0]?.acceptedPlan?.nodes[0].title).toBe('Calculate Risk Metrics');
   });
 
-  it('builds a playbook from a persisted conversation response', async () => {
-    apiClientMock.post.mockReset();
-    apiClientMock.post.mockResolvedValueOnce({ data: { data: { id: 'playbook-1' } } });
-    const payload = {
-      conversationId: 'conversation-1',
-      assistantMessageId: 'message-1',
-      answerVersion: 'original',
-      name: 'Incident response',
-    };
-
-    await expect(buildPlaybookFromConversation(payload)).resolves.toEqual({ id: 'playbook-1' });
-    expect(apiClientMock.post).toHaveBeenCalledWith(
-      '/playbooks/from-conversation',
-      payload,
-      { timeout: 0 },
-    );
-  });
 });

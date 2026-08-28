@@ -111,7 +111,7 @@ vi.mock('@/components/ai-elements/node', () => ({
 }));
 
 vi.mock('@/components/ui/button', () => ({
-  Button: ({ children }: any) => <button type="button">{children}</button>,
+  Button: ({ children, variant: _variant, size: _size, ...props }: any) => <button type="button" {...props}>{children}</button>,
 }));
 
 vi.mock('@/components/ui/badge', () => ({
@@ -215,6 +215,7 @@ describe('PlaybookNode', () => {
     );
 
     expect(screen.getByText('Prompt')).toHaveAttribute('data-warning', 'true');
+    expect(screen.getByRole('button', { name: 'nodeContextMenu.edit' })).toBeInTheDocument();
   });
 
   it('creates a dedicated input port for every dropped workspace', () => {

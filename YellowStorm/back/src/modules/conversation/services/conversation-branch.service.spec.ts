@@ -57,7 +57,7 @@ describe('ConversationBranchService path selection', () => {
       {
         conversationType: 'ai',
         components: [
-          { type: 'toolInfo', data: { name: 'search' } },
+          { type: 'toolActivity', data: { name: 'search' } },
           { type: 'text', data: { content: ' answer ' } },
         ],
       },

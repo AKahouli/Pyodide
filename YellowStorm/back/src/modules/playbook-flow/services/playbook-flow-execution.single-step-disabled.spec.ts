@@ -75,8 +75,6 @@ describe('single-step execution disabled-node safety', () => {
       {} as any,
       { resolveReplayArtifacts: async () => new Map() } as any,
       { buildReplayPromptSection: () => '' } as any,
-      { buildCurrentReplayFingerprints: jest.fn() } as any,
-      { evaluateReplayEligibility: jest.fn() } as any,
       { createPreRunReport: jest.fn(), updateStructuralDrift: jest.fn() } as any,
       new PlaybookFlowOutputContractService() as any,
       { validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: null, inactive: false }) } as any,

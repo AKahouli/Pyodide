@@ -34,6 +34,7 @@ except ImportError:
     chatbot_pb2_grpc = None
 
 from src.smart_rag.core import AgentTeamService
+from src.smart_rag.tools.infrastructure.common_helpers import CommonHelpers
 from src.evaluation.semantic_match import evaluate_semantic_match
 from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
 from src.temporary_child_summary import pop_temporary_child_summary
@@ -81,28 +82,6 @@ def _grpc_skill_summaries(skills: Any) -> List[Dict[str, Any]]:
             }
         )
     return summaries
-
-
-def _convert_file_chunk_to_artifact(chunk_dict: Dict[str, Any]) -> Dict[str, Any]:
-    file_data = json.loads(chunk_dict.get("chunk", "{}"))
-    return {
-        "action": "add",
-        "component": {
-            "id": str(uuid.uuid4()),
-            "type": "artifact",
-            "data": {
-                "filename": file_data.get("filename", ""),
-                "file_path": file_data.get("object_key")
-                or file_data.get("azure_path")
-                or file_data.get("file_path")
-                or "",
-            },
-        },
-        "metadata": {
-            "message_id": chunk_dict.get("message_id", ""),
-            "agent_id": chunk_dict.get("agent_id", ""),
-        },
-    }
 
 
 class ChatbotServicer(
@@ -404,6 +383,8 @@ class ChatbotServicer(
                     action="replay_started",
                     metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
                 )
+            else:
+                yield self._build_initial_agent_activity_chunk(request.conversation_id)
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -482,17 +463,9 @@ class ChatbotServicer(
                     await bg_task
                     break
 
-                # Convert old File chunks to artifact components
                 if chunk_dict.get("content_type") == "File":
-                    try:
-                        chunk_dict = _convert_file_chunk_to_artifact(chunk_dict)
-                        logger.info(
-                            "[gRPC] Converted old File chunk to artifact component"
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"[gRPC] Failed to convert File chunk to artifact: {e}"
-                        )
+                    logger.warning("[gRPC] Dropped unsupported legacy File chunk")
+                    continue
 
                 # Convert dict to protobuf
                 chunk_pb = self._dict_to_stream_chunk(chunk_dict)
@@ -654,6 +627,8 @@ class ChatbotServicer(
                     action="replay_started",
                     metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
                 )
+            else:
+                yield self._build_initial_agent_activity_chunk(request.conversation_id)
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -709,12 +684,8 @@ class ChatbotServicer(
                     break
 
                 if chunk_dict.get("content_type") == "File":
-                    try:
-                        chunk_dict = _convert_file_chunk_to_artifact(chunk_dict)
-                    except Exception as e:
-                        logger.error(
-                            f"[gRPC] Failed to convert File chunk to artifact: {e}"
-                        )
+                    logger.warning("[gRPC] Dropped unsupported legacy File chunk")
+                    continue
 
                 yield self._dict_to_stream_chunk(chunk_dict)
 
@@ -777,6 +748,18 @@ class ChatbotServicer(
                 pass
 
     # ========== CONVERSION HELPERS ==========
+
+    def _build_initial_agent_activity_chunk(self, message_id: str) -> "chatbot_pb2.StreamChunk":
+        """Emit the initial progress row before model reasoning is available."""
+        return self._dict_to_stream_chunk({
+            "action": "add",
+            "component": {
+                "id": f"activity-{uuid.uuid4()}",
+                "type": "agent_activity",
+                "data": {"summary": "", "status": "completed"},
+            },
+            "metadata": {"message_id": message_id},
+        })
 
     def _convert_agent(self, pb_agent: "chatbot_pb2.Agent") -> AgentSuggestion:
         """Convert protobuf Agent (V2) to internal V1 AgentSuggestion Pydantic model.
@@ -925,6 +908,8 @@ class ChatbotServicer(
             chatbot_name={
                 "provider": pb_agent.chatbot.model,
                 "input_modalities": list(pb_agent.chatbot.input_modalities) or ["text"],
+                **({"reasoning_effort": pb_agent.chatbot.reasoning_effort} if pb_agent.chatbot.reasoning_effort else {}),
+                **({"context_window_tokens": pb_agent.chatbot.context_window_tokens} if pb_agent.chatbot.context_window_tokens > 0 else {}),
             }
             if pb_agent.HasField("chatbot")
             else None,
@@ -1538,14 +1523,17 @@ class ChatbotServicer(
     async def _download_and_encode_images(
         self, filepaths: List[str]
     ) -> List[Dict[str, str]]:
-        """Download images from Azure Datalake to temp files, then base64 encode.
+        """Download chat images from object storage, then base64 encode.
 
-        Uses tempfile.mkdtemp() for per-request isolation. Images are written
-        to disk first so that raw bytes are never held in memory alongside
-        the base64 string, reducing peak memory under concurrency.
+        Routes through CommonHelpers.async_download_from_storage so images
+        resolve from the same store the backend uploads to (Ceph S3 when
+        configured, Azure Data Lake fallback). Uses tempfile.mkdtemp() for
+        per-request isolation. Images are written to disk first so that raw
+        bytes are never held in memory alongside the base64 string, reducing
+        peak memory under concurrency.
 
         Args:
-            filepaths: List of Datalake file paths (e.g., "workspaceId/image.png").
+            filepaths: Object-storage keys (e.g., "workspaceId/image.png").
 
         Returns:
             List of dicts like [{"image 1": "data:image/png;base64,..."}, ...].
@@ -1563,59 +1551,39 @@ class ChatbotServicer(
         tmp_dir = tempfile.mkdtemp()
 
         try:
-            async with DataLakeServiceClient.from_connection_string(
-                app_settings.AZURE_DATALAKE_CONNECTION_STRING
-            ) as service_client:
-                fs_client = service_client.get_file_system_client(
-                    app_settings.AZURE_DATALAKE_FILE_SYSTEM_NAME
-                )
+            helpers = CommonHelpers(file_path=tmp_dir)
 
-                for idx, filepath in enumerate(filepaths, start=1):
-                    try:
-                        file_client = fs_client.get_file_client(filepath)
-                        download = await file_client.download_file()
-                        raw_bytes = await download.readall()
+            for idx, filepath in enumerate(filepaths, start=1):
+                try:
+                    tmp_path = await helpers.async_download_from_storage(filepath)
 
-                        if len(raw_bytes) > app_settings.MAX_IMAGE_SIZE:
-                            logger.warning(
-                                f"[gRPC] Image {filepath} too large ({len(raw_bytes)} bytes), skipping (max {app_settings.MAX_IMAGE_SIZE})"
-                            )
-                            continue
+                    async with aiofiles.open(tmp_path, "rb") as f:
+                        file_bytes = await f.read()
 
-                        # Write to temp file and release raw_bytes from memory
-                        tmp_path = os.path.join(
-                            tmp_dir, f"image_{idx}{os.path.splitext(filepath)[1]}"
+                    if len(file_bytes) > app_settings.MAX_IMAGE_SIZE:
+                        logger.warning(
+                            f"[gRPC] Image {filepath} too large ({len(file_bytes)} bytes), skipping (max {app_settings.MAX_IMAGE_SIZE})"
                         )
-                        async with aiofiles.open(tmp_path, "wb") as f:
-                            await f.write(raw_bytes)
-                        file_size = len(raw_bytes)
-                        del raw_bytes  # free memory before encoding
+                        continue
 
-                        # Read back from disk and encode to base64
-                        async with aiofiles.open(tmp_path, "rb") as f:
-                            file_bytes = await f.read()
-                        b64_data = base64.b64encode(file_bytes).decode("utf-8")
-                        del file_bytes  # free raw bytes immediately
+                    file_size = len(file_bytes)
+                    b64_data = base64.b64encode(file_bytes).decode("utf-8")
+                    del file_bytes  # free raw bytes immediately
 
-                        # Detect MIME type from extension
-                        ext = os.path.splitext(filepath)[1].lower()
-                        mime_type = mimetypes.types_map.get(ext, "image/jpeg")
+                    # Detect MIME type from the original object key extension
+                    ext = os.path.splitext(filepath)[1].lower()
+                    mime_type = mimetypes.types_map.get(ext, "image/jpeg")
 
-                        data_uri = f"data:{mime_type};base64,{b64_data}"
-                        del b64_data  # only keep the final data_uri string
+                    data_uri = f"data:{mime_type};base64,{b64_data}"
+                    del b64_data  # only keep the final data_uri string
 
-                        image_input.append({f"image {idx}": data_uri})
-                        logger.info(
-                            f"[gRPC] Downloaded and encoded image {idx}: {filepath} ({file_size} bytes)"
-                        )
+                    image_input.append({f"image {idx}": data_uri})
+                    logger.info(
+                        f"[gRPC] Downloaded and encoded image {idx}: {filepath} ({file_size} bytes)"
+                    )
 
-                    except Exception as e:
-                        logger.error(f"[gRPC] Failed to download image {filepath}: {e}")
-
-        except Exception as e:
-            logger.error(
-                f"[gRPC] Failed to connect to Azure Datalake for image download: {e}"
-            )
+                except Exception as e:
+                    logger.error(f"[gRPC] Failed to download image {filepath}: {e}")
 
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1791,6 +1759,7 @@ class ChatbotServicer(
                     output_tokens=usage_data.get("output_tokens", 0),
                     total_tokens=usage_data.get("total_tokens", 0),
                     model=usage_data.get("model", ""),
+                    context_window_tokens=usage_data.get("context_window_tokens", 0),
                 ),
             )
 
@@ -1883,14 +1852,16 @@ class ChatbotServicer(
                 output_port_id=component_data.get("output_port_id")
                 or component_data.get("outputPortId", ""),
             )
-        elif component_type == "reasoning":
-            component_kwargs["reasoning"] = chatbot_pb2.ReasoningComponent(
-                content=component_data.get("content", "")
+        elif component_type == "agent_activity":
+            agent_activity = chatbot_pb2.AgentActivityComponent(
+                summary=component_data.get("summary", ""),
+                status=component_data.get("status", "running"),
             )
-        elif component_type == "chain_of_thought":
-            component_kwargs["chain_of_thought"] = chatbot_pb2.ChainOfThoughtComponent(
-                steps=[str(step) for step in component_data.get("steps", [])],
-            )
+            for field in ("detail", "started_at", "completed_at", "duration_ms", "actor_id", "actor_name"):
+                value = component_data.get(field)
+                if value is not None and value != "":
+                    setattr(agent_activity, field, value)
+            component_kwargs["agent_activity"] = agent_activity
         elif component_type == "plan":
             # Build PlanComponent with PlanStep objects
             steps = []
@@ -2019,21 +1990,20 @@ class ChatbotServicer(
                 error=component_data.get("error", ""),
                 output_available=component_data.get("output_available", False),
             )
-        elif component_type == "tool_info":
-            tool_info = chatbot_pb2.ToolInfoComponent(
-                title=component_data.get("title", ""),
+        elif component_type == "tool_activity":
+            tool_activity = chatbot_pb2.ToolActivityComponent(
+                tool_name=component_data.get("tool_name", ""),
                 status=component_data.get("status", ""),
             )
-            params = component_data.get("params")
-            if params:
-                tool_info.params = params
-            result_json = component_data.get("result_json")
-            if result_json:
-                tool_info.result_json = result_json
-            started_at = component_data.get("started_at")
-            if started_at:
-                tool_info.started_at = started_at
-            component_kwargs["tool_info"] = tool_info
+            for field in (
+                "params_json", "result_json", "started_at", "completed_at", "duration_ms",
+                "display_key", "fallback_display_name", "summary", "render_kind", "actor_id", "actor_name",
+                "primary_input", "primary_input_language",
+            ):
+                value = component_data.get(field)
+                if value is not None and value != "":
+                    setattr(tool_activity, field, value)
+            component_kwargs["tool_activity"] = tool_activity
         elif component_type == "web_preview":
             component_kwargs["web_preview"] = chatbot_pb2.WebPreviewComponent(
                 content=component_data.get("content", "")
@@ -2051,6 +2021,13 @@ class ChatbotServicer(
                 or component_data.get("artifactKind", ""),
                 mime_type=component_data.get("mime_type")
                 or component_data.get("mimeType", ""),
+                artifact_id=component_data.get("artifact_id")
+                or component_data.get("artifactId", ""),
+                producer_tool_id=component_data.get("producer_tool_id")
+                or component_data.get("producerToolId", ""),
+                size_bytes=component_data.get("size_bytes")
+                or component_data.get("sizeBytes", 0),
+                availability=component_data.get("availability", "ready"),
             )
         elif component_type == "citation":
             # Build CitationComponent with TextSourceData or ImageSourceData
@@ -2531,7 +2508,6 @@ class ChatbotServicer(
                     prompt_overrides=dict(request.prompt_overrides)
                     if getattr(request, "prompt_overrides", None)
                     else {},
-                    deep_search=getattr(request, "deep_search", False),
                 )
             )
             register_task(thread_id, bg_task)

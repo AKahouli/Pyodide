@@ -142,4 +142,23 @@ describe('FlowDeltaPatchService', () => {
       }),
     ]);
   });
+
+  it('allows a delta patch to persist without a default workspace', () => {
+    const service = new FlowDeltaPatchService(
+      new FlowWorkspacePolicyService(),
+      new FlowGraphSanitizerService(),
+    );
+
+    const result = service.buildPatchedGraph({
+      workspaces: [],
+      nodes: [],
+      controlEdges: [],
+      dataBindings: [],
+    } as any, {
+      expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
+      patch: { fields: { workspaces: [] } },
+    } as any);
+
+    expect(result.normalizedWorkspaces).toEqual([]);
+  });
 });

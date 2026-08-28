@@ -107,7 +107,7 @@ describe('controlEdgesToFlowEdges', () => {
 });
 
 describe('resolveIntentEdgePorts', () => {
-  it('preserves exact requested ports for visual edges when artifact kinds differ', () => {
+  it('rejects exact requested ports when artifact kinds differ', () => {
     const sourceTask = {
       id: 'collect_rh_cvs',
       outputPorts: [{ id: 'output-1', name: 'CV file references', artifactKind: 'text' }],
@@ -118,10 +118,7 @@ describe('resolveIntentEdgePorts', () => {
       inputPorts: [{ id: 'items', name: 'CV items', artifactKind: 'data', required: false }],
     } as PlaybookTask;
 
-    expect(resolveIntentEdgePorts(sourceTask, targetTask, 'output-1', 'items')).toEqual({
-      sourceOutputPortId: 'output-1',
-      targetInputPortId: 'items',
-    });
+    expect(resolveIntentEdgePorts(sourceTask, targetTask, 'output-1', 'items')).toBeNull();
   });
 
   it('uses the requested router output port instead of the first compatible output', () => {
@@ -165,7 +162,7 @@ describe('resolveIntentEdgePorts', () => {
     });
   });
 
-  it('matches backend text-serializable kinds when resolving generated topology links', () => {
+  it('does not coerce text-serializable kinds when resolving generated topology links', () => {
     const detectStep = {
       id: 'iterator.detect_extension',
       outputPorts: [{ id: 'output_data', name: 'Metadata', artifactKind: 'data' }],
@@ -181,13 +178,7 @@ describe('resolveIntentEdgePorts', () => {
       inputPorts: [{ id: 'input_data', name: 'PDF File', artifactKind: 'data', required: false }],
     } as PlaybookTask;
 
-    expect(resolveIntentEdgePorts(detectStep, routerStep, null, null)).toEqual({
-      sourceOutputPortId: 'output_data',
-      targetInputPortId: 'input_1',
-    });
-    expect(resolveIntentEdgePorts(routerStep, handlerStep, 'pdf', null)).toEqual({
-      sourceOutputPortId: 'pdf',
-      targetInputPortId: 'input_data',
-    });
+    expect(resolveIntentEdgePorts(detectStep, routerStep, null, null)).toBeNull();
+    expect(resolveIntentEdgePorts(routerStep, handlerStep, 'pdf', null)).toBeNull();
   });
 });

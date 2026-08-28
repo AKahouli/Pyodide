@@ -20,6 +20,68 @@ describe('PlaybookFlowIntentConstructionService', () => {
     expect(chunks).toEqual(['tail content']);
   });
 
+  it('aborts a local worker when another replica durably cancels its operation', async () => {
+    jest.useFakeTimers();
+    const operationService = {
+      getStatus: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+    };
+    const service = new PlaybookFlowIntentConstructionService(
+      { normalizeConstructionSuggestions: jest.fn() } as any,
+      undefined,
+      operationService as any,
+    );
+    const job = {
+      id: 'operation-1',
+      flowId: 'flow-1',
+      ownerId: 'owner-1',
+      status: 'running',
+      events: [],
+      abortController: new AbortController(),
+      waiters: new Set(),
+    };
+
+    try {
+      const timer = (service as any).watchDurableCancellation(job);
+      await jest.advanceTimersByTimeAsync(500);
+      expect(job.abortController.signal.aborted).toBe(true);
+      expect(job.status).toBe('cancelled');
+      clearInterval(timer);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not append after a durable terminal event wins on another replica', async () => {
+    const operationService = {
+      append: jest.fn().mockRejectedValue(new Error('terminal conflict')),
+      getStatus: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+    };
+    const service = new PlaybookFlowIntentConstructionService(
+      { normalizeConstructionSuggestions: jest.fn() } as any,
+      undefined,
+      operationService as any,
+    );
+    const job = {
+      id: 'operation-1',
+      flowId: 'flow-1',
+      ownerId: 'owner-1',
+      status: 'running',
+      events: [],
+      abortController: new AbortController(),
+      waiters: new Set(),
+    };
+
+    await expect((service as any).emit(job, {
+      type: 'progress',
+      constructionId: 'operation-1',
+      playbookId: 'flow-1',
+      phase: 'planning',
+      message: 'Planning',
+    })).resolves.toBeUndefined();
+    expect(job.abortController.signal.aborted).toBe(true);
+    expect(job.events).toEqual([]);
+  });
+
   it.each([
     { omitTemperature: true, expectedTemperature: undefined },
     { omitTemperature: false, expectedTemperature: 0.2 },
@@ -69,6 +131,7 @@ describe('PlaybookFlowIntentConstructionService', () => {
       const validationContext = {
         existingTaskIds: new Set<string>(),
         existingTaskTitles: new Map<string, string>(),
+        existingTaskDescriptions: new Map<string, string>(),
         existingTaskAgents: new Map<string, string | null>(),
         inputPortsByTaskId: new Map<string, Map<string, string>>(),
         outputPortsByTaskId: new Map<string, Map<string, string>>(),
@@ -212,6 +275,57 @@ describe('PlaybookFlowIntentConstructionService', () => {
       );
       expect(normalizeConstructionSuggestions).not.toHaveBeenCalled();
       expect(suggestions).toEqual([]);
+    });
+
+    it('uses at most one repair call before completing a valid construction', async () => {
+      const context = makeContext(true);
+      const stream = (content: string) => [Buffer.from(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`)];
+      context.httpClient.post
+        .mockResolvedValueOnce({ data: stream('{"blueprint":{"nodes":[]}}') })
+        .mockResolvedValueOnce({ data: stream('{"blueprint":{"nodes":[]}}') });
+      const blocked = {
+        id: 'intent-blueprint', kind: 'workflow_plan', label: 'Blocked', summary: '', reason: '', confidence: 0.5,
+        impact: { nodesToCreate: 0, nodesToUpdate: 0, nodesToDelete: 0, edgesToCreate: 0, edgesToDelete: 0, dataBindingsToCreate: 0, dataBindingsToDelete: 0, affectedTaskIds: [], businessOutcome: '' },
+        changes: [], isDirectIntentFallback: false, validationStatus: 'blocked',
+        diagnostics: [{ severity: 'error', stage: 'binding_resolver', code: 'edge_artifact_mismatch', message: 'mismatch' }],
+      };
+      const valid = { ...blocked, validationStatus: 'valid', diagnostics: [] };
+      const compiler = { compile: jest.fn().mockReturnValueOnce([blocked]).mockReturnValueOnce([valid]) };
+      const service = new PlaybookFlowIntentConstructionService({} as any, compiler as any);
+      const job = {
+        id: 'construction-repair', flowId: 'flow-1', ownerId: 'owner-1', status: 'queued', baseDefinitionRevision: 1,
+        events: [], abortController: new AbortController(), waiters: new Set<() => void>(),
+      };
+
+      await (service as any).run(job, { intent: 'Build workflow' }, context);
+
+      expect(context.httpClient.post).toHaveBeenCalledTimes(2);
+      expect(context.httpClient.post.mock.calls[1][1].messages.at(-1).content).toContain('edge_artifact_mismatch');
+      expect(job.status).toBe('completed');
+    });
+
+    it('fails without deltas when the single repair remains blocked', async () => {
+      const context = makeContext(true);
+      const stream = [Buffer.from(`data: ${JSON.stringify({ choices: [{ delta: { content: '{"blueprint":{"nodes":[]}}' } }] })}\n\n`)];
+      context.httpClient.post.mockResolvedValue({ data: stream });
+      const blocked = {
+        id: 'intent-blueprint', kind: 'workflow_plan', label: 'Blocked', summary: '', reason: '', confidence: 0.5,
+        impact: { nodesToCreate: 0, nodesToUpdate: 0, nodesToDelete: 0, edgesToCreate: 0, edgesToDelete: 0, dataBindingsToCreate: 0, dataBindingsToDelete: 0, affectedTaskIds: [], businessOutcome: '' },
+        changes: [], isDirectIntentFallback: false, validationStatus: 'blocked',
+        diagnostics: [{ severity: 'error', stage: 'binding_resolver', code: 'edge_artifact_mismatch', message: 'mismatch' }],
+      };
+      const compiler = { compile: jest.fn().mockReturnValue([blocked]) };
+      const service = new PlaybookFlowIntentConstructionService({} as any, compiler as any);
+      const job = {
+        id: 'construction-blocked', flowId: 'flow-1', ownerId: 'owner-1', status: 'queued', baseDefinitionRevision: 1,
+        events: [], abortController: new AbortController(), waiters: new Set<() => void>(),
+      };
+
+      await (service as any).run(job, { intent: 'Build workflow' }, context);
+
+      expect(context.httpClient.post).toHaveBeenCalledTimes(2);
+      expect(job.status).toBe('failed');
+      expect((job.events as any[]).some((event) => event.type.endsWith('_delta'))).toBe(false);
     });
   });
 });

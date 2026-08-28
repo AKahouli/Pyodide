@@ -1,6 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { UpdateConversationSettingsDto } from './update-conversation-settings.dto';
+import { UpdateConversationSettingsDto, UpdateSensitiveTextRedactionDto } from './update-conversation-settings.dto';
 
 describe('UpdateConversationSettingsDto', () => {
   it('rejects a missing composerSuggestions object', async () => {
@@ -24,5 +24,10 @@ describe('UpdateConversationSettingsDto', () => {
     });
 
     await expect(validate(dto)).resolves.toEqual([]);
+  });
+
+  it('validates the sensitive text redaction toggle as a boolean', async () => {
+    await expect(validate(plainToInstance(UpdateSensitiveTextRedactionDto, { redactSensitiveText: false }))).resolves.toEqual([]);
+    await expect(validate(plainToInstance(UpdateSensitiveTextRedactionDto, { redactSensitiveText: 'false' }))).resolves.not.toEqual([]);
   });
 });

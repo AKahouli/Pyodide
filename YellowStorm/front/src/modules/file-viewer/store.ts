@@ -5,9 +5,10 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { toast } from 'sonner';
-import { getArtifactDownloadUrl } from '../conversation/api';
+import { apiClient, API_ENDPOINTS, type ApiResponse } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-codes';
 import type { ApiError } from '@/lib/api/client';
+import type { DownloadUrlResponse } from '@/modules/workspace';
 import type { FileTab, FileOpenOptions, PendingNavigation, WindowPosition, WindowSize, ViewerMode, DisplayMode } from './types';
 import { i18nInstance } from '@/modules/localization/i18nInstance';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
@@ -20,13 +21,11 @@ const MIN_WIDTH = 480;
 const MIN_HEIGHT = 360;
 const URL_EXPIRY_SAFETY_MARGIN_MS = 60_000;
 const SIDEBAR_MIN_VIEWPORT_WIDTH = 768;
-/**
- * Path-signer endpoint (POST /conversations/artifact-url) issues URLs that
- * expire after 60 minutes. Kept as a client-side constant because the
- * endpoint only returns the URL, not its expiry — we still want to refetch
- * before the URL goes stale rather than letting the renderer 403.
- */
-const SIGNED_URL_LIFETIME_MS = 60 * 60 * 1000;
+
+type UrlLoaderResult = { url: string; fileName?: string; mimeType?: string };
+type PendingUrlLoad = { token: symbol; promise: Promise<void> };
+
+const pendingUrlLoads = new Map<string, PendingUrlLoad>();
 
 type FileViewerTranslationKey = ModuleTranslationKey<'file-viewer'>;
 
@@ -86,12 +85,9 @@ interface FileViewerState {
 
 interface FileViewerActions {
   /**
-   * Open a workspace document by its stored object key (`document.path`).
-   * The viewer signs the path directly via the path-signer endpoint — it no
-   * longer reaches into `/workspaces/:id/documents/:docId/download-url`, so
-   * stale (workspaceId, docId) → path resolution can't desync from current
-   * storage layout. `workspaceId` and `docId` are still threaded through so
-   * tabs dedupe per (workspace, doc) and the viewer can show legacy metadata.
+   * Open a workspace document through its scoped workspace/document identity.
+   * `path` remains tab metadata, but the backend resolves and signs the current
+   * storage location without exposing that location to the browser.
    */
   openFile: (
     workspaceId: string,
@@ -102,6 +98,13 @@ interface FileViewerActions {
     options?: FileOpenOptions,
   ) => Promise<void>;
   openFileFromUrl: (url: string, fileName: string, mimeType: string, options?: Pick<FileOpenOptions, 'displayMode' | 'closeOnOutsideClick' | 'page' | 'highlightText' | 'highlightBBox' | 'spreadsheet'>) => void;
+  openFileFromUrlLoader: (
+    key: string,
+    fileName: string,
+    mimeType: string,
+    load: () => Promise<UrlLoaderResult>,
+    options?: Pick<FileOpenOptions, 'displayMode' | 'closeOnOutsideClick' | 'page' | 'highlightText' | 'highlightBBox' | 'spreadsheet'>,
+  ) => Promise<void>;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   updatePdfState: (tabId: string, currentPage: number, pageCount: number) => void;
@@ -151,11 +154,10 @@ export const useFileViewerStore = create<FileViewerStore>()(
         }
 
         const signAndCompute = async () => {
-          const { downloadUrl } = await getArtifactDownloadUrl(path, fileName);
-          return {
-            url: downloadUrl,
-            expiresAt: new Date(Date.now() + SIGNED_URL_LIFETIME_MS).toISOString(),
-          };
+          const response = await apiClient.get<ApiResponse<DownloadUrlResponse>>(
+            API_ENDPOINTS.workspaceDocuments.downloadUrl(workspaceId, docId),
+          );
+          return response.data.data;
         };
 
         // Check if tab already exists
@@ -303,6 +305,72 @@ export const useFileViewerStore = create<FileViewerStore>()(
         }));
       },
 
+      openFileFromUrlLoader: async (key, fileName, mimeType, load, options) => {
+        const tabId = `loader:${key}`;
+        const existingTab = get().tabs.find((tab) => tab.id === tabId);
+        const existingLoad = pendingUrlLoads.get(tabId);
+        const resolved = resolveDisplayMode(options?.displayMode);
+        const pending = createPendingNavigation(tabId, options as FileOpenOptions | undefined);
+
+        set((state) => ({
+          tabs: existingTab
+            ? state.tabs.map((tab) => tab.id === tabId ? { ...tab, fileName, mimeType, isLoading: true } : tab)
+            : [...state.tabs, { id: tabId, fileName, mimeType, url: '', isLoading: true }],
+          activeTabId: tabId,
+          mode: 'open',
+          pendingNavigation: pending,
+          closeOnOutsideClick: options?.closeOnOutsideClick ?? false,
+          ...(resolved
+            ? { displayMode: resolved }
+            : state.mode === 'closed'
+              ? { displayMode: 'floating' as const }
+              : {}),
+        }));
+
+        if (existingLoad && existingTab?.isLoading) {
+          return existingLoad.promise;
+        }
+
+        const token = Symbol(tabId);
+        const pendingLoad: PendingUrlLoad = { token, promise: Promise.resolve() };
+        pendingUrlLoads.set(tabId, pendingLoad);
+        pendingLoad.promise = (async () => {
+          try {
+            const loaded = await load();
+            if (pendingUrlLoads.get(tabId)?.token !== token) return;
+            set((state) => ({
+              tabs: state.tabs.map((tab) => tab.id === tabId ? {
+                ...tab,
+                url: loaded.url,
+                fileName: loaded.fileName || fileName,
+                mimeType: loaded.mimeType || mimeType,
+                isLoading: false,
+              } : tab),
+            }));
+          } catch (error) {
+            if (pendingUrlLoads.get(tabId)?.token !== token) return;
+            set((state) => {
+              if (existingTab) {
+                return { tabs: state.tabs.map((tab) => tab.id === tabId ? { ...tab, isLoading: false } : tab) };
+              }
+              const tabs = state.tabs.filter((tab) => tab.id !== tabId);
+              return {
+                tabs,
+                activeTabId: state.activeTabId === tabId ? tabs.at(-1)?.id || null : state.activeTabId,
+                mode: tabs.length === 0 ? 'closed' as const : state.mode,
+                pendingNavigation: state.pendingNavigation?.tabId === tabId ? null : state.pendingNavigation,
+              };
+            });
+            throw error;
+          } finally {
+            if (pendingUrlLoads.get(tabId)?.token === token) {
+              pendingUrlLoads.delete(tabId);
+            }
+          }
+        })();
+        return pendingLoad.promise;
+      },
+
       closeTab: (tabId) => {
         const { tabs, activeTabId } = get();
         const remaining = tabs.filter((t) => t.id !== tabId);
@@ -392,10 +460,13 @@ export const useFileViewerStore = create<FileViewerStore>()(
         if (!tab || !tab.path) return;
 
         try {
-          const { downloadUrl } = await getArtifactDownloadUrl(tab.path, tab.fileName);
-          const expiresAt = new Date(Date.now() + SIGNED_URL_LIFETIME_MS).toISOString();
+          if (!tab.workspaceId || !tab.documentId) throw new Error('Workspace document identity is required');
+          const response = await apiClient.get<ApiResponse<DownloadUrlResponse>>(
+            API_ENDPOINTS.workspaceDocuments.downloadUrl(tab.workspaceId, tab.documentId),
+          );
+          const { url, expiresAt } = response.data.data;
           set((state) => ({
-            tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, url: downloadUrl, urlExpiresAt: expiresAt } : t)),
+            tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, url, urlExpiresAt: expiresAt } : t)),
           }));
         } catch (error) {
           const apiError = error as ApiError;

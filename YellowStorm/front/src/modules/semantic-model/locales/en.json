@@ -1,9 +1,9 @@
 {
-  "navigation": { "label": "Semantic Models", "tooltip": "Organize business concepts and knowledge" },
+  "navigation": { "label": "Business Models", "tooltip": "Organize business concepts and knowledge" },
   "status": { "draft": "Draft", "published": "Published", "archived": "Archived" },
   "action": { "add": "Add", "cancel": "Cancel", "close": "Close", "retry": "Retry", "loadMore": "Load more", "undo": "Undo", "redo": "Redo", "autoLayout": "Arrange automatically", "validate": "Check model", "versions": "Versions" },
   "catalog": {
-    "eyebrow": "Business knowledge design", "title": "Semantic Models", "description": "Turn documents and business language into a shared map that everyone can understand.", "create": "Create a model", "search": "Search models", "open": "Open model", "noDescription": "No description yet.", "emptyTitle": "Create your first business map", "emptyDescription": "Start with a workspace or a blank model, then add the concepts your teams use every day.", "needsAttention": "{{count}} knowledge links need attention",
+    "eyebrow": "Business knowledge design", "title": "Business Models", "description": "Turn documents and business language into a shared map that everyone can understand.", "create": "Create a model", "search": "Search models", "open": "Open model", "noDescription": "No description yet.", "loading": "Loading business models", "errorTitle": "Business Models could not be loaded", "errorDescription": "The catalog is temporarily unavailable. Retry without creating a duplicate model.", "retrying": "Retrying…", "emptyTitle": "Create your first business map", "emptyDescription": "Start with a workspace or a blank model, then add the concepts your teams use every day.", "filteredEmptyTitle": "No model matches these filters", "filteredEmptyDescription": "Clear the search and filters to return to the full Business Models catalog.", "clearFilters": "Clear filters", "needsAttention": "{{count}} knowledge links need attention",
     "badge": { "automatic": "Automatic", "designed": "Designed" },
     "metric": { "workspaces": "workspaces", "concepts": "concepts", "relationships": "links", "records": "records" },
     "section": { "all": "All", "designed": "Designed", "automatic": "Automatic", "records": "With records", "attention": "Needs attention", "archived": "Archived" }

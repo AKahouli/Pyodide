@@ -8,14 +8,14 @@ describe('FeatureVisibilityService', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
-  it('returns all features enabled when no setting is persisted', async () => {
+  it('returns Platform Copilot disabled when no setting is persisted', async () => {
     findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue(null) }) });
     const service = new FeatureVisibilityService(model as any);
 
     await expect(service.getVisibility()).resolves.toEqual(DEFAULT_FEATURE_VISIBILITY);
   });
 
-  it('merges partial persisted values with enabled defaults', async () => {
+  it('normalizes old persisted settings with Platform Copilot disabled', async () => {
     findOne.mockReturnValue({
       lean: () => ({ exec: jest.fn().mockResolvedValue({ value: { worky: false } }) }),
     });
@@ -24,6 +24,7 @@ describe('FeatureVisibilityService', () => {
     await expect(service.getVisibility()).resolves.toEqual({
       ...DEFAULT_FEATURE_VISIBILITY,
       worky: false,
+      platformCopilot: false,
     });
   });
 

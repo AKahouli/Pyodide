@@ -5,6 +5,8 @@ export interface CreateConversationData {
   participants?: { email: string; job?: string }[];
   ownerJob?: string;
   projectId?: string;
+  runtimePurpose?: 'chat' | 'platform_copilot';
+  creationRequestId?: string;
 }
 
 export interface UpdateConversationData {
@@ -28,6 +30,7 @@ export interface ConversationQueryParams {
   isArchived?: boolean;
   projectId?: string | 'none';
   searchScope?: 'title' | 'fulltext';
+  runtimePurpose?: 'chat' | 'platform_copilot';
 }
 
 export interface GroupMember {
@@ -77,6 +80,8 @@ export interface ConversationResponse {
   groupMeta?: GroupConversationMeta;
   projectId?: string | null;
   runtimeMode: 'standard' | 'governed';
+  runtimePurpose: 'chat' | 'platform_copilot';
+  pinnedAgentId?: string | null;
   governanceContext?: {
     programId: string;
     scopeId: string;

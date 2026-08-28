@@ -61,6 +61,7 @@ import { ConversationAgentRequestBuilder } from './services/conversation-agent-r
 import { CorrectiveReplayContextService } from './services/corrective-replay-context.service';
 import { CorrectiveReplayPromptBuilder } from './services/corrective-replay-prompt.builder';
 import { CorrectiveReplayRunnerService } from './services/corrective-replay-runner.service';
+import { ConversationArtifactService } from './services/conversation-artifact.service';
 
 @Module({
   imports: [
@@ -117,6 +118,7 @@ import { CorrectiveReplayRunnerService } from './services/corrective-replay-runn
     CorrectiveReplayContextService,
     CorrectiveReplayPromptBuilder,
     CorrectiveReplayRunnerService,
+    ConversationArtifactService,
     ConversationOwnerGuard,
     SseAuthGuard,
     ComposerSuggestionsRateLimitGuard,

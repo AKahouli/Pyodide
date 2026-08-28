@@ -2,7 +2,7 @@
   "inputBlueprint": {
     "version": 2,
     "title": "Artifact conversion data to text",
-    "summary": "Allow text-compatible artifact connection.",
+    "summary": "Reject an implicit artifact conversion.",
     "nodes": [
       { "ref": "extract", "label": "Extract", "purpose": "Extract data", "nodeTemplateKey": "generic.agent_step", "outputPorts": [{ "id": "payload", "artifactKind": "data" }] },
       { "ref": "write", "label": "Write", "purpose": "Write text", "nodeTemplateKey": "generic.agent_step", "inputPorts": [{ "id": "text", "artifactKind": "text" }] }
@@ -10,5 +10,5 @@
     "links": [{ "sourceRef": "extract", "targetRef": "write", "sourceOutputPortId": "payload", "targetInputPortId": "text" }],
     "bindings": [{ "sourceKind": "node-output", "sourceRef": "extract", "sourcePort": "payload", "targetRef": "write", "targetPort": "text" }]
   },
-  "expected": { "minNodes": 2, "minEdges": 1, "minBindings": 1, "forbiddenDiagnosticCodes": ["edge_artifact_mismatch", "binding_artifact_mismatch"] }
+  "expected": { "minNodes": 2, "diagnosticCodes": ["blueprint_binding_artifact_mismatch", "edge_artifact_mismatch"], "validationStatus": "blocked" }
 }

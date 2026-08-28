@@ -11,7 +11,6 @@ import { findNextReadinessCheck, sortReadinessChecks, tabForReadinessCheck, type
 const actionLabelKeys: Partial<Record<string, string>> = {
   agents_mapped: 'scopeShell.readiness.actions.mapAgents',
   knowledge_mapped: 'scopeShell.readiness.actions.mapKnowledge',
-  published_workspace_set_valid: 'scopeShell.readiness.actions.prepareKnowledge',
   published_agent_roster_valid: 'scopeShell.readiness.actions.reviewAgentRoster',
   audience_configured: 'scopeShell.readiness.actions.configureAudience',
   ownership_assigned: 'scopeShell.readiness.actions.assignOwnership',
@@ -25,7 +24,6 @@ const actionLabelKeys: Partial<Record<string, string>> = {
 const actionHelpKeys: Partial<Record<string, string>> = {
   agents_mapped: 'scopeShell.readiness.help.mapAgents',
   knowledge_mapped: 'scopeShell.readiness.help.mapKnowledge',
-  published_workspace_set_valid: 'scopeShell.readiness.help.prepareKnowledge',
   published_agent_roster_valid: 'scopeShell.readiness.help.reviewAgentRoster',
   audience_configured: 'scopeShell.readiness.help.configureAudience',
   ownership_assigned: 'scopeShell.readiness.help.assignOwnership',
@@ -36,8 +34,8 @@ const actionHelpKeys: Partial<Record<string, string>> = {
   channel_ready: 'scopeShell.readiness.help.configureChannel',
 };
 
-function isUserVisibleCheck(key: string): boolean {
-  return !key.startsWith('document_') && !key.startsWith('deployment_') && key !== 'draft_revision_publishable' && (governedConversationFeatures.conversationsEnabled || key !== 'audience_configured');
+export function isUserVisibleCheck(key: string): boolean {
+  return !key.startsWith('document_') && !key.startsWith('deployment_') && key !== 'draft_revision_publishable' && key !== 'published_workspace_set_valid' && (governedConversationFeatures.conversationsEnabled || key !== 'audience_configured');
 }
 
 function tabForCheck(key: string): TabKey {
@@ -66,9 +64,8 @@ export function GovernanceReadinessPanel({ className, overview, onNavigateTab }:
   const visibleWarnings = sortReadinessChecks(overview.readiness.warnings.filter((check) => isUserVisibleCheck(check.key)));
   const checks = sortReadinessChecks(overview.readiness.checks.filter((check) => isUserVisibleCheck(check.key)));
   const nextAction = findNextReadinessCheck(checks);
-  const hasMappedWorkspace = overview.knowledge.sharedWorkspaces.length + overview.knowledge.localWorkspaces.length > 0;
-  const actionLabelKey = nextAction?.key === 'knowledge_mapped' && hasMappedWorkspace ? 'scopeShell.readiness.actions.prepareKnowledge' : nextAction ? actionLabelKeys[nextAction.key] : undefined;
-  const actionHelpKey = nextAction?.key === 'knowledge_mapped' && hasMappedWorkspace ? 'scopeShell.readiness.help.prepareKnowledge' : nextAction ? actionHelpKeys[nextAction.key] : undefined;
+  const actionLabelKey = nextAction ? actionLabelKeys[nextAction.key] : undefined;
+  const actionHelpKey = nextAction ? actionHelpKeys[nextAction.key] : undefined;
   const nextActionLabel = nextAction ? (actionLabelKey ? t(actionLabelKey as never) : translateBlocker(nextAction.key, nextAction.label)) : undefined;
   const nextActionHelp = nextAction ? (actionHelpKey ? t(actionHelpKey as never) : translateBlocker(nextAction.key, nextAction.label)) : undefined;
   const nextActionTab = nextAction ? tabForCheck(nextAction.key) : undefined;

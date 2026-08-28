@@ -25,9 +25,15 @@ from google.protobuf.json_format import MessageToDict, ParseDict
 pytest.importorskip("src.grpc_generated.playbook_flow_pb2")
 pytest.importorskip("src.grpc_generated.playbook_flow_pb2_grpc")
 
-from src.grpc_generated import playbook_flow_pb2 as pb
-from src.grpc_generated import playbook_flow_pb2_grpc as pb_grpc
-from src.flow_engine.grpc_service import PlaybookFlowRuntimeServicer
+from src.grpc_generated import playbook_flow_pb2 as pb  # noqa: E402
+from src.grpc_generated import playbook_flow_pb2_grpc as pb_grpc  # noqa: E402
+from src.flow_engine.grpc_service import (  # noqa: E402
+    PlaybookFlowRuntimeServicer,
+    _apply_runtime_settings,
+    app_settings,
+    compiled_graph_cache,
+    execution_limiter,
+)
 
 
 class _MockChunk:
@@ -83,6 +89,52 @@ def _linear_snapshot() -> pb.FlowSnapshot:
         data_bindings=[],
         settings=pb.FlowSettings(recursion_limit=25, max_parallelism=5),
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_settings_preserve_zero_and_false(monkeypatch):
+    old_max_entries = compiled_graph_cache.max_entries
+    old_ttl_seconds = compiled_graph_cache.ttl_seconds
+    old_capacity = app_settings.PLAYBOOK_PYTHON_WORKER_POOL_SIZE * app_settings.PLAYBOOK_PYTHON_WORKER_MAX_INFLIGHT
+    for name in (
+        "PLAYBOOK_MAX_CONCURRENT_PER_USER",
+        "PLAYBOOK_EXECUTION_QUEUE_MAX_DEPTH",
+        "PLAYBOOK_MAX_PARALLELISM_PER_EXECUTION",
+        "PLAYBOOK_RECURSION_LIMIT_DEFAULT",
+        "PLAYBOOK_RECURSION_LIMIT_MAX",
+        "PLAYBOOK_MAX_HITL_ROUNDS",
+        "PLAYBOOK_PYTHON_WORKER_POOL_SIZE",
+        "PLAYBOOK_PYTHON_WORKER_MAX_INFLIGHT",
+        "PLAYBOOK_MAX_TOOL_ITERATIONS",
+        "PLAYBOOK_GRAPH_CACHE_MAX_ENTRIES",
+        "PLAYBOOK_GRAPH_CACHE_TTL_SECONDS",
+    ):
+        monkeypatch.setattr(app_settings, name, getattr(app_settings, name))
+    monkeypatch.setattr(app_settings, "PLAYBOOK_GRAPH_CACHE_ENABLED", True)
+    try:
+        await _apply_runtime_settings(pb.RunSettings(runtime_settings=pb.RuntimeSettings(
+            max_concurrent_per_user=7,
+            execution_queue_max_depth=0,
+            max_parallelism_per_execution=6,
+            recursion_limit_default=30,
+            recursion_limit_max=60,
+            max_hitl_rounds=0,
+            python_worker_pool_size=3,
+            python_worker_max_inflight=2,
+            max_tool_iterations=25,
+            graph_cache_enabled=False,
+            graph_cache_max_entries=64,
+            graph_cache_ttl_seconds=120,
+        )))
+
+        assert app_settings.PLAYBOOK_EXECUTION_QUEUE_MAX_DEPTH == 0
+        assert app_settings.PLAYBOOK_MAX_HITL_ROUNDS == 0
+        assert app_settings.PLAYBOOK_GRAPH_CACHE_ENABLED is False
+        assert compiled_graph_cache.max_entries == 64
+        assert compiled_graph_cache.ttl_seconds == 120
+    finally:
+        compiled_graph_cache.reconfigure(max_entries=old_max_entries, ttl_seconds=old_ttl_seconds)
+        await execution_limiter.resize(old_capacity)
 
 
 @pytest.fixture(scope="session")

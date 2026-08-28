@@ -136,11 +136,14 @@ class AgentFactory:
         conversation_brain_id: Optional[str],
         brain_documents: Optional[list],
     ) -> Optional[str]:
+        selected_workspace_id = str(conversation_brain_id or "").strip()
+        if selected_workspace_id:
+            return selected_workspace_id
         for doc in brain_documents or []:
             workspace_id = str(doc.get("workspace_id") or "").strip()
             if workspace_id:
                 return workspace_id
-        return conversation_brain_id
+        return None
 
     def create_agent(
         self,
@@ -175,6 +178,7 @@ class AgentFactory:
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         connector_bindings: Optional[List[Dict[str, Any]]] = None,
+        platform_api_token: Optional[str] = None,
     ) -> Agent:
         """Create an agent with optional tools including calculator, web search, document search, and in-memory extraction.
 
@@ -305,6 +309,8 @@ class AgentFactory:
                             brain_documents=brain_documents,
                             session_id=session_id,
                             agent_id=agent_id,
+                            user_id=user_id,
+                            platform_api_token=platform_api_token,
                         ),
                     )
                 )

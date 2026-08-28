@@ -13,7 +13,6 @@ export type PlaybookUiTarget = {
     taskId?: string;
   };
   effects?: Array<
-    | { type: 'selectTab'; tab: string }
     | { type: 'highlightTask'; taskId: string }
     | { type: 'focusExecutionStatus' }
   >;

@@ -1,7 +1,7 @@
 import { memo, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ThumbsUp, ThumbsDown, Copy, RotateCcw, MoreHorizontal, FileText, Flag, GitBranch, Loader2, Wand2 } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, Copy, RotateCcw, MoreHorizontal, FileText, Flag, GitBranch, Loader2 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import { useModuleTranslation } from '@/modules/localization';
@@ -16,13 +16,6 @@ import { showError } from '@/lib/notifications';
 import { branchConversation } from '../api';
 import { buildChoiceInteractionIndex } from '../choice-interactions';
 import { useModelById } from '@/modules/models';
-import { useAuth } from '@/modules/auth';
-import { buildPlaybookFromConversation } from '@/modules/playbook';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { getAnswerComponents, getDefaultAnswerVersion } from '../utils/answer-version';
-import { MessagePdfExport } from './MessagePdfExport';
 
 import { cn } from '@/lib/utils';
 
@@ -34,7 +27,7 @@ interface MessageActionsProps {
   className?: string;
 }
 
-export const MessageActions = memo(function MessageActions({ message, isLastAiMessage, conversationId, displayedVersion, className }: MessageActionsProps) {
+export const MessageActions = memo(function MessageActions({ message, isLastAiMessage, conversationId, className }: MessageActionsProps) {
   const updateFeedback = useConversationStore((s) => s.updateFeedback);
   const regenerateMessage = useConversationStore((s) => s.regenerateMessage);
   const setReplyingToMessage = useConversationStore((s) => s.setReplyingToMessage);
@@ -44,11 +37,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const fetchConversations = useConversationStore((s) => s.fetchConversations);
   const isGroup = !!currentConversation?.groupMeta?.isGroup;
   const [reportOpen, setReportOpen] = useState(false);
-  const [buildDialogOpen, setBuildDialogOpen] = useState(false);
-  const [playbookName, setPlaybookName] = useState('');
-  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const { t, language } = useModuleTranslation('conversation');
-  const { user } = useAuth();
   const generationModelId = message.modelId
     || (message.questionMessageId ? messages.find((candidate) => candidate.id === message.questionMessageId)?.modelId : undefined);
   const model = useModelById(generationModelId || '');
@@ -58,37 +47,12 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     && !message.isStreaming
     && !isGroup
     && currentConversation?.runtimeMode !== 'governed';
-  const permissions = user?.permissions ?? [];
-  const canCreatePlaybook = permissions.includes('*')
-    || permissions.includes('playbook.*')
-    || permissions.includes('playbook.create');
-  const questionMessage = message.questionMessageId
-    ? messages.find((candidate) => candidate.id === message.questionMessageId)
-    : undefined;
-  const selectedAnswerVersion = displayedVersion ?? getDefaultAnswerVersion(message);
-  const canBuildPlaybook = !!currentConversation
-    && currentConversation.createdBy === user?.id
-    && canCreatePlaybook
-    && message.isComplete
-    && !message.isStreaming
-    && message.conversationType === 'ai'
-    && questionMessage?.conversationType === 'user'
-    && !!questionMessage.content?.trim()
-    && selectedAnswerVersion !== 'abstention';
   const { execute: createBranch, isLoading: isBranching } = useApiAction(branchConversation, {
     showSuccessToast: true,
     successMessage: t('toasts.branch.success'),
     onSuccess: (conversation) => {
       void fetchConversations({ reset: true });
       navigate(`/conversation/${conversation.id}`);
-    },
-  });
-  const { execute: buildPlaybook, isLoading: isBuildingPlaybook } = useApiAction(buildPlaybookFromConversation, {
-    showSuccessToast: true,
-    successMessage: t('toasts.playbookBuilt'),
-    onSuccess: ({ id }) => {
-      setBuildDialogOpen(false);
-      navigate(`/playbooks/${id}`);
     },
   });
   const createdAt = new Date(message.createdAt);
@@ -143,27 +107,6 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     });
   };
 
-  const handleBuildPlaybook = () => {
-    if (!canBuildPlaybook) return;
-    void buildPlaybook({
-      conversationId,
-      assistantMessageId: message.id,
-      answerVersion: selectedAnswerVersion,
-      ...(playbookName.trim() ? { name: playbookName.trim() } : {}),
-    });
-  };
-
-  const answerPreview = componentsToMarkdown(
-    getAnswerComponents(message, selectedAnswerVersion, ''),
-  );
-
-  const choiceInteractions = useMemo(() => buildChoiceInteractionIndex(messages), [messages]);
-
-  const handleExportPdf = () => {
-    if (isExportingPdf) return;
-    setIsExportingPdf(true);
-  };
-
   return (
     <>
       <div className={cn('mt-1 flex flex-wrap items-center gap-0.5', className)}>
@@ -214,12 +157,6 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align='start'>
-            {canBuildPlaybook && (
-              <DropdownMenuItem onClick={() => setBuildDialogOpen(true)}>
-                <Wand2 className='h-3.5 w-3.5 mr-2' />
-                {t('messageActions.buildPlaybook')}
-              </DropdownMenuItem>
-            )}
             {canBranch && (
               <DropdownMenuItem onClick={handleBranch} disabled={isBranching}>
                 {isBranching
@@ -249,73 +186,6 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       </div>
 
       <ReportDialog open={reportOpen} onOpenChange={setReportOpen} conversationId={conversationId} messageId={message.id} />
-      {isExportingPdf && (
-        <MessagePdfExport
-          message={message}
-          questionMessage={questionMessage}
-          conversationTitle={currentConversation?.title}
-          formattedCreatedAt={formattedCreatedAt}
-          modelName={modelName}
-          displayedVersion={displayedVersion}
-          choiceInteractions={choiceInteractions}
-          onFinish={(ok) => {
-            setIsExportingPdf(false);
-            if (!ok) showError(t('toasts.message.exportError'));
-          }}
-        />
-      )}
-      <Dialog
-        open={buildDialogOpen}
-        onOpenChange={(open) => {
-          if (isBuildingPlaybook) return;
-          setBuildDialogOpen(open);
-          if (!open) setPlaybookName('');
-        }}
-      >
-        <DialogContent className='sm:max-w-2xl'>
-          <DialogHeader>
-            <DialogTitle>{t('buildPlaybookDialog.title')}</DialogTitle>
-            <DialogDescription>{t('buildPlaybookDialog.description')}</DialogDescription>
-          </DialogHeader>
-          <div className='space-y-4'>
-            <div className='space-y-2'>
-              <Label htmlFor={`playbook-name-${message.id}`}>{t('buildPlaybookDialog.nameLabel')}</Label>
-              <Input
-                id={`playbook-name-${message.id}`}
-                value={playbookName}
-                onChange={(event) => setPlaybookName(event.target.value)}
-                maxLength={100}
-                placeholder={t('buildPlaybookDialog.namePlaceholder')}
-                disabled={isBuildingPlaybook}
-              />
-              <p className='text-xs text-muted-foreground'>{t('buildPlaybookDialog.nameHelp')}</p>
-            </div>
-            <div className='grid gap-3 md:grid-cols-2'>
-              <div className='min-w-0 space-y-2'>
-                <p className='text-sm font-medium'>{t('buildPlaybookDialog.userPrompt')}</p>
-                <div className='max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-sm'>
-                  {questionMessage?.content}
-                </div>
-              </div>
-              <div className='min-w-0 space-y-2'>
-                <p className='text-sm font-medium'>{t('buildPlaybookDialog.generatedAnswer')}</p>
-                <div className='max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md border bg-muted/30 p-3 text-sm'>
-                  {answerPreview}
-                </div>
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant='outline' onClick={() => setBuildDialogOpen(false)} disabled={isBuildingPlaybook}>
-              {t('buildPlaybookDialog.cancel')}
-            </Button>
-            <Button onClick={handleBuildPlaybook} disabled={isBuildingPlaybook}>
-              {isBuildingPlaybook && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
-              {isBuildingPlaybook ? t('buildPlaybookDialog.building') : t('buildPlaybookDialog.build')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 });

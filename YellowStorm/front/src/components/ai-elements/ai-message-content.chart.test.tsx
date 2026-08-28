@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -7,7 +7,9 @@ import { MessageProvider } from './message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 
 const openFileViewerFromUrlMock = vi.hoisted(() => vi.fn());
-const getArtifactDownloadUrlMock = vi.hoisted(() => vi.fn());
+const openFileViewerFromUrlLoaderMock = vi.hoisted(() => vi.fn());
+const getFileSignedUrlMock = vi.hoisted(() => vi.fn());
+const getCitationViewUrlMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key, language: 'en' }),
@@ -15,13 +17,16 @@ vi.mock('@/modules/localization', () => ({
 
 vi.mock('@/modules/file-viewer', () => ({
   openFileViewerFromUrl: openFileViewerFromUrlMock,
-  getMimeTypeFromFilename: () => 'application/pdf',
+  openFileViewerFromUrlLoader: openFileViewerFromUrlLoaderMock,
+  getMimeTypeFromFilename: (fileName: string) => fileName.endsWith('.png') ? 'image/png' : 'application/pdf',
   useFileViewerDisplayMode: () => 'sidebar',
 }));
 
-vi.mock('@/modules/conversation/api', () => ({
-  getArtifactDownloadUrl: getArtifactDownloadUrlMock,
+vi.mock('@/modules/conversation-v2/api', () => ({
+  conversationV2Api: { getFileSignedUrl: getFileSignedUrlMock },
 }));
+
+vi.mock('@/modules/conversation/api', () => ({ getCitationViewUrl: getCitationViewUrlMock }));
 
 beforeAll(() => {
   vi.stubGlobal('IntersectionObserver', class {
@@ -155,7 +160,8 @@ describe('AIMessageContent charts', () => {
   });
 
   it('opens citations with exact located highlight text', async () => {
-    getArtifactDownloadUrlMock.mockResolvedValueOnce({ downloadUrl: 'https://example.test/contract.pdf' });
+    openFileViewerFromUrlLoaderMock.mockImplementationOnce(async (_key, _fileName, _mimeType, load) => load());
+    getCitationViewUrlMock.mockResolvedValueOnce({ url: 'https://example.test/contract.pdf', fileName: 'contract.pdf', mimeType: 'application/pdf' });
     const parts: MessageContentPart[] = [
       {
         type: 'text',
@@ -164,6 +170,7 @@ describe('AIMessageContent charts', () => {
           parentId: '',
           sourceType: 'text',
           source: 'user-1/codeinterpreter/contract.pdf',
+          fileName: 'contract.pdf',
           externalId: '',
           page: '2',
           pageContent: 'Retrieved chunk',
@@ -175,25 +182,103 @@ describe('AIMessageContent charts', () => {
       },
     ];
 
-    render(<AIMessageContent parts={parts} />);
+    render(<AIMessageContent parts={parts} citationScope={{ conversationId: 'conversation-1', messageId: 'message-1' }} />);
     await userEvent.click(screen.getByText('2'));
 
-    expect(openFileViewerFromUrlMock).toHaveBeenCalledWith(
-      'https://example.test/contract.pdf',
-      'contract.pdf',
+    await waitFor(() => {
+      expect(getCitationViewUrlMock).toHaveBeenCalledWith('conversation-1', 'message-1', {
+        source: 'user-1/codeinterpreter/contract.pdf', fileName: 'contract.pdf', reference: '2',
+      });
+      expect(openFileViewerFromUrlLoaderMock).toHaveBeenCalledWith(
+        '["conversation-1","message-1","user-1/codeinterpreter/contract.pdf"]',
+        'contract.pdf',
+        'application/pdf',
+        expect.any(Function),
+        {
+          displayMode: 'sidebar',
+          closeOnOutsideClick: false,
+          page: 2,
+          highlightText: 'Exact located quote',
+          highlightBBox: [10, 20, 30, 40],
+        },
+      );
+    });
+  });
+
+  it('resolves a filename-less image citation by its path', async () => {
+    openFileViewerFromUrlLoaderMock.mockImplementationOnce(async (_key, _fileName, _mimeType, load) => load());
+    getCitationViewUrlMock.mockResolvedValueOnce({
+      url: 'https://example.test/chart.png', fileName: 'chart.png', mimeType: 'image/png',
+    });
+    const parts: MessageContentPart[] = [{
+      type: 'citation',
+      parentId: '',
+      sourceType: 'image',
+      source: '',
+      externalId: '',
+      page: '3',
+      pageContent: '',
+      workspaceId: 'workspace-1',
+      reference: '[4]',
+      path: 'owner/workspace/chart.png',
+    }];
+
+    render(<AIMessageContent parts={parts} citationScope={{ conversationId: 'conversation-1', messageId: 'message-1' }} />);
+    await userEvent.click(screen.getByText('4'));
+
+    await waitFor(() => {
+      expect(getCitationViewUrlMock).toHaveBeenCalledWith('conversation-1', 'message-1', {
+        source: 'owner/workspace/chart.png', fileName: undefined, reference: '4',
+      });
+      expect(openFileViewerFromUrlLoaderMock).toHaveBeenCalledWith(
+        '["conversation-1","message-1","owner/workspace/chart.png"]',
+        'chart.png',
+        'image/png',
+        expect.any(Function),
+        expect.objectContaining({ page: 3 }),
+      );
+    });
+  });
+
+  it('uses scoped object keys to distinguish citations with the same filename', async () => {
+    const parts: MessageContentPart[] = [{
+      type: 'text',
+      content: 'First [1], second [2].',
+      citations: [
+        {
+          parentId: '', sourceType: 'text', source: 'owner/first/shared.pdf', fileName: 'shared.pdf',
+          externalId: '', page: '1', pageContent: '', workspaceId: 'workspace-1', reference: '[1]',
+        },
+        {
+          parentId: '', sourceType: 'text', source: 'owner/second/shared.pdf', fileName: 'shared.pdf',
+          externalId: '', page: '2', pageContent: '', workspaceId: 'workspace-1', reference: '[2]',
+        },
+      ],
+    }];
+
+    render(<AIMessageContent parts={parts} citationScope={{ conversationId: 'conversation-1', messageId: 'message-1' }} />);
+    await userEvent.click(screen.getByText('1'));
+    await userEvent.click(screen.getByText('2'));
+
+    expect(openFileViewerFromUrlLoaderMock).toHaveBeenCalledWith(
+      '["conversation-1","message-1","owner/first/shared.pdf"]',
+      'shared.pdf',
       'application/pdf',
-      {
-        displayMode: 'sidebar',
-        closeOnOutsideClick: false,
-        page: 2,
-        highlightText: 'Exact located quote',
-        highlightBBox: [10, 20, 30, 40],
-      },
+      expect.any(Function),
+      expect.objectContaining({ page: 1 }),
+    );
+    expect(openFileViewerFromUrlLoaderMock).toHaveBeenCalledWith(
+      '["conversation-1","message-1","owner/second/shared.pdf"]',
+      'shared.pdf',
+      'application/pdf',
+      expect.any(Function),
+      expect.objectContaining({ page: 2 }),
     );
   });
 
   it('enables outside-click dismissal for playbook citations', async () => {
-    getArtifactDownloadUrlMock.mockResolvedValueOnce({ downloadUrl: 'https://example.test/playbook.pdf' });
+    openFileViewerFromUrlLoaderMock.mockImplementationOnce(async (_key, _fileName, _mimeType, load) => load());
+    getFileSignedUrlMock.mockResolvedValueOnce({ url: 'https://example.test/playbook.pdf' });
     const parts: MessageContentPart[] = [{
       type: 'text',
       content: 'Playbook source [2].',
@@ -216,12 +301,15 @@ describe('AIMessageContent charts', () => {
     );
     await userEvent.click(screen.getByText('2'));
 
-    expect(openFileViewerFromUrlMock).toHaveBeenLastCalledWith(
-      'https://example.test/playbook.pdf',
-      'playbook.pdf',
-      'application/pdf',
-      expect.objectContaining({ displayMode: 'floating', closeOnOutsideClick: true }),
-    );
+    await waitFor(() => {
+      expect(openFileViewerFromUrlLoaderMock).toHaveBeenLastCalledWith(
+        'playbook.pdf',
+        'playbook.pdf',
+        'application/pdf',
+        expect.any(Function),
+        expect.objectContaining({ displayMode: 'floating', closeOnOutsideClick: true }),
+      );
+    });
   });
 
   it('renders a line chart between text parts', () => {

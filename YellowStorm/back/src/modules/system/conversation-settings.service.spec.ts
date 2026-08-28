@@ -25,6 +25,7 @@ describe('ConversationSettingsService', () => {
 
     const result = await service.getSettings();
     expect(result.composerSuggestions).toEqual({ ...DEFAULT_CONVERSATION_SETTINGS.composerSuggestions, enabled: false });
+    expect(result.redactSensitiveText).toBe(true);
   });
 
   it('validates and persists a configured active default agent', async () => {
@@ -37,8 +38,30 @@ describe('ConversationSettingsService', () => {
     expect(agents.assertActiveDefaultAgent).toHaveBeenCalledWith(value.composerSuggestions.agentId);
     expect(findOneAndUpdate).toHaveBeenCalledWith(
       { key: 'conversation_settings' },
-      { key: 'conversation_settings', value },
+      { key: 'conversation_settings', value: { ...value, redactSensitiveText: true } },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
+  });
+
+  it('persists an explicit sensitive text redaction change', async () => {
+    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue(null) }) });
+    findOneAndUpdate.mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue({}) }) });
+    const service = new ConversationSettingsService(model as any, agents as any);
+
+    await expect(service.updateSensitiveTextRedaction(false)).resolves.toMatchObject({ redactSensitiveText: false });
+    expect(service.shouldRedactSensitiveText()).toBe(false);
+  });
+
+  it('fails closed while an expired disabled setting is refreshing', async () => {
+    findOne.mockReturnValue({ lean: () => ({ exec: jest.fn().mockRejectedValue(new Error('database unavailable')) }) });
+    const service = new ConversationSettingsService(model as any, agents as any);
+    (service as any).cache = {
+      settings: { ...DEFAULT_CONVERSATION_SETTINGS, redactSensitiveText: false },
+      expiresAt: Date.now() - 1,
+    };
+
+    expect(service.shouldRedactSensitiveText()).toBe(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(service.shouldRedactSensitiveText()).toBe(true);
   });
 });

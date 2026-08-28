@@ -3,6 +3,7 @@ import { Document, HydratedDocument, Types } from 'mongoose';
 
 export type ConversationDocument = HydratedDocument<Conversation>;
 export type ConversationRuntimeMode = 'standard' | 'governed';
+export type ConversationRuntimePurpose = 'chat' | 'platform_copilot';
 export type ConversationInitializationStatus = 'ready' | 'pending' | 'seeding' | 'cleanup_pending';
 
 @Schema({ _id: false })
@@ -26,6 +27,15 @@ const ConversationGovernanceContextSchema = SchemaFactory.createForClass(Convers
 export class Conversation extends Document {
   @Prop({ type: String, enum: ['standard', 'governed'], default: 'standard', index: true })
   runtimeMode!: ConversationRuntimeMode;
+
+  @Prop({ type: String, enum: ['chat', 'platform_copilot'], default: 'chat', index: true })
+  runtimePurpose!: ConversationRuntimePurpose;
+
+  @Prop({ type: Types.ObjectId, ref: 'Agent', default: null })
+  pinnedAgentId?: Types.ObjectId | null;
+
+  @Prop({ type: String })
+  platformCopilotCreationRequestId?: string;
 
   @Prop({ type: ConversationGovernanceContextSchema })
   governanceContext?: ConversationGovernanceContext;
@@ -161,6 +171,14 @@ ConversationSchema.index({ createdBy: 1, lastMessageAt: -1 });
 ConversationSchema.index({ createdBy: 1, isArchived: 1, lastMessageAt: -1 });
 ConversationSchema.index({ createdBy: 1, createdAt: -1 });
 ConversationSchema.index({ createdBy: 1, projectId: 1, lastMessageAt: -1 });
+ConversationSchema.index(
+  { createdBy: 1, platformCopilotCreationRequestId: 1 },
+  {
+    name: 'platform_copilot_creation_request_unique',
+    unique: true,
+    partialFilterExpression: { platformCopilotCreationRequestId: { $exists: true, $type: 'string' } },
+  },
+);
 ConversationSchema.index({ createdBy: 1, governedCreationRequestId: 1 }, { unique: true, partialFilterExpression: { governedCreationRequestId: { $exists: true, $type: 'string' } } });
 ConversationSchema.index(
   { createdBy: 1, 'branchProvenance.requestId': 1 },

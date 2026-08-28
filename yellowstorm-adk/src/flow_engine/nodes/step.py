@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-import time
 from typing import Any
 
 import litellm
@@ -56,7 +55,7 @@ from src.temporary_child_summary import (
     record_temporary_child_result,
     record_temporary_child_start,
 )
-from src.skills.runtime import inject_skill_catalog
+from src.skills.runtime import inject_skill_catalog, inject_tool_skill_instructions
 
 logger = get_logger(__name__)
 
@@ -413,11 +412,17 @@ def _collect_workspace_ceph_paths(
     """
     paths: list[str] = []
     seen: set[str] = set()
+    paths_by_alias: dict[str, str] = {}
 
     def _add(raw: Any) -> None:
         path = str(raw or "").strip().strip("/")
         if "/" not in path or path in seen:
             return
+        alias = path.rsplit("/", 1)[-1]
+        existing = paths_by_alias.get(alias)
+        if existing and existing != path:
+            raise ValueError(f"Sandbox workspace alias collision: {alias}")
+        paths_by_alias[alias] = path
         seen.add(path)
         paths.append(path)
 
@@ -425,15 +430,13 @@ def _collect_workspace_ceph_paths(
     for path in document_paths or []:
         _add(path)
 
-    # Playbook-level workspace paths: dict {workspace_id: "user_id/workspace_name"}.
+    # Keep only the selected default as the output destination. Other playbook
+    # workspaces are not implicit input sources for a wired step.
     state_inputs = state.get("inputs", {})
     for source in (input_context, state_inputs):
         if not isinstance(source, dict):
             continue
-        playbook_paths = source.get("__playbook_workspace_paths")
-        if isinstance(playbook_paths, dict):
-            for value in playbook_paths.values():
-                _add(value)
+        _add(source.get("__playbook_default_workspace_path"))
 
     return paths
 
@@ -563,7 +566,6 @@ async def run_step(
     if not isinstance(metadata, dict):
         metadata = {}
 
-    deep_search = bool(metadata.get("deep_search", False))
     agent_name = str(metadata.get("agent_name") or "")
     agent_description = str(metadata.get("agent_description") or "")
     agent_model = metadata.get("agent_model") or node_config.get("model_id")
@@ -585,17 +587,25 @@ async def run_step(
     if agent_description:
         fallback_system_prompt = f"{agent_description}\n\n{fallback_system_prompt}"
     system_prompt = str(agent_prompt or metadata.get("system_prompt", "") or fallback_system_prompt)
-    if deep_search:
-        system_prompt += (
-            "\n\n<deep_search_mode>\n"
-            "The runtime performs relevant-document discovery before normal MCP or "
-            "retrieval work. It merges those selected filenames with user-provided "
-            "files and supplies the combined scope to the normal tools. Do not call "
-            "deep search again. Gather detailed evidence from the scoped documents "
-            "and cross-reference them when relevant.\n"
-            "</deep_search_mode>"
-        )
     system_prompt = inject_skill_catalog(system_prompt, agent_config.get("skills", []))
+    configured_tool_names = {
+        str(tool.get("name") or "")
+        for tool in agent_config.get("tools", [])
+        if isinstance(tool, dict)
+    }
+    for binding in connector_bindings:
+        if not isinstance(binding, dict):
+            continue
+        configured_tool_names.update(
+            str(binding.get(key) or "")
+            for key in ("connector_slug", "connector_name", "connector_id")
+            if binding.get(key)
+        )
+    system_prompt = inject_tool_skill_instructions(
+        system_prompt,
+        agent_config.get("skills", []),
+        configured_tool_names,
+    )
     has_agent = bool(agent_name)
 
     logger.info(
@@ -607,7 +617,6 @@ async def run_step(
         agent_name=agent_name,
         agent_model=agent_model,
         node_model_id=node_config.get("model_id"),
-        deep_search=deep_search,
     )
 
     try:
@@ -745,7 +754,6 @@ async def run_step(
                             hitl_policy,
                             hitl_blockers,
                             _merge_human_context(state, new_human_context),
-                            deep_search=deep_search,
                         )
                         payload = _build_result_payload(
                             child_output_contract,
@@ -784,7 +792,6 @@ async def run_step(
                         structured_output, agent_config, connector_bindings,
                         iteration, label, writer, hitl_policy, hitl_blockers,
                         _merge_human_context(state, new_human_context),
-                        deep_search=deep_search,
                     )
             elif metadata.get("executionStrategy") == "deterministic_script":
                 deterministic_payload = _execute_deterministic_step(
@@ -803,7 +810,6 @@ async def run_step(
                     structured_output, agent_config, connector_bindings,
                     iteration, label, writer, hitl_policy, hitl_blockers,
                     _merge_human_context(state, new_human_context),
-                    deep_search=deep_search,
                 )
         except GraphInterrupt:
             raise
@@ -815,10 +821,7 @@ async def run_step(
                 "iteration": iteration,
                 "payload": {"error": str(exc)},
             })
-            return {
-                "errors": [{"node_id": node_id, "iteration": iteration, "message": f"Step execution error: {exc}"}],
-                "iterations": {node_id: iteration + 1},
-            }
+            raise
 
     else:
         full_output = checkpoint.get("llm_output", "")
@@ -910,7 +913,6 @@ async def _execute_step(
     hitl_policy: dict[str, Any],
     hitl_blockers: list[dict[str, Any]],
     human_context: list[dict[str, Any]],
-    deep_search: bool = False,
 ) -> str:
     trigger_context = state.get("inputs", {})
     prompt_input_context = build_prompt_input_context(
@@ -930,6 +932,14 @@ async def _execute_step(
         for tool in agent_config.get("tools", [])
         if isinstance(tool, dict)
     }
+    if "run_code" in tool_names:
+        from src.smart_rag.tools.utilities.run_code import (
+            RUN_CODE_PROMPT_GUIDANCE,
+            run_code_globally_enabled,
+        )
+
+        if run_code_globally_enabled():
+            system_prompt = f"{system_prompt}\n\n{RUN_CODE_PROMPT_GUIDANCE}"
     user_msg = _build_prompt(
         label=label,
         node_id=node_id,
@@ -975,99 +985,11 @@ async def _execute_step(
         input_context if isinstance(input_context, dict) else {},
         state,
     )
-    deep_search_workspace_id = next(
-        (workspace_id for workspace_id in tool_scope.binding_workspace_ids if workspace_id),
-        output_workspace_id,
-    )
 
     effective_file_names = list(tool_scope.file_names)
-    deep_search_result: dict[str, Any] | None = None
-    if deep_search:
-        from src.flow_engine.deep_search import (
-            merge_file_names,
-            routed_file_items,
-            search_relevant_documents,
-        )
 
-        state_inputs = state.get("inputs", {})
-        deep_search_query = ""
-        for source in (state_inputs, input_context):
-            if not isinstance(source, dict):
-                continue
-            for key in ("query", "user_query", "message", "prompt"):
-                candidate = source.get(key)
-                if isinstance(candidate, str) and candidate.strip():
-                    deep_search_query = candidate.strip()
-                    break
-            if deep_search_query:
-                break
-        if not deep_search_query:
-            deep_search_query = str(node_description or "").strip()
-        if not deep_search_query:
-            deep_search_query = user_msg
-
-        started_at = time.perf_counter()
-        try:
-            deep_search_result = await search_relevant_documents(
-                deep_search_query,
-                deep_search_workspace_id,
-            )
-            deep_search_file_names = [
-                str(item.get("file_name") or "")
-                for item in routed_file_items(deep_search_result)
-            ]
-            effective_file_names = merge_file_names(
-                tool_scope.file_names,
-                deep_search_file_names,
-            )
-            duration_ms = int((time.perf_counter() - started_at) * 1000)
-            trace_collector.record_tool_call(
-                tool_name="search_relevant_documents",
-                args={
-                    "query": deep_search_query,
-                    "workspace_id": deep_search_workspace_id,
-                },
-                output_summary=json.dumps(deep_search_result, ensure_ascii=False, default=str),
-                status="completed",
-                duration_ms=duration_ms,
-                agent_name=agent_config.get("name") or node_id,
-                agent_role="preflight",
-            )
-            emit_trace_update()
-        except Exception as exc:
-            duration_ms = int((time.perf_counter() - started_at) * 1000)
-            trace_collector.record_tool_call(
-                tool_name="search_relevant_documents",
-                args={
-                    "query": deep_search_query,
-                    "workspace_id": deep_search_workspace_id,
-                },
-                output_summary=None,
-                status="failed",
-                duration_ms=duration_ms,
-                error=str(exc),
-                agent_name=agent_config.get("name") or node_id,
-                agent_role="preflight",
-            )
-            emit_trace_update()
-            raise
-
-        user_msg = (
-            f"{user_msg}\n\n<deep_search_routing_plan>\n"
-            "The community-graph routing step is complete. Review each returned "
-            "file's routing_decision, reason, and search_for guidance. Decide which "
-            "exact file_name or file_names are needed for each next MCP call; do not "
-            "assume every candidate must be used. Treat required files as the strongest "
-            "candidates and optional files as additional choices that may help answer "
-            "the request. Pass selected filenames only when "
-            "the MCP tool schema supports file_name or file_names. If the status is "
-            "NO_RELEVANT_FILES, do not invent filenames; use only user-provided files "
-            "or explain that no relevant indexed file was found.\n"
-            f"{json.dumps(deep_search_result, ensure_ascii=False, default=str)}\n"
-            "</deep_search_routing_plan>"
-        )
-
-    user_msg = f"{user_msg}\n\n{_build_available_file_context(effective_file_names)}"
+    if connector_bindings or {"code interpreter", "search", "in_memory"} & tool_names:
+        user_msg = f"{user_msg}\n\n{_build_available_file_context(effective_file_names)}"
 
     tools, collector = create_langchain_tools(
         agent_config=agent_config,
@@ -1081,8 +1003,9 @@ async def _execute_step(
         workspace_context_mode=tool_scope.workspace_context_mode,
         user_id=str(state.get("evaluation_user_id") or ""),
         workspace_ceph_paths=workspace_ceph_paths,
-        deep_search=False,
+        sandbox_inputs=tool_scope.sandbox_inputs,
         binding_workspace_ids=tool_scope.binding_workspace_ids,
+        run_code_sources=tool_scope.run_code_sources,
         execution_id=str(state.get("execution_id") or ""),
     )
     if _temporary_child_enabled(agent_config["agent_params"]):

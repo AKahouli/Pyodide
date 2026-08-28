@@ -65,12 +65,14 @@ function createService(overrides: Partial<{
 function makeContext(overrides: Partial<{
   existingTaskIds: string[];
   existingTaskTitles: Array<[string, string]>;
+  existingTaskDescriptions: Array<[string, string]>;
   existingTaskAgents: Array<[string, string | null]>;
   inputPortsByTaskId: Array<[string, Array<[string, string]>]>;
   outputPortsByTaskId: Array<[string, Array<[string, string]>]>;
 }> = {}) {
   const existingTaskIds = new Set(overrides.existingTaskIds || []);
   const existingTaskTitles = new Map(overrides.existingTaskTitles || []);
+  const existingTaskDescriptions = new Map(overrides.existingTaskDescriptions || []);
   const existingTaskAgents = new Map(overrides.existingTaskAgents || []);
   const inputPortsByTaskId = new Map(
     (overrides.inputPortsByTaskId || []).map(([k, v]) => [k, new Map(v)]),
@@ -81,6 +83,7 @@ function makeContext(overrides: Partial<{
   return {
     existingTaskIds,
     existingTaskTitles,
+    existingTaskDescriptions,
     existingTaskAgents,
     inputPortsByTaskId,
     outputPortsByTaskId,
@@ -168,6 +171,48 @@ describe('PlaybookFlowIntentService normalization', () => {
         { role: 'system', content: 'Custom design assessment prompt' },
         { role: 'user', content: 'User intent context' },
       ],
+    }), { timeout: 180000 });
+  });
+
+  it('assesses a new design without loading or creating a Playbook', async () => {
+    const httpClient = {
+      post: jest.fn().mockResolvedValue({
+        data: { choices: [{ message: { content: '{"status":"needs_clarification","detectedIntent":"Lead generation","questions":[{"id":"source","question":"Which source?","required":true}]}' } }] },
+      }),
+    };
+    const flowService = { findOne: jest.fn() } as unknown as PlaybookFlowService;
+    const promptService = {
+      findByKey: jest.fn().mockImplementation(async (key: string) => key === 'intent.design_assessment'
+        ? { systemTemplate: 'Assess the new design' }
+        : { userTemplate: 'Intent={intent_text}; workflow={workflow_summary}' }),
+    } as unknown as PlaybookFlowPromptTemplateService;
+    service = createService({
+      flowService,
+      promptService,
+      promptRenderer: new PlaybookFlowPromptRendererService(),
+      settingsService: {
+        resolveEffectiveSettings: jest.fn().mockResolvedValue({ intentNormalizationLimits: DEFAULT_LIMITS }),
+        resolveInferenceModelConfig: jest.fn().mockResolvedValue({ model: 'model-1', omitTemperature: true }),
+      } as unknown as PlaybookFlowSettingsService,
+      liteLLMConnectionService: {
+        getHttpClient: jest.fn().mockReturnValue(httpClient),
+      } as unknown as LiteLLMConnectionService,
+      agentService: {
+        findDefaultAgents: jest.fn().mockResolvedValue({ data: [] }),
+      } as unknown as AgentService,
+      nodeTemplateService: {
+        findEnabled: jest.fn().mockResolvedValue({ items: [] }),
+      } as unknown as PlaybookFlowNodeTemplateService,
+    });
+
+    const result = await service.assessNewDesign('request-1', 'owner-1', { intent: 'Build lead generation' });
+
+    expect(result.status).toBe('needs_clarification');
+    expect(flowService.findOne).not.toHaveBeenCalled();
+    expect(httpClient.post).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+      messages: expect.arrayContaining([
+        expect.objectContaining({ role: 'user', content: expect.stringContaining('"taskCount": 0') }),
+      ]),
     }), { timeout: 180000 });
   });
 
@@ -459,27 +504,33 @@ describe('PlaybookFlowIntentService normalization', () => {
     const context = await service.buildIntentAnalysisContext('flow-1', 'owner-1', { intent: 'Build workflow' });
     const catalog = JSON.parse(context.promptVariables.available_design_catalog as string);
     const nodeTemplates = JSON.parse(context.promptVariables.node_templates as string);
+    const assessmentContext = await service.buildIntentAnalysisContext('flow-1', 'owner-1', { intent: 'Build workflow' }, 'assessment');
+    const assessmentCatalog = JSON.parse(assessmentContext.promptVariables.available_design_catalog as string);
 
     expect(context).toMatchObject({ model: 'model-1', omitTemperature: true });
 
     expect(catalog).toEqual({
-      availableConnectors: [{ id: 'connector-1', connectorSlug: 'google-drive', name: 'Google Drive', description: 'Drive access', category: 'Storage' }],
+      availableConnectors: [{ id: 'connector-1', connectorSlug: 'google-drive', name: 'Google Drive', category: 'Storage' }],
       availableConnectorActions: [{
         connectorId: 'connector-1',
         connectorSlug: 'google-drive',
-        connectorName: 'Google Drive',
         actionKey: 'search',
         label: 'Search files',
-        description: 'Find files',
       }],
       availableWorkspaces: [{
         id: 'workspace-1',
         name: 'Finance',
-        description: 'Finance docs',
         folders: [{ id: 'folder-1', name: 'Invoices', parentId: null }],
       }],
     });
     expect(catalog.availableSkills).toBeUndefined();
+    expect(assessmentCatalog).toEqual({
+      availableConnectors: [{ id: 'connector-1', connectorSlug: 'google-drive', name: 'Google Drive', category: 'Storage' }],
+      availableConnectorActions: [],
+      availableWorkspaces: [{ id: 'workspace-1', name: 'Finance' }],
+    });
+    expect((assessmentContext.promptVariables.available_design_catalog as string).length)
+      .toBeLessThan((context.promptVariables.available_design_catalog as string).length);
     expect(nodeTemplates[0]).toEqual(expect.objectContaining({
       key: 'generic.agent_step',
       semanticNodeType: 'agent',
@@ -788,7 +839,8 @@ it('falls back to clarification questions when design JSON is malformed', () => 
     expect(prompt?.systemTemplate).toContain('node-output|constant');
     expect(prompt?.systemTemplate).toContain('nodeTemplateKey');
     expect(prompt?.systemTemplate).toContain('primitive.kind="router"');
-    expect(prompt?.version).toBe(16);
+    expect(prompt?.systemTemplate).toContain('Existing Workflow Modification Rules');
+    expect(prompt?.version).toBe(17);
   });
 
   it('keeps the design assessment prompt distinct from intent analyze', () => {
@@ -1170,6 +1222,30 @@ it('falls back to clarification questions when design JSON is malformed', () => 
     const plan = result.find((s: any) => s.kind === 'workflow_plan');
     expect(plan).toBeDefined();
     expect(plan.changes.length).toBe(1);
+  });
+
+  it('drops a re-emitted create_node with matching title + description even when the agent differs', () => {
+    const ctx = makeContext({
+      existingTaskIds: ['task-1'],
+      existingTaskTitles: [['task-1', 'research competitors']],
+      existingTaskDescriptions: [['task-1', 'do it']],
+      existingTaskAgents: [['task-1', 'analyst']],
+    });
+    const raw = JSON.stringify({
+      suggestions: [{
+        kind: 'workflow_plan',
+        label: 'Plan',
+        changes: [{
+          type: 'create_node',
+          nodeRef: 'node-new',
+          task: { title: 'Research Competitors', description: 'Do it', agentSlug: 'writer' },
+        }],
+      }],
+    });
+
+    const result = callNormalize(raw, ctx);
+    const plan = result.find((s: any) => s.kind === 'workflow_plan');
+    expect(plan).toBeUndefined();
   });
 
   it('allows valid create_edge referencing previously created nodeRef', () => {

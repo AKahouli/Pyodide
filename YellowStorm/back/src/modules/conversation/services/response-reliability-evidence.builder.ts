@@ -138,9 +138,9 @@ export class ResponseReliabilityEvidenceBuilder {
           content: `Output:\n${output}`,
         });
       }
-      if (component.type === 'toolInfo' && data.status === 'completed') {
-        const toolName = stringValue(data.title);
-        const parsed = parseToolResult(data.resultJson ?? data.result_json);
+      if (component.type === 'toolActivity' && data.status === 'completed') {
+        const toolName = stringValue(data.toolName);
+        const parsed = parseToolResult(data.resultJson);
         if (!toolName || parsed === undefined) continue;
 
         if (DOCUMENT_EVIDENCE_TOOLS.has(toolName)) {

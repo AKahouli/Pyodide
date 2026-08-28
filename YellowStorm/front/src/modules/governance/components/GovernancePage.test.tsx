@@ -13,6 +13,11 @@ const mocks = vi.hoisted(() => ({
   setSelectedScopeId: vi.fn(),
   selectedScopeId: 'scope-1' as string | null,
   programs: [{ id: 'program-1', name: 'Program', description: 'Description', domain: 'public', defaultLanguage: 'fr', status: 'published', createdAt: '', updatedAt: '' }],
+  programsLoading: false,
+  programsError: false,
+  programsLoaded: true,
+  programsFetching: false,
+  refetchPrograms: vi.fn(),
 }));
 
 vi.mock('@/lib/notifications', () => ({ showError: vi.fn() }));
@@ -24,7 +29,14 @@ vi.mock('@/modules/governance', () => ({
   useCreateGovernanceScope: () => ({ mutate: mocks.createScope, isPending: false }),
   useDeleteGovernanceProgram: () => ({ mutate: mocks.deleteProgram, isPending: false }),
   useUpdateGovernanceProgram: () => ({ mutate: mocks.updateProgram, isPending: false }),
-  useGovernancePrograms: () => ({ data: mocks.programs }),
+  useGovernancePrograms: () => ({
+    data: mocks.programs,
+    isLoading: mocks.programsLoading,
+    isError: mocks.programsError,
+    isSuccess: mocks.programsLoaded,
+    isFetching: mocks.programsFetching,
+    refetch: mocks.refetchPrograms,
+  }),
   useGovernanceUiStore: (selector: (state: { selectedProgramId: string; selectedScopeId: string | null; setSelectedProgramId: typeof mocks.setSelectedProgramId; setSelectedScopeId: typeof mocks.setSelectedScopeId }) => unknown) => selector({ selectedProgramId: 'program-1', selectedScopeId: mocks.selectedScopeId, setSelectedProgramId: mocks.setSelectedProgramId, setSelectedScopeId: mocks.setSelectedScopeId }),
 }));
 vi.mock('./GovernanceCockpit', () => ({ GovernanceCockpit: ({ onCreateScope }: { onCreateScope: () => void }) => <button type='button' onClick={onCreateScope}>cockpit.scopes.create</button> }));
@@ -38,6 +50,10 @@ describe('GovernancePage program cloning', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.selectedScopeId = 'scope-1';
+    mocks.programsLoading = false;
+    mocks.programsError = false;
+    mocks.programsLoaded = true;
+    mocks.programsFetching = false;
     mocks.programs = [{ id: 'program-1', name: 'Program', description: 'Description', domain: 'public', defaultLanguage: 'fr', status: 'published', createdAt: '', updatedAt: '' }];
   });
 
@@ -65,7 +81,8 @@ describe('GovernancePage program cloning', () => {
     const { container } = render(<GovernancePage />);
 
     expect(container.querySelector('main')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'programs.create' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'page.emptyPrograms.title' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'programs.create' })).toBeInTheDocument();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'programs.actions' }));
@@ -116,5 +133,27 @@ describe('GovernancePage program cloning', () => {
     await user.click(screen.getByRole('button', { name: 'lifecycle:overview' }));
 
     expect(screen.getByRole('button', { name: 'lifecycle:testPublish' })).toBeInTheDocument();
+  });
+
+  it('renders and retries a program query failure', async () => {
+    mocks.programsError = true;
+    mocks.programsLoaded = false;
+    mocks.selectedScopeId = null;
+    render(<GovernancePage />);
+
+    expect(screen.getByRole('heading', { name: 'page.error.title' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'page.error.retry' }));
+    expect(mocks.refetchPrograms).toHaveBeenCalledOnce();
+  });
+
+  it('preserves governance selection while programs are loading', () => {
+    mocks.programs = [];
+    mocks.programsLoading = true;
+    mocks.programsLoaded = false;
+
+    render(<GovernancePage />);
+
+    expect(mocks.setSelectedProgramId).not.toHaveBeenCalled();
+    expect(mocks.setSelectedScopeId).not.toHaveBeenCalled();
   });
 });

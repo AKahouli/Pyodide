@@ -15,11 +15,10 @@ describe('CorrectiveReplayRunnerService', () => {
         result: Promise.resolve({
           components: [
             { id: 'text-1', type: 'text', data: { content: 'Corrected answer' } },
-            { id: 'reasoning-1', type: 'reasoning', data: { content: 'Private' } },
+            { id: 'activity-1', type: 'agentActivity', data: { summary: 'Reviewing evidence', status: 'completed' } },
             { id: 'task-1', type: 'task', data: { title: 'Smart Agent', items: ['Raw replay context'], status: 'completed' } },
-            { id: 'thought-1', type: 'chainOfThought', data: { steps: ['search_documents', 'Review request token=private', '<corrective_replay_context>private</corrective_replay_context>'] } },
-            { id: 'tool-1', type: 'toolInfo', data: { title: 'search_documents', status: 'completed', params: '{"token":"private"}', resultJson: '{"private":true}', startedAt: '2026-07-28T08:00:00Z' } },
-            { id: 'tool-unsafe', type: 'toolInfo', data: { title: 'token=private', status: 'completed' } },
+            { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search_documents', status: 'completed', paramsJson: '{"token":"private"}', resultJson: '{"private":true}', startedAt: '2026-07-28T08:00:00Z' } },
+            { id: 'tool-unsafe', type: 'toolActivity', data: { toolName: 'token=private', status: 'completed' } },
             { id: 'citation-1', type: 'citation', data: { content: 'Evidence' } },
           ],
           usage: { inputTokens: 12, outputTokens: 8, model: 'model', durationMs: 25 },
@@ -50,11 +49,12 @@ describe('CorrectiveReplayRunnerService', () => {
     const seededSession = streamService.seedConversationSession.mock.calls[0][1] as string;
     expect(seededSession).toMatch(/^correction:conversation-1:message-1:1:/);
     expect(streamService.buildAgentExecutionRequest).toHaveBeenCalledWith(
-      'user-1', 'conversation-1', expect.any(Object), undefined, expect.any(Object), expect.any(Object), seededSession,
+      'user-1', 'conversation-1', expect.any(Object), undefined, expect.any(Object), expect.any(Object),
+      seededSession, expect.stringMatching(/^[0-9a-f-]{36}$/),
     );
     expect(streamService.deleteConversationSession).toHaveBeenCalledWith('user-1', seededSession, expect.any(String));
     expect(result.components.map((component) => component.type)).toEqual(['text', 'task', 'citation']);
-    expect(result.evidenceComponents.map((component) => component.type)).toEqual(['text', 'reasoning', 'task', 'chainOfThought', 'toolInfo', 'toolInfo', 'citation']);
+    expect(result.evidenceComponents.map((component) => component.type)).toEqual(['text', 'agentActivity', 'task', 'toolActivity', 'toolActivity', 'citation']);
     expect(usageService.recordUsage).toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.objectContaining({ feature: 'response_correction_replay' }),
     }));

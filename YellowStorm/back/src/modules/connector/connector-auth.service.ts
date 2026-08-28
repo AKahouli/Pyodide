@@ -108,7 +108,7 @@ export class ConnectorAuthServiceImpl implements ConnectorAuthService {
         this.logger.warn('Playbook MCP ingress token is not configured');
         return empty;
       }
-      return { headers: { 'X-Playbook-MCP-Token': token }, env: {} };
+      return { headers: { Authorization: `Bearer ${token}` }, env: {} };
     }
 
     if (connector.authSourceType === 'connected_app') {

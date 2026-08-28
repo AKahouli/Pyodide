@@ -8,7 +8,7 @@ const updateConversationMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefi
 const stopStreamMock = vi.hoisted(() => vi.fn());
 const clearAllMock = vi.hoisted(() => vi.fn());
 const currentConversationMock = vi.hoisted(() => ({
-  value: { id: 'conv-1', workspaces: ['ws-1'] } as { id: string; workspaces: string[]; runtimeMode?: 'standard' | 'governed' },
+  value: { id: 'conv-1', workspaces: ['ws-1'] } as { id: string; workspaces: string[]; runtimeMode?: 'standard' | 'governed'; runtimePurpose?: 'platform_copilot' },
 }));
 
 vi.mock('@/components/ai-elements/input', () => ({
@@ -16,6 +16,7 @@ vi.mock('@/components/ai-elements/input', () => ({
     onSubmit,
     showWorkspaceSelect,
     preserveWorkspaceSelectionOnSubmit,
+    extraTools,
   }: {
     onSubmit: (
       message: { text: string },
@@ -33,10 +34,12 @@ vi.mock('@/components/ai-elements/input', () => ({
     ) => Promise<void>;
     showWorkspaceSelect?: boolean;
     preserveWorkspaceSelectionOnSubmit?: boolean;
+    extraTools?: React.ReactNode;
   }) => (
     <>
       <span>{showWorkspaceSelect ? 'workspace-selector-visible' : 'workspace-selector-hidden'}</span>
       <span>{preserveWorkspaceSelectionOnSubmit ? 'workspace-selection-preserved' : 'workspace-selection-reset'}</span>
+      {extraTools}
       <button
         type='button'
         onClick={() => {
@@ -56,6 +59,18 @@ vi.mock('@/components/ai-elements/input', () => ({
           );
         }}>
         submit-message
+      </button>
+      <button
+        type='button'
+        onClick={() => void onSubmit({ text: 'hello' }, 'model-1')}
+      >
+        submit-with-reasoning
+      </button>
+      <button
+        type='button'
+        onClick={() => void onSubmit({ text: 'hello' }, 'model-1', undefined, ['member-1'])}
+      >
+        submit-to-member
       </button>
     </>
   ),
@@ -102,6 +117,21 @@ vi.mock('@/modules/auth/useAuth', () => ({
   useAuth: () => ({ user: { id: 'user-1' } }),
 }));
 
+vi.mock('@/modules/models', () => ({
+  useModels: () => [{
+    id: 'model-1',
+    supportsReasoning: true,
+    reasoning: {
+      defaultEffort: 'medium',
+      efforts: [
+        { id: 'medium', name: 'Medium' },
+        { id: 'high', name: 'High' },
+      ],
+    },
+  }],
+  useDefaultModel: () => undefined,
+}));
+
 vi.mock('../store', () => ({
   useConversationStore: Object.assign(
     (selector: (state: Record<string, unknown>) => unknown) =>
@@ -119,6 +149,7 @@ vi.mock('../store', () => ({
           repoName: 'org-name/repo-name',
           repoUrl: 'https://github.com/org-name/repo-name',
         },
+        messages: [],
         currentConversation: currentConversationMock.value,
       }),
     {
@@ -140,6 +171,9 @@ vi.mock('../store', () => ({
   useSelectedWorkspaceIds: () => ['ws-2'],
   useDeepSearchEnabled: () => false,
   useSetDeepSearchEnabled: () => vi.fn(),
+  useSelectedModelId: () => 'model-1',
+  useSelectedReasoningEffort: () => 'high',
+  useSetSelectedReasoningEffort: () => vi.fn(),
   useSelectedConnectorRepo: () => ({
     connectorId: 'connector-1',
     connectorName: 'GitHub',
@@ -199,5 +233,28 @@ describe('ConversationInput', () => {
     render(<ConversationInput conversationId='conv-1' />);
 
     expect(screen.getByText('workspace-selector-hidden')).toBeInTheDocument();
+  });
+
+  it('submits reasoning effort only for an untagged standard turn', async () => {
+    render(<ConversationInput conversationId='conv-1' />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
+
+    await waitFor(() => expect(sendMessageMock).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({ modelId: 'model-1', reasoningEffort: 'high' }),
+    ));
+  });
+
+  it('omits reasoning effort for member and platform copilot turns', async () => {
+    const { rerender } = render(<ConversationInput conversationId='conv-1' />);
+    await userEvent.click(screen.getByRole('button', { name: 'submit-to-member' }));
+    expect(sendMessageMock.mock.calls.at(-1)?.[1]).not.toHaveProperty('reasoningEffort');
+
+    currentConversationMock.value = { id: 'conv-1', workspaces: ['ws-1'], runtimePurpose: 'platform_copilot' };
+    rerender(<ConversationInput conversationId='conv-1' />);
+    await userEvent.click(screen.getByRole('button', { name: 'submit-with-reasoning' }));
+    expect(sendMessageMock.mock.calls.at(-1)?.[1]).not.toHaveProperty('reasoningEffort');
+    expect(screen.queryByRole('button', { name: 'input.reasoning.label' })).not.toBeInTheDocument();
   });
 });

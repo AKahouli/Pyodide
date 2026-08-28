@@ -47,3 +47,14 @@ export function openFileViewerFromUrl(
 ) {
   return useFileViewerStore.getState().openFileFromUrl(url, fileName, mimeType, options);
 }
+
+/** Open the viewer immediately while an asynchronous URL resolver runs. */
+export function openFileViewerFromUrlLoader(
+  key: string,
+  fileName: string,
+  mimeType: string,
+  load: () => Promise<{ url: string; fileName?: string; mimeType?: string }>,
+  options?: FileOpenOptions,
+) {
+  return useFileViewerStore.getState().openFileFromUrlLoader(key, fileName, mimeType, load, options);
+}

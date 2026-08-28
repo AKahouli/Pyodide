@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
-import type { ReactNode } from 'react';
+import userEvent from '@testing-library/user-event';
+import { forwardRef, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { CreateEditAgentDialog } from './CreateEditAgentDialog';
 
@@ -54,7 +55,7 @@ vi.mock('@/components/ui/dialog', () => ({
 }));
 
 vi.mock('@/components/ui/input', () => ({
-  Input: (props: any) => <input {...props} />,
+  Input: forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>((props, ref) => <input ref={ref} {...props} />),
 }));
 
 vi.mock('@/components/ui/label', () => ({
@@ -62,7 +63,7 @@ vi.mock('@/components/ui/label', () => ({
 }));
 
 vi.mock('@/components/ui/textarea', () => ({
-  Textarea: (props: any) => <textarea {...props} />,
+  Textarea: forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>((props, ref) => <textarea ref={ref} {...props} />),
 }));
 
 vi.mock('@/components/ui/button', () => ({
@@ -151,15 +152,36 @@ describe('CreateEditAgentDialog', () => {
     });
   });
 
-  it('renders edit mode content with agent data', async () => {
+  it('generates a slug from the name in create mode', async () => {
+    const user = userEvent.setup();
+    render(
+      <CreateEditAgentDialog
+        open
+        onOpenChange={vi.fn()}
+        agent={null}
+        onSave={vi.fn()}
+        saving={false}
+      />,
+    );
+
+    await user.type(await screen.findByLabelText('createEdit.fields.name'), 'New Agent');
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('createEdit.fields.slug')).toHaveValue('new-agent');
+    });
+  });
+
+  it('preserves the loaded slug when editing an agent', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
     render(
       <CreateEditAgentDialog
         open
         onOpenChange={vi.fn()}
         agent={{
           id: 'a1',
-          name: 'Agent',
-          slug: 'agent',
+          name: 'Yellowmind',
+          slug: 'platform-copilot',
           agentType: { id: 'type-1', name: 'Manager' },
           role: 'role',
           description: '',
@@ -175,15 +197,20 @@ describe('CreateEditAgentDialog', () => {
           createdAt: '',
           updatedAt: '',
         }}
-        onSave={vi.fn()}
+        onSave={onSave}
         saving={false}
       />,
     );
 
     await waitFor(() => {
-      expect(screen.getByText('createEdit.titleEdit')).toBeInTheDocument();
+      expect(screen.getByLabelText('createEdit.fields.slug')).toHaveValue('platform-copilot');
     });
 
+    await user.click(screen.getByRole('button', { name: 'createEdit.actions.saveChanges' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'platform-copilot' }),
+      expect.anything(),
+    ));
     expect(screen.getByTestId('telegram-section')).toHaveTextContent('telegram-section-a1');
   });
 });

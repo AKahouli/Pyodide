@@ -3,7 +3,6 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { FlowExecution, FlowExecutionDocument } from '../../schemas/playbook-flow-execution.schema';
 import type { FlowSnapshot } from '../../mappers/flow-to-snapshot.mapper';
-import type { ReplayEligibilityResult } from '../../interfaces/playbook-flow-replay-eligibility.interface';
 import type { ResolvedReplayArtifacts } from '../../interfaces/playbook-flow-replay-artifact.interface';
 import type {
   FlowSemanticMatchSummary,
@@ -80,7 +79,6 @@ export class PlaybookExecutionReplayRuntimeService {
     referenceExecutionId: string;
     validationVersion: number;
     mode: 'replay_strict' | 'replay_flex' | 'replay_adaptive';
-    eligibility: ReplayEligibilityResult;
   }): Promise<void> {
     try {
       await this.getReplayDriftService().createPreRunReport({
@@ -92,7 +90,6 @@ export class PlaybookExecutionReplayRuntimeService {
         referenceExecutionId: params.referenceExecutionId,
         validationVersion: params.validationVersion,
         mode: params.mode,
-        eligibility: params.eligibility,
       });
     } catch (err) {
       this.logger.warn(`Failed to persist replay report for task ${params.taskId}: ${err instanceof Error ? err.message : String(err)}`);
@@ -231,7 +228,7 @@ export class PlaybookExecutionReplayRuntimeService {
     }
 
     const replayReport = await this.replayReportService.findLatestReportForExecutionTask(executionId, taskId, iteration);
-    if (!replayReport?.applied) {
+    if (!replayReport?.replayId) {
       return null;
     }
 

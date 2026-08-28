@@ -15,12 +15,15 @@ import { User, UserSchema } from '../user/schemas/user.schema';
 import { ConnectorModule } from '../connector/connector.module';
 import { WorkspaceEvidenceSearchSettingsService } from './workspace-evidence-search-settings.service';
 import { AdminWorkspaceEvidenceSearchSettingsController } from './controllers/admin-workspace-evidence-search-settings.controller';
+import { AgentRepositoryModule } from '../agent/repositories/agent-repository.module';
 import { AgentModule } from '../agent/agent.module';
+import { AgentTypeModule } from '../agent-type/agent-type.module';
 import { WorkspaceTransformationSettingsService } from './workspace-transformation-settings.service';
 import { AdminWorkspaceTransformationSettingsController } from './controllers/admin-workspace-transformation-settings.controller';
 import { ConversationSettingsService } from './conversation-settings.service';
 import { AdminConversationSettingsController } from './controllers/admin-conversation-settings.controller';
 import { FeatureVisibilityService } from './feature-visibility.service';
+import { PlatformCopilotBootstrapService } from './services/platform-copilot-bootstrap.service';
 
 @Global() // Make SystemService available globally for the guard
 @Module({
@@ -42,7 +45,9 @@ import { FeatureVisibilityService } from './feature-visibility.service';
     }),
     forwardRef(() => AuthorizationModule),
     ConnectorModule,
+    AgentRepositoryModule,
     AgentModule,
+    AgentTypeModule,
   ],
   controllers: [
     SystemController,
@@ -59,11 +64,12 @@ import { FeatureVisibilityService } from './feature-visibility.service';
     WorkspaceTransformationSettingsService,
     ConversationSettingsService,
     FeatureVisibilityService,
+    PlatformCopilotBootstrapService,
     {
       provide: APP_GUARD,
       useClass: MaintenanceGuard,
     },
   ],
-  exports: [SystemService, WorkspaceUploadSettingsService, WorkspaceEvidenceSearchSettingsService, WorkspaceTransformationSettingsService, ConversationSettingsService],
+  exports: [SystemService, WorkspaceUploadSettingsService, WorkspaceEvidenceSearchSettingsService, WorkspaceTransformationSettingsService, ConversationSettingsService, FeatureVisibilityService],
 })
 export class SystemModule {}

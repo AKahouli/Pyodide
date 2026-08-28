@@ -36,6 +36,7 @@ import { UrlToPdfClientService } from './services/url-to-pdf-client.service';
 import { WebsiteCrawlerService } from './services/website-crawler.service';
 import { WorkspaceArtifactCleanupService } from './services/workspace-artifact-cleanup.service';
 import { GuardedUrlDownloaderService } from './services/guarded-url-downloader.service';
+import { RunCodeSourceScopeService } from './services/run-code-source-scope.service';
 import {
   WorkspaceOwnerGuard,
   WorkspaceAccessGuard,
@@ -98,6 +99,7 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
     UrlToPdfClientService,
     WorkspaceArtifactCleanupService,
     GuardedUrlDownloaderService,
+    RunCodeSourceScopeService,
   ],
   exports: [
     MongooseModule,
@@ -108,6 +110,7 @@ import { SemanticModelModule } from '../semantic-model/semantic-model.module';
     WorkspaceShareService,
     WorkspaceAccessGuard,
     WritePermissionGuard,
+    RunCodeSourceScopeService,
   ],
 })
 export class WorkspaceModule {}

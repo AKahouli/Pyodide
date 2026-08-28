@@ -92,6 +92,51 @@ export class WorkspaceShareService {
     }
   }
 
+  async assertUserHasWriteAccess(userId: string, workspaceId: string): Promise<void> {
+    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(workspaceId)) {
+      throw new NotFoundException(
+        ErrorCode.WORKSPACE_NOT_FOUND,
+        'Invalid workspace or user ID format',
+      );
+    }
+
+    const workspace = await this.workspaceModel.findById(workspaceId).exec();
+    if (!workspace) {
+      throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
+    }
+
+    if (workspace.createdBy.toString() === userId) return;
+
+    if (workspace.isPublic) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_READ_ONLY,
+        'You have read-only access to this workspace',
+      );
+    }
+
+    const share = await this.shareModel
+      .findOne({
+        workspaceId: new Types.ObjectId(workspaceId),
+        sharedWithUserId: new Types.ObjectId(userId),
+      })
+      .lean()
+      .exec();
+
+    if (!share) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_FORBIDDEN,
+        'You do not have access to this workspace',
+      );
+    }
+
+    if (share.permission !== 'readwrite') {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_READ_ONLY,
+        'You have read-only access to this workspace',
+      );
+    }
+  }
+
   /**
    * Return whether a user has any kind of access (owner OR active share,
    * read or readwrite, OR the workspace is public) to a single workspace.

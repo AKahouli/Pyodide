@@ -64,6 +64,57 @@ describe('PlaybookFlowObservabilityService', () => {
     }));
   });
 
+  it('preserves trace text when sensitive-text redaction is disabled', () => {
+    const payload = service.extractCompletedResultPayload({
+      output: 'done',
+      tool_trace: [{
+        tool_name: 'shell',
+        args: { command: 'cat /mnt/workspace/cv/template.docx', authorization: 'Bearer abc' },
+        output_summary: 'Read /mnt/workspace/cv/template.docx',
+      }],
+      llm_prompt_trace: [{
+        stage: 'initial_request',
+        model: 'test-model',
+        prompt: 'Bearer secret',
+        generated_output: 'token=abc',
+      }],
+      trace_metadata: { token: 'abc' },
+    }, { executionId: 'exec-1', taskId: 'task-1' }, false);
+
+    expect(payload.toolTrace?.[0].args).toEqual({
+      command: 'cat /mnt/workspace/cv/template.docx',
+      authorization: 'Bearer abc',
+    });
+    expect(payload.llmPromptTrace?.[0]).toEqual(expect.objectContaining({
+      prompt: 'Bearer secret',
+      generatedOutput: 'token=abc',
+    }));
+    expect(payload.traceMetadata).toEqual(expect.objectContaining({ token: 'abc' }));
+    expect(service.toStreamPayload(payload, false).toolTrace).toEqual(payload.toolTrace);
+  });
+
+  it('fails secure when the redaction setting cannot be loaded', async () => {
+    const settings = { getSettings: jest.fn().mockRejectedValue(new Error('unavailable')) };
+    const configuredService = new PlaybookFlowObservabilityService(
+      new PlaybookFlowTraceRedactionService(),
+      new PlaybookFlowPublicReasoningParserService(),
+      settings as any,
+    );
+
+    await expect(configuredService.shouldRedactSensitiveText()).resolves.toBe(true);
+  });
+
+  it('uses the disabled persisted redaction setting', async () => {
+    const settings = { getSettings: jest.fn().mockResolvedValue({ redactSensitiveText: false }) };
+    const configuredService = new PlaybookFlowObservabilityService(
+      new PlaybookFlowTraceRedactionService(),
+      new PlaybookFlowPublicReasoningParserService(),
+      settings as any,
+    );
+
+    await expect(configuredService.shouldRedactSensitiveText()).resolves.toBe(false);
+  });
+
   it('cleans display text when only display_text carries the marker', () => {
     const payload = service.extractCompletedResultPayload({
       output: { final: 'done' },
@@ -102,15 +153,17 @@ describe('PlaybookFlowObservabilityService', () => {
     const payload = service.extractCompletedResultPayload({
       output: 'Iterator complete',
       iterator_iterations: [
-        { index: 0, status: 'completed', childResults: [{ taskId: 'child-1', status: 'completed' }] },
+        { index: 0, status: 'completed', childResults: [{ taskId: 'child-1', status: 'completed', file_path: '/mnt/workspace/private/report.pdf' }] },
         'invalid',
       ],
     }, { executionId: 'exec-1', taskId: 'iterator-1' });
 
     expect(payload.iteratorIterations).toEqual([
+      { index: 0, status: 'completed', childResults: [{ taskId: 'child-1', status: 'completed', file_path: '/mnt/workspace/private/report.pdf' }] },
+    ]);
+    expect(service.toStreamPayload(payload).iteratorIterations).toEqual([
       { index: 0, status: 'completed', childResults: [{ taskId: 'child-1', status: 'completed' }] },
     ]);
-    expect(service.toStreamPayload(payload).iteratorIterations).toEqual(payload.iteratorIterations);
   });
 
   it('maps playbook citation sources to conversation citation components', () => {

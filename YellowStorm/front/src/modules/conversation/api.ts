@@ -1,5 +1,5 @@
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse } from './types';
+import type { ActiveStreamSnapshot, Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload } from './types';
 
 // ===== Conversation APIs =====
 
@@ -25,7 +25,7 @@ export async function fetchConversations(params?: ConversationListParams): Promi
   };
 }
 
-export async function createConversation(data?: { title?: string; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }>; ownerJob?: string; projectId?: string }): Promise<Conversation> {
+export async function createConversation(data?: CreateConversationPayload): Promise<Conversation> {
   const response = await apiClient.post<ApiResponse<Conversation>>(API_ENDPOINTS.conversations.create, data || {});
   return response.data.data;
 }
@@ -83,6 +83,11 @@ export async function fetchMessages(conversationId: string, params?: MessageList
   };
 }
 
+export async function fetchActiveStream(conversationId: string): Promise<ActiveStreamSnapshot | null> {
+  const response = await apiClient.get<ApiResponse<ActiveStreamSnapshot | null>>(API_ENDPOINTS.conversations.activeStream(conversationId));
+  return response.data.data;
+}
+
 export async function sendMessage(conversationId: string, payload: SendMessagePayload): Promise<{ userMessage: Message; aiMessageId?: string }> {
   const response = await apiClient.post<ApiResponse<{ userMessage: Message; aiMessageId?: string }>>(API_ENDPOINTS.conversations.messages(conversationId), payload);
   return response.data.data;
@@ -135,8 +140,22 @@ export async function reportMessage(conversationId: string, messageId: string, p
   await apiClient.post(API_ENDPOINTS.conversations.report(conversationId, messageId), payload);
 }
 
-export async function getArtifactDownloadUrl(filePath: string, filename?: string): Promise<{ downloadUrl: string }> {
-  const response = await apiClient.post<ApiResponse<{ downloadUrl: string }>>(API_ENDPOINTS.conversations.artifactUrl, { filePath, filename });
+export async function getArtifactDownloadUrl(conversationId: string, messageId: string, artifactId: string): Promise<{ viewUrl: string; downloadUrl: string }> {
+  const response = await apiClient.post<ApiResponse<{ viewUrl: string; downloadUrl: string }>>(
+    API_ENDPOINTS.conversations.artifactUrl(conversationId, messageId, artifactId),
+  );
+  return response.data.data;
+}
+
+export async function getCitationViewUrl(
+  conversationId: string,
+  messageId: string,
+  citation: { source: string; fileName?: string; reference?: string },
+): Promise<{ url: string; fileName: string; mimeType: string }> {
+  const response = await apiClient.post<ApiResponse<{ url: string; fileName: string; mimeType: string }>>(
+    API_ENDPOINTS.conversations.citationUrl(conversationId, messageId),
+    citation,
+  );
   return response.data.data;
 }
 

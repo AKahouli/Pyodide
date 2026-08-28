@@ -110,11 +110,11 @@ export const API_ENDPOINTS = {
   adminConversationSettings: {
     base: '/admin/conversation-settings',
     agents: '/admin/conversation-settings/agents',
+    sensitiveTextRedaction: '/admin/conversation-settings/sensitive-text-redaction',
   },
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
     plannerAgents: '/admin/playbook-settings/planner-agents',
-    suggestorAgents: '/admin/playbook-settings/suggestor-agents',
   },
   adminGuardrails: {
     base: '/admin/guardrails',
@@ -214,6 +214,7 @@ export const API_ENDPOINTS = {
     join: (id: string) => `/conversations/${id}/join`,
     taggedAgents: (id: string) => `/conversations/${id}/tagged-agents`,
     messages: (id: string) => `/conversations/${id}/messages`,
+    activeStream: (id: string) => `/conversations/${id}/active-stream`,
     messageById: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}`,
     feedback: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/feedback`,
     rerunReliabilityEvaluation: (convId: string, msgId: string) => `/conversations/${convId}/messages/${msgId}/reliability-evaluation/rerun`,
@@ -228,7 +229,10 @@ export const API_ENDPOINTS = {
     fileConfirm: (convId: string) => `/conversations/${convId}/files/confirm`,
     fileDelete: (convId: string, docId: string) => `/conversations/${convId}/files/${docId}`,
     stream: '/conversations/stream',
-    artifactUrl: '/conversations/artifact-url',
+    artifactUrl: (conversationId: string, messageId: string, artifactId: string) =>
+      `/conversations/${conversationId}/messages/${messageId}/artifacts/${artifactId}/url`,
+    citationUrl: (conversationId: string, messageId: string) =>
+      `/conversations/${conversationId}/messages/${messageId}/citations/url`,
     composerSuggestions: '/conversations/suggestions',
     settings: '/conversations/settings',
     // Share endpoints
@@ -470,11 +474,6 @@ export const API_ENDPOINTS = {
   skills: {
     active: '/skills/active',
   },
-  secondBrain: {
-    turns: '/second-brain/turns',
-    confirm: (confirmationId: string) => `/second-brain/confirmations/${encodeURIComponent(confirmationId)}/confirm`,
-    reject: (confirmationId: string) => `/second-brain/confirmations/${encodeURIComponent(confirmationId)}/reject`,
-  },
   playbooks: {
     list: '/playbooks',
     generate: '/playbooks/generate',
@@ -512,6 +511,9 @@ export const API_ENDPOINTS = {
     outputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     intentDesign: (id: string) => `/playbooks/${id}/intent-design`,
     assistantTurns: (id: string) => `/playbooks/${id}/assistant/turns`,
+    assistantAttachments: (id: string) => `/playbooks/${id}/assistant/attachments`,
+    assistantAttachmentConfirm: (id: string, attachmentId: string) => `/playbooks/${id}/assistant/attachments/${attachmentId}/confirm`,
+    assistantMessages: (id: string) => `/playbooks/${id}/assistant/messages`,
     intentTraces: (id: string) => `/playbooks/${id}/intent-traces`,
     intentConstructions: (id: string) => `/playbooks/${id}/intent-constructions`,
     intentConstruction: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}`,
@@ -617,7 +619,6 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/playbooks/${id}`,
     delta: (id: string) => `/playbooks/${id}/delta`,
     generate: '/playbooks/generate',
-    fromConversation: '/playbooks/from-conversation',
     rewritePrompt: '/playbooks/rewrite-prompt',
     design: (id: string) => `/playbooks/${id}/design`,
     designOperations: (id: string) => `/playbooks/${id}/design-operations`,
@@ -627,6 +628,8 @@ export const API_ENDPOINTS = {
     execute: (id: string) => `/playbooks/${id}/executions`,
     executions: (id: string) => `/playbooks/${id}/executions`,
     executionDetail: (executionId: string) => `/executions/${executionId}`,
+    executionArtifactAccess: (executionId: string, artifactId: string) => `/executions/${executionId}/artifacts/${artifactId}/access`,
+    artifactContent: '/executions/artifacts/content',
     hitlPolicy: (id: string) => `/playbooks/${id}/hitl/policy`,
     hitlBlockers: (id: string) => `/playbooks/${id}/hitl/blockers`,
     hitlBlocker: (id: string, blockerId: string) => `/playbooks/${id}/hitl/blockers/${blockerId}`,

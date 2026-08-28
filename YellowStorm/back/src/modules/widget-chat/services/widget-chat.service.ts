@@ -865,7 +865,7 @@ export class WidgetChatService {
   }
 
   private mergeData(type: ComponentType, existing: Record<string, unknown>, incoming: Record<string, unknown>): Record<string, unknown> {
-    if (type === 'text' || type === 'reasoning' || type === 'code') {
+    if (type === 'text' || type === 'agentActivity' || type === 'code') {
       return { ...existing, content: (existing.content as string) + (incoming.content as string) };
     }
     return { ...incoming };

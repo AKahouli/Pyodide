@@ -104,17 +104,40 @@ class UpdatePlaybookExecutionAdminSettingsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
   recursionLimitMax?: number;
 
+  @ApiPropertyOptional({ minimum: 0, maximum: 100 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100)
+  maxHitlRounds?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 100 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100)
+  pythonWorkerPoolSize?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 20 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(20)
+  pythonWorkerMaxInflight?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 500 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(500)
+  maxToolIterations?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional() @IsBoolean()
+  graphCacheEnabled?: boolean;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 10000 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(10000)
+  graphCacheMaxEntries?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 86400 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(86400)
+  graphCacheTtlSeconds?: number;
+
   @ApiPropertyOptional({ type: UpdateDynamicReasoningAdminSettingsDto })
   @IsOptional() @ValidateNested() @Type(() => UpdateDynamicReasoningAdminSettingsDto)
   dynamicReasoning?: UpdateDynamicReasoningAdminSettingsDto;
 }
 
 export class UpdateAdminPlaybookSettingsDto {
-  @ApiPropertyOptional({ description: 'Required default agent used to suggest a playbook from a conversation turn.' })
-  @IsOptional()
-  @IsMongoId()
-  playbookSuggestorAgentId?: string | null;
-
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -145,14 +168,6 @@ export class UpdateAdminPlaybookSettingsDto {
   @ValidateNested()
   @Type(() => UpdatePlaybookIntentNormalizationLimitsDto)
   intentNormalizationLimits?: UpdatePlaybookIntentNormalizationLimitsDto;
-
-  @ApiPropertyOptional({ minimum: 0, maximum: 100 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  @Max(100)
-  replayEligibilityConfidenceThreshold?: number;
 
   @ApiPropertyOptional({ description: 'Use the deterministic blueprint builder path for intent.analyze and realtime construction.' })
   @IsOptional()

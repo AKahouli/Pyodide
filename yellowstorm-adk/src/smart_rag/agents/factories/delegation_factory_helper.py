@@ -53,6 +53,24 @@ def _get_enabled_tool_config(
     return None
 
 
+def _append_run_code_guidance(
+    prompt: str,
+    tools_config: List[Any],
+    runtime_context: Dict[str, Any],
+) -> str:
+    if not _get_enabled_tool_config(tools_config, "run_code"):
+        return prompt
+    from src.infrastructure.run_code.context import parse_run_code_context
+    from src.smart_rag.tools.utilities.run_code import (
+        RUN_CODE_PROMPT_GUIDANCE,
+        run_code_globally_enabled,
+    )
+
+    if not run_code_globally_enabled() or parse_run_code_context(runtime_context) is None:
+        return prompt
+    return f"{prompt}\n\n{RUN_CODE_PROMPT_GUIDANCE}"
+
+
 def _build_connector_repo_fixed_params(
     connector_repo: Dict[str, str],
 ) -> Dict[str, str]:
@@ -182,6 +200,76 @@ def _append_workspace_document_context(prompt: str, brain_documents: Any) -> str
     if not context:
         return prompt
     return f"{prompt}\n\n{context}"
+
+
+def _append_capability_aware_file_context(
+    prompt: str,
+    brain_documents: Any,
+    tools_config: Any,
+    *,
+    preserve_for_legacy_connector: bool = False,
+) -> str:
+    if preserve_for_legacy_connector:
+        return _append_workspace_document_context(prompt, brain_documents)
+    names = {
+        str(tool.get("name") if isinstance(tool, dict) else tool or "").strip().lower()
+        for tool in tools_config or []
+        if isinstance(tool, (dict, str))
+    }
+    discovery_capabilities = {"run_code", "search"}
+    if names and names <= discovery_capabilities:
+        return prompt
+    return _append_workspace_document_context(prompt, brain_documents)
+
+
+def _append_current_attachment_context(
+    prompt: str,
+    attached_files: Any,
+    runtime_context: Dict[str, Any],
+) -> str:
+    if not isinstance(attached_files, list) or not attached_files:
+        return prompt
+
+    names = []
+    for item in attached_files:
+        if not isinstance(item, dict):
+            continue
+        name = " ".join(str(item.get("filename") or item.get("name") or "").split())
+        name = name.replace("{", "(").replace("}", ")").replace("<", "").replace(">", "")
+        if name and name not in names:
+            names.append(name[:255])
+    if not names:
+        return prompt
+
+    logical_paths = []
+    from src.infrastructure.run_code.context import parse_run_code_context
+
+    run_code_context = parse_run_code_context(runtime_context)
+    if run_code_context is not None:
+        for source in run_code_context.sources:
+            if source.scope.kind != "files":
+                continue
+            for relative_path in source.scope.relativePaths:
+                logical_path = f"/workspace/attachments/{source.alias}/{relative_path}"
+                if "{" not in logical_path and "}" not in logical_path:
+                    logical_paths.append(logical_path)
+
+    lines = [
+        "<current_attachments>",
+        "The user attached these files to the current message:",
+    ]
+    for name in names:
+        matches = [path for path in logical_paths if path.rsplit("/", 1)[-1] == name]
+        if not matches and len(names) == 1 and len(logical_paths) == 1:
+            matches = logical_paths
+        lines.append(f"- File: {name}")
+        lines.extend(f"  Logical path: {path}" for path in matches)
+    if logical_paths:
+        lines.append("Use the logical path with the available file tool. Do not ask which file was attached.")
+    else:
+        lines.append("Use the available file or search tool for these files. Do not ask which file was attached.")
+    lines.append("</current_attachments>")
+    return f"{prompt}\n\n" + "\n".join(lines)
 
 
 def _get_connector_repo(config: Any) -> Optional[Dict[str, str]]:
@@ -461,12 +549,25 @@ def create_search_agent_with_tools(
         enhanced_prompt,
         _get_connector_repo(config),
     )
-    enhanced_prompt = _append_workspace_document_context(
+    tools_config = agent_config.get("tools", [])
+    enhanced_prompt = _append_capability_aware_file_context(
         enhanced_prompt,
         agent_config.get("brain_documents", []),
+        tools_config,
+        preserve_for_legacy_connector=_get_connector_repo(config) is not None,
+    )
+    enhanced_prompt = _append_current_attachment_context(
+        enhanced_prompt,
+        getattr(config, "attached_files", None),
+        agent_config.get("agent_params") or {},
     )
 
     agent_params = agent_config.get("agent_params") or {}
+    enhanced_prompt = _append_run_code_guidance(
+        enhanced_prompt,
+        tools_config,
+        agent_params,
+    )
     temp = _resolve_temperature(agent_params)
     if agent_config.get("agent_type") == "visualizer":
         max_tokens = (
@@ -481,7 +582,6 @@ def create_search_agent_with_tools(
             else 20000
         )
     top_k = 1
-    tools_config = agent_config.get("tools", [])
     preview_tool_config = _get_enabled_tool_config(
         tools_config, "generate_web_preview"
     )
@@ -560,6 +660,12 @@ def create_search_agent_with_tools(
                         brain_documents=agent_config.get("brain_documents", []),
                         session_id=config.session_id,
                         agent_id=agent_config.get("id"),
+                        user_id=config.user_id,
+                        platform_api_token=str(
+                            (agent_config.get("agent_params") or {}).get(
+                                "platform_api_token", ""
+                            )
+                        ),
                     ),
                 )
             )
@@ -686,9 +792,21 @@ def create_standard_agent_with_tools(
         enhanced_prompt,
         _get_connector_repo(config),
     )
-    enhanced_prompt = _append_workspace_document_context(
+    enhanced_prompt = _append_capability_aware_file_context(
         enhanced_prompt,
         agent_config.get("brain_documents", []),
+        agent_config.get("tools", []),
+        preserve_for_legacy_connector=_get_connector_repo(config) is not None,
+    )
+    enhanced_prompt = _append_current_attachment_context(
+        enhanced_prompt,
+        getattr(config, "attached_files", None),
+        agent_params,
+    )
+    enhanced_prompt = _append_run_code_guidance(
+        enhanced_prompt,
+        agent_config.get("tools", []),
+        agent_params,
     )
 
     connector_bindings = []
@@ -740,6 +858,7 @@ def create_standard_agent_with_tools(
             connector_bindings,
             _get_connector_repo(config),
         ),
+        platform_api_token=str(_agent_params_std.get("platform_api_token", "")),
     )
 
     # Catalogue assignment controls native UI tools; metadata alone never makes a

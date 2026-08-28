@@ -18,13 +18,29 @@ from pydantic import BaseModel, Field, create_model
 from structlog import get_logger
 
 from src.connector_tool_name import build_connector_tool_name
-from src.run_workspace import with_run_workspace_path
+from src.run_workspace import run_workspace_path, with_run_workspace_path
 from src.config.settings import get_settings
 from src.flow_engine.runtime.artifact_routing import (
     infer_artifact_kind,
     semantic_match_output_port,
 )
 from src.guardrails.tool_registry import tool_policy
+from src.infrastructure.run_code import (
+    RunCodeClient,
+    build_run_code_context,
+    build_run_code_context_from_sources,
+)
+from src.flow_engine.tools.sandbox_mount_guard import (
+    SANDBOX_CALL_LIMIT_MESSAGE,
+    SandboxCallBudget,
+    SandboxMountGuard,
+    SandboxMountValidationError,
+)
+from src.smart_rag.tools.utilities.run_code import (
+    RUN_CODE_CODE_DESCRIPTION,
+    RUN_CODE_TOOL_DESCRIPTION,
+    run_code_globally_enabled,
+)
 from src.smart_rag.tools.utilities.code_interpreter_payload import (
     _extract_workspace_name_from_filepath,
     _extract_workspace_name_hint,
@@ -553,6 +569,11 @@ class ActivateSkillInput(BaseModel):
     name: str = Field(description="The exact skill name to activate.")
 
 
+class RunCodeInput(BaseModel):
+    code: str = Field(description=RUN_CODE_CODE_DESCRIPTION)
+    input: Any = Field(default=None, description="Optional JSON-compatible input value.")
+
+
 def create_langchain_tools(
     agent_config: dict,
     workspace_context: Optional[list] = None,
@@ -567,9 +588,10 @@ def create_langchain_tools(
     initial_components: Optional[List[dict]] = None,
     user_id: Optional[str] = None,
     workspace_ceph_paths: Optional[List[str]] = None,
-    deep_search: bool = False,
     binding_workspace_ids: Optional[List[str]] = None,
+    run_code_sources: Optional[List[Dict[str, Any]]] = None,
     execution_id: str = "",
+    sandbox_inputs: Optional[List[Dict[str, str]]] = None,
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
@@ -584,7 +606,6 @@ def create_langchain_tools(
         step_connector_bindings: Optional list of connector bindings attached to this step.
         initial_components: Prior playbook source/citation components used to continue
             citation numbering and avoid duplicate source emission.
-        deep_search: When True, attach a search_relevant_documents tool via the MCP indexation server.
 
     Returns:
         Tuple of (list of StructuredTools, ToolResultCollector).
@@ -593,7 +614,8 @@ def create_langchain_tools(
     effective_file_names = file_names if file_names is not None else input_files
     agent_params = agent_config.get("agent_params") or {}
     session_id = str(agent_params.get("session_id") or "")
-    user_id = str(agent_params.get("user_id") or "")
+    user_id = str(agent_params.get("user_id") or user_id or "")
+    runtime_id = execution_id or session_id
     # Prefer the authoritative Ceph paths ("user_id/workspace_name") resolved by the
     # step node from the backend payload. Fall back to deriving them from document
     # filepaths only when the backend did not supply explicit paths.
@@ -603,7 +625,7 @@ def create_langchain_tools(
             workspace_context, code_interpreter_files, user_id
         )
     workspace_paths = with_run_workspace_path(
-        workspace_paths, user_id, session_id or execution_id
+        workspace_paths, user_id, runtime_id
     )
 
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
@@ -640,11 +662,12 @@ def create_langchain_tools(
             file_names=effective_file_names,
             file_paths=connector_file_paths,
             user_id=user_id,
+            platform_api_token=str(agent_params.get("platform_api_token") or ""),
             external_ids=input_files,
-            session_id=session_id,
+            session_id=runtime_id,
             workspace_paths=workspace_paths,
-            deep_search=deep_search,
             execution_id=execution_id,
+            sandbox_inputs=sandbox_inputs,
         )
 
     tool_configs = agent_config.get("tools", [])
@@ -718,9 +741,46 @@ def create_langchain_tools(
             documents_by_port=documents_by_port,
             output_workspace_id=output_workspace_id,
             workspace_context_mode=workspace_context_mode,
+            execution_id=execution_id,
         )
         if code_tool:
             tools.append(code_tool)
+
+    if "run_code" in tool_names and run_code_globally_enabled():
+        run_id = runtime_id
+        if user_id and run_id:
+            if run_code_sources:
+                context = build_run_code_context_from_sources(
+                    user_id, run_id, run_code_sources
+                )
+            else:
+                context = build_run_code_context(
+                    user_id,
+                    run_id,
+                    [
+                        path
+                        for path in workspace_paths
+                        if path != run_workspace_path(user_id, run_id)
+                    ],
+                )
+            client = RunCodeClient()
+
+            async def execute_run_code(code: str, input: Any = None) -> dict[str, Any]:
+                return await client.execute(
+                    code=code,
+                    input_value=input,
+                    context=context,
+                )
+
+            tools.append(
+                StructuredTool.from_function(
+                    coroutine=execute_run_code,
+                    func=None,
+                    name="run_code",
+                    description=RUN_CODE_TOOL_DESCRIPTION,
+                    args_schema=RunCodeInput,
+                )
+            )
 
     # --- Plan generator ---
     if "plan" in tool_names:
@@ -732,15 +792,6 @@ def create_langchain_tools(
         )
         if activate_skill_tool:
             tools.append(activate_skill_tool)
-
-    if deep_search:
-        deep_search_workspace_id = next(
-            (workspace_id for workspace_id in (binding_workspace_ids or []) if workspace_id),
-            output_workspace_id,
-        )
-        deep_search_tool = _create_deep_search_tool(deep_search_workspace_id)
-        if deep_search_tool:
-            tools.append(deep_search_tool)
 
     logger.info(
         "Created LangChain tools for playbook agent",
@@ -1382,6 +1433,7 @@ def _create_code_interpreter_tool(
     documents_by_port: Optional[Dict[str, List[str]]] = None,
     output_workspace_id: str = "",
     workspace_context_mode: str = "resolved_inputs_only",
+    execution_id: str = "",
 ) -> Optional[StructuredTool]:
     """Create a code interpreter LangChain tool.
 
@@ -1413,7 +1465,7 @@ def _create_code_interpreter_tool(
 
     # Extract session params from agent_params if available
     agent_params = agent_config.get("agent_params") or {}
-    session_id = agent_params.get("session_id")
+    session_id = execution_id or agent_params.get("session_id")
     user_id = agent_params.get("user_id")
     file_workspace_ids = {
         str(doc.get("workspace_id", "")).strip()
@@ -1626,34 +1678,6 @@ def _create_plan_tool() -> StructuredTool:
     )
 
 
-class DeepSearchInput(BaseModel):
-    query: str = Field(description="The search query string.")
-
-
-def _create_deep_search_tool(workspace_id: str) -> Optional[StructuredTool]:
-    """Create the relevant-document tool for compatible non-preflight callers."""
-    async def _deep_search(query: str) -> str:
-        from src.flow_engine.deep_search import search_relevant_documents
-
-        try:
-            result = await search_relevant_documents(query, workspace_id)
-            return json.dumps(result, ensure_ascii=False)
-        except Exception as e:
-            logger.error("deep_search_tool_failed", error=str(e))
-            return f"Deep search failed: {str(e)}"
-
-    return StructuredTool(
-        name="search_relevant_documents",
-        description=(
-            "Search for relevant documents across the knowledge base using semantic search. "
-            "Use this to find information in indexed documents by providing a natural language query."
-        ),
-        func=None,
-        coroutine=_deep_search,
-        args_schema=DeepSearchInput,
-    )
-
-
 def _format_search_result(result: Dict[str, Any]) -> str:
     """Format a SearchToolkit result dict into a readable string for the LLM."""
     if not result:
@@ -1699,12 +1723,13 @@ def _create_connector_mcp_tools(
     file_names: Optional[List[str]] = None,
     file_paths: Optional[List[str]] = None,
     user_id: Optional[str] = None,
+    platform_api_token: str = "",
     brain_ids: Optional[List[str]] = None,
     external_ids: Optional[List[str]] = None,
     session_id: str = "",
     workspace_paths: Optional[List[str]] = None,
-    deep_search: bool = False,
     execution_id: str = "",
+    sandbox_inputs: Optional[List[Dict[str, str]]] = None,
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1715,6 +1740,7 @@ def _create_connector_mcp_tools(
         return []
 
     tools: List[StructuredTool] = []
+    sandbox_call_budget = SandboxCallBudget()
     for binding in bindings:
         connector_id = binding.get("connector_id", "")
         connector_name = binding.get("connector_name") or connector_id
@@ -1728,10 +1754,9 @@ def _create_connector_mcp_tools(
         fixed_params = binding.get("fixed_params", {})
         binding_auth_headers = binding.get("auth_headers") or {}
         binding_auth_env = binding.get("auth_env") or {}
-        # When deep search is off, strip the header so the MCP server hides
-        # search_relevant_documents, and filter the action below.
-        if not deep_search:
-            binding_auth_headers.pop("X-Deep-Search", None)
+        # The MCP server can hide search_relevant_documents behind the X-Deep-Search
+        # header; strip it so the gated action never surfaces to the agent.
+        binding_auth_headers.pop("X-Deep-Search", None)
         actions = (
             [
                 {
@@ -1754,12 +1779,18 @@ def _create_connector_mcp_tools(
             if raw_actions
             else []
         )
-        # When deep search is off, drop the gated MCP action so the agent
-        # never sees search_relevant_documents as a connector tool.
-        if not deep_search:
-            actions = [a for a in actions if a.get("action_key") != "search_relevant_documents"]
+        # Drop the gated MCP action so the agent never sees
+        # search_relevant_documents as a connector tool.
+        actions = [a for a in actions if a.get("action_key") != "search_relevant_documents"]
         if not actions:
             continue
+        available_action_keys = {str(action.get("action_key") or "") for action in actions}
+        is_code_interpreter = connector_slug == "code-interpreter"
+        mount_guard = (
+            SandboxMountGuard(list(sandbox_inputs or []), available_action_keys)
+            if is_code_interpreter and sandbox_inputs
+            else None
+        )
 
         logger.info(
             "connector_binding_processing",
@@ -1805,6 +1836,11 @@ def _create_connector_mcp_tools(
                 eid: str = execution_id,
                 wsp: List[str] = list(workspace_paths or []),
                 fpths: List[str] = list(file_paths or []),
+                guard: Optional[SandboxMountGuard] = mount_guard,
+                call_budget: Optional[SandboxCallBudget] = sandbox_call_budget if is_code_interpreter else None,
+                suppress_file_paths: bool = is_code_interpreter and bool(sandbox_inputs),
+                action_keys: set[str] = set(available_action_keys),
+                internal_token: str = platform_api_token,
             ) -> StructuredTool:
                 async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
@@ -1816,6 +1852,14 @@ def _create_connector_mcp_tools(
                         params = {k: v for k, v in kwargs.items() if k != "params"}
                     if not isinstance(params, dict):
                         params = {}
+                    merged_params = {**fp, **params}
+                    merged_params.pop("user_id", None)
+                    for filename_param in ("file_name", "file_names"):
+                        if params.get(filename_param) in (None, "", []):
+                            merged_params.pop(filename_param, None)
+                    _last_mcp_actual_args.set(dict(merged_params))
+                    if call_budget is not None and not await call_budget.try_acquire():
+                        return SANDBOX_CALL_LIMIT_MESSAGE
                     try:
                         if not su:
                             return (
@@ -1826,19 +1870,17 @@ def _create_connector_mcp_tools(
                             call_mcp_tool,
                         )
 
-                        merged_params = {**fp, **params}
-                        merged_params.pop("user_id", None)
-                        for filename_param in ("file_name", "file_names"):
-                            if params.get(filename_param) in (None, "", []):
-                                merged_params.pop(filename_param, None)
-
-                        effective_auth_headers = dict(ah)
+                        effective_auth_headers = {
+                            key: value
+                            for key, value in ah.items()
+                            if key.lower() not in {"x-conversation-id", "x-execution-id"}
+                        }
                         # Run/turn correlation applies to every HTTP MCP transport,
                         # not just streamable_http -- an sse connector is the same
                         # server behind a different stream.
                         if tt in ("streamable_http", "sse"):
-                            if sid:
-                                effective_auth_headers["x-conversation-id"] = sid
+                            if eid or sid:
+                                effective_auth_headers["x-conversation-id"] = eid or sid
                             if eid:
                                 effective_auth_headers["x-execution-id"] = eid
                         if tt == "streamable_http":
@@ -1857,39 +1899,79 @@ def _create_connector_mcp_tools(
                                 effective_auth_headers.pop("workspace_name", None)
                             if wsp:
                                 effective_auth_headers["x-workspace-paths"] = ",".join(wsp)
-                            if fpths:
+                            if fpths and not suppress_file_paths:
                                 effective_auth_headers["x-file-paths"] = ",".join(fpths)
                             logger.info(
                                 "playbook_connector_mcp_context_headers workspace_id=%s",
                                 effective_auth_headers.get("workspace_id"),
                             )
 
-                        _last_mcp_actual_args.set(dict(merged_params))
-                        response = await call_mcp_tool(
-                            tt,
-                            su,
-                            sc,
-                            ak,
-                            merged_params,
-                            auth_headers=effective_auth_headers,
-                            auth_env=ae,
+                        async def _call(action: str, action_params: Dict[str, Any]) -> Any:
+                            return await call_mcp_tool(
+                                tt,
+                                su,
+                                sc,
+                                action,
+                                action_params,
+                                auth_headers=effective_auth_headers,
+                                auth_env=ae,
+                                log_payload=action != "send_file_to_user",
+                            )
+
+                        if guard is not None and ak != "sandbox_create":
+                            await guard.wait_until_ready()
+                            if ak in {"file_list", "file_find"} and not guard.allows_discovery(ak, merged_params):
+                                paths = ", ".join(guard.authoritative_paths)
+                                return f"Discovery disabled; use the authoritative sandbox input directly: {paths}"
+
+                        response = (
+                            await guard.create_validated(_call, merged_params)
+                            if guard is not None and ak == "sandbox_create"
+                            else await _call(ak, merged_params)
                         )
-                        if isinstance(response, dict):
-                            if response.get("ceph_path"):
-                                ceph_path = response.get("ceph_path", "")
-                                filename = (response.get("path") or ceph_path).rstrip("/").split("/")[-1]
+                        if isinstance(response, dict) and ak == "send_file_to_user":
+                            source_path = response.get("path")
+                            if (
+                                isinstance(source_path, str)
+                                and source_path.strip()
+                                and "file_download_base64" in action_keys
+                            ):
+                                download_params = {"path": source_path}
+                                if "workspace_id" in merged_params:
+                                    download_params["workspace_id"] = merged_params["workspace_id"]
+                                encoded_file = await call_mcp_tool(
+                                    tt,
+                                    su,
+                                    sc,
+                                    "file_download_base64",
+                                    download_params,
+                                    auth_headers=effective_auth_headers,
+                                    auth_env=ae,
+                                    log_payload=False,
+                                )
+                                from src.flow_engine.runtime.artifact_publication import publish_playbook_artifact
+
+                                filename = source_path.rstrip("/").split("/")[-1]
+                                receipt = await publish_playbook_artifact(
+                                    payload=encoded_file,
+                                    filename=filename,
+                                    execution_id=eid,
+                                    user_id=str(_uid or ""),
+                                    internal_token=internal_token,
+                                )
                                 artifact_kind = infer_artifact_kind(filename) or "document"
                                 logger.info(
-                                    "mcp_file_artifact_detected connector_id=%s action_key=%s filename=%s artifact_kind=%s ceph_path=%s",
+                                    "mcp_file_artifact_detected connector_id=%s action_key=%s filename=%s artifact_kind=%s",
                                     cid,
                                     ak,
                                     filename,
                                     artifact_kind,
-                                    ceph_path,
                                 )
                                 collector.add_component("artifact", {
-                                    "file_path": ceph_path,
+                                    "artifactId": receipt["artifactId"],
                                     "filename": filename,
+                                    "mime_type": receipt["mimeType"],
+                                    "size": receipt["size"],
                                     "artifact_kind": artifact_kind,
                                     "output_port_id": "",
                                 })
@@ -1899,12 +1981,22 @@ def _create_connector_mcp_tools(
                                     filename,
                                     len(collector.components),
                                 )
+                                response = {
+                                    "status": "success",
+                                    "filename": filename,
+                                    "artifactId": receipt["artifactId"],
+                                }
+                            else:
+                                response = "Artifact publication failed: generated file could not be copied to platform storage."
+                        if isinstance(response, dict):
                             response = _collect_connector_response_components(
                                 collector,
                                 response,
                                 tool_name=ak,
                             )
                         return response
+                    except SandboxMountValidationError:
+                        raise
                     except Exception as e:
                         logger.error("MCP tool execution failed", tool=tn, error=str(e))
                         return f"Connector action '{ak}' failed: {str(e)}"

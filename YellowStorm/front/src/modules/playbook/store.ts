@@ -706,7 +706,6 @@ function getChangedDefinitionFields(previous: UpdateFlowData, current: UpdateFlo
     'advisorAutopilotEnabled',
     'advisorAutopilotTargetScore',
     'advisorAutopilotMaxTurns',
-    'deepSearch',
     'nodes',
     'controlEdges',
     'dataBindings',

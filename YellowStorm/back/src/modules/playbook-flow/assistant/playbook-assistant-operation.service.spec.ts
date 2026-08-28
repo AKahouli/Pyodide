@@ -89,10 +89,7 @@ describe('PlaybookAssistantOperationService', () => {
     expect(flowService.update).toHaveBeenCalledWith('flow-1', 'owner-1', expect.objectContaining({
       expectedDefinitionRevision: 5,
       clientMutationId: 'assistant-operation-operation-1',
-    }), {
-      allowUnboundRequiredPorts: true,
-      allowIncompleteNodeOutputBindings: true,
-    });
+    }));
     expect(operationModel.updateOne).toHaveBeenCalledWith(
       expect.objectContaining({ operationId: 'operation-1', status: 'completed' }),
       expect.objectContaining({ $set: expect.objectContaining({ committedRevision: 6 }) }),

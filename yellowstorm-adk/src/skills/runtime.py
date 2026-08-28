@@ -93,6 +93,36 @@ def inject_skill_catalog(prompt: str, skills: Optional[List[Any]]) -> str:
     return f"{prompt}\n\n{catalog}" if prompt else catalog
 
 
+def inject_tool_skill_instructions(
+    prompt: str,
+    skills: Optional[List[Any]],
+    tool_names: set[str],
+) -> str:
+    """Preload instructions for skills that directly govern configured tools."""
+    normalized_tool_names = {
+        "".join(char for char in name.casefold() if char.isalnum())
+        for name in tool_names
+        if name
+    }
+    blocks = []
+    for skill in normalize_skills(skills):
+        name = _skill_name(skill)
+        normalized_name = "".join(
+            char for char in name.casefold() if char.isalnum()
+        )
+        instructions = str(skill.get("instructions") or "").strip()
+        if normalized_name not in normalized_tool_names or not instructions:
+            continue
+        blocks.append(
+            f'<active_skill name="{escape(name)}">\n{instructions}\n</active_skill>'
+        )
+
+    if not blocks:
+        return prompt
+    active_skills = "\n\n".join(blocks)
+    return f"{prompt}\n\n{active_skills}" if prompt else active_skills
+
+
 def make_activate_skill_tool(skills: Optional[List[Any]]):
     """Create a lightweight skill activation tool for ADK agents."""
     skill_map = {

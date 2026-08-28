@@ -61,6 +61,24 @@ describe('FileFloatingWindow', () => {
     expect(container.querySelectorAll('[data-resize-edge]').length).toBe(8);
   });
 
+  it('fits the floating window to a narrow viewport immediately', () => {
+    modeState = 'open';
+    displayModeState = 'floating';
+    const width = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(390);
+    const height = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(320);
+
+    render(<FileFloatingWindow />);
+
+    expect(screen.getByTestId('file-viewer-window')).toHaveStyle({
+      left: '0px',
+      top: '0px',
+      width: '390px',
+      height: '320px',
+    });
+    width.mockRestore();
+    height.mockRestore();
+  });
+
   it('renders minimized pill in minimized mode and clamps on resize', () => {
     modeState = 'minimized';
     displayModeState = 'floating';

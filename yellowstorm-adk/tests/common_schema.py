@@ -18,7 +18,7 @@ class MockSettings(BaseModel):
     AZURE_STORAGE_ACCOUNT_KEY: str = "mock_storage_key"
     AZURE_DATALAKE_CONNECTION_STRING: str = "DefaultEndpointsProtocol=https;AccountName=mock_account;AccountKey=mock_key;EndpointSuffix=core.windows.net"
     AZURE_DATALAKE_FILE_SYSTEM_NAME: str = "mock_file_system"
-    DATABASE_URL: str = "sqlite:///./test.db"
+    DATABASE_URL: str = "sqlite+aiosqlite:///./test.db"
     LANGGRAPH_CHECKPOINT_SCHEMA: str = "langgraph_checkpoints"
     LANGGRAPH_CHECKPOINT_POOL_MIN_SIZE: int = 1
     LANGGRAPH_CHECKPOINT_POOL_MAX_SIZE: int = 2

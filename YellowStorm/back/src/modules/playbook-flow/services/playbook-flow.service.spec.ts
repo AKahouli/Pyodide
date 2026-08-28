@@ -898,6 +898,36 @@ describe('PlaybookFlowService', () => {
     });
   });
 
+  it('creates a Playbook without a default workspace', async () => {
+    const flowModel = Object.assign(jest.fn().mockImplementation((payload: Record<string, unknown>) => {
+      const document = {
+        ...payload,
+        toJSON: jest.fn().mockReturnValue({ id: 'flow-new', ...payload }),
+        save: jest.fn(),
+      };
+      document.save.mockResolvedValue(document);
+      return document;
+    }), { exists: jest.fn().mockResolvedValue(false) });
+    const service = new PlaybookFlowService(
+      flowModel as any,
+      {} as any,
+      { validate: jest.fn() } as any,
+      {} as any,
+      {} as any,
+      new FlowWorkspacePolicyService(),
+      { sanitize: jest.fn((graph) => graph) } as any,
+      { buildPatchedGraph: jest.fn() } as any,
+      idempotencyService as any,
+      { get: jest.fn().mockReturnValue(true) } as any,
+      playbookShareService as any,
+    );
+
+    const result = await service.create('user-1', { name: 'Workspace-free draft' });
+
+    expect((flowModel as jest.Mock).mock.calls[0][0].workspaces).toEqual([]);
+    expect(result.workspaces).toEqual([]);
+  });
+
   it('createWithNodesAndEdges seeds smart HITL defaults by default', async () => {
     const executionModel = {} as any;
     const flowModel = Object.assign(
@@ -921,7 +951,7 @@ describe('PlaybookFlowService', () => {
       { validate: jest.fn() } as any,
       {} as any,
       {} as any,
-      { normalizeWorkspaces: (workspaces: string[]) => workspaces, ensureWorkspaceSelection: () => undefined } as any,
+      new FlowWorkspacePolicyService(),
       { sanitize: jest.fn((graph) => graph) } as any,
       { buildPatchedGraph: jest.fn() } as any,
       idempotencyService as any,
@@ -932,6 +962,7 @@ describe('PlaybookFlowService', () => {
     await service.createWithNodesAndEdges('user-1', 'Base', '', [], [], [], []);
 
     const created = (flowModel as jest.Mock).mock.calls[0][0];
+    expect(created.workspaces).toEqual([]);
     expect(created.hitlPolicy).toMatchObject({ mode: 'auto', sensitivity: 'balanced' });
     expect(Array.isArray(created.hitlBlockers)).toBe(true);
     expect(created.hitlBlockers).toEqual([]);
@@ -986,7 +1017,6 @@ describe('PlaybookFlowService', () => {
       {} as any,
       {
         normalizeWorkspaces: (workspaces: string[]) => workspaces,
-        ensureWorkspaceSelection: () => undefined,
       } as any,
       { sanitize: jest.fn((graph) => graph) } as any,
       { buildPatchedGraph: jest.fn() } as any,

@@ -157,7 +157,7 @@ playbook/
 │   │   └── timeInput.ts                 # `timeLocalFromInput`: `<input type="time">` → `HH:mm` for API
 │   ├── PlaybookWorkspaceSelect.tsx       # Multi-select workspace picker
 │   ├── PlaybookGeneratingOverlay.tsx     # Animated overlay during AI generation/design
-│   ├── PlaybookDesignerPanel.tsx         # AI Designer chat panel (right sidebar)
+│   ├── PlaybookSecondBrainPanel.tsx      # AI Second Brain chat panel (right sidebar)
 │   ├── PlaybookUsageIndicator.tsx        # Token usage display (color-coded bar)
 │   ├── PlaybookBetaDisclaimer.tsx        # First-visit beta disclaimer modal
 │   ├── PlaybookStatusBadge.tsx           # Reusable status badge component
@@ -407,7 +407,7 @@ ReactFlow-based canvas editor wrapped in `ReactFlowProvider` with an IDE-style r
 |           Save | Run]                                          |
 +---------------------------------------------------------------+
 |                          |                                     |
-|  ReactFlow Canvas        | PlaybookDesignerPanel (toggleable)  |
+|  ReactFlow Canvas        | PlaybookSecondBrainPanel (toggleable) |
 |  - Custom node type:     |                                     |
 |    playbookStep           |                                     |
 |  - Animated edges         |                                     |
@@ -517,7 +517,7 @@ Side sheet (`Sheet` from shadcn) for editing node properties:
 | `PlaybookUsageIndicator` | Token usage display: total/limit bar (green->yellow->amber->rose), input/output breakdown tooltip |
 | `PlaybookStatusBadge` | Status icon + color for step/execution statuses (sm/md sizes) |
 | `PlaybookGeneratingOverlay` | Animated overlay during AI generation/design (morphing blobs, shimmer text) |
-| `PlaybookDesignerPanel` | Right sidebar chat panel for AI-assisted playbook modification with revert support |
+| `PlaybookSecondBrainPanel` | Right sidebar chat panel for AI-assisted playbook modification with revert support |
 | `PlaybookBetaDisclaimer` | First-visit beta disclaimer modal (dismissible via localStorage) |
 | `CloneShareDialog` | Share playbook by email (comma/enter separated, shows success/failure results) |
 | `ExecutionHistoryDropdown` | Dropdown to switch between past executions (standalone execution page) |
@@ -849,7 +849,7 @@ PlaybookNodeData // extends PlaybookTask with stepStatus?: StepStatus (for React
 
 ### AI Designer
 
-- Side panel chat interface (`PlaybookDesignerPanel`) for iterative playbook modifications
+- Side panel chat interface (`PlaybookSecondBrainPanel`) for iterative playbook modifications
 - Natural language instructions to add, remove, or modify steps
 - Design messages are persisted and can be viewed via `getDesignMessages()`
 - Revert to any previous design state via `revertToSnapshot()`

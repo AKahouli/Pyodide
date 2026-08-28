@@ -241,24 +241,6 @@ export class FlowReplayRunReport {
   @Prop({ required: true, type: String })
   mode!: ReplayMode;
 
-  @Prop({ required: true, type: Boolean })
-  applied!: boolean;
-
-  @Prop({ required: true, type: Number })
-  confidenceScore!: number;
-
-  @Prop({ required: false, type: [String], default: [] })
-  appliedSections!: string[];
-
-  @Prop({ required: false, type: [String], default: [] })
-  skippedSections!: string[];
-
-  @Prop({ required: false, type: [String], default: [] })
-  invalidationReasons!: string[];
-
-  @Prop({ required: false, type: Object, default: {} })
-  confidenceFactors!: Record<string, number>;
-
   @Prop({ required: false, type: Boolean, default: false })
   outputContractEvaluated!: boolean;
 
@@ -272,7 +254,7 @@ export class FlowReplayRunReport {
   toolPolicyScore!: number | null;
 
   @Prop({ required: false, type: String, default: null })
-  verdict!: 'pass' | 'warning' | 'fail' | 'skipped' | 'unknown' | null;
+  verdict!: 'pass' | 'warning' | 'fail' | 'unknown' | null;
 
   @Prop({ required: false, type: Number, default: null })
   overallScore!: number | null;

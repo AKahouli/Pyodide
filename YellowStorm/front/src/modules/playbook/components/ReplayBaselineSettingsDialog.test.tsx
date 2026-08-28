@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReplayBaselineSettingsDialog } from './ReplayBaselineSettingsDialog';
 import type { PlaybookTask, ValidatedTaskReplay } from '../types';
@@ -28,7 +28,12 @@ vi.mock('../store', () => ({
 }));
 
 vi.mock('@/components/ui/dialog', () => ({
-  Dialog: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Dialog: ({ children, onOpenChange }: { children: ReactNode; onOpenChange?: (open: boolean) => void }) => (
+    <div>
+      {children}
+      <button type="button" aria-label="test-dialog-close" onClick={() => onOpenChange?.(false)} />
+    </div>
+  ),
   DialogContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogDescription: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -280,7 +285,7 @@ describe('ReplayBaselineSettingsDialog', () => {
     expect(screen.getByText('baselineBadge.empty.traceMetadata')).toBeInTheDocument();
   });
 
-  it('saves rename and replay settings together', async () => {
+  it('saves a rename without rewriting unchanged replay settings', async () => {
     fetchTaskReplays.mockResolvedValue([replay]);
     renameTaskReplay.mockResolvedValue({ ...replay, label: 'Renamed Baseline' });
     updateTaskReplayFormatGuide.mockResolvedValue({
@@ -305,11 +310,8 @@ describe('ReplayBaselineSettingsDialog', () => {
 
     await waitFor(() => {
       expect(renameTaskReplay).toHaveBeenCalledWith('playbook-1', 'task-1', 'replay-1', 'Renamed Baseline');
-      expect(updateTaskReplayFormatGuide).toHaveBeenCalledWith('playbook-1', 'task-1', 'replay-1', expect.objectContaining({
-        outputFormatGuide: 'Current guide',
-        replayConfig: expect.objectContaining({ replayToolTrace: false }),
-      }));
     });
+    expect(updateTaskReplayFormatGuide).not.toHaveBeenCalled();
   });
 
   it('does not coerce a missing format guide to an empty string during rename-only saves', async () => {
@@ -339,9 +341,81 @@ describe('ReplayBaselineSettingsDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'baselineBadge.saveSettings' }));
 
     await waitFor(() => {
-      expect(updateTaskReplayFormatGuide).toHaveBeenCalledWith('playbook-1', 'task-1', 'replay-1', expect.objectContaining({
-        outputFormatGuide: undefined,
-      }));
+      expect(renameTaskReplay).toHaveBeenCalledWith('playbook-1', 'task-1', 'replay-1', 'Renamed Baseline');
+    });
+    expect(updateTaskReplayFormatGuide).not.toHaveBeenCalled();
+  });
+
+  it('does not create replay settings when an untouched replay without configuration closes', async () => {
+    const replayWithoutConfig: ValidatedTaskReplay = {
+      ...replay,
+      replayConfig: undefined,
+    };
+    fetchTaskReplays.mockResolvedValue([replayWithoutConfig]);
+    const onOpenChange = vi.fn();
+
+    render(
+      <ReplayBaselineSettingsDialog
+        open
+        onOpenChange={onOpenChange}
+        playbookId="playbook-1"
+        task={task}
+        replay={replayWithoutConfig}
+        replayId={replayWithoutConfig.id}
+      />,
+    );
+
+    await screen.findByLabelText('baselineBadge.nameLabel');
+    fireEvent.click(screen.getByRole('button', { name: 'test-dialog-close' }));
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(updateTaskReplayFormatGuide).not.toHaveBeenCalled();
+    expect(renameTaskReplay).not.toHaveBeenCalled();
+  });
+
+  it('keeps rule editing disabled until replay refresh completes, then saves one user change', async () => {
+    let resolveFetch: (replays: ValidatedTaskReplay[]) => void = () => undefined;
+    fetchTaskReplays.mockReturnValue(new Promise<ValidatedTaskReplay[]>((resolve) => {
+      resolveFetch = resolve;
+    }));
+    const updatedReplay = {
+      ...replay,
+      replayConfig: { ...replay.replayConfig, replayOutputFormat: false },
+    };
+    updateTaskReplayFormatGuide.mockResolvedValue(updatedReplay);
+
+    render(
+      <ReplayBaselineSettingsDialog
+        open
+        onOpenChange={vi.fn()}
+        playbookId="playbook-1"
+        task={task}
+        replay={replay}
+        replayId={replay.id}
+      />,
+    );
+
+    const replayConfigSwitches = await screen.findAllByRole('button', { name: '' });
+    expect(replayConfigSwitches[0]).toBeDisabled();
+
+    await act(async () => {
+      resolveFetch([replay]);
+    });
+    await waitFor(() => expect(replayConfigSwitches[0]).toBeEnabled());
+
+    fireEvent.click(replayConfigSwitches[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'baselineBadge.saveSettings' }));
+
+    await waitFor(() => {
+      expect(updateTaskReplayFormatGuide).toHaveBeenCalledTimes(1);
+      expect(updateTaskReplayFormatGuide).toHaveBeenCalledWith('playbook-1', 'task-1', 'replay-1', {
+        outputFormatGuide: 'Current guide',
+        replayConfig: {
+          replayOutputFormat: false,
+          replayToolTrace: false,
+          replayReasoningChain: true,
+        },
+      });
     });
   });
 
