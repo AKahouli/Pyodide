@@ -13,6 +13,126 @@ from src.flow_engine.nodes.step_tool_scope import (
     build_step_tool_scope,
     sanitize_trigger_context_for_prompt,
 )
+from src.flow_engine.nodes.step import _collect_workspace_ceph_paths
+
+
+def test_build_step_tool_scope_mounts_live_binding_workspace_once() -> None:
+    scope = build_step_tool_scope(
+        {
+            "default": {
+                "kind": "document",
+                "id": "69f9a8ec018a0028666e6f83",
+                "name": "cv_template.docx",
+                "path": (
+                    "6984baadd6b2ec4585e8c707/69d6bbdcb700785894f33455/"
+                    "69f9a8ec018a0028666e6f83/cv_template.docx"
+                ),
+                "workspaceId": "69d6bbdcb700785894f33455",
+                "workspaceName": "CV",
+                "workspacePath": "6984baadd6b2ec4585e8c707/cv",
+                "metadata": {
+                    "documentId": "69f9a8ec018a0028666e6f83",
+                    "workspaceId": "69d6bbdcb700785894f33455",
+                    "filepath": (
+                        "6984baadd6b2ec4585e8c707/69d6bbdcb700785894f33455/"
+                        "69f9a8ec018a0028666e6f83/cv_template.docx"
+                    ),
+                    "filename": "69f9a8ec018a0028666e6f83-cv_template.docx",
+                },
+            }
+        },
+        {},
+    )
+
+    assert scope.workspace_ceph_paths == [
+        "6984baadd6b2ec4585e8c707/69d6bbdcb700785894f33455/69f9a8ec018a0028666e6f83"
+    ]
+    assert scope.sandbox_inputs == [{
+        "path": "/mnt/workspace/69f9a8ec018a0028666e6f83/cv_template.docx",
+        "kind": "file",
+    }]
+    assert scope.run_code_sources == [{
+        "workspaceId": "69d6bbdcb700785894f33455",
+        "alias": "cv",
+        "cephPrefix": (
+            "6984baadd6b2ec4585e8c707/69d6bbdcb700785894f33455/"
+            "69f9a8ec018a0028666e6f83"
+        ),
+        "scope": {"kind": "files", "relativePaths": ["cv_template.docx"]},
+    }]
+
+
+def test_build_step_tool_scope_rejects_workspace_alias_collision() -> None:
+    with pytest.raises(ValueError, match="Sandbox workspace alias collision: shared"):
+        build_step_tool_scope(
+            {
+                "documents": [
+                    {
+                        "kind": "document",
+                        "id": "doc-1",
+                        "name": "one.pdf",
+                        "path": "owner-1/shared/one.pdf",
+                        "workspaceId": "workspace-1",
+                        "workspacePath": "owner-1/shared",
+                    },
+                    {
+                        "kind": "document",
+                        "id": "doc-2",
+                        "name": "two.pdf",
+                        "path": "owner-2/shared/two.pdf",
+                        "workspaceId": "workspace-2",
+                        "workspacePath": "owner-2/shared",
+                    },
+                ]
+            },
+            {},
+        )
+
+
+def test_collect_workspace_ceph_paths_mounts_only_default_output_workspace() -> None:
+    paths = _collect_workspace_ceph_paths(
+        {
+            "__playbook_workspace_paths": {
+                "input": "owner/unrelated-input",
+                "output": "owner/default-output",
+            },
+            "__playbook_default_workspace_path": "owner/default-output",
+        },
+        {"inputs": {}},
+        ["owner/cv"],
+    )
+
+    assert paths == ["owner/cv", "owner/default-output"]
+
+
+def test_collect_workspace_ceph_paths_rejects_output_alias_collision() -> None:
+    with pytest.raises(ValueError, match="Sandbox workspace alias collision: cv"):
+        _collect_workspace_ceph_paths(
+            {"__playbook_default_workspace_path": "other-owner/cv"},
+            {"inputs": {}},
+            ["owner/cv"],
+        )
+
+
+def test_build_sandbox_prompt_note_provides_authoritative_exact_path() -> None:
+    scope = build_step_tool_scope(
+        {
+            "default": {
+                "kind": "document",
+                "id": "doc-1",
+                "name": "cv_template.docx",
+                "path": "owner/cv/cv_template.docx",
+                "workspaceId": "workspace-1",
+                "workspacePath": "owner/cv",
+            }
+        },
+        {},
+    )
+
+    note = build_sandbox_prompt_note(scope, {"code interpreter"})
+
+    assert "/mnt/workspace/cv/cv_template.docx" in note
+    assert "Do not rediscover them" in note
 
 
 @pytest.mark.asyncio
@@ -320,6 +440,10 @@ def test_build_step_tool_scope_derives_exact_run_code_source_without_changing_le
         {},
     )
     assert scope.workspace_ceph_paths == ["owner/immutable-workspace"]
+    assert scope.sandbox_inputs == [{
+        "path": "/mnt/workspace/immutable-workspace/reports/report.pdf",
+        "kind": "file",
+    }]
     assert scope.binding_workspace_ids == ["workspace-1"]
     assert scope.workspace_context_mode == "resolved_inputs_only"
     assert scope.run_code_sources == [{

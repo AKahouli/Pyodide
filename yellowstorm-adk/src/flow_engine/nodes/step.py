@@ -55,7 +55,7 @@ from src.temporary_child_summary import (
     record_temporary_child_result,
     record_temporary_child_start,
 )
-from src.skills.runtime import inject_skill_catalog
+from src.skills.runtime import inject_skill_catalog, inject_tool_skill_instructions
 
 logger = get_logger(__name__)
 
@@ -412,11 +412,17 @@ def _collect_workspace_ceph_paths(
     """
     paths: list[str] = []
     seen: set[str] = set()
+    paths_by_alias: dict[str, str] = {}
 
     def _add(raw: Any) -> None:
         path = str(raw or "").strip().strip("/")
         if "/" not in path or path in seen:
             return
+        alias = path.rsplit("/", 1)[-1]
+        existing = paths_by_alias.get(alias)
+        if existing and existing != path:
+            raise ValueError(f"Sandbox workspace alias collision: {alias}")
+        paths_by_alias[alias] = path
         seen.add(path)
         paths.append(path)
 
@@ -424,15 +430,13 @@ def _collect_workspace_ceph_paths(
     for path in document_paths or []:
         _add(path)
 
-    # Playbook-level workspace paths: dict {workspace_id: "user_id/workspace_name"}.
+    # Keep only the selected default as the output destination. Other playbook
+    # workspaces are not implicit input sources for a wired step.
     state_inputs = state.get("inputs", {})
     for source in (input_context, state_inputs):
         if not isinstance(source, dict):
             continue
-        playbook_paths = source.get("__playbook_workspace_paths")
-        if isinstance(playbook_paths, dict):
-            for value in playbook_paths.values():
-                _add(value)
+        _add(source.get("__playbook_default_workspace_path"))
 
     return paths
 
@@ -584,6 +588,24 @@ async def run_step(
         fallback_system_prompt = f"{agent_description}\n\n{fallback_system_prompt}"
     system_prompt = str(agent_prompt or metadata.get("system_prompt", "") or fallback_system_prompt)
     system_prompt = inject_skill_catalog(system_prompt, agent_config.get("skills", []))
+    configured_tool_names = {
+        str(tool.get("name") or "")
+        for tool in agent_config.get("tools", [])
+        if isinstance(tool, dict)
+    }
+    for binding in connector_bindings:
+        if not isinstance(binding, dict):
+            continue
+        configured_tool_names.update(
+            str(binding.get(key) or "")
+            for key in ("connector_slug", "connector_name", "connector_id")
+            if binding.get(key)
+        )
+    system_prompt = inject_tool_skill_instructions(
+        system_prompt,
+        agent_config.get("skills", []),
+        configured_tool_names,
+    )
     has_agent = bool(agent_name)
 
     logger.info(
@@ -981,6 +1003,7 @@ async def _execute_step(
         workspace_context_mode=tool_scope.workspace_context_mode,
         user_id=str(state.get("evaluation_user_id") or ""),
         workspace_ceph_paths=workspace_ceph_paths,
+        sandbox_inputs=tool_scope.sandbox_inputs,
         binding_workspace_ids=tool_scope.binding_workspace_ids,
         run_code_sources=tool_scope.run_code_sources,
         execution_id=str(state.get("execution_id") or ""),

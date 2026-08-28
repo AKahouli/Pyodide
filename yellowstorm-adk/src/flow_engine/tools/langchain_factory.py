@@ -30,6 +30,12 @@ from src.infrastructure.run_code import (
     build_run_code_context,
     build_run_code_context_from_sources,
 )
+from src.flow_engine.tools.sandbox_mount_guard import (
+    SANDBOX_CALL_LIMIT_MESSAGE,
+    SandboxCallBudget,
+    SandboxMountGuard,
+    SandboxMountValidationError,
+)
 from src.smart_rag.tools.utilities.run_code import (
     RUN_CODE_CODE_DESCRIPTION,
     RUN_CODE_TOOL_DESCRIPTION,
@@ -585,6 +591,7 @@ def create_langchain_tools(
     binding_workspace_ids: Optional[List[str]] = None,
     run_code_sources: Optional[List[Dict[str, Any]]] = None,
     execution_id: str = "",
+    sandbox_inputs: Optional[List[Dict[str, str]]] = None,
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
@@ -660,6 +667,7 @@ def create_langchain_tools(
             session_id=runtime_id,
             workspace_paths=workspace_paths,
             execution_id=execution_id,
+            sandbox_inputs=sandbox_inputs,
         )
 
     tool_configs = agent_config.get("tools", [])
@@ -1721,6 +1729,7 @@ def _create_connector_mcp_tools(
     session_id: str = "",
     workspace_paths: Optional[List[str]] = None,
     execution_id: str = "",
+    sandbox_inputs: Optional[List[Dict[str, str]]] = None,
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1731,6 +1740,7 @@ def _create_connector_mcp_tools(
         return []
 
     tools: List[StructuredTool] = []
+    sandbox_call_budget = SandboxCallBudget()
     for binding in bindings:
         connector_id = binding.get("connector_id", "")
         connector_name = binding.get("connector_name") or connector_id
@@ -1775,6 +1785,12 @@ def _create_connector_mcp_tools(
         if not actions:
             continue
         available_action_keys = {str(action.get("action_key") or "") for action in actions}
+        is_code_interpreter = connector_slug == "code-interpreter"
+        mount_guard = (
+            SandboxMountGuard(list(sandbox_inputs or []), available_action_keys)
+            if is_code_interpreter and sandbox_inputs
+            else None
+        )
 
         logger.info(
             "connector_binding_processing",
@@ -1820,6 +1836,9 @@ def _create_connector_mcp_tools(
                 eid: str = execution_id,
                 wsp: List[str] = list(workspace_paths or []),
                 fpths: List[str] = list(file_paths or []),
+                guard: Optional[SandboxMountGuard] = mount_guard,
+                call_budget: Optional[SandboxCallBudget] = sandbox_call_budget if is_code_interpreter else None,
+                suppress_file_paths: bool = is_code_interpreter and bool(sandbox_inputs),
                 action_keys: set[str] = set(available_action_keys),
                 internal_token: str = platform_api_token,
             ) -> StructuredTool:
@@ -1833,6 +1852,14 @@ def _create_connector_mcp_tools(
                         params = {k: v for k, v in kwargs.items() if k != "params"}
                     if not isinstance(params, dict):
                         params = {}
+                    merged_params = {**fp, **params}
+                    merged_params.pop("user_id", None)
+                    for filename_param in ("file_name", "file_names"):
+                        if params.get(filename_param) in (None, "", []):
+                            merged_params.pop(filename_param, None)
+                    _last_mcp_actual_args.set(dict(merged_params))
+                    if call_budget is not None and not await call_budget.try_acquire():
+                        return SANDBOX_CALL_LIMIT_MESSAGE
                     try:
                         if not su:
                             return (
@@ -1842,12 +1869,6 @@ def _create_connector_mcp_tools(
                         from src.flow_engine.mcp import (
                             call_mcp_tool,
                         )
-
-                        merged_params = {**fp, **params}
-                        merged_params.pop("user_id", None)
-                        for filename_param in ("file_name", "file_names"):
-                            if params.get(filename_param) in (None, "", []):
-                                merged_params.pop(filename_param, None)
 
                         effective_auth_headers = {
                             key: value
@@ -1878,23 +1899,35 @@ def _create_connector_mcp_tools(
                                 effective_auth_headers.pop("workspace_name", None)
                             if wsp:
                                 effective_auth_headers["x-workspace-paths"] = ",".join(wsp)
-                            if fpths:
+                            if fpths and not suppress_file_paths:
                                 effective_auth_headers["x-file-paths"] = ",".join(fpths)
                             logger.info(
                                 "playbook_connector_mcp_context_headers workspace_id=%s",
                                 effective_auth_headers.get("workspace_id"),
                             )
 
-                        _last_mcp_actual_args.set(dict(merged_params))
-                        response = await call_mcp_tool(
-                            tt,
-                            su,
-                            sc,
-                            ak,
-                            merged_params,
-                            auth_headers=effective_auth_headers,
-                            auth_env=ae,
-                            log_payload=ak != "send_file_to_user",
+                        async def _call(action: str, action_params: Dict[str, Any]) -> Any:
+                            return await call_mcp_tool(
+                                tt,
+                                su,
+                                sc,
+                                action,
+                                action_params,
+                                auth_headers=effective_auth_headers,
+                                auth_env=ae,
+                                log_payload=action != "send_file_to_user",
+                            )
+
+                        if guard is not None and ak != "sandbox_create":
+                            await guard.wait_until_ready()
+                            if ak in {"file_list", "file_find"} and not guard.allows_discovery(ak, merged_params):
+                                paths = ", ".join(guard.authoritative_paths)
+                                return f"Discovery disabled; use the authoritative sandbox input directly: {paths}"
+
+                        response = (
+                            await guard.create_validated(_call, merged_params)
+                            if guard is not None and ak == "sandbox_create"
+                            else await _call(ak, merged_params)
                         )
                         if isinstance(response, dict) and ak == "send_file_to_user":
                             source_path = response.get("path")
@@ -1962,6 +1995,8 @@ def _create_connector_mcp_tools(
                                 tool_name=ak,
                             )
                         return response
+                    except SandboxMountValidationError:
+                        raise
                     except Exception as e:
                         logger.error("MCP tool execution failed", tool=tn, error=str(e))
                         return f"Connector action '{ak}' failed: {str(e)}"

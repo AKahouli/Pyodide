@@ -4305,11 +4305,12 @@ function PlaybookCanvasInner() {
           )}
 
           {!isExecutionPanelVisible && (
-            <div className="absolute right-3 top-3 z-20">
+            <div className="absolute right-2 top-2 z-20 sm:right-3 sm:top-3">
               <Button
+                type="button"
                 variant="outline"
                 size="icon"
-                className="h-8 w-8 shadow-md bg-background"
+                className="h-11 w-11 touch-manipulation bg-background shadow-md sm:h-8 sm:w-8"
                 onClick={() => {
                   setExecutionPanelCollapsed(false);
                   setExecutionPanelOpen(true);

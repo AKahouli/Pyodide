@@ -98,6 +98,7 @@ sys.modules.pop("src.flow_engine.nodes.step_hitl_handlers", None)
 sys.modules.pop("src.flow_engine.nodes.step_hitl_blockers", None)
 from src.flow_engine.nodes.step_prompt import build_step_prompt
 from src.flow_engine.nodes.step_result import finalize_step_result
+from src.skills.runtime import inject_tool_skill_instructions
 
 
 @pytest.fixture
@@ -212,6 +213,28 @@ def test_available_file_context_leaves_filename_choice_to_model():
     assert "Only send file_name or file_names when that tool declares the parameter" in context
     assert "Preserve filenames exactly" in context
     assert '"file_names": []' in _build_available_file_context([])
+
+
+def test_tool_skill_instructions_are_preloaded_for_matching_tool():
+    prompt = inject_tool_skill_instructions(
+        "Base prompt",
+        [
+            {
+                "name": "code-interpreter",
+                "instructions": "Use exact mounted paths and avoid package installation.",
+            },
+            {
+                "name": "logical-search-paddle",
+                "instructions": "Load only when document retrieval is needed.",
+            },
+        ],
+        {"code interpreter"},
+    )
+
+    assert '<active_skill name="code-interpreter">' in prompt
+    assert "Use exact mounted paths and avoid package installation." in prompt
+    assert '<active_skill name="logical-search-paddle">' not in prompt
+    assert "Load only when document retrieval is needed." not in prompt
 
 
 def test_temporary_child_instruction_requires_one_child_not_two():
@@ -717,6 +740,20 @@ async def test_run_step_executes_bound_tools(monkeypatch):
             "metadata": {
                 "agent_name": "Research agent",
                 "agent_tools": [{"name": "calculator", "description": "Math helper"}],
+                "skills": [{
+                    "name": "calculator",
+                    "description": "Use the calculator safely.",
+                    "instructions": "Make one calculation per tool call.",
+                }, {
+                    "name": "code-interpreter",
+                    "description": "Use the configured sandbox connector.",
+                    "instructions": "Use exact mounted paths and avoid package installation.",
+                }],
+                "connector_bindings": [{
+                    "connector_id": "connector-1",
+                    "connector_name": "Code Interpreter",
+                    "connector_slug": "code-interpreter",
+                }],
             },
         },
         state={
@@ -734,6 +771,14 @@ async def test_run_step_executes_bound_tools(monkeypatch):
 
     assert len(calls) == 2
     assert calls[0]["tools"][0]["function"]["name"] == "calculator"
+    assert any(
+        "<active_skill name=\"calculator\">" in message.get("content", "")
+        and "Make one calculation per tool call." in message.get("content", "")
+        and "<active_skill name=\"code-interpreter\">" in message.get("content", "")
+        and "Use exact mounted paths and avoid package installation." in message.get("content", "")
+        for message in calls[0]["messages"]
+        if message.get("role") == "system"
+    )
     assert any(message.get("role") == "tool" and message.get("content") == "4" for message in calls[1]["messages"])
     assert result["task_outputs"][("step-1", 0)]["output"] == "The answer is 4."
     assert events[-1]["type"] == "NodeCompleted"
