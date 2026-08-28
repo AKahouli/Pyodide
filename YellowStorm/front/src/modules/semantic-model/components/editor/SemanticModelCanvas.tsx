@@ -97,7 +97,7 @@ function BusinessNode({ data,selected,isConnectable }: NodeProps<Node<BusinessNo
     <p className='mt-2 text-[11px] text-muted-foreground'>{t('concept.quickHelp')}</p>
   </div>;
   const dropLabel=data.dropState?t(`knowledge.dropState.${data.dropState}`):null;
-  return <div className={cn('relative w-60 rounded-2xl border bg-card shadow-sm transition',selected?'border-primary ring-4 ring-primary/10':'border-border/80 hover:border-primary/40',data.protected&&'border-sky-400/60 bg-sky-50/70 dark:bg-sky-950/20',data.dropState==='valid'&&'border-primary ring-4 ring-primary/20',data.dropState==='already-linked'&&'border-emerald-500 ring-4 ring-emerald-500/15',data.dropState==='busy'&&'border-amber-500 ring-4 ring-amber-500/15')}
+  return <div className={cn('relative w-60 rounded-2xl border bg-card shadow-sm transition-colors',selected?'border-primary ring-4 ring-primary/10':'border-border/80 hover:border-primary/40',data.protected&&'border-sky-400/60 bg-sky-50/70 dark:bg-sky-950/20',data.dropState==='valid'&&'border-primary ring-4 ring-primary/20',data.dropState==='already-linked'&&'border-emerald-500 ring-4 ring-emerald-500/15',data.dropState==='busy'&&'border-amber-500 ring-4 ring-amber-500/15')}
     onDragEnter={(event)=>{if(!data.onKnowledgeDragEnter)return;event.preventDefault();event.stopPropagation();data.onKnowledgeDragEnter(data.nodeId);}}
     onDragOver={(event)=>{if(!data.onKnowledgeDrop)return;event.preventDefault();event.stopPropagation();event.dataTransfer.dropEffect=data.dropState==='valid'?'copy':'none';}}
     onDragLeave={(event)=>{if(event.currentTarget.contains(event.relatedTarget as globalThis.Node|null))return;data.onKnowledgeDragLeave?.(data.nodeId);}}
@@ -140,6 +140,12 @@ export function SemanticModelCanvas({ canEdit,onConnectRequest,knowledge,onOpenK
     const timer = window.setTimeout(() => void flowRef.current?.fitView({nodes:[{id:quickConcept.sourceId},{id:quickConcept.id}],padding:0.3,maxZoom:1,duration:200}),0);
     return () => window.clearTimeout(timer);
   },[quickConcept?.id]);
+  const graphId = graph?.versionId;
+  useEffect(() => {
+    if (!graphId) return;
+    const timer = window.setTimeout(() => void flowRef.current?.fitView({padding:0.25,maxZoom:1,duration:300}),100);
+    return () => window.clearTimeout(timer);
+  },[graphId]);
   useEffect(() => {
     if (!isMobile) return;
     const timer = window.setTimeout(() => void flowRef.current?.fitView({padding:0.15,minZoom:1,maxZoom:1}),0);

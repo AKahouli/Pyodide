@@ -510,3 +510,38 @@
   right: 0 !important;
   transform: translate(35%, -35%) !important;
 }
+
+/* ReactFlow controls — match app theme */
+.react-flow__controls {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 2px 8px color-mix(in oklch, var(--foreground) 12%, transparent) !important;
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  background: var(--card) !important;
+  border-bottom: 1px solid var(--border) !important;
+  color: var(--primary) !important;
+  fill: var(--primary) !important;
+  width: 28px !important;
+  height: 28px !important;
+}
+.react-flow__controls-button:hover {
+  background: color-mix(in oklch, var(--primary) 15%, transparent) !important;
+}
+.react-flow__controls-button svg {
+  color: var(--primary) !important;
+  fill: var(--primary) !important;
+  max-width: 14px;
+  max-height: 14px;
+}
+.react-flow__controls-button svg path,
+.react-flow__controls-button svg rect {
+  fill: var(--primary) !important;
+}
+
+/* Drag performance — GPU layer for nodes */
+.react-flow__node {
+  will-change: transform;
+}
