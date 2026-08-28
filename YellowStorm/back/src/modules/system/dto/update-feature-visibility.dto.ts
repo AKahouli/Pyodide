@@ -30,4 +30,8 @@ export class UpdateFeatureVisibilityDto implements FeatureVisibility {
   @ApiProperty()
   @IsBoolean()
   agents!: boolean;
+
+  @ApiProperty()
+  @IsBoolean()
+  platformCopilot!: boolean;
 }

@@ -57,7 +57,6 @@ import type {
   SyncModelsResponse,
   AdminPlaybookSettings,
   PlaybookPlannerAgentOption,
-  PlaybookSuggestorAgentOption,
   UpdateAdminPlaybookSettingsRequest,
   PlaybookPromptListResponse,
   PlaybookPromptResponse,
@@ -109,6 +108,7 @@ import type {
   ConversationSettingsResponse,
   UpdateConversationSettingsRequest,
   ConversationSettingsAgentOption,
+  UpdateSensitiveTextRedactionRequest,
   CatalogExportRequest,
   CatalogConflictPolicy,
   CatalogImportResult,
@@ -610,13 +610,6 @@ export async function getAdminPlaybookSettings(): Promise<AdminPlaybookSettings>
 export async function getPlaybookPlannerAgents(): Promise<PlaybookPlannerAgentOption[]> {
   const response = await apiClient.get<ApiResponse<PlaybookPlannerAgentOption[]>>(
     API_ENDPOINTS.adminPlaybookSettings.plannerAgents,
-  );
-  return response.data.data;
-}
-
-export async function getPlaybookSuggestorAgents(): Promise<PlaybookSuggestorAgentOption[]> {
-  const response = await apiClient.get<ApiResponse<PlaybookSuggestorAgentOption[]>>(
-    API_ENDPOINTS.adminPlaybookSettings.suggestorAgents,
   );
   return response.data.data;
 }
@@ -1291,6 +1284,14 @@ export async function getAdminConversationSettingsAgents(): Promise<Conversation
 
 export async function updateAdminConversationSettings(data: UpdateConversationSettingsRequest): Promise<ConversationSettingsResponse> {
   const response = await apiClient.put<ApiResponse<ConversationSettingsResponse>>(API_ENDPOINTS.adminConversationSettings.base, data);
+  return response.data.data;
+}
+
+export async function updateSensitiveTextRedaction(data: UpdateSensitiveTextRedactionRequest): Promise<ConversationSettingsResponse> {
+  const response = await apiClient.patch<ApiResponse<ConversationSettingsResponse>>(
+    API_ENDPOINTS.adminConversationSettings.sensitiveTextRedaction,
+    data,
+  );
   return response.data.data;
 }
 

@@ -8,7 +8,7 @@ export class MessageComponentSchema {
   @Prop({ type: String })
   id?: string;
 
-  @Prop({ type: String, required: true, enum: ['text', 'code', 'reasoning', 'plan', 'queue', 'checkpoint', 'chart', 'task', 'error', 'sources', 'sandbox', 'webPreview', 'artifact', 'citation', 'toolInfo', 'chainOfThought', 'choice'] })
+  @Prop({ type: String, required: true, enum: ['text', 'code', 'agentActivity', 'plan', 'queue', 'checkpoint', 'chart', 'task', 'error', 'sources', 'sandbox', 'webPreview', 'artifact', 'citation', 'toolActivity', 'choice'] })
   type!: string;
 
   @Prop({ type: Object, required: true })
@@ -40,7 +40,7 @@ export class Message extends Document {
   @Prop({
     type: [new MongooseSchema({
       id: String,
-      type: { type: String, required: true, enum: ['text', 'code', 'reasoning', 'plan', 'queue', 'checkpoint', 'chart', 'task', 'error', 'sources', 'sandbox', 'webPreview', 'artifact', 'citation', 'toolInfo', 'chainOfThought', 'choice'] },
+      type: { type: String, required: true, enum: ['text', 'code', 'agentActivity', 'plan', 'queue', 'checkpoint', 'chart', 'task', 'error', 'sources', 'sandbox', 'webPreview', 'artifact', 'citation', 'toolActivity', 'choice'] },
       data: { type: MongooseSchema.Types.Mixed, required: true },
     }, { _id: false })],
     default: undefined,
@@ -62,6 +62,9 @@ export class Message extends Document {
   // AI metadata
   @Prop({ type: String, maxlength: 100 })
   modelId?: string;
+
+  @Prop({ type: String, maxlength: 50 })
+  reasoningEffort?: string;
 
   @Prop({ type: Boolean, default: false })
   webSearchEnabled!: boolean;
@@ -94,12 +97,21 @@ export class Message extends Document {
   @Prop({ type: Boolean, default: false })
   isComplete!: boolean;
 
+  @Prop({ type: String, default: undefined })
+  streamExecutionLeaseId?: string;
+
+  @Prop({ type: Date, default: undefined })
+  streamExecutionLeaseExpiresAt?: Date;
+
   // Token usage
   @Prop({ type: Number })
   inputTokens?: number;
 
   @Prop({ type: Number })
   outputTokens?: number;
+
+  @Prop({ type: Object, default: undefined })
+  modelRequestTelemetry?: { usedTokens: number; contextWindow: number; model: string };
 
   @Prop({ type: Number })
   durationMs?: number;
@@ -119,6 +131,9 @@ export class Message extends Document {
 
   @Prop({ type: Object, default: undefined })
   interaction?: Record<string, unknown>;
+
+  @Prop({ type: [Object], default: undefined })
+  interactions?: Record<string, unknown>[];
 
   // Internal reproducible execution inputs. Never included in MessageResponse.
   @Prop({ type: Object, default: undefined })
@@ -146,7 +161,17 @@ MessageSchema.index({ conversationId: 1, createdAt: -1 }); // Descending sort fo
 MessageSchema.index({ conversationId: 1, conversationType: 1 });
 MessageSchema.index({ questionMessageId: 1, conversationType: 1, createdAt: 1 }); // Branch queries
 MessageSchema.index({ isStreaming: 1, updatedAt: 1 });
-MessageSchema.index({ requestId: 1 });
+MessageSchema.index(
+  { conversationId: 1, senderId: 1, conversationType: 1, requestId: 1 },
+  {
+    name: 'conversation_sender_type_request_unique',
+    unique: true,
+    partialFilterExpression: {
+      requestId: { $exists: true, $type: 'string' },
+      senderId: { $exists: true, $type: 'objectId' },
+    },
+  },
+);
 MessageSchema.index({ 'reliabilityEvaluation.status': 1, reliabilityEvaluationHeartbeatAt: 1 });
 
 // JSON transform

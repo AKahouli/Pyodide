@@ -67,6 +67,16 @@ export function FileFloatingWindow() {
     onPositionChange: setPosition,
     onSizeChange: setSize,
   });
+  const widthConstrained = size.width > window.innerWidth;
+  const heightConstrained = size.height > window.innerHeight;
+  const renderedSize = {
+    width: Math.min(size.width, window.innerWidth),
+    height: Math.min(size.height, window.innerHeight),
+  };
+  const renderedPosition = {
+    x: widthConstrained ? 0 : position.x,
+    y: heightConstrained ? 0 : position.y,
+  };
 
   if (mode === 'closed' || displayMode !== 'floating') return null;
 
@@ -80,7 +90,7 @@ export function FileFloatingWindow() {
           data-testid='file-viewer-backdrop'
         />
       )}
-      <div className={`fixed z-55 rounded-lg border shadow-2xl bg-background overflow-hidden flex flex-col ${mode === 'minimized' ? 'opacity-0 pointer-events-none' : ''}`} style={{ left: position.x, top: position.y, width: size.width, height: size.height }}>
+      <div data-testid='file-viewer-window' className={`fixed z-55 rounded-lg border shadow-2xl bg-background overflow-hidden flex flex-col ${mode === 'minimized' ? 'opacity-0 pointer-events-none' : ''}`} style={{ left: renderedPosition.x, top: renderedPosition.y, width: renderedSize.width, height: renderedSize.height }}>
         {/* 8 invisible resize handles */}
         {RESIZE_EDGES.map((edge) => (
           <div key={edge} {...getResizeHandleProps(edge)} />

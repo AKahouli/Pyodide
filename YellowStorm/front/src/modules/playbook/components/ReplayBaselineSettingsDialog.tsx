@@ -21,6 +21,8 @@ import { useModuleTranslation } from '@/modules/localization';
 import { usePlaybookStore } from '../store';
 import type { PlaybookTask, ValidatedTaskReplay } from '../types';
 import { ReplayTemplateSummary } from './ReplayTemplateSummary';
+import { getEffectiveNodeType } from '../utils/node-type';
+import { getNodeCapabilities } from '../utils/node-capabilities';
 
 interface ReplayBaselineSettingsDialogProps {
   open: boolean;
@@ -35,9 +37,11 @@ interface ReplayBaselineSettingsDialogProps {
   defaultTab?: 'overview' | 'rules' | 'history' | 'technical';
 }
 
-const DEFAULT_REPLAY_CONFIG = {
-  replayOutputFormat: true,
-  replayToolTrace: true,
+type ReplayConfig = NonNullable<ValidatedTaskReplay['replayConfig']>;
+
+const DEFAULT_REPLAY_CONFIG: ReplayConfig = {
+  replayOutputFormat: false,
+  replayToolTrace: false,
   replayReasoningChain: true,
 };
 
@@ -100,14 +104,19 @@ ref,
   const renameTaskReplay = usePlaybookStore((s) => s.renameTaskReplay);
   const deleteTaskReplay = usePlaybookStore((s) => s.deleteTaskReplay);
   const [labelDraft, setLabelDraft] = useState(() => replay?.label || '');
-  const [replayConfigDraft, setReplayConfigDraft] = useState(() => replay?.replayConfig ?? DEFAULT_REPLAY_CONFIG);
+  const [replayConfigDraft, setReplayConfigDraft] = useState<ReplayConfig | undefined>(() => replay?.replayConfig);
   const [isSaving, setIsSaving] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
   const [isLoadingReplay, setIsLoadingReplay] = useState(false);
+  const [isRefreshingReplay, setIsRefreshingReplay] = useState(Boolean(replayId));
   const [replayLoadFailed, setReplayLoadFailed] = useState(false);
   const [replayMissing, setReplayMissing] = useState(false);
   const [currentReplay, setCurrentReplay] = useState<ValidatedTaskReplay | null>(() => replay ?? null);
   const [activeTab, setActiveTab] = useState<'overview' | 'rules' | 'history' | 'technical'>(defaultTab);
+  const originalLabelRef = useRef(replay?.label || '');
+  const originalConfigRef = useRef<ReplayConfig | undefined>(replay?.replayConfig);
+  const capabilities = getNodeCapabilities(getEffectiveNodeType(task));
+  const effectiveReplayConfig = { ...DEFAULT_REPLAY_CONFIG, ...replayConfigDraft };
 
   useEffect(() => {
     if (!open) return;
@@ -124,8 +133,12 @@ ref,
       if (replaySnapshot) {
         setCurrentReplay(replaySnapshot);
         setLabelDraft(replaySnapshot.label || '');
+        setReplayConfigDraft(replaySnapshot.replayConfig);
+        originalLabelRef.current = replaySnapshot.label || '';
+        originalConfigRef.current = replaySnapshot.replayConfig;
       }
       setIsLoadingReplay(!replaySnapshot);
+      setIsRefreshingReplay(Boolean(replayId));
       setReplayLoadFailed(false);
       setReplayMissing(false);
 
@@ -136,6 +149,9 @@ ref,
           const matchedReplay = replays.find((item) => item.id === replayId) || null;
           setCurrentReplay(matchedReplay);
           setLabelDraft(matchedReplay?.label || '');
+          setReplayConfigDraft(matchedReplay?.replayConfig);
+          originalLabelRef.current = matchedReplay?.label || '';
+          originalConfigRef.current = matchedReplay?.replayConfig;
           setReplayMissing(!matchedReplay);
         } catch {
           if (cancelled) return;
@@ -146,9 +162,13 @@ ref,
       } else {
         setCurrentReplay(replay ?? null);
         setLabelDraft(replay?.label || '');
+        setReplayConfigDraft(replay?.replayConfig);
       }
 
-      if (!cancelled) setIsLoadingReplay(false);
+      if (!cancelled) {
+        setIsLoadingReplay(false);
+        setIsRefreshingReplay(false);
+      }
     };
 
     void loadReplay();
@@ -161,15 +181,11 @@ ref,
   useEffect(() => {
     if (!open || !currentReplay) return;
     setLabelDraft(currentReplay.label || '');
-    setReplayConfigDraft({
-      replayOutputFormat: currentReplay.replayConfig?.replayOutputFormat ?? false,
-      replayToolTrace: currentReplay.replayConfig?.replayToolTrace ?? false,
-      replayReasoningChain: currentReplay.replayConfig?.replayReasoningChain ?? true,
-    });
+    setReplayConfigDraft(currentReplay.replayConfig);
   }, [open, currentReplay]);
 
   const activeReplayId = replayId || currentReplay?.id || null;
-  const isBusy = isSaving || isRemoving || isLoadingReplay;
+  const isBusy = isSaving || isRemoving || isLoadingReplay || isRefreshingReplay;
   const canEditReplay = Boolean(currentReplay && !replayLoadFailed);
   const dialogDescription = useMemo(() => {
     if (currentReplay?.validationVersion) {
@@ -189,29 +205,37 @@ ref,
     ];
   }, [currentReplay, t]);
   const expectedFormatStatusKey = currentReplay
-    ? getExpectedFormatStatusKey(currentReplay, replayConfigDraft.replayOutputFormat)
+    ? getExpectedFormatStatusKey(currentReplay, effectiveReplayConfig.replayOutputFormat ?? false)
     : 'baselineBadge.expectedFormatStatus.notChecked';
 
   const performSave = async () => {
     if (!activeReplayId || !canEditReplay) return false;
     const replayToSave = currentReplay;
     if (!replayToSave) return false;
+    const trimmedLabel = labelDraft.trim();
+    const nextLabel = trimmedLabel || null;
+    const labelChanged = (originalLabelRef.current.trim() || null) !== nextLabel;
+    const configChanged = replayConfigDraft !== undefined
+      && JSON.stringify(originalConfigRef.current) !== JSON.stringify(replayConfigDraft);
+    if (!labelChanged && !configChanged) return true;
     setIsSaving(true);
     try {
       let updatedReplay = replayToSave;
-      const trimmedLabel = labelDraft.trim();
-      const nextLabel = trimmedLabel || null;
 
-      if ((replayToSave.label || null) !== nextLabel) {
+      if (labelChanged) {
         updatedReplay = await renameTaskReplay(playbookId, task.id, activeReplayId, nextLabel);
       }
 
-      updatedReplay = await updateTaskReplayFormatGuide(playbookId, task.id, activeReplayId, {
-        outputFormatGuide: replayToSave.outputFormatGuide ?? undefined,
-        replayConfig: replayConfigDraft,
-      });
+      if (configChanged && replayConfigDraft) {
+        updatedReplay = await updateTaskReplayFormatGuide(playbookId, task.id, activeReplayId, {
+          outputFormatGuide: replayToSave.outputFormatGuide ?? undefined,
+          replayConfig: replayConfigDraft,
+        });
+      }
 
       setCurrentReplay(updatedReplay);
+      originalLabelRef.current = updatedReplay.label || '';
+      originalConfigRef.current = updatedReplay.replayConfig ?? replayConfigDraft;
       onReplayUpdated?.(updatedReplay);
       return true;
     } finally {
@@ -349,10 +373,10 @@ ref,
                     <div className="mt-1 text-muted-foreground">{t(expectedFormatStatusKey as any)}</div>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {replayConfigDraft.replayOutputFormat && <Badge variant="outline">{t('baselineBadge.overview.ruleAnswerStructure')}</Badge>}
-                    {replayConfigDraft.replayToolTrace && <Badge variant="outline">{t('baselineBadge.overview.ruleToolSteps')}</Badge>}
-                    {replayConfigDraft.replayReasoningChain && <Badge variant="outline">{t('baselineBadge.overview.ruleReasoning')}</Badge>}
-                    {!replayConfigDraft.replayOutputFormat && !replayConfigDraft.replayToolTrace && !replayConfigDraft.replayReasoningChain && (
+                    {effectiveReplayConfig.replayOutputFormat && <Badge variant="outline">{t('baselineBadge.overview.ruleAnswerStructure')}</Badge>}
+                    {effectiveReplayConfig.replayToolTrace && <Badge variant="outline">{t('baselineBadge.overview.ruleToolSteps')}</Badge>}
+                    {capabilities.supportsReplayReasoning && effectiveReplayConfig.replayReasoningChain && <Badge variant="outline">{t('baselineBadge.overview.ruleReasoning')}</Badge>}
+                    {!effectiveReplayConfig.replayOutputFormat && !effectiveReplayConfig.replayToolTrace && (!capabilities.supportsReplayReasoning || !effectiveReplayConfig.replayReasoningChain) && (
                       <span className="text-sm text-muted-foreground">{t('baselineBadge.overview.noRules')}</span>
                     )}
                   </div>
@@ -570,7 +594,7 @@ ref,
                     <div className="text-sm font-medium">{t('nodeEditor.replayConfigOutputFormat')}</div>
                     <div className="text-xs text-muted-foreground">{t('nodeEditor.replayConfigOutputFormatHint')}</div>
                     <div className="mt-1 text-xs text-muted-foreground">{t(expectedFormatStatusKey as any)}</div>
-                    {replayConfigDraft.replayOutputFormat && onOpenOutputFormatEditor && (
+                    {effectiveReplayConfig.replayOutputFormat && onOpenOutputFormatEditor && (
                       <div className="mt-2">
                         <Button
                           type="button"
@@ -586,8 +610,8 @@ ref,
                     )}
                   </div>
                   <Switch
-                    checked={replayConfigDraft.replayOutputFormat}
-                    onCheckedChange={(value) => setReplayConfigDraft((prev) => ({ ...prev, replayOutputFormat: value }))}
+                    checked={effectiveReplayConfig.replayOutputFormat}
+                    onCheckedChange={(value) => setReplayConfigDraft((prev) => ({ ...DEFAULT_REPLAY_CONFIG, ...prev, replayOutputFormat: value }))}
                     disabled={isBusy || !canEditReplay}
                   />
                 </div>
@@ -597,22 +621,22 @@ ref,
                     <div className="text-xs text-muted-foreground">{t('nodeEditor.replayConfigToolTraceHint')}</div>
                   </div>
                   <Switch
-                    checked={replayConfigDraft.replayToolTrace}
-                    onCheckedChange={(value) => setReplayConfigDraft((prev) => ({ ...prev, replayToolTrace: value }))}
+                    checked={effectiveReplayConfig.replayToolTrace}
+                    onCheckedChange={(value) => setReplayConfigDraft((prev) => ({ ...DEFAULT_REPLAY_CONFIG, ...prev, replayToolTrace: value }))}
                     disabled={isBusy || !canEditReplay}
                   />
                 </div>
-                <div className="flex items-center justify-between rounded-md border p-3 gap-4">
+                {capabilities.supportsReplayReasoning && <div className="flex items-center justify-between rounded-md border p-3 gap-4">
                   <div>
                     <div className="text-sm font-medium">{t('nodeEditor.replayConfigReasoningChain')}</div>
                     <div className="text-xs text-muted-foreground">{t('nodeEditor.replayConfigReasoningChainHint')}</div>
                   </div>
                   <Switch
-                    checked={replayConfigDraft.replayReasoningChain}
-                    onCheckedChange={(value) => setReplayConfigDraft((prev) => ({ ...prev, replayReasoningChain: value }))}
+                    checked={effectiveReplayConfig.replayReasoningChain}
+                    onCheckedChange={(value) => setReplayConfigDraft((prev) => ({ ...DEFAULT_REPLAY_CONFIG, ...prev, replayReasoningChain: value }))}
                     disabled={isBusy || !canEditReplay}
                   />
-                </div>
+                </div>}
               </div>
 
               {currentReplay.referenceOutput && (

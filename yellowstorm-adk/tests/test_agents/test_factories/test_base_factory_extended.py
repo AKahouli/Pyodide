@@ -28,19 +28,19 @@ def agent_factory():
 
 
 class TestBaseFactoryExtended:
-    def test_resolve_connector_workspace_id_prefers_document(self):
+    def test_resolve_connector_workspace_id_prefers_selected_conversation_workspace(self):
         workspace_id = AgentFactory._resolve_connector_workspace_id(
             "conversation-brain",
             [{"workspace_id": "doc-workspace"}],
         )
-        assert workspace_id == "doc-workspace"
-
-    def test_resolve_connector_workspace_id_falls_back(self):
-        workspace_id = AgentFactory._resolve_connector_workspace_id(
-            "conversation-brain",
-            [{"filename": "doc.pdf"}],
-        )
         assert workspace_id == "conversation-brain"
+
+    def test_resolve_connector_workspace_id_falls_back_to_document(self):
+        workspace_id = AgentFactory._resolve_connector_workspace_id(
+            None,
+            [{"workspace_id": "doc-workspace"}],
+        )
+        assert workspace_id == "doc-workspace"
 
     def test_create_html_diagram_tool(self, agent_factory):
         with patch.object(agent_factory, "create_html_diagram_agent", return_value=MagicMock()):

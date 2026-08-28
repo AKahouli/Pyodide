@@ -112,8 +112,9 @@ async function bootstrap() {
       'Connection',
       'Last-Event-ID',
       ...APP_DATA_CORS_REQUEST_HEADERS,
+      'Range',
     ],
-    exposedHeaders: ['Set-Cookie'],
+    exposedHeaders: ['Set-Cookie', 'Accept-Ranges', 'Content-Disposition', 'Content-Length', 'Content-Range'],
     preflightContinue: false,
     optionsSuccessStatus: 204,
   });

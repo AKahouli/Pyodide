@@ -23,16 +23,16 @@ describe('extractWhatsAppReplyText', () => {
     expect(result).toBe('Hello from agent\nMinor warning');
   });
 
-  it('falls back to reasoning blocks when no text is available', () => {
+  it('falls back to agent activity summaries when no text is available', () => {
     const result = extractWhatsAppReplyText([
-      component({ id: 'cmp-1', type: 'reasoning', data: { content: 'Thinking step 1' } }),
-      component({ id: 'cmp-2', type: 'reasoning', data: { content: 'Thinking step 2' } }),
+      component({ id: 'cmp-1', type: 'agentActivity', data: { summary: 'Preparing the answer', status: 'completed' } }),
+      component({ id: 'cmp-2', type: 'agentActivity', data: { summary: 'Checking the result', status: 'completed' } }),
     ]);
 
-    expect(result).toBe('Thinking step 1\nThinking step 2');
+    expect(result).toBe('Preparing the answer\nChecking the result');
   });
 
-  it('falls back to task item text when no text or reasoning is available', () => {
+  it('falls back to task item text when no text or activity is available', () => {
     const result = extractWhatsAppReplyText([
       component({
         type: 'task',

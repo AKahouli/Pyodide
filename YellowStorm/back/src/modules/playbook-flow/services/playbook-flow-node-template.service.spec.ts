@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import { PlaybookFlowNodeTemplateService } from './playbook-flow-node-template.service';
+import { FlowNodeTemplateSchema } from '../schemas/playbook-flow-node-template.schema';
 
 function makeDoc(overrides: Record<string, unknown> = {}) {
   return {
@@ -48,6 +49,67 @@ function execResult<T>(value: T) {
 
 describe('PlaybookFlowNodeTemplateService', () => {
   const userId = '507f1f77bcf86cd799439011';
+
+  it('removes the legacy type index before unsetting stale type fields', async () => {
+    const calls: string[] = [];
+    const updateExec = jest.fn().mockImplementation(async () => {
+      calls.push('unset');
+      return { modifiedCount: 1 };
+    });
+    const model = {
+      collection: {
+        dropIndex: jest.fn().mockImplementation(async () => {
+          calls.push('drop');
+        }),
+      },
+      updateMany: jest.fn().mockReturnValue({ exec: updateExec }),
+    } as any;
+
+    const service = new PlaybookFlowNodeTemplateService(model);
+    await service.onModuleInit();
+
+    expect(calls).toEqual(['drop', 'unset']);
+    expect(model.collection.dropIndex).toHaveBeenCalledWith('type_1');
+    expect(model.updateMany).toHaveBeenCalledWith(
+      { type: { $exists: true } },
+      { $unset: { type: 1 } },
+    );
+  });
+
+  it.each([
+    { code: 27, codeName: 'IndexNotFound' },
+    { code: 26, codeName: 'NamespaceNotFound' },
+  ])('continues cleanup when the legacy index is already absent ($codeName)', async (mongoError) => {
+    const updateExec = jest.fn().mockResolvedValue({ modifiedCount: 0 });
+    const model = {
+      collection: { dropIndex: jest.fn().mockRejectedValue(mongoError) },
+      updateMany: jest.fn().mockReturnValue({ exec: updateExec }),
+    } as any;
+
+    const service = new PlaybookFlowNodeTemplateService(model);
+    await expect(service.onModuleInit()).resolves.toBeUndefined();
+
+    expect(updateExec).toHaveBeenCalled();
+  });
+
+  it('propagates unexpected index cleanup failures', async () => {
+    const error = new Error('not authorized to drop index');
+    const model = {
+      collection: { dropIndex: jest.fn().mockRejectedValue(error) },
+      updateMany: jest.fn(),
+    } as any;
+
+    const service = new PlaybookFlowNodeTemplateService(model);
+    await expect(service.onModuleInit()).rejects.toBe(error);
+
+    expect(model.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('keeps template keys uniquely indexed', () => {
+    const keyIndex = FlowNodeTemplateSchema.indexes().find(([fields]) => fields.key === 1);
+
+    expect(keyIndex?.[1]).toEqual(expect.objectContaining({ unique: true }));
+  });
 
   it('includes router and human approval configs in responses', async () => {
     const docs = [

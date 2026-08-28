@@ -3,6 +3,11 @@ import { Type, Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class ConversationQueryDto {
+  @ApiPropertyOptional({ enum: ['chat', 'platform_copilot'], description: 'Filter by conversation runtime purpose' })
+  @IsOptional()
+  @IsIn(['chat', 'platform_copilot'])
+  runtimePurpose?: 'chat' | 'platform_copilot';
+
   @ApiPropertyOptional({ minimum: 1, default: 1 })
   @IsOptional()
   @Type(() => Number)

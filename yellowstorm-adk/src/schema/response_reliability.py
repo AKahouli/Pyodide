@@ -27,7 +27,7 @@ class ResponseReliabilityRequest(BaseModel):
     segments: list[ReliabilityAnswerSegment] = Field(min_length=1, max_length=100)
     globalEvidence: list[ReliabilityEvidenceItem] = Field(default_factory=list, max_length=40)
     judgeModel: str = Field(min_length=1, max_length=300)
-    maxFindings: int = Field(default=5, ge=1, le=10)
+    maxFindings: int = Field(default=5, ge=1)
     omitTemperature: bool = False
 
 

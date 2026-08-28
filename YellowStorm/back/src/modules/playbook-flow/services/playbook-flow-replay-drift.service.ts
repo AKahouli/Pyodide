@@ -9,7 +9,6 @@ import {
   type FlowReplayRunReportDocument,
   type ReplaySignalEvaluationStatus,
 } from '../schemas/playbook-flow-replay-run-report.schema';
-import type { ReplayEligibilityResult } from '../interfaces/playbook-flow-replay-eligibility.interface';
 import type { ReplayMode } from '../schemas/playbook-flow-validated-replay.schema';
 import type {
   ReplayPlanToolStep,
@@ -58,7 +57,6 @@ export interface CreateReplayPreRunReportInput {
   referenceExecutionId: string;
   validationVersion: number;
   mode: ReplayMode;
-  eligibility: ReplayEligibilityResult;
 }
 
 export interface RecordReplayCompletedTaskDriftInput {
@@ -100,12 +98,9 @@ interface UpdateReplayStructuralDriftInput {
   hitlMemorySnapshots?: FlowReplayHitlMemorySnapshot[];
 }
 
-type ReplayRunVerdict = 'pass' | 'warning' | 'fail' | 'skipped' | 'unknown';
+type ReplayRunVerdict = 'pass' | 'warning' | 'fail' | 'unknown';
 type ReplaySignalReason =
-  | 'replay_not_applied'
   | 'evaluation_pending'
-  | 'confidence_below_threshold'
-  | 'required_context_unresolved'
   | 'intent_not_configured'
   | 'intent_not_evaluated'
   | 'intent_mismatch'
@@ -128,7 +123,6 @@ type ReplaySignalReason =
   | 'semantic_stale_context_references'
   | 'semantic_unsupported_claims';
 type ReplayVerdictReason =
-  | 'replay_not_applied'
   | 'evaluation_pending'
   | 'output_contract_failed'
   | 'strict_tool_policy_failed'
@@ -176,39 +170,12 @@ export class PlaybookFlowReplayDriftService {
   }
 
   async createPreRunReport(params: CreateReplayPreRunReportInput): Promise<FlowReplayRunReportDocument> {
-    const signalStatuses = this.buildPreRunSignalStatuses(
-      params.eligibility.applied,
-      params.eligibility.invalidationReasons,
-      params.eligibility.confidenceScore,
-    );
-    const preRunOutcome = this.deriveReplayOutcome({
-      applied: params.eligibility.applied,
-      mode: params.mode,
-      confidenceScore: params.eligibility.confidenceScore,
-      invalidationReasons: params.eligibility.invalidationReasons,
-      outputContractEvaluated: false,
-      outputContractPassed: false,
-      structuralDriftScore: null,
-      toolPolicyScore: null,
-      structuralDriftReasons: [],
-      semanticMatch: null,
-      replayConfidence: null,
-      toolSequenceMatch: null,
-      argumentShapeMatch: null,
-      reasoningMatch: null,
-      outputFormatMatch: null,
-      contextDrift: params.eligibility.confidenceScore,
-      dataDrift: null,
-      driftFindings: [],
-      blockedBy: [],
-    });
     const iteration = params.iteration ?? 0;
     const hitlSummary = await this.buildReplayHitlSummary({
       referenceExecutionId: params.referenceExecutionId,
       executionId: params.executionId,
       taskId: params.taskId,
       flowId: params.flowId,
-      applied: params.eligibility.applied,
     });
     const report = await this.replayReportService.createReport({
       executionId: params.executionId,
@@ -218,19 +185,13 @@ export class PlaybookFlowReplayDriftService {
       replayId: params.replayId,
       validationVersion: params.validationVersion,
       mode: params.mode,
-      applied: params.eligibility.applied,
-      confidenceScore: params.eligibility.confidenceScore,
-      appliedSections: params.eligibility.appliedSections,
-      skippedSections: params.eligibility.skippedSections,
-      invalidationReasons: params.eligibility.invalidationReasons,
-      confidenceFactors: params.eligibility.confidenceFactors,
       outputContractEvaluated: false,
       outputContractPassed: false,
       structuralDriftScore: null,
       toolPolicyScore: null,
-      verdict: preRunOutcome.verdict,
-      overallScore: preRunOutcome.overallScore,
-      verdictReasons: preRunOutcome.verdictReasons,
+      verdict: 'unknown',
+      overallScore: null,
+      verdictReasons: ['evaluation_pending'],
       structuralDriftReasons: [],
       semanticMatch: null,
       matchedBaselineId: params.replayId,
@@ -241,12 +202,11 @@ export class PlaybookFlowReplayDriftService {
       argumentShapeMatch: null,
       reasoningMatch: null,
       outputFormatMatch: null,
-      contextDrift: params.eligibility.confidenceScore,
+      contextDrift: null,
       dataDrift: null,
       driftFindings: [],
       blockedBy: [],
       hitlSummary,
-      ...signalStatuses,
     });
 
     this.emitReplayHitlSummaryUpdated({
@@ -301,26 +261,19 @@ export class PlaybookFlowReplayDriftService {
         params.iteration ?? 0,
       );
       if (latestReport?._id) {
-        const notEvaluatedStatuses = this.buildPreRunSignalStatuses(
-          Boolean(latestReport.applied),
-          asStringArray(latestReport.invalidationReasons),
-          Number(latestReport.confidenceScore ?? 0),
-        );
         const hitlSummary = await this.buildReplayHitlSummary({
           referenceExecutionId: params.replayArtifacts.referenceExecutionId,
           executionId: params.executionId,
           taskId: params.taskId,
           flowId: params.replayArtifacts.flowId ?? String(latestReport.flowId ?? ''),
-          applied: Boolean(latestReport.applied),
           hitlMemorySnapshots: params.replayArtifacts.hitlMemorySnapshots,
         });
         await this.replayReportService.updateReport(latestReport._id as string, {
-          verdict: 'skipped',
+          verdict: 'unknown',
           overallScore: null,
           verdictReasons: ['evaluation_pending'],
           observedToolCalls: params.toolTrace,
           hitlSummary,
-          ...notEvaluatedStatuses,
         });
         this.emitReplayHitlSummaryUpdated({
           executionId: params.executionId,
@@ -402,16 +355,13 @@ export class PlaybookFlowReplayDriftService {
     }
 
     const outcome = this.deriveReplayOutcome({
-      applied: Boolean(latestReport.applied),
       mode: latestReport.mode as ReplayMode,
-      invalidationReasons: asStringArray(latestReport.invalidationReasons),
       outputContractEvaluated: Boolean(latestReport.outputContractEvaluated),
       outputContractPassed: Boolean(latestReport.outputContractPassed),
       structuralDriftScore: normalizeReplayScore(asNumberOrNull(latestReport.structuralDriftScore)),
       toolPolicyScore: normalizeReplayScore(asNumberOrNull(latestReport.toolPolicyScore)),
       structuralDriftReasons: asStringArray(latestReport.structuralDriftReasons),
       semanticMatch,
-      confidenceScore: Number(latestReport.confidenceScore ?? 0),
       replayConfidence: normalizeReplayScore(asNumberOrNull(latestReport.replayConfidence)),
       toolSequenceMatch: normalizeReplayScore(asNumberOrNull(latestReport.toolSequenceMatch)),
       argumentShapeMatch: normalizeReplayScore(asNumberOrNull(latestReport.argumentShapeMatch)),
@@ -428,9 +378,7 @@ export class PlaybookFlowReplayDriftService {
       verdict: outcome.verdict,
       overallScore: outcome.overallScore,
       verdictReasons: outcome.verdictReasons,
-      semanticStatus: latestReport.applied
-        ? this.buildSemanticStatus(semanticMatch)
-        : this.buildSignalStatus('not_evaluated', this.resolveSkipReason(asStringArray(latestReport.invalidationReasons))),
+      semanticStatus: this.buildSemanticStatus(semanticMatch),
     });
 
     const latestHitlSummary = this.resolveHitlSummaryFromReport(latestReport);
@@ -469,8 +417,6 @@ export class PlaybookFlowReplayDriftService {
 
     const flexAssessment = latestReport.mode === 'replay_flex'
       ? deriveReplayFlexDriftAssessment({
-          confidenceScore: Number(latestReport.confidenceScore ?? 0),
-          invalidationReasons: asStringArray(latestReport.invalidationReasons),
           driftPolicy: params.driftPolicy,
           baselineIntentKey: params.intentKey,
           observedIntentKey: params.observedIntentKey,
@@ -487,22 +433,19 @@ export class PlaybookFlowReplayDriftService {
         })
       : null;
     const outcome = this.deriveReplayOutcome({
-      applied: Boolean(latestReport.applied),
       mode: latestReport.mode as ReplayMode,
-      invalidationReasons: asStringArray(latestReport.invalidationReasons),
       outputContractEvaluated: params.outputContractEvaluated,
       outputContractPassed: params.outputContractPassed,
       structuralDriftScore: params.structuralDriftScore,
       toolPolicyScore: params.toolAssessment?.toolPolicyScore ?? params.toolPolicyScore,
       structuralDriftReasons: params.structuralDriftReasons,
       semanticMatch: params.semanticMatch ?? null,
-      confidenceScore: Number(latestReport.confidenceScore ?? 0),
       replayConfidence: flexAssessment?.replayConfidence ?? null,
       toolSequenceMatch: flexAssessment?.toolSequenceMatch ?? params.toolAssessment?.toolSequenceMatch ?? null,
       argumentShapeMatch: flexAssessment?.argumentShapeMatch ?? params.toolAssessment?.argumentShapeMatch ?? null,
       reasoningMatch: flexAssessment?.reasoningMatch ?? null,
       outputFormatMatch: flexAssessment?.outputFormatMatch ?? normalizeReplayScore(params.structuralDriftScore),
-      contextDrift: flexAssessment?.contextDrift ?? Number(latestReport.confidenceScore ?? 0),
+      contextDrift: null,
       dataDrift: flexAssessment?.dataDrift ?? normalizeReplayScore(params.semanticMatch?.matchScore ?? null),
       driftFindings: mergeReplayDriftFindings(flexAssessment?.driftFindings ?? [], params.toolAssessment?.findings ?? []),
       blockedBy: uniqueReplayStrings([...(flexAssessment?.blockedBy ?? []), ...(params.toolAssessment?.blockedBy ?? [])]),
@@ -513,7 +456,6 @@ export class PlaybookFlowReplayDriftService {
       executionId: params.executionId,
       taskId: params.taskId,
       flowId: String(latestReport.flowId ?? ''),
-      applied: Boolean(latestReport.applied),
       hitlMemorySnapshots: params.hitlMemorySnapshots,
     });
 
@@ -535,7 +477,7 @@ export class PlaybookFlowReplayDriftService {
       argumentShapeMatch: flexAssessment?.argumentShapeMatch ?? params.toolAssessment?.argumentShapeMatch ?? null,
       reasoningMatch: flexAssessment?.reasoningMatch ?? null,
       outputFormatMatch: flexAssessment?.outputFormatMatch ?? normalizeReplayScore(params.structuralDriftScore),
-      contextDrift: flexAssessment?.contextDrift ?? Number(latestReport.confidenceScore ?? 0),
+      contextDrift: null,
       dataDrift: flexAssessment?.dataDrift ?? normalizeReplayScore(params.semanticMatch?.matchScore ?? null),
       driftFindings: mergeReplayDriftFindings(flexAssessment?.driftFindings ?? [], params.toolAssessment?.findings ?? []),
       blockedBy: uniqueReplayStrings([...(flexAssessment?.blockedBy ?? []), ...(params.toolAssessment?.blockedBy ?? [])]),
@@ -638,47 +580,6 @@ export class PlaybookFlowReplayDriftService {
     return { status, reason };
   }
 
-  private resolveSkipReason(invalidationReasons: string[]): ReplaySignalReason {
-    if (invalidationReasons.includes('required_context_unresolved')) {
-      return 'required_context_unresolved';
-    }
-    if (invalidationReasons.includes('confidence_below_threshold')) {
-      return 'confidence_below_threshold';
-    }
-    return 'replay_not_applied';
-  }
-
-  private buildPreRunSignalStatuses(applied: boolean, invalidationReasons: string[], confidenceScore: number): ReplaySignalStatuses {
-    if (!applied) {
-      const skipReason = this.resolveSkipReason(invalidationReasons);
-      return {
-        intentStatus: this.buildSignalStatus('not_evaluated', skipReason),
-        reasoningStatus: this.buildSignalStatus('not_evaluated', skipReason),
-        toolSequenceStatus: this.buildSignalStatus('not_evaluated', skipReason),
-        argumentShapeStatus: this.buildSignalStatus('not_evaluated', skipReason),
-        outputContractStatus: this.buildSignalStatus('not_evaluated', skipReason),
-        semanticStatus: this.buildSignalStatus('not_evaluated', skipReason),
-        contextSubstitutionStatus: this.buildSignalStatus(
-          skipReason === 'confidence_below_threshold' || skipReason === 'required_context_unresolved' ? 'failed' : 'warning',
-          skipReason,
-        ),
-      };
-    }
-
-    return {
-      intentStatus: this.buildSignalStatus('not_evaluated', 'evaluation_pending'),
-      reasoningStatus: this.buildSignalStatus('not_evaluated', 'evaluation_pending'),
-      toolSequenceStatus: this.buildSignalStatus('not_evaluated', 'evaluation_pending'),
-      argumentShapeStatus: this.buildSignalStatus('not_evaluated', 'evaluation_pending'),
-      outputContractStatus: this.buildSignalStatus('not_evaluated', 'evaluation_pending'),
-      semanticStatus: this.buildSignalStatus('not_evaluated', 'evaluation_pending'),
-      contextSubstitutionStatus: this.buildSignalStatus(
-        confidenceScore >= SCORE_WARNING_THRESHOLD && invalidationReasons.length === 0 ? 'passed' : 'warning',
-        invalidationReasons.includes('confidence_below_threshold') ? 'confidence_below_threshold' : null,
-      ),
-    };
-  }
-
   private buildSemanticStatus(semanticMatch: FlowTaskSemanticMatch | null): FlowReplaySignalStatus {
     if (!semanticMatch) {
       return this.buildSignalStatus('not_evaluated', 'semantic_evaluation_missing');
@@ -730,12 +631,7 @@ export class PlaybookFlowReplayDriftService {
     const baselineHasReasoning = params.baselineReasoningOutline.length > 0 || params.baselineReasoningChain.length > 0;
     const baselineHasTools = params.baselineToolCalls.length > 0;
     const semanticStatus = this.buildSemanticStatus(params.semanticMatch ?? null);
-    const contextScore = flexAssessment?.contextDrift ?? Number(latestReport.confidenceScore ?? 0);
-
-    const contextSubstitutionStatus = this.scoreToStatus(
-      normalizeReplayScore(contextScore),
-      'confidence_below_threshold',
-    );
+    const contextSubstitutionStatus = this.buildSignalStatus('not_evaluated', 'evaluation_pending');
 
     const intentStatus = !params.intentKey
       ? this.buildSignalStatus('not_applicable', 'intent_not_configured')
@@ -785,16 +681,13 @@ export class PlaybookFlowReplayDriftService {
 
   private deriveReplayOutcome(
     report: {
-      applied: boolean;
       mode: ReplayMode;
-      invalidationReasons: string[];
       outputContractEvaluated: boolean;
       outputContractPassed: boolean;
       structuralDriftScore: number | null;
       toolPolicyScore: number | null;
       structuralDriftReasons: string[];
       semanticMatch: FlowTaskSemanticMatch | null;
-      confidenceScore: number;
       replayConfidence: number | null;
       toolSequenceMatch: number | null;
       argumentShapeMatch: number | null;
@@ -806,14 +699,6 @@ export class PlaybookFlowReplayDriftService {
       blockedBy: string[];
     },
   ): { verdict: ReplayRunVerdict; overallScore: number | null; verdictReasons: ReplayVerdictReason[] } {
-    if (!report.applied) {
-      return {
-        verdict: 'skipped',
-        overallScore: null,
-        verdictReasons: ['replay_not_applied'],
-      };
-    }
-
     if (report.mode === 'replay_flex' && report.replayConfidence !== null) {
       const overallScore = normalizeReplayScore(report.replayConfidence);
       if (overallScore === null) {
@@ -906,7 +791,7 @@ export class PlaybookFlowReplayDriftService {
       if (reason === 'semantic_match_below_threshold') {
         reasons.add('semantic_score_below_fail_threshold');
       }
-      if (reason === 'confidence_below_threshold' || reason === 'reasoning_match_below_threshold' || reason === 'tool_sequence_match_below_threshold' || reason === 'argument_shape_match_below_threshold') {
+      if (reason === 'reasoning_match_below_threshold' || reason === 'tool_sequence_match_below_threshold' || reason === 'argument_shape_match_below_threshold') {
         reasons.add('structural_drift_detected');
       }
       if (reason === 'intent_mismatch' || reason === 'additional_tools_not_allowed') {
@@ -948,33 +833,6 @@ export class PlaybookFlowReplayDriftService {
       return null;
     }
 
-    const signalStatuses = this.buildPreRunSignalStatuses(
-      Boolean(sourceReport.applied),
-      asStringArray(sourceReport.invalidationReasons),
-      Number(sourceReport.confidenceScore ?? 0),
-    );
-    const preRunOutcome = this.deriveReplayOutcome({
-      applied: Boolean(sourceReport.applied),
-      mode: sourceReport.mode as ReplayMode,
-      confidenceScore: Number(sourceReport.confidenceScore ?? 0),
-      invalidationReasons: asStringArray(sourceReport.invalidationReasons),
-      outputContractEvaluated: false,
-      outputContractPassed: false,
-      structuralDriftScore: null,
-      toolPolicyScore: null,
-      structuralDriftReasons: [],
-      semanticMatch: null,
-      replayConfidence: null,
-      toolSequenceMatch: null,
-      argumentShapeMatch: null,
-      reasoningMatch: null,
-      outputFormatMatch: null,
-      contextDrift: Number(sourceReport.confidenceScore ?? 0),
-      dataDrift: null,
-      driftFindings: [],
-      blockedBy: [],
-    });
-
     const clone: Record<string, unknown> = {
       ...sourceReport,
       iteration,
@@ -982,9 +840,9 @@ export class PlaybookFlowReplayDriftService {
       outputContractPassed: false,
       structuralDriftScore: null,
       toolPolicyScore: null,
-      verdict: preRunOutcome.verdict,
-      overallScore: preRunOutcome.overallScore,
-      verdictReasons: preRunOutcome.verdictReasons,
+      verdict: 'unknown',
+      overallScore: null,
+      verdictReasons: ['evaluation_pending'],
       structuralDriftReasons: [],
       semanticMatch: null,
       intentKey: null,
@@ -993,7 +851,7 @@ export class PlaybookFlowReplayDriftService {
       argumentShapeMatch: null,
       reasoningMatch: null,
       outputFormatMatch: null,
-      contextDrift: Number(sourceReport.confidenceScore ?? 0),
+      contextDrift: null,
       dataDrift: null,
       driftFindings: [],
       blockedBy: [],
@@ -1002,7 +860,6 @@ export class PlaybookFlowReplayDriftService {
       observedToolCalls: [],
       toolCallComparisons: [],
       instantiatedSemanticChecklist: sourceReport.instantiatedSemanticChecklist ?? [],
-      ...signalStatuses,
     };
     delete clone._id;
     delete clone.id;
@@ -1021,7 +878,6 @@ export class PlaybookFlowReplayDriftService {
     executionId: string;
     taskId: string;
     flowId: string;
-    applied: boolean;
     hitlMemorySnapshots?: FlowReplayHitlMemorySnapshot[];
   }): Promise<Record<string, unknown>> {
     const [baselineEvents, runtimeEvents] = await Promise.all([
@@ -1029,7 +885,7 @@ export class PlaybookFlowReplayDriftService {
       this.findHitlEventsForTask(params.executionId, params.taskId),
     ]);
     const approvalReaskedCount = runtimeEvents.filter((event) => event.type === 'approval_request').length;
-    const findings = this.buildHitlReplayFindings(params.taskId, baselineEvents.length, runtimeEvents.length, params.applied);
+    const findings = this.buildHitlReplayFindings(params.taskId, baselineEvents.length, runtimeEvents.length);
     const reusedMemoryCount = Array.isArray(params.hitlMemorySnapshots)
       ? this.countReusableHitlSnapshots(params.hitlMemorySnapshots)
       : await this.countReusableHitlMemories({
@@ -1043,7 +899,7 @@ export class PlaybookFlowReplayDriftService {
       reusedMemoryCount,
       newClarificationCount: runtimeEvents.filter((event) => event.type === 'clarification').length,
       approvalReaskedCount,
-      hitlContextDrift: baselineEvents.length > 0 && runtimeEvents.length === 0 && !params.applied,
+      hitlContextDrift: baselineEvents.length > 0 && runtimeEvents.length === 0,
       findings,
     };
   }
@@ -1080,12 +936,11 @@ export class PlaybookFlowReplayDriftService {
     taskId: string,
     baselineCount: number,
     runtimeCount: number,
-    applied: boolean,
   ): Array<{ severity: 'info' | 'warning' | 'fail'; message: string; nodeId: string }> {
     if (baselineCount > 0 && runtimeCount === 0) {
       return [{
-        severity: applied ? 'info' : 'warning',
-        message: applied ? 'baseline_hitl_reused_or_not_needed' : 'hitl_context_drift',
+        severity: 'info',
+        message: 'baseline_hitl_reused_or_not_needed',
         nodeId: taskId,
       }];
     }

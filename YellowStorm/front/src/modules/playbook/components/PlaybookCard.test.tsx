@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PlaybookCard } from './PlaybookCard';
 import type { PlaybookSummary } from '../types';
 const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
@@ -48,6 +48,10 @@ const playbook: PlaybookSummary = {
 };
 
 describe('PlaybookCard', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('renders playbook name and description', () => {
     render(<PlaybookCard playbook={playbook} onDelete={vi.fn()} onClone={vi.fn()} onToggleFavorite={vi.fn()} />);
     expect(screen.getByText('Deploy Pipeline')).toBeInTheDocument();
@@ -90,29 +94,34 @@ describe('PlaybookCard', () => {
     expect(screen.getByText('status.idle')).toBeInTheDocument();
   });
 
-  it('opens the triggers panel from the shortcut icon', async () => {
+  it('opens the triggers panel from the secondary actions menu', async () => {
     render(<PlaybookCard playbook={playbook} onDelete={vi.fn()} onClone={vi.fn()} onToggleFavorite={vi.fn()} />);
-    await userEvent.click(screen.getByLabelText('card.openTriggers'));
+    await userEvent.click(screen.getByRole('button', { name: 'card.actions' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'card.openTriggers' }));
     expect(navigateMock).toHaveBeenCalledWith('/playbooks/p1?triggers=1', { state: { autoLayoutOnOpen: true } });
   });
 
-  it('navigates to playbook on card click', async () => {
+  it('keeps opening the Playbook as the single direct action', async () => {
     render(<PlaybookCard playbook={playbook} onDelete={vi.fn()} onClone={vi.fn()} onToggleFavorite={vi.fn()} />);
-    await userEvent.click(screen.getByText('Deploy Pipeline'));
+    await userEvent.click(screen.getByRole('button', { name: 'card.view' }));
     expect(navigateMock).toHaveBeenCalledWith('/playbooks/p1', { state: { autoLayoutOnOpen: true } });
   });
 
-  it('calls onDelete when delete button is clicked', async () => {
+  it('confirms before deleting from the secondary actions menu', async () => {
     const onDelete = vi.fn();
     render(<PlaybookCard playbook={playbook} onDelete={onDelete} onClone={vi.fn()} onToggleFavorite={vi.fn()} />);
-    await userEvent.click(screen.getByTitle('card.delete'));
+    await userEvent.click(screen.getByRole('button', { name: 'card.actions' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'card.delete' }));
+    expect(onDelete).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'card.delete' }));
     expect(onDelete).toHaveBeenCalledWith('p1');
   });
 
   it('calls onToggleFavorite when star button is clicked', async () => {
     const onFav = vi.fn();
     render(<PlaybookCard playbook={playbook} onDelete={vi.fn()} onClone={vi.fn()} onToggleFavorite={onFav} />);
-    await userEvent.click(screen.getByTitle('card.favorite'));
+    await userEvent.click(screen.getByRole('button', { name: 'card.actions' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'card.favorite' }));
     expect(onFav).toHaveBeenCalledWith('p1');
   });
 
@@ -125,12 +134,13 @@ describe('PlaybookCard', () => {
 
     render(<PlaybookCard playbook={playbook} onDelete={vi.fn()} onClone={vi.fn()} onToggleFavorite={vi.fn()} />);
 
-    await userEvent.click(screen.getByTitle('Copy integration URL'));
+    await userEvent.click(screen.getByRole('button', { name: 'card.actions' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'card.integration.open' }));
     expect(screen.getByDisplayValue('http://localhost:3000/api/v1/playbooks/public/integration-token/execute')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /copy/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'card.integration.copy' }));
 
     expect(writeText).toHaveBeenCalledWith('http://localhost:3000/api/v1/playbooks/public/integration-token/execute');
-    expect(toastMock.success).toHaveBeenCalledWith('Integration URL copied');
+    expect(toastMock.success).toHaveBeenCalledWith('card.integration.copied');
   });
 
   it('calls onSelect in selectable mode instead of navigating', async () => {

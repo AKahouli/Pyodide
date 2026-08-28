@@ -56,6 +56,13 @@ export class ImportConnectorItemDto {
   mimeType?: string;
 }
 
+export class InternalImportConnectorItemDto extends ImportConnectorItemDto {
+  @ApiProperty({ description: 'User ID on whose behalf the trusted service imports the item' })
+  @IsString()
+  @IsNotEmpty()
+  userId!: string;
+}
+
 export class ExportToConnectorDto {
   @ApiProperty({ description: 'Connector slug or ID' })
   @IsString()

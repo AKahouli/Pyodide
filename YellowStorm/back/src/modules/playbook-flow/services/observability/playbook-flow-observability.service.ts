@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { ConversationSettingsService } from '@modules/system/conversation-settings.service';
 import {
   FlowCompletedResultPayload,
 } from '../../interfaces/playbook-flow-observability.interface';
@@ -13,6 +14,7 @@ import {
 import { normalizePlaybookComponents } from './playbook-flow-citation.mapper';
 import { PlaybookFlowPublicReasoningParserService } from './playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './playbook-flow-trace-redaction.service';
+import { sanitizePlaybookPublicValue } from '../../utils/playbook-artifact';
 
 export interface FlowTraceUpdatePayload {
   toolTrace?: FlowCompletedResultPayload['toolTrace'];
@@ -28,11 +30,23 @@ export class PlaybookFlowObservabilityService {
   constructor(
     private readonly traceRedactionService: PlaybookFlowTraceRedactionService,
     private readonly publicReasoningParser: PlaybookFlowPublicReasoningParserService,
+    @Optional() private readonly conversationSettings?: ConversationSettingsService,
   ) {}
+
+  async shouldRedactSensitiveText(): Promise<boolean> {
+    if (!this.conversationSettings) return true;
+    try {
+      return (await this.conversationSettings.getSettings()).redactSensitiveText !== false;
+    } catch (error) {
+      this.logger.warn(`Failed to load sensitive-text redaction setting; defaulting to redaction: ${error instanceof Error ? error.message : String(error)}`);
+      return true;
+    }
+  }
 
   extractCompletedResultPayload(
     payload: Record<string, unknown>,
     context: { executionId: string; taskId: string },
+    redactSensitiveText = true,
   ): FlowCompletedResultPayload {
     const cleanOutput = payload.output ?? payload;
     const rawDisplayText = typeof payload.display_text === 'string'
@@ -79,11 +93,11 @@ export class PlaybookFlowObservabilityService {
     if (payload.outputs !== undefined && outputs === undefined) {
       this.logger.warn(`Dropping invalid outputs payload for execution=${context.executionId} task=${context.taskId} (type=${typeof payload.outputs})`);
     }
-    const toolTrace = this.traceRedactionService.redactToolTrace(mapToolTrace(payload.tool_trace ?? payload.toolTrace));
-    const llmPromptTrace = this.traceRedactionService.redactPromptTrace(mapPromptTrace(payload.llm_prompt_trace ?? payload.llmPromptTrace));
+    const toolTrace = this.traceRedactionService.redactToolTrace(mapToolTrace(payload.tool_trace ?? payload.toolTrace), redactSensitiveText);
+    const llmPromptTrace = this.traceRedactionService.redactPromptTrace(mapPromptTrace(payload.llm_prompt_trace ?? payload.llmPromptTrace), redactSensitiveText);
     const usage = mapUsage(payload.usage);
     const semanticMatch = mapSemanticMatch(payload.semantic_match ?? payload.semanticMatch);
-    const traceMetadata = this.traceRedactionService.redactRecord(mapTraceMetadata(payload.trace_metadata ?? payload.traceMetadata));
+    const traceMetadata = this.traceRedactionService.redactRecord(mapTraceMetadata(payload.trace_metadata ?? payload.traceMetadata), redactSensitiveText);
 
     this.warnOnInvalidObservabilityPayload(payload, context, toolTrace.length, llmPromptTrace.length);
 
@@ -110,8 +124,8 @@ export class PlaybookFlowObservabilityService {
     };
   }
 
-  toStreamPayload(payload: FlowCompletedResultPayload) {
-    return {
+  toStreamPayload(payload: FlowCompletedResultPayload, redactSensitiveText = true) {
+    return sanitizePlaybookPublicValue({
       ...flattenUsage(payload),
       toolTrace: payload.toolTrace,
       reasoningChain: payload.reasoningChain ?? [],
@@ -119,17 +133,18 @@ export class PlaybookFlowObservabilityService {
       semanticMatch: payload.semanticMatch ?? null,
       traceMetadata: payload.traceMetadata ?? {},
       iteratorIterations: payload.iteratorIterations,
-    };
+    }, false, redactSensitiveText) as ReturnType<typeof flattenUsage> & Record<string, unknown>;
   }
 
   extractTraceUpdatePayload(
     payload: Record<string, unknown>,
     context: { executionId: string; taskId: string },
+    redactSensitiveText = true,
   ): FlowTraceUpdatePayload {
-    const toolTrace = this.traceRedactionService.redactToolTrace(mapToolTrace(payload.tool_trace ?? payload.toolTrace));
-    const llmPromptTrace = this.traceRedactionService.redactPromptTrace(mapPromptTrace(payload.llm_prompt_trace ?? payload.llmPromptTrace));
+    const toolTrace = this.traceRedactionService.redactToolTrace(mapToolTrace(payload.tool_trace ?? payload.toolTrace), redactSensitiveText);
+    const llmPromptTrace = this.traceRedactionService.redactPromptTrace(mapPromptTrace(payload.llm_prompt_trace ?? payload.llmPromptTrace), redactSensitiveText);
     const usage = mapUsage(payload.usage);
-    const traceMetadata = this.traceRedactionService.redactRecord(mapTraceMetadata(payload.trace_metadata ?? payload.traceMetadata));
+    const traceMetadata = this.traceRedactionService.redactRecord(mapTraceMetadata(payload.trace_metadata ?? payload.traceMetadata), redactSensitiveText);
 
     this.warnOnInvalidObservabilityPayload(payload, context, toolTrace.length, llmPromptTrace.length);
 

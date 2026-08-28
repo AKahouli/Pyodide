@@ -14,7 +14,6 @@ import type {
   ReplaySignalStatus,
   ReplayToolCallComparison,
 } from '../types';
-import { ReplayConfidenceBadge } from './ReplayConfidenceBadge';
 import { ReplayDriftFindingsList } from './ReplayDriftFindingsList';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
@@ -122,10 +121,6 @@ function formatReplayReason(value: string, t: Translate): string {
   const directKeys: Record<string, string> = {
     missing_replay_baseline: 'replayReport.reason.missingReplayBaseline',
     baseline_fingerprints_missing: 'replayReport.reason.baselineFingerprintsMissing',
-    replay_marked_stale: 'replayReport.reason.replayMarkedStale',
-    replay_stale_high_risk: 'replayReport.reason.replayStaleHighRisk',
-    confidence_below_threshold: 'replayReport.reason.confidenceBelowThreshold',
-    required_context_unresolved: 'replayReport.reason.requiredContextUnresolved',
     intent_not_evaluated: 'replayReport.reason.intentNotEvaluated',
     intent_mismatch: 'replayReport.reason.intentMismatch',
     additional_tools_not_allowed: 'replayReport.reason.additionalToolsNotAllowed',
@@ -176,7 +171,6 @@ function formatReplayReason(value: string, t: Translate): string {
 
 function formatVerdictReason(value: string, t: Translate): string {
   const keys: Record<string, string> = {
-    replay_not_applied: 'replayReport.verdictReason.replayNotApplied',
     evaluation_pending: 'replayReport.verdictReason.evaluationPending',
     output_contract_failed: 'replayReport.verdictReason.outputContractFailed',
     strict_tool_policy_failed: 'replayReport.verdictReason.strictToolPolicyFailed',
@@ -249,10 +243,7 @@ function formatSignalReason(value: string | null | undefined, t: Translate): str
     return null;
   }
   const keys: Record<string, string> = {
-    replay_not_applied: 'replayReport.signalReason.replayNotApplied',
     evaluation_pending: 'replayReport.signalReason.evaluationPending',
-    confidence_below_threshold: 'replayReport.signalReason.confidenceBelowThreshold',
-    required_context_unresolved: 'replayReport.signalReason.requiredContextUnresolved',
     intent_not_configured: 'replayReport.signalReason.intentNotConfigured',
     intent_not_evaluated: 'replayReport.signalReason.intentNotEvaluated',
     intent_mismatch: 'replayReport.signalReason.intentMismatch',
@@ -297,12 +288,6 @@ function formatJsonPreview(value: Record<string, unknown> | null): string {
   return JSON.stringify(value, null, 2);
 }
 
-function confidenceTone(score: number): string {
-  if (score >= SCORE_WARNING_THRESHOLD) return 'bg-emerald-100 text-emerald-700';
-  if (score >= SCORE_FAIL_THRESHOLD) return 'bg-amber-100 text-amber-700';
-  return 'bg-red-100 text-red-700';
-}
-
 function verdictTone(verdict: ReplayRunReport['verdict']): string {
   switch (verdict) {
     case 'pass':
@@ -311,15 +296,12 @@ function verdictTone(verdict: ReplayRunReport['verdict']): string {
       return 'bg-amber-100 text-amber-700';
     case 'fail':
       return 'bg-red-100 text-red-700';
-    case 'skipped':
-      return 'bg-slate-100 text-slate-700';
     default:
       return 'bg-muted text-muted-foreground';
   }
 }
 
-function getOutcomeKey(verdict: ReplayRunReport['verdict'], applied: boolean): string {
-  if (!applied || verdict === 'skipped') return 'notUsed';
+function getOutcomeKey(verdict: ReplayRunReport['verdict']): string {
   if (verdict === 'pass') return 'consistent';
   if (verdict === 'warning') return 'needsReview';
   if (verdict === 'fail') return 'blocked';
@@ -334,15 +316,9 @@ function buildReferenceRunSummary(params: {
   t: Translate;
 }): ReferenceRunSummary {
   const { report, verdict, statuses, verdictReasons, t } = params;
-  const outcomeKey = getOutcomeKey(verdict, report.applied);
-  const skippedSummary = verdict === 'skipped'
-    ? formatSignalReason(statuses.contextSubstitution.reason, t) ?? verdictReasons[0] ?? t('replayReport.verdictReason.replayNotApplied')
-    : null;
+  const outcomeKey = getOutcomeKey(verdict);
   const recommendedActions = new Set<string>();
 
-  if (!report.applied || verdict === 'skipped') {
-    recommendedActions.add(t('replayReport.action.reviewReference'));
-  }
   if (statuses.outputContract.status === 'failed' || statuses.outputContract.reason === 'output_contract_not_configured') {
     recommendedActions.add(t('replayReport.action.createExpectedFormat'));
   }
@@ -358,10 +334,8 @@ function buildReferenceRunSummary(params: {
 
   return {
     outcomeKey,
-    description: skippedSummary
-      ? t('replayReport.outcome.notUsedWithReason', { reason: skippedSummary })
-      : t(`replayReport.outcome.${outcomeKey}.description`),
-    score: report.applied ? report.overallScore ?? null : null,
+    description: t(`replayReport.outcome.${outcomeKey}.description`),
+    score: report.overallScore ?? null,
     recommendedActions: [...recommendedActions].slice(0, 3),
   };
 }
@@ -423,9 +397,7 @@ function buildReferenceCheckViewModel(params: {
       ? 'border-emerald-500/30 bg-emerald-500/10'
       : summary.outcomeKey === 'blocked'
         ? 'border-red-500/30 bg-red-500/10'
-        : summary.outcomeKey === 'notUsed'
-          ? 'border-slate-500/30 bg-slate-500/10'
-          : 'border-amber-500/30 bg-amber-500/10',
+        : 'border-amber-500/30 bg-amber-500/10',
     checkedRules,
     maintenanceFix,
     humanInputSummary: buildHumanInputSummary(report, t),
@@ -508,15 +480,12 @@ function deriveFallbackScoreStatus(score: number | null | undefined, failReason:
 }
 
 function deriveSignalStatuses(report: ReplayRunReport): Record<string, ReplaySignalStatus> {
-  const replayNotAppliedReason = report.invalidationReasons.includes('confidence_below_threshold')
-    ? 'confidence_below_threshold'
-    : 'replay_not_applied';
   const semanticScore = report.semanticMatch?.matchScore ?? null;
 
   return {
     contextSubstitution: report.contextSubstitutionStatus ?? {
-      status: !report.applied ? 'failed' : report.confidenceScore >= SCORE_WARNING_THRESHOLD ? 'passed' : 'warning',
-      reason: !report.applied ? replayNotAppliedReason : null,
+      status: 'not_evaluated',
+      reason: 'evaluation_pending',
     },
     intent: report.intentStatus ?? (report.intentKey
       ? { status: 'not_evaluated', reason: 'intent_not_evaluated' }
@@ -682,7 +651,7 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
     return <div className="rounded-md border border-muted bg-muted/30 p-3 text-xs text-muted-foreground">{t('replayReport.empty' as any)}</div>;
   }
 
-  const verdict = report.verdict ?? (report.applied ? 'unknown' : 'skipped');
+  const verdict = report.verdict ?? 'unknown';
   const statuses = deriveSignalStatuses(report);
   const semanticMatch = report.semanticMatch ?? null;
   const semanticEvaluated = Boolean(semanticMatch);
@@ -703,7 +672,6 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
   const extraPointFindings = semanticMatch?.extraPointFindings ?? [];
   const staleContextReferenceFindings = semanticMatch?.staleContextReferenceFindings ?? [];
   const unsupportedClaimFindings = semanticMatch?.unsupportedClaimFindings ?? [];
-  const invalidationReasons = report.invalidationReasons.map((reason) => formatReplayReason(reason, translate));
   const structuralDriftReasons = report.structuralDriftReasons.map((reason) => formatReplayReason(reason, translate));
   const verdictReasons = (report.verdictReasons ?? []).map((reason) => formatVerdictReason(reason, translate));
   const driftFindings = (report.driftFindings ?? []).map((finding) => ({ ...finding, label: formatDriftFindingReason(finding.reason, translate) }));
@@ -979,7 +947,6 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
           <Badge variant="outline" className={verdictTone(verdict)}>
             {t('replayReport.verdict' as any)}: {t(`replayReport.verdictValue.${verdict}` as any)}
           </Badge>
-          <Badge variant={report.applied ? 'default' : 'secondary'}>{report.applied ? t('replayReport.applied' as any) : t('replayReport.skipped' as any)}</Badge>
         </div>
         {report.overallScore !== null && report.overallScore !== undefined && (
           <TooltipProvider delayDuration={200}>
@@ -1010,22 +977,6 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
           )}
         </div>
         {verdictReasons.length > 0 && <div className="text-xs text-muted-foreground"><span className="font-medium">{t('replayReport.verdictReasons' as any)}:</span> {verdictReasons.join(', ')}</div>}
-        {(!report.applied || verdict === 'skipped') && <div className="text-xs text-muted-foreground"><span className="font-medium">{t('replayReport.skippedSummary' as any)}:</span> {referenceSummary.description}</div>}
-      </div>
-
-      <div className="space-y-2 rounded-md border bg-background p-3">
-        <div className="font-medium">{t('replayReport.section.eligibility' as any)}</div>
-        <div className="flex flex-wrap items-center gap-2">
-          <ReplayConfidenceBadge label={t('replayReport.confidence' as any)} value={formatScore(report.confidenceScore)} tone={confidenceTone(report.confidenceScore)} />
-          <Badge variant={report.applied ? 'default' : 'secondary'}>{report.applied ? t('replayReport.applied' as any) : t('replayReport.skipped' as any)}</Badge>
-        </div>
-        {(report.appliedSections.length > 0 || report.skippedSections.length > 0) && (
-          <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-            <div><span className="font-medium">{t('replayReport.appliedSections' as any)}:</span> {report.appliedSections.length > 0 ? report.appliedSections.join(', ') : '-'}</div>
-            <div><span className="font-medium">{t('replayReport.skippedSections' as any)}:</span> {report.skippedSections.length > 0 ? report.skippedSections.join(', ') : '-'}</div>
-          </div>
-        )}
-        {invalidationReasons.length > 0 && <div className="text-xs text-muted-foreground"><span className="font-medium">{t('replayReport.observations' as any)}:</span> {invalidationReasons.join(', ')}</div>}
       </div>
 
       <div className="space-y-2 rounded-md border bg-background p-3">

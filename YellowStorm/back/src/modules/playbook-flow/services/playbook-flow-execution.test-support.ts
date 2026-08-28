@@ -21,8 +21,6 @@ export function createExecutionServiceForTests(overrides?: {
   builderService?: Record<string, any>;
   replayArtifactService?: Record<string, any>;
   replayPromptService?: Record<string, any>;
-  replayBaselineService?: Record<string, any>;
-  replayEligibilityService?: Record<string, any>;
   replayReportService?: Record<string, any>;
   replayDriftService?: Record<string, any>;
   outputFormatService?: Record<string, any>;
@@ -33,6 +31,7 @@ export function createExecutionServiceForTests(overrides?: {
   workspaceService?: Record<string, any>;
   hitlMemoryModel?: Record<string, any>;
   accessService?: Record<string, any>;
+  executionSettingsResolver?: Record<string, any>;
 }) {
   const executionModel = {
     exists: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(null) })),
@@ -126,44 +125,6 @@ export function createExecutionServiceForTests(overrides?: {
     buildReplayPromptSection: () => '',
     ...overrides?.replayPromptService,
   };
-  const replayBaselineService = {
-    buildCurrentReplayFingerprints: jest.fn().mockReturnValue({
-      inputContextHash: 'input-a',
-      flowSnapshotHash: 'flow-a',
-      nodeSnapshotHash: 'node-a',
-      agentConfigHash: null,
-      modelConfigHash: 'model-a',
-      toolConfigHash: 'tool-a',
-      outputContractHash: 'contract-a',
-    }),
-    buildReplayIntent: jest.fn(({ taskId, taskTitle, nodeSnapshot }) => {
-      const metadata = nodeSnapshot && typeof nodeSnapshot === 'object' && !Array.isArray(nodeSnapshot)
-        ? ((nodeSnapshot as Record<string, unknown>).metadata as Record<string, unknown> | undefined)
-        : undefined;
-      const parts = [
-        typeof taskTitle === 'string' ? taskTitle.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') : '',
-        typeof metadata?.taskType === 'string' ? metadata.taskType.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') : '',
-        typeof metadata?.nodeTemplateKey === 'string'
-          ? metadata.nodeTemplateKey.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
-          : typeof metadata?.templateType === 'string'
-            ? metadata.templateType.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
-            : '',
-      ].filter(Boolean);
-      return { intentKey: parts.join('-') || taskId, intentLabel: taskTitle || taskId };
-    }),
-    ...overrides?.replayBaselineService,
-  };
-  const replayEligibilityService = {
-    evaluateReplayEligibility: jest.fn().mockReturnValue({
-      applied: true,
-      confidenceScore: 100,
-      confidenceFactors: {},
-      invalidationReasons: [],
-      appliedSections: [],
-      skippedSections: [],
-    }),
-    ...overrides?.replayEligibilityService,
-  };
   const replayReportService: Record<string, any> = {
     findLatestReportForExecutionTask: jest.fn().mockResolvedValue(null),
     ...overrides?.replayReportService,
@@ -233,15 +194,12 @@ export function createExecutionServiceForTests(overrides?: {
     {} as any,
     replayArtifactService as any,
     replayPromptService as any,
-    replayBaselineService as any,
-    replayEligibilityService as any,
     replayReportService as any,
     outputContractService as any,
     { validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: null, inactive: false }) } as any,
     outputFormatService as any,
     replayPlanService as any,
     replayDriftService as any,
-    undefined as any,
     undefined as any,
     overrides?.tokenBufferService as any,
     executionLeaseService as any,
@@ -255,6 +213,7 @@ export function createExecutionServiceForTests(overrides?: {
     accessService as any,
     hitlResumeService,
     singleStepPrepService,
+    overrides?.executionSettingsResolver as any,
   );
 
   return {
@@ -271,8 +230,6 @@ export function createExecutionServiceForTests(overrides?: {
     agentService,
     replayArtifactService,
     replayPromptService,
-    replayBaselineService,
-    replayEligibilityService,
     replayReportService,
     replayDriftService,
     replayPlanService,

@@ -35,7 +35,7 @@ export interface PgMessageComponentRow {
   message_id: string; // joins messages(id)
   component_id: string;
   ordinal: number;
-  type: string; // ComponentType: text|code|chart|artifact|citation|toolInfo|...
+  type: string; // ComponentType: text|code|chart|artifact|citation|toolActivity|...
   data: unknown; // JSONB — object, or a JSON string (Electric variance)
   created_at: string;
 }

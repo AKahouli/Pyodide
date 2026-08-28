@@ -1,7 +1,5 @@
 {
   "ERR_2534": "L'agent par défaut Playbook Planner est indisponible ou ambigu.",
-  "ERR_2535": "L'agent par défaut Playbook Suggestor est indisponible ou non configuré.",
-  "ERR_2536": "Playbook Suggestor n'a pas pu produire un cas d'usage de playbook valide.",
   "ERR_1000": "Une erreur s'est produite. Veuillez réessayer plus tard.",
   "ERR_1001": "Vérifiez vos informations puis réessayez.",
   "ERR_1002": "L'élément demandé est introuvable.",

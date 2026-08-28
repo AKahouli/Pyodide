@@ -4,7 +4,6 @@ import { PlaybookFlowExecutionService } from './playbook-flow-execution.service'
 import { PlaybookFlowReplayService } from './playbook-flow-replay.service';
 import { PlaybookFlowReplayArtifactService } from './playbook-flow-replay-artifact.service';
 import { PlaybookFlowReplayBaselineService } from './playbook-flow-replay-baseline.service';
-import { PlaybookFlowReplayEligibilityService } from './playbook-flow-replay-eligibility.service';
 import { PlaybookFlowReplayHashService } from './playbook-flow-replay-hash.service';
 import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.service';
 import { PlaybookFlowReplayPromptService } from './playbook-flow-replay-prompt.service';
@@ -360,8 +359,6 @@ function createReplayWorkflowHarness() {
     {} as any,
     replayArtifactService,
     new PlaybookFlowReplayPromptService(),
-    replayBaselineService,
-    new PlaybookFlowReplayEligibilityService(),
     replayReportService,
     outputContractService,
     { validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: null, inactive: false }) } as any,
@@ -374,7 +371,7 @@ function createReplayWorkflowHarness() {
 
   return {
     replayController: new PlaybookFlowReplayController(replayService, replayDriftService, replayReportService, { findOneForWrite: jest.fn().mockResolvedValue({ id: 'flow-1' }) } as any),
-    executionController: new PlaybookFlowExecutionController(executionService, replayService),
+    executionController: new PlaybookFlowExecutionController(executionService, replayService, { requestArtifactAccess: jest.fn() } as any),
     reports,
     replays,
     mockRun,

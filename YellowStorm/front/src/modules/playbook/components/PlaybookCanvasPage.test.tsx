@@ -1,8 +1,43 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildIntentEdgeOptions, buildOverviewResultNodeIds, hydrateAssistantOperationHandoff, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyHomeAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldEnableCanvasNodeDragging, shouldUsePlaybookAgentAssistant } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, buildOverviewResultNodeIds, canAppendIntentEdge, getInitialPlaybookPageMode, getScopedConstructionDiagnostics, hydrateAssistantOperationHandoff, isPlaybookRouteCurrent, isTaskConfiguredForExecution, loadLatestPlaybookAssistantHistory, pruneUnreachableDataBindings, remapRouterConditionSourceNodes, resolveDiagnosticNodeId, resolveIntentNodeSemantics, shouldApplyInitialAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockCanvasMutationShortcut, shouldClearConstructionDiagnostics, shouldConsumeAssistantOperationHandoff, shouldEnableCanvasNodeDragging, shouldRenderPlaybookAssistant, shouldUsePlaybookMcpAssistant, updateScopedConstructionDiagnostics } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
+import type { PlaybookTask } from '../types';
+
+const makeTask = (overrides: Partial<PlaybookTask> = {}) => ({
+  id: 'task-1',
+  title: 'Task',
+  description: '',
+  nodeType: 'agent',
+  taskType: 'generic',
+  executionMode: 'agent',
+  enabled: true,
+  assignedAgentId: 'agent-1',
+  ...overrides,
+}) as PlaybookTask;
+
+describe('isTaskConfiguredForExecution', () => {
+  it('requires an assigned agent for enabled agent tasks', () => {
+    expect(isTaskConfiguredForExecution(makeTask())).toBe(true);
+    expect(isTaskConfiguredForExecution(makeTask({ assignedAgentId: undefined }))).toBe(false);
+    expect(isTaskConfiguredForExecution(makeTask({ assignedAgentId: undefined, enabled: false }))).toBe(true);
+  });
+
+  it('uses effective action type even when legacy execution mode says agent', () => {
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'action', executionMode: 'agent', assignedAgentId: undefined, selectedAction: 'send' }))).toBe(true);
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'action', executionMode: 'agent', selectedAction: undefined }))).toBe(false);
+  });
+
+  it('requires evaluation, iterator, and structural configuration by node type', () => {
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'evaluation', evaluationConfig: { expectation: 'Accurate' } as PlaybookTask['evaluationConfig'] }))).toBe(true);
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'evaluation', evaluationConfig: undefined }))).toBe(false);
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'iterator', assignedAgentId: undefined, iteratorConfig: { source: 'items' } as PlaybookTask['iteratorConfig'] }))).toBe(true);
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'iterator', iteratorConfig: undefined }))).toBe(false);
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'router', assignedAgentId: undefined }))).toBe(true);
+    expect(isTaskConfiguredForExecution(makeTask({ nodeType: 'human_approval', assignedAgentId: undefined }))).toBe(true);
+  });
+});
 
 describe('shouldBlockCanvasMutationShortcut', () => {
   it('blocks undo, redo, cut, and paste shortcuts during direct construction', () => {
@@ -23,6 +58,80 @@ describe('shouldEnableCanvasNodeDragging', () => {
   });
 });
 
+describe('shouldRenderPlaybookAssistant', () => {
+  it('hides the design assistant in monitor view and while an execution is live', () => {
+    expect(shouldRenderPlaybookAssistant('design', false, false)).toBe(true);
+    expect(shouldRenderPlaybookAssistant('run', false, false)).toBe(false);
+    expect(shouldRenderPlaybookAssistant('design', true, false)).toBe(false);
+  });
+
+  it('keeps the human response surface available for an interrupted execution', () => {
+    expect(shouldRenderPlaybookAssistant('run', true, true)).toBe(true);
+  });
+});
+
+describe('shouldConsumeAssistantOperationHandoff', () => {
+  it('waits for the route playbook to load instead of consuming onto a stale one', () => {
+    expect(shouldConsumeAssistantOperationHandoff('playbook-b', 'playbook-a', 'operation-1', null)).toBe(false);
+    expect(shouldConsumeAssistantOperationHandoff('playbook-b', undefined, 'operation-1', null)).toBe(false);
+    expect(shouldConsumeAssistantOperationHandoff('playbook-b', 'playbook-b', 'operation-1', null)).toBe(true);
+  });
+
+  it('ignores handoffs without a route, operation, or already consumed', () => {
+    expect(shouldConsumeAssistantOperationHandoff(undefined, 'playbook-a', 'operation-1', null)).toBe(false);
+    expect(shouldConsumeAssistantOperationHandoff('playbook-b', 'playbook-b', null, null)).toBe(false);
+    expect(shouldConsumeAssistantOperationHandoff('playbook-b', 'playbook-b', 'operation-1', 'operation-1')).toBe(false);
+  });
+});
+
+describe('pruneUnreachableDataBindings', () => {
+  const tasks = [
+    { id: 'a', inputPorts: [], outputPorts: [{ id: 'o', artifactKind: 'text' }] },
+    { id: 'b', inputPorts: [{ id: 'i', artifactKind: 'text', required: true }], outputPorts: [] },
+    { id: 'c', inputPorts: [{ id: 'i', artifactKind: 'text' }], outputPorts: [] },
+  ] as any;
+  const edge = (source: string, target: string) => ({ id: `${source}->${target}`, source, target }) as any;
+
+  it('keeps bindings whose source can reach the target and drops the rest', () => {
+    const { bindings, dropped } = pruneUnreachableDataBindings(tasks, [edge('a', 'b'), edge('b', 'c')], [
+      { sourceKind: 'node-output', sourceNode: 'a', sourcePort: 'o', targetNode: 'b', targetPort: 'i' },
+      { sourceKind: 'node-output', sourceNode: 'a', sourcePort: 'o', targetNode: 'c', targetPort: 'i' },
+      { sourceKind: 'node-output', sourceNode: 'b', sourcePort: 'o', targetNode: 'a', targetPort: 'i' },
+      { sourceKind: 'constant', constantValue: 'x', targetNode: 'c', targetPort: 'i' },
+    ] as any);
+
+    expect(bindings.map((b) => b.sourceKind === 'node-output' ? `${b.sourceNode}->${b.targetNode}` : b.sourceKind)).toEqual(['a->b', 'a->c', 'constant']);
+    expect(dropped).toEqual(['b.o->a.i']);
+  });
+
+  it('keeps reachable bindings after an after-anchor re-route severs a direct edge', () => {
+    // zqw95x -> export -> s2l9bl keeps the zqw95x -> s2l9bl binding reachable transitively.
+    const { bindings } = pruneUnreachableDataBindings(tasks, [edge('a', 'b'), edge('b', 'c')], [
+      { sourceKind: 'node-output', sourceNode: 'a', sourcePort: 'o', targetNode: 'c', targetPort: 'i' },
+    ] as any);
+    expect(bindings).toHaveLength(1);
+  });
+});
+
+describe('getInitialPlaybookPageMode', () => {
+  it('opens completed Playbooks in Monitor and all others in Design', () => {
+    expect(getInitialPlaybookPageMode('completed')).toBe('run');
+    expect(getInitialPlaybookPageMode('running')).toBe('design');
+    expect(getInitialPlaybookPageMode('failed')).toBe('design');
+    expect(getInitialPlaybookPageMode()).toBe('design');
+  });
+});
+
+describe('canAppendIntentEdge', () => {
+  it('blocks Canvas fallback edges with incompatible explicit artifact kinds', () => {
+    const source = makeTask({ outputPorts: [{ id: 'output-document', name: 'Report', artifactKind: 'document' }] });
+    const target = makeTask({ id: 'export', inputPorts: [{ id: 'scores_data', name: 'Scores', artifactKind: 'data', required: true }] });
+
+    expect(canAppendIntentEdge(source, target, 'output-document', 'scores_data')).toBe(false);
+    expect(canAppendIntentEdge(source, target, 'default', 'default')).toBe(true);
+  });
+});
+
 describe('buildOverviewResultNodeIds', () => {
   it('excludes pending and running placeholders from Overview result interactions', () => {
     const template = makeExecution().taskResults[0]!;
@@ -37,11 +146,33 @@ describe('buildOverviewResultNodeIds', () => {
   });
 });
 
-describe('shouldUsePlaybookAgentAssistant', () => {
-  it('uses the dedicated agent for flagged text turns only', () => {
-    expect(shouldUsePlaybookAgentAssistant(true)).toBe(true);
-    expect(shouldUsePlaybookAgentAssistant(false)).toBe(false);
-    expect(shouldUsePlaybookAgentAssistant(true, [{ mediaType: 'image/png', data: 'encoded' }])).toBe(false);
+describe('shouldUsePlaybookMcpAssistant', () => {
+  it('uses the MCP rollout as the sole assistant routing authority', () => {
+    expect(shouldUsePlaybookMcpAssistant(true)).toBe(true);
+    expect(shouldUsePlaybookMcpAssistant(false)).toBe(false);
+  });
+});
+
+describe('loadLatestPlaybookAssistantHistory', () => {
+  it('does not let a delayed initial load overwrite a newer conversation refresh', async () => {
+    let resolveInitial!: (value: string) => void;
+    let resolveScoped!: (value: string) => void;
+    const initial = new Promise<string>((resolve) => { resolveInitial = resolve; });
+    const scoped = new Promise<string>((resolve) => { resolveScoped = resolve; });
+    const generation = { current: 0 };
+    const apply = vi.fn();
+    const setLoading = vi.fn();
+
+    const initialLoad = loadLatestPlaybookAssistantHistory(() => initial, generation, apply, setLoading);
+    const scopedLoad = loadLatestPlaybookAssistantHistory(() => scoped, generation, apply, setLoading);
+    resolveScoped('new-conversation');
+    await scopedLoad;
+    resolveInitial('old-conversation');
+    await initialLoad;
+
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(apply).toHaveBeenCalledWith('new-conversation');
+    expect(setLoading).toHaveBeenLastCalledWith(false);
   });
 });
 
@@ -234,15 +365,60 @@ describe('shouldAutoLayoutAfterConstruction', () => {
   });
 });
 
-describe('shouldApplyHomeAutoLayout', () => {
-  it('waits for the current route load instead of laying out a stale cached playbook', () => {
-    expect(shouldApplyHomeAutoLayout(true, 'playbook-1', null, 'playbook-1', null)).toBe(false);
-    expect(shouldApplyHomeAutoLayout(true, 'playbook-1', 'playbook-1', 'playbook-1', null)).toBe(true);
+describe('construction diagnostics lifecycle', () => {
+  const diagnostics = [{ code: 'validator_rule_2' }] as any;
+
+  it('never exposes diagnostics from another playbook', () => {
+    expect(getScopedConstructionDiagnostics('playbook-1', 'playbook-2', diagnostics)).toEqual([]);
+    expect(getScopedConstructionDiagnostics('playbook-1', 'playbook-1', diagnostics)).toBe(diagnostics);
   });
 
-  it('does not repeat layout or apply it to direct navigation', () => {
-    expect(shouldApplyHomeAutoLayout(true, 'playbook-1', 'playbook-1', 'playbook-1', 'playbook-1')).toBe(false);
-    expect(shouldApplyHomeAutoLayout(false, 'playbook-1', 'playbook-1', 'playbook-1', null)).toBe(false);
+  it('ignores a late diagnostic event from the previous playbook', () => {
+    const playbookBDiagnostics = [{ code: 'validator_rule_7' }] as any;
+    const stateForPlaybookB = updateScopedConstructionDiagnostics(
+      { ownerPlaybookId: 'playbook-2', diagnostics: [] },
+      'playbook-2',
+      playbookBDiagnostics,
+    );
+
+    expect(updateScopedConstructionDiagnostics(
+      stateForPlaybookB,
+      'playbook-1',
+      diagnostics,
+    )).toBe(stateForPlaybookB);
+    expect(stateForPlaybookB.diagnostics).toBe(playbookBDiagnostics);
+  });
+
+  it('rejects advisor preview completion after navigation to another playbook', () => {
+    expect(isPlaybookRouteCurrent('playbook-1', 'playbook-2')).toBe(false);
+    expect(isPlaybookRouteCurrent('playbook-2', 'playbook-2')).toBe(true);
+  });
+
+  it('clears settled diagnostics after a later local edit', () => {
+    expect(shouldClearConstructionDiagnostics('completed', true, 'idle')).toBe(true);
+    expect(shouldClearConstructionDiagnostics('completed', false, 'idle')).toBe(false);
+  });
+
+  it('keeps diagnostics while an advisor preview awaits a decision', () => {
+    expect(shouldClearConstructionDiagnostics('completed', true, 'ready')).toBe(false);
+    expect(shouldClearConstructionDiagnostics('streaming', true, 'streaming')).toBe(false);
+  });
+
+  it('clears diagnostics from failed and cancelled constructions', () => {
+    expect(shouldClearConstructionDiagnostics('failed', false, 'idle')).toBe(true);
+    expect(shouldClearConstructionDiagnostics('cancelled', false, 'idle')).toBe(true);
+  });
+});
+
+describe('shouldApplyInitialAutoLayout', () => {
+  it('waits for the current route load instead of laying out a stale cached playbook', () => {
+    expect(shouldApplyInitialAutoLayout('playbook-1', null, 'playbook-1', null)).toBe(false);
+    expect(shouldApplyInitialAutoLayout('playbook-1', 'playbook-1', 'playbook-1', null)).toBe(true);
+  });
+
+  it('applies to direct navigation once per loaded playbook', () => {
+    expect(shouldApplyInitialAutoLayout('playbook-1', 'playbook-1', 'playbook-1', null)).toBe(true);
+    expect(shouldApplyInitialAutoLayout('playbook-1', 'playbook-1', 'playbook-1', 'playbook-1')).toBe(false);
   });
 });
 

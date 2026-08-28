@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { ArrowLeft, BarChart3, Loader2, Share2, Copy, PanelRightOpen } from 'lucide-react';
+import { ArrowLeft, Loader2, PanelRightOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { ReactFlowProvider, useReactFlow, getNodesBounds, type Edge, type Node } from '@xyflow/react';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -41,6 +40,7 @@ import {
   useCurrentExecution,
   useLatestExecutionForPlaybook,
   useIsDirty,
+  useDirtyVersion,
   useIsSaving,
   useIsGenerating,
   useIsExecuting,
@@ -84,7 +84,7 @@ import { ConditionalEdge } from './ConditionalEdge';
 import { DataBindingEdge } from './DataBindingEdge';
 import { PlaybookOverviewCanvas } from './PlaybookOverviewCanvas';
 import { PlaybookNodeEditor, type PlaybookNodeEditorHandle } from './PlaybookNodeEditor';
-import { PlaybookToolbar } from './PlaybookToolbar';
+import { PlaybookStatusActions, PlaybookToolbar } from './PlaybookToolbar';
 import { PlaybookCanvasFloatingToolbar, type PlaybookCanvasFloatingToolbarHandle } from './PlaybookCanvasFloatingToolbar';
 import { ReferenceModePromptDialog, type ReferenceModePromptState, type StepReplayMode } from './ReferenceModePromptDialog';
 import { PlaybookIntentGhostNode } from './PlaybookIntentGhostNode';
@@ -105,7 +105,7 @@ import {
   createIntentSuggestionBindingId,
   createIntentSuggestionNodeId,
 } from '../utils/intent-application-key';
-import { appendDesignMessage, cancelPlaybookIntentConstruction, discardPlaybookIntentConstruction, fetchPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybookRepeatability, requestPlaybookNodeAdvisor, runPlaybookAssistantTurn, startAdvisorRemediationConstruction, startPlaybookIntentConstruction, streamPlaybookIntentConstruction } from '../api';
+import { appendDesignMessage, cancelPlaybookIntentConstruction, discardPlaybookIntentConstruction, fetchPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybookAssistantMessages, getPlaybookRepeatability, requestPlaybookNodeAdvisor, runPlaybookAssistantTurn, startAdvisorRemediationConstruction, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, uploadPlaybookAssistantAttachment } from '../api';
 import { playbookFeatures } from '../features';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
 import type {
@@ -116,7 +116,9 @@ import type {
   PlaybookExecution,
   PlaybookIntentSuggestion,
   PlaybookIntentImageInput,
+  PlaybookClarificationAnswer,
   PlaybookIntentDesignResponse,
+  PlaybookAssistantMessage,
   PlaybookIntentConstructionStatus,
   PlaybookIntentConstructionStartResponse,
   PlaybookIntentDiagnostic,
@@ -152,6 +154,7 @@ import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { usePlaybookIntentFlow } from '../utils/playbook-intent-flow';
 import { getUnboundRequiredPortsForTaskIds } from '../utils/required-port-validation';
 import type { PlaybookValidationIssue } from '../utils/required-port-validation';
+import { getEffectiveNodeType } from '../utils/node-type';
 import {
   buildCanvasJudgeStateMap,
   buildCanvasStepStatusMap,
@@ -179,8 +182,138 @@ export function shouldAutoLayoutAfterConstruction(
   return previousStatus !== 'completed' && currentStatus === 'completed';
 }
 
-export function shouldUsePlaybookAgentAssistant(enabled: boolean, images?: PlaybookIntentImageInput[]): boolean {
-  return enabled && !images?.length;
+export function shouldUsePlaybookMcpAssistant(enabled: boolean): boolean {
+  return enabled;
+}
+
+export function getScopedConstructionDiagnostics(
+  ownerPlaybookId: string | undefined,
+  currentPlaybookId: string | undefined,
+  diagnostics: PlaybookIntentDiagnostic[],
+): PlaybookIntentDiagnostic[] {
+  return ownerPlaybookId === currentPlaybookId ? diagnostics : [];
+}
+
+interface ConstructionDiagnosticState {
+  ownerPlaybookId: string | undefined;
+  diagnostics: PlaybookIntentDiagnostic[];
+}
+
+export function updateScopedConstructionDiagnostics(
+  current: ConstructionDiagnosticState,
+  ownerPlaybookId: string | undefined,
+  diagnostics: PlaybookIntentDiagnostic[],
+): ConstructionDiagnosticState {
+  if (current.ownerPlaybookId !== ownerPlaybookId) return current;
+  return { ownerPlaybookId, diagnostics };
+}
+
+export function isPlaybookRouteCurrent(
+  operationPlaybookId: string | undefined,
+  currentPlaybookId: string | undefined,
+): boolean {
+  return operationPlaybookId === currentPlaybookId;
+}
+
+export function shouldConsumeAssistantOperationHandoff(
+  routePlaybookId: string | undefined,
+  loadedPlaybookId: string | undefined,
+  operationId: string | null,
+  consumedOperationId: string | null,
+): boolean {
+  // currentPlaybook is a store singleton: right after navigating to a different playbook,
+  // it still holds the previously opened one until the route playbook fetch resolves.
+  // Consuming a handoff onto that stale graph commits the union of both playbooks.
+  if (!routePlaybookId || !operationId) return false;
+  if (consumedOperationId === operationId) return false;
+  return isPlaybookRouteCurrent(loadedPlaybookId, routePlaybookId);
+}
+
+export function pruneUnreachableDataBindings(
+  tasks: PlaybookTask[],
+  flowEdges: Edge[],
+  dataBindings: DataBinding[],
+): { bindings: DataBinding[]; dropped: string[] } {
+  const taskIds = new Set(tasks.map((task) => task.id));
+  const adjacency = new Map<string, string[]>();
+  for (const edge of flowEdges) {
+    if (!edge.source || !edge.target || edge.source === edge.target) continue;
+    const targets = adjacency.get(edge.source) || [];
+    targets.push(edge.target);
+    adjacency.set(edge.source, targets);
+  }
+  const canReach = (source: string, target: string): boolean => {
+    if (source === target) return true;
+    const queue = [source];
+    const seen = new Set<string>([source]);
+    while (queue.length > 0) {
+      const current = queue.shift() as string;
+      for (const next of adjacency.get(current) || []) {
+        if (next === target) return true;
+        if (!seen.has(next)) {
+          seen.add(next);
+          queue.push(next);
+        }
+      }
+    }
+    return false;
+  };
+  const dropped: string[] = [];
+  const bindings: DataBinding[] = [];
+  for (const binding of dataBindings) {
+    if (binding.sourceKind !== 'node-output' || !binding.sourceNode || !binding.targetNode) {
+      bindings.push(binding);
+      continue;
+    }
+    if (!taskIds.has(binding.sourceNode) || !taskIds.has(binding.targetNode)) {
+      bindings.push(binding);
+      continue;
+    }
+    if (canReach(binding.sourceNode, binding.targetNode)) {
+      bindings.push(binding);
+      continue;
+    }
+    dropped.push(`${binding.sourceNode}.${binding.sourcePort}->${binding.targetNode}.${binding.targetPort}`);
+  }
+  return { bindings, dropped };
+}
+
+export function shouldClearConstructionDiagnostics(
+  constructionStatus: PlaybookIntentConstructionStatus,
+  isDirty: boolean,
+  assistantPreviewStatus: 'idle' | 'streaming' | 'ready' | 'applying' | 'discarding',
+): boolean {
+  if (constructionStatus === 'failed' || constructionStatus === 'cancelled') return true;
+  return constructionStatus === 'completed' && isDirty && assistantPreviewStatus === 'idle';
+}
+
+export async function loadLatestPlaybookAssistantHistory<T>(
+  load: () => Promise<T>,
+  requestGeneration: { current: number },
+  apply: (history: T) => void,
+  setLoading: (loading: boolean) => void,
+): Promise<void> {
+  const generation = ++requestGeneration.current;
+  setLoading(true);
+  try {
+    const history = await load();
+    if (generation === requestGeneration.current) apply(history);
+  } finally {
+    if (generation === requestGeneration.current) setLoading(false);
+  }
+}
+
+function readLegacyIntentImage(file: File): Promise<PlaybookIntentImageInput> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      mediaType: file.type as PlaybookIntentImageInput['mediaType'],
+      data: String(reader.result || '').split(',')[1] || '',
+      name: file.name,
+    });
+    reader.onerror = () => reject(reader.error || new Error('Failed to read image'));
+    reader.readAsDataURL(file);
+  });
 }
 
 export function shouldBlockCanvasMutationShortcut(
@@ -197,6 +330,30 @@ export function shouldEnableCanvasNodeDragging(
   executionViewMode: ExecutionViewMode,
 ): boolean {
   return !isSaving && !constructionActive && executionViewMode === 'full';
+}
+
+export function shouldRenderPlaybookAssistant(
+  pageMode: PlaybookPageMode,
+  hasLiveExecution: boolean,
+  hasPendingHumanInput: boolean,
+): boolean {
+  // Human approval and clarification use this surface to unblock an interrupted run.
+  return hasPendingHumanInput || (pageMode === 'design' && !hasLiveExecution);
+}
+
+export function getInitialPlaybookPageMode(latestExecutionStatus?: string): PlaybookPageMode {
+  return latestExecutionStatus === 'completed' ? 'run' : 'design';
+}
+
+export function canAppendIntentEdge(
+  sourceTask: PlaybookTask,
+  targetTask: PlaybookTask,
+  sourceOutputPortId: string,
+  targetInputPortId: string,
+): boolean {
+  const sourcePort = sourceTask.outputPorts?.find((port) => port.id === sourceOutputPortId);
+  const targetPort = targetTask.inputPorts?.find((port) => port.id === targetInputPortId);
+  return !sourcePort || !targetPort || sourcePort.artifactKind === targetPort.artifactKind;
 }
 
 export async function hydrateAssistantOperationHandoff(
@@ -282,15 +439,13 @@ export function resolveIntentNodeSemantics(
   return { nodeType, taskType };
 }
 
-export function shouldApplyHomeAutoLayout(
-  requested: boolean,
+export function shouldApplyInitialAutoLayout(
   routePlaybookId: string | undefined,
   loadedPlaybookId: string | null,
   currentPlaybookId: string | undefined,
   appliedPlaybookId: string | null,
 ): boolean {
-  return requested
-    && Boolean(routePlaybookId)
+  return Boolean(routePlaybookId)
     && loadedPlaybookId === routePlaybookId
     && currentPlaybookId === routePlaybookId
     && appliedPlaybookId !== routePlaybookId;
@@ -302,6 +457,18 @@ export function buildOverviewResultNodeIds(
   return new Set((taskResults ?? [])
     .filter((result) => result.status !== 'pending' && result.status !== 'running')
     .map((result) => result.taskId));
+}
+
+export function isTaskConfiguredForExecution(task: PlaybookTask): boolean {
+  if (task.enabled === false) return true;
+  const nodeType = getEffectiveNodeType(task);
+  if (nodeType === 'router' || nodeType === 'human_approval') return true;
+  if (nodeType === 'iterator') return Boolean(task.iteratorConfig?.source?.trim());
+  if (nodeType === 'evaluation') {
+    return Boolean(task.assignedAgentId && (task.evaluationConfig?.expectation || task.evaluationConfig?.referenceBaselineId));
+  }
+  if (nodeType === 'action') return Boolean(task.selectedAction);
+  return Boolean(task.assignedAgentId);
 }
 
 function PlaybookCanvasInner() {
@@ -372,6 +539,15 @@ function PlaybookCanvasInner() {
   const { refreshUsage } = useUsage();
 
   const isGeneratingRoute = id === 'generating';
+
+  useEffect(() => {
+    const requestedTaskId = searchParams.get('mascotTask');
+    if (!requestedTaskId) return;
+    selectStep(requestedTaskId);
+    const next = new URLSearchParams(searchParams);
+    next.delete('mascotTask');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, selectStep, setSearchParams]);
 
   const reactFlow = useReactFlow();
   const canvasChromeRef = useRef<HTMLDivElement | null>(null);
@@ -450,10 +626,21 @@ function PlaybookCanvasInner() {
     artifactKindMismatch,
   } = usePlaybookCanvas(triggerNodeActions);
 
+  const fitCanvasToNodes = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        void reactFlow.fitView({
+          padding: 0.24,
+          duration: 300,
+          maxZoom: 1.1,
+        });
+      });
+    });
+  }, [reactFlow]);
+
   useEffect(() => {
     const navigationState = location.state as { autoLayoutOnOpen?: boolean } | null;
-    if (!shouldApplyHomeAutoLayout(
-      navigationState?.autoLayoutOnOpen === true,
+    if (!shouldApplyInitialAutoLayout(
       id,
       loadedPlaybookId,
       playbook?.id,
@@ -465,12 +652,19 @@ function PlaybookCanvasInner() {
     const layoutedTasks = autoLayoutTasks(playbook.tasks, playbook.edges);
     setNodes(tasksToNodes(layoutedTasks, playbook.automatedTriggerType === 'mail'));
     updateTasks(layoutedTasks);
-    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
-  }, [id, loadedPlaybookId, location.pathname, location.search, location.state, navigate, playbook, setNodes, updateTasks]);
+    if (layoutedTasks.length > 0) {
+      viewportInitializedPlaybookRef.current = id!;
+      fitCanvasToNodes();
+    }
+    if (navigationState?.autoLayoutOnOpen === true) {
+      navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+    }
+  }, [fitCanvasToNodes, id, loadedPlaybookId, location.pathname, location.search, location.state, navigate, playbook, setNodes, updateTasks]);
 
   const saveCurrentPlaybook = usePlaybookStore((state) => state.saveCurrentPlaybook);
 
   const [editingTask, setEditingTask] = useState<PlaybookTask | null>(null);
+  const [editorInitialView, setEditorInitialView] = useState<'setup' | 'quality' | 'reference'>('setup');
   const [dataBindingsVisible, setDataBindingsVisible] = useState(false);
   const editorOpen = usePlaybookStore((s) => s.nodeEditorOpen);
   const setEditorOpen = usePlaybookStore((s) => s.setNodeEditorOpen);
@@ -520,7 +714,15 @@ function PlaybookCanvasInner() {
   const [lastIntentSuggestions, setLastIntentSuggestions] = useState<PlaybookIntentSuggestion[]>([]);
   const [intentLoading, setIntentLoading] = useState(false);
   const [intentError, setIntentError] = useState('');
-  const [constructionDiagnostics, setConstructionDiagnostics] = useState<PlaybookIntentDiagnostic[]>([]);
+  const [constructionDiagnosticState, setConstructionDiagnosticState] = useState<ConstructionDiagnosticState>({ ownerPlaybookId: id, diagnostics: [] });
+  const constructionDiagnostics = getScopedConstructionDiagnostics(
+    constructionDiagnosticState.ownerPlaybookId,
+    id,
+    constructionDiagnosticState.diagnostics,
+  );
+  const setConstructionDiagnostics = useCallback((diagnostics: PlaybookIntentDiagnostic[]) => {
+    setConstructionDiagnosticState((current) => updateScopedConstructionDiagnostics(current, id, diagnostics));
+  }, [id]);
   const [intentDesign, setIntentDesign] = useState<PlaybookIntentDesignResponse | null>(null);
   const [intentTraces, setIntentTraces] = useState<PlaybookIntentTraceResponse | null>(null);
   const [intentTracesLoading, setIntentTracesLoading] = useState(false);
@@ -530,6 +732,17 @@ function PlaybookCanvasInner() {
   const setConstructionStatus = usePlaybookUiStore((s) => s.setAssistantConstructionStatus);
   const setConstructionProgress = usePlaybookUiStore((s) => s.setAssistantConstructionProgress);
   const setConstructionId = usePlaybookUiStore((s) => s.setAssistantConstructionId);
+  const activePlaybookIdRef = useRef(id);
+  activePlaybookIdRef.current = id;
+  const setScopedConstructionStatus = useCallback((status: PlaybookIntentConstructionStatus) => {
+    if (activePlaybookIdRef.current === id) setConstructionStatus(status);
+  }, [id, setConstructionStatus]);
+  const setScopedConstructionProgress = useCallback((progress: string) => {
+    if (activePlaybookIdRef.current === id) setConstructionProgress(progress);
+  }, [id, setConstructionProgress]);
+  const setScopedConstructionId = useCallback((nextConstructionId: string | null) => {
+    if (activePlaybookIdRef.current === id) setConstructionId(nextConstructionId);
+  }, [id, setConstructionId]);
   const constructionAbortRef = useRef<AbortController | null>(null);
   const consumedAssistantOperationRef = useRef<string | null>(null);
   const constructionUndoCheckpointRef = useRef<{
@@ -537,12 +750,17 @@ function PlaybookCanvasInner() {
     snapshot: PlaybookUndoSnapshot;
   } | null>(null);
   const designerIntentRef = useRef('');
-  const designerIntentImagesRef = useRef<PlaybookIntentImageInput[]>([]);
+  const designerIntentImagesRef = useRef<File[]>([]);
+  const designerConversationIdRef = useRef<string>();
+  const designerHistoryRequestGenerationRef = useRef(0);
+  const [designerAssistantMessages, setDesignerAssistantMessages] = useState<PlaybookAssistantMessage[]>([]);
+  const [designerAssistantMessagesLoading, setDesignerAssistantMessagesLoading] = useState(false);
   const [designerSidebarWidth, setDesignerSidebarWidth] = useState(0);
   const [runtimeContainerExpansion, setRuntimeContainerExpansion] = useState<Record<string, boolean>>({});
   const previousConstructionStatusRef = useRef<PlaybookIntentConstructionStatus>('idle');
   const autoIntentRef = useRef<string | null>(null);
   const constructionActive = constructionStatus === 'starting' || constructionStatus === 'streaming';
+  const dirtyVersion = useDirtyVersion();
   const assistantOperationId = usePlaybookUiStore((s) => s.assistantOperationId);
   const assistantOperationTarget = usePlaybookUiStore((s) => s.assistantOperationTarget);
   const assistantPreviewStatus = usePlaybookUiStore((s) => s.assistantPreviewStatus);
@@ -552,10 +770,40 @@ function PlaybookCanvasInner() {
   const clearAssistantOperation = usePlaybookUiStore((s) => s.clearAssistantOperation);
   const { saveNow, validationIssues } = useAutosave({ paused: constructionActive || assistantPreviewStatus === 'ready' || assistantPreviewStatus === 'applying' || assistantPreviewStatus === 'discarding' });
 
+  useEffect(() => {
+    setConstructionDiagnosticState({ ownerPlaybookId: id, diagnostics: [] });
+  }, [id]);
+
+  useEffect(() => {
+    if (constructionDiagnostics.length === 0) return;
+    if (!shouldClearConstructionDiagnostics(constructionStatus, isDirty, assistantPreviewStatus)) return;
+    setConstructionDiagnostics([]);
+  }, [assistantPreviewStatus, constructionDiagnostics.length, constructionStatus, dirtyVersion, isDirty, setConstructionDiagnostics]);
+
   const [recentlyChangedNodeIds, setRecentlyChangedNodeIds] = useState<string[]>([]);
   const [recentlyChangedEdgeIds, setRecentlyChangedEdgeIds] = useState<string[]>([]);
   const [highlightDismissArmed, setHighlightDismissArmed] = useState(false);
   const highlightTimeoutRef = useRef<number | null>(null);
+
+  const refreshDesignerAssistantHistory = useCallback(async (playbookId: string, conversationId?: string) => {
+    await loadLatestPlaybookAssistantHistory(
+      () => getPlaybookAssistantMessages(playbookId, conversationId),
+      designerHistoryRequestGenerationRef,
+      (history) => {
+        designerConversationIdRef.current = history.conversationId ?? undefined;
+        setDesignerAssistantMessages(history.messages);
+      },
+      setDesignerAssistantMessagesLoading,
+    );
+  }, []);
+
+  useEffect(() => {
+    designerHistoryRequestGenerationRef.current += 1;
+    designerConversationIdRef.current = undefined;
+    setDesignerAssistantMessages([]);
+    if (!id || !playbookFeatures.mcpAssistantEnabled) return;
+    void refreshDesignerAssistantHistory(id).catch(() => showWarning(t('designer.historyLoadFailed')));
+  }, [id, refreshDesignerAssistantHistory, t]);
 
   useEffect(() => {
     // Ensure agents are loaded so nodes can display agent names
@@ -564,9 +812,10 @@ function PlaybookCanvasInner() {
     if (id && !isGeneratingRoute) {
       let cancelled = false;
       setLoadedPlaybookId(null);
+      setCanvasViewMode('expanded');
       const hasExecutionParam = searchParams.has('execution');
 
-      // A normal playbook open always starts in the design view. Execution links restore the pane below.
+      // Keep the canvas neutral until Playbook and execution history resolve.
       const workspaceExplorerPref = (() => { try { return localStorage.getItem('ys_workspace_explorer_open') === '1'; } catch { return false; } })();
       usePlaybookUiStore.setState({
         selectedStepId: null,
@@ -575,7 +824,7 @@ function PlaybookCanvasInner() {
         workspaceExplorerOpen: workspaceExplorerPref,
         connectorSidebarOpen: false,
         nodeEditorOpen: false,
-        designerOpen: true,
+        designerOpen: false,
         copilotMode: 'design',
         pageMode: 'design',
       });
@@ -585,7 +834,7 @@ function PlaybookCanvasInner() {
         executionPanelOpen: false,
         workspaceExplorerOpen: workspaceExplorerPref,
         executionHistory: [],
-        designerOpen: true,
+        designerOpen: false,
         copilotMode: 'design',
         pageMode: 'design',
       });
@@ -606,11 +855,14 @@ function PlaybookCanvasInner() {
           return;
         }
 
-        setPageMode('design');
-        setDesignerOpen(true);
-        setCopilotMode('design');
-        setExecutionPanelOpen(false);
-        setExecutionPanelCollapsed(true);
+        const latestExecution = usePlaybookStore.getState().executionHistoryByPlaybook[id]?.[0];
+        const initialMode = getInitialPlaybookPageMode(latestExecution?.status);
+        setPageMode(initialMode);
+        setExecutionPanelOpen(initialMode === 'run');
+        setExecutionPanelCollapsed(initialMode !== 'run');
+        if (initialMode === 'run' && latestExecution) {
+          viewExecutionInPanel(latestExecution.id);
+        }
         selectStep(null);
       })();
 
@@ -698,7 +950,7 @@ function PlaybookCanvasInner() {
     if (viewportInitializedPlaybookRef.current === id) {
       return;
     }
-    if (!id || isGeneratingRoute || playbookLoading || playbook?.id !== id || nodes.length === 0) {
+    if (!id || loadedPlaybookId !== id || isGeneratingRoute || playbookLoading || playbook?.id !== id || nodes.length === 0) {
       return;
     }
 
@@ -733,7 +985,7 @@ function PlaybookCanvasInner() {
       window.cancelAnimationFrame(frameTwo);
       window.clearTimeout(zoomTimeout);
     };
-  }, [id, isGeneratingRoute, nodes.length, playbookLoading, playbook?.id, reactFlow]);
+  }, [id, isGeneratingRoute, loadedPlaybookId, nodes.length, playbookLoading, playbook?.id, reactFlow]);
 
   useEffect(() => {
     if (executionPanelOpen && pageMode === 'run' && executionPanelCollapsed) {
@@ -1548,7 +1800,18 @@ function PlaybookCanvasInner() {
 
   const nodeContextMenuActions = useMemo<NodeContextMenuActions>(
     () => ({
-      onEdit: handleEditNode,
+      onEdit: (nodeId) => {
+        setEditorInitialView('setup');
+        handleEditNode(nodeId);
+      },
+      onEditReference: (nodeId) => {
+        const task = playbook?.tasks.find((candidate) => candidate.id === nodeId);
+        if (!task) return;
+        setEditorInitialView('reference');
+        setEditingTask(task);
+        setEditorOpen(true);
+        setDesignerOpen(false);
+      },
       onAdvise: (nodeId) => { void handleOpenNodeAdvisor(nodeId); },
       onClone: handleCloneNode,
       onDelete: removeNode,
@@ -1571,6 +1834,8 @@ function PlaybookCanvasInner() {
     }),
     [
       handleEditNode,
+      playbook?.tasks,
+      setDesignerOpen,
       handleOpenNodeAdvisor,
       handleCloneNode,
       removeNode,
@@ -1604,6 +1869,7 @@ function PlaybookCanvasInner() {
         return;
       }
       const taskFromPlaybook = playbook?.tasks.find((t) => t.id === node.id) ?? null;
+      setEditorInitialView('setup');
       setEditingTask(taskFromPlaybook || node.data);
       setEditorOpen(true);
       setDesignerOpen(false);
@@ -1973,13 +2239,16 @@ function PlaybookCanvasInner() {
     };
 
     const commitGraph = (nextTasks: PlaybookTask[], nextEdges: Edge[], nextDataBindings: DataBinding[]) => {
+      // The backend rejects bindings whose source cannot reach the target on the control graph
+      // (rule 9); prune them here so an assistant apply never commits a graph the backend refuses.
+      const prunedBindings = pruneUnreachableDataBindings(nextTasks, nextEdges, nextDataBindings);
       const layoutedTasks = autoLayoutTasks(nextTasks, flowEdgesToPlaybookEdges(nextEdges));
       if (shouldCaptureHistory) captureSnapshot();
       setNodes(tasksToNodes(layoutedTasks));
       setEdges(nextEdges);
       updateTasks(layoutedTasks);
       updateEdges(flowEdgesToPlaybookEdges(nextEdges));
-      updateDataBindings(nextDataBindings);
+      updateDataBindings(prunedBindings.bindings);
       setIntentSuggestions([]);
       const changedIds = layoutedTasks.filter((task) => changedNodeIds.has(task.id)).map((task) => task.id);
       setRecentlyChangedNodeIds(changedIds);
@@ -2247,49 +2516,82 @@ function PlaybookCanvasInner() {
         const incomingEdges = nextEdges.filter((edge) => edge.target === anchorTask.id);
         const untouchedEdges = nextEdges.filter((edge) => edge.target !== anchorTask.id);
         nextEdges = untouchedEdges;
+        // Data bindings that flowed severed source -> anchor must follow the new control flow.
+        // Re-point them into the new task when it accepts the same artifact kind, else drop.
+        const severedSources = new Set(incomingEdges.map((edge) => edge.source));
+        nextDataBindings = nextDataBindings.flatMap((binding) => {
+          if (binding.sourceKind !== 'node-output' || !binding.sourceNode) return [binding];
+          if (binding.targetNode !== anchorTask.id || !severedSources.has(binding.sourceNode)) return [binding];
+          const anchorPortKind = anchorTask.inputPorts?.find((port) => port.id === binding.targetPort)?.artifactKind;
+          const newInputPort = newTask.inputPorts?.find((port) => port.artifactKind === anchorPortKind);
+          if (newInputPort) {
+            applicationWarnings.push(`Re-routed data binding ${binding.sourceNode}.${binding.sourcePort}->${anchorTask.id}.${binding.targetPort} through ${newTask.id}.${newInputPort.id}.`);
+            return [{ ...binding, targetNode: newTask.id, targetPort: newInputPort.id }];
+          }
+          applicationWarnings.push(`Dropped data binding ${binding.sourceNode}.${binding.sourcePort}->${anchorTask.id}.${binding.targetPort}: ${newTask.id} cannot accept ${anchorPortKind || 'unknown'} data.`);
+          return [];
+        });
         incomingEdges.forEach((edge) => {
           const data = (edge.data || {}) as { sourceOutputPortId?: string };
-          const edgeTargetInputPortId = ((edge.data || {}) as { targetInputPortId?: string }).targetInputPortId || edge.targetHandle || 'default';
-          const rewrittenTargetInputPortId = newTask.inputPorts?.some((port) => port.id === edgeTargetInputPortId)
-            ? edgeTargetInputPortId
-            : getPreferredIntentInputPortId(newTask);
-          appendIntentEdge(
-            edge.source,
-            newTask.id,
-            data.sourceOutputPortId || edge.sourceHandle || 'default',
-            rewrittenTargetInputPortId,
-          );
+          const sourceTask = nextTasks.find((task) => task.id === edge.source) || null;
+          const reBridgedPorts = sourceTask
+            ? resolveIntentEdgePorts(sourceTask, newTask, data.sourceOutputPortId || edge.sourceHandle || undefined, undefined)
+            : null;
+          if (reBridgedPorts) {
+            appendIntentEdge(edge.source, newTask.id, reBridgedPorts.sourceOutputPortId, reBridgedPorts.targetInputPortId);
+          }
         });
-        appendIntentEdge(newTask.id, anchorTask.id, getPreferredIntentOutputPortId(newTask), getPreferredIntentInputPortId(anchorTask));
-          return true;
-        }
-
-        if (mode === 'after') {
-          const outgoingEdges = nextEdges.filter((edge) => edge.source === anchorTask.id);
-          const untouchedEdges = nextEdges.filter((edge) => edge.source !== anchorTask.id);
-          nextEdges = untouchedEdges;
-          const resolvedPorts = resolveIntentEdgePorts(anchorTask, newTask, anchorSourceOutputPortId, anchorTargetInputPortId)
-            || { sourceOutputPortId: getPreferredIntentOutputPortId(anchorTask), targetInputPortId: getPreferredIntentInputPortId(newTask) };
-          appendIntentEdge(anchorTask.id, newTask.id, resolvedPorts.sourceOutputPortId, resolvedPorts.targetInputPortId);
-          outgoingEdges.forEach((edge) => {
-            const data = (edge.data || {}) as { targetInputPortId?: string };
-            appendIntentEdge(
-              newTask.id,
-              edge.target,
-              getPreferredIntentOutputPortId(newTask),
-              data.targetInputPortId || edge.targetHandle || 'default',
-            );
-          });
-          return true;
-        }
-
-        {
-          const resolvedPorts = resolveIntentEdgePorts(anchorTask, newTask, anchorSourceOutputPortId, anchorTargetInputPortId)
-            || { sourceOutputPortId: getPreferredIntentOutputPortId(anchorTask), targetInputPortId: getPreferredIntentInputPortId(newTask) };
-          appendIntentEdge(anchorTask.id, newTask.id, resolvedPorts.sourceOutputPortId, resolvedPorts.targetInputPortId);
+        const anchorPorts = resolveIntentEdgePorts(newTask, anchorTask, undefined, undefined);
+        if (anchorPorts) {
+          appendIntentEdge(newTask.id, anchorTask.id, anchorPorts.sourceOutputPortId, anchorPorts.targetInputPortId);
         }
         return true;
-      };
+      }
+
+      if (mode === 'after') {
+        const outgoingEdges = nextEdges.filter((edge) => edge.source === anchorTask.id);
+        const untouchedEdges = nextEdges.filter((edge) => edge.source !== anchorTask.id);
+        nextEdges = untouchedEdges;
+        // Data bindings that flowed anchor -> severed target must follow the new control flow.
+        // Re-point them to the new task when it can supply the same artifact kind, else drop.
+        const severedTargets = new Set(outgoingEdges.map((edge) => edge.target));
+        nextDataBindings = nextDataBindings.flatMap((binding) => {
+          if (binding.sourceKind !== 'node-output') return [binding];
+          if (binding.sourceNode !== anchorTask.id || !severedTargets.has(binding.targetNode)) return [binding];
+          const anchorPortKind = anchorTask.outputPorts?.find((port) => port.id === binding.sourcePort)?.artifactKind;
+          const newOutputPort = newTask.outputPorts?.find((port) => port.artifactKind === anchorPortKind);
+          if (newOutputPort) {
+            applicationWarnings.push(`Re-routed data binding ${anchorTask.id}.${binding.sourcePort}->${binding.targetNode}.${binding.targetPort} through ${newTask.id}.${newOutputPort.id}.`);
+            return [{ ...binding, sourceNode: newTask.id, sourcePort: newOutputPort.id }];
+          }
+          applicationWarnings.push(`Dropped data binding ${anchorTask.id}.${binding.sourcePort}->${binding.targetNode}.${binding.targetPort}: ${newTask.id} cannot supply ${anchorPortKind || 'unknown'} data.`);
+          return [];
+        });
+        const anchorPorts = resolveIntentEdgePorts(anchorTask, newTask, anchorSourceOutputPortId, anchorTargetInputPortId);
+        if (anchorPorts) {
+          appendIntentEdge(anchorTask.id, newTask.id, anchorPorts.sourceOutputPortId, anchorPorts.targetInputPortId);
+        }
+        outgoingEdges.forEach((edge) => {
+          const data = (edge.data || {}) as { targetInputPortId?: string };
+          const targetTask = nextTasks.find((task) => task.id === edge.target) || null;
+          const reBridgedPorts = targetTask
+            ? resolveIntentEdgePorts(newTask, targetTask, undefined, data.targetInputPortId || edge.targetHandle || undefined)
+            : null;
+          if (reBridgedPorts) {
+            appendIntentEdge(newTask.id, edge.target, reBridgedPorts.sourceOutputPortId, reBridgedPorts.targetInputPortId);
+          }
+        });
+        return true;
+      }
+
+      {
+        const resolvedPorts = resolveIntentEdgePorts(anchorTask, newTask, anchorSourceOutputPortId, anchorTargetInputPortId);
+        if (resolvedPorts) {
+          appendIntentEdge(anchorTask.id, newTask.id, resolvedPorts.sourceOutputPortId, resolvedPorts.targetInputPortId);
+        }
+      }
+      return true;
+    };
 
     const deleteTaskAndBridgeEdges = (taskId: string) => {
       const deletedTask = nextTasks.find((task) => task.id === taskId) || null;
@@ -2524,7 +2826,11 @@ function PlaybookCanvasInner() {
       options?: { kind?: 'sequential' | 'conditional'; routerLabel?: string | null; priority?: number | null; autoBind?: boolean },
     ) => {
       const isConditional = options?.kind === 'conditional' || Boolean(options?.routerLabel);
+      const sourceTask = nextTasks.find((task) => task.id === sourceId);
       const targetTask = nextTasks.find((task) => task.id === targetId);
+      if (sourceTask && targetTask && !canAppendIntentEdge(sourceTask, targetTask, sourceOutputPortId, targetInputPortId)) {
+        return;
+      }
       const targetInputPort = targetTask?.inputPorts?.find((port) => port.id === targetInputPortId);
       if (targetInputPort?.required && !isConditional) {
         nextEdges = nextEdges.filter((edge) => {
@@ -3132,6 +3438,7 @@ function PlaybookCanvasInner() {
         assistantOperationId,
         assistantOperationTarget: 'advisor_preview',
       });
+      if (!isPlaybookRouteCurrent(id, activePlaybookIdRef.current)) return;
       const state = usePlaybookStore.getState();
       if (state.isDirty || state.isSaving) throw new Error(t('intentBar.error'));
       stabilizeConstructionUndoCheckpoint();
@@ -3140,6 +3447,7 @@ function PlaybookCanvasInner() {
         navigate(`/playbooks/${state.currentPlaybook.id}`, { replace: true });
       }
     } catch (error) {
+      if (!isPlaybookRouteCurrent(id, activePlaybookIdRef.current)) return;
       setAssistantPreviewStatus('ready');
       showError(error instanceof Error ? error.message : t('intentBar.error'));
     }
@@ -3150,11 +3458,13 @@ function PlaybookCanvasInner() {
     setAssistantPreviewStatus('discarding');
     try {
       await discardPlaybookIntentConstruction(id, assistantOperationId);
+      if (!isPlaybookRouteCurrent(id, activePlaybookIdRef.current)) return;
       rollbackIntentConstruction();
       setConstructionStatus('cancelled');
       setConstructionProgress('');
       clearAssistantOperation();
     } catch (error) {
+      if (!isPlaybookRouteCurrent(id, activePlaybookIdRef.current)) return;
       setAssistantPreviewStatus('ready');
       showError(error instanceof Error ? error.message : t('intentBar.error'));
     }
@@ -3196,9 +3506,9 @@ function PlaybookCanvasInner() {
     showError,
     showWarning,
     getCurrentDefinitionRevision,
-    setConstructionStatus,
-    setConstructionProgress,
-    setConstructionId,
+    setConstructionStatus: setScopedConstructionStatus,
+    setConstructionProgress: setScopedConstructionProgress,
+    setConstructionId: setScopedConstructionId,
     setConstructionDiagnostics,
     constructionAbortRef,
     realtimeConstructionEnabled: playbookFeatures.mcpAssistantEnabled,
@@ -3207,7 +3517,7 @@ function PlaybookCanvasInner() {
 
   useEffect(() => {
     const operationId = searchParams.get('assistantOperation');
-    if (!id || !playbook || !operationId || consumedAssistantOperationRef.current === operationId) return;
+    if (!id || !operationId || !shouldConsumeAssistantOperationHandoff(id, playbook?.id, operationId, consumedAssistantOperationRef.current)) return;
     consumedAssistantOperationRef.current = operationId;
     void hydrateAssistantOperationHandoff(id, operationId, fetchPlaybookIntentConstruction, consumePlaybookConstruction).then(() => {
       setSearchParams((current) => {
@@ -3217,62 +3527,69 @@ function PlaybookCanvasInner() {
       }, { replace: true });
     }).catch((error) => {
       const message = error instanceof Error ? error.message : t('intentBar.error');
-      setConstructionStatus('failed');
-      setConstructionProgress('');
+      setScopedConstructionStatus('failed');
+      setScopedConstructionProgress('');
       setIntentError(message);
       showError(message);
     });
-  }, [consumePlaybookConstruction, id, playbook, searchParams, setConstructionProgress, setConstructionStatus, setSearchParams, showError, t]);
+  }, [consumePlaybookConstruction, id, playbook, searchParams, setScopedConstructionProgress, setScopedConstructionStatus, setSearchParams, showError, t]);
 
-  const handleSubmitIntentFromDesigner = useCallback(async (intentText: string, visibleUserQuery: string, images?: PlaybookIntentImageInput[]) => {
+  const handleSubmitIntentFromDesigner = useCallback(async (intentText: string, visibleUserQuery: string, images?: File[]) => {
     designerIntentRef.current = intentText;
     designerIntentImagesRef.current = images ?? [];
-    if (shouldUsePlaybookAgentAssistant(playbookFeatures.agentAssistantEnabled, images) && id && playbook) {
+    if (shouldUsePlaybookMcpAssistant(playbookFeatures.mcpAssistantEnabled) && id && playbook) {
+      // currentPlaybook is a store singleton; applying suggestions while it still holds the
+      // previously opened playbook would commit both graphs merged into this route.
+      if (playbook.id !== id) return;
       setIntentLoading(true);
       setIntentError('');
       try {
         if (isDirty) await saveNow();
+        const requestId = window.crypto.randomUUID();
+        const expectedDefinitionRevision = getCurrentDefinitionRevision();
+        const attachmentIds = images?.length
+          ? await Promise.all(images.map((file) => uploadPlaybookAssistantAttachment(
+              id,
+              requestId,
+              expectedDefinitionRevision,
+              file,
+            )))
+          : [];
         const response = await runPlaybookAssistantTurn(id, {
           message: intentText,
-          expectedDefinitionRevision: getCurrentDefinitionRevision(),
+          requestId,
+          expectedDefinitionRevision,
+          ...(designerConversationIdRef.current ? { conversationId: designerConversationIdRef.current } : {}),
+          ...(attachmentIds.length ? { attachmentIds } : {}),
           ...(selectedStepId && playbook.tasks.some((task) => task.id === selectedStepId)
             ? { selectedTaskId: selectedStepId }
             : {}),
           ...(currentExecution?.playbookId === id ? { executionId: currentExecution.id } : {}),
         });
+        designerConversationIdRef.current = response.conversationId;
+        setIntentDesign(response.assessment);
+        await refreshDesignerAssistantHistory(id, response.conversationId);
+        if (response.assessment?.status === 'needs_clarification') return;
         const constructionResult = response.operation
           ? await consumePlaybookConstruction({
               ...response.operation,
               constructionId: response.operation.constructionId ?? response.operation.operationId!,
             })
           : { status: 'completed' as const };
-        const failed = constructionResult.status === 'failed';
-        await appendDesignMessage(id, {
-          userQuery: visibleUserQuery,
-          aiSummary: failed ? (constructionResult.error || response.answer) : response.answer,
-          status: failed ? 'failed' : 'completed',
-          error: failed ? (constructionResult.error || response.answer) : null,
-        });
+        if (constructionResult.status === 'failed') {
+          setIntentError(constructionResult.error || response.answer);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : t('designer.intentFailedSummary');
         setIntentError(message);
         showError(message);
-        try {
-          await appendDesignMessage(id, {
-            userQuery: visibleUserQuery,
-            aiSummary: message,
-            status: 'failed',
-            error: message,
-          });
-        } catch (historyError) {
-          console.error('Failed to save Designer Assistant failure', historyError);
-        }
       } finally {
         setIntentLoading(false);
       }
       return;
     }
-    const result = await handleSubmitIntentText(intentText, images);
+    const legacyImages = images ? await Promise.all(images.map(readLegacyIntentImage)) : undefined;
+    const result = await handleSubmitIntentText(intentText, legacyImages);
     if (!id || result.status === 'skipped') return;
     try {
       await appendDesignMessage(id, {
@@ -3287,30 +3604,39 @@ function PlaybookCanvasInner() {
       });
       await refreshIntentTraces();
     } catch (error) {
-      console.error('Failed to save Designer Assistant chat history', error);
       showWarning(t('designer.intentSaveFailed'));
     }
-  }, [consumePlaybookConstruction, currentExecution, getCurrentDefinitionRevision, handleSubmitIntentText, id, isDirty, playbook, refreshIntentTraces, saveNow, selectedStepId, showError, t]);
+  }, [consumePlaybookConstruction, currentExecution, getCurrentDefinitionRevision, handleSubmitIntentText, id, isDirty, playbook, refreshDesignerAssistantHistory, refreshIntentTraces, saveNow, selectedStepId, showError, showWarning, t]);
 
-  const handleAnswerIntentFromDesigner = useCallback(async (answerText?: string) => {
-    const result = await handleForceGenerateIntentText(designerIntentRef.current, answerText, designerIntentImagesRef.current);
-    if (!id || !answerText || result.status === 'skipped') return;
+  const handleAnswerIntentFromDesigner = useCallback(async (answers: PlaybookClarificationAnswer[], answerText: string) => {
+    if (!id || playbook?.id !== id || intentDesign?.status !== 'needs_clarification' || !intentDesign.continuationId) return;
+    setIntentLoading(true);
+    setIntentError('');
     try {
-      await appendDesignMessage(id, {
-        userQuery: answerText,
-        aiSummary: result.status === 'failed'
-          ? (result.error || t('designer.intentFailedSummary'))
-          : t('designer.intentSavedSummary'),
-        status: result.status === 'failed' ? 'failed' : 'completed',
-        error: result.status === 'failed' ? (result.error || t('designer.intentFailedSummary')) : null,
+      const response = await runPlaybookAssistantTurn(id, {
+        message: answerText || t('designer.intentClarificationSummary'),
+        expectedDefinitionRevision: getCurrentDefinitionRevision(),
+        conversationId: designerConversationIdRef.current,
+        continuationId: intentDesign.continuationId,
+        answers,
       });
-      await usePlaybookStore.getState().fetchDesignMessages(id);
-      await refreshIntentTraces();
+      designerConversationIdRef.current = response.conversationId;
+      setIntentDesign(response.assessment);
+      await refreshDesignerAssistantHistory(id, response.conversationId);
+      if (response.operation) {
+        await consumePlaybookConstruction({
+          ...response.operation,
+          constructionId: response.operation.constructionId ?? response.operation.operationId!,
+        });
+      }
     } catch (error) {
-      console.error('Failed to save Designer Assistant clarification history', error);
-      showWarning(t('designer.intentSaveFailed'));
+      const message = error instanceof Error ? error.message : t('designer.intentFailedSummary');
+      setIntentError(message);
+      showError(message);
+    } finally {
+      setIntentLoading(false);
     }
-  }, [handleForceGenerateIntentText, id, t]);
+  }, [consumePlaybookConstruction, getCurrentDefinitionRevision, id, intentDesign, playbook, refreshDesignerAssistantHistory, showError, t]);
 
   const { handleRun, handleStop } = usePlaybookCanvasExecutionHandlers({
     id,
@@ -3375,6 +3701,7 @@ function PlaybookCanvasInner() {
     advisorAutopilotEnabled,
     pageMode,
     designerOpen,
+    waitingForHumanInput: Boolean(waitingForHumanInput),
     confirmRemoveAllMessage: `${t('toolbar.confirmRemoveAllTitle')}\n${t('toolbar.confirmRemoveAllDescription')}`,
     workspaceRequiredError: t('errors.workspaceRequired'),
     importReadErrorMessage: t('import.readError'),
@@ -3383,6 +3710,7 @@ function PlaybookCanvasInner() {
     setNodeReflectionEnabled,
     setAdvisorScoringMode,
     setAdvisorAutopilotEnabled,
+    fitCanvasToNodes,
     setNodes,
     setEdges,
     setPendingImport,
@@ -3454,14 +3782,6 @@ function PlaybookCanvasInner() {
     if (!playbook) return;
     setAdvisorAutopilotEnabled((playbook.advisorAutopilotEnabled ?? false) === true);
   }, [playbook?.advisorAutopilotEnabled]);
-
-  const handleToggleDeepSearch = useCallback(() => {
-    if (!id || !playbook) return;
-    const currentDeepSearch = playbook.tasks.some((t) => t.deepSearch);
-    const newValue = !currentDeepSearch;
-    updateTasks(playbook.tasks.map((t) => ({ ...t, deepSearch: newValue })));
-    toast.success(newValue ? t('floatingToolbar.deepSearchOn') : t('floatingToolbar.deepSearchOff'));
-  }, [id, playbook, updateTasks, t]);
 
   useEffect(() => {
     if (!id || !executionForCanvas || executionForCanvas.status !== 'interrupted' || executionForCanvas.waitingForHumanInput) {
@@ -3603,50 +3923,53 @@ function PlaybookCanvasInner() {
   }
 
   const isExecutionPanelVisible = !executionPanelCollapsed && (pageMode !== 'design' || executionPanelOpen);
-  const renderCanvasViewModeButtons = (shortLabels: boolean) => (
+  const shouldShowAssistant = shouldRenderPlaybookAssistant(
+    pageMode,
+    Boolean(isLiveExecution),
+    waitingForHumanInput,
+  );
+  const renderCanvasViewModeButtons = () => (
     <>
       <Button
         type="button"
         variant={canvasViewMode === 'expanded' ? 'default' : 'ghost'}
         size="sm"
-        className="h-8 rounded-full px-2 text-[11px] sm:px-3 sm:text-xs"
+        className="h-10 rounded-full px-3 text-xs sm:h-8"
         aria-pressed={canvasViewMode === 'expanded'}
         onClick={() => setCanvasViewMode('expanded')}
       >
-        {t(shortLabels ? 'canvas.view.expandedShort' : 'canvas.view.expanded')}
+        <span className="sm:hidden">{t('canvas.view.expandedShort')}</span>
+        <span className="hidden sm:inline">{t('canvas.view.expanded')}</span>
       </Button>
       <Button
         type="button"
         variant={canvasViewMode === 'overview' ? 'default' : 'ghost'}
         size="sm"
-        className="h-8 rounded-full px-2 text-[11px] sm:px-3 sm:text-xs"
+        className="h-10 rounded-full px-3 text-xs sm:h-8"
         aria-pressed={canvasViewMode === 'overview'}
         onClick={() => setCanvasViewMode('overview')}
       >
-        {t(shortLabels ? 'canvas.view.overviewShort' : 'canvas.view.overview')}
+        <span className="sm:hidden">{t('canvas.view.overviewShort')}</span>
+        <span className="hidden sm:inline">{t('canvas.view.overview')}</span>
       </Button>
     </>
   );
+  const hasRunnableContent = playbook.tasks.length > 0 || (playbook.nodes?.length || 0) > 0;
+  const hasWorkspace = (playbook.workspaces?.length || 0) > 0;
+  const unconfiguredTaskCount = playbook.tasks.filter((task) => !isTaskConfiguredForExecution(task)).length;
+  const canRun = hasRunnableContent && hasWorkspace && unconfiguredTaskCount === 0 && !hasActiveExecution && !isSaving && !isDirty;
 
   return (
     <div className="flex flex-col h-full w-full">
-      {typeof document !== 'undefined'
-        ? createPortal(
-            <div
-              className="fixed left-2 top-16 z-20 inline-flex rounded-full border bg-background/95 p-1 shadow-sm backdrop-blur sm:hidden"
-              role="group"
-              aria-label={t('canvas.view.groupLabel')}
-            >
-              {renderCanvasViewModeButtons(true)}
-            </div>,
-            document.body,
-          )
-        : null}
-      {/* Header */}
-      <div className="flex flex-wrap items-center gap-2 px-2 sm:px-4 py-2 border-b bg-background z-10">
-        {/* Left: back + name + live indicator */}
+      <div className="z-10 flex min-w-0 items-center gap-2 border-b bg-background px-2 py-2 sm:px-4">
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <Button variant="ghost" size="icon" className="shrink-0" onClick={() => navigate('/playbooks')}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11 shrink-0 sm:h-9 sm:w-9"
+            onClick={() => navigate('/playbooks')}
+            aria-label={t('header.backToPlaybooks')}
+          >
             <ArrowLeft className="h-4 w-4" />
           </Button>
           {editingName ? (
@@ -3674,84 +3997,63 @@ function PlaybookCanvasInner() {
             </span>
           )}
         </div>
-        {/* Right: share + workspace select + usage + evaluation + toolbar */}
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setEvaluationDialogOpen(true)}
-            title={t('header.evaluation')}
-            aria-label={t('header.evaluation')}
-          >
-            <BarChart3 className="h-4 w-4" />
-            <span className="hidden xl:inline">{t('header.evaluation')}</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void (id && clonePlaybook(id))}
-            title={t('header.clonePlaybook')}
-            aria-label={t('header.clonePlaybook')}
-          >
-            <Copy className="h-4 w-4" />
-          </Button>
-          {playbook.accessLevel !== 'read' && playbook.accessLevel !== 'write' && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShareDialogOpen(true)}
-              title={t('share.share')}
-            >
-              <Share2 className="h-4 w-4" />
-            </Button>
-          )}
-          <div className="w-40 sm:w-64">
-            <PlaybookWorkspaceSelect
-              value={playbook.workspaces || []}
-              onChange={handleWorkspacesChange}
-            />
-          </div>
-          <PlaybookUsageIndicator />
-          <PlaybookToolbar
-            pageMode={pageMode}
-            onPageModeChange={handlePageModeChange}
-            hasExecutionContext={Boolean(currentExecution || execution)}
-            onRun={handleRun}
-            onStop={handleStop}
-            onSave={saveNow}
-            onViewExecutions={handleViewExecutions}
-            isDirty={isDirty}
-            isSaving={isSaving}
-            isExecuting={isExecuting}
-            hasActiveExecution={hasActiveExecution}
-            isStopping={isStopping}
-            canRun={(playbook.tasks.length > 0 || (playbook.nodes?.length || 0) > 0) && (playbook.workspaces?.length || 0) > 0 && !hasActiveExecution && !isSaving && !isDirty}
-            validationIssues={validationIssues}
-            onValidationIssueSelect={handleValidationIssueSelect}
-            nodeReflectionEnabled={nodeReflectionEnabled}
-            onNodeReflectionChange={handleNodeReflectionChange}
-            advisorAutopilotEnabled={advisorAutopilotEnabled}
-            onAdvisorAutopilotChange={handleAdvisorAutopilotChange}
-            advisorScoringMode={advisorScoringMode}
-            onAdvisorScoringModeChange={handleAdvisorScoringModeChange}
-            onDownloadAllResults={handleDownloadAllResults}
-            canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
-            onTriggers={() => setTriggersSheetOpen(true)}
-            triggersOpen={triggersSheetOpen}
-            designSettings={playbook.designSettings}
-            onDesignSettingsChange={(settings) => {
-              void updatePlaybook(playbook.id, {
-                designSettings: {
-                  ...playbook.designSettings,
-                  ...settings,
-                },
-              });
-            }}
-            onOpenFlowSettings={() => setFlowSettingsOpen(true)}
-            onExport={handleExportPlaybook}
-            onImport={() => importFileInputRef.current?.click()}
+        <div className="hidden xl:block"><PlaybookUsageIndicator /></div>
+        <PlaybookStatusActions
+          onRun={handleRun}
+          onStop={handleStop}
+          onSave={saveNow}
+          isDirty={isDirty}
+          isSaving={isSaving}
+          isExecuting={isExecuting}
+          hasActiveExecution={hasActiveExecution}
+          isStopping={isStopping}
+          canRun={canRun}
+          hasRunnableContent={hasRunnableContent}
+          hasWorkspace={hasWorkspace}
+          unconfiguredTaskCount={unconfiguredTaskCount}
+          validationIssues={validationIssues}
+          onValidationIssueSelect={handleValidationIssueSelect}
+        />
+      </div>
+
+      <div className="z-10 flex min-w-0 items-center gap-2 border-b bg-muted/20 px-2 py-1.5 sm:px-4">
+        <div className="min-w-0 flex-1 sm:max-w-64">
+          <PlaybookWorkspaceSelect
+            value={playbook.workspaces || []}
+            onChange={handleWorkspacesChange}
           />
         </div>
+        <PlaybookToolbar
+          pageMode={pageMode}
+          onPageModeChange={handlePageModeChange}
+          hasExecutionContext={Boolean(currentExecution || execution)}
+          onViewExecutions={handleViewExecutions}
+          nodeReflectionEnabled={nodeReflectionEnabled}
+          onNodeReflectionChange={handleNodeReflectionChange}
+          advisorAutopilotEnabled={advisorAutopilotEnabled}
+          onAdvisorAutopilotChange={handleAdvisorAutopilotChange}
+          advisorScoringMode={advisorScoringMode}
+          onAdvisorScoringModeChange={handleAdvisorScoringModeChange}
+          onDownloadAllResults={handleDownloadAllResults}
+          canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
+          onTriggers={() => setTriggersSheetOpen(true)}
+          triggersOpen={triggersSheetOpen}
+          designSettings={playbook.designSettings}
+          onDesignSettingsChange={(settings) => {
+            void updatePlaybook(playbook.id, {
+              designSettings: {
+                ...playbook.designSettings,
+                ...settings,
+              },
+            });
+          }}
+          onOpenFlowSettings={() => setFlowSettingsOpen(true)}
+          onExport={handleExportPlaybook}
+          onImport={() => importFileInputRef.current?.click()}
+          onEvaluation={() => setEvaluationDialogOpen(true)}
+          onClone={() => void (id && clonePlaybook(id))}
+          onShare={playbook.accessLevel !== 'read' && playbook.accessLevel !== 'write' ? () => setShareDialogOpen(true) : undefined}
+        />
       </div>
 
       {id && playbook?.accessLevel !== 'read' && playbook?.accessLevel !== 'write' && (
@@ -3830,14 +4132,15 @@ function PlaybookCanvasInner() {
           >
             <div
               ref={canvasViewModeRef}
-              className="absolute left-4 top-4 z-20 hidden rounded-full border bg-background/95 p-1 shadow-sm backdrop-blur sm:inline-flex"
+              className="absolute left-3 top-3 z-30 inline-flex rounded-full border bg-background/95 p-1 shadow-sm sm:left-4 sm:top-4"
               role="group"
               aria-label={t('canvas.view.groupLabel')}
             >
-              {renderCanvasViewModeButtons(false)}
+              {renderCanvasViewModeButtons()}
               <Button
                 type="button"
                 size="sm"
+                className="hidden sm:inline-flex"
                 variant={executionViewMode === 'focus' ? 'default' : 'ghost'}
                 disabled={executionRuntimeGraph.focusNodes.length === 0}
                 aria-pressed={executionViewMode === 'focus'}
@@ -3890,6 +4193,7 @@ function PlaybookCanvasInner() {
                   panOnDrag
                   panOnScroll={false}
                   zoomOnScroll
+                  minZoom={0.1}
                   fitView
                   selectionOnDrag
                   selectionKeyCode="Shift"
@@ -3948,8 +4252,6 @@ function PlaybookCanvasInner() {
                   collapsed={toolbarCollapsed}
                   onCollapsedChange={setToolbarCollapsed}
                   minLeftOffset={TOOLBAR_MIN_LEFT_OFFSET}
-                  deepSearch={playbook.tasks.some((t) => t.deepSearch)}
-                  onToggleDeepSearch={() => { void handleToggleDeepSearch(); }}
                 />
                 </ConnectionDragContext.Provider>
               </NodeDataActionsContext.Provider>
@@ -3961,28 +4263,33 @@ function PlaybookCanvasInner() {
                 subtitle={t('canvas.designingHint')}
               />
             )}
-            <PlaybookDesignerPanel
-              playbookId={id}
-              intentDesign={intentDesign}
-              intentLoading={intentLoading}
-              history={intentHistory}
-              constructionStatus={constructionStatus}
-              constructionDiagnostics={constructionDiagnostics}
-              intentTraces={intentTraces}
-              intentTracesLoading={intentTracesLoading}
-              onSubmitDesignIntent={handleSubmitIntentFromDesigner}
-              onAnswerDesignIntent={handleAnswerIntentFromDesigner}
-              onApplyHistorySuggestion={constructionActive
-                ? undefined
-                : (suggestion) => handleApplyIntentSuggestion(suggestion, { replaceAll: true })}
-              onCancelConstruction={handleCancelIntentConstruction}
-              onReviewConstructionDiagnostic={handleReviewConstructionDiagnostic}
-              assistantPreviewStatus={assistantPreviewStatus}
-              onApplyAssistantPreview={() => { void applyAdvisorPreview(); }}
-              onDiscardAssistantPreview={() => { void discardAdvisorPreview(); }}
-              onWidthChange={setDesignerSidebarWidth}
-              onOpenIntentTraces={handleOpenIntentTraces}
-            />
+            {shouldShowAssistant && (
+              <PlaybookDesignerPanel
+                playbookId={id}
+                designChatEnabled={false}
+                assistantMessages={playbookFeatures.mcpAssistantEnabled ? designerAssistantMessages : undefined}
+                assistantMessagesLoading={designerAssistantMessagesLoading}
+                intentDesign={intentDesign}
+                intentLoading={intentLoading}
+                history={intentHistory}
+                constructionStatus={constructionStatus}
+                constructionDiagnostics={constructionDiagnostics}
+                intentTraces={intentTraces}
+                intentTracesLoading={intentTracesLoading}
+                onSubmitDesignIntent={handleSubmitIntentFromDesigner}
+                onAnswerDesignIntent={handleAnswerIntentFromDesigner}
+                onApplyHistorySuggestion={constructionActive
+                  ? undefined
+                  : (suggestion) => handleApplyIntentSuggestion(suggestion, { replaceAll: true })}
+                onCancelConstruction={handleCancelIntentConstruction}
+                onReviewConstructionDiagnostic={handleReviewConstructionDiagnostic}
+                assistantPreviewStatus={assistantPreviewStatus}
+                onApplyAssistantPreview={() => { void applyAdvisorPreview(); }}
+                onDiscardAssistantPreview={() => { void discardAdvisorPreview(); }}
+                onWidthChange={setDesignerSidebarWidth}
+                onOpenIntentTraces={handleOpenIntentTraces}
+              />
+            )}
           </div>
 
           {isExecutionPanelVisible && (
@@ -3998,11 +4305,12 @@ function PlaybookCanvasInner() {
           )}
 
           {!isExecutionPanelVisible && (
-            <div className="absolute right-3 top-3 z-20">
+            <div className="absolute right-2 top-2 z-20 sm:right-3 sm:top-3">
               <Button
+                type="button"
                 variant="outline"
                 size="icon"
-                className="h-8 w-8 shadow-md bg-background"
+                className="h-11 w-11 touch-manipulation bg-background shadow-md sm:h-8 sm:w-8"
                 onClick={() => {
                   setExecutionPanelCollapsed(false);
                   setExecutionPanelOpen(true);
@@ -4027,7 +4335,7 @@ function PlaybookCanvasInner() {
         open={editorOpen}
         onOpenChange={setEditorOpen}
         onSave={handleNodeSave}
-        onOpenOutputFormatEditor={openOutputFormatEditor}
+        initialView={editorInitialView}
       />
 
       <PlaybookNodeAdvisorDialog

@@ -9,6 +9,7 @@ export interface ComposerSuggestionSettings {
 
 export interface ConversationSettingsValue {
   composerSuggestions: ComposerSuggestionSettings;
+  redactSensitiveText: boolean;
 }
 
 export interface ConversationSettings extends ConversationSettingsValue {
@@ -24,6 +25,7 @@ export interface ConversationSettingsAgentOption {
 }
 
 export const DEFAULT_CONVERSATION_SETTINGS: ConversationSettingsValue = {
+  redactSensitiveText: true,
   composerSuggestions: {
     enabled: true,
     agentId: null,

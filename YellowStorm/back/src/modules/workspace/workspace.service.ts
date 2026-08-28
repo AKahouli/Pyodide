@@ -30,6 +30,7 @@ import {
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { escapeRegex } from '../../common/utils';
+import type { RunCodeWorkspaceMetadata } from './interfaces/run-code-source.interface';
 
 @Injectable()
 export class WorkspaceService implements OnModuleInit {
@@ -706,6 +707,30 @@ export class WorkspaceService implements OnModuleInit {
       pathById[doc._id.toString()] = `${doc.createdBy.toString()}/${doc.storagePrefix}`;
     }
     return pathById;
+  }
+
+  async getRunCodeSourceMetadataByIds(
+    workspaceIds: string[],
+  ): Promise<Record<string, RunCodeWorkspaceMetadata>> {
+    if (workspaceIds.length === 0) return {};
+    const validIds = workspaceIds.filter((id) => Types.ObjectId.isValid(id));
+    if (validIds.length === 0) return {};
+    const docs = await this.workspaceModel
+      .find({ _id: { $in: validIds.map((id) => new Types.ObjectId(id)) } })
+      .select('name alias createdBy storagePrefix')
+      .lean()
+      .exec();
+    const metadata: Record<string, RunCodeWorkspaceMetadata> = {};
+    for (const doc of docs) {
+      const workspaceId = doc._id.toString();
+      metadata[workspaceId] = {
+        workspaceId,
+        name: doc.name,
+        alias: doc.alias,
+        cephPrefix: `${doc.createdBy.toString()}/${doc.storagePrefix}`,
+      };
+    }
+    return metadata;
   }
 
   /**

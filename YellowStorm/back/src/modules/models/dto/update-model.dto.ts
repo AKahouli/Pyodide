@@ -1,6 +1,26 @@
-import { ArrayContains, ArrayNotEmpty, ArrayUnique, IsString, IsBoolean, IsArray, IsOptional, IsIn } from 'class-validator';
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ArrayContains, ArrayMaxSize, ArrayNotEmpty, ArrayUnique, IsString, IsBoolean, IsArray, IsOptional, IsIn, MaxLength, Matches, ValidateNested } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import { MODEL_INPUT_MODALITIES, MODEL_TYPES, ModelInputModality } from '../interfaces/model.interface';
+
+export class ReasoningEffortOptionDto {
+  @ApiProperty({ maxLength: 50 })
+  @IsString()
+  @Matches(/^[A-Za-z0-9._-]+$/)
+  @MaxLength(50)
+  id!: string;
+
+  @ApiProperty({ maxLength: 80 })
+  @IsString()
+  @MaxLength(80)
+  name!: string;
+
+  @ApiPropertyOptional({ maxLength: 240 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(240)
+  description?: string;
+}
 
 export class UpdateModelDto {
   @ApiPropertyOptional({ description: 'Model display name' })
@@ -66,4 +86,20 @@ export class UpdateModelDto {
   @IsIn(MODEL_INPUT_MODALITIES, { each: true })
   @IsOptional()
   inputModalities?: ModelInputModality[];
+
+  @ApiPropertyOptional({ type: [ReasoningEffortOptionDto], description: 'Selectable reasoning efforts supported by this model' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ArrayUnique((option: ReasoningEffortOptionDto) => option.id)
+  @ValidateNested({ each: true })
+  @Type(() => ReasoningEffortOptionDto)
+  reasoningEfforts?: ReasoningEffortOptionDto[];
+
+  @ApiPropertyOptional({ description: 'Default reasoning effort ID', maxLength: 50, nullable: true })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z0-9._-]+$/)
+  @MaxLength(50)
+  defaultReasoningEffort?: string | null;
 }

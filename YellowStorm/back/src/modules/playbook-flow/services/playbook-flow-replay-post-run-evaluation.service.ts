@@ -223,7 +223,7 @@ Return strict JSON:
 }`,
         },
       ],
-    }, { timeout: 45000 });
+    }, { timeout: 345000 });
 
     const content = (response.data as { choices?: Array<{ message?: { content?: string } }> })?.choices?.[0]?.message?.content;
     if (typeof content !== 'string' || !content.trim()) {

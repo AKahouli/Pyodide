@@ -116,9 +116,6 @@ export class FlowDeltaPatchService {
     });
 
     const normalizedWorkspaces = this.workspacePolicy.normalizeWorkspaces(fields?.workspaces ?? flow.workspaces);
-    if (fields?.workspaces !== undefined || flow.workspaces.length > 1) {
-      this.workspacePolicy.ensureWorkspaceSelection(normalizedWorkspaces);
-    }
 
     return {
       nodes,

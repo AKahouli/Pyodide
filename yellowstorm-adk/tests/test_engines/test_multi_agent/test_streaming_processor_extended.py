@@ -91,7 +91,8 @@ class TestStreamingProcessorFunctionCalls:
         ) as mock_lf:
             mock_lf.event.return_value = MagicMock()
             await processor._handle_event_parts(event, None, "msg-1", queue)
-        assert queue.put.await_count == 1
+        assert queue.put.await_count == 2
+        assert queue.put.await_args_list[0].args[0]["component"]["type"] == "tool_activity"
 
 
 class TestStreamingProcessorResponses:

@@ -19,6 +19,7 @@ export { useConversationStore } from './store';
 
 // Stream hook (initialize in App)
 export { useConversationStream } from './hooks/useConversationStream';
+export { setCachedConversationSettings } from './hooks/useConversationSettings';
 
 // Types
 export type { Conversation, Message, MessageComponent, ShareType, ShareResponse, CreateSharePayload, PublicShareViewResponse, PublicShareMessage } from './types';

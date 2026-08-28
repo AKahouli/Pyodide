@@ -385,18 +385,13 @@ export class SystemService implements OnApplicationBootstrap {
   }
 
   async setPlaybookSettings(settings: AdminPlaybookSettings): Promise<AdminPlaybookSettings> {
-    const threshold = typeof settings.replayEligibilityConfidenceThreshold === 'number'
-      ? Math.max(0, Math.min(100, Math.round(settings.replayEligibilityConfidenceThreshold)))
-      : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.replayEligibilityConfidenceThreshold;
     const value: AdminPlaybookSettings = {
-      playbookSuggestorAgentId: settings.playbookSuggestorAgentId?.trim() || null,
       inferenceModelId: settings.inferenceModelId?.trim() || null,
       advisorEvaluationModelId: settings.advisorEvaluationModelId?.trim() || null,
       replayEvaluationModelId: settings.replayEvaluationModelId?.trim() || null,
       nodeSuggestionsMode: settings.nodeSuggestionsMode,
       approvalSuggestionMode: settings.approvalSuggestionMode,
       intentNormalizationLimits: normalizePlaybookIntentNormalizationLimits(settings.intentNormalizationLimits),
-      replayEligibilityConfidenceThreshold: threshold,
       useDeterministicBlueprintBuilder: typeof settings.useDeterministicBlueprintBuilder === 'boolean'
         ? settings.useDeterministicBlueprintBuilder
         : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.useDeterministicBlueprintBuilder,
@@ -596,9 +591,6 @@ export class SystemService implements OnApplicationBootstrap {
       const value = setting?.value as Partial<AdminPlaybookSettings> | undefined;
 
       this.playbookSettingsCache = {
-        playbookSuggestorAgentId: typeof value?.playbookSuggestorAgentId === 'string' && value.playbookSuggestorAgentId.trim()
-          ? value.playbookSuggestorAgentId.trim()
-          : null,
         inferenceModelId: typeof value?.inferenceModelId === 'string' && value.inferenceModelId.trim()
           ? value.inferenceModelId.trim()
           : null,
@@ -611,9 +603,6 @@ export class SystemService implements OnApplicationBootstrap {
         nodeSuggestionsMode: value?.nodeSuggestionsMode === 'auto' ? 'auto' : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.nodeSuggestionsMode,
         approvalSuggestionMode: value?.approvalSuggestionMode === 'manual' ? 'manual' : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.approvalSuggestionMode,
         intentNormalizationLimits: normalizePlaybookIntentNormalizationLimits(value?.intentNormalizationLimits),
-        replayEligibilityConfidenceThreshold: typeof value?.replayEligibilityConfidenceThreshold === 'number'
-          ? Math.max(0, Math.min(100, Math.round(value.replayEligibilityConfidenceThreshold)))
-          : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.replayEligibilityConfidenceThreshold,
         useDeterministicBlueprintBuilder: typeof value?.useDeterministicBlueprintBuilder === 'boolean'
           ? value.useDeterministicBlueprintBuilder
           : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.useDeterministicBlueprintBuilder,

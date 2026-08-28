@@ -132,4 +132,67 @@ describe('ChoiceInteractionService', () => {
     expect(result.taskSummary).toMatch(/\.\.\.$/);
     expect(JSON.parse(result.content).alternativeResponse).toBe(customAnswer.trim());
   });
+
+  it('canonicalizes multiple interactions into one combined payload', async () => {
+    const secondComponentId = 'choice-2';
+    source.components = [
+      ...(source.components as Array<{ data: Record<string, unknown> }>),
+      {
+        id: secondComponentId,
+        type: 'choice',
+        data: {
+          schemaVersion: 1,
+          questionId: 'region',
+          prompt: 'Pick a region',
+          presentation: 'list',
+          selectionMode: 'single',
+          submitBehavior: 'explicit',
+          status: 'ready',
+          options: [
+            { id: 'france', label: 'France', submitText: 'Use France' },
+            { id: 'germany', label: 'Germany', submitText: 'Use Germany' },
+          ],
+        },
+      },
+    ];
+
+    const result = await service.canonicalizeMany(conversationId, [
+      {
+        type: 'choice', componentId, questionId: 'financial-analysis', sourceMessageId,
+        selectionMode: 'multiple', selectedOptions: [{ optionId: 'profitability', label: 'Profitability' }],
+      },
+      {
+        type: 'choice', componentId: secondComponentId, questionId: 'region', sourceMessageId,
+        selectionMode: 'single', selectedOptions: [{ optionId: 'germany', label: 'Germany' }],
+      },
+    ]);
+
+    const content = JSON.parse(result.content) as Array<Record<string, unknown>>;
+    expect(content).toHaveLength(2);
+    expect(content[0].selectedChoices).toEqual([
+      { optionId: 'profitability', submitText: 'Analyze profitability', description: 'Review margins and return.' },
+    ]);
+    expect(content[1].selectedChoices).toEqual([
+      { optionId: 'germany', submitText: 'Use Germany', description: null },
+    ]);
+    expect(result.taskSummary).toBe('Profitability, Germany');
+    expect(result.interactions).toHaveLength(2);
+    expect(result.interactions[0]).toMatchObject({ componentId, questionId: 'financial-analysis' });
+    expect(result.interactions[1]).toMatchObject({ componentId: secondComponentId, questionId: 'region' });
+  });
+
+  it('rejects an invalid interaction inside a multi-submission', async () => {
+    const result = service.canonicalizeMany(conversationId, [
+      {
+        type: 'choice', componentId, questionId: 'financial-analysis', sourceMessageId,
+        selectionMode: 'multiple', selectedOptions: [{ optionId: 'profitability', label: 'Profitability' }],
+      },
+      {
+        type: 'choice', componentId: 'missing-component', questionId: 'region', sourceMessageId,
+        selectionMode: 'single', selectedOptions: [{ optionId: 'germany', label: 'Germany' }],
+      },
+    ]);
+
+    await expect(result).rejects.toMatchObject({ status: 400 });
+  });
 });

@@ -19,9 +19,13 @@ interface SearchableSelectProps {
   placeholder?: string;
   searchPlaceholder?: string;
   emptyText?: string;
+  id?: string;
+  name?: string;
+  'aria-label'?: string;
+  'aria-labelledby'?: string;
 }
 
-export function SearchableSelect({ options, value, onValueChange, placeholder = 'Select...', searchPlaceholder = 'Search...', emptyText = 'No results found.' }: SearchableSelectProps) {
+export function SearchableSelect({ options, value, onValueChange, placeholder = 'Select...', searchPlaceholder = 'Search...', emptyText = 'No results found.', id, name, 'aria-label': ariaLabel, 'aria-labelledby': ariaLabelledBy }: SearchableSelectProps) {
   const [open, setOpen] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const [triggerWidth, setTriggerWidth] = React.useState<number>(0);
@@ -37,7 +41,7 @@ export function SearchableSelect({ options, value, onValueChange, placeholder = 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button ref={triggerRef} variant='outline' role='combobox' aria-expanded={open} className='w-full justify-between h-9 font-normal'>
+        <Button ref={triggerRef} id={id} name={name} variant='outline' role='combobox' aria-expanded={open} aria-label={ariaLabel} aria-labelledby={ariaLabelledBy} className='w-full justify-between h-9 font-normal'>
           <span className={cn('truncate', !selectedOption && 'text-muted-foreground')}>{selectedOption ? selectedOption.label : placeholder}</span>
           <ChevronsUpDown className='ml-2 h-4 w-4 shrink-0 opacity-50' />
         </Button>

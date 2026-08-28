@@ -179,9 +179,6 @@ export class FlowNode {
   @Prop({ required: false, type: Object })
   metadata?: Record<string, unknown>;
 
-  @Prop({ required: false, type: Boolean, default: false })
-  deepSearch?: boolean;
-
   @Prop({ required: false, type: DynamicReasoningConfig })
   dynamicReasoning?: DynamicReasoningConfig;
 }

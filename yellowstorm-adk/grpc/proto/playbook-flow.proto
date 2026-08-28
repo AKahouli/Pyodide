@@ -35,6 +35,22 @@ message RunSettings {
   int32 max_parallelism = 2;
   DynamicReasoningPolicy dynamic_reasoning_policy = 3;
   PlannerAgentSnapshot playbook_planner = 4;
+  RuntimeSettings runtime_settings = 5;
+}
+
+message RuntimeSettings {
+  int32 max_concurrent_per_user = 1;
+  int32 execution_queue_max_depth = 2;
+  int32 max_parallelism_per_execution = 3;
+  int32 recursion_limit_default = 4;
+  int32 recursion_limit_max = 5;
+  int32 max_hitl_rounds = 6;
+  int32 python_worker_pool_size = 7;
+  int32 python_worker_max_inflight = 8;
+  int32 max_tool_iterations = 9;
+  bool graph_cache_enabled = 10;
+  int32 graph_cache_max_entries = 11;
+  int32 graph_cache_ttl_seconds = 12;
 }
 
 message DynamicReasoningPolicy {

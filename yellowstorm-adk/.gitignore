@@ -167,3 +167,4 @@ Thumbs.db
 
 # gRPC TLS material — never commit private keys
 grpc/certs/
+$/

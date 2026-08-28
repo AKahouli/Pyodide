@@ -26,7 +26,7 @@ describe('PlaybookIntentSuggestionDiagnosticsService', () => {
 
     expect(enriched.confidence).toBeCloseTo(0.65);
     expect(enriched.diagnostics).toHaveLength(2);
-    expect(enriched.validationStatus).toBe('valid_with_warnings');
+    expect(enriched.validationStatus).toBe('blocked');
     expect(enriched.blockingReasons).toBeUndefined();
     expect(enriched.repairSummary).toBeNull();
   });
@@ -80,7 +80,7 @@ describe('PlaybookIntentSuggestionDiagnosticsService', () => {
     }));
   });
 
-  it('keeps suggestions with final validation diagnostics apply-ready', () => {
+  it('blocks suggestions with final validation errors', () => {
     const enriched = service.enrichWorkflowPlan(workflowPlan({
       changes: [{
         type: 'create_node',
@@ -94,7 +94,7 @@ describe('PlaybookIntentSuggestionDiagnosticsService', () => {
       }],
     }), {}, []);
 
-    expect(enriched.validationStatus).toBe('valid_with_warnings');
+    expect(enriched.validationStatus).toBe('blocked');
     expect(enriched.validationDiagnostics?.length).toBeGreaterThan(0);
     expect(enriched.blockingReasons).toBeUndefined();
   });
@@ -124,6 +124,67 @@ describe('PlaybookIntentSuggestionDiagnosticsService', () => {
 
     expect(enriched.validationDiagnostics).toBeUndefined();
     expect(enriched.confidence).toBe(0.85);
+    expect(enriched.validationStatus).toBe('valid');
+  });
+
+  it('does not flag iterator-scoped bindings as unknown draft targets', () => {
+    const enriched = service.enrichWorkflowPlan(workflowPlan({
+      changes: [{
+        type: 'create_node',
+        nodeRef: 'loop',
+        anchor: { mode: 'append', targetTaskId: null, nodeRef: null },
+        task: {
+          title: 'Loop',
+          description: 'Loop',
+          iteratorBody: {
+            steps: [{ nodeRef: 'prepare_task_assignment', title: 'Prepare', description: 'Prepare' }],
+            edges: [],
+          },
+          inputPorts: [{ id: 'items', artifactKind: 'data' }],
+        },
+      }, {
+        type: 'create_data_binding',
+        targetNodeRef: 'prepare_task_assignment',
+        targetIteratorNodeRef: 'loop',
+        targetPort: 'current_task',
+        sourceKind: 'state',
+        statePath: 'inputs._item',
+      }],
+    }), {}, []);
+
+    expect(enriched.validationDiagnostics).toBeUndefined();
+    expect(enriched.validationStatus).toBe('valid');
+  });
+
+  it('does not flag iterator-scoped edges as unknown draft endpoints', () => {
+    const enriched = service.enrichWorkflowPlan(workflowPlan({
+      changes: [{
+        type: 'create_node',
+        nodeRef: 'review_content_items',
+        anchor: { mode: 'append', targetTaskId: null, nodeRef: null },
+        task: {
+          title: 'Review Content Items',
+          description: 'Review',
+          iteratorBody: {
+            steps: [
+              { nodeRef: 'analyze_content_item', title: 'Analyze', description: 'Analyze' },
+              { nodeRef: 'human_moderation_review', title: 'Review', description: 'Review' },
+            ],
+            edges: [],
+          },
+          inputPorts: [{ id: 'items', artifactKind: 'data' }],
+        },
+      }, {
+        type: 'create_edge',
+        sourceNodeRef: 'analyze_content_item',
+        sourceIteratorNodeRef: 'review_content_items',
+        targetNodeRef: 'human_moderation_review',
+        targetIteratorNodeRef: 'review_content_items',
+        edgeKind: 'sequential',
+      }],
+    }), {}, []);
+
+    expect(enriched.validationDiagnostics).toBeUndefined();
     expect(enriched.validationStatus).toBe('valid');
   });
 });

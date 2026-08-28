@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { PlaybookToolbar } from './PlaybookToolbar';
+import { PlaybookStatusActions, PlaybookToolbar } from './PlaybookToolbar';
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
@@ -22,15 +22,20 @@ const defaultProps = {
   pageMode: 'design' as const,
   onPageModeChange: vi.fn(),
   hasExecutionContext: false,
+  onViewExecutions: vi.fn(),
+  nodeReflectionEnabled: true,
+  onNodeReflectionChange: vi.fn(),
+};
+
+const defaultStatusProps = {
   onRun: vi.fn(),
   onSave: vi.fn(),
-  onViewExecutions: vi.fn(),
   isDirty: false,
   isSaving: false,
   isExecuting: false,
   canRun: true,
-  nodeReflectionEnabled: true,
-  onNodeReflectionChange: vi.fn(),
+  hasRunnableContent: true,
+  hasWorkspace: true,
 };
 
 const validationIssue = {
@@ -47,55 +52,54 @@ describe('PlaybookToolbar', () => {
   it('renders all toolbar buttons', () => {
     render(<PlaybookToolbar {...defaultProps} />);
     expect(screen.getByText('mode.design')).toBeInTheDocument();
-    expect(screen.getByText('mode.run')).toBeInTheDocument();
-    expect(screen.getByText('toolbar.runSettings')).toBeInTheDocument();
-    expect(screen.getByText('toolbar.saved')).toBeInTheDocument();
-    expect(screen.getByText('toolbar.run')).toBeInTheDocument();
+    expect(screen.getByText('mode.monitor')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'toolbar.runSettings' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'toolbar.moreActions' })).toBeInTheDocument();
   });
 
   it('calls onPageModeChange when a mode is selected', async () => {
     const onPageModeChange = vi.fn();
     render(<PlaybookToolbar {...defaultProps} onPageModeChange={onPageModeChange} />);
-    await userEvent.click(screen.getByText('mode.run'));
+    await userEvent.click(screen.getByText('mode.monitor'));
     expect(onPageModeChange).toHaveBeenCalledWith('run');
   });
 
   it('calls onRun when run button is clicked', async () => {
     const onRun = vi.fn();
-    render(<PlaybookToolbar {...defaultProps} onRun={onRun} />);
+    render(<PlaybookStatusActions {...defaultStatusProps} onRun={onRun} />);
     await userEvent.click(screen.getByText('toolbar.run'));
     expect(onRun).toHaveBeenCalledOnce();
   });
 
   it('disables run button when canRun is false', () => {
-    render(<PlaybookToolbar {...defaultProps} canRun={false} />);
+    render(<PlaybookStatusActions {...defaultStatusProps} canRun={false} />);
     const runButton = screen.getByText('toolbar.run').closest('button');
     expect(runButton).toBeDisabled();
   });
 
   it('disables save button when not dirty', () => {
-    render(<PlaybookToolbar {...defaultProps} isDirty={false} />);
-    const saveButton = screen.getByText('toolbar.saved').closest('button');
+    render(<PlaybookStatusActions {...defaultStatusProps} isDirty={false} />);
+    const saveButton = screen.getByRole('button', { name: 'toolbar.saved' });
     expect(saveButton).toBeDisabled();
   });
 
   it('shows save label when dirty', () => {
-    render(<PlaybookToolbar {...defaultProps} isDirty={true} />);
-    expect(screen.getByText('toolbar.save')).toBeInTheDocument();
+    render(<PlaybookStatusActions {...defaultStatusProps} isDirty={true} />);
+    expect(screen.getByRole('button', { name: 'toolbar.save' })).toBeInTheDocument();
   });
 
   it('opens actionable validation details and selects the affected issue', async () => {
     const onValidationIssueSelect = vi.fn();
     render(
-      <PlaybookToolbar
-        {...defaultProps}
-        isDirty={true}
+      <PlaybookStatusActions
+        {...defaultStatusProps}
+        isDirty={false}
         validationIssues={[validationIssue]}
         onValidationIssueSelect={onValidationIssueSelect}
       />,
     );
 
-    const trigger = screen.getByText('toolbar.validationIssuesCount').closest('button');
+    const trigger = screen.getByText('toolbar.readiness.blockersCount').closest('button');
     expect(trigger).toBeEnabled();
     await userEvent.click(trigger!);
     expect(screen.getByText('Prepare report')).toBeInTheDocument();
@@ -106,54 +110,62 @@ describe('PlaybookToolbar', () => {
     expect(onValidationIssueSelect).toHaveBeenCalledWith(validationIssue);
   });
 
+  it('surfaces unconfigured workflow steps as readiness blockers', async () => {
+    render(<PlaybookStatusActions {...defaultStatusProps} canRun={false} unconfiguredTaskCount={2} />);
+    await userEvent.click(screen.getByText('toolbar.readiness.blockersCount'));
+    expect(screen.getByText('toolbar.readiness.unconfiguredTasks')).toBeInTheDocument();
+    expect(screen.getByText('toolbar.run').closest('button')).toBeDisabled();
+  });
+
   it('shows saving label and disables when saving', () => {
-    render(<PlaybookToolbar {...defaultProps} isDirty={true} isSaving={true} />);
-    expect(screen.getByText('toolbar.saving')).toBeInTheDocument();
-    const saveButton = screen.getByText('toolbar.saving').closest('button');
+    render(<PlaybookStatusActions {...defaultStatusProps} isDirty={true} isSaving={true} />);
+    const saveButton = screen.getByRole('button', { name: 'toolbar.saving' });
     expect(saveButton).toBeDisabled();
   });
 
   it('shows stop button when executing', () => {
     const onStop = vi.fn();
-    render(<PlaybookToolbar {...defaultProps} isExecuting={true} onStop={onStop} />);
+    render(<PlaybookStatusActions {...defaultStatusProps} isExecuting={true} onStop={onStop} />);
     expect(screen.getByText('toolbar.stop')).toBeInTheDocument();
   });
 
   it('calls onStop when stop button is clicked', async () => {
     const onStop = vi.fn();
-    render(<PlaybookToolbar {...defaultProps} isExecuting={true} onStop={onStop} />);
+    render(<PlaybookStatusActions {...defaultStatusProps} isExecuting={true} onStop={onStop} />);
     await userEvent.click(screen.getByText('toolbar.stop'));
     expect(onStop).toHaveBeenCalledOnce();
   });
 
   it('shows stopping label when stopping', () => {
     const onStop = vi.fn();
-    render(<PlaybookToolbar {...defaultProps} isExecuting={true} isStopping={true} onStop={onStop} />);
+    render(<PlaybookStatusActions {...defaultStatusProps} isExecuting={true} isStopping={true} onStop={onStop} />);
     expect(screen.getByText('toolbar.stopping')).toBeInTheDocument();
   });
 
   it('calls onViewExecutions when executions button is clicked', async () => {
     const onViewExecutions = vi.fn();
     render(<PlaybookToolbar {...defaultProps} pageMode="run" onViewExecutions={onViewExecutions} />);
+    await userEvent.click(screen.getByRole('button', { name: 'toolbar.moreActions' }));
     await userEvent.click(screen.getByText('toolbar.executions'));
     expect(onViewExecutions).toHaveBeenCalledOnce();
   });
 
-  it('hides executions button in design mode when there is no execution context', () => {
+  it('hides executions button in design mode when there is no execution context', async () => {
     render(<PlaybookToolbar {...defaultProps} pageMode="design" hasExecutionContext={false} />);
+    await userEvent.click(screen.getByRole('button', { name: 'toolbar.moreActions' }));
     expect(screen.queryByText('toolbar.executions')).not.toBeInTheDocument();
   });
 
   it('shows run settings content when the popover is opened', async () => {
     render(<PlaybookToolbar {...defaultProps} />);
-    await userEvent.click(screen.getByText('toolbar.runSettings'));
+    await userEvent.click(screen.getByRole('button', { name: 'toolbar.runSettings' }));
     expect(screen.getByText('toolbar.advisor')).toBeInTheDocument();
   });
 
   it('calls onTriggers from inside the run settings popover', async () => {
     const onTriggers = vi.fn();
     render(<PlaybookToolbar {...defaultProps} onTriggers={onTriggers} triggersOpen={false} />);
-    await userEvent.click(screen.getByText('toolbar.runSettings'));
+    await userEvent.click(screen.getByRole('button', { name: 'toolbar.runSettings' }));
     const switches = screen.getAllByRole('switch');
     const triggerSwitch = switches[0];
     await userEvent.click(triggerSwitch);
@@ -162,7 +174,7 @@ describe('PlaybookToolbar', () => {
 
   it('does not show trigger button in popover when onTriggers is not provided', async () => {
     render(<PlaybookToolbar {...defaultProps} />);
-    await userEvent.click(screen.getByText('toolbar.runSettings'));
+    await userEvent.click(screen.getByRole('button', { name: 'toolbar.runSettings' }));
     expect(screen.queryByText('toolbar.triggers')).not.toBeInTheDocument();
   });
 
@@ -180,7 +192,7 @@ describe('PlaybookToolbar', () => {
       />,
     );
 
-    await userEvent.click(screen.getByText('toolbar.runSettings'));
+    await userEvent.click(screen.getByRole('button', { name: 'toolbar.runSettings' }));
 
     expect(screen.getByText('toolbar.aiDefaults.title')).toBeInTheDocument();
     expect(screen.getByText('toolbar.aiDefaults.nodeSuggestions')).toBeInTheDocument();
@@ -201,7 +213,7 @@ describe('PlaybookToolbar', () => {
       />,
     );
 
-    await userEvent.click(screen.getByText('toolbar.runSettings'));
+    await userEvent.click(screen.getByRole('button', { name: 'toolbar.runSettings' }));
 
     expect(screen.getAllByText('toolbar.aiDefaults.inherit').length).toBeGreaterThan(0);
     expect(screen.getAllByText('toolbar.aiDefaults.manual').length).toBeGreaterThan(0);

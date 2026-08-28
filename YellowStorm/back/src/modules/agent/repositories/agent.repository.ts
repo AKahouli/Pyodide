@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, inArray, or, desc, asc, ilike, sql, count } from 'drizzle-orm';
+import { and, eq, inArray, notInArray, or, desc, asc, ilike, sql, count } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '../../postgres/postgres.constants';
 import * as schema from '../../postgres/schema';
@@ -179,9 +179,57 @@ export class AgentRepository {
     return rows.length > 0;
   }
 
-  async findActiveDefaultIdBySlug(slug: string): Promise<string | null> {
+  async createDefaultSystemAgentIfMissing(input: CreateAgentInput): Promise<AgentRecord> {
+    const id = await this.db.transaction(async (tx: Tx) => {
+      const inserted = await tx.insert(agents).values({
+        id: input.id,
+        name: input.name,
+        slug: input.slug,
+        role: input.role,
+        description: input.description,
+        temperature: input.temperature,
+        llmModel: input.llmModel ?? null,
+        email: input.email ?? null,
+        instruction: input.instruction,
+        ignorePrePrompt: input.ignorePrePrompt,
+        agentTypeId: input.agentType,
+        agentTypeSlug: input.agentTypeSlug,
+        enableTemporaryChildAgents: input.enable_temporary_child_agents,
+        maxTemporaryChildAgents: input.max_temporary_child_agents,
+        isDefault: true,
+        isActive: true,
+        isDefaultForType: true,
+        createdBy: input.createdBy,
+        guardrails: input.guardrails,
+        deploymentSettings: input.deploymentSettings,
+      }).onConflictDoNothing().returning({ id: agents.id });
+
+      if (inserted.length > 0) {
+        const insertedId = trim24(inserted[0].id);
+        await this.insertJunctions(tx, insertedId, input);
+        return insertedId;
+      }
+
+      const existing = await tx.select({ id: agents.id }).from(agents)
+        .where(eq(agents.slug, input.slug)).limit(1);
+      if (existing.length === 0) {
+        throw new Error(`AgentRepository.createDefaultSystemAgentIfMissing: slug ${input.slug} conflicts with another agent identity`);
+      }
+      return trim24(existing[0].id);
+    });
+    const record = await this.findById(id);
+    if (!record) throw new Error(`AgentRepository.createDefaultSystemAgentIfMissing: row ${id} not found after insert`);
+    return record;
+  }
+
+  async findActiveDefaultIdBySlugAndType(slug: string, agentTypeSlug: string): Promise<string | null> {
     const rows = await this.db.select({ id: agents.id }).from(agents)
-      .where(and(eq(agents.slug, slug), eq(agents.isDefault, true), eq(agents.isActive, true))).limit(1);
+      .where(and(
+        eq(agents.slug, slug),
+        eq(agents.agentTypeSlug, agentTypeSlug),
+        eq(agents.isDefault, true),
+        eq(agents.isActive, true),
+      )).limit(1);
     return rows.length ? trim24(rows[0].id) : null;
   }
 
@@ -276,13 +324,6 @@ export class AgentRepository {
     return this.assemble(rows);
   }
 
-  async pullConnectorFromAllExcept(connectorId: string, exceptAgentId: string): Promise<void> {
-    await this.db.transaction(async (tx: Tx) => {
-      await tx.delete(agentConnectors).where(and(eq(agentConnectors.connectorId, connectorId), sql`${agentConnectors.agentId} <> ${exceptAgentId}`));
-      await tx.delete(agentConnectorActions).where(and(eq(agentConnectorActions.connectorId, connectorId), sql`${agentConnectorActions.agentId} <> ${exceptAgentId}`));
-    });
-  }
-
   /** Remove a connector (and its action selections) from every agent except the given ids. */
   async pullConnectorFromAgentsExcept(connectorId: string, exceptAgentIds: string[]): Promise<void> {
     await this.db.transaction(async (tx: Tx) => {
@@ -297,12 +338,6 @@ export class AgentRepository {
   async setRoleEmbedding(id: string, embedding: number[]): Promise<void> {
     const literal = `[${embedding.join(',')}]`;
     await this.db.execute(sql`UPDATE agents SET role_embedding = ${literal}::halfvec WHERE id = ${id}`);
-  }
-
-  async findIdsByInstructionLike(pattern: string, exceptAgentId: string): Promise<Array<{ id: string; instruction: string }>> {
-    const rows = await this.db.select({ id: agents.id, instruction: agents.instruction }).from(agents)
-      .where(and(ilike(agents.instruction, pattern), sql`${agents.id} <> ${exceptAgentId}`));
-    return rows.map((r) => ({ id: trim24(r.id), instruction: r.instruction }));
   }
 
   // ---- internals ----

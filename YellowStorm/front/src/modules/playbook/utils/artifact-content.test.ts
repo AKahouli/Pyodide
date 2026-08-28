@@ -45,4 +45,15 @@ describe('artifact-content', () => {
     expect(preview?.endsWith('...')).toBe(true);
     expect(preview?.length).toBe(23);
   });
+
+  it('does not treat document metadata as inline file content', () => {
+    const artifact: TaskArtifact = {
+      portId: 'report',
+      artifactKind: 'document',
+      filename: 'report.pdf',
+      metadata: { data: { filename: 'report.pdf', availability: 'unverified' } },
+    };
+
+    expect(getArtifactDisplayContent(artifact)).toBeNull();
+  });
 });

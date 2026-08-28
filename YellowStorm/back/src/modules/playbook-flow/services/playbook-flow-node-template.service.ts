@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { FlowNodeTemplate, FlowNodeTemplateDocument } from '../schemas/playbook-flow-node-template.schema';
@@ -11,7 +11,7 @@ import {
 } from '../interfaces/playbook-flow-node-template.interface';
 
 @Injectable()
-export class PlaybookFlowNodeTemplateService {
+export class PlaybookFlowNodeTemplateService implements OnModuleInit {
   private cachedItems: FlowNodeTemplateResponse[] | null = null;
   private cachedAt = 0;
   private static readonly CACHE_TTL_MS = 30_000;
@@ -20,6 +20,24 @@ export class PlaybookFlowNodeTemplateService {
     @InjectModel(FlowNodeTemplate.name)
     private readonly templateModel: Model<FlowNodeTemplateDocument>,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.templateModel.collection.dropIndex('type_1');
+    } catch (error: unknown) {
+      const mongoError = error as { code?: number; codeName?: string };
+      const isAlreadyAbsent = mongoError.code === 26
+        || mongoError.code === 27
+        || mongoError.codeName === 'NamespaceNotFound'
+        || mongoError.codeName === 'IndexNotFound';
+      if (!isAlreadyAbsent) throw error;
+    }
+
+    await this.templateModel.updateMany(
+      { type: { $exists: true } },
+      { $unset: { type: 1 } },
+    ).exec();
+  }
 
   private deriveNodeType(doc: Pick<FlowNodeTemplate, 'nodeType'>): FlowNodeTemplateResponse['nodeType'] {
     if (doc.nodeType) return doc.nodeType;

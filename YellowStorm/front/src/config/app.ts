@@ -6,7 +6,7 @@ interface AppConfig {
     },
 }
 export const appConfig: AppConfig = {
-    name: "YellowMind",
+    name: "Yellowmind",
     author: {
         name: "YellowSys",
         url: "https://yellowsys.ai/",

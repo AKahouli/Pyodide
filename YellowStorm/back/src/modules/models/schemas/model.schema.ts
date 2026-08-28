@@ -47,6 +47,21 @@ export class AiModel extends Document {
   @Prop({ type: [String], enum: ['text', 'image'], default: ['text'] })
   inputModalities!: string[];
 
+  @Prop({ type: Number, default: null })
+  maxInputTokens!: number | null;
+
+  @Prop({ type: Number, default: null })
+  maxOutputTokens!: number | null;
+
+  @Prop({ type: Boolean, default: null })
+  supportsReasoning!: boolean | null;
+
+  @Prop({ type: [{ id: { type: String, required: true }, name: { type: String, required: true }, description: { type: String } }], default: [] })
+  reasoningEfforts!: Array<{ id: string; name: string; description?: string }>;
+
+  @Prop({ type: String, default: undefined })
+  defaultReasoningEffort?: string;
+
   createdAt!: Date;
   updatedAt!: Date;
 }

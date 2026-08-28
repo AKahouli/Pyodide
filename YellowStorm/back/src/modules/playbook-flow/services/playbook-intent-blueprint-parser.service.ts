@@ -15,6 +15,7 @@ import {
   PlaybookIntentBlueprintSkillRef,
 } from '../interfaces/playbook-flow-intent-blueprint.interface';
 import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
+import type { IntentWorkflowValidationContext } from './playbook-flow-intent.service';
 
 const SUPPORTED_ARTIFACT_KINDS: PlaybookIntentBlueprintPort['artifactKind'][] = [
   'text', 'document', 'code', 'image', 'data', 'dashboard',
@@ -29,7 +30,7 @@ const ROUTER_OPERATORS = ['equals', 'not_equals', 'contains', 'exists', 'gt', 'g
 export class PlaybookIntentBlueprintParserService {
   private readonly logger = new Logger(PlaybookIntentBlueprintParserService.name);
 
-  parse(raw: string | null | undefined): PlaybookIntentBlueprintParseResult | null {
+  parse(raw: string | null | undefined, existingContext?: IntentWorkflowValidationContext): PlaybookIntentBlueprintParseResult | null {
     const parsed = this.parseJsonObject(raw);
     if (!parsed || typeof parsed !== 'object') return null;
 
@@ -61,8 +62,8 @@ export class PlaybookIntentBlueprintParserService {
         misplacedBindings.push(...rawBody.bindings.map((binding) => this.inferIteratorScopedEntry(binding, iteratorRef, stepRefs)));
       }
     }
-    const links = this.parseLinks([...(Array.isArray(blueprintNode.links) ? blueprintNode.links : []), ...misplacedLinks], nodes, diagnostics);
-    const bindings = this.parseBindings([...(Array.isArray(blueprintNode.bindings) ? blueprintNode.bindings : []), ...misplacedBindings], nodes, diagnostics);
+    const links = this.parseLinks([...(Array.isArray(blueprintNode.links) ? blueprintNode.links : []), ...misplacedLinks], nodes, diagnostics, existingContext?.existingTaskIds);
+    const bindings = this.parseBindings([...(Array.isArray(blueprintNode.bindings) ? blueprintNode.bindings : []), ...misplacedBindings], nodes, diagnostics, existingContext);
     const summary = this.asString(blueprintNode.summary) || this.asString(root.summary);
     const title = this.asString(blueprintNode.title) || this.asString(root.title) || summary || nodes[0]?.label;
     if (!title) {
@@ -385,6 +386,7 @@ export class PlaybookIntentBlueprintParserService {
     value: unknown,
     nodes: PlaybookIntentBlueprintNode[],
     diagnostics: PlaybookIntentDiagnostic[],
+    existingTaskIds?: Set<string>,
   ): PlaybookIntentBlueprintLink[] {
     if (!Array.isArray(value)) return [];
     const refSet = new Set(nodes.map((n) => n.ref));
@@ -410,11 +412,11 @@ export class PlaybookIntentBlueprintParserService {
         this.recordDiagnostic(diagnostics, 'blueprint_link_missing_refs', `${sourceRef || '?'}->${targetRef || '?'}`);
         continue;
       }
-      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, sourceRef, sourceIteratorRef)) {
+      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, sourceRef, sourceIteratorRef, existingTaskIds)) {
         this.recordDiagnostic(diagnostics, 'blueprint_link_unknown_ref', `${sourceRef}->${targetRef}`);
         continue;
       }
-      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, targetRef, targetIteratorRef)) {
+      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, targetRef, targetIteratorRef, existingTaskIds)) {
         this.recordDiagnostic(diagnostics, 'blueprint_link_unknown_ref', `${sourceRef}->${targetRef}`);
         continue;
       }
@@ -444,6 +446,7 @@ export class PlaybookIntentBlueprintParserService {
     value: unknown,
     nodes: PlaybookIntentBlueprintNode[],
     diagnostics: PlaybookIntentDiagnostic[],
+    existingContext?: IntentWorkflowValidationContext,
   ): PlaybookIntentBlueprintBinding[] {
     if (!Array.isArray(value)) return [];
     const refSet = new Set(nodes.map((n) => n.ref));
@@ -457,6 +460,21 @@ export class PlaybookIntentBlueprintParserService {
         const scopedRef = this.scopedRef(node.ref, step.ref);
         inputsByRef.set(scopedRef, new Map((step.inputPorts || []).map((p) => [p.id, p])));
         outputsByRef.set(scopedRef, new Map((step.outputPorts || []).map((p) => [p.id, p])));
+      }
+    }
+    // When modifying an existing playbook the LLM references already-committed tasks by
+    // their real node ids; merge their port catalogs so existence and artifact-kind checks
+    // accept those endpoints instead of dropping the bindings.
+    if (existingContext) {
+      for (const [taskId, ports] of existingContext.inputPortsByTaskId) {
+        if (!inputsByRef.has(taskId)) {
+          inputsByRef.set(taskId, new Map([...ports].map(([id, kind]) => [id, { id, artifactKind: kind as PlaybookIntentBlueprintPort['artifactKind'] }])));
+        }
+      }
+      for (const [taskId, ports] of existingContext.outputPortsByTaskId) {
+        if (!outputsByRef.has(taskId)) {
+          outputsByRef.set(taskId, new Map([...ports].map(([id, kind]) => [id, { id, artifactKind: kind as PlaybookIntentBlueprintPort['artifactKind'] }])));
+        }
       }
     }
 
@@ -475,7 +493,7 @@ export class PlaybookIntentBlueprintParserService {
         this.recordDiagnostic(diagnostics, 'blueprint_binding_missing_target', `${targetRef || '?'}.${targetPort || '?'}`);
         continue;
       }
-      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, targetRef, targetIteratorRef)) {
+      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, targetRef, targetIteratorRef, existingContext?.existingTaskIds)) {
         this.recordDiagnostic(diagnostics, 'blueprint_binding_unknown_target_ref', targetRef);
         continue;
       }
@@ -519,7 +537,7 @@ export class PlaybookIntentBlueprintParserService {
         this.recordDiagnostic(diagnostics, 'blueprint_binding_missing_source', key);
         continue;
       }
-      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, sourceRef, sourceIteratorRef)) {
+      if (!this.hasEndpointRef(refSet, iteratorStepsByRef, sourceRef, sourceIteratorRef, existingContext?.existingTaskIds)) {
         this.recordDiagnostic(diagnostics, 'blueprint_binding_unknown_source_ref', `${sourceRef}->${key}`);
         continue;
       }
@@ -596,8 +614,11 @@ export class PlaybookIntentBlueprintParserService {
     iteratorStepsByRef: Map<string, Set<string>>,
     ref: string,
     iteratorRef: string,
+    existingTaskIds?: Set<string>,
   ): boolean {
-    if (!iteratorRef || ref === iteratorRef) return topLevelRefs.has(ref);
+    if (!iteratorRef || ref === iteratorRef) {
+      return topLevelRefs.has(ref) || (existingTaskIds?.has(ref) === true);
+    }
     return iteratorStepsByRef.get(iteratorRef)?.has(ref) === true;
   }
 
@@ -620,6 +641,10 @@ export class PlaybookIntentBlueprintParserService {
       const literalMatchesPort = targetArtifactKind === 'data'
         || ((targetArtifactKind === 'text' || targetArtifactKind === 'code') && typeof value === 'string');
       if (!literalMatchesPort) {
+        // LLMs frequently pass structured objects/arrays as constants for text ports; a serialized form preserves the intent.
+        if ((targetArtifactKind === 'text' || targetArtifactKind === 'code') && (typeof value === 'object')) {
+          return JSON.stringify(value);
+        }
         this.recordDiagnostic(diagnostics, 'blueprint_binding_invalid_constant', key);
         return undefined;
       }
@@ -628,6 +653,7 @@ export class PlaybookIntentBlueprintParserService {
     const kind = this.asString(raw.kind);
     if (kind !== 'workspace' && kind !== 'document') {
       if (targetArtifactKind === 'data' || targetArtifactKind === 'dashboard') return value;
+      if (targetArtifactKind === 'text' || targetArtifactKind === 'code') return JSON.stringify(value);
       this.recordDiagnostic(diagnostics, 'blueprint_binding_invalid_constant', key);
       return undefined;
     }
@@ -715,9 +741,14 @@ export class PlaybookIntentBlueprintParserService {
     const sourceRef = this.asString(raw.sourceRef ?? raw.source_ref ?? raw.sourceNode ?? raw.source_node);
     const sourcePort = this.asString(raw.sourcePort ?? raw.source_port);
     const operator = this.asString(raw.operator) as PlaybookIntentBlueprintRouterCondition['operator'];
-    if (!label || !sourceRef || !sourcePort || !(ROUTER_OPERATORS as readonly string[]).includes(operator) || !outputLabels.includes(label)) {
+    if (!label || !sourceRef || !sourcePort || !(ROUTER_OPERATORS as readonly string[]).includes(operator)) {
       this.recordDiagnostic(diagnostics, 'blueprint_router_condition_invalid', ownerRef);
       return null;
+    }
+    if (!outputLabels.includes(label)) {
+      // LLMs frequently emit consistent condition/link labels that differ from outputLabels;
+      // the condition itself is the routing rule, so adopt its label instead of dropping the rule.
+      outputLabels.push(label);
     }
     return {
       label,

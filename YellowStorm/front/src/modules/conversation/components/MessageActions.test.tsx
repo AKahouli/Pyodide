@@ -11,7 +11,6 @@ const branchConversationMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
 const fetchConversationsMock = vi.hoisted(() => vi.fn());
 const modelMock = vi.hoisted(() => ({ value: { id: 'model-1', name: 'Model One' } as { id: string; name: string } | undefined }));
-const buildPlaybookMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -31,7 +30,6 @@ vi.mock('react-router-dom', () => ({ useNavigate: () => navigateMock }));
 vi.mock('@/modules/auth', () => ({
   useAuth: () => ({ user: { id: 'user-owner', permissions: ['playbook.create'] } }),
 }));
-vi.mock('@/modules/playbook', () => ({ buildPlaybookFromConversation: buildPlaybookMock }));
 vi.mock('../api', () => ({ branchConversation: branchConversationMock }));
 vi.mock('@/modules/models', () => ({
   useModelById: (id: string) => id === 'model-1' ? modelMock.value : undefined,
@@ -84,7 +82,6 @@ vi.mock('sonner', () => ({
 describe('MessageActions', () => {
   beforeEach(() => {
     modelMock.value = { id: 'model-1', name: 'Model One' };
-    buildPlaybookMock.mockReset();
   });
 
   it('handles like, copy, and regenerate actions', async () => {
@@ -144,88 +141,6 @@ describe('MessageActions', () => {
       }),
     ));
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/conversation/branch-1'));
-  });
-
-  it('builds a playbook from the paired conversation turn', async () => {
-    buildPlaybookMock.mockResolvedValueOnce({ id: 'playbook-1' });
-    render(
-      <MessageActions
-        message={{
-          id: 'ai-1',
-          conversationType: 'ai',
-          questionMessageId: 'user-1',
-          components: [{ type: 'text', data: { content: 'Triage and recover' } }],
-          isComplete: true,
-          isStreaming: false,
-          createdAt: '2026-07-29T13:00:00.000Z',
-        } as never}
-        isLastAiMessage={false}
-        conversationId='conv-1'
-      />,
-    );
-
-    await userEvent.click(screen.getByRole('button', { name: 'messageActions.buildPlaybook' }));
-    expect(await screen.findByText('buildPlaybookDialog.userPrompt')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'buildPlaybookDialog.build' }));
-
-    await waitFor(() => expect(buildPlaybookMock).toHaveBeenCalledWith({
-      conversationId: 'conv-1',
-      assistantMessageId: 'ai-1',
-      answerVersion: 'original',
-    }));
-    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/playbooks/playbook-1'));
-  });
-
-  it('previews and submits the explicitly displayed answer version', async () => {
-    render(
-      <MessageActions
-        message={{
-          id: 'ai-1',
-          conversationType: 'ai',
-          questionMessageId: 'user-1',
-          components: [{ type: 'text', data: { content: 'Original answer' } }],
-          correctionWorkflow: {
-            activeVersion: 'corrected',
-            publishedAttemptId: 'attempt-2',
-            attempts: [{
-              attemptId: 'attempt-2',
-              components: [{ type: 'text', data: { content: 'Corrected answer' } }],
-            }],
-          },
-          isComplete: true,
-          isStreaming: false,
-          createdAt: '2026-07-29T13:00:00.000Z',
-        } as never}
-        displayedVersion='original'
-        isLastAiMessage={false}
-        conversationId='conv-1'
-      />,
-    );
-
-    await userEvent.click(screen.getByRole('button', { name: 'messageActions.buildPlaybook' }));
-
-    expect(await screen.findByText('Original answer')).toBeInTheDocument();
-    expect(screen.queryByText('Corrected answer')).not.toBeInTheDocument();
-  });
-
-  it('exports a completed response to PDF from the actions menu', async () => {
-    render(
-      <MessageActions
-        message={{ id: 'ai-1', conversationType: 'ai', questionMessageId: 'user-1', components: [], isComplete: true, isStreaming: false, createdAt: '2026-07-29T13:00:00.000Z' } as never}
-        isLastAiMessage={false}
-        conversationId='conv-1'
-      />,
-    );
-
-    const exportButton = screen.getByRole('button', { name: 'messageActions.export' });
-    expect(exportButton).toBeEnabled();
-
-    await userEvent.click(exportButton);
-    expect(await screen.findByTestId('message-pdf-export')).toBeInTheDocument();
-
-    // The export overlay unmounts once the print flow reports completion.
-    act(() => pdfExportMock.onFinish?.(true));
-    await waitFor(() => expect(screen.queryByTestId('message-pdf-export')).not.toBeInTheDocument());
   });
 
   it('falls back safely when generation metadata cannot be resolved', () => {

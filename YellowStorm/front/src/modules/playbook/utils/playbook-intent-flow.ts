@@ -164,6 +164,8 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
     let completed = false;
     let lastSequence = 0;
     const appliedKeys = new Set<string>();
+    const bufferedSuggestionOrder: string[] = [];
+    const bufferedSuggestions = new Map<string, { suggestion: PlaybookIntentSuggestion; sequence: number }>();
     let constructionDiagnostics: PlaybookIntentDiagnostic[] = [];
     try {
       await streamPlaybookIntentConstruction(id, construction.constructionId, {
@@ -185,20 +187,14 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
             )) {
               throw new Error(t('detail.remediation.noApplicableSuggestion'));
             }
-            if (!appliedDelta) captureConstructionSnapshot?.();
-            appliedDelta = true;
-            handleApplyIntentSuggestion(event.suggestion, {
-              replaceAll: false,
-              expectedDefinitionRevision: baseDefinitionRevision,
-              save: false,
-              clearSuggestions: false,
-              focus: true,
-              applicationKey: `intent-construction-${construction.constructionId}`,
-              focusMode: 'construction-frontier',
-              connectAnchors: true,
-              captureHistory: false,
-              confirmDeletes: false,
-            });
+            const suggestionKey = `${event.suggestion.kind}:${event.suggestion.id}`;
+            const buffered = bufferedSuggestions.get(suggestionKey);
+            const shouldReplace = !buffered
+              || event.suggestion.kind === 'single_change'
+              || (buffered.suggestion.kind === 'workflow_plan'
+                && event.suggestion.changes.length >= buffered.suggestion.changes.length);
+            if (!buffered) bufferedSuggestionOrder.push(suggestionKey);
+            if (shouldReplace) bufferedSuggestions.set(suggestionKey, { suggestion: event.suggestion, sequence: event.sequence });
           }
           if (event.type === 'completed') completed = true;
           if (event.type === 'cancelled') {
@@ -214,10 +210,6 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
         setConstructionProgress?.('');
         return 'cancelled' as const;
       }
-      if (appliedDelta) {
-        rollbackConstruction?.();
-        throw Object.assign(error instanceof Error ? error : new Error(t('intentBar.error')), { appliedDelta: true });
-      }
       throw error;
     }
 
@@ -230,13 +222,39 @@ export function usePlaybookIntentFlow(deps: PlaybookIntentFlowDeps): PlaybookInt
       if (appliedDelta) rollbackConstruction?.();
       throw Object.assign(new Error(t('intentBar.error')), appliedDelta ? { appliedDelta: true } : {});
     }
-    if (lastSequence > 0 && appliedDelta && construction.target === 'advisor_preview') {
-      setPreviewConstructionReady?.(construction.constructionId, baseDefinitionRevision);
-    } else if (lastSequence > 0 && appliedDelta) {
+    const finalSuggestions = bufferedSuggestionOrder
+      .map((key) => bufferedSuggestions.get(key))
+      .filter((entry): entry is { suggestion: PlaybookIntentSuggestion; sequence: number } => Boolean(entry))
+      .sort((left, right) => left.sequence - right.sequence)
+      .map((entry) => entry.suggestion);
+
+    if (lastSequence > 0 && finalSuggestions.length > 0) {
+      captureConstructionSnapshot?.();
+      let applicationStarted = false;
       try {
-        await finalizeConstruction?.(baseDefinitionRevision, construction.constructionId);
+        applicationStarted = true;
+        finalSuggestions.forEach((suggestion) => {
+          handleApplyIntentSuggestion(suggestion, {
+            replaceAll: false,
+            expectedDefinitionRevision: baseDefinitionRevision,
+            save: false,
+            clearSuggestions: false,
+            focus: true,
+            applicationKey: `intent-construction-${construction.constructionId}`,
+            focusMode: 'construction-frontier',
+            connectAnchors: true,
+            captureHistory: false,
+            confirmDeletes: false,
+          });
+        });
+        appliedDelta = true;
+        if (construction.target === 'advisor_preview') {
+          setPreviewConstructionReady?.(construction.constructionId, baseDefinitionRevision);
+        } else {
+          await finalizeConstruction?.(baseDefinitionRevision, construction.constructionId);
+        }
       } catch (error) {
-        rollbackConstruction?.();
+        if (applicationStarted) rollbackConstruction?.();
         throw Object.assign(error instanceof Error ? error : new Error(t('intentBar.error')), { appliedDelta: true });
       }
     }

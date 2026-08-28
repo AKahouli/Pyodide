@@ -91,7 +91,25 @@ export interface AvailableDesignCatalog {
   }>;
 }
 
-type PromptAvailableDesignCatalog = Omit<AvailableDesignCatalog, 'availableSkills'>;
+interface PromptAvailableDesignCatalog {
+  availableConnectors: Array<{
+    id: string;
+    connectorSlug: string;
+    name: string;
+    category?: string | null;
+  }>;
+  availableConnectorActions: Array<{
+    connectorId: string;
+    connectorSlug: string;
+    actionKey: string;
+    label: string;
+  }>;
+  availableWorkspaces: Array<{
+    id: string;
+    name: string;
+    folders?: Array<{ id: string; name: string; parentId: string | null }>;
+  }>;
+}
 
 type PlaybookIntentOperationType =
   | 'create_node'
@@ -108,6 +126,7 @@ type PlaybookIntentOperationType =
 export interface IntentWorkflowValidationContext {
   existingTaskIds: Set<string>;
   existingTaskTitles: Map<string, string>;
+  existingTaskDescriptions: Map<string, string>;
   existingTaskAgents: Map<string, string | null>;
   inputPortsByTaskId: Map<string, Map<string, string>>;
   outputPortsByTaskId: Map<string, Map<string, string>>;
@@ -413,7 +432,29 @@ export class PlaybookFlowIntentService {
   }
 
   async assessDesign(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentDesignResponse> {
-    const context = await this.buildIntentAnalysisContext(flowId, ownerId, dto);
+    const context = await this.buildIntentAnalysisContext(flowId, ownerId, dto, 'assessment');
+    return this.assessDesignWithContext(flowId, ownerId, dto, context);
+  }
+
+  async assessNewDesign(scopeId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentDesignResponse> {
+    const context = await this.buildIntentAnalysisContextForFlow(scopeId, ownerId, dto, 'assessment', {
+      name: 'New Playbook',
+      description: '',
+      nodes: [],
+      controlEdges: [],
+      dataBindings: [],
+      designSettings: null,
+    });
+    return this.assessDesignWithContext(scopeId, ownerId, dto, context);
+  }
+
+  private async assessDesignWithContext(
+    scopeId: string,
+    ownerId: string,
+    dto: RequestPlaybookFlowIntentDto,
+    context: PlaybookIntentAnalysisContext,
+  ): Promise<PlaybookIntentDesignResponse> {
+    const startedAt = Date.now();
     const prompt = await this.promptService.findByKey('intent.design_assessment');
     const userPrompt = prompt?.userTemplate?.trim()
       ? this.promptRenderer.render(prompt.userTemplate, this.withClarificationTemplateFallback(context.promptVariables, prompt.userTemplate))
@@ -429,7 +470,8 @@ export class PlaybookFlowIntentService {
       ],
     });
     const rawOutput = this.extractChatCompletionText(responseData);
-    const lastTrace = this.recordTrace(flowId, ownerId, 'intent.design_assessment', context, rawOutput, {
+    this.logger.log(`playbook_intent_assessment_completed scopeId=${scopeId} model=${context.model} llmCalls=1 catalogChars=${String(context.promptVariables.available_design_catalog ?? '').length} durationMs=${Date.now() - startedAt}`);
+    const lastTrace = this.recordTrace(scopeId, ownerId, 'intent.design_assessment', context, rawOutput, {
       systemPromptOverride: systemPrompt,
       userPromptOverride: userPrompt,
     });
@@ -474,13 +516,28 @@ export class PlaybookFlowIntentService {
       .join('\n\n');
   }
 
-  async buildIntentAnalysisContext(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto): Promise<PlaybookIntentAnalysisContext> {
+  async buildIntentAnalysisContext(
+    flowId: string,
+    ownerId: string,
+    dto: RequestPlaybookFlowIntentDto,
+    catalogPhase: 'assessment' | 'construction' = 'construction',
+  ): Promise<PlaybookIntentAnalysisContext> {
+    const flow = await this.flowService.findOne(flowId, ownerId);
+    return this.buildIntentAnalysisContextForFlow(flowId, ownerId, dto, catalogPhase, flow);
+  }
+
+  private async buildIntentAnalysisContextForFlow(
+    _scopeId: string,
+    ownerId: string,
+    dto: RequestPlaybookFlowIntentDto,
+    catalogPhase: 'assessment' | 'construction',
+    flow: any,
+  ): Promise<PlaybookIntentAnalysisContext> {
     const httpClient = this.liteLLMConnectionService.getHttpClient();
     if (!httpClient) {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
     }
 
-    const flow = await this.flowService.findOne(flowId, ownerId);
     const selectedNode = dto.selectedTaskId
       ? (flow.nodes as Array<{ id: string; label?: string; description?: string; metadata?: Record<string, unknown> }>).find((n) => n.id === dto.selectedTaskId) || null
       : null;
@@ -554,7 +611,7 @@ export class PlaybookFlowIntentService {
       intent_text: intentParts.intentText,
       captured_clarifications: intentParts.capturedClarifications || NO_CAPTURED_CLARIFICATIONS,
       resolved_design_resources: JSON.stringify(resolvedDesignResources, null, 2),
-      available_design_catalog: JSON.stringify(this.buildPromptAvailableDesignCatalog(availableDesignCatalog), null, 2),
+      available_design_catalog: JSON.stringify(this.buildPromptAvailableDesignCatalog(availableDesignCatalog, catalogPhase), null, 2),
       selected_task_title: selectedNode?.label || '',
       selected_task_description: selectedNode?.description || (selectedNode?.metadata as Record<string, unknown> | undefined)?.description as string || '',
       selected_task_id: selectedNode?.id || '',
@@ -675,11 +732,30 @@ export class PlaybookFlowIntentService {
     };
   }
 
-  private buildPromptAvailableDesignCatalog(catalog: AvailableDesignCatalog): PromptAvailableDesignCatalog {
+  private buildPromptAvailableDesignCatalog(
+    catalog: AvailableDesignCatalog,
+    phase: 'assessment' | 'construction',
+  ): PromptAvailableDesignCatalog {
     return {
-      availableConnectors: catalog.availableConnectors,
-      availableConnectorActions: catalog.availableConnectorActions,
-      availableWorkspaces: catalog.availableWorkspaces,
+      availableConnectors: catalog.availableConnectors.map((connector) => ({
+        id: connector.id,
+        connectorSlug: connector.connectorSlug,
+        name: connector.name,
+        category: connector.category,
+      })),
+      availableConnectorActions: phase === 'assessment'
+        ? []
+        : catalog.availableConnectorActions.map((action) => ({
+            connectorId: action.connectorId,
+            connectorSlug: action.connectorSlug,
+            actionKey: action.actionKey,
+            label: action.label,
+          })),
+      availableWorkspaces: catalog.availableWorkspaces.map((workspace) => ({
+        id: workspace.id,
+        name: workspace.name,
+        ...(phase === 'construction' ? { folders: workspace.folders } : {}),
+      })),
     };
   }
 
@@ -952,11 +1028,12 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
   }
 
   private buildValidationContext(flow: any): IntentWorkflowValidationContext {
-    const nodes: Array<{ id: string; label?: string; metadata?: { agentSlug?: string }; input?: { ports?: Array<{ id: string; type?: string }> }; output?: { ports?: Array<{ id: string; type?: string }> } }> = flow.nodes || [];
+    const nodes: Array<{ id: string; label?: string; description?: string; metadata?: { agentSlug?: string; description?: string }; input?: { ports?: Array<{ id: string; type?: string }> }; output?: { ports?: Array<{ id: string; type?: string }> } }> = flow.nodes || [];
     const bindings: Array<{ targetNode: string; targetPort: string }> = flow.dataBindings || [];
 
     const existingTaskIds = new Set<string>();
     const existingTaskTitles = new Map<string, string>();
+    const existingTaskDescriptions = new Map<string, string>();
     const existingTaskAgents = new Map<string, string | null>();
     const inputPortsByTaskId = new Map<string, Map<string, string>>();
     const outputPortsByTaskId = new Map<string, Map<string, string>>();
@@ -965,6 +1042,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     for (const node of nodes) {
       existingTaskIds.add(node.id);
       existingTaskTitles.set(node.id, (node.label || '').trim().toLowerCase().replace(/\s+/g, ' '));
+      existingTaskDescriptions.set(node.id, this.normalizeComparableTitle(node.description || node.metadata?.description || ''));
       existingTaskAgents.set(node.id, node.metadata?.agentSlug || null);
 
       const inputMap = new Map<string, string>();
@@ -984,7 +1062,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       existingBindingTargets.add(`${b.targetNode}:${b.targetPort}`);
     }
 
-    return { existingTaskIds, existingTaskTitles, existingTaskAgents, inputPortsByTaskId, outputPortsByTaskId, existingBindingTargets };
+    return { existingTaskIds, existingTaskTitles, existingTaskDescriptions, existingTaskAgents, inputPortsByTaskId, outputPortsByTaskId, existingBindingTargets };
   }
 
   private buildWorkflowSummary(flow: any, selectedNodeId: string | null) {
@@ -1226,11 +1304,16 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       }
 
       const newTitle = this.normalizeComparableTitle(change.task.title);
+      const newDescription = this.normalizeComparableTitle(change.task.description || '');
       const newAgent = change.task.agentSlug || null;
       for (const [taskId, existingTitle] of ctx.existingTaskTitles) {
         if (existingTitle === newTitle) {
           const existingAgent = ctx.existingTaskAgents.get(taskId);
           if (existingAgent === newAgent) {
+            return null;
+          }
+          const existingDescription = ctx.existingTaskDescriptions.get(taskId) ?? '';
+          if (existingDescription === newDescription) {
             return null;
           }
         }

@@ -3,10 +3,11 @@ import { ConfigType } from '@nestjs/config';
 import playbookFlowConfig from '@config/playbook-flow.config';
 import { ConflictException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { AnalyzeTaskOptimizationDto, AnalyzeWorkflowOptimizationDto, ListRecentExecutionsDto, RunPlaybookAssistantTurnDto, RunPlaybookFromStepDto, SearchPlaybooksDto, StartAdvisorRemediationConstructionDto, StartPlaybookAssistantConstructionDto } from '../dto/playbook-assistant.dto';
+import { AnalyzeTaskOptimizationDto, AnalyzeWorkflowOptimizationDto, ContinuePlaybookClarificationDto, ListRecentExecutionsDto, RunCurrentTurnPlaybookModificationDto, RunPlaybookAssistantTurnDto, RunPlaybookFromStepDto, SearchPlaybooksDto, StartAdvisorRemediationConstructionDto, StartPlaybookAssistantConstructionDto, StartPlaybookGenerationDto } from '../dto/playbook-assistant.dto';
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execution.dto';
 import type { PlaybookTaskOptimizationResult } from '../interfaces/playbook-assistant.interface';
+import type { PlaybookAssistantRequest } from '../schemas/playbook-assistant-request.schema';
 import { FlowAccessService } from '../domain/flow-access.service';
 import { PlaybookFlowExecutionAdvisorService } from '../services/advisor/playbook-flow-execution-advisor.service';
 import { PlaybookFlowIntentConstructionService } from '../services/playbook-flow-intent-construction.service';
@@ -16,12 +17,28 @@ import { PlaybookFlowService } from '../services/playbook-flow.service';
 import { PlaybookFlowExecutionService } from '../services/playbook-flow-execution.service';
 import { PlaybookFlowReplayService } from '../services/playbook-flow-replay.service';
 import { AgentService } from '@modules/agent/agent.service';
-import { AgentTaskExecutionService, type AgentTaskToolResult } from '@modules/agent/services/agent-task-execution.service';
-import { PLAYBOOK_ASSISTANT_AGENT_SLUG } from '@modules/agent/services/playbook-assistant-connector-reconciler.service';
-import { randomUUID } from 'crypto';
 import type { ExecutionDiagnosticCategory, ExecutionDiagnostics, MascotExecutionStatus } from '../interfaces/playbook-mascot.interface';
+import { PlaybookAssistantRequestService } from './playbook-assistant-request.service';
+import { PlaybookAssistantHistoryService } from './playbook-assistant-history.service';
+import { PlaybookFlowIntentService } from '../services/playbook-flow-intent.service';
+import { randomUUID } from 'crypto';
+import { PlaybookAssistantAttachmentService } from './playbook-assistant-attachment.service';
+import { ConversationService } from '@modules/conversation/services/conversation.service';
+import { MessageService } from '@modules/conversation/services/message.service';
+import { PLATFORM_COPILOT } from '@modules/agent/constants/platform-copilot.constants';
+import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
+import { Types } from 'mongoose';
+import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
+import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 
 const DEFAULT_OPTIMIZATION_DIMENSIONS = ['clarity', 'agent', 'tools', 'inputs', 'outputs', 'bindings', 'cost', 'latency', 'determinism'];
+
+export interface TrustedPlaybookAssistantActor {
+  ownerId: string;
+  agentId: string;
+  conversationId: string;
+  correlationId: string;
+}
 
 @Injectable()
 export class PlaybookAssistantService {
@@ -35,7 +52,15 @@ export class PlaybookAssistantService {
     private readonly executionService: PlaybookFlowExecutionService,
     private readonly replayService: PlaybookFlowReplayService,
     private readonly agentService: AgentService,
-    private readonly agentTaskExecutionService: AgentTaskExecutionService,
+    private readonly requestService: PlaybookAssistantRequestService,
+    private readonly historyService: PlaybookAssistantHistoryService,
+    private readonly intentService: PlaybookFlowIntentService,
+    private readonly attachmentService: PlaybookAssistantAttachmentService,
+    private readonly conversationService: ConversationService,
+    private readonly messageService: MessageService,
+    private readonly featureVisibility: FeatureVisibilityService,
+    private readonly workspaceDocumentService: WorkspaceDocumentService,
+    private readonly workspaceShareService: WorkspaceShareService,
   ) {}
 
   assertEnabled(): void {
@@ -44,45 +69,500 @@ export class PlaybookAssistantService {
     }
   }
 
-  async runTurn(playbookId: string, userId: string, dto: RunPlaybookAssistantTurnDto) {
+  private async assertPlatformCopilotEnabled(): Promise<void> {
     this.assertEnabled();
+    const visibility = await this.featureVisibility.getVisibility();
+    if (!visibility.platformCopilot) {
+      throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Platform Copilot is disabled');
+    }
+  }
+
+  async runTurn(playbookId: string, userId: string, dto: RunPlaybookAssistantTurnDto) {
+    await this.assertPlatformCopilotEnabled();
     const flow = await this.accessService.findAccessibleFlow(playbookId, userId, 'write');
     const definitionRevision = flow.definitionRevision ?? 0;
     this.assertRevision(definitionRevision, dto.expectedDefinitionRevision);
-    const agentId = await this.agentService.findActiveDefaultAgentIdBySlug(PLAYBOOK_ASSISTANT_AGENT_SLUG);
+    const agentId = await this.agentService.findActivePlatformCopilotAgentId();
     if (!agentId) {
-      throw new ServiceUnavailableException(ErrorCode.AGENT_UNAVAILABLE, 'The Playbook AI Workflow Assistant is unavailable');
+      throw new ServiceUnavailableException(ErrorCode.AGENT_UNAVAILABLE, 'Yellowmind is unavailable');
     }
-    const trustedContext = [
-      `Current Playbook ID: ${playbookId}`,
-      `Current definition revision: ${definitionRevision}`,
-      dto.selectedTaskId ? `Selected task ID: ${dto.selectedTaskId}` : 'Selected task ID: none',
-      dto.executionId ? `Current execution ID: ${dto.executionId}` : 'Current execution ID: none',
-    ].join('\n');
-    const result = await this.agentTaskExecutionService.runSingleAgentTask({
-      userId,
-      agentId,
-      query: `${trustedContext}\n\n<user_request>\n${dto.message.trim()}\n</user_request>`,
-      attachedFiles: [],
-      correlationId: `playbook-assistant:${randomUUID()}`,
+    const requestId = dto.requestId?.trim() || randomUUID();
+    const continuationConversationId = dto.conversationId?.trim();
+    if (dto.continuationId && !continuationConversationId) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Assistant clarification requires its conversation identifier');
+    }
+    const claimed = dto.continuationId
+      ? {
+          request: await this.requestService.getContinuationForUser(dto.continuationId, userId, playbookId, continuationConversationId!),
+          replay: false,
+        }
+      : await (async () => {
+          await this.attachmentService.assertBindings({
+            ownerId: userId,
+            playbookId,
+            requestId,
+            expectedDefinitionRevision: definitionRevision,
+            attachmentIds: dto.attachmentIds ?? [],
+          });
+          return this.requestService.claimTurn({
+            requestId,
+            conversationId: dto.conversationId,
+            ownerId: userId,
+            agentId,
+            operationKind: 'existing_construction',
+            playbookId,
+            expectedDefinitionRevision: definitionRevision,
+            text: dto.message,
+            selectedTaskId: dto.selectedTaskId,
+            executionId: dto.executionId,
+            attachmentIds: dto.attachmentIds,
+          });
+        })();
+    if ((!dto.continuationId && claimed.request.agentId !== agentId)
+      || (continuationConversationId && claimed.request.conversationId !== continuationConversationId)) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Assistant clarification conversation binding does not match');
+    }
+    if (claimed.replay) {
+      const operation = claimed.request.mutationOperationId
+        ? await this.constructionService.getStatus(playbookId, userId, claimed.request.mutationOperationId)
+        : null;
+      return {
+        requestId: claimed.request.requestId,
+        conversationId: claimed.request.conversationId,
+        answer: claimed.request.assistantAnswer ?? 'The Playbook assistant completed the request.',
+        assessment: claimed.request.assessment ?? null,
+        operation: operation ? { ...operation, constructionId: operation.operationId } : null,
+      };
+    }
+    await this.historyService.append({
+      requestId: claimed.request.requestId,
+      conversationId: claimed.request.conversationId,
+      ownerId: userId,
+      playbookId,
+      role: 'user',
+      content: dto.message.trim(),
     });
-    const constructionResults = result.toolResults.filter((toolResult) => this.isConstructionToolResult(toolResult));
-    if (constructionResults.length > 1) {
-      throw new ConflictException(ErrorCode.CONFLICT, 'The assistant started more than one construction operation in a single turn.');
-    }
-    let operation: (Awaited<ReturnType<PlaybookFlowIntentConstructionService['getStatus']>> & { constructionId: string }) | null = null;
-    if (constructionResults.length === 1) {
-      const operationId = this.findOperationId(constructionResults[0].result);
-      if (!operationId) {
-        throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'The assistant construction result did not include an operation identifier');
+    try {
+      const actor = this.actorFromRequest(claimed.request, userId);
+      const assessment = (dto.continuationId
+        ? await this.continueClarification(dto.continuationId, actor, { answers: dto.answers ?? [] })
+        : await this.assessRequest(claimed.request.requestId, actor)) as Record<string, unknown> & { status?: string };
+      let operation: (Awaited<ReturnType<PlaybookFlowIntentConstructionService['getStatus']>> & { constructionId: string }) | null = null;
+      if (assessment.status !== 'needs_clarification') {
+        const construction = await this.startBoundConstruction(claimed.request.requestId, actor, claimed.request.contextId);
+        const status = await this.constructionService.getStatus(playbookId, userId, construction.operationId);
+        operation = { ...status, constructionId: status.operationId };
       }
-      const status = await this.constructionService.getStatus(playbookId, userId, operationId);
-      operation = { ...status, constructionId: status.operationId };
+      const answer = assessment.status === 'needs_clarification'
+        ? 'I need the requested details before constructing this Playbook change.'
+        : 'The requested Playbook construction is ready in the canvas.';
+      await this.requestService.complete(claimed.request.requestId, answer, operation?.operationId);
+      await this.historyService.append({
+        requestId: claimed.request.requestId,
+        conversationId: claimed.request.conversationId,
+        ownerId: userId,
+        playbookId,
+        role: 'assistant',
+        content: answer,
+        operationId: operation?.operationId,
+      });
+      return {
+        requestId: claimed.request.requestId,
+        conversationId: claimed.request.conversationId,
+        answer,
+        assessment,
+        operation,
+      };
+    } catch (error) {
+      await this.requestService.fail(claimed.request.requestId);
+      throw error;
     }
+  }
+
+  async listHistory(playbookId: string, userId: string, conversationId?: string) {
+    this.assertEnabled();
+    await this.accessService.findAccessibleFlow(playbookId, userId, 'read');
+    return this.historyService.list(userId, playbookId, conversationId);
+  }
+
+  async initializeAttachment(playbookId: string, userId: string, input: { requestId: string; expectedDefinitionRevision: number; mediaType: string; size: number }) {
+    this.assertEnabled();
+    const flow = await this.accessService.findAccessibleFlow(playbookId, userId, 'write');
+    this.assertRevision(flow.definitionRevision ?? 0, input.expectedDefinitionRevision);
+    return this.attachmentService.initialize({ ownerId: userId, playbookId, ...input });
+  }
+
+  confirmAttachment(playbookId: string, userId: string, attachmentId: string) {
+    this.assertEnabled();
+    return this.attachmentService.confirm(userId, playbookId, attachmentId);
+  }
+
+  async assessRequest(requestId: string, actor: TrustedPlaybookAssistantActor) {
+    this.assertEnabled();
+    const request = await this.requestService.getBound(requestId, actor);
+    if (request.operationKind === 'generation') {
+      const assessmentVersion = await this.requestService.claimAssessment(requestId);
+      const assessment = await this.intentService.assessNewDesign(request.requestId, request.ownerId, {
+        intent: request.originalText,
+      });
+      const normalized = this.normalizeAssessment(assessment as unknown as Record<string, unknown>);
+      const saved = await this.requestService.saveAssessment(requestId, assessmentVersion, normalized);
+      return {
+        requestId,
+        assessmentId: requestId,
+        continuationId: saved.continuationId ?? null,
+        definitionRevision: null,
+        ...normalized,
+      };
+    }
+    if (request.operationKind !== 'existing_construction'
+      || !request.playbookId || request.expectedDefinitionRevision == null) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Existing-Playbook assessment requires a bound Playbook revision');
+    }
+    const flow = await this.accessService.findAccessibleFlow(request.playbookId, request.ownerId, 'write');
+    this.assertRevision(flow.definitionRevision ?? 0, request.expectedDefinitionRevision);
+    const assessmentVersion = await this.requestService.claimAssessment(requestId);
+    const assessment = await this.intentService.assessDesign(request.playbookId, request.ownerId, {
+      intent: request.originalText,
+      selectedTaskId: request.selectedTaskId ?? undefined,
+      images: await this.attachmentService.resolveImages({
+        ownerId: request.ownerId,
+        playbookId: request.playbookId,
+        requestId: request.requestId,
+        expectedDefinitionRevision: request.expectedDefinitionRevision,
+        attachmentIds: request.attachmentIds,
+      }),
+    });
+    const normalized = this.normalizeAssessment(assessment as unknown as Record<string, unknown>);
+    const saved = await this.requestService.saveAssessment(requestId, assessmentVersion, normalized);
     return {
-      answer: result.text.trim() || (operation ? 'The requested Playbook construction is ready in the canvas.' : 'The Playbook assistant completed the request.'),
-      operation,
+      requestId,
+      assessmentId: requestId,
+      continuationId: saved.continuationId ?? null,
+      definitionRevision: request.expectedDefinitionRevision,
+      ...normalized,
     };
+  }
+
+  async continueClarification(continuationId: string, actor: TrustedPlaybookAssistantActor, dto: ContinuePlaybookClarificationDto) {
+    this.assertEnabled();
+    // The answer can arrive in a later conversation turn with a new correlation id; rebind it to the
+    // trusted conversation before validating the actor binding, mirroring runCurrentTurnModification.
+    await this.requestService.rebindCorrelationForContinuation({ continuationId, actor });
+    const request = await this.requestService.getByContinuation(continuationId, actor);
+    if (request.operationKind === 'existing_construction') {
+      if (!request.playbookId || request.expectedDefinitionRevision == null) {
+        throw new ConflictException(ErrorCode.CONFLICT, 'Clarification requires a bound Playbook revision');
+      }
+      const flow = await this.accessService.findAccessibleFlow(request.playbookId, request.ownerId, 'write');
+      this.assertRevision(flow.definitionRevision ?? 0, request.expectedDefinitionRevision);
+    } else if (request.operationKind !== 'generation') {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Assistant request does not support clarification');
+    }
+    const questions = Array.isArray(request.assessment?.questions)
+      ? request.assessment.questions as Array<{
+        id?: string;
+        required?: boolean;
+        resourceSelector?: 'workspace_or_document' | 'destination_workspace';
+      }>
+      : [];
+    const allowedQuestionIds = new Set(questions.map((question) => question.id).filter((id): id is string => Boolean(id)));
+    if (dto.answers.some((answer) => !allowedQuestionIds.has(answer.questionId))) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Clarification answer does not match the active assessment');
+    }
+    const validatedAnswers = await this.validateClarificationResources(request.ownerId, questions, dto.answers);
+    const answeredIds = new Set(validatedAnswers.map((answer) => answer.questionId));
+    if (answeredIds.size !== dto.answers.length) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Clarification contains duplicate answers');
+    }
+    const meaningfulAnswerIds = new Set(validatedAnswers
+      .filter((answer) => Boolean(answer.resource || answer.choice?.trim() || answer.text?.trim()))
+      .map((answer) => answer.questionId));
+    if (!dto.skip && questions.some((question) => question.required && question.id && !meaningfulAnswerIds.has(question.id))) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'A required clarification answer is missing');
+    }
+    const normalized = {
+      ...(request.assessment ?? {}),
+      status: 'ready_to_construct',
+      ...(dto.skip ? {
+        clarificationsSkipped: true,
+        unansweredQuestionIds: questions
+          .map((question) => question.id)
+          .filter((id): id is string => Boolean(id))
+          .filter((id) => !meaningfulAnswerIds.has(id)),
+      } : {}),
+    };
+    await this.requestService.claimContinuation({
+      requestId: request.requestId,
+      continuationId,
+      actor,
+      answers: validatedAnswers as unknown as Record<string, unknown>[],
+      assessment: normalized,
+    });
+    return {
+      requestId: request.requestId,
+      assessmentId: request.requestId,
+      continuationId: null,
+      definitionRevision: request.expectedDefinitionRevision ?? null,
+      ...normalized,
+    };
+  }
+
+  async startBoundConstruction(requestId: string, actor: TrustedPlaybookAssistantActor, contextId?: string) {
+    this.assertEnabled();
+    const request = await this.requestService.getBound(requestId, actor);
+    if (!request.playbookId || request.expectedDefinitionRevision == null) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Construction requires a bound Playbook revision');
+    }
+    if (request.operationKind !== 'existing_construction' || request.status !== 'ready') {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Assistant request is not ready for construction');
+    }
+    if (contextId && contextId !== request.contextId) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Assistant context binding does not match');
+    }
+    const flow = await this.accessService.findAccessibleFlow(request.playbookId, request.ownerId, 'write');
+    this.assertRevision(flow.definitionRevision ?? 0, request.expectedDefinitionRevision);
+    const proposedOperationId = randomUUID();
+    const operationId = await this.requestService.claimMutation(request.requestId, proposedOperationId);
+    if (operationId !== proposedOperationId) {
+      const status = await this.constructionService.getStatus(request.playbookId, request.ownerId, operationId);
+      return this.withEventStreamPath({
+        constructionId: status.operationId,
+        playbookId: status.playbookId,
+        baseDefinitionRevision: status.baseDefinitionRevision,
+      });
+    }
+    try {
+      const result = await this.constructionService.start(
+        request.playbookId,
+        request.ownerId,
+        {
+          intent: this.buildConstructionIntent(request),
+          selectedTaskId: request.selectedTaskId ?? undefined,
+          images: await this.attachmentService.resolveImages({
+            ownerId: request.ownerId,
+            playbookId: request.playbookId,
+            requestId: request.requestId,
+            expectedDefinitionRevision: request.expectedDefinitionRevision,
+            attachmentIds: request.attachmentIds,
+          }),
+        },
+        { origin: 'mcp', operationId, requestId: request.requestId, operationKind: 'construction' },
+      );
+      return this.withEventStreamPath(result);
+    } catch (error) {
+      await this.requestService.releaseMutation(request.requestId, operationId);
+      throw error;
+    }
+  }
+
+  async startGeneration(requestId: string, actor: TrustedPlaybookAssistantActor, dto: StartPlaybookGenerationDto): Promise<{
+    operationId: string;
+    constructionId: string;
+    playbookId: string;
+    baseDefinitionRevision: number;
+    status: 'planning';
+    eventStreamPath: string;
+  }> {
+    this.assertEnabled();
+    const request = await this.requestService.getBound(requestId, actor);
+    if (request.operationKind !== 'generation') {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Assistant request is not bound to generation');
+    }
+    if (request.status !== 'ready' && !request.mutationOperationId) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Generation request is not ready');
+    }
+    const proposedOperationId = randomUUID();
+    const operationId = await this.requestService.claimMutation(request.requestId, proposedOperationId);
+    if (operationId !== proposedOperationId) {
+      const existingFlow = await this.flowService.findByAssistantOperationId(request.ownerId, operationId);
+      if (!existingFlow) throw new ConflictException(ErrorCode.CONFLICT, 'Generation operation is not ready');
+      const status = await this.constructionService.getStatus(existingFlow.id, request.ownerId, operationId);
+      if (status.status === 'failed' || status.status === 'cancelled') {
+        const removed = await this.flowService.removeAssistantDraftIfUnchanged(
+          request.ownerId,
+          existingFlow.id,
+          operationId,
+          status.baseDefinitionRevision,
+        );
+        if (!removed) {
+          throw new ConflictException(ErrorCode.CONFLICT, 'The generated Playbook changed and cannot be replaced automatically');
+        }
+        const reset = await this.requestService.resetMutation(request.requestId, operationId);
+        if (!reset) {
+          throw new ConflictException(ErrorCode.CONFLICT, 'Generation retry is already being claimed');
+        }
+        return this.startGeneration(requestId, actor, dto);
+      }
+      return this.withEventStreamPath({
+        constructionId: status.operationId,
+        playbookId: status.playbookId,
+        baseDefinitionRevision: status.baseDefinitionRevision,
+      });
+    }
+    let playbookId: string | null = null;
+    let baseDefinitionRevision = 0;
+    try {
+      const fallbackName = request.originalText.replace(/\s+/g, ' ').trim().slice(0, 80) || 'New Playbook';
+      const requestedName = request.requestedName?.trim() || dto.name?.trim() || fallbackName;
+      const flow = await this.flowService.create(request.ownerId, {
+        name: requestedName.length >= 2 ? requestedName : 'New Playbook',
+        description: request.originalText,
+        workspaces: [],
+      }, { assistantOperationId: operationId });
+      playbookId = flow.id;
+      baseDefinitionRevision = flow.definitionRevision ?? 0;
+      await this.requestService.bindGeneratedPlaybook(request.requestId, playbookId, baseDefinitionRevision);
+      const result = await this.constructionService.start(
+        playbookId,
+        request.ownerId,
+        { intent: this.buildConstructionIntent(request) },
+        {
+          origin: 'mcp',
+          operationId,
+          requestId: request.requestId,
+          operationKind: 'generation',
+          createdPlaybookId: playbookId,
+        },
+      );
+      return this.withEventStreamPath(result);
+    } catch (error) {
+      if (playbookId) {
+        const removed = await this.flowService.removeAssistantDraftIfUnchanged(request.ownerId, playbookId, operationId, baseDefinitionRevision);
+        if (!removed) {
+          throw new ConflictException(ErrorCode.CONFLICT, 'The generated Playbook changed and cannot be removed automatically');
+        }
+      }
+      await this.requestService.resetMutation(request.requestId, operationId);
+      throw error;
+    }
+  }
+
+  async startCurrentTurnGeneration(actor: TrustedPlaybookAssistantActor, dto: StartPlaybookGenerationDto) {
+    await this.assertPlatformCopilotEnabled();
+    const continuationId = dto.continuationId?.trim();
+    let requestId: string;
+    let assessment: Record<string, unknown> & { status?: string; continuationId?: string | null };
+    let request: PlaybookAssistantRequest;
+    if (continuationId) {
+      assessment = (await this.continueClarification(continuationId, actor, {
+        answers: dto.answers ?? [],
+        skip: dto.skip,
+      })) as Record<string, unknown> & { status?: string };
+      requestId = String(assessment.requestId || '');
+      request = await this.requestService.getBound(requestId, actor);
+      if (request.operationKind !== 'generation') {
+        throw new ConflictException(ErrorCode.CONFLICT, 'Clarification is not bound to generation');
+      }
+      if (dto.name?.trim() && request.requestedName && dto.name.trim() !== request.requestedName) {
+        throw new ConflictException(ErrorCode.CONFLICT, 'Generation name does not match the original request');
+      }
+    } else {
+      const text = await this.resolveCurrentTurnQuestion(actor, 'generation');
+      request = await this.requestService.claimGenerationForTurn({
+        actor,
+        text,
+        requestedName: dto.name,
+      });
+      requestId = request.requestId;
+      if (request.mutationOperationId) {
+        return this.startGeneration(requestId, actor, dto);
+      }
+      if (request.status === 'processing') {
+        assessment = (await this.assessRequest(requestId, actor)) as Record<string, unknown> & { status?: string };
+      } else {
+        assessment = {
+          continuationId: request.continuationId ?? null,
+          definitionRevision: null,
+          ...(request.assessment ?? {}),
+        };
+      }
+    }
+    if (assessment.status === 'needs_clarification') {
+      const { requestId: _requestId, assessmentId: _assessmentId, ...safeAssessment } = assessment;
+      return safeAssessment;
+    }
+    return this.startGeneration(requestId, actor, dto);
+  }
+
+  async runCurrentTurnModification(playbookId: string, actor: TrustedPlaybookAssistantActor, dto: RunCurrentTurnPlaybookModificationDto) {
+    await this.assertPlatformCopilotEnabled();
+    const flow = await this.accessService.findAccessibleFlow(playbookId, actor.ownerId, 'write');
+    const continuationId = dto.continuationId?.trim();
+    let requestId: string;
+    let assessment: Record<string, unknown> & { status?: string; continuationId?: string | null };
+    if (continuationId) {
+      await this.requestService.rebindCorrelationForContinuation({ continuationId, playbookId, actor });
+      const request = await this.requestService.getByContinuation(continuationId, actor);
+      requestId = request.requestId;
+      assessment = (await this.continueClarification(continuationId, actor, { answers: dto.answers ?? [], skip: dto.skip })) as Record<string, unknown> & { status?: string };
+    } else {
+      const text = await this.resolveCurrentTurnQuestion(actor, 'modification');
+      const request = await this.requestService.claimCurrentTurnModification({
+        actor,
+        playbookId,
+        expectedDefinitionRevision: flow.definitionRevision ?? 0,
+        text,
+      });
+      requestId = request.requestId;
+      if (request.status === 'processing') {
+        assessment = (await this.assessRequest(requestId, actor)) as Record<string, unknown> & { status?: string };
+      } else {
+        assessment = {
+          requestId,
+          assessmentId: requestId,
+          continuationId: request.continuationId ?? null,
+          definitionRevision: request.expectedDefinitionRevision,
+          ...(request.assessment ?? {}),
+        };
+      }
+    }
+    if (assessment.status === 'needs_clarification') {
+      return {
+        requestId,
+        status: 'needs_clarification' as const,
+        continuationId: assessment.continuationId ?? null,
+        definitionRevision: assessment.definitionRevision ?? null,
+        questions: assessment.questions ?? [],
+        assessment,
+      };
+    }
+    const request = await this.requestService.getBound(requestId, actor);
+    const construction = await this.startBoundConstruction(requestId, actor, request.contextId);
+    const answer = 'The requested Playbook construction is ready in the canvas.';
+    await this.requestService.complete(requestId, answer, construction.operationId);
+    return {
+      requestId,
+      status: 'ready' as const,
+      continuationId: null,
+      definitionRevision: construction.baseDefinitionRevision,
+      operation: construction,
+      assessment,
+    };
+  }
+
+  private async resolveCurrentTurnQuestion(actor: TrustedPlaybookAssistantActor, purpose: 'generation' | 'modification'): Promise<string> {
+    const conversation = await this.conversationService.getConversationDocument(actor.conversationId);
+    if (conversation.createdBy.toString() !== actor.ownerId
+      || conversation.runtimePurpose !== PLATFORM_COPILOT
+      || conversation.pinnedAgentId?.toString() !== actor.agentId) {
+      throw new ConflictException(ErrorCode.CONFLICT, `Assistant ${purpose} conversation binding does not match`);
+    }
+    const response = await this.messageService.getMessageDocument(actor.correlationId);
+    if (response.conversationId.toString() !== actor.conversationId
+      || response.conversationType !== 'ai'
+      || response.senderId?.toString() !== actor.ownerId
+      || !response.questionMessageId) {
+      throw new ConflictException(ErrorCode.CONFLICT, `Assistant ${purpose} response binding does not match`);
+    }
+    const question = await this.messageService.getMessageDocument(response.questionMessageId.toString());
+    if (question.conversationId.toString() !== actor.conversationId
+      || question.conversationType !== 'user'
+      || question.senderId?.toString() !== actor.ownerId
+      || !question.content?.trim()) {
+      throw new ConflictException(ErrorCode.CONFLICT, `Assistant ${purpose} question binding does not match`);
+    }
+    return question.content.trim();
   }
 
   async startConstruction(playbookId: string, userId: string, dto: StartPlaybookAssistantConstructionDto) {
@@ -221,7 +701,15 @@ export class PlaybookAssistantService {
       dto.stepExecutionModes,
       dto.modelIdOverride,
     );
-    return { executionId: this.executionId(execution) };
+    const executionId = this.executionId(execution);
+    return {
+      executionId,
+      uiTarget: {
+        surface: 'playbook.execution.details' as const,
+        params: { playbookId, executionId },
+        effects: [{ type: 'focusExecutionStatus' as const }],
+      },
+    };
   }
 
   async searchPlaybooks(userId: string, dto: SearchPlaybooksDto) {
@@ -379,8 +867,9 @@ export class PlaybookAssistantService {
   private executionId(execution: unknown): string {
     if (execution && typeof execution === 'object') {
       const record = execution as { id?: unknown; _id?: unknown };
-      if (typeof record.id === 'string') return record.id;
-      if (record._id != null) return String(record._id);
+      const identifier = record.id ?? record._id;
+      if (typeof identifier === 'string' && identifier.trim()) return identifier.trim();
+      if (identifier instanceof Types.ObjectId) return identifier.toHexString();
     }
     throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Execution identifier is unavailable');
   }
@@ -444,6 +933,14 @@ export class PlaybookAssistantService {
     }
   }
 
+  private normalizeAssessment(assessment: Record<string, unknown>): Record<string, unknown> {
+    const { lastTrace: _lastTrace, ...safeAssessment } = assessment;
+    return {
+      ...safeAssessment,
+      status: assessment.status === 'ready_to_generate' ? 'ready_to_construct' : assessment.status,
+    };
+  }
+
   private withEventStreamPath<T extends { constructionId: string; playbookId: string; baseDefinitionRevision: number }>(result: T) {
     return {
       operationId: result.constructionId,
@@ -455,40 +952,90 @@ export class PlaybookAssistantService {
     };
   }
 
-  private isConstructionToolResult(toolResult: AgentTaskToolResult): boolean {
-    if (toolResult.status !== 'completed') return false;
-    return [
-      'start_playbook_construction',
-      'start_advisor_remediation_construction',
-      'start_workflow_optimization',
-    ].some((action) => toolResult.name === action || toolResult.name.endsWith(`_${action}`));
+  private actorFromRequest(request: {
+    agentId: string;
+    conversationId: string;
+    correlationId: string;
+  }, ownerId: string): TrustedPlaybookAssistantActor {
+    return {
+      ownerId,
+      agentId: request.agentId,
+      conversationId: request.conversationId,
+      correlationId: request.correlationId,
+    };
   }
 
-  private findOperationId(value: unknown, depth = 0): string | null {
-    if (depth > 4 || value == null) return null;
-    if (typeof value === 'string') {
-      try {
-        return this.findOperationId(JSON.parse(value), depth + 1);
-      } catch {
-        return null;
+  private buildConstructionIntent(request: {
+    originalText: string;
+    assessment?: Record<string, unknown> | null;
+    answers: Record<string, unknown>[];
+  }): string {
+    const assessment = request.assessment ?? null;
+    const skipped = Array.isArray(assessment?.unansweredQuestionIds)
+      ? assessment.unansweredQuestionIds as string[]
+      : [];
+    return [
+      '<original_request>',
+      request.originalText,
+      '</original_request>',
+      '<resolved_design_context>',
+      JSON.stringify({
+        assessment,
+        clarificationAnswers: request.answers ?? [],
+      }),
+      '</resolved_design_context>',
+      'Treat the resolved design context as binding. Do not replace selected sources, outputs, resources, or branching decisions.',
+      ...(assessment?.clarificationsSkipped === true && skipped.length > 0 ? [
+        'The user explicitly skipped the remaining clarification questions. For those questions choose sensible defaults, record them as assumptions, and proceed without asking again.',
+      ] : []),
+    ].join('\n');
+  }
+
+  private async validateClarificationResources(
+    ownerId: string,
+    questions: Array<{
+      id?: string;
+      resourceSelector?: 'workspace_or_document' | 'destination_workspace';
+    }>,
+    answers: ContinuePlaybookClarificationDto['answers'],
+  ): Promise<ContinuePlaybookClarificationDto['answers']> {
+    const questionsById = new Map(questions
+      .filter((question): question is typeof question & { id: string } => Boolean(question.id))
+      .map((question) => [question.id, question]));
+
+    return Promise.all(answers.map(async (answer) => {
+      if (!answer.resource) return answer;
+      const question = questionsById.get(answer.questionId);
+      const selector = question?.resourceSelector;
+      if (!selector || (selector === 'destination_workspace' && answer.resource.kind !== 'workspace')) {
+        throw new ConflictException(ErrorCode.CONFLICT, 'Clarification resource does not match the active question');
       }
-    }
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const operationId = this.findOperationId(item, depth + 1);
-        if (operationId) return operationId;
+      if (!Types.ObjectId.isValid(answer.resource.id)) {
+        throw new ConflictException(ErrorCode.CONFLICT, 'Clarification resource is invalid');
       }
-      return null;
-    }
-    if (typeof value !== 'object') return null;
-    const record = value as Record<string, unknown>;
-    for (const key of ['operationId', 'operation_id', 'constructionId', 'construction_id']) {
-      if (typeof record[key] === 'string' && record[key]) return record[key];
-    }
-    for (const key of ['result', 'data', 'structuredContent', 'structured_content']) {
-      const operationId = this.findOperationId(record[key], depth + 1);
-      if (operationId) return operationId;
-    }
-    return null;
+      if (answer.resource.kind === 'workspace') {
+        await this.workspaceShareService.assertUserHasAccess(ownerId, [answer.resource.id]);
+        return answer;
+      }
+
+      const documents = await this.workspaceDocumentService.findByIds([answer.resource.id]);
+      const document = documents.find((candidate) => candidate.id === answer.resource?.id && !candidate.isFolder);
+      if (!document) {
+        throw new ConflictException(ErrorCode.CONFLICT, 'Clarification document is unavailable');
+      }
+      await this.workspaceShareService.assertUserHasAccess(ownerId, [document.workspaceId]);
+      return {
+        ...answer,
+        resource: {
+          kind: 'document' as const,
+          id: document.id,
+          documentId: document.id,
+          workspaceId: document.workspaceId,
+          label: document.originalName,
+          ...(document.path ? { path: document.path } : {}),
+          ...(document.mimeType ? { mimeType: document.mimeType } : {}),
+        },
+      };
+    }));
   }
 }

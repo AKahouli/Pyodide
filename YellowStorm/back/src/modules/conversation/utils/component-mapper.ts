@@ -1,10 +1,9 @@
 import { ComponentType } from '../interfaces/message.interface';
 import { normalizeChoiceComponentData } from './choice-component-normalizer';
-import { redactTaskDiagnosticText } from './task-diagnostics';
 
 const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> = [
   { field: 'text', type: 'text' },
-  { field: 'reasoning', type: 'reasoning' },
+  { field: 'agent_activity', type: 'agentActivity' },
   { field: 'code', type: 'code' },
   { field: 'error', type: 'error' },
   { field: 'plan', type: 'plan' },
@@ -17,15 +16,15 @@ const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> =
   { field: 'web_preview', type: 'webPreview' },
   { field: 'artifact', type: 'artifact' },
   { field: 'citation', type: 'citation' },
-  { field: 'tool_info', type: 'toolInfo' },
-  { field: 'chain_of_thought', type: 'chainOfThought' },
+  { field: 'tool_activity', type: 'toolActivity' },
   { field: 'choice', type: 'choice' },
 ];
 
 const LEGACY_TYPE_MAP: Record<string, ComponentType> = {
   text: 'text',
   code: 'code',
-  reasoning: 'reasoning',
+  agent_activity: 'agentActivity',
+  agentActivity: 'agentActivity',
   plan: 'plan',
   queue: 'queue',
   checkpoint: 'checkpoint',
@@ -38,10 +37,8 @@ const LEGACY_TYPE_MAP: Record<string, ComponentType> = {
   webPreview: 'webPreview',
   artifact: 'artifact',
   citation: 'citation',
-  tool_info: 'toolInfo',
-  toolInfo: 'toolInfo',
-  chain_of_thought: 'chainOfThought',
-  chainOfThought: 'chainOfThought',
+  tool_activity: 'toolActivity',
+  toolActivity: 'toolActivity',
   choice: 'choice',
 };
 
@@ -52,7 +49,6 @@ function normalizeLegacyType(raw: string): ComponentType {
 function oneofPayloadHasContent(type: ComponentType, payload: Record<string, unknown>): boolean {
   switch (type) {
     case 'text':
-    case 'reasoning':
     case 'code':
     case 'webPreview':
       return typeof payload.content === 'string' && payload.content.length > 0;
@@ -85,13 +81,13 @@ function oneofPayloadHasContent(type: ComponentType, payload: Record<string, unk
       );
     case 'citation':
       return Boolean(payload.text_source || payload.image_source);
-    case 'toolInfo':
+    case 'agentActivity':
+      return typeof payload.summary === 'string' && payload.summary.length > 0;
+    case 'toolActivity':
       return (
-        (typeof payload.title === 'string' && payload.title.length > 0) ||
+        (typeof payload.tool_name === 'string' && payload.tool_name.length > 0) ||
         (typeof payload.status === 'string' && payload.status.length > 0)
       );
-    case 'chainOfThought':
-      return Array.isArray(payload.steps) && payload.steps.length > 0;
     case 'choice':
       return normalizeChoiceComponentData(payload) !== null;
     default:
@@ -108,6 +104,11 @@ export function getComponentType(comp: any): ComponentType {
 
   if (typeof comp.type === 'string' && comp.data && typeof comp.data === 'object') {
     return normalizeLegacyType(comp.type);
+  }
+
+  if (typeof comp.data === 'string') {
+    const selected = ONEOF_FIELD_TYPES.find(({ field }) => field === comp.data);
+    if (selected) return selected.type;
   }
 
   for (const { field, type } of ONEOF_FIELD_TYPES) {
@@ -192,12 +193,18 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
           output_port_id: comp.code?.output_port_id || '',
         },
       };
-    case 'reasoning':
+    case 'agentActivity':
       return {
         type,
         data: {
-          content: comp.reasoning?.content || '',
-          duration: comp.reasoning?.duration || 0,
+          summary: comp.agent_activity?.summary || '',
+          ...(comp.agent_activity?.detail ? { detail: comp.agent_activity.detail } : {}),
+          status: comp.agent_activity?.status || 'running',
+          ...(comp.agent_activity?.started_at ? { startedAt: comp.agent_activity.started_at } : {}),
+          ...(comp.agent_activity?.completed_at ? { completedAt: comp.agent_activity.completed_at } : {}),
+          ...(comp.agent_activity?.duration_ms !== undefined ? { durationMs: Number(comp.agent_activity.duration_ms) } : {}),
+          ...(comp.agent_activity?.actor_id ? { actorId: comp.agent_activity.actor_id } : {}),
+          ...(comp.agent_activity?.actor_name ? { actorName: comp.agent_activity.actor_name } : {}),
         },
       };
     case 'plan':
@@ -259,7 +266,7 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
         type,
         data: {
           title: comp.task?.title || '',
-          items: (comp.task?.items || []).map((item: any) => redactTaskDiagnosticText(item.text || '')),
+          items: (comp.task?.items || []).map((item: any) => item.text || ''),
           status: comp.task?.status || 'pending',
         },
       };
@@ -302,15 +309,17 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
       return {
         type,
         data: {
-          filePath: comp.artifact?.file_path || '',
-          file_path: comp.artifact?.file_path || '',
+          storagePath: comp.artifact?.file_path || '',
           filename: comp.artifact?.filename || '',
           outputPortId: comp.artifact?.output_port_id || '',
           output_port_id: comp.artifact?.output_port_id || '',
           artifactKind: comp.artifact?.artifact_kind || '',
           artifact_kind: comp.artifact?.artifact_kind || '',
           mimeType: comp.artifact?.mime_type || '',
-          mime_type: comp.artifact?.mime_type || '',
+          artifactId: comp.artifact?.artifact_id || '',
+          producerToolId: comp.artifact?.producer_tool_id || '',
+          sizeBytes: Number(comp.artifact?.size_bytes || 0),
+          availability: comp.artifact?.availability || 'ready',
         },
       };
     case 'citation': {
@@ -345,26 +354,29 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
 
       return { type: 'citation' as ComponentType, data: sourceData };
     }
-    case 'toolInfo': {
-      const toolInfo = comp.tool_info;
+    case 'toolActivity': {
+      const toolActivity = comp.tool_activity;
       return {
         type,
         data: {
-          title: toolInfo?.title || '',
-          status: toolInfo?.status || 'running',
-          params: toolInfo?.params || '',
-          ...(toolInfo?.result_json ? { resultJson: toolInfo.result_json } : {}),
-          ...(toolInfo?.started_at ? { startedAt: toolInfo.started_at } : {}),
+          toolName: toolActivity?.tool_name || '',
+          status: toolActivity?.status || 'running',
+          paramsJson: toolActivity?.params_json || '',
+          ...(toolActivity?.result_json ? { resultJson: toolActivity.result_json } : {}),
+          ...(toolActivity?.started_at ? { startedAt: toolActivity.started_at } : {}),
+          ...(toolActivity?.completed_at ? { completedAt: toolActivity.completed_at } : {}),
+          ...(toolActivity?.duration_ms !== undefined ? { durationMs: Number(toolActivity.duration_ms) } : {}),
+          ...(toolActivity?.display_key ? { displayKey: toolActivity.display_key } : {}),
+          ...(toolActivity?.fallback_display_name ? { fallbackDisplayName: toolActivity.fallback_display_name } : {}),
+          ...(toolActivity?.summary ? { summary: toolActivity.summary } : {}),
+          ...(toolActivity?.render_kind ? { renderKind: toolActivity.render_kind } : {}),
+          ...(toolActivity?.actor_id ? { actorId: toolActivity.actor_id } : {}),
+          ...(toolActivity?.actor_name ? { actorName: toolActivity.actor_name } : {}),
+          ...(toolActivity?.primary_input ? { primaryInput: toolActivity.primary_input } : {}),
+          ...(toolActivity?.primary_input_language ? { primaryInputLanguage: toolActivity.primary_input_language } : {}),
         },
       };
     }
-    case 'chainOfThought':
-      return {
-        type,
-        data: {
-          steps: (comp.chain_of_thought?.steps || []).map((s: any) => String(s ?? '')),
-        },
-      };
     case 'choice': {
       const normalized = normalizeChoiceComponentData(comp.choice);
       return normalized ? { type, data: normalized } : { type: 'text', data: { content: '' } };
@@ -396,13 +408,13 @@ export function mapTaskStatus(status: string | undefined): string {
   return statusMap[status] || 'pending';
 }
 
-/** Merges text/reasoning/code/error content from streamed components for plain-text consumers (widget, telegram). */
+/** Merges answer content from streamed components for plain-text consumers (widget, telegram). */
 export function aggregateTextFromComponents(
   components: Array<{ type: ComponentType | string; data: Record<string, unknown> }>,
 ): string {
   let replyText = '';
   for (const component of components) {
-    if ((component.type === 'text' || component.type === 'reasoning') && typeof component.data.content === 'string') {
+    if (component.type === 'text' && typeof component.data.content === 'string') {
       replyText += component.data.content;
       continue;
     }

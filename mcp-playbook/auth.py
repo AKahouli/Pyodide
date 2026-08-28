@@ -2,7 +2,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from hmac import compare_digest
 import re
-from uuid import uuid4
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -12,7 +11,6 @@ _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$")
 
 @dataclass(frozen=True)
 class PlatformActorContext:
-    tenant_id: str
     user_id: str
     agent_id: str
     conversation_id: str
@@ -68,7 +66,6 @@ class TrustedIdentityMiddleware:
             return
         headers = {key.lower(): value for key, value in raw_headers}
         values = {
-            "tenant_id": headers.get(b"x-yellowstorm-tenant-id", b"").decode("utf-8", errors="replace").strip(),
             "user_id": headers.get(b"x-yellowstorm-user-id", b"").decode("utf-8", errors="replace").strip(),
             "agent_id": headers.get(b"x-yellowstorm-agent-id", b"").decode("utf-8", errors="replace").strip(),
             "conversation_id": headers.get(b"x-yellowstorm-conversation-id", b"").decode("utf-8", errors="replace").strip(),
@@ -87,13 +84,17 @@ class TrustedIdentityMiddleware:
             await send({"type": "http.response.body", "body": b'{"error":"unauthorized"}'})
             return
 
-        complete_actor = all(values[key] for key in ("tenant_id", "user_id", "agent_id", "conversation_id"))
+        complete_actor = all(values[key] for key in (
+            "user_id",
+            "agent_id",
+            "conversation_id",
+            "correlation_id",
+        ))
         context = PlatformActorContext(
-            tenant_id=values["tenant_id"],
             user_id=values["user_id"],
             agent_id=values["agent_id"],
             conversation_id=values["conversation_id"],
-            correlation_id=values["correlation_id"] or str(uuid4()),
+            correlation_id=values["correlation_id"],
         ) if complete_actor else None
         user_token = acting_user_id.set(values["user_id"] or None)
         actor_token = actor_context.set(context)
@@ -112,7 +113,4 @@ def require_actor_context() -> PlatformActorContext:
 
 
 def require_acting_user_id() -> str:
-    user_id = acting_user_id.get()
-    if not user_id:
-        raise RuntimeError("Trusted acting user identity is unavailable")
-    return user_id
+    return require_actor_context().user_id

@@ -59,7 +59,9 @@ export class ConversationOwnerGuard implements CanActivate {
     // 2. Invited users can only use GET  join endpoint
     const hasFullAccess = isCreator || isMember;
     const isJoiningAction = request.method === 'POST' && request.url.endsWith('/join');
-    const hasGuestAccess = isInvited && (request.method === 'GET' || isJoiningAction);
+    const requestPath = request.url.split('?')[0].replace(/\/$/, '');
+    const exposesActiveStream = request.method === 'GET' && requestPath.endsWith('/active-stream');
+    const hasGuestAccess = isInvited && !exposesActiveStream && (request.method === 'GET' || isJoiningAction);
 
     if (!hasFullAccess && !hasGuestAccess) {
       throw new ForbiddenException(

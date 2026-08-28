@@ -311,7 +311,7 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     expect(deps.setIntentError).toHaveBeenCalledWith('Construction unavailable');
   });
 
-  it('does not fall back after construction emits a delta and then fails', async () => {
+  it('does not mutate or roll back the graph when construction emits a delta and then fails', async () => {
     const deps = {
       ...buildDeps({
         suggestion: validStepSuggestion,
@@ -343,10 +343,10 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
 
     expect(response?.status).toBe('failed');
     expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
-    expect(deps.captureConstructionSnapshot).toHaveBeenCalledTimes(1);
-    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledTimes(1);
+    expect(deps.captureConstructionSnapshot).not.toHaveBeenCalled();
+    expect(deps.handleApplyIntentSuggestion).not.toHaveBeenCalled();
     expect(deps.finalizeConstruction).not.toHaveBeenCalled();
-    expect(deps.rollbackConstruction).toHaveBeenCalledTimes(1);
+    expect(deps.rollbackConstruction).not.toHaveBeenCalled();
   });
 
   it('does not fall back after direct construction applies but final persistence fails', async () => {
@@ -430,8 +430,11 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
       requestPlaybookIntent: vi.fn(),
       startPlaybookIntentConstruction: vi.fn().mockResolvedValue({ constructionId: 'construction-server-cancelled', playbookId: 'p1', baseDefinitionRevision: 7 }),
       streamPlaybookIntentConstruction: vi.fn(async (_playbookId, _constructionId, options) => {
-        options.onEvent({ type: 'cancelled', constructionId: 'construction-server-cancelled', playbookId: 'p1', sequence: 1, reason: 'Stopped' } as any);
+        options.onEvent({ type: 'node_delta', constructionId: 'construction-server-cancelled', playbookId: 'p1', sequence: 1, suggestion: validStepSuggestion } as any);
+        options.onEvent({ type: 'cancelled', constructionId: 'construction-server-cancelled', playbookId: 'p1', sequence: 2, reason: 'Stopped' } as any);
       }),
+      captureConstructionSnapshot: vi.fn(),
+      rollbackConstruction: vi.fn(),
       finalizeConstruction: vi.fn().mockResolvedValue(undefined),
       setConstructionStatus: vi.fn(),
       setConstructionProgress: vi.fn(),
@@ -445,6 +448,9 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     });
 
     expect(response?.status).toBe('skipped');
+    expect(deps.captureConstructionSnapshot).not.toHaveBeenCalled();
+    expect(deps.handleApplyIntentSuggestion).not.toHaveBeenCalled();
+    expect(deps.rollbackConstruction).not.toHaveBeenCalled();
     expect(deps.finalizeConstruction).not.toHaveBeenCalled();
     expect(deps.requestPlaybookIntent).not.toHaveBeenCalled();
   });
@@ -632,7 +638,7 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     expect(deps.finalizeConstruction).toHaveBeenCalledWith(7, 'construction-1');
   });
 
-  it('applies and saves realtime construction deltas with validation warnings', async () => {
+  it('applies the final realtime construction once with validation warnings', async () => {
     const deps = {
       ...buildDeps({
         suggestion: blockedWorkflowSuggestion,
@@ -678,9 +684,111 @@ describe('usePlaybookIntentFlow advisor remediation', () => {
     });
 
     expect(deps.captureConstructionSnapshot).toHaveBeenCalledTimes(1);
-    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledTimes(2);
+    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledTimes(1);
     expect(deps.finalizeConstruction).toHaveBeenCalledWith(7, 'construction-blocked');
     expect(deps.showWarning).not.toHaveBeenCalled();
+  });
+
+  it('applies only the largest cumulative workflow plan after completion', async () => {
+    const changes = [
+      {
+        type: 'create_node' as const,
+        nodeRef: 'source',
+        anchor: { mode: 'append' as const, targetTaskId: null, nodeRef: null },
+        task: { title: 'Source', description: 'Produce data.', outputPorts: [{ id: 'result', artifactKind: 'data' as const }] },
+      },
+      {
+        type: 'create_node' as const,
+        nodeRef: 'target',
+        anchor: { mode: 'append' as const, targetTaskId: null, nodeRef: null },
+        task: { title: 'Target', description: 'Consume data.', inputPorts: [{ id: 'input', artifactKind: 'data' as const, required: true }] },
+      },
+      {
+        type: 'create_edge' as const,
+        sourceTaskId: null,
+        sourceNodeRef: 'source',
+        targetTaskId: null,
+        targetNodeRef: 'target',
+        sourcePort: 'result',
+        targetPort: 'input',
+        edgeKind: 'sequential' as const,
+      },
+      {
+        type: 'create_data_binding' as const,
+        sourceKind: 'node-output' as const,
+        sourceTaskId: null,
+        sourceNodeRef: 'source',
+        sourcePort: 'result',
+        targetTaskId: null,
+        targetNodeRef: 'target',
+        targetPort: 'input',
+        iteration: 'current' as const,
+      },
+    ];
+    const cumulativePlan = (count: number): PlaybookIntentSuggestion => ({
+      id: 'cumulative-plan',
+      kind: 'workflow_plan',
+      label: 'Cumulative plan',
+      summary: 'Build a connected graph.',
+      reason: 'Test cumulative streaming.',
+      confidence: 0.9,
+      impact: {
+        nodesToCreate: Math.min(count, 2),
+        nodesToUpdate: 0,
+        nodesToDelete: 0,
+        edgesToCreate: count >= 3 ? 1 : 0,
+        edgesToDelete: 0,
+        dataBindingsToCreate: count >= 4 ? 1 : 0,
+        dataBindingsToDelete: 0,
+        affectedTaskIds: [],
+        businessOutcome: '',
+      },
+      changes: changes.slice(0, count),
+      isDirectIntentFallback: false,
+    });
+    const finalPlan = cumulativePlan(4);
+    const deps = {
+      ...buildDeps({
+        suggestion: finalPlan,
+        suggestions: [finalPlan],
+        intent: 'Build workflow.',
+        expectedDefinitionRevision: 7,
+        validation: { valid: true, warnings: [], errors: [] },
+      }),
+      intentValue: 'Build connected workflow',
+      startPlaybookIntentConstruction: vi.fn().mockResolvedValue({
+        constructionId: 'construction-cumulative',
+        playbookId: 'p1',
+        baseDefinitionRevision: 7,
+      }),
+      streamPlaybookIntentConstruction: vi.fn(async (_playbookId, _constructionId, options) => {
+        options.onEvent({ type: 'node_delta', constructionId: 'construction-cumulative', playbookId: 'p1', sequence: 1, suggestion: cumulativePlan(1) } as any);
+        options.onEvent({ type: 'data_binding_delta', constructionId: 'construction-cumulative', playbookId: 'p1', sequence: 2, suggestion: finalPlan } as any);
+        options.onEvent({ type: 'edge_delta', constructionId: 'construction-cumulative', playbookId: 'p1', sequence: 3, suggestion: cumulativePlan(3) } as any);
+        options.onEvent({ type: 'completed', constructionId: 'construction-cumulative', playbookId: 'p1', sequence: 4 } as any);
+      }),
+      captureConstructionSnapshot: vi.fn(),
+      rollbackConstruction: vi.fn(),
+      finalizeConstruction: vi.fn().mockResolvedValue(undefined),
+      setConstructionStatus: vi.fn(),
+      setConstructionProgress: vi.fn(),
+      setConstructionId: vi.fn(),
+      constructionAbortRef: { current: null },
+    };
+    const { result } = renderHook(() => usePlaybookIntentFlow(deps));
+
+    await act(async () => {
+      await result.current.handleForceGenerateIntent();
+    });
+
+    expect(deps.captureConstructionSnapshot).toHaveBeenCalledTimes(1);
+    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledTimes(1);
+    expect(deps.handleApplyIntentSuggestion).toHaveBeenCalledWith(finalPlan, expect.objectContaining({
+      applicationKey: 'intent-construction-construction-cumulative',
+      save: false,
+    }));
+    expect(deps.finalizeConstruction).toHaveBeenCalledWith(7, 'construction-cumulative');
+    expect(deps.rollbackConstruction).not.toHaveBeenCalled();
   });
 
   it('marks explicit construction as starting before dirty-save completes', async () => {

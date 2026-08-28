@@ -117,13 +117,13 @@ describe('MessageService createUserMessage agent tagging', () => {
     expect(conversationService.updateTaggedAgents).not.toHaveBeenCalled();
   });
 
-  it('includes bounded tool results in authorized message responses', () => {
+  it('includes sanitized bounded tool results in authorized message responses', () => {
     const toolComponent = {
       id: 'tool-1',
-      data: { title: 'connector', status: 'completed', resultJson: '{"secret":"value"}', params: '{"query":"safe"}' },
+      data: { toolName: 'connector', status: 'completed', resultJson: '{"secret":"[REDACTED]"}', paramsJson: '{"query":"safe"}' },
     };
     // Mongoose subdocuments expose schema paths without making all of them enumerable.
-    Object.defineProperty(toolComponent, 'type', { value: 'toolInfo', enumerable: false });
+    Object.defineProperty(toolComponent, 'type', { value: 'toolActivity', enumerable: false });
     const response = (service as any).mapToResponse({
       _id: new Types.ObjectId(),
       conversationId: new Types.ObjectId(conversationId),
@@ -133,9 +133,43 @@ describe('MessageService createUserMessage agent tagging', () => {
 
     expect(response.components[0]).toEqual({
       id: 'tool-1',
-      type: 'toolInfo',
-      data: { title: 'connector', status: 'completed', resultJson: '{"secret":"value"}', params: '{"query":"safe"}' },
+      type: 'toolActivity',
+      data: { toolName: 'connector', status: 'completed', resultJson: '{"secret":"[REDACTED]"}', paramsJson: '{"query":"safe"}' },
     });
+  });
+
+  it('preserves tool paths but removes credentials when authenticated display redaction is disabled', () => {
+    (service as any).conversationSettings = { shouldRedactSensitiveText: () => false };
+    const response = (service as any).mapToResponse({
+      _id: new Types.ObjectId(),
+      conversationId: new Types.ObjectId(conversationId),
+      conversationType: 'ai',
+      components: [{
+        id: 'tool-private',
+        type: 'toolActivity',
+        data: { toolName: 'run_code', resultJson: '{"password":"private","path":"/workspace/run/file.txt"}' },
+      }],
+    });
+
+    expect(response.components[0].data.resultJson).toContain('"password":"[REDACTED]"');
+    expect(response.components[0].data.resultJson).toContain('/workspace/run/file.txt');
+  });
+
+  it('strips persisted artifact paths and preserves activity detail in authenticated responses', () => {
+    const response = (service as any).mapToResponse({
+      _id: new Types.ObjectId(),
+      conversationId: new Types.ObjectId(conversationId),
+      conversationType: 'ai',
+      components: [
+        { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf', storagePath: 'owner/system_run/report.pdf' } },
+        { id: 'activity-1', type: 'agentActivity', data: { summary: 'Reviewing evidence', detail: 'private reasoning', status: 'completed' } },
+      ],
+    });
+
+    expect(response.components).toEqual([
+      { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf' } },
+      { id: 'activity-1', type: 'agentActivity', data: { summary: 'Reviewing evidence', detail: 'private reasoning', status: 'completed' } },
+    ]);
   });
 
   it('waits for the canonical completion update to broadcast', async () => {
@@ -157,7 +191,7 @@ describe('MessageService createUserMessage agent tagging', () => {
     let completed = false;
     const completion = service.completeAIMessage({
       messageId: messageId.toString(),
-      components: [{ id: 'tool-1', type: 'toolInfo', data: { title: 'search', status: 'completed', resultJson: '{"secret":true}', startedAt: '2026-07-29T08:00:00.000Z' } }],
+      components: [{ id: 'tool-1', type: 'toolActivity', data: { title: 'search', status: 'completed', resultJson: '{"secret":true}', startedAt: '2026-07-29T08:00:00.000Z' } }],
       inputTokens: 10,
       outputTokens: 20,
       durationMs: 1000,
@@ -172,7 +206,7 @@ describe('MessageService createUserMessage agent tagging', () => {
           messageId: messageId.toString(),
           message: expect.objectContaining({
             isComplete: true,
-            components: [expect.objectContaining({ data: expect.objectContaining({ resultJson: '{"secret":true}' }) })],
+            components: [expect.objectContaining({ data: expect.objectContaining({ resultJson: '{"secret":"[REDACTED]"}' }) })],
           }),
         }),
       }),
@@ -280,12 +314,98 @@ describe('MessageService createUserMessage agent tagging', () => {
     await service.upsertCorrectionAttempt('message-1', { ...base, status: 'generating' });
     await service.upsertCorrectionAttempt('message-1', {
       ...base, status: 'rejected', decision: 'rejected', policyReasons: ['score_below_threshold'],
-      components: [{ id: 'tool', type: 'toolInfo', data: { title: 'search', resultJson: '{"secret":"value"}' } }],
+      components: [{ id: 'tool', type: 'toolActivity', data: { title: 'search', resultJson: '{"secret":"value"}' } }],
     });
     await service.upsertCorrectionAttempt('message-1', { ...base, status: 'generating' });
 
     expect(document.correctionWorkflow.attempts).toHaveLength(1);
     expect(document.correctionWorkflow.attempts[0]).toMatchObject({ status: 'rejected', policyReasons: ['score_below_threshold'] });
     expect(document.correctionWorkflow.attempts[0].components[0].data).toEqual({ title: 'search' });
+  });
+
+  it('atomically claims an expired or unclaimed AI stream execution lease', async () => {
+    const exec = jest.fn().mockResolvedValue({ _id: new Types.ObjectId() });
+    const lean = jest.fn().mockReturnValue({ exec });
+    messageModel.findOneAndUpdate = jest.fn().mockReturnValue({ lean });
+
+    await expect(service.claimStreamExecution(new Types.ObjectId().toString(), 'lease-1', 90_000))
+      .resolves.toBe(true);
+    expect(messageModel.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationType: 'ai',
+        isComplete: { $ne: true },
+        $or: expect.arrayContaining([
+          { streamExecutionLeaseExpiresAt: { $exists: false } },
+          { streamExecutionLeaseExpiresAt: null },
+        ]),
+      }),
+      expect.objectContaining({ $set: expect.objectContaining({ streamExecutionLeaseId: 'lease-1' }) }),
+      { new: true },
+    );
+  });
+
+  it('denies a stream execution lease while another instance owns it', async () => {
+    const exec = jest.fn().mockResolvedValue(null);
+    const lean = jest.fn().mockReturnValue({ exec });
+    messageModel.findOneAndUpdate = jest.fn().mockReturnValue({ lean });
+
+    await expect(service.claimStreamExecution(new Types.ObjectId().toString(), 'lease-2', 90_000))
+      .resolves.toBe(false);
+  });
+
+  it('allows only one simulated service instance to claim the same stream execution', async () => {
+    const results = [{ _id: new Types.ObjectId() }, null];
+    messageModel.findOneAndUpdate = jest.fn().mockImplementation(() => {
+      const exec = jest.fn().mockResolvedValue(results.shift());
+      const lean = jest.fn().mockReturnValue({ exec });
+      return { lean };
+    });
+    const otherInstance = new MessageService(
+      messageModel as any,
+      conversationService as any,
+      streamGateway as any,
+      {} as any,
+      configService as any,
+      logger as any,
+      {} as any,
+    );
+    const messageId = new Types.ObjectId().toString();
+
+    await expect(Promise.all([
+      service.claimStreamExecution(messageId, 'instance-a', 90_000),
+      otherInstance.claimStreamExecution(messageId, 'instance-b', 90_000),
+    ])).resolves.toEqual([true, false]);
+  });
+
+  it('completes a stream only while the matching durable lease still owns it', async () => {
+    const messageId = new Types.ObjectId();
+    const document: any = {
+      _id: messageId,
+      conversationId: new Types.ObjectId(conversationId),
+      conversationType: 'ai',
+      components: [{ id: 'text-1', type: 'text', data: { content: 'done' } }],
+      isStreaming: false,
+      isComplete: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const exec = jest.fn().mockResolvedValue(document);
+    messageModel.findOneAndUpdate = jest.fn().mockReturnValue({ exec });
+
+    await service.completeAIMessage({
+      messageId: messageId.toString(),
+      streamExecutionLeaseId: 'lease-1',
+      components: document.components,
+    });
+
+    expect(messageModel.findOneAndUpdate).toHaveBeenCalledWith(
+      {
+        _id: expect.any(Types.ObjectId),
+        streamExecutionLeaseId: 'lease-1',
+        isComplete: { $ne: true },
+      },
+      expect.objectContaining({ $set: expect.objectContaining({ isComplete: true, isStreaming: false }) }),
+      { new: true },
+    );
   });
 });

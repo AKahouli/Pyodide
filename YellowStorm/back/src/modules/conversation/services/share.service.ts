@@ -16,6 +16,7 @@ import { MessageComponent } from '../interfaces/message.interface';
 import { LoggerService } from '../../logger';
 import { NotFoundException, ForbiddenException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 
 const publicShareComponentTypes = new Set([
   'text',
@@ -29,23 +30,35 @@ const publicShareComponentTypes = new Set([
   'sources',
   'sandbox',
   'webPreview',
-  'artifact',
   'citation',
   'choice',
+  'agentActivity',
+  'toolActivity',
 ]);
 
 function sanitizePublicShareMessages(messages: readonly EmbeddedMessage[]): EmbeddedMessage[] {
   return messages.map(({ components, content, ...message }) => ({
     ...message,
-    // AI content can aggregate private reasoning. Public AI output must use
-    // explicitly typed components, while user text remains shareable.
+    // Public AI output uses explicitly typed, display-safe components.
     ...(message.conversationType === 'user' && content ? { content } : {}),
     ...(components ? {
       components: components
         .filter((component) => publicShareComponentTypes.has(component.type))
-        .map((component) => component.type === 'task'
-          ? { ...component, data: { ...component.data, items: [] } }
-          : component),
+        .map((component) => {
+          if (component.type === 'task') {
+            return sanitizePublicComponent({ ...component, data: { ...component.data, items: [] } });
+          }
+          if (component.type === 'toolActivity') {
+            const {
+              paramsJson: _paramsJson,
+              resultJson: _resultJson,
+              primaryInput: _primaryInput,
+              ...displayData
+            } = component.data;
+            return sanitizePublicComponent({ ...component, data: displayData });
+          }
+          return sanitizePublicComponent(component);
+        }),
     } : {}),
   }));
 }

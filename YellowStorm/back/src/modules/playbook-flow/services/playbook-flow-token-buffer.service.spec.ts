@@ -30,11 +30,12 @@ describe('PlaybookFlowTokenBufferService', () => {
     await service.appendToken({ executionId: 'exec-1', taskId: 'step-1', iteration: 0 }, 'Hel');
     await service.appendToken({ executionId: 'exec-1', taskId: 'step-1', iteration: 0 }, 'lo');
 
-    expect(streamEvents.emitStepUpdate).toHaveBeenCalledTimes(2);
+    expect(streamEvents.emitStepUpdate).not.toHaveBeenCalled();
     expect(taskResultModel.updateOne).not.toHaveBeenCalled();
 
     await service.flushTask({ executionId: 'exec-1', taskId: 'step-1', iteration: 0 });
 
+    expect(streamEvents.emitStepUpdate).toHaveBeenCalledWith('exec-1', 'step-1', 'Hello');
     expect(taskResultModel.updateOne).toHaveBeenCalledTimes(1);
     expect(taskResultModel.updateOne).toHaveBeenCalledWith(
       { executionId: 'exec-1', taskId: 'step-1', iteration: 0 },
@@ -45,6 +46,20 @@ describe('PlaybookFlowTokenBufferService', () => {
       })],
       { upsert: true },
     );
+  });
+
+  it('redacts private paths split across token chunks before SSE emission', async () => {
+    const { service, streamEvents } = createService();
+    const key = { executionId: 'exec-1', taskId: 'step-1', iteration: 0 };
+
+    await service.appendToken(key, 'Saved at /mnt/work');
+    await service.appendToken(key, 'space/private/report.pdf');
+    await service.appendToken(key, ' done');
+    await service.flushTask(key);
+
+    const emitted = streamEvents.emitStepUpdate.mock.calls.map((call) => call[2]).join('');
+    expect(emitted).toBe('Saved at [REDACTED] done');
+    expect(emitted).not.toContain('/mnt/workspace');
   });
 
   it('flushes when buffered bytes reach the configured threshold', async () => {

@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.smart_rag.agents.factories.delegation_factory_helper import (
+    _append_capability_aware_file_context,
     _append_connector_repo_context,
+    _append_current_attachment_context,
     _append_workspace_document_context,
     _build_connector_repo_fixed_params,
     _build_mcp_context_note,
@@ -71,6 +73,74 @@ class TestConnectorRepoHelpers:
             [{"filename": "doc.pdf", "workspace_id": "w1"}],
         )
         assert "<workspace_documents>" in result
+
+    def test_capability_aware_context_omits_discoverable_inventory(self):
+        documents = [{"filename": "secret.pdf", "workspace_id": "w1"}]
+
+        result = _append_capability_aware_file_context(
+            "prompt",
+            documents,
+            [{"name": "run_code"}, {"name": "search"}],
+        )
+
+        assert result == "prompt"
+
+        string_result = _append_capability_aware_file_context(
+            "prompt",
+            documents,
+            ["run_code"],
+        )
+
+        assert string_result == "prompt"
+
+    def test_capability_aware_context_preserves_legacy_inventory(self):
+        result = _append_capability_aware_file_context(
+            "prompt",
+            [{"filename": "legacy.pdf", "workspace_id": "w1"}],
+            [{"name": "legacy_mcp"}],
+        )
+
+        assert "legacy.pdf" in result
+
+        non_discovery = _append_capability_aware_file_context(
+            "prompt",
+            [{"filename": "calculator.pdf", "workspace_id": "w1"}],
+            [{"name": "calculator"}],
+        )
+
+        assert "calculator.pdf" in non_discovery
+
+    def test_current_attachment_context_keeps_safe_logical_path_for_run_code(self):
+        result = _append_current_attachment_context(
+            "prompt",
+            [{"filename": "deatils.txt", "filepath": "owner/conversation/deatils.txt"}],
+            {
+                "run_code_context_json": (
+                    '{"userId":"user-1","runId":"run-1","sources":['
+                    '{"workspaceId":"workspace-1","alias":"conversation-files",'
+                    '"cephPrefix":"owner/conversation","scope":'
+                    '{"kind":"files","relativePaths":["deatils.txt"]}}]}'
+                )
+            },
+        )
+
+        assert "<current_attachments>" in result
+        assert "File: deatils.txt" in result
+        assert "/workspace/attachments/conversation-files/deatils.txt" in result
+        assert "owner/conversation" not in result
+        assert "{" not in result
+        assert "}" not in result
+
+    def test_current_attachment_context_does_not_restore_broad_inventory(self):
+        result = _append_current_attachment_context(
+            "prompt",
+            [{"filename": "current.txt"}],
+            {},
+        )
+
+        assert "current.txt" in result
+        assert "workspace_documents" not in result
+        assert "Do not ask which file was attached" in result
 
 
 class TestSkillAndConfigHelpers:

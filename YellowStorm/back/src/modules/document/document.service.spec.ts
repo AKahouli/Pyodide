@@ -404,6 +404,36 @@ describe('DocumentService', () => {
     });
   });
 
+  describe('openReadStream', () => {
+    it('opens a ranged stream and returns safe content metadata', async () => {
+      const body = Readable.from(['partial']);
+      setSendImpl({
+        GetObjectCommand: () => ({
+          Body: body,
+          ContentType: 'application/pdf',
+          ContentLength: 7,
+          ContentRange: 'bytes 0-6/20',
+          AcceptRanges: 'bytes',
+        }),
+      });
+
+      await expect(service.openReadStream('private/report.pdf', 'bytes=0-6')).resolves.toEqual({
+        body,
+        contentType: 'application/pdf',
+        contentLength: 7,
+        contentRange: 'bytes 0-6/20',
+        acceptRanges: 'bytes',
+      });
+      const command = mockSend.mock.calls.at(-1)?.[0];
+      expect(command.input).toMatchObject({ Key: 'private/report.pdf', Range: 'bytes=0-6' });
+    });
+
+    it('rejects multiple or malformed ranges', async () => {
+      await expect(service.openReadStream('private/report.pdf', 'bytes=0-1,4-5')).rejects.toThrow(BadRequestException);
+      expect(mockSend).not.toHaveBeenCalled();
+    });
+  });
+
   describe('delete', () => {
     const testObjectKey = 'folder/test-file.pdf';
 
@@ -416,7 +446,7 @@ describe('DocumentService', () => {
         .find((cmd) => cmd.constructor.name === 'DeleteObjectCommand');
       expect(deleteCommand.input).toMatchObject({ Bucket: BUCKET, Key: testObjectKey });
       expect(loggerService.log).toHaveBeenCalledWith('Document deleted', {
-        objectKey: testObjectKey,
+        objectKeyFingerprint: expect.stringMatching(/^[a-f0-9]{12}$/),
       });
     });
 
@@ -533,7 +563,9 @@ describe('DocumentService', () => {
         expect(mockSend).toHaveBeenCalledTimes(3);
         expect(loggerService.warn).toHaveBeenCalledWith(
           'S3 HeadObject still 403 Unknown after retries; assuming object present',
-          expect.objectContaining({ objectKey: testObjectKey }),
+          expect.objectContaining({
+            objectKeyFingerprint: expect.stringMatching(/^[a-f0-9]{12}$/),
+          }),
         );
       } finally {
         jest.useRealTimers();
@@ -805,8 +837,8 @@ describe('DocumentService', () => {
         .find((cmd) => cmd.constructor.name === 'CopyObjectCommand');
       expect(copyCommand.input).toMatchObject({ Bucket: BUCKET, Key: destKey });
       expect(loggerService.log).toHaveBeenCalledWith('Document copied', {
-        source: sourceKey,
-        destination: destKey,
+        sourceFingerprint: expect.stringMatching(/^[a-f0-9]{12}$/),
+        destinationFingerprint: expect.stringMatching(/^[a-f0-9]{12}$/),
       });
     });
 

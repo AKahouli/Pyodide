@@ -100,6 +100,25 @@ class TestLLMFactory:
             "create_no_tool_calls_llm",
         ],
     )
+    def test_forwards_reasoning_effort_from_model_config(self, monkeypatch, factory_method):
+        mock_litellm = MagicMock()
+        _install_lite_llm_mock(monkeypatch, mock_litellm)
+
+        getattr(LLMFactory(), factory_method)({
+            "provider": "reasoning-model",
+            "reasoning_effort": "high",
+        })
+
+        assert mock_litellm.call_args.kwargs["reasoning_effort"] == "high"
+
+    @pytest.mark.parametrize(
+        "factory_method",
+        [
+            "create_parallel_tool_calls_llm",
+            "create_no_parallel_tool_calls_llm",
+            "create_no_tool_calls_llm",
+        ],
+    )
     def test_normalizes_kimi_temperature_on_every_factory_method(self, monkeypatch, factory_method):
         """Live BadRequestError: "invalid temperature: only 1 is allowed for
         this model ... Model Group=kimi-k3" -- kimi rejects any temperature

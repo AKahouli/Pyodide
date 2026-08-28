@@ -147,7 +147,7 @@ export class GovernanceScopeOverviewService {
     return [
       this.check('scope_active', 'Scope active', scope.status === 'active', 'blocking', 'rule'),
       this.check('agents_mapped', 'Agent mapped', agentIds.length > 0, 'blocking', 'agent'),
-      this.check('knowledge_mapped', 'Knowledge mapped', hasWorkspaceBinding && documents.some((entry) => (entry.document as { status?: string; indexingStatus?: string } | undefined)?.status === 'completed' && (entry.document as { indexingStatus?: string } | undefined)?.indexingStatus === 'ready'), 'blocking', 'document'),
+      this.check('knowledge_mapped', 'Knowledge mapped', hasWorkspaceBinding, 'blocking', 'workspace'),
       this.check('ownership_assigned', 'Ownership assigned', ownershipAssigned, 'blocking', 'rule'),
       this.check('guardrails_reviewed', 'Guardrails reviewed', guardrailsReviewed, 'warning', 'agent'),
       this.check('draft_revision', 'Draft revision exists', Boolean(draftRevision), 'blocking', 'rule'),

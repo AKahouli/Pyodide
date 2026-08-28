@@ -37,6 +37,7 @@ import { normalizeWidgetSettings } from './constants/widget-default-settings';
 import { AgentRepository, CreateAgentInput, UpdateAgentInput } from './repositories/agent.repository';
 import { AgentRecord } from './repositories/agent-record.mapper';
 import { AgentRoleEmbeddingService } from './services/agent-role-embedding.service';
+import { PLATFORM_COPILOT, PLATFORM_COPILOT_AGENT_SLUG } from './constants/platform-copilot.constants';
 
 /** Agent-type slug of the orchestrating manager agent. */
 const MANAGER_SLUG = 'manager';
@@ -44,14 +45,13 @@ const MANAGER_SLUG = 'manager';
 const MONO_AGENT_SLUG = 'mono-agent';
 /** Agent-type slug for human agents exposed to third-party integrations. */
 const HUMAIN_AGENT_TYPE_SLUG = 'humain';
-export const PLAYBOOK_PLANNER_AGENT_TYPE_SLUG = 'playbook_planner';
 
 export interface PlaybookPlannerAgentConfig {
   agentTypeId: string;
   agentTypeSlug: string;
   agentId: string;
   agentRevision: string;
-  model: string;
+  model: string | null;
   temperature: number;
   instruction: string;
 }
@@ -60,11 +60,8 @@ export interface PlaybookPlannerAgentOption {
   id: string;
   name: string;
   description?: string;
-  model: string;
+  model: string | null;
 }
-
-export type PlaybookSuggestorAgentConfig = PlaybookPlannerAgentConfig;
-export type PlaybookSuggestorAgentOption = PlaybookPlannerAgentOption;
 
 @Injectable()
 export class AgentService {
@@ -432,6 +429,7 @@ export class AgentService {
     if (!agent) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
+    this.assertReservedPlatformCopilotIdentity(agent, dto);
 
     if (dto.agentType) {
       const agentType = await this.agentTypeService.findById(dto.agentType);
@@ -482,6 +480,12 @@ export class AgentService {
     if (!agent) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
+    if (this.isReservedPlatformCopilotAgent(agent)) {
+      throw new ForbiddenException(
+        ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY,
+        'Platform Copilot technical identity is system-reserved',
+      );
+    }
 
     await this.agentRepository.deleteById(agentId);
 
@@ -514,6 +518,8 @@ export class AgentService {
     sharedAgentIds?: string[],
     groupMembers?: any[],
     selectedConnectorId?: string,
+    runtimeContext?: { conversationId: string; correlationId: string },
+    reasoningEffort?: string,
   ): Promise<IGrpcAgent[]> {
     this.logger.log('Building agents for stream', {
       userId,
@@ -678,14 +684,14 @@ export class AgentService {
         .map(effectiveModelIdForAgent)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[] }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; maxInputTokens: number | null }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
         if (m) {
-          modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature, inputModalities: m.inputModalities });
+          modelMap.set(m.id, { model: m.id, omitTemperature: m.omitTemperature, inputModalities: m.inputModalities, maxInputTokens: m.maxInputTokens });
         }
       }
     }
@@ -751,6 +757,17 @@ export class AgentService {
         userId,
         this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections),
       );
+      if (agent.agentTypeSlug === PLATFORM_COPILOT && runtimeContext) {
+        for (const binding of connectorBindings) {
+          binding.auth_headers = {
+            ...((binding.auth_headers as Record<string, string> | undefined) ?? {}),
+            'X-YellowStorm-User-Id': userId,
+            'X-YellowStorm-Agent-Id': agent.id,
+            'X-YellowStorm-Conversation-Id': runtimeContext.conversationId,
+            'X-Correlation-Id': runtimeContext.correlationId,
+          };
+        }
+      }
       const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
       // Build prompt using batch-resolved prompts
@@ -792,6 +809,8 @@ export class AgentService {
         chatbot: {
           model: proxyModel,
           input_modalities: resolvedModel?.inputModalities || ['text'],
+          ...(reasoningEffort && pingedAgents.length === 0 ? { reasoning_effort: reasoningEffort } : {}),
+          ...(resolvedModel?.maxInputTokens ? { context_window_tokens: resolvedModel.maxInputTokens } : {}),
         },
         agent_params: {
           params: {
@@ -958,7 +977,6 @@ export class AgentService {
           if (String(binding.connector_slug || '').toLowerCase() !== 'playbook-mcp') continue;
           binding.auth_headers = {
             ...((binding.auth_headers as Record<string, string>) || {}),
-            'X-YellowStorm-Tenant-Id': runtimeContext?.tenantId || 'default',
             'X-YellowStorm-Agent-Id': agent.id,
             'X-YellowStorm-Conversation-Id': runtimeContext?.conversationId || sessionId || 'playbook-runtime',
             'X-Correlation-Id': runtimeContext?.correlationId || sessionId || 'playbook-runtime',
@@ -1038,11 +1056,6 @@ export class AgentService {
               ...(sessionId ? { session_id: sessionId } : {}),
               platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
               platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
-              ...(runtimeContext ? {
-                mascot_tenant_id: runtimeContext.tenantId || 'default',
-                mascot_conversation_id: runtimeContext.conversationId || sessionId || '',
-                mascot_correlation_id: runtimeContext.correlationId || sessionId || '',
-              } : {}),
               ...(resolvedModel?.omitTemperature
                 ? { omit_temperature: 'true' }
                 : { temperature: String(agent.temperature) }),
@@ -1495,23 +1508,40 @@ export class AgentService {
     }
   }
 
-  async findActiveDefaultAgentIdBySlug(slug: string): Promise<string | null> {
-    return this.agentRepository.findActiveDefaultIdBySlug(slug);
+  async findActivePlatformCopilotAgentId(): Promise<string | null> {
+    return this.agentRepository.findActiveDefaultIdBySlugAndType(PLATFORM_COPILOT_AGENT_SLUG, PLATFORM_COPILOT);
+  }
+
+  private isReservedPlatformCopilotAgent(agent: AgentRecord): boolean {
+    return agent.isDefault
+      && agent.slug === PLATFORM_COPILOT_AGENT_SLUG
+      && agent.agentTypeSlug === PLATFORM_COPILOT;
+  }
+
+  private assertReservedPlatformCopilotIdentity(agent: AgentRecord, dto: UpdateAgentDto): void {
+    if (!this.isReservedPlatformCopilotAgent(agent)) return;
+    const changesIdentity = (dto.slug !== undefined && dto.slug !== PLATFORM_COPILOT_AGENT_SLUG)
+      || (dto.agentType !== undefined && dto.agentType !== agent.agentType)
+      || dto.isActive === false
+      || dto.isDefaultForType === false;
+    if (changesIdentity) {
+      throw new ForbiddenException(
+        ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY,
+        'Platform Copilot technical identity is system-reserved',
+      );
+    }
   }
 
   async listPlaybookPlannerAgentOptions(): Promise<PlaybookPlannerAgentOption[]> {
-    // The planner agent type must be active (findBySlug filters on isActive).
-    const plannerType = await this.agentTypeService.findBySlug(PLAYBOOK_PLANNER_AGENT_TYPE_SLUG);
-    if (!plannerType) return [];
     const agents = await this.agentRepository.findActiveDefaults();
-    return agents.flatMap((agent) => {
-      const model = agent.llmModel?.trim();
-      return agent.agentTypeSlug === PLAYBOOK_PLANNER_AGENT_TYPE_SLUG && model ? [{
+    return agents.map((agent) => {
+      const model = agent.llmModel?.trim() || null;
+      return {
         id: agent._id,
         name: agent.name,
         description: agent.description || undefined,
         model,
-      }] : [];
+      };
     });
   }
 
@@ -1519,66 +1549,27 @@ export class AgentService {
     if (!Types.ObjectId.isValid(agentId)) {
       throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is invalid');
     }
-    const agent = await this.agentRepository.findByIdDefault(agentId);
-    const model = agent?.llmModel?.trim();
+    const record = await this.agentRepository.findById(agentId);
+    const agentType = record
+      ? (await this.agentTypeService.getManyForHydration([record.agentType])).get(record.agentType)
+      : undefined;
+    const model = record?.llmModel?.trim();
     if (
-      !agent
-      || !agent.isActive
-      || agent.agentTypeSlug !== PLAYBOOK_PLANNER_AGENT_TYPE_SLUG
-      || !model
+      !record
+      || !record.isDefault
+      || !record.isActive
+      || !agentType
     ) {
       throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is unavailable or has no model configured');
     }
-    // The planner agent type must itself be active (findBySlug filters on isActive).
-    const plannerType = await this.agentTypeService.findBySlug(PLAYBOOK_PLANNER_AGENT_TYPE_SLUG);
-    if (!plannerType) {
-      throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is unavailable or has no model configured');
-    }
     return {
-      agentTypeId: agent.agentType,
-      agentTypeSlug: agent.agentTypeSlug,
-      agentId: agent._id,
-      agentRevision: agent.updatedAt?.toISOString() ?? agent._id,
-      model,
-      temperature: agent.temperature,
-      instruction: agent.instruction,
-    };
-  }
-
-  async listPlaybookSuggestorAgentOptions(): Promise<PlaybookSuggestorAgentOption[]> {
-    const agents = await this.listActiveDefaultAgentOptions();
-    return agents.flatMap((agent) => {
-      const model = agent.model?.trim();
-      return model ? [{
-        id: agent.id,
-        name: agent.name,
-        description: agent.description,
-        model,
-      }] : [];
-    });
-  }
-
-  async findPlaybookSuggestorById(agentId: string): Promise<PlaybookSuggestorAgentConfig> {
-    if (!Types.ObjectId.isValid(agentId)) {
-      throw new BadRequestException(ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE, 'The selected Playbook Suggestor agent is invalid');
-    }
-    const agent = await this.agentRepository.findByIdDefault(agentId);
-    const model = agent?.llmModel?.trim();
-    if (
-      !agent
-      || !agent.isActive
-      || !model
-    ) {
-      throw new BadRequestException(ErrorCode.PLAYBOOK_SUGGESTOR_UNAVAILABLE, 'The selected Playbook Suggestor agent is unavailable or has no model configured');
-    }
-    return {
-      agentTypeId: agent.agentType,
-      agentTypeSlug: agent.agentTypeSlug,
-      agentId: agent._id,
-      agentRevision: agent.updatedAt?.toISOString() ?? agent._id,
-      model,
-      temperature: agent.temperature,
-      instruction: agent.instruction,
+      agentTypeId: agentType.id,
+      agentTypeSlug: agentType.slug,
+      agentId: record._id,
+      agentRevision: record.updatedAt?.toISOString() ?? record._id,
+      model: model || null,
+      temperature: record.temperature,
+      instruction: record.instruction,
     };
   }
 

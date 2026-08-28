@@ -27,7 +27,7 @@ describe('PlaybookFlowExecutionService event handling', () => {
 
   it('flushes buffered task tokens before persisting a completed node result', async () => {
     const tokenBufferService = {
-      isEnabled: jest.fn(),
+      isEnabled: jest.fn().mockReturnValue(true),
       appendToken: jest.fn(),
       flushTask: jest.fn().mockResolvedValue(undefined),
       flushExecution: jest.fn(),
@@ -91,6 +91,46 @@ describe('PlaybookFlowExecutionService event handling', () => {
     );
   });
 
+  it('preserves sensitive trace text while always removing storage paths', async () => {
+    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
+    jest.spyOn((service as any).observabilityService, 'shouldRedactSensitiveText').mockResolvedValue(false);
+    taskResultModel.updateOne.mockResolvedValue(undefined);
+    const trace = {
+      tool_trace: [{
+        tool_name: 'shell',
+        args: {
+          authorization: 'Bearer abc',
+          command: 'cat /mnt/workspace/cv.docx then ceph://private/report.pdf',
+          storagePath: 'owner/system_exec-1/private/report.pdf',
+        },
+        output_summary: 'See https://host/file?x-amz-signature=secret',
+      }],
+      llm_prompt_trace: [{ stage: 'initial_request', model: 'test', prompt: 'Bearer abc', generated_output: 'token=abc' }],
+    };
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'NodeTraceUpdate', node_id: 'step-1', iteration: 0, payload: trace,
+    });
+
+    const persistedTrace = taskResultModel.updateOne.mock.calls[0][1].$set;
+    expect(persistedTrace.toolTrace[0].args).toEqual({
+      authorization: 'Bearer abc',
+      command: 'cat /mnt/workspace/cv.docx then [REDACTED]',
+    });
+    expect(persistedTrace.toolTrace[0].outputSummary).toBe('See [REDACTED]');
+    expect(persistedTrace.llmPromptTrace[0].prompt).toBe('Bearer abc');
+    expect(streamEvents.emitStepUpdate.mock.calls[0][3].toolTrace).toEqual(persistedTrace.toolTrace);
+
+    taskResultModel.updateOne.mockClear();
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'NodeCompleted', node_id: 'step-1', iteration: 0, payload: { output: 'done', ...trace },
+    });
+
+    const completedTrace = taskResultModel.updateOne.mock.calls[0][1].$set;
+    expect(completedTrace.toolTrace).toEqual(persistedTrace.toolTrace);
+    expect(completedTrace.llmPromptTrace[0].prompt).toBe('Bearer abc');
+  });
+
   it('flushes buffered execution tokens before marking execution failed', async () => {
     const tokenBufferService = {
       isEnabled: jest.fn(),
@@ -109,6 +149,27 @@ describe('PlaybookFlowExecutionService event handling', () => {
     expect(executionModel.updateOne).toHaveBeenCalledWith(
       { _id: 'exec-1', status: { $nin: ['completed', 'failed', 'cancelled'] } },
       { status: 'failed', error: 'boom', endedAt: expect.any(Date) },
+    );
+  });
+
+  it('redacts private paths from failed node persistence and stream events', async () => {
+    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
+    taskResultModel.updateOne.mockResolvedValue(undefined);
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'NodeFailed',
+      node_id: 'step-1',
+      iteration: 0,
+      payload: { error: 'Failed while reading /mnt/workspace/private/report.pdf' },
+    });
+
+    expect(taskResultModel.updateOne).toHaveBeenCalledWith(
+      { executionId: 'exec-1', taskId: 'step-1', iteration: 0 },
+      expect.objectContaining({ $set: expect.objectContaining({ error: 'Failed while reading [REDACTED]' }) }),
+      { upsert: true },
+    );
+    expect(streamEvents.emitStepComplete).toHaveBeenCalledWith(
+      'exec-1', 'step-1', undefined, 'Failed while reading [REDACTED]', 0,
     );
   });
 
@@ -176,12 +237,39 @@ describe('PlaybookFlowExecutionService event handling', () => {
       'Executive summary',
       undefined,
       0,
-      [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }],
+      [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf' }],
       [{ type: 'text', data: { content: 'Executive summary' } }],
       expect.objectContaining({
         reasoningChain: [{ id: 'step_1', type: 'observation', label: 'Identify', description: 'Picked the answer.' }],
       }),
     );
+  });
+
+  it('preserves public source links and redacts signed links in completed SSE', async () => {
+    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
+    taskResultModel.updateOne.mockResolvedValue(undefined);
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'NodeCompleted',
+      node_id: 'step-1',
+      iteration: 0,
+      payload: {
+        output: 'Research complete',
+        components: [{
+          type: 'sources',
+          data: {
+            sources: [
+              { title: 'Public source', url: 'https://example.com/article' },
+              { title: 'Storage source', url: 'https://storage.example/private.pdf?X-Amz-Signature=secret' },
+            ],
+          },
+        }],
+      },
+    });
+
+    const components = streamEvents.emitStepComplete.mock.calls[0][6];
+    expect(components[0].data.sources[0].url).toBe('https://example.com/article');
+    expect(components[0].data.sources[1].url).toBe('[REDACTED]');
   });
 
   it('does not fail task completion when public reasoning JSON is malformed', async () => {
@@ -242,5 +330,26 @@ describe('PlaybookFlowExecutionService event handling', () => {
       'cancelled',
       'Router router-1 returned __cancelled__',
     );
+  });
+
+  it('marks the execution failed when the runtime completes after a task failure', async () => {
+    const { service, taskResultModel, executionModel, streamEvents } = createExecutionServiceForTests();
+    taskResultModel.findOne.mockReturnValue({
+      sort: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue({ error: 'upstream failed' }),
+    });
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'ExecutionCompleted',
+      node_id: '',
+      iteration: 0,
+      payload: {},
+    });
+
+    expect(executionModel.updateOne).toHaveBeenCalledWith(
+      { _id: 'exec-1', status: { $nin: ['completed', 'failed', 'cancelled'] } },
+      { status: 'failed', error: 'upstream failed', endedAt: expect.any(Date) },
+    );
+    expect(streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-1', 'failed', 'upstream failed');
   });
 });

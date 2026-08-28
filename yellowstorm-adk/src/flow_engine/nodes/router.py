@@ -54,6 +54,26 @@ async def run_router(
         "payload": {"label": label},
     })
 
+    preselected_label = state.get("router_decisions", {}).get(node_id)
+    if preselected_label == "__error__" and preselected_label in output_labels:
+        decision_payload = {"label": preselected_label, "mode": "error"}
+        writer({
+            "type": "RouterDecision",
+            "node_id": node_id,
+            "iteration": iteration,
+            "payload": decision_payload,
+        })
+        writer({
+            "type": "NodeCompleted",
+            "node_id": node_id,
+            "iteration": iteration,
+            "payload": decision_payload,
+        })
+        return {
+            "router_decisions": {node_id: preselected_label},
+            "iterations": {node_id: iteration + 1},
+        }
+
     chosen_label = output_labels[0]
     decision_payload: dict[str, Any] = {"label": chosen_label, "mode": "llm"}
 

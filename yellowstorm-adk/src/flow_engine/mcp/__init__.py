@@ -492,6 +492,7 @@ async def call_mcp_tool(
     params: Dict[str, Any],
     auth_headers: Optional[Dict[str, str]] = None,
     auth_env: Optional[Dict[str, str]] = None,
+    log_payload: bool = True,
 ) -> Any:
     """Call an MCP tool and return either text or a structured response.
 
@@ -517,7 +518,7 @@ async def call_mcp_tool(
         action_key,
         transport_type,
         sorted((merged_headers or {}).keys()),
-        _log_payload(params),
+        _log_payload(params) if log_payload else "[suppressed]",
     )
 
     try:
@@ -589,15 +590,22 @@ async def call_mcp_tool(
             content_parts = getattr(result, "content", []) or []
             error_texts = [p.text for p in content_parts if hasattr(p, "text")]
             error_response = (
-                f"Connector action '{action_key}' failed: "
-                f"{'; '.join(error_texts) or 'Unknown error'}"
+                f"Connector action '{action_key}' failed"
+                if not log_payload
+                else (
+                    f"Connector action '{action_key}' failed: "
+                    f"{'; '.join(error_texts) or 'Unknown error'}"
+                )
             )
-            logger.error("mcp_tool_error action=%s error_text=%s", action_key, "; ".join(error_texts) or "Unknown error")
+            if log_payload:
+                logger.error("mcp_tool_error action=%s error_text=%s", action_key, "; ".join(error_texts) or "Unknown error")
+            else:
+                logger.error("mcp_tool_error action=%s error_text=[suppressed]", action_key)
             logger.info(
                 "mcp_call_tool_response action=%s transport=%s response_payload=%s",
                 action_key,
                 transport_type,
-                _log_payload(error_response),
+                _log_payload(error_response) if log_payload else "[suppressed]",
             )
             return error_response
 
@@ -635,12 +643,19 @@ async def call_mcp_tool(
             "mcp_call_tool_response action=%s transport=%s response_payload=%s",
             action_key,
             transport_type,
-            _log_payload(normalized_response),
+            _log_payload(normalized_response) if log_payload else "[suppressed]",
         )
         return normalized_response
     except Exception as e:
-        error_response = f"Connector action '{action_key}' failed: {str(e)}"
-        logger.error("MCP tool call failed: action=%s error_type=%s error=%s", action_key, type(e).__name__, str(e))
+        error_response = (
+            f"Connector action '{action_key}' failed: {str(e)}"
+            if log_payload
+            else f"Connector action '{action_key}' failed"
+        )
+        if log_payload:
+            logger.error("MCP tool call failed: action=%s error_type=%s error=%s", action_key, type(e).__name__, str(e))
+        else:
+            logger.error("MCP tool call failed: action=%s error_type=%s error=[suppressed]", action_key, type(e).__name__)
         # Unwrap ExceptionGroup / TaskGroup sub-exceptions for visibility
         # BaseExceptionGroup is only a builtin on Python 3.11+; use backport on 3.10
         try:
@@ -652,15 +667,25 @@ async def call_mcp_tool(
                 _BEG = None  # type: ignore[assignment]
         if _BEG is not None and isinstance(e, _BEG):
             for sub in e.exceptions:  # type: ignore[attr-defined]
-                logger.error("MCP sub-exception: action=%s type=%s error=%s", action_key, type(sub).__name__, str(sub))
+                logger.error(
+                    "MCP sub-exception: action=%s type=%s error=%s",
+                    action_key,
+                    type(sub).__name__,
+                    str(sub) if log_payload else "[suppressed]",
+                )
                 if isinstance(sub, _BEG):
                     for nested in sub.exceptions:  # type: ignore[attr-defined]
-                        logger.error("MCP nested-exception: action=%s type=%s error=%s", action_key, type(nested).__name__, str(nested))
+                        logger.error(
+                            "MCP nested-exception: action=%s type=%s error=%s",
+                            action_key,
+                            type(nested).__name__,
+                            str(nested) if log_payload else "[suppressed]",
+                        )
         logger.info(
             "mcp_call_tool_response action=%s transport=%s response_payload=%s",
             action_key,
             transport_type,
-            _log_payload(error_response),
+            _log_payload(error_response) if log_payload else "[suppressed]",
         )
         return error_response
 

@@ -34,13 +34,6 @@ export class PlaybookFlowSettingsController {
     return this.settingsService.listPlannerAgents();
   }
 
-  @Get('suggestor-agents')
-  @ApiOperation({ summary: 'List eligible Playbook Suggestor agents' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
-  async listSuggestorAgents() {
-    return this.settingsService.listSuggestorAgents();
-  }
-
   @Post()
   @ApiOperation({ summary: 'Update admin playbook settings' })
   @RequirePermissions(Permissions.PLAYBOOK_UPDATE)

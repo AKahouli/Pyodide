@@ -61,7 +61,7 @@ async function writeRepeatabilityWorkbook(
 ): Promise<void> {
   const excelModule: ExcelModule = await import('exceljs');
   const workbook = new excelModule.Workbook();
-  workbook.creator = 'YellowStorm';
+  workbook.creator = 'Yellowmind';
   workbook.created = new Date();
 
   const summarySheet = workbook.addWorksheet(t('repeatability.export.sheet.summary'));

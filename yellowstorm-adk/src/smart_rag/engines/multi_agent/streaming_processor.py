@@ -11,6 +11,7 @@ Classes:
 import asyncio
 import contextlib
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, Any, Dict, List
@@ -29,6 +30,17 @@ from src.smart_rag.engines.helpers import (
 from src.smart_rag.messaging.component_tracker import ComponentTracker
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
 from src.guardrails.adapters.google_adk import agent_tree_has_output_guardrail
+from src.smart_rag.infrastructure.model_parameters import get_context_window_for_model
+from src.smart_rag.run_code_artifacts import build_tool_result_artifacts
+from src.run_workspace import run_workspace_path
+from src.smart_rag.tool_activity_presenter import (
+    present_tool_call,
+    sanitize_activity_summary,
+    sanitize_tool_result_value,
+    serialize_tool_args,
+    serialize_tool_result,
+)
+from src.smart_rag.thought_activity_tracker import ThoughtActivityTracker
 
 logger = get_logger("api.routers.agentic_rag.StreamingEventProcessor")
 
@@ -63,6 +75,7 @@ class StreamingEventProcessor:
             self.config.call_id_registry = {}
         self._manager_pending_tools_by_call_id: Dict[str, List[str]] = {}
         self._manager_pending_tools_by_name: Dict[str, List[str]] = {}
+        self._manager_pending_tool_metadata: Dict[str, Dict[str, Any]] = {}
         self._manager_seen_tool_ids: set[str] = set()
 
     def _get_manager_info(self, manager_agent: Any = None) -> tuple:
@@ -128,6 +141,7 @@ class StreamingEventProcessor:
 
         accumulated_manager_text = ""
         delegation_count = 0
+        thought_activity_tracker = ThoughtActivityTracker()
 
         # Token usage tracking
         total_prompt_tokens = 0
@@ -193,6 +207,7 @@ class StreamingEventProcessor:
                                 "output_tokens": response_tokens,
                                 "total_tokens": event_total_tokens,
                                 "model": model_name,
+                                "context_window_tokens": get_context_window_for_model(model_name) or 0,
                             },
                             "metadata": {"message_id": session_id},
                         }
@@ -221,6 +236,8 @@ class StreamingEventProcessor:
                     current_agent,
                     component_tracker,
                     guarded_output,
+                    run_id=session_id,
+                    thought_activity_tracker=thought_activity_tracker,
                 )
         except (asyncio.CancelledError, GeneratorExit):
             should_close_stream = False
@@ -260,6 +277,8 @@ class StreamingEventProcessor:
         current_agent: str = None,
         component_tracker: ComponentTracker = None,
         guarded_output: bool = False,
+        run_id: str | None = None,
+        thought_activity_tracker: Optional[ThoughtActivityTracker] = None,
     ) -> tuple:
         """Handle individual event parts and update message_id if needed.
 
@@ -290,11 +309,72 @@ class StreamingEventProcessor:
                 current_agent,
             )
 
-        # Skip text parts if event has multiple parts (indicates explanation + function call)
-        has_multiple_parts = len(event.content.parts) > 1
+        has_function_call = any(part.function_call for part in event.content.parts)
+        thought_activity_tracker = thought_activity_tracker or ThoughtActivityTracker()
 
         for part in event.content.parts:
-            if part.text and not event.is_final_response() and not has_multiple_parts:
+            is_thought = (
+                part.text
+                and getattr(part, "thought", False) is True
+                and not guarded_output
+            )
+            if not is_thought and part.text:
+                thought_activity_tracker.end_for_visible_text()
+            if part.function_call or part.function_response:
+                thought_activity_tracker.end_for_tool_boundary()
+
+            if is_thought:
+                manager_id, manager_name = self._get_manager_info(manager_agent)
+                observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                update = thought_activity_tracker.observe(
+                    part.text,
+                    getattr(event, "partial", None),
+                    observed_at,
+                )
+                if q and update:
+                    await q.put(self.streaming_formatter.format_component_event(
+                        agent_id=manager_id,
+                        component_type="agent_activity",
+                        component_data={
+                            "summary": sanitize_activity_summary(update.detail),
+                            "detail": update.detail,
+                            "status": "completed",
+                            "started_at": update.started_at,
+                            "completed_at": observed_at,
+                            "actor_id": manager_id,
+                            "actor_name": manager_name,
+                        },
+                        message_id=current_message_id,
+                        component_id=update.component_id,
+                        action=update.action,
+                    ))
+            elif (
+                part.text
+                and getattr(part, "thought", False) is not True
+                and has_function_call
+                and not event.is_final_response()
+                and not guarded_output
+            ):
+                summary = sanitize_activity_summary(part.text)
+                if summary and q:
+                    manager_id, manager_name = self._get_manager_info(manager_agent)
+                    observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                    await q.put(self.streaming_formatter.format_component_event(
+                        agent_id=manager_id,
+                        component_type="agent_activity",
+                        component_data={
+                            "summary": summary,
+                            "status": "completed",
+                            "started_at": observed_at,
+                            "completed_at": observed_at,
+                            "actor_id": manager_id,
+                            "actor_name": manager_name,
+                        },
+                        message_id=current_message_id,
+                        component_id=f"activity-{uuid.uuid4()}",
+                        action="add",
+                    ))
+            elif part.text and not event.is_final_response() and not has_function_call:
                 event_text = part.text
                 accumulated_manager_text += event_text
                 if not guarded_output:
@@ -311,25 +391,41 @@ class StreamingEventProcessor:
 
                 delegation_count += 1
                 func_name = part.function_call.name
+                tool_args = dict(part.function_call.args or {})
+                presentation = present_tool_call(func_name, tool_args)
 
                 if q:
                     raw_call_id = getattr(part.function_call, "id", None)
                     call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id else str(uuid.uuid4())
-                    manager_id, _ = self._get_manager_info(manager_agent)
+                    manager_id, manager_name = self._get_manager_info(manager_agent)
                     tool_component_id = f"tool-{manager_id}-{call_id}"
                     if tool_component_id in self._manager_seen_tool_ids:
                         tool_component_id = f"{tool_component_id}-{uuid.uuid4()}"
                     self._manager_seen_tool_ids.add(tool_component_id)
                     self._manager_pending_tools_by_call_id.setdefault(call_id, []).append(tool_component_id)
                     self._manager_pending_tools_by_name.setdefault(func_name, []).append(tool_component_id)
+                    started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                    self._manager_pending_tool_metadata[tool_component_id] = {
+                        "started_monotonic": time.monotonic(),
+                    }
                     await q.put(self.streaming_formatter.format_component_event(
                         agent_id=manager_id,
-                        component_type="tool_info",
+                        component_type="tool_activity",
                         component_data={
-                            "title": func_name,
+                            "tool_name": func_name,
                             "status": "running",
-                            "params": json.dumps(dict(part.function_call.args or {}), default=str, sort_keys=True),
-                            "started_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                            "params_json": serialize_tool_args(tool_args),
+                            "started_at": started_at,
+                            "display_key": presentation.display_key or "",
+                            "fallback_display_name": presentation.fallback_display_name or "",
+                            "summary": presentation.summary,
+                            "render_kind": presentation.render_kind,
+                            "actor_id": manager_id,
+                            "actor_name": manager_name,
+                            **({
+                                "primary_input": sanitize_tool_result_value(tool_args.get("code", "")),
+                                "primary_input_language": tool_args.get("language", ""),
+                            } if func_name == "run_code" else {}),
                         },
                         message_id=current_message_id,
                         component_id=tool_component_id,
@@ -374,7 +470,7 @@ class StreamingEventProcessor:
                     code = ""
                     if hasattr(part.function_call, "args") and part.function_call.args:
                         args_dict = dict(part.function_call.args)
-                        code = args_dict.get("code", "")
+                        code = sanitize_tool_result_value(args_dict.get("code", ""))
 
                     # Use function_call.id as component_id for tracking
                     call_id = (
@@ -449,9 +545,7 @@ class StreamingEventProcessor:
                     name=func_name,
                     input={
                         "function_name": func_name,
-                        "arguments": dict(part.function_call.args)
-                        if part.function_call.args
-                        else {},
+                        "arguments": sanitize_tool_result_value(tool_args),
                         "delegation_order": delegation_count,
                     },
                 )
@@ -480,27 +574,44 @@ class StreamingEventProcessor:
                                         self._manager_pending_tools_by_call_id.pop(call_id)
                                     break
                     if tool_component_id:
+                        metadata = self._manager_pending_tool_metadata.pop(tool_component_id, {})
                         result_json = ""
                         if getattr(q, "include_tool_results", False) and func_name != "generate_web_preview" and not func_name.startswith("delegate_to_"):
-                            try:
-                                candidate = json.dumps(part.function_response.response, default=str, separators=(",", ":"))
-                                if len(candidate.encode("utf-8")) <= 65536:
-                                    result_json = candidate
-                            except (TypeError, ValueError):
-                                logger.warning("manager_tool_result_serialization_failed tool=%s", func_name)
+                            result_json = serialize_tool_result(part.function_response.response)
                         manager_id, _ = self._get_manager_info(manager_agent)
+                        failed = getattr(part.function_response, "is_error", False)
+                        response_payload = part.function_response.response
+                        if func_name == "run_code" and isinstance(response_payload, dict) and response_payload.get("ok") is False:
+                            failed = True
+                        started_monotonic = metadata.get("started_monotonic")
+                        duration_ms = max(0, round((time.monotonic() - started_monotonic) * 1000)) if isinstance(started_monotonic, float) else 0
                         await q.put(self.streaming_formatter.format_component_event(
                             agent_id=manager_id,
-                            component_type="tool_info",
+                            component_type="tool_activity",
                             component_data={
-                                "title": func_name,
-                                "status": "failed" if getattr(part.function_response, "is_error", False) else "completed",
+                                "tool_name": func_name,
+                                "status": "failed" if failed else "completed",
+                                "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                                "duration_ms": duration_ms,
                                 **({"result_json": result_json} if result_json else {}),
                             },
                             message_id=current_message_id,
                             component_id=tool_component_id,
                             action="update",
                         ))
+                        for artifact in build_tool_result_artifacts(
+                            response_payload,
+                            tool_component_id,
+                            run_workspace_path(self.config.user_id, run_id or ""),
+                        ):
+                            await q.put(self.streaming_formatter.format_component_event(
+                                agent_id=manager_id,
+                                component_type="artifact",
+                                component_data=artifact,
+                                message_id=current_message_id,
+                                component_id=f"artifact-{artifact['artifact_id']}",
+                                action="add",
+                            ))
                 if func_name == "generate_ui" and q:
                     await self._handle_dataviz_response(
                         part.function_response, current_message_id, q

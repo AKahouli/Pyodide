@@ -1,4 +1,6 @@
 import { extractComponentData } from '../../conversation/utils/component-mapper';
+import { sanitizeSerializedToolValue } from '../../conversation/utils/public-component-sanitizer';
+import { redactTaskDiagnosticText } from '../../conversation/utils/task-diagnostics';
 
 // ===== Constants =====
 
@@ -197,7 +199,16 @@ export function mapGrpcComponents(
   const comps = (grpcComponents || []).slice(-maxComponents);
   return comps.map((comp: any, idx: number) => {
     const { type, data } = extractComponentData(comp);
-    return { id: comp.id || `comp-${taskId}-${idx}`, type, data: truncateComponentData(data, maxDataBytes) };
+    const publicData = type === 'toolActivity'
+      ? {
+        ...data,
+        ...(typeof data.paramsJson === 'string' ? { paramsJson: sanitizeSerializedToolValue(data.paramsJson) } : {}),
+        ...(typeof data.resultJson === 'string' ? { resultJson: sanitizeSerializedToolValue(data.resultJson) } : {}),
+      }
+      : type === 'task' && Array.isArray(data.items)
+        ? { ...data, items: data.items.map((item) => redactTaskDiagnosticText(String(item))) }
+        : data;
+    return { id: comp.id || `comp-${taskId}-${idx}`, type, data: truncateComponentData(publicData, maxDataBytes) };
   });
 }
 

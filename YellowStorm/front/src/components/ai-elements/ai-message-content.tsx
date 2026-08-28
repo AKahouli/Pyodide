@@ -1,21 +1,18 @@
 'use client';
 
 import { cn } from '@/lib/utils';
+import { getMimeTypeFromFilename, openFileViewerFromUrlLoader } from '@/modules/file-viewer';
 import { downloadCode } from '@/lib/download';
 import { toast } from 'sonner';
 import { useState, useMemo, useCallback, useEffect, useRef, type HTMLAttributes } from 'react';
-import { useShouldAutoOpenPreview, useFileViewerDisplayMode } from './message-context';
+import { useFileViewerDisplayMode, useShouldAutoOpenPreview } from './message-context';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CodeArtifact } from './code-artifact';
-import { Reasoning, ReasoningTrigger, ReasoningContent } from './reasoning';
 import { Queue, QueueSection, QueueSectionTrigger, QueueSectionLabel, QueueSectionContent, QueueList, QueueItem, QueueItemIndicator, QueueItemContent } from './queue';
 import { Plan, PlanHeader, PlanTitle, PlanDescription, PlanContent, PlanFooter } from './plan';
 import { Checkpoint, CheckpointIcon, CheckpointTrigger } from './checkpoint';
 import { Task, TaskTrigger, TaskContent, TaskItem, TaskDiagnosticsTrigger } from './task';
-import { Tool, ToolHeader, ToolContent, ToolInput } from './tool';
-import type { ToolUIPart } from 'ai';
-import { ChainOfThought, ChainOfThoughtHeader, ChainOfThoughtContent, ChainOfThoughtStep } from './chain-of-thought';
 import { Sources, SourcesTrigger, SourcesContent, Source } from './sources';
 import { Sandbox, SandboxHeader, SandboxContent, SandboxTabs, SandboxTabsBar, SandboxTabsList, SandboxTabsTrigger, SandboxTabContent, type SandboxState } from './sandbox';
 import { WebPreview, WebPreviewNavigation, WebPreviewBody, isolateGeneratedPreviewHtml } from './web-preview';
@@ -30,8 +27,8 @@ import type { ChartConfig } from '@/components/ui/chart';
 import type { ChartComponentData } from '@/modules/conversation/types';
 import type { ChoiceComponentData, ChoiceInteractionMetadata } from '@/modules/conversation/types';
 import { ChoicePartRenderer, type ChoiceComponentAction } from './choice/ChoicePartRenderer';
+import { ChoiceTabsQuestions } from './choice/ChoiceTabsQuestions';
 import { useModuleTranslation } from '@/modules/localization';
-import { isViewableFilename } from '@/modules/file-viewer/renderers';
 import { Separator } from '../ui/separator';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
 import { rehypeCitationMarkers } from '@/lib/rehype-citation-markers';
@@ -47,6 +44,7 @@ export interface CitationData {
   parentId: string;
   sourceType: 'text' | 'image';
   source: string;
+  fileName?: string;
   externalId: string;
   page: string;
   pageContent: string;
@@ -74,10 +72,15 @@ export interface CodePart {
   filename?: string;
 }
 
-export interface ReasoningPart {
-  type: 'reasoning';
-  content: string;
-  duration?: number;
+export interface AgentActivityPart {
+  type: 'agentActivity';
+  summary: string;
+  status: 'running' | 'completed';
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  actorId?: string;
+  actorName?: string;
 }
 
 export interface QueueItemData {
@@ -165,6 +168,7 @@ export interface CitationPart {
   parentId: string;
   sourceType: 'text' | 'image';
   source: string;
+  fileName?: string;
   externalId: string;
   page: string;
   pageContent: string;
@@ -178,22 +182,26 @@ export interface CitationPart {
   blockBBox?: CitationBBox;
 }
 
-export interface ToolInfoPart {
-  type: 'toolInfo';
-  title: string;
-  status: 'running' | 'completed' | 'failed';
-  /** JSON string of the tool-call arguments, e.g. '{"query":"..."}'. */
-  params?: string;
+export interface ToolActivityPart {
+  type: 'toolActivity';
+  toolName: string;
+  summary: string;
+  renderKind: 'run_code' | 'search' | 'read' | 'write' | 'file' | 'web' | 'generic';
+  status: 'running' | 'completed' | 'failed' | 'stopped';
+  displayKey?: string;
+  fallbackDisplayName?: string;
+  paramsJson?: string;
+  resultJson?: string;
   startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  actorId?: string;
+  actorName?: string;
+  primaryInput?: string;
+  primaryInputLanguage?: string;
 }
 
-export interface ChainOfThoughtPart {
-  type: 'chainOfThought';
-  /** Ordered step titles, shown as a collapsed list on top of the response. */
-  steps: string[];
-}
-
-export type MessageContentPart = TextPart | CodePart | ReasoningPart | QueuePart | PlanPart | CheckpointPart | ChartPart | ChoicePart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolInfoPart | ChainOfThoughtPart;
+export type MessageContentPart = TextPart | CodePart | AgentActivityPart | QueuePart | PlanPart | CheckpointPart | ChartPart | ChoicePart | TaskPart | ErrorPart | SourcesPart | SandboxPart | WebPreviewPart | ArtifactPart | CitationPart | ToolActivityPart;
 
 // ============================================================================
 // AIMessageContent Component
@@ -204,14 +212,17 @@ export type AIMessageContentProps = HTMLAttributes<HTMLDivElement> & {
   /** Whether the message is currently streaming. Affects default open state of collapsible components. */
   isStreaming?: boolean;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
+  onSubmitQuestions?: (actions: ChoiceComponentAction[]) => Promise<void>;
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
   taskDisplay?: 'raw' | 'activity';
   showTaskDiagnostics?: boolean;
+  redactTaskDiagnostics?: boolean;
+  citationScope?: { conversationId: string; messageId: string };
 };
 
 type TaskActivityStep = {
   label: string;
-  status?: ToolInfoPart['status'];
+  status?: ToolActivityPart['status'];
 };
 
 function redactDiagnosticText(value: string): string {
@@ -226,20 +237,37 @@ function redactDiagnosticText(value: string): string {
 /**
  * AIMessageContent - Renders structured AI message content using ai-sdk components
  */
-export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', showTaskDiagnostics = true, ...props }: AIMessageContentProps) => {
+export const AIMessageContent = ({ parts, className, isStreaming = false, onComponentAction, onSubmitQuestions, choiceInteractions, taskDisplay = 'raw', showTaskDiagnostics = true, redactTaskDiagnostics = true, citationScope, ...props }: AIMessageContentProps) => {
   const choicePrompts = new Set(parts.filter((part): part is ChoicePart => part.type === 'choice' && part.status === 'ready').map((part) => part.prompt.trim()).filter(Boolean));
   const hasTask = parts.some((part) => part.type === 'task');
   const taskActivity: TaskActivityStep[] = [];
   const visibleParts = parts.filter((part) => {
     if (part.type === 'text' && choicePrompts.has(part.content.trim())) return false;
-    return !(taskDisplay === 'activity' && hasTask && (part.type === 'chainOfThought' || part.type === 'toolInfo'));
+    return !(taskDisplay === 'activity' && hasTask && part.type === 'toolActivity');
   });
+
+  const pendingChoiceParts = visibleParts.filter(
+    (part): part is ChoicePart => part.type === 'choice' && part.status === 'ready' && !choiceInteractions?.has(part.componentId),
+  );
+  const renderPendingAsTabs = onSubmitQuestions && pendingChoiceParts.length > 1;
+  const groupedChoiceIds = renderPendingAsTabs ? new Set(pendingChoiceParts.map((part) => part.componentId)) : new Set<string>();
 
   return (
     <div className={cn('space-y-4', className)} {...props}>
-      {visibleParts.map((part, index) => (
-        <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} />
-      ))}
+      {renderPendingAsTabs && (
+        <ChoiceTabsQuestions
+          questions={pendingChoiceParts.map((part) => ({ componentId: part.componentId, choice: part }))}
+          onSubmitAll={onSubmitQuestions}
+          submittedInteractions={choiceInteractions}
+          externallyDisabled={isStreaming}
+        />
+      )}
+      {visibleParts.map((part, index) => {
+        if (part.type === 'choice' && groupedChoiceIds.has(part.componentId)) return null;
+        return (
+          <AIMessagePart key={part.type === 'choice' ? `choice:${part.componentId}` : index} part={part} isStreaming={isStreaming} onComponentAction={onComponentAction} choiceInteractions={choiceInteractions} taskDisplay={taskDisplay} taskActivity={taskActivity} showTaskDiagnostics={showTaskDiagnostics} redactTaskDiagnostics={redactTaskDiagnostics} citationScope={citationScope} />
+        );
+      })}
     </div>
   );
 };
@@ -256,16 +284,18 @@ type AIMessagePartProps = {
   taskDisplay?: 'raw' | 'activity';
   taskActivity?: TaskActivityStep[];
   showTaskDiagnostics?: boolean;
+  redactTaskDiagnostics?: boolean;
+  citationScope?: { conversationId: string; messageId: string };
 };
 
-const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', taskActivity = [], showTaskDiagnostics = true }: AIMessagePartProps) => {
+const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInteractions, taskDisplay = 'raw', taskActivity = [], showTaskDiagnostics = true, redactTaskDiagnostics = true, citationScope }: AIMessagePartProps) => {
   switch (part.type) {
     case 'text':
-      return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} />;
+      return <TextPartRenderer content={part.content} showCursor={part.showCursor} citations={part.citations} citationScope={citationScope} />;
     case 'code':
       return <CodePartRenderer content={part.content} language={part.language} filename={part.filename} />;
-    case 'reasoning':
-      return <ReasoningPartRenderer content={part.content} duration={part.duration} isStreaming={isStreaming} />;
+    case 'agentActivity':
+      return <AgentActivityPartRenderer part={part} isStreaming={isStreaming} />;
     case 'queue':
       return <QueuePartRenderer title={part.title} items={part.items} isStreaming={isStreaming} />;
     case 'plan':
@@ -277,7 +307,7 @@ const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInt
     case 'choice':
       return <ChoicePartRenderer {...part} onAction={onComponentAction} submittedInteraction={choiceInteractions?.get(part.componentId)} externallyDisabled={isStreaming} />;
     case 'task':
-      return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} activity={taskDisplay === 'activity' ? taskActivity : undefined} showDiagnostics={showTaskDiagnostics} />;
+      return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} activity={taskDisplay === 'activity' ? taskActivity : undefined} showDiagnostics={showTaskDiagnostics} redactDiagnostics={redactTaskDiagnostics} />;
     case 'error':
       return <ErrorPartRenderer title={part.title} content={part.content} />;
     case 'sources':
@@ -289,11 +319,9 @@ const AIMessagePart = ({ part, isStreaming = false, onComponentAction, choiceInt
     case 'artifact':
       return <ArtifactPartRenderer filePath={part.filePath} filename={part.filename} />;
     case 'citation':
-      return <CitationPartRenderer citation={part} />;
-    case 'toolInfo':
-      return <ToolInfoPartRenderer title={part.title} status={part.status} params={part.params} />;
-    case 'chainOfThought':
-      return <ChainOfThoughtPartRenderer steps={part.steps} />;
+      return <CitationPartRenderer citation={part} citationScope={citationScope} />;
+    case 'toolActivity':
+      return <ToolActivityPartRenderer part={part} isStreaming={isStreaming} />;
     default:
       return null;
   }
@@ -371,8 +399,50 @@ function getCitationTriggerLabel(citation: CitationData, fallback: string): stri
   return normalizeCitationReference(citation.reference) || citation.source || fallback;
 }
 
+async function openCitationSource(
+  citation: CitationData,
+  displayMode: ReturnType<typeof useFileViewerDisplayMode>,
+  defaultLabel: string,
+  citationScope?: { conversationId: string; messageId: string },
+): Promise<void> {
+  const objectKey = (citation.sourceType === 'image' ? citation.path : citation.source) || '';
+  if (!objectKey) return;
+
+  const displayName = citation.fileName ||
+    (citation.sourceType === 'image' ? citation.source : '') ||
+    objectKey.split('/').pop() ||
+    defaultLabel;
+  const mimeType = getMimeTypeFromFilename(displayName) ?? 'application/octet-stream';
+  const pageNumbers = citation.page?.match(/\d+/g);
+  const page = pageNumbers?.length ? Number(pageNumbers.at(-1)) : undefined;
+  const reference = normalizeCitationReference(citation.reference);
+  const tabKey = citationScope
+    ? JSON.stringify([citationScope.conversationId, citationScope.messageId, objectKey])
+    : objectKey;
+
+  await openFileViewerFromUrlLoader(tabKey, displayName, mimeType, async () => {
+    if (citationScope) {
+      const { getCitationViewUrl } = await import('@/modules/conversation/api');
+      return getCitationViewUrl(
+        citationScope.conversationId,
+        citationScope.messageId,
+        { source: objectKey, fileName: citation.fileName, reference },
+      );
+    }
+    const { conversationV2Api } = await import('@/modules/conversation-v2/api');
+    const { url } = await conversationV2Api.getFileSignedUrl(objectKey);
+    return { url, fileName: displayName, mimeType };
+  }, {
+    displayMode,
+    closeOnOutsideClick: displayMode === 'floating',
+    page,
+    highlightText: citation.highlightText || citation.pageContent || undefined,
+    highlightBBox: citation.highlightBBox || citation.blockBBox,
+  });
+}
+
 // Text Part with Markdown support
-const TextPartRenderer = ({ content, showCursor, citations }: { content: string; showCursor?: boolean; citations?: CitationData[] }) => {
+const TextPartRenderer = ({ content, showCursor, citations, citationScope }: { content: string; showCursor?: boolean; citations?: CitationData[]; citationScope?: { conversationId: string; messageId: string } }) => {
   // Split citations: those with a reference AND a matching [n] marker in the text are inline
   // (rendered at [n] positions by rehype), all others are trailing (rendered as badges after text).
   // This ensures citations with a reference but no matching marker are not silently lost.
@@ -411,71 +481,34 @@ const TextPartRenderer = ({ content, showCursor, citations }: { content: string;
         if (ref == null) return null;
         const c = citationMapRef.current.get(ref);
         if (!c) return <>[{ref}]</>;
-        return <SingleInlineCitation citation={c} />;
+        return <SingleInlineCitation citation={c} citationScope={citationScope} />;
       },
     };
-  }, [hasInline]);
+  }, [citationScope, hasInline]);
 
   return (
     <div className={cn(showCursor && "[&>*:last-child]:after:content-[''] [&>*:last-child]:after:inline-block [&>*:last-child]:after:w-[3px] [&>*:last-child]:after:h-4 [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:ml-0.5 [&>*:last-child]:after:animate-pulse [&>*:last-child]:after:align-text-bottom", hasTrailing && '[&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):inline [&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):mb-0')}>
       <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={hasInline ? rehypeCitationPlugins : undefined} components={componentsWithCite}>
         {content}
       </ReactMarkdown>
-      {hasTrailing && <CitationsInline citations={trailingCitations} />}
+      {hasTrailing && <CitationsInline citations={trailingCitations} citationScope={citationScope} />}
     </div>
   );
 };
 
-// Single inline citation badge rendered at a marker position within text
-// Resolve a citation to a signed URL via the path-signer endpoint and open it.
-// Image citations carry `path`; text citations carry the path in `source` (the
-// proto comment calling it a filename is misleading — it's the object key).
-async function openCitationSource(
-  c: CitationData,
-  displayMode: ReturnType<typeof useFileViewerDisplayMode>,
-  defaultLabel: string,
-): Promise<void> {
-  const { openFileViewerFromUrl, getMimeTypeFromFilename } = await import('@/modules/file-viewer');
-
-  const objectKey = (c.sourceType === 'image' ? c.path : c.source) || '';
-  if (!objectKey) return;
-
-  // Display name = the proto-provided filename when present; otherwise the
-  // basename of the object key. Falls back to the i18n default label so the
-  // viewer tab always has *some* title.
-  const displayName =
-    (c.sourceType === 'image' ? c.source : '') ||
-    objectKey.split('/').pop() ||
-    defaultLabel;
-  const mimeType = getMimeTypeFromFilename(displayName) ?? 'application/octet-stream';
-  const numbers = c.page?.match(/\d+/g);
-  const page = numbers?.length ? parseInt(numbers[numbers.length - 1], 10) : undefined;
-
-  const { getArtifactDownloadUrl } = await import('@/modules/conversation/api');
-  const { downloadUrl } = await getArtifactDownloadUrl(objectKey, displayName);
-  openFileViewerFromUrl(downloadUrl, displayName, mimeType, {
-    displayMode,
-    closeOnOutsideClick: displayMode === 'floating',
-    page,
-    highlightText: c.highlightText || c.pageContent || undefined,
-    highlightBBox: c.highlightBBox || c.blockBBox,
-  });
-}
-
-const SingleInlineCitation = ({ citation: c }: { citation: CitationData }) => {
+const SingleInlineCitation = ({ citation: c, citationScope }: { citation: CitationData; citationScope?: { conversationId: string; messageId: string } }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
 
   const handleClick = useCallback(async () => {
     try {
-      await openCitationSource(c, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'));
-    } catch (error) {
-      console.error('Failed to open citation source:', error);
+      await openCitationSource(c, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'), citationScope);
+    } catch {
       toast.error(tCommon('ai.errors.openFileTitle'), {
         description: tCommon('ai.errors.openFileDescription'),
       });
     }
-  }, [c, tCommon, fileViewerDisplayMode]);
+  }, [c, citationScope, fileViewerDisplayMode, tCommon]);
 
   return (
     <InlineCitation>
@@ -497,15 +530,14 @@ const SingleInlineCitation = ({ citation: c }: { citation: CitationData }) => {
 };
 
 // Citations Inline - renders citation badges after text content
-const CitationsInline = ({ citations }: { citations: CitationData[] }) => {
+const CitationsInline = ({ citations, citationScope }: { citations: CitationData[]; citationScope?: { conversationId: string; messageId: string } }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const fileViewerDisplayMode = useFileViewerDisplayMode();
 
-  const handleCitationClick = async (c: CitationData) => {
+  const handleCitationClick = async (citation: CitationData) => {
     try {
-      await openCitationSource(c, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'));
-    } catch (error) {
-      console.error('Failed to open citation source:', error);
+      await openCitationSource(citation, fileViewerDisplayMode, tCommon('ai.citations.defaultSource'), citationScope);
+    } catch {
       toast.error(tCommon('ai.errors.openFileTitle'), {
         description: tCommon('ai.errors.openFileDescription'),
       });
@@ -536,13 +568,15 @@ const CitationsInline = ({ citations }: { citations: CitationData[] }) => {
 };
 
 // Citation Part - standalone citation (no parent text)
-const CitationPartRenderer = ({ citation }: { citation: CitationPart }) => (
+const CitationPartRenderer = ({ citation, citationScope }: { citation: CitationPart; citationScope?: { conversationId: string; messageId: string } }) => (
   <CitationsInline
+    citationScope={citationScope}
     citations={[
       {
         parentId: citation.parentId,
         sourceType: citation.sourceType,
         source: citation.source,
+        fileName: citation.fileName,
         externalId: citation.externalId,
         page: citation.page,
         pageContent: citation.pageContent,
@@ -562,12 +596,14 @@ const CitationPartRenderer = ({ citation }: { citation: CitationPart }) => (
 // Code Part
 const CodePartRenderer = ({ content, language, filename }: { content: string; language: string; filename?: string }) => <CodeArtifact code={content} language={language as BundledLanguage} filename={filename} className='my-2' />;
 
-// Reasoning Part
-const ReasoningPartRenderer = ({ content, duration, isStreaming = false }: { content: string; duration?: number; isStreaming?: boolean }) => (
-  <Reasoning duration={duration} isStreaming={isStreaming} defaultOpen={isStreaming}>
-    <ReasoningTrigger />
-    <ReasoningContent>{content}</ReasoningContent>
-  </Reasoning>
+const AgentActivityPartRenderer = ({ part, isStreaming }: { part: AgentActivityPart; isStreaming: boolean }) => (
+  <div className='flex min-h-8 items-center gap-2 text-sm text-muted-foreground'>
+    {isStreaming && part.status === 'running'
+      ? <Loader2 className='size-4 animate-spin text-primary' aria-hidden='true' />
+      : <Circle className='size-3 fill-primary/15 text-primary' aria-hidden='true' />}
+    <span>{part.summary}</span>
+    {part.durationMs !== undefined && <span className='ml-auto tabular-nums'>{part.durationMs} ms</span>}
+  </div>
 );
 
 // Queue Part
@@ -696,69 +732,27 @@ const CheckpointPartRenderer = ({ label }: { label: string }) => (
   </Checkpoint>
 );
 
-// Tool Info Part - reports a single tool execution and its status via the
-// ai-elements Tool component. Our proto only carries title + status, so we map
-// the status onto the Tool component's UI states and render the header only.
-const TOOL_INFO_STATE_MAP = {
-  running: 'input-available',
-  completed: 'output-available',
-  failed: 'output-error',
-} satisfies Record<'running' | 'completed' | 'failed', ToolUIPart['state']>;
-
-/** Parses the tool-call params JSON string; returns undefined when there's nothing to show. */
-function parseToolParams(params: string | undefined): unknown {
-  if (!params || typeof params !== 'string') return undefined;
-  const trimmed = params.trim();
-  if (!trimmed || trimmed === '{}' || trimmed === '[]') return undefined;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    // Not valid JSON — surface the raw string rather than dropping it.
-    return trimmed;
-  }
-}
-
-const ToolInfoPartRenderer = ({ title, status, params }: { title: string; status: 'running' | 'completed' | 'failed'; params?: string }) => {
-  const parsedParams = useMemo(() => parseToolParams(params), [params]);
-  const hasParams = parsedParams !== undefined;
-
+const ToolActivityPartRenderer = ({ part, isStreaming }: { part: ToolActivityPart; isStreaming: boolean }) => {
+  const label = part.fallbackDisplayName || formatLabel(part.toolName);
+  const failed = part.status === 'failed';
   return (
-    <Tool className='my-2'>
-      {/* No params → nothing to expand: drop the chevron and the toggle affordance. */}
-      <ToolHeader type={`tool-${title}`} title={formatLabel(title)} state={TOOL_INFO_STATE_MAP[status]} className={cn(!hasParams && 'cursor-default [&>svg]:hidden')} />
-      {hasParams && (
-        <ToolContent>
-          <ToolInput className='space-y-1 p-2 [&_pre]:p-2! [&_pre]:text-xs! [&_code]:text-xs!' input={parsedParams} />
-        </ToolContent>
-      )}
-    </Tool>
-  );
-};
-
-// Chain of Thought Part - collapsed list of reasoning step titles, pinned to the
-// top of the response. Closed by default; the user toggles it open/closed.
-const ChainOfThoughtPartRenderer = ({ steps }: { steps: string[] }) => {
-  const { t: tCommon } = useModuleTranslation('common');
-  if (!steps.length) return null;
-
-  return (
-    <ChainOfThought className='my-2' defaultOpen={false}>
-      <ChainOfThoughtHeader>{tCommon('ai.chainOfThought.label')}</ChainOfThoughtHeader>
-      <ChainOfThoughtContent>
-        {steps.map((step, index) => (
-          <ChainOfThoughtStep key={index} label={step} />
-        ))}
-      </ChainOfThoughtContent>
-    </ChainOfThought>
+    <div className='flex min-h-8 items-center gap-2 text-sm text-muted-foreground'>
+      {isStreaming && part.status === 'running' && <Loader2 className='size-4 animate-spin text-primary' aria-hidden='true' />}
+      {failed && <XCircle className='size-4 text-destructive' aria-hidden='true' />}
+      {(part.status === 'completed' || part.status === 'stopped') && <CheckCircle2 className='size-4 text-primary' aria-hidden='true' />}
+      <span className='font-medium text-foreground'>{label}</span>
+      {part.summary && <span className='truncate'>- {part.summary}</span>}
+      {part.durationMs !== undefined && <span className='ml-auto tabular-nums'>{part.durationMs} ms</span>}
+    </div>
   );
 };
 
 // Task Part
-const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity, showDiagnostics = true }: { title: string; items: string[]; status?: 'pending' | 'in_progress' | 'completed'; isStreaming?: boolean; activity?: TaskActivityStep[]; showDiagnostics?: boolean }) => {
+const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity, showDiagnostics = true, redactDiagnostics = true }: { title: string; items: string[]; status?: 'pending' | 'in_progress' | 'completed'; isStreaming?: boolean; activity?: TaskActivityStep[]; showDiagnostics?: boolean; redactDiagnostics?: boolean }) => {
   const { t: tCommon } = useModuleTranslation('common');
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const activityMode = activity !== undefined;
-  const diagnostics = items.map(redactDiagnosticText).filter(Boolean);
+  const diagnostics = (redactDiagnostics ? items.map(redactDiagnosticText) : items).filter(Boolean);
 
   const statusIcon = (stepStatus: TaskActivityStep['status'], index: number) => {
     const resolvedStatus = stepStatus ?? (status === 'completed' ? 'completed' : isStreaming && index === (activity?.length ?? 0) - 1 ? 'running' : 'completed');
@@ -808,7 +802,7 @@ const TaskPartRenderer = ({ title, items, status, isStreaming = false, activity,
               </section>
               <section className='space-y-2'>
                 <h3 className='text-sm font-medium'>{tCommon('ai.task.diagnostics.input')}</h3>
-                <p className='text-xs text-muted-foreground'>{tCommon('ai.task.diagnostics.redactedNotice')}</p>
+                {redactDiagnostics && <p className='text-xs text-muted-foreground'>{tCommon('ai.task.diagnostics.redactedNotice')}</p>}
                 {diagnostics.length > 0 ? diagnostics.map((item, index) => (
                   <pre key={index} className='max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-muted/40 p-3 font-mono text-xs leading-relaxed'>{item}</pre>
                 )) : <p className='text-sm text-muted-foreground'>{tCommon('ai.task.diagnostics.emptyInput')}</p>}
@@ -1165,75 +1159,10 @@ const WebPreviewPartRenderer = ({ content }: { content: string }) => {
 };
 
 // Artifact Part - Document/file artifact
-const ArtifactPartRenderer = ({ filePath, filename }: { filePath: string; filename: string }) => {
+export const ArtifactPartRenderer = ({ filename }: { filePath: string; filename: string }) => {
   const { t: tCommon } = useModuleTranslation('common');
-  const fileViewerDisplayMode = useFileViewerDisplayMode();
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [isOpening, setIsOpening] = useState(false);
-  const downloadErrorTitle = tCommon('ai.errors.downloadFailedTitle');
-  const downloadErrorDescription = tCommon('ai.errors.downloadFailedDescription');
-  const openErrorTitle = tCommon('ai.errors.openFileTitle');
-  const openErrorDescription = tCommon('ai.errors.openFileDescription');
   const defaultFileName = tCommon('ai.artifact.defaultName');
   const generatedLabel = tCommon('ai.artifact.generatedFile');
-  const downloadTooltipLabel = tCommon('ai.artifact.downloadTooltip', { name: filename || tCommon('ai.artifact.genericFile') });
-
-  const handleDownload = async () => {
-    if (isDownloading || !filePath) return;
-
-    setIsDownloading(true);
-    try {
-      const { getArtifactDownloadUrl } = await import('@/modules/conversation/api');
-      const { downloadUrl } = await getArtifactDownloadUrl(filePath, filename);
-
-      window.open(downloadUrl, '_blank');
-    } catch (error: unknown) {
-      console.error('Failed to download artifact:', error);
-
-      let errorMessage = downloadErrorDescription;
-      if (error && typeof error === 'object' && 'message' in error) {
-        errorMessage = (error as { message: string }).message;
-      }
-
-      toast.error(downloadErrorTitle, {
-        description: errorMessage,
-      });
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
-  const handleOpenViewer = async () => {
-    if (isOpening || !filePath) return;
-
-    setIsOpening(true);
-    try {
-      const [{ getArtifactDownloadUrl }, { openFileViewerFromUrl, getMimeTypeFromFilename }] = await Promise.all([import('@/modules/conversation/api'), import('@/modules/file-viewer')]);
-
-      const { downloadUrl } = await getArtifactDownloadUrl(filePath, filename);
-      const mimeType = getMimeTypeFromFilename(filename) ?? 'application/octet-stream';
-      openFileViewerFromUrl(downloadUrl, filename, mimeType, {
-        displayMode: fileViewerDisplayMode,
-        closeOnOutsideClick: fileViewerDisplayMode === 'floating',
-      });
-    } catch (error: unknown) {
-      console.error('Failed to open artifact:', error);
-
-      let errorMessage = openErrorDescription;
-      if (error && typeof error === 'object' && 'message' in error) {
-        errorMessage = (error as { message: string }).message;
-      }
-
-      toast.error(openErrorTitle, {
-        description: errorMessage,
-      });
-    } finally {
-      setIsOpening(false);
-    }
-  };
-
-  // Check if this file type can be previewed
-  const canView = useMemo(() => isViewableFilename(filename), [filename]);
 
   return (
     <div className='my-2 flex items-center gap-3 rounded-lg border bg-muted/30 p-3'>
@@ -1243,36 +1172,6 @@ const ArtifactPartRenderer = ({ filePath, filename }: { filePath: string; filena
       <div className='flex flex-1 flex-col min-w-0'>
         <span className='text-sm font-medium truncate'>{filename || defaultFileName}</span>
         <span className='text-xs text-muted-foreground'>{generatedLabel}</span>
-      </div>
-      <div className='flex items-center gap-1.5'>
-        {canView && (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant='outline' size='sm' className='h-8 gap-1.5' onClick={handleOpenViewer} disabled={isOpening || !filePath}>
-                  {isOpening ? <Loader2 className='h-4 w-4 animate-spin' /> : <Eye className='h-4 w-4' />}
-                  {tCommon('actionView')}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{tCommon('ai.artifact.openInViewer')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant='outline' size='sm' className='h-8 gap-1.5' onClick={handleDownload} disabled={isDownloading || !filePath}>
-                {isDownloading ? <Loader2 className='h-4 w-4 animate-spin' /> : <Download className='h-4 w-4' />}
-                {tCommon('actionDownload')}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{downloadTooltipLabel}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
       </div>
     </div>
   );

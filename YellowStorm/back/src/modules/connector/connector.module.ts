@@ -20,6 +20,8 @@ import { AdminConnectorCategoryController } from './admin-connector-category.con
 import { AdminConnectorAuthCallbackController } from './admin-connector-auth-callback.controller';
 import { UnifiedOAuthCallbackController } from './controllers/unified-oauth-callback.controller';
 import { ConnectorController } from './connector.controller';
+import { ConnectorInternalController } from './controllers/connector-internal.controller';
+import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
 import { ConnectorUserService } from './connector-user.service';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { ConnectedAppModule } from '../connected-app/connected-app.module';
@@ -74,6 +76,7 @@ import {
     AdminConnectorAuthCallbackController,
     UnifiedOAuthCallbackController,
     ConnectorController,
+    ConnectorInternalController,
     AdminCatalogTransferController,
   ],
   providers: [
@@ -89,6 +92,7 @@ import {
     CatalogTransferService,
     M365TransferAdapter,
     ConnectorUserService,
+    InternalServiceGuard,
     {
       provide: 'ConnectorAuthService',
       useExisting: ConnectorAuthServiceImpl,

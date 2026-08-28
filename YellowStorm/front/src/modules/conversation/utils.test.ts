@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, mapComponentsToContentParts, mapConversationComponentsToContentParts, messageToChat, normalizeChoiceComponentData } from './utils';
+import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, getUserMessageDisplayText, mapComponentsToContentParts, mapConversationComponentsToContentParts, messageToChat, normalizeChoiceComponentData } from './utils';
 
 describe('conversation utils', () => {
   it('formats timing values', () => {
@@ -28,6 +28,37 @@ describe('conversation utils', () => {
     });
 
     expect(message.content).toBe('Profitability');
+  });
+
+  it('joins display texts for multi-interaction user messages instead of raw JSON content', () => {
+    const text = getUserMessageDisplayText({
+      id: 'message-1',
+      conversationId: 'conversation-1',
+      conversationType: 'user',
+      content: '[{\n  "question": { "prompt": "Pick a region" },\n  "selectedChoices": [ { "optionId": "germany", "submitText": "Use Germany" } ]\n}]',
+      interactions: [
+        { type: 'choice', componentId: 'choice-1', questionId: 'region', selectionMode: 'single', selectedOptions: [{ optionId: 'germany', label: 'Germany' }], displayText: 'Germany' },
+        { type: 'choice', componentId: 'choice-2', questionId: 'scope', selectionMode: 'single', selectedOptions: [{ optionId: 'sales', label: 'Sales' }], displayText: 'Sales' },
+      ],
+      createdAt: '2026-07-22T00:00:00.000Z',
+    });
+
+    expect(text).toBe('Germany, Sales');
+  });
+
+  it('falls back to raw content when multi-interaction display texts are missing', () => {
+    const text = getUserMessageDisplayText({
+      id: 'message-1',
+      conversationId: 'conversation-1',
+      conversationType: 'user',
+      content: 'raw content',
+      interactions: [
+        { type: 'choice', componentId: 'choice-1', questionId: 'region', selectionMode: 'single', selectedOptions: [{ optionId: 'germany', label: 'Germany' }] },
+      ],
+      createdAt: '2026-07-22T00:00:00.000Z',
+    });
+
+    expect(text).toBe('raw content');
   });
 
   it('maps components and attaches citation to parent text', () => {
@@ -67,6 +98,7 @@ describe('conversation utils', () => {
     if (parts[0]?.type === 'text') {
       expect(parts[0].citations?.[0]).toMatchObject({
         source: 'user-1/codeinterpreter/contract.docx',
+        fileName: 'contract.docx',
         page: '2',
         pageContent: 'Clause de penalites exacte',
         highlightText: 'Clause de penalites exacte',
@@ -87,22 +119,25 @@ describe('conversation utils', () => {
     expect(markdown).toContain('```ts');
   });
 
-  it('excludes internal execution payloads from conversation content and copies', () => {
+  it('renders safe activity while excluding it from copied answer markdown', () => {
     const components = [
-      { type: 'reasoning', data: { content: 'Internal system instructions' } },
-      { type: 'toolInfo', data: { title: 'activate_skill', params: '{"secret":"value"}' } },
-      { type: 'chainOfThought', data: { steps: ['Internal step'] } },
+      { type: 'agentActivity', data: { summary: 'Preparing the answer', status: 'completed' } },
+      { type: 'toolActivity', data: { toolName: 'activate_skill', paramsJson: '{"secret":"value"}' } },
       { type: 'text', data: { content: 'Public answer' } },
       { type: 'unknown', data: { content: 'Unexpected payload' } },
     ] as never;
 
-    expect(mapConversationComponentsToContentParts(components)).toEqual([{ type: 'text', content: 'Public answer' }]);
+    expect(mapConversationComponentsToContentParts(components)).toEqual([
+      expect.objectContaining({ type: 'agentActivity', summary: 'Preparing the answer', status: 'completed' }),
+      expect.objectContaining({ type: 'toolActivity', toolName: 'activate_skill' }),
+      { type: 'text', content: 'Public answer' },
+    ]);
     expect(componentsToMarkdown(components)).toBe('Public answer');
   });
 
   it('uses generic activity states without exposing tool details', () => {
     expect(getConversationStreamActivity([])).toBe('thinking');
-    expect(getConversationStreamActivity([{ type: 'toolInfo', data: { title: 'activate_skill' } }] as never)).toBe('usingTools');
+    expect(getConversationStreamActivity([{ type: 'toolActivity', data: { title: 'activate_skill' } }] as never)).toBe('usingTools');
     expect(getConversationStreamActivity([{ type: 'text', data: { content: 'Public answer' } }] as never)).toBe('responding');
   });
 
@@ -122,7 +157,7 @@ describe('conversation utils', () => {
       } as never,
       {
         type: 'artifact',
-        data: { file_path: 'user/execution/ai_summary.docx', filename: 'ai_summary.docx' },
+        data: { artifactId: 'artifact-1', filename: 'ai_summary.docx', availability: 'ready' },
       } as never,
     ]);
 
@@ -132,7 +167,7 @@ describe('conversation utils', () => {
     });
     expect(parts[1]).toMatchObject({
       type: 'artifact',
-      filePath: 'user/execution/ai_summary.docx',
+      filePath: '',
       filename: 'ai_summary.docx',
     });
   });
