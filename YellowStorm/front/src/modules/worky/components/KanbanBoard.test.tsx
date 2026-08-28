@@ -9,12 +9,15 @@ import { ThemeProvider } from '@/contexts/ThemeContext';
 import { KanbanBoard } from './KanbanBoard';
 import { useWorkyStore } from '../store';
 import { useBoard, useTaskOps } from '../query/hooks';
+import { useStreamAgents } from '../agents/useStreamAgents';
 import type { WorkyBoardResponse } from '../types';
 
 vi.mock('../query/hooks', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../query/hooks')>();
   return { ...actual, useBoard: vi.fn(), useTaskOps: vi.fn() };
 });
+
+vi.mock('../agents/useStreamAgents', () => ({ useStreamAgents: vi.fn() }));
 
 const moveTask = vi.fn();
 
@@ -77,6 +80,7 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
     (useTaskOps as ReturnType<typeof vi.fn>).mockReturnValue({
       move: { mutate: moveTask, isPending: false },
     });
+    (useStreamAgents as ReturnType<typeof vi.fn>).mockReturnValue({ agents: [], ungrouped: [] });
   });
 
   afterEach(() => {
@@ -220,6 +224,65 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
         reason: 'owner-kanban-move',
       });
     });
+  });
+
+  it('shows the resolved assignee name on status cards, with raw-key and type-label fallbacks', () => {
+    const board: WorkyBoardResponse = {
+      streamId: 'stream-1',
+      lanes: {
+        backlog: [],
+        ready: [
+          {
+            ...baseTask,
+            id: 'task-1',
+            title: 'Resolved task',
+            lane: 'ready',
+            assigneeType: 'ephemeral_ai_agent' as const,
+            assigneeKey: 'agent-1',
+          },
+          {
+            ...baseTask,
+            id: 'task-2',
+            title: 'Unresolved task',
+            lane: 'ready',
+            assigneeType: 'ephemeral_ai_agent' as const,
+            assigneeKey: 'deadbeef',
+          },
+          { ...baseTask, id: 'task-3', title: 'Unattributed task', lane: 'ready' },
+        ],
+        running: [],
+        review: [],
+        failed: [],
+        blocked: [],
+        done: [],
+        canceled: [],
+      },
+      pendingClarifications: [],
+    };
+    (useBoard as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: board,
+      isLoading: false,
+      error: null,
+      refetch: () => Promise.resolve({ data: board }),
+    });
+    useWorkyStore.getState().setBoard(board);
+    (useStreamAgents as ReturnType<typeof vi.fn>).mockReturnValue({
+      agents: [{ key: 'agent-1', name: 'Atlas' }],
+      ungrouped: [],
+    });
+
+    render(
+      <TestProviders>
+        <KanbanBoard streamId='stream-1' />
+      </TestProviders>,
+    );
+
+    // Resolved assignee key renders the agent's display name.
+    expect(screen.getByText('Atlas')).toBeInTheDocument();
+    // Unresolved key falls back to the raw key (same rule as the graph view).
+    expect(screen.getByText('deadbeef')).toBeInTheDocument();
+    // Unattributed task keeps the assignee-type label (i18n mock returns the key).
+    expect(screen.getByText('kanban.assignees.unassigned')).toBeInTheDocument();
   });
 });
 
