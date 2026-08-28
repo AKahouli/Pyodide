@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ThumbsUp, ThumbsDown, Copy, RotateCcw, MoreHorizontal, FileText, Flag, GitBranch, Loader2, Wand2 } from 'lucide-react';
@@ -12,7 +12,9 @@ import { ReportDialog } from './ReportDialog';
 import { TimingIndicator } from './TimingIndicator';
 import { useNavigate } from 'react-router-dom';
 import { useApiAction } from '@/lib/use-api-action';
+import { showError } from '@/lib/notifications';
 import { branchConversation } from '../api';
+import { buildChoiceInteractionIndex } from '../choice-interactions';
 import { useModelById } from '@/modules/models';
 import { useAuth } from '@/modules/auth';
 import { buildPlaybookFromConversation } from '@/modules/playbook';
@@ -20,6 +22,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { getAnswerComponents, getDefaultAnswerVersion } from '../utils/answer-version';
+import { MessagePdfExport } from './MessagePdfExport';
 
 import { cn } from '@/lib/utils';
 
@@ -43,6 +46,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const [reportOpen, setReportOpen] = useState(false);
   const [buildDialogOpen, setBuildDialogOpen] = useState(false);
   const [playbookName, setPlaybookName] = useState('');
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const { t, language } = useModuleTranslation('conversation');
   const { user } = useAuth();
   const generationModelId = message.modelId
@@ -153,6 +157,13 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
     getAnswerComponents(message, selectedAnswerVersion, ''),
   );
 
+  const choiceInteractions = useMemo(() => buildChoiceInteractionIndex(messages), [messages]);
+
+  const handleExportPdf = () => {
+    if (isExportingPdf) return;
+    setIsExportingPdf(true);
+  };
+
   return (
     <>
       <div className={cn('mt-1 flex flex-wrap items-center gap-0.5', className)}>
@@ -217,9 +228,11 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
                 {isBranching ? t('messageActions.branching') : t('messageActions.branch')}
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem disabled>
-              <FileText className='h-3.5 w-3.5 mr-2' />
-              {t('messageActions.export')}
+            <DropdownMenuItem onClick={handleExportPdf} disabled={isExportingPdf}>
+              {isExportingPdf
+                ? <Loader2 className='h-3.5 w-3.5 mr-2 animate-spin' />
+                : <FileText className='h-3.5 w-3.5 mr-2' />}
+              {isExportingPdf ? t('messageActions.exporting') : t('messageActions.export')}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setReportOpen(true)}>
               <Flag className='h-3.5 w-3.5 mr-2' />
@@ -236,6 +249,21 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       </div>
 
       <ReportDialog open={reportOpen} onOpenChange={setReportOpen} conversationId={conversationId} messageId={message.id} />
+      {isExportingPdf && (
+        <MessagePdfExport
+          message={message}
+          questionMessage={questionMessage}
+          conversationTitle={currentConversation?.title}
+          formattedCreatedAt={formattedCreatedAt}
+          modelName={modelName}
+          displayedVersion={displayedVersion}
+          choiceInteractions={choiceInteractions}
+          onFinish={(ok) => {
+            setIsExportingPdf(false);
+            if (!ok) showError(t('toasts.message.exportError'));
+          }}
+        />
+      )}
       <Dialog
         open={buildDialogOpen}
         onOpenChange={(open) => {

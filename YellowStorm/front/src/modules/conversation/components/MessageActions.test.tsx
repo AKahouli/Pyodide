@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -66,6 +66,13 @@ vi.mock('../utils', async () => {
 
 vi.mock('./ReportDialog', () => ({ ReportDialog: () => null }));
 vi.mock('./TimingIndicator', () => ({ TimingIndicator: () => <div>timing</div> }));
+const pdfExportMock = vi.hoisted(() => ({ onFinish: null as null | ((ok: boolean) => void) }));
+vi.mock('./MessagePdfExport', () => ({
+  MessagePdfExport: ({ onFinish }: { onFinish: (ok: boolean) => void }) => {
+    pdfExportMock.onFinish = onFinish;
+    return <div data-testid='message-pdf-export' />;
+  },
+}));
 
 vi.mock('sonner', () => ({
   toast: {
@@ -199,6 +206,26 @@ describe('MessageActions', () => {
 
     expect(await screen.findByText('Original answer')).toBeInTheDocument();
     expect(screen.queryByText('Corrected answer')).not.toBeInTheDocument();
+  });
+
+  it('exports a completed response to PDF from the actions menu', async () => {
+    render(
+      <MessageActions
+        message={{ id: 'ai-1', conversationType: 'ai', questionMessageId: 'user-1', components: [], isComplete: true, isStreaming: false, createdAt: '2026-07-29T13:00:00.000Z' } as never}
+        isLastAiMessage={false}
+        conversationId='conv-1'
+      />,
+    );
+
+    const exportButton = screen.getByRole('button', { name: 'messageActions.export' });
+    expect(exportButton).toBeEnabled();
+
+    await userEvent.click(exportButton);
+    expect(await screen.findByTestId('message-pdf-export')).toBeInTheDocument();
+
+    // The export overlay unmounts once the print flow reports completion.
+    act(() => pdfExportMock.onFinish?.(true));
+    await waitFor(() => expect(screen.queryByTestId('message-pdf-export')).not.toBeInTheDocument());
   });
 
   it('falls back safely when generation metadata cannot be resolved', () => {
