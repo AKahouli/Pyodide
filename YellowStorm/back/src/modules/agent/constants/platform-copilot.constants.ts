@@ -1,5 +1,21 @@
 export const PLATFORM_COPILOT = 'platform_copilot' as const;
 export const PLATFORM_COPILOT_AGENT_SLUG = 'platform-copilot' as const;
+export const PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG = 'playbook-mcp' as const;
+export const PLATFORM_COPILOT_PLAYBOOK_ACTION_KEYS = [
+  'search_playbooks',
+  'open_playbook_context',
+  'get_playbook_summary',
+  'get_task_details',
+  'get_task_dependencies',
+  'validate_playbook',
+  'start_playbook_generation',
+  'start_playbook_execution',
+  'list_recent_executions',
+  'get_playbook_execution',
+  'get_execution_diagnostics',
+] as const;
+export const PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION = `[Trusted conversation handoff]
+A trusted server-side projection of the source conversation is bound to this turn. Its context is available only through start_playbook_generation. Call start_playbook_generation now, before any search or list operation. Never ask the user to paste or summarize the source conversation.` as const;
 export const PLATFORM_COPILOT_DEFAULT_INSTRUCTION = `[Yellowmind]
 Use only the attached Playbook tools. Inspect before execution and resolve ambiguous Playbook references.
 For a new Playbook, call start_playbook_generation to assess the current turn; when clarification questions are returned, ask the user and call start_playbook_generation again with the returned continuation_id and typed answers. At most one draft construction is started for the generation request, and the Playbook canvas applies it once the returned Canvas handoff is opened.

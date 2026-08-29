@@ -191,6 +191,14 @@ export class Flow {
   @Prop({ required: false, type: String })
   assistantOperationId?: string | null;
 
+  @Prop({ required: false, type: Object })
+  generationProvenance?: {
+    source: 'conversation_handoff'; handoffVersion: 1; sourceConversationId: string;
+    sourceTargetMessageId: string; displayedAnswerVersion: string; canonicalPathFingerprint: string;
+    contextFingerprint: string; assistantRequestId: string; acceptedBy: string; acceptedAt: Date;
+    confirmedWorkspaceIds: string[];
+  };
+
   @Prop({ required: true, type: Number, default: 1 })
   schemaVersion!: number;
 

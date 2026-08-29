@@ -151,6 +151,7 @@ describe('PlaybookAssistantService.runTurn', () => {
     };
     const workspaceDocumentService = { findByIds: jest.fn().mockResolvedValue([]) };
     const workspaceShareService = { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) };
+    const playbookHandoffService = { consume: jest.fn().mockResolvedValue(undefined) };
     const service = new PlaybookAssistantService(
       { mcpAssistantEnabled: true } as any,
       {} as any,
@@ -170,8 +171,9 @@ describe('PlaybookAssistantService.runTurn', () => {
       featureVisibility as any,
       workspaceDocumentService as any,
       workspaceShareService as any,
+      playbookHandoffService as any,
     );
-    return { service, accessService, constructionService, flowService, executionService, agentService, requestService, historyService, intentService, attachmentService, conversationService, messageService, featureVisibility, workspaceDocumentService, workspaceShareService };
+    return { service, accessService, constructionService, flowService, executionService, agentService, requestService, historyService, intentService, attachmentService, conversationService, messageService, featureVisibility, workspaceDocumentService, workspaceShareService, playbookHandoffService };
   };
 
   it('returns a focused canvas handoff when it starts an execution', async () => {

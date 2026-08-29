@@ -46,23 +46,32 @@ export function PlatformCopilotMascot() {
   const openPanel = usePlatformCopilotPanelStore((s) => s.openPanel);
   const closePanel = usePlatformCopilotPanelStore((s) => s.closePanel);
   const consumePendingPrompt = usePlatformCopilotPanelStore((s) => s.consumePendingPrompt);
-  const [open, setOpen] = React.useState(panelOpen);
+  const pendingHandoff = usePlatformCopilotPanelStore((s) => s.pendingHandoff);
+  const clearHandoff = usePlatformCopilotPanelStore((s) => s.clearHandoff);
+  const open = panelOpen;
   const [input, setInput] = React.useState('');
   const [historyOpen, setHistoryOpen] = React.useState(false);
   const [scrollRequest, setScrollRequest] = React.useState(0);
   const launcherRef = React.useRef<HTMLButtonElement>(null);
+  const composerRef = React.useRef<HTMLTextAreaElement>(null);
+  const initializedHandoffIdRef = React.useRef<string>();
   const hasOpenedRef = React.useRef(false);
   const previousDesignerOpenRef = React.useRef(designerOpen);
-
-  React.useEffect(() => {
-    setOpen(panelOpen);
-  }, [panelOpen]);
+  const [, refreshExpiry] = React.useReducer((value: number) => value + 1, 0);
 
   React.useEffect(() => {
     if (!open) return;
+    if (pendingHandoff) {
+      if (initializedHandoffIdRef.current !== pendingHandoff.handoffId) {
+        initializedHandoffIdRef.current = pendingHandoff.handoffId;
+        setInput(pendingHandoff.suggestedPrompt);
+      }
+      return;
+    }
+    initializedHandoffIdRef.current = undefined;
     const pendingPrompt = consumePendingPrompt();
     if (pendingPrompt) setInput(pendingPrompt);
-  }, [consumePendingPrompt, open]);
+  }, [consumePendingPrompt, open, pendingHandoff]);
 
   React.useEffect(() => {
     if (open || !hasOpenedRef.current) return;
@@ -84,6 +93,14 @@ export function PlatformCopilotMascot() {
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [open, useDrawer, closePanel]);
 
+  React.useEffect(() => {
+    if (!pendingHandoff) return;
+    const delay = new Date(pendingHandoff.expiresAt).getTime() - Date.now();
+    if (delay <= 0) return;
+    const timeout = window.setTimeout(refreshExpiry, delay);
+    return () => window.clearTimeout(timeout);
+  }, [pendingHandoff]);
+
   const pageContext = React.useMemo<PlatformCopilotPageContext>(() => {
     const match = location.pathname.match(/^\/playbooks\/([^/]+)(?:\/executions\/([^/]+))?/);
     const playbookId = match?.[1] ? decodeURIComponent(match[1]) : undefined;
@@ -103,7 +120,7 @@ export function PlatformCopilotMascot() {
   }, [isDirty, language, location.pathname, location.search, selectedTaskId]);
 
   const routePlaybookId = pageContext.entity?.type === 'playbook' ? pageContext.entity.id : undefined;
-  const platformCopilot = usePlatformCopilotConversation(open, pageContext);
+  const platformCopilot = usePlatformCopilotConversation(open, pageContext, pendingHandoff);
   React.useEffect(() => {
     if (platformCopilot.error) handleApiError(platformCopilot.error);
   }, [platformCopilot.error]);
@@ -131,12 +148,17 @@ export function PlatformCopilotMascot() {
     return streaming ? [...persisted, streaming] : persisted;
   }, [platformCopilot.conversationId, platformCopilot.messages, platformCopilot.streamingComponents, platformCopilot.streamingMessageId]);
   const loading = platformCopilot.loading || Boolean(platformCopilot.streamingMessageId);
+  const handoffExpired = Boolean(pendingHandoff && new Date(pendingHandoff.expiresAt).getTime() <= Date.now());
 
   const sendMessage = async () => {
-    const message = input.trim();
-    if (!message || loading) return;
+    const message = (composerRef.current?.value ?? input).trim();
+    const expired = Boolean(pendingHandoff && new Date(pendingHandoff.expiresAt).getTime() <= Date.now());
+    if (!message || loading || expired) return;
     setScrollRequest((request) => request + 1);
-    if (await platformCopilot.send(message)) setInput('');
+    if (await platformCopilot.send(message, undefined, undefined, pendingHandoff ?? undefined)) {
+      setInput('');
+      clearHandoff();
+    }
   };
 
   const choiceInteractions = React.useMemo(
@@ -239,10 +261,10 @@ export function PlatformCopilotMascot() {
             <p className='mt-0.5 text-xs text-muted-foreground'>{t('description')}</p>
           </div>
           <div className='ml-auto flex shrink-0 items-center gap-1'>
-            <Button type='button' variant='ghost' size='icon' className='size-9' title={t('newConversation')} aria-label={t('newConversation')} disabled={loading} onClick={() => { void platformCopilot.createNewConversation().then((created) => { if (created) { setInput(''); setScrollRequest((request) => request + 1); } }); }}>
+            <Button type='button' variant='ghost' size='icon' className='size-9' title={t('newConversation')} aria-label={t('newConversation')} disabled={loading || Boolean(pendingHandoff)} onClick={() => { void platformCopilot.createNewConversation().then((created) => { if (created) { setInput(''); setScrollRequest((request) => request + 1); } }); }}>
               <MessageSquarePlus className='size-4' />
             </Button>
-            <Button type='button' variant='ghost' size='icon' className='size-9' title={t('history.open')} aria-label={t('history.open')} disabled={loading} onClick={() => { setHistoryOpen(true); void platformCopilot.refreshHistory(); }}>
+            <Button type='button' variant='ghost' size='icon' className='size-9' title={t('history.open')} aria-label={t('history.open')} disabled={loading || Boolean(pendingHandoff)} onClick={() => { setHistoryOpen(true); void platformCopilot.refreshHistory(); }}>
               <History className='size-4' />
             </Button>
             {!useDrawer && <Button type='button' variant='ghost' size='icon' className='size-9' aria-label={t('close')} onClick={closePanel}>
@@ -334,10 +356,36 @@ export function PlatformCopilotMascot() {
         <ChatScrollButton className='bottom-3 z-10' aria-label={t('scrollLatest')} title={t('scrollLatest')} />
       </ChatConversation>
       <footer className='shrink-0 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]'>
+        {pendingHandoff && (
+          <section className='mb-3 rounded-xl border bg-muted/30 p-3' aria-label={t('handoff.previewLabel')}>
+            <div className='flex items-start gap-2'>
+              <Workflow className='mt-0.5 size-4 shrink-0 text-primary' />
+              <div className='min-w-0 flex-1'>
+                <p className='text-sm font-medium'>{t('handoff.title')}</p>
+                <p className='mt-0.5 text-xs text-muted-foreground'>{t('handoff.description')}</p>
+              </div>
+              <Button type='button' variant='ghost' size='sm' onClick={() => { clearHandoff(); setInput(''); }}>{t('handoff.discard')}</Button>
+            </div>
+            {pendingHandoff.preview.goal && <p className='mt-3 text-xs leading-5'><span className='font-medium'>{t('handoff.goal')}</span> {pendingHandoff.preview.goal}</p>}
+            {pendingHandoff.preview.planSteps.length > 0 && (
+              <div className='mt-2'>
+                <p className='text-xs font-medium'>{t('handoff.steps')}</p>
+                <ul className='mt-1 space-y-1 text-xs text-muted-foreground'>
+                  {pendingHandoff.preview.planSteps.slice(0, 5).map((step, index) => <li key={`${step.label}-${index}`}>{step.label}</li>)}
+                </ul>
+              </div>
+            )}
+            {pendingHandoff.preview.actions.length > 0 && <p className='mt-2 text-xs text-muted-foreground'>{t('handoff.actions', { actions: pendingHandoff.preview.actions.slice(0, 5).map((action) => action.label || action.name).join(', ') })}</p>}
+            {pendingHandoff.preview.resources.length > 0 && <p className='mt-1 text-xs text-muted-foreground'>{t('handoff.resources', { resources: pendingHandoff.preview.resources.slice(0, 5).map((resource) => resource.label).join(', ') })}</p>}
+            <p className='mt-2 text-[11px] text-muted-foreground' aria-live='polite'>
+              {handoffExpired ? t('handoff.expired') : t('handoff.expires', { date: new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(pendingHandoff.expiresAt)) })}
+            </p>
+          </section>
+        )}
         <label htmlFor='platform-copilot-message' className='sr-only'>{t('placeholder')}</label>
         <div className='flex items-end gap-2 rounded-xl border bg-card p-2 shadow-sm focus-within:ring-1 focus-within:ring-ring'>
-          <Textarea id='platform-copilot-message' name='platformCopilotMessage' value={input} onChange={(event) => setInput(event.target.value)} placeholder={t('placeholder')} className='max-h-32 min-h-10 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0' onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} />
-          <Button type='button' size='icon' className='size-11 shrink-0 rounded-lg' onClick={(event) => { event.preventDefault(); event.stopPropagation(); void sendMessage(); }} disabled={loading || !input.trim()} aria-label={t('sendLabel')}><Send className='size-4' /></Button>
+          <Textarea ref={composerRef} id='platform-copilot-message' name='platformCopilotMessage' value={input} onChange={(event) => setInput(event.target.value)} placeholder={t('placeholder')} className='max-h-32 min-h-10 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0' onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} />
+          <Button type='button' size='icon' className='size-11 shrink-0 rounded-lg' onClick={(event) => { event.preventDefault(); event.stopPropagation(); void sendMessage(); }} disabled={loading || handoffExpired || !input.trim()} aria-label={t('sendLabel')}><Send className='size-4' /></Button>
         </div>
       </footer>
     </>

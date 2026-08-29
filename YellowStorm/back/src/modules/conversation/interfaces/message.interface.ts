@@ -130,6 +130,7 @@ export interface MessageReplayContext {
     repoUrl?: string;
   };
   clientContext?: ConversationClientContextV1;
+  playbookHandoffId?: string;
   governanceOverride?: {
     runtimeMode: 'governed';
     primaryAgentId: string;

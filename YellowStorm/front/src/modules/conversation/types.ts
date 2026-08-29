@@ -264,6 +264,38 @@ export interface ChoiceInteractionMetadata {
   selectedOptions: Array<{ optionId: string; label: string; value?: string }>; customAnswer?: string; dismissed?: boolean; displayText?: string;
 }
 
+export interface SafeExecutionSummary { summary: string; status: string; actorLabel?: string }
+export interface SafePlanStep { label: string; status?: string }
+export interface SafeActionIdentity { name: string; label?: string; kind?: string; status?: string; summary?: string }
+export interface SafeResourceReference { kind: 'workspace' | 'document' | 'connector' | 'agent' | 'skill' | 'citation' | 'artifact'; id?: string; label: string }
+export interface ConversationPlaybookPreviewV1 {
+  goal?: string;
+  answerOutline?: string;
+  executionSummaries: SafeExecutionSummary[];
+  planSteps: SafePlanStep[];
+  actions: SafeActionIdentity[];
+  resources: SafeResourceReference[];
+  omissions: Record<string, number>;
+}
+export interface PrepareConversationPlaybookHandoffV1 {
+  contractVersion: 1;
+  targetMessageId: string;
+  activeBranches: Record<string, string>;
+  branchSelectionFingerprint: string;
+  displayedAnswerVersion: DisplayedAnswerVersion;
+  creationRequestId: string;
+}
+export interface PreparedConversationPlaybookHandoffV1 {
+  contractVersion: 1;
+  status: 'prepared';
+  handoffId: string;
+  platformConversationId: string;
+  suggestedPrompt: string;
+  expiresAt: string;
+  preview: ConversationPlaybookPreviewV1;
+  provenance: { sourceConversationId: string; targetMessageId: string; displayedAnswerVersion: string; canonicalPathFingerprint: string; contextFingerprint: string };
+}
+
 export type ToolRenderKind = 'run_code' | 'search' | 'read' | 'write' | 'file' | 'web' | 'generic';
 export interface AgentActivityData extends Record<string, unknown> {
   summary: string; detail?: string; status: 'running' | 'completed'; startedAt?: string; completedAt?: string; durationMs?: number;
@@ -328,6 +360,7 @@ export interface PaginatedResponse<T> {
 
 export interface SendMessagePayload {
   requestId?: string;
+  playbookHandoffId?: string;
   content: string;
   attachedFileIds?: string[];
   attachedFiles?: AttachedFile[];

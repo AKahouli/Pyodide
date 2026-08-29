@@ -38,6 +38,7 @@ import { ConflictException } from '../../exceptions';
 import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
 import { ConversationArtifactService } from '../services/conversation-artifact.service';
 import { ResolveCitationUrlDto } from '../dto/resolve-citation-url.dto';
+import { ConversationPlaybookHandoffService } from '../services/conversation-playbook-handoff.service';
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -55,6 +56,7 @@ export class MessageController {
     private readonly governedRuntimeService: GovernedConversationRuntimeService,
     private readonly responseReliabilityService: ResponseReliabilityService,
     private readonly conversationArtifactService: ConversationArtifactService,
+    private readonly playbookHandoffService: ConversationPlaybookHandoffService,
   ) {
     this.logger.setContext('MessageController');
   }
@@ -145,6 +147,8 @@ export class MessageController {
         );
       }
       await this.conversationService.resolvePlatformCopilotAgent(conversation);
+    } else if (dto.playbookHandoffId) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Playbook handoffs require a Platform Copilot conversation');
     }
 
     if (dto.requestId) {
@@ -161,6 +165,7 @@ export class MessageController {
           );
         }
         if (platformCopilot) {
+          await this.recoverPlaybookHandoff(dto, user._id.toString(), conversationId, existingTurn.userMessage.id);
           return this.resumePlatformCopilotTurn(
             user,
             conversationId,
@@ -273,6 +278,18 @@ export class MessageController {
       effectiveReasoningEffort = dto.reasoningEffort;
     }
 
+    if (dto.playbookHandoffId) {
+      if (!dto.requestId) throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Playbook handoff turns require a stable request ID');
+      if (dto.interaction || dto.interactions?.length) throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Playbook handoffs require an explicit prompt turn');
+      await this.playbookHandoffService.bind({
+        handoffId: dto.playbookHandoffId,
+        ownerId: user._id.toString(),
+        platformConversationId: conversationId,
+        turnRequestId: dto.requestId,
+        prompt: dto.content,
+      });
+    }
+
     if (!platformCopilot && shouldReplaceSticky && effectiveAgentIds?.length) {
       await this.conversationService.replaceTaggedAgentIds(
         conversationId,
@@ -326,6 +343,7 @@ export class MessageController {
           skillIds: dto.skillIds ?? [],
           connectorRepo: dto.connectorRepo,
           clientContext: dto.clientContext,
+          playbookHandoffId: dto.playbookHandoffId,
           governanceOverride: governedRuntime ? {
             runtimeMode: 'governed',
             primaryAgentId: governedRuntime.primaryAgentId,
@@ -336,11 +354,15 @@ export class MessageController {
           } : undefined,
         },
       });
+      if (dto.playbookHandoffId) {
+        await this.playbookHandoffService.attachUserMessage(dto.playbookHandoffId, user._id.toString(), userMessage.id);
+      }
     } catch (error: unknown) {
       if (dto.requestId && typeof error === 'object' && error !== null && 'code' in error && (error as { code?: number }).code === 11000) {
         const racedTurn = await this.messageService.findTurnByRequestId(conversationId, user._id.toString(), dto.requestId);
         if (racedTurn?.requestFingerprint === requestFingerprint) {
           if (platformCopilot) {
+            await this.recoverPlaybookHandoff(dto, user._id.toString(), conversationId, racedTurn.userMessage.id);
             return this.resumePlatformCopilotTurn(
               user,
               conversationId,
@@ -411,6 +433,7 @@ export class MessageController {
           connectorRepo: dto.connectorRepo,
           skillIds: dto.skillIds,
           clientContext: dto.clientContext,
+          playbookHandoffId: dto.playbookHandoffId,
         }, requestId, undefined, this.resolveDisplayName(user), governedRuntime ? {
           runtimeMode: 'governed',
           primaryAgentId: governedRuntime.primaryAgentId,
@@ -490,6 +513,7 @@ export class MessageController {
         deepSearchEnabled: dto.deepSearchEnabled,
         agentIds: [pinnedAgentId],
         clientContext: dto.clientContext,
+        playbookHandoffId: dto.playbookHandoffId,
       }, dto.requestId, undefined, this.resolveDisplayName(user)).catch((error: unknown) => {
         if ((error as { code?: ErrorCode }).code === ErrorCode.CHAT_ALREADY_STREAMING) return;
         this.logger.error('Recovered stream start failed', {
@@ -500,6 +524,26 @@ export class MessageController {
       });
     }
     return { userMessage: turn.userMessage, aiMessageId };
+  }
+
+  private async recoverPlaybookHandoff(
+    dto: SendMessageDto,
+    ownerId: string,
+    conversationId: string,
+    userMessageId: string,
+  ): Promise<void> {
+    if (!dto.playbookHandoffId) return;
+    if (!dto.requestId) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Playbook handoff turns require a stable request ID');
+    }
+    await this.playbookHandoffService.bind({
+      handoffId: dto.playbookHandoffId,
+      ownerId,
+      platformConversationId: conversationId,
+      turnRequestId: dto.requestId,
+      prompt: dto.content,
+    });
+    await this.playbookHandoffService.attachUserMessage(dto.playbookHandoffId, ownerId, userMessageId);
   }
 
   private fingerprintTurn(dto: SendMessageDto): string {
@@ -519,6 +563,7 @@ export class MessageController {
       interaction: dto.interaction ?? null,
       interactions: dto.interactions ?? null,
       clientContext: dto.clientContext ?? null,
+      playbookHandoffId: dto.playbookHandoffId ?? null,
     };
     return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
   }

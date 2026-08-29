@@ -3,6 +3,7 @@ import { createConversation, fetchConversation, fetchConversations, fetchMessage
 import { conversationStreamService } from '@/modules/conversation/stream';
 import type { ChoiceInteractionMetadata, Conversation, Message, StreamingComponent, StreamSSEEvent } from '@/modules/conversation/types';
 import type { PlatformCopilotPageContext } from './types';
+import type { PendingPlaybookHandoffDraft } from './platformCopilotPanelStore';
 
 export const PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY = 'ys_platform_copilot_conversation_id';
 const LEGACY_CONVERSATION_STORAGE_KEY = 'ys_second_brain_conversation_id';
@@ -44,7 +45,7 @@ function applyStreamAction(
   return next;
 }
 
-export function usePlatformCopilotConversation(open: boolean, clientContext: PlatformCopilotPageContext) {
+export function usePlatformCopilotConversation(open: boolean, clientContext: PlatformCopilotPageContext, pendingHandoff?: PendingPlaybookHandoffDraft | null) {
   const [conversationId, setConversationId] = React.useState<string>();
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [streamingComponents, setStreamingComponents] = React.useState<StreamingComponent[]>([]);
@@ -80,10 +81,20 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
   }, []);
 
   React.useEffect(() => {
-    if (!open || conversationId) return;
+    if (!open || (conversationId && conversationId === pendingHandoff?.platformConversationId) || (conversationId && !pendingHandoff)) return;
     let cancelled = false;
     setLoading(true);
     void (async () => {
+      if (pendingHandoff) {
+        const prepared = await fetchConversation(pendingHandoff.platformConversationId);
+        if (prepared.runtimePurpose !== 'platform_copilot') throw new Error('Prepared Yellowmind conversation is invalid');
+        await hydrate(prepared.id);
+        if (!cancelled) {
+          setConversationId(prepared.id);
+          void loadHistory();
+        }
+        return;
+      }
       const legacyId = localStorage.getItem(LEGACY_CONVERSATION_STORAGE_KEY);
       const storedId = localStorage.getItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY) ?? legacyId;
       if (legacyId && !localStorage.getItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY)) {
@@ -113,7 +124,7 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [conversationId, hydrate, loadHistory, open]);
+  }, [conversationId, hydrate, loadHistory, open, pendingHandoff]);
 
   React.useEffect(() => conversationStreamService.subscribe((event: StreamSSEEvent) => {
     if (!conversationId || !('data' in event) || !event.data || !('conversationId' in event.data) || event.data.conversationId !== conversationId) return;
@@ -153,14 +164,14 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
     }
   }), [conversationId, hydrate, loadHistory]);
 
-  const send = async (content: string, interaction?: ChoiceInteractionMetadata, interactions?: ChoiceInteractionMetadata[]) => {
+  const send = async (content: string, interaction?: ChoiceInteractionMetadata, interactions?: ChoiceInteractionMetadata[], handoff?: PendingPlaybookHandoffDraft) => {
     if (!conversationId || loading) return false;
     setLoading(true);
     setError(undefined);
-    const fingerprint = JSON.stringify({ content, interaction, interactions, clientContext });
-    const requestId = retryRef.current?.fingerprint === fingerprint
+    const fingerprint = JSON.stringify({ content, interaction, interactions, clientContext, playbookHandoffId: handoff?.handoffId });
+    const requestId = handoff?.messageRequestId ?? (retryRef.current?.fingerprint === fingerprint
       ? retryRef.current.requestId
-      : crypto.randomUUID();
+      : crypto.randomUUID());
     retryRef.current = { fingerprint, requestId };
     try {
       const connected = await conversationStreamService.waitForConnection();
@@ -168,6 +179,7 @@ export function usePlatformCopilotConversation(open: boolean, clientContext: Pla
       const response = await sendMessage(conversationId, {
         content,
         requestId,
+        playbookHandoffId: handoff?.handoffId,
         clientContext,
         interaction,
         interactions,

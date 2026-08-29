@@ -44,6 +44,7 @@ vi.mock('@/modules/localization', () => ({
     'stream.activity.retry': 'Retry response',
     'stream.activity.stepProgress': `${options?.current} of ${options?.total} steps`,
     'stream.activity.mobileDetailsAria': `Show all activity steps (${options?.status || ''})`,
+    'stream.activity.desktopDetailsAria': 'Show or hide tool activity',
     'stream.activity.viewArtifact': 'View',
     'stream.activity.downloadArtifact': 'Download',
     'stream.activity.artifactError': 'Artifact error',
@@ -101,7 +102,7 @@ describe('ConversationAssistantBubble', () => {
     }
     expect(bubble.textContent).not.toContain('storagePath');
     expect([...desktop.querySelectorAll('[data-tool-sequence]')].map((node) => node.textContent)).toEqual(['1.', '2.']);
-    expect(bubble.querySelector('[data-activity-pane]')).toHaveClass('h-[13.333rem]', 'overflow-y-auto');
+    expect(bubble.querySelector('[data-activity-pane]')).toHaveClass('h-[6.667rem]', 'overflow-y-auto');
     expect(bubble.querySelector('[data-activity-pane]')).not.toContainElement(nodes.at(-1) as HTMLElement);
   });
 
@@ -154,6 +155,99 @@ describe('ConversationAssistantBubble', () => {
 
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText(/First inspect the complete 2023 report.*Then compare every 2025 ratio/s)).toHaveClass('whitespace-pre-wrap');
+  });
+
+  it('collapses desktop activity when streaming completes and allows reopening it', () => {
+    const { rerender } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming
+      components={[{ id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'Find revenue', status: 'running', renderKind: 'search' } }]}
+    />);
+    const toggle = screen.getByRole('button', { name: 'Show or hide tool activity' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    rerender(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{ id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'Find revenue', status: 'completed', renderKind: 'search' } }]}
+    />);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('uses detailed reasoning instead of a one-word activity summary and omits its text replay', () => {
+    const detail = 'I am checking the official revenue statement before preparing the answer.';
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        { id: 'activity-1', type: 'agentActivity', data: { summary: 'statement', detail, status: 'completed' } },
+        { id: 'reasoning-replay', type: 'text', data: { content: detail } },
+        { id: 'answer', type: 'text', data: { content: 'Revenue was 33.9 million euros.' } },
+      ]}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show or hide tool activity' }));
+    expect(screen.getByRole('button', { name: 'Activity, Completed. Show full reasoning' })).toHaveTextContent('I am checking the official revenue statement');
+    expect(container.querySelector('[data-answer-content]')).toHaveTextContent('Revenue was 33.9 million euros.');
+    expect(container.querySelector('[data-answer-content]')).not.toHaveTextContent(detail);
+  });
+
+  it('omits an activity row when both summary and detail are only one word', () => {
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        { id: 'activity-1', type: 'agentActivity', data: { summary: 'revenue', detail: 'revenue', status: 'completed' } },
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'create_sandbox', summary: 'Prepare the revenue workspace', status: 'completed', renderKind: 'generic' } },
+        { id: 'answer', type: 'text', data: { content: 'Revenue was 33.9 million euros.' } },
+      ]}
+    />);
+
+    expect(container.querySelectorAll('[data-desktop-activity] button[aria-label^="Activity,"]')).toHaveLength(0);
+    expect(screen.getAllByText(/Prepare the revenue workspace/)).not.toHaveLength(0);
+    expect(screen.getByText('Revenue was 33.9 million euros.')).toBeInTheDocument();
+  });
+
+  it('removes concatenated summary-only reasoning from persisted answer components', () => {
+    const firstSummary = 'I am checking the official revenue statement before preparing the answer.';
+    const secondSummary = 'I am comparing the confirmed figures with the prior reporting period.';
+    const activity = [
+      { id: 'activity-1', type: 'agentActivity' as const, data: { summary: firstSummary, status: 'completed' as const } },
+      { id: 'activity-2', type: 'agentActivity' as const, data: { summary: secondSummary, status: 'completed' as const } },
+    ];
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={activity}
+      answerComponents={[{ id: 'answer', type: 'text', data: { content: `${firstSummary}${secondSummary}\n\n## Revenue\nRevenue was 33.9 million euros.` } }]}
+    />);
+
+    const answer = container.querySelector('[data-answer-content]');
+    expect(answer).toHaveTextContent('Revenue was 33.9 million euros.');
+    expect(answer).not.toHaveTextContent(firstSummary);
+    expect(answer).not.toHaveTextContent(secondSummary);
+  });
+
+  it('keeps a short final answer that matches a short activity detail', () => {
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        { id: 'activity-1', type: 'agentActivity', data: { summary: 'Done', detail: 'Yes', status: 'completed' } },
+        { id: 'answer', type: 'text', data: { content: 'Yes' } },
+      ]}
+    />);
+
+    expect(container.querySelector('[data-answer-content]')).toHaveTextContent('Yes');
   });
 
   it('projects historical snapshot replays as one reasoning row per tool segment', () => {
@@ -223,7 +317,7 @@ describe('ConversationAssistantBubble', () => {
       ]}
     />);
 
-    expect(screen.getByText('Smart Agent')).toBeInTheDocument();
+    expect(screen.getAllByText('Smart Agent')).not.toHaveLength(0);
     expect(screen.getByText(/Read the research explanation/)).toBeInTheDocument();
     expect(container.querySelector('[data-agent-activity]')).toHaveAttribute('data-active', 'true');
     expect(container.querySelector('[data-agent-spinner]')).toBeInTheDocument();
@@ -425,7 +519,7 @@ describe('ConversationAssistantBubble', () => {
     expect(container.querySelector('[data-tool-status="failed"]')).toBeInTheDocument();
     expect(container.querySelector('[data-tool-spinner]')).not.toBeInTheDocument();
     expect(screen.getByText('3 of 3 steps')).toBeInTheDocument();
-    expect(container.querySelector('[data-activity-pane]')).toHaveClass('h-[13.333rem]', 'overflow-y-auto');
+    expect(container.querySelector('[data-activity-pane]')).toHaveClass('h-[6.667rem]', 'overflow-y-auto');
     expect([...container.querySelectorAll('[data-tool-sequence]')].map((node) => node.textContent)).toEqual(['1.', '2.', '3.']);
     expect(container.querySelectorAll('[data-tool-spinner]')).toHaveLength(0);
     fireEvent.click(screen.getByRole('button', { name: '3. Tool response: Search (Failed)' }));
@@ -510,8 +604,8 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.queryByText(/path=C:/)).not.toBeInTheDocument();
     expect(screen.queryByText(/s3:\/\//)).not.toBeInTheDocument();
     expect(screen.queryByText(/507f1f77bcf86cd799439011/)).not.toBeInTheDocument();
-    expect(screen.getByText('Assistant')).toBeInTheDocument();
-    expect(screen.getByText(/Preparing your request/)).toBeInTheDocument();
+    expect(screen.getAllByText('Assistant')).not.toHaveLength(0);
+    expect(screen.queryByText(/Preparing your request/)).not.toBeInTheDocument();
     expect(screen.getAllByText('report.csv')).not.toHaveLength(0);
     expect(screen.queryByText(/\/tmp\/private\/report/)).not.toBeInTheDocument();
     expect(document.querySelector('[id*="opaque-artifact"]')).not.toBeInTheDocument();

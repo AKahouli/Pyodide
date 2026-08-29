@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import type { TrustedConversationPlaybookContextV1 } from '@modules/conversation/interfaces/conversation-playbook-handoff.interface';
 
 export type PlaybookAssistantRequestDocument = HydratedDocument<PlaybookAssistantRequest>;
 export type PlaybookAssistantOperationKind = 'inspect' | 'existing_construction' | 'generation';
@@ -41,6 +42,18 @@ export class PlaybookAssistantRequest {
 
   @Prop({ required: false, type: String, default: null })
   requestedName?: string | null;
+
+  @Prop({ required: false, type: Object, default: null })
+  handoffContext?: TrustedConversationPlaybookContextV1 | null;
+
+  @Prop({ required: false, type: Object, default: null })
+  handoffProvenance?: {
+    handoffId: string; handoffVersion: 1; sourceConversationId: string; targetMessageId: string;
+    displayedAnswerVersion: string; canonicalPathFingerprint: string; contextFingerprint: string; acceptedAt: string;
+  } | null;
+
+  @Prop({ required: true, type: [String], default: [] })
+  workspaceDefaultIds!: string[];
 
   @Prop({ required: false, type: String, default: null })
   selectedTaskId?: string | null;

@@ -10,6 +10,7 @@ import type { PreparedConstructionInput } from '../interfaces/playbook-assistant
 import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
 import { PlaybookAssistantOperationService, type PersistableConstructionEvent } from '../assistant/playbook-assistant-operation.service';
 import type { UpdatePlaybookFlowDto } from '../dto/update-playbook-flow.dto';
+import type { TrustedConversationPlaybookContextV1 } from '@modules/conversation/interfaces/conversation-playbook-handoff.interface';
 
 interface PlaybookIntentConstructionJob {
   id: string;
@@ -35,10 +36,11 @@ export class PlaybookFlowIntentConstructionService {
     @Optional() private readonly operationService?: PlaybookAssistantOperationService,
   ) {}
 
-  async start(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto, options?: { origin?: 'designer' | 'mcp'; operationId?: string; requestId?: string; operationKind?: 'construction' | 'generation'; createdPlaybookId?: string }): Promise<PlaybookIntentConstructionStartResult> {
+  async start(flowId: string, ownerId: string, dto: RequestPlaybookFlowIntentDto, options?: { origin?: 'designer' | 'mcp'; operationId?: string; requestId?: string; operationKind?: 'construction' | 'generation'; createdPlaybookId?: string; trustedHandoffContext?: TrustedConversationPlaybookContextV1 }): Promise<PlaybookIntentConstructionStartResult> {
     const normalizedFlowId = String(flowId);
     const normalizedOwnerId = String(ownerId);
     const context = await this.intentService.buildIntentAnalysisContext(flowId, ownerId, dto);
+    this.intentService.attachTrustedHandoffContext(context, dto, options?.trustedHandoffContext);
     const id = options?.operationId ?? randomUUID();
     const job: PlaybookIntentConstructionJob = {
       id,

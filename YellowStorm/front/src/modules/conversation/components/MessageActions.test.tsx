@@ -8,6 +8,8 @@ const updateFeedbackMock = vi.hoisted(() => vi.fn());
 const regenerateMessageMock = vi.hoisted(() => vi.fn());
 const toastSuccessMock = vi.hoisted(() => vi.fn());
 const branchConversationMock = vi.hoisted(() => vi.fn());
+const prepareConversationPlaybookHandoffMock = vi.hoisted(() => vi.fn());
+const openHandoffMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
 const fetchConversationsMock = vi.hoisted(() => vi.fn());
 const modelMock = vi.hoisted(() => ({ value: { id: 'model-1', name: 'Model One' } as { id: string; name: string } | undefined }));
@@ -30,9 +32,16 @@ vi.mock('react-router-dom', () => ({ useNavigate: () => navigateMock }));
 vi.mock('@/modules/auth', () => ({
   useAuth: () => ({ user: { id: 'user-owner', permissions: ['playbook.create'] } }),
 }));
-vi.mock('../api', () => ({ branchConversation: branchConversationMock }));
+vi.mock('../api', () => ({
+  branchConversation: branchConversationMock,
+  prepareConversationPlaybookHandoff: prepareConversationPlaybookHandoffMock,
+}));
 vi.mock('@/modules/models', () => ({
   useModelById: (id: string) => id === 'model-1' ? modelMock.value : undefined,
+}));
+vi.mock('@/modules/playbook/features', () => ({ playbookFeatures: { mcpAssistantEnabled: true } }));
+vi.mock('@/modules/platform-copilot/platformCopilotPanelStore', () => ({
+  usePlatformCopilotPanelStore: (selector: (state: Record<string, unknown>) => unknown) => selector({ openHandoff: openHandoffMock }),
 }));
 
 vi.mock('../store', () => ({
@@ -74,6 +83,7 @@ vi.mock('sonner', () => ({
 
 describe('MessageActions', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     modelMock.value = { id: 'model-1', name: 'Model One' };
   });
 
@@ -132,6 +142,42 @@ describe('MessageActions', () => {
       }),
     ));
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/conversation/branch-1'));
+  });
+
+  it('prepares a canonical branch handoff and opens Yellowmind', async () => {
+    const handoff = {
+      contractVersion: 1,
+      status: 'prepared',
+      handoffId: crypto.randomUUID(),
+      platformConversationId: 'platform-1',
+      suggestedPrompt: 'Create a reusable Playbook',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      preview: { executionSummaries: [], planSteps: [], actions: [], resources: [], omissions: {} },
+      provenance: {},
+    };
+    prepareConversationPlaybookHandoffMock.mockResolvedValueOnce(handoff);
+    render(
+      <MessageActions
+        message={{ id: 'ai-1', conversationType: 'ai', questionMessageId: 'user-1', components: [], isComplete: true, isStreaming: false } as never}
+        isLastAiMessage={false}
+        conversationId='conv-1'
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'messageActions.playbookHandoff' }));
+
+    await waitFor(() => expect(prepareConversationPlaybookHandoffMock).toHaveBeenCalledWith(
+      'conv-1',
+      expect.objectContaining({
+        contractVersion: 1,
+        targetMessageId: 'ai-1',
+        displayedAnswerVersion: 'original',
+        activeBranches: { 'user-1': 'ai-1' },
+        branchSelectionFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+        creationRequestId: expect.any(String),
+      }),
+    ));
+    await waitFor(() => expect(openHandoffMock).toHaveBeenCalledWith(handoff));
   });
 
   it('falls back safely when generation metadata cannot be resolved', () => {

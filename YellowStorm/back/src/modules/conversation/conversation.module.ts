@@ -8,6 +8,7 @@ import { Conversation, ConversationSchema } from './schemas/conversation.schema'
 import { Message, MessageSchema } from './schemas/message.schema';
 import { Report, ReportSchema } from './schemas/report.schema';
 import { SharedConversation, SharedConversationSchema } from './schemas/shared-conversation.schema';
+import { ConversationPlaybookHandoff, ConversationPlaybookHandoffSchema } from './schemas/conversation-playbook-handoff.schema';
 import { User, UserSchema } from '../user/schemas/user.schema';
 
 // Controllers
@@ -29,6 +30,8 @@ import { ReportService } from './services/report.service';
 import { ComposerSuggestionsService } from './services/composer-suggestions.service';
 import { ChoiceInteractionService } from './services/choice-interaction.service';
 import { ConversationBranchService } from './services/conversation-branch.service';
+import { ConversationPlaybookContextProjectorService } from './services/conversation-playbook-context-projector.service';
+import { ConversationPlaybookHandoffService } from './services/conversation-playbook-handoff.service';
 
 // Guards
 import { ConversationOwnerGuard } from './guards/conversation-owner.guard';
@@ -72,6 +75,7 @@ import { ConversationArtifactService } from './services/conversation-artifact.se
       { name: Report.name, schema: ReportSchema },
       { name: SharedConversation.name, schema: SharedConversationSchema },
       { name: User.name, schema: UserSchema },
+      { name: ConversationPlaybookHandoff.name, schema: ConversationPlaybookHandoffSchema },
     ]),
     JwtModule.register({}),
     forwardRef(() => AuthModule),
@@ -107,6 +111,8 @@ import { ConversationArtifactService } from './services/conversation-artifact.se
     ComposerSuggestionsService,
     ChoiceInteractionService,
     ConversationBranchService,
+    ConversationPlaybookContextProjectorService,
+    ConversationPlaybookHandoffService,
     ResponseReliabilityService,
     ResponseReliabilityEvidenceBuilder,
     ResponseReliabilityScoringService,
@@ -128,6 +134,7 @@ import { ConversationArtifactService } from './services/conversation-artifact.se
     MessageService,
     StreamService,
     StreamGatewayService,
+    ConversationPlaybookHandoffService,
   ],
 })
 export class ConversationModule {}

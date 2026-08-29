@@ -47,5 +47,15 @@
   "navigation.executionTask": "Inspect execution task",
   "navigation.executionTaskDescription": "Focus this task in the run",
   "navigation.unsaved": "You have unsaved Playbook changes. Continue navigation?",
-  "error.generic": "Yellowmind could not complete that request."
+  "error.generic": "Yellowmind could not complete that request.",
+  "handoff.previewLabel": "Read-only conversation source context",
+  "handoff.title": "Conversation source",
+  "handoff.description": "Review the safe source context, then edit and send the prompt when ready.",
+  "handoff.goal": "Goal:",
+  "handoff.steps": "Reusable process steps",
+  "handoff.actions": "Actions: {{actions}}",
+  "handoff.resources": "Resources: {{resources}}",
+  "handoff.discard": "Discard",
+  "handoff.expires": "Available until {{date}}",
+  "handoff.expired": "This handoff expired. Return to the source response to prepare it again."
 }

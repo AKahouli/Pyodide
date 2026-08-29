@@ -16,6 +16,14 @@ import { createHash, randomUUID } from 'node:crypto';
 
 const MAX_BRANCH_SELECTIONS = 500;
 
+export interface CanonicalConversationPath {
+  source: any;
+  messages: any[];
+  path: any[];
+  selectedAnswerIds: string[];
+  fingerprint: string;
+}
+
 @Injectable()
 export class ConversationBranchService {
   constructor(
@@ -146,6 +154,41 @@ export class ConversationBranchService {
         originalError: error instanceof Error ? error : undefined,
       });
     }
+  }
+
+  async resolveCanonicalPath(
+    sourceConversationId: string,
+    userId: string,
+    targetMessageId: string,
+    activeBranches: Record<string, string>,
+  ): Promise<CanonicalConversationPath> {
+    if (!Types.ObjectId.isValid(sourceConversationId)) {
+      throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    }
+    const ownerId = new Types.ObjectId(userId);
+    const source = await this.conversationModel.findOne({
+      _id: new Types.ObjectId(sourceConversationId),
+      initializationStatus: { $nin: ['pending', 'seeding', 'cleanup_pending'] },
+      $or: [{ createdBy: ownerId }, { 'groupMeta.members.userId': ownerId }],
+    }).lean().exec();
+    if (!source) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    if (source.runtimeMode === 'governed') {
+      throw new ConflictException(ErrorCode.CONFLICT, 'This governed conversation does not permit derivative use');
+    }
+    const messages = await this.messageModel.find({ conversationId: source._id })
+      .sort({ createdAt: 1, _id: 1 }).lean().exec();
+    const path = this.derivePath(messages, {
+      requestId: 'handoff-resolution',
+      targetMessageId,
+      activeBranches,
+    });
+    const selectedAnswerIds = path.filter((message) => message.conversationType === 'ai')
+      .map((message) => message._id.toString());
+    const fingerprint = createHash('sha256').update(JSON.stringify(path.map((message) => ({
+      id: message._id.toString(),
+      updatedAt: message.updatedAt instanceof Date ? message.updatedAt.toISOString() : String(message.updatedAt ?? ''),
+    })))).digest('hex');
+    return { source, messages, path, selectedAnswerIds, fingerprint };
   }
 
   private derivePath(messages: any[], dto: BranchConversationDto): any[] {

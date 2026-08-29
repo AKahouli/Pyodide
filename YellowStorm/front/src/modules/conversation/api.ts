@@ -1,5 +1,5 @@
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { ActiveStreamSnapshot, Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload } from './types';
+import type { ActiveStreamSnapshot, Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload, PrepareConversationPlaybookHandoffV1, PreparedConversationPlaybookHandoffV1 } from './types';
 
 // ===== Conversation APIs =====
 
@@ -95,6 +95,11 @@ export async function sendMessage(conversationId: string, payload: SendMessagePa
 
 export async function branchConversation(id: string, payload: BranchConversationPayload): Promise<Conversation> {
   const response = await apiClient.post<ApiResponse<Conversation>>(API_ENDPOINTS.conversations.branch(id), payload);
+  return response.data.data;
+}
+
+export async function prepareConversationPlaybookHandoff(id: string, payload: PrepareConversationPlaybookHandoffV1): Promise<PreparedConversationPlaybookHandoffV1> {
+  const response = await apiClient.post<ApiResponse<PreparedConversationPlaybookHandoffV1>>(API_ENDPOINTS.conversations.playbookHandoffs(id), payload);
   return response.data.data;
 }
 

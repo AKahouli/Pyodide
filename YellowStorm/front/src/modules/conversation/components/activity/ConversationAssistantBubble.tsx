@@ -54,6 +54,28 @@ function hasMeaningfulActivityText(value: string): boolean {
   return /[\p{L}\p{N}]/u.test(value);
 }
 
+function hasDescriptiveActivityText(value: string): boolean {
+  return value.trim().split(/\s+/).length > 1;
+}
+
+function resolveAgentActivityPreview(data: AgentActivityData, redactSensitiveText: boolean, fallback: string): string {
+  const summary = sanitizeActivitySummary(data.summary, redactSensitiveText);
+  const detail = sanitizeActivitySummary(data.detail, redactSensitiveText);
+  return summary && summary.trim().split(/\s+/).length > 1 ? summary : detail || summary || fallback;
+}
+
+function stripReasoningReplayPrefix(component: MessageComponent, reasoningTexts: readonly string[]): MessageComponent | undefined {
+  if (component.type !== 'text' || typeof component.data.content !== 'string') return component;
+  let content = component.data.content;
+  let replay: string | undefined;
+  do {
+    content = content.trimStart();
+    replay = reasoningTexts.find((text) => content.startsWith(text));
+    if (replay) content = content.slice(replay.length);
+  } while (replay);
+  return content.trim() ? { ...component, data: { ...component.data, content } } : undefined;
+}
+
 function projectActivityComponents(components: MessageComponent[]): MessageComponent[] {
   const hasReasoning = components.some((component) => component.type === 'agentActivity'
     && (String(component.data.detail || '').trim() || String(component.data.summary || '').trim()));
@@ -77,6 +99,7 @@ function projectActivityComponents(components: MessageComponent[]): MessageCompo
     const summaryText = String(component.data.summary || '').trim();
     if (hasReasoning && !detailText && !summaryText) continue;
     if ((detailText || summaryText) && !hasMeaningfulActivityText(`${detailText}${summaryText}`)) continue;
+    if ((detailText || summaryText) && !hasDescriptiveActivityText(detailText) && !hasDescriptiveActivityText(summaryText)) continue;
 
     const actor = String(component.data.actorId || component.data.actorName || 'assistant');
     const fingerprint = detailText ? `${actor}\u0000${detailText}` : '';
@@ -191,10 +214,10 @@ function ToolRow({ component, sequence, redactSensitiveText, isStreaming, onRetr
   );
 }
 
-function AgentActivityRow({ data, isStreaming }: Readonly<{ data: AgentActivityData; isStreaming: boolean }>) {
+function AgentActivityRow({ data, isStreaming, redactSensitiveText }: Readonly<{ data: AgentActivityData; isStreaming: boolean; redactSensitiveText: boolean }>) {
   const { t } = useModuleTranslation('conversation');
   const duration = formatActivityDuration(data.durationMs);
-  const summary = sanitizeActivitySummary(data.summary) || t('stream.activity.agentPlanning');
+  const summary = resolveAgentActivityPreview(data, redactSensitiveText, t('stream.activity.agentPlanning'));
   const active = isStreaming && data.status === 'running';
   const statusLabel = t(`stream.activity.toolStatus.${data.status}`);
   const detail = typeof data.detail === 'string' && data.detail.trim() ? data.detail : summary;
@@ -303,6 +326,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const { t } = useModuleTranslation('conversation');
   const settings = useConversationSettings();
   const activityPaneRef = useRef<HTMLDivElement>(null);
+  const [desktopActivityOpen, setDesktopActivityOpen] = useState(props.isStreaming);
   const redactSensitiveText = settings?.redactSensitiveText !== false;
   const useOriginalAnswer = !props.answerComponents || props.answerComponents === props.components;
   const source = useOriginalAnswer
@@ -315,10 +339,20 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
       component.type === 'agentActivity' || component.type === 'toolActivity' || component.type === 'artifact',
   ));
   const activityCount = activityComponents.length;
+  const reasoningTexts = [...new Set(activityComponents.flatMap((component) => {
+    if (component.type !== 'agentActivity') return [];
+    const detail = collapseExactTandem(component.data.detail);
+    return [detail, component.data.summary]
+      .filter((text): text is string => typeof text === 'string' && text.trim().split(/\s+/).length > 1)
+      .map((text) => text.trim());
+  }))];
   useEffect(() => {
     const pane = activityPaneRef.current;
     if (pane) pane.scrollTop = pane.scrollHeight;
   }, [activityCount]);
+  useEffect(() => {
+    setDesktopActivityOpen(props.isStreaming);
+  }, [props.isStreaming]);
   let answerBatch: MessageComponent[] = [];
   const flush = () => {
     if (!answerBatch.length) return;
@@ -330,12 +364,14 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     answerBatch = [];
   };
   source.forEach((component) => {
-    if (!['agentActivity', 'toolActivity', 'artifact'].includes(component.type)) answerBatch.push(component);
+    if (['agentActivity', 'toolActivity', 'artifact'].includes(component.type)) return;
+    const projected = stripReasoningReplayPrefix(component, reasoningTexts);
+    if (projected) answerBatch.push(projected);
   });
   flush();
   let toolSequence = 0;
   activityComponents.forEach((component, index) => {
-    if (component.type === 'agentActivity') activityNodes.push(<AgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} />);
+    if (component.type === 'agentActivity') activityNodes.push(<AgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} redactSensitiveText={redactSensitiveText} />);
     if (component.type === 'toolActivity') {
       toolSequence += 1;
       activityNodes.push(<ToolRow key={component.id || index} component={component} sequence={toolSequence} redactSensitiveText={redactSensitiveText} isStreaming={props.isStreaming} onRetry={props.onRetry} />);
@@ -351,25 +387,56 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   }, '') || t('stream.activity.assistant');
   return (
     <div data-message-role='assistant' data-testid='conversation-assistant-bubble' className={cn('w-full rounded-2xl rounded-tl-sm border border-border/70 bg-muted/45 px-4 py-4 text-sm text-foreground shadow-xs dark:bg-muted/30')}>
-      <div data-agent-activity data-active={props.isStreaming || undefined} className='mb-3 flex min-w-0 items-center gap-2 overflow-hidden text-sm text-muted-foreground' role={props.isStreaming ? 'status' : undefined}>
-        <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
-          {props.isStreaming && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
-          <Bot className={cn('relative size-4', props.isStreaming && 'text-running')} />
-        </span>
-        <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
-        <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
-          {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />}
-        </span>
-      </div>
+      <Collapsible open={desktopActivityOpen} onOpenChange={setDesktopActivityOpen}>
+        {activityNodes.length > 0 ? <>
+        <CollapsibleTrigger asChild>
+          <button type='button' aria-label={t('stream.activity.desktopDetailsAria')} data-agent-activity data-active={props.isStreaming || undefined} className='group mb-3 hidden min-w-0 w-full items-center gap-2 overflow-hidden rounded-md text-left text-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex'>
+            <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
+              {props.isStreaming && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
+              <Bot className={cn('relative size-4', props.isStreaming && 'text-running')} />
+            </span>
+            <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
+            {props.isStreaming && <span className='sr-only' role='status'>{actorName}</span>}
+            <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
+              {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />}
+            </span>
+            <ChevronRight className='size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />
+          </button>
+        </CollapsibleTrigger>
+        <div data-agent-activity-mobile data-active={props.isStreaming || undefined} className='mb-3 flex min-w-0 items-center gap-2 overflow-hidden text-sm text-muted-foreground md:hidden' role={props.isStreaming ? 'status' : undefined}>
+          <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
+            {props.isStreaming && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
+            <Bot className={cn('relative size-4', props.isStreaming && 'text-running')} />
+          </span>
+          <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
+          <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
+            {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />}
+          </span>
+        </div>
+        </> : (
+          <div data-agent-activity data-active={props.isStreaming || undefined} className='mb-3 flex min-w-0 items-center gap-2 overflow-hidden text-sm text-muted-foreground' role={props.isStreaming ? 'status' : undefined}>
+            <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
+              {props.isStreaming && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
+              <Bot className={cn('relative size-4', props.isStreaming && 'text-running')} />
+            </span>
+            <span className='shrink-0 font-medium text-foreground'>{actorName}</span>
+            <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
+              {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />}
+            </span>
+          </div>
+        )}
       {activityComponents.length > 0
         ? <MobileActivityTimeline components={activityComponents} nodes={activityNodes} isStreaming={props.isStreaming} />
         : props.showWorking && <div data-mobile-working className='flex items-center gap-2 text-sm text-muted-foreground md:hidden'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>}
       {activityNodes.length > 0 && (
-        <div ref={activityPaneRef} data-activity-pane className='hidden h-[13.333rem] overflow-y-auto overscroll-contain pr-2 md:block'>
-          <div data-desktop-activity className='space-y-2'>{activityNodes}</div>
-        </div>
+        <CollapsibleContent forceMount className='hidden data-[state=closed]:hidden md:block'>
+          <div ref={activityPaneRef} data-activity-pane className='h-[6.667rem] overflow-y-auto overscroll-contain pr-2'>
+            <div data-desktop-activity className='space-y-2'>{activityNodes}</div>
+          </div>
+        </CollapsibleContent>
       )}
-      {answerNodes.length > 0 && <div className={cn('space-y-2', activityNodes.length > 0 && 'mt-3 border-t pt-3')}>{answerNodes}</div>}
+      </Collapsible>
+      {answerNodes.length > 0 && <div data-answer-content className={cn('space-y-2', activityNodes.length > 0 && 'mt-3 border-t pt-3')}>{answerNodes}</div>}
     </div>
   );
 }
