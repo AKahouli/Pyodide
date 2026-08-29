@@ -1204,6 +1204,7 @@ function normalizeExecution(raw: any): PlaybookExecution {
     currentInterruptTaskId: isTerminal ? null : toNullableString(raw.currentInterruptTaskId ?? raw.pendingApproval?.nodeId),
     hitlHistory: normalizedHitlHistory,
     hitlEvents,
+    snapshot: raw.snapshot && typeof raw.snapshot === 'object' ? raw.snapshot : null,
     playbookSnapshot: raw.playbookSnapshot ?? null,
     totalInputTokens: toNullableNumber(raw.totalInputTokens) ?? 0,
     totalOutputTokens: toNullableNumber(raw.totalOutputTokens) ?? 0,

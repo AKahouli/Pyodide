@@ -11,12 +11,18 @@ import { useAdvisorEvaluationData } from '../hooks/useAdvisorEvaluationData';
 import type { PlaybookTask } from '../types';
 import {
   buildAdvisorExecutionPoints,
+  buildAdvisorWholeExecutionPoints,
   calculateAdvisorEvaluationMetrics,
+  calculateAdvisorWholeEvaluationMetrics,
   type AdvisorEvaluationMetrics,
   type AdvisorExecutionPoint,
 } from '../utils/advisor-evaluation-metrics';
 import { AdvisorExecutionComparison } from './AdvisorExecutionComparison';
+import { AdvisorWholePlaybookComparison } from './AdvisorWholePlaybookComparison';
+import { AdvisorWholePlaybookHistory, AdvisorWholePlaybookSummary } from './AdvisorWholePlaybookView';
 import { EvaluationDefinitionTooltip } from './EvaluationDefinitionTooltip';
+
+const WHOLE_PLAYBOOK_SCOPE = '__whole-playbook__';
 
 function formatPercent(value: number | null, unavailableLabel: string): string {
   return value === null ? unavailableLabel : `${Math.round(value)}%`;
@@ -136,27 +142,46 @@ export function AdvisorEvaluationWorkspace({
   const { t } = useModuleTranslation('playbook');
   const eligibleTasks = useMemo(
     () => tasks
-      .filter((task) => task.enabled !== false && task.taskType !== 'evaluation')
+      .filter((task) => task.enabled !== false && task.taskType !== 'evaluation' && task.disableAdvisorEvaluation !== true)
       .sort((left, right) => left.executionOrder - right.executionOrder),
     [tasks],
   );
   const { executions, loading, error, unavailableCount, refresh } = useAdvisorEvaluationData(playbookId, enabled);
-  const [selectedTaskId, setSelectedTaskId] = useState('');
+  const [selectedScope, setSelectedScope] = useState(WHOLE_PLAYBOOK_SCOPE);
+  const [activeTab, setActiveTab] = useState('history');
+  const [comparisonPair, setComparisonPair] = useState<{ left: string; right: string } | null>(null);
   const unavailableLabel = t('evaluationWorkspace.notAvailable' as any);
 
   useEffect(() => {
-    if (eligibleTasks.some((task) => task.id === selectedTaskId)) return;
-    const evaluatedTask = eligibleTasks.find((task) =>
-      buildAdvisorExecutionPoints(executions, task.id).some((point) => point.overallScore !== null),
-    );
-    setSelectedTaskId(evaluatedTask?.id ?? eligibleTasks[0]?.id ?? '');
-  }, [eligibleTasks, executions, selectedTaskId]);
+    if (selectedScope === WHOLE_PLAYBOOK_SCOPE || eligibleTasks.some((task) => task.id === selectedScope)) return;
+    setSelectedScope(WHOLE_PLAYBOOK_SCOPE);
+  }, [eligibleTasks, selectedScope]);
+
+  const selectedTaskId = selectedScope === WHOLE_PLAYBOOK_SCOPE ? '' : selectedScope;
 
   const points = useMemo(
     () => selectedTaskId ? buildAdvisorExecutionPoints(executions, selectedTaskId) : [],
     [executions, selectedTaskId],
   );
   const metrics = useMemo(() => calculateAdvisorEvaluationMetrics(points), [points]);
+  const wholePoints = useMemo(
+    () => buildAdvisorWholeExecutionPoints(executions, tasks),
+    [executions, tasks],
+  );
+  const wholeMetrics = useMemo(() => calculateAdvisorWholeEvaluationMetrics(wholePoints), [wholePoints]);
+  const drillableTaskIds = useMemo(() => new Set(eligibleTasks.map((task) => task.id)), [eligibleTasks]);
+  const isWholePlaybook = selectedScope === WHOLE_PLAYBOOK_SCOPE;
+
+  const selectScope = (scope: string) => {
+    setSelectedScope(scope);
+    setComparisonPair(null);
+  };
+
+  const handleDrillDown = (taskId: string, left: string, right: string) => {
+    setComparisonPair({ left, right });
+    setSelectedScope(taskId);
+    setActiveTab('compare');
+  };
 
   if (loading) {
     return (
@@ -177,7 +202,7 @@ export function AdvisorEvaluationWorkspace({
     );
   }
 
-  if (eligibleTasks.length === 0 || executions.length === 0) {
+  if (executions.length === 0 || (eligibleTasks.length === 0 && wholePoints.every((point) => point.eligibleCount === 0))) {
     return <div className="rounded-lg border bg-muted/20 p-8 text-center text-sm text-muted-foreground">{t('evaluationWorkspace.empty' as any)}</div>;
   }
 
@@ -185,16 +210,28 @@ export function AdvisorEvaluationWorkspace({
     <TooltipProvider delayDuration={200}>
       <div className="grid min-h-0 gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
         <aside className="rounded-lg border bg-muted/20 p-3">
-          <EvaluationDefinitionTooltip label={t('evaluationWorkspace.steps' as any)} definition={t('evaluationWorkspace.tooltip.steps' as any)} className="px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground" />
+          <EvaluationDefinitionTooltip label={t('evaluationWorkspace.scope.title' as any)} definition={t('evaluationWorkspace.tooltip.steps' as any)} className="px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground" />
           <div className="mt-3 hidden space-y-1 lg:block">
+            <button
+              type="button"
+              className={cn(
+                'w-full rounded-md border px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring',
+                isWholePlaybook ? 'border-primary bg-primary/10' : 'border-transparent hover:bg-muted',
+              )}
+              onClick={() => selectScope(WHOLE_PLAYBOOK_SCOPE)}
+            >
+              <span className="block text-sm font-medium">{t('evaluationWorkspace.scope.wholePlaybook' as any)}</span>
+              <span className="mt-1 block text-xs text-muted-foreground">{t('evaluationWorkspace.scope.wholePlaybookDescription' as any)}</span>
+            </button>
+            {eligibleTasks.length > 0 && <div className="px-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t('evaluationWorkspace.scope.steps' as any)}</div>}
             {eligibleTasks.map((task) => {
               const taskMetrics = calculateAdvisorEvaluationMetrics(buildAdvisorExecutionPoints(executions, task.id));
               return (
                 <div
                   key={task.id}
-                  className={cn('rounded-md border px-3 py-2 transition-colors', selectedTaskId === task.id ? 'border-primary bg-primary/10' : 'border-transparent hover:bg-muted')}
+                  className={cn('rounded-md border px-3 py-2 transition-colors', selectedScope === task.id ? 'border-primary bg-primary/10' : 'border-transparent hover:bg-muted')}
                 >
-                  <button type="button" className="w-full truncate text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setSelectedTaskId(task.id)}>
+                  <button type="button" className="w-full truncate text-left text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => selectScope(task.id)}>
                     {task.title || t('evaluationWorkspace.untitledStep' as any)}
                   </button>
                   <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
@@ -206,9 +243,12 @@ export function AdvisorEvaluationWorkspace({
             })}
           </div>
           <div className="mt-3 lg:hidden">
-            <Select value={selectedTaskId} onValueChange={setSelectedTaskId}>
-              <SelectTrigger aria-label={t('evaluationWorkspace.steps' as any)}><SelectValue /></SelectTrigger>
-              <SelectContent>{eligibleTasks.map((task) => <SelectItem key={task.id} value={task.id}>{task.title || t('evaluationWorkspace.untitledStep' as any)}</SelectItem>)}</SelectContent>
+            <Select value={selectedScope} onValueChange={selectScope}>
+              <SelectTrigger aria-label={t('evaluationWorkspace.scope.title' as any)}><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={WHOLE_PLAYBOOK_SCOPE}>{t('evaluationWorkspace.scope.wholePlaybook' as any)}</SelectItem>
+                {eligibleTasks.map((task) => <SelectItem key={task.id} value={task.id}>{task.title || t('evaluationWorkspace.untitledStep' as any)}</SelectItem>)}
+              </SelectContent>
             </Select>
           </div>
         </aside>
@@ -219,21 +259,35 @@ export function AdvisorEvaluationWorkspace({
               {t('evaluationWorkspace.partialData' as any, { count: unavailableCount })}
             </div>
           )}
-          <QualitySummary metrics={metrics} />
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <KpiCard label={t('evaluationWorkspace.kpi.average' as any)} definition={t('evaluationWorkspace.tooltip.average' as any)} value={formatPercent(metrics.averageScore, unavailableLabel)} detail={t('evaluationWorkspace.kpi.averageDetail' as any, { count: metrics.evaluatedCount })} tone={scoreTone(metrics.averageScore)} />
-            <KpiCard label={t('evaluationWorkspace.kpi.variation' as any)} definition={t('evaluationWorkspace.tooltip.variation' as any)} value={metrics.variation === null ? unavailableLabel : t('evaluationWorkspace.kpi.variationValue' as any, { value: Math.round(metrics.variation) })} detail={t(`evaluationWorkspace.stability.${metrics.stability}` as any)} />
-            <KpiCard label={t('evaluationWorkspace.kpi.passRate' as any)} definition={t('evaluationWorkspace.tooltip.passRate' as any)} value={`${metrics.passedCount} / ${metrics.evaluatedCount}`} detail={t('evaluationWorkspace.kpi.passRateDetail' as any)} />
-            <KpiCard label={t('evaluationWorkspace.kpi.coverage' as any)} definition={t('evaluationWorkspace.tooltip.coverage' as any)} value={`${metrics.evaluatedCount} / ${metrics.eligibleCount}`} detail={t('evaluationWorkspace.kpi.coverageDetail' as any)} />
-          </div>
+          {isWholePlaybook ? (
+            <AdvisorWholePlaybookSummary metrics={wholeMetrics} />
+          ) : (
+            <>
+              <QualitySummary metrics={metrics} />
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <KpiCard label={t('evaluationWorkspace.kpi.average' as any)} definition={t('evaluationWorkspace.tooltip.average' as any)} value={formatPercent(metrics.averageScore, unavailableLabel)} detail={t('evaluationWorkspace.kpi.averageDetail' as any, { count: metrics.evaluatedCount })} tone={scoreTone(metrics.averageScore)} />
+                <KpiCard label={t('evaluationWorkspace.kpi.variation' as any)} definition={t('evaluationWorkspace.tooltip.variation' as any)} value={metrics.variation === null ? unavailableLabel : t('evaluationWorkspace.kpi.variationValue' as any, { value: Math.round(metrics.variation) })} detail={t(`evaluationWorkspace.stability.${metrics.stability}` as any)} />
+                <KpiCard label={t('evaluationWorkspace.kpi.passRate' as any)} definition={t('evaluationWorkspace.tooltip.passRate' as any)} value={`${metrics.passedCount} / ${metrics.evaluatedCount}`} detail={t('evaluationWorkspace.kpi.passRateDetail' as any)} />
+                <KpiCard label={t('evaluationWorkspace.kpi.coverage' as any)} definition={t('evaluationWorkspace.tooltip.coverage' as any)} value={`${metrics.evaluatedCount} / ${metrics.eligibleCount}`} detail={t('evaluationWorkspace.kpi.coverageDetail' as any)} />
+              </div>
+            </>
+          )}
 
-          <Tabs defaultValue="history" className="space-y-4">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
             <TabsList>
               <TabsTrigger value="history">{t('evaluationWorkspace.tabs.history' as any)}</TabsTrigger>
               <TabsTrigger value="compare">{t('evaluationWorkspace.tabs.compare' as any)}</TabsTrigger>
             </TabsList>
-            <TabsContent value="history"><AdvisorTrend points={points} /></TabsContent>
-            <TabsContent value="compare"><AdvisorExecutionComparison key={selectedTaskId} points={points} /></TabsContent>
+            <TabsContent value="history">
+              {isWholePlaybook ? <AdvisorWholePlaybookHistory points={wholePoints} /> : <AdvisorTrend points={points} />}
+            </TabsContent>
+            <TabsContent value="compare">
+              {isWholePlaybook ? (
+                <AdvisorWholePlaybookComparison points={wholePoints} drillableTaskIds={drillableTaskIds} onDrillDown={handleDrillDown} />
+              ) : (
+                <AdvisorExecutionComparison key={selectedTaskId} points={points} initialExecutionIds={comparisonPair} />
+              )}
+            </TabsContent>
           </Tabs>
         </main>
       </div>

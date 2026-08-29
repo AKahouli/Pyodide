@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import type { PlaybookExecution, TaskResult } from '../types';
+import type { PlaybookExecution, PlaybookTask, TaskResult } from '../types';
 import {
   buildAdvisorExecutionPoints,
+  buildAdvisorWholeExecutionPoints,
   calculateAdvisorEvaluationMetrics,
+  calculateAdvisorWholeEvaluationMetrics,
   getAdvisorAttempts,
   normalizeAdvisorScore,
   selectTaskResult,
@@ -39,10 +41,10 @@ function makeJudgeResult(overallScore: number): NonNullable<TaskResult['judgeRes
   };
 }
 
-function makeTaskResult(overallScore: number | null, iteration = 0): TaskResult {
+function makeTaskResult(overallScore: number | null, iteration = 0, taskId = 'task-1'): TaskResult {
   return {
-    taskId: 'task-1',
-    nodeTitle: 'Plan optimization',
+    taskId,
+    nodeTitle: taskId,
     agentName: 'Advisor',
     order: 1,
     iteration,
@@ -124,5 +126,59 @@ describe('advisor evaluation metrics', () => {
     expect(metrics.evaluatedCount).toBe(2);
     expect(metrics.eligibleCount).toBe(3);
     expect(metrics.passedCount).toBe(0);
+  });
+
+  it('averages eligible step scores equally and keeps missing evaluations out of quality', () => {
+    const tasks = [
+      { id: 'task-1', title: 'Research', executionOrder: 1, enabled: true },
+      { id: 'task-2', title: 'Draft', executionOrder: 2, enabled: true },
+    ] as PlaybookTask[];
+    const complete = makeExecution(2, 60);
+    complete.taskResults.push(makeTaskResult(100, 0, 'task-2'));
+    const partial = makeExecution(1, 90);
+    partial.taskResults.push(makeTaskResult(null, 0, 'task-2'));
+
+    const points = buildAdvisorWholeExecutionPoints([complete, partial], tasks);
+    const metrics = calculateAdvisorWholeEvaluationMetrics(points);
+
+    expect(points.map((point) => point.overallScore)).toEqual([80, 90]);
+    expect(points.map((point) => point.state)).toEqual(['pass', 'partial']);
+    expect(metrics.averageScore).toBe(85);
+    expect(metrics.variation).toBe(5);
+    expect(metrics.evaluatedStepCount).toBe(3);
+    expect(metrics.eligibleStepCount).toBe(4);
+    expect(metrics.passedCount).toBe(1);
+  });
+
+  it('never passes a single-step execution even with full evaluation coverage', () => {
+    const execution = makeExecution(1, 95);
+    execution.singleStepTaskId = 'task-1';
+    const tasks = [{ id: 'task-1', title: 'Research', executionOrder: 1, enabled: true }] as PlaybookTask[];
+
+    expect(buildAdvisorWholeExecutionPoints([execution], tasks)[0].state).toBe('partial');
+  });
+
+  it('uses historical snapshot task IDs, titles, and eligibility', () => {
+    const execution = makeExecution(1, 75);
+    execution.taskResults[0].taskId = 'removed-task';
+    execution.snapshot = {
+      nodes: [
+        { id: 'removed-task', kind: 'step', label: 'Historical research', metadata: { executionOrder: 2 } },
+        { id: 'iterator-task', kind: 'iterator', label: 'Historical iterator', metadata: { executionOrder: 3 } },
+        { id: 'disabled-task', kind: 'step', label: 'Disabled', metadata: { enabled: false, executionOrder: 1 } },
+      ],
+    };
+
+    const points = buildAdvisorWholeExecutionPoints([execution], []);
+
+    expect(points[0].steps).toEqual(expect.arrayContaining([expect.objectContaining({
+      taskId: 'removed-task',
+      title: 'Historical research',
+      overallScore: 75,
+    }), expect.objectContaining({
+      taskId: 'iterator-task',
+      title: 'Historical iterator',
+    })]));
+    expect(points[0].eligibleCount).toBe(1);
   });
 });

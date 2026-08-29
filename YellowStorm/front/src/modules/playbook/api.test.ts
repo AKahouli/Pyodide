@@ -1413,6 +1413,33 @@ describe('clonePlaybook', () => {
 });
 
 describe('getExecution', () => {
+  it('preserves the flow snapshot returned by execution details', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-snapshot',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'completed',
+          taskResults: [],
+          snapshot: {
+            nodes: [{ id: 'task-1', kind: 'step', label: 'Historical title', metadata: { executionOrder: 1 } }],
+          },
+          createdAt: '2026-08-29T10:00:00.000Z',
+          updatedAt: '2026-08-29T10:01:00.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-snapshot');
+
+    expect(execution.snapshot?.nodes?.[0]).toEqual(expect.objectContaining({
+      id: 'task-1',
+      label: 'Historical title',
+    }));
+  });
+
   it('normalizes persisted HITL events into execution and task feedback history', async () => {
     apiClientMock.get.mockReset();
     apiClientMock.get.mockResolvedValueOnce({

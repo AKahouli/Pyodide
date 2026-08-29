@@ -72,7 +72,11 @@ function ExecutionResultCard({
           definition={t('evaluationWorkspace.tooltip.evaluationAttempt' as any)}
           className="text-xs font-medium text-muted-foreground"
         />
-        {point.attempts.length > 1 ? (
+        {!point.taskResult ? (
+          <div className="rounded-md border bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
+            {t('evaluationWorkspace.compare.noStepResult' as any)}
+          </div>
+        ) : point.attempts.length > 1 ? (
           <Select value={attempt?.id ?? ''} onValueChange={onAttemptChange}>
             <SelectTrigger aria-label={t('evaluationWorkspace.compare.evaluationAttempt' as any)}>
               <SelectValue />
@@ -88,9 +92,13 @@ function ExecutionResultCard({
               ))}
             </SelectContent>
           </Select>
-        ) : (
+        ) : point.attempts.length === 1 ? (
           <div className="rounded-md border bg-muted/20 px-3 py-2 text-sm">
             {t('evaluationWorkspace.compare.latestAttempt' as any)}
+          </div>
+        ) : (
+          <div className="rounded-md border bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
+            {t('evaluationWorkspace.compare.noEvaluation' as any)}
           </div>
         )}
       </div>
@@ -102,7 +110,7 @@ function ExecutionResultCard({
           className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
         />
         <div className="mt-2 max-h-80 overflow-auto rounded-md border bg-muted/20 p-3 text-sm whitespace-pre-wrap break-words">
-          {output || t('evaluationWorkspace.compare.noOutput' as any)}
+          {output || t(point.taskResult ? 'evaluationWorkspace.compare.noOutput' as any : 'evaluationWorkspace.compare.noStepResult' as any)}
         </div>
       </div>
     </section>
@@ -151,19 +159,32 @@ function DimensionDelta({
   );
 }
 
-export function AdvisorExecutionComparison({ points }: Readonly<{ points: AdvisorExecutionPoint[] }>) {
+export function AdvisorExecutionComparison({ points, initialExecutionIds }: Readonly<{
+  points: AdvisorExecutionPoint[];
+  initialExecutionIds?: { left: string; right: string } | null;
+}>) {
   const { t } = useModuleTranslation('playbook');
   const unavailableLabel = t('evaluationWorkspace.notAvailable' as any);
-  const comparable = useMemo(() => points.filter((point) => point.taskResult !== null), [points]);
+  const comparable = useMemo(() => points.filter((point) => point.taskResult !== null
+    || point.execution.id === initialExecutionIds?.left
+    || point.execution.id === initialExecutionIds?.right), [initialExecutionIds, points]);
   const [leftExecutionId, setLeftExecutionId] = useState('');
   const [rightExecutionId, setRightExecutionId] = useState('');
   const [leftAttemptId, setLeftAttemptId] = useState('');
   const [rightAttemptId, setRightAttemptId] = useState('');
 
   useEffect(() => {
-    setLeftExecutionId(comparable[1]?.execution.id ?? comparable[0]?.execution.id ?? '');
-    setRightExecutionId(comparable[0]?.execution.id ?? '');
-  }, [comparable]);
+    setLeftExecutionId((current) => {
+      if (comparable.some((point) => point.execution.id === current)) return current;
+      if (comparable.some((point) => point.execution.id === initialExecutionIds?.left)) return initialExecutionIds?.left ?? '';
+      return comparable[1]?.execution.id ?? comparable[0]?.execution.id ?? '';
+    });
+    setRightExecutionId((current) => {
+      if (comparable.some((point) => point.execution.id === current)) return current;
+      if (comparable.some((point) => point.execution.id === initialExecutionIds?.right)) return initialExecutionIds?.right ?? '';
+      return comparable[0]?.execution.id ?? '';
+    });
+  }, [comparable, initialExecutionIds]);
 
   const leftPoint = comparable.find((point) => point.execution.id === leftExecutionId) ?? null;
   const rightPoint = comparable.find((point) => point.execution.id === rightExecutionId) ?? null;

@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -81,26 +82,40 @@ describe('AdvisorEvaluationWorkspace', () => {
     evaluationDataMock.unavailableCount = 0;
   });
 
-  it('defines every summary KPI for business users', () => {
+  it('defaults to the whole-playbook scope and defines every aggregate KPI', () => {
     render(<AdvisorEvaluationWorkspace playbookId="playbook-1" tasks={[task]} enabled />);
 
-    expect(screen.getByRole('button', { name: /evaluationWorkspace.kpi.average: evaluationWorkspace.tooltip.average/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /evaluationWorkspace.kpi.variation: evaluationWorkspace.tooltip.variation/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /evaluationWorkspace.kpi.passRate: evaluationWorkspace.tooltip.passRate/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /evaluationWorkspace.kpi.coverage: evaluationWorkspace.tooltip.coverage/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /evaluationWorkspace.whole.kpi.quality: evaluationWorkspace.whole.tooltip.quality/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /evaluationWorkspace.whole.kpi.variation: evaluationWorkspace.whole.tooltip.variation/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /evaluationWorkspace.whole.kpi.passRate: evaluationWorkspace.whole.tooltip.passRate/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /evaluationWorkspace.whole.kpi.coverage: evaluationWorkspace.whole.tooltip.coverage/ })).toBeInTheDocument();
   });
 
-  it('describes the summary with a sentence-compatible stability adjective', () => {
+  it('describes the aggregate summary using evaluated execution coverage', () => {
     render(<AdvisorEvaluationWorkspace playbookId="playbook-1" tasks={[task]} enabled />);
 
-    expect(screen.getByText(/evaluationWorkspace\.summaryDescription \{"quality":"evaluationworkspace\.quality\.medium","stability":"evaluationWorkspace\.summaryStability\.moderate"\}/)).toBeInTheDocument();
+    expect(screen.getByText(/evaluationWorkspace\.whole\.summaryDescription \{"executions":2,"evaluated":2\}/)).toBeInTheDocument();
   });
 
-  it('uses the insufficient-data summary wording when consistency cannot be computed', () => {
+  it('preserves the step-level insufficient-data wording after scope selection', () => {
     evaluationDataMock.executions = [makeExecution(1, 82, 'Only generated result')];
     render(<AdvisorEvaluationWorkspace playbookId="playbook-1" tasks={[task]} enabled />);
+    fireEvent.click(screen.getByRole('button', { name: 'Plan optimization' }));
 
     expect(screen.getByText(/evaluationWorkspace\.summaryDescriptionInsufficient \{"quality":"evaluationworkspace\.quality\.high"\}/)).toBeInTheDocument();
+  });
+
+  it('drills from the whole-playbook matrix into the selected step comparison', async () => {
+    const user = userEvent.setup();
+    render(<AdvisorEvaluationWorkspace playbookId="playbook-1" tasks={[task]} enabled />);
+    await user.click(screen.getByRole('tab', { name: 'evaluationWorkspace.tabs.compare' }));
+
+    expect(await screen.findByText('evaluationWorkspace.whole.compare.matrixTitle')).toBeInTheDocument();
+    const stepButtons = screen.getAllByRole('button', { name: 'Plan optimization' });
+    await user.click(stepButtons.at(-1)!);
+
+    expect(await screen.findByText('First generated result')).toBeInTheDocument();
+    expect(screen.getByText('Second generated result')).toBeInTheDocument();
   });
 
   it('compares Advisor dimensions and generated results without priority or confidence attributes', async () => {
