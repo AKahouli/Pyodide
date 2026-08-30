@@ -187,7 +187,20 @@ export class MessageController {
     }
 
     const governedRuntime = conversation.runtimeMode === 'governed'
-      ? await this.governedRuntimeService.resolveRuntime(user._id.toString(), conversation)
+      ? await this.governedRuntimeService.resolveRuntime(user._id.toString(), {
+          runtimeMode: conversation.runtimeMode,
+          createdBy: conversation.createdBy.toString(),
+          governanceContext: conversation.governanceContext
+            ? {
+                programId: conversation.governanceContext.programId.toString(),
+                scopeId: conversation.governanceContext.scopeId.toString(),
+                deploymentId: conversation.governanceContext.deploymentId.toString(),
+                revisionId: conversation.governanceContext.revisionId.toString(),
+                revisionNumber: conversation.governanceContext.revisionNumber,
+                runtimeDefinition: conversation.governanceContext.runtimeDefinition,
+              }
+            : undefined,
+        })
       : undefined;
     if (governedRuntime) this.governedRuntimeService.assertRuntimeRequestAllowed(governedRuntime, dto);
 

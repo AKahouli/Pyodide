@@ -28,6 +28,9 @@ vi.mock('@/modules/localization', () => ({
     'stream.activity.tool.search': 'Search',
     'stream.activity.request': 'Request',
     'stream.activity.response': 'Response',
+    'stream.activity.input': 'Input',
+    'stream.activity.output': 'Output',
+    'stream.activity.responseTokens': 'Response tokens',
     'stream.activity.description': 'Description',
     'stream.activity.timestamp': 'Timestamp',
     'stream.activity.timestampUnavailable': 'Timestamp unavailable',
@@ -44,7 +47,7 @@ vi.mock('@/modules/localization', () => ({
     'stream.activity.retry': 'Retry response',
     'stream.activity.stepProgress': `${options?.current} of ${options?.total} steps`,
     'stream.activity.mobileDetailsAria': `Show all activity steps (${options?.status || ''})`,
-    'stream.activity.desktopDetailsAria': 'Show or hide tool activity',
+    'stream.activity.resizePaneAria': 'Resize tool activity pane',
     'stream.activity.viewArtifact': 'View',
     'stream.activity.downloadArtifact': 'Download',
     'stream.activity.artifactError': 'Artifact error',
@@ -58,6 +61,9 @@ describe('ConversationAssistantBubble', () => {
     vi.clearAllMocks();
     mocks.redactSensitiveText = true;
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: mocks.writeClipboard } });
+    Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', { configurable: true, value: vi.fn() });
+    Object.defineProperty(HTMLElement.prototype, 'releasePointerCapture', { configurable: true, value: vi.fn() });
+    Object.defineProperty(HTMLElement.prototype, 'hasPointerCapture', { configurable: true, value: vi.fn(() => true) });
   });
 
   it('shows the working fallback on mobile before the first component arrives', () => {
@@ -102,7 +108,8 @@ describe('ConversationAssistantBubble', () => {
     }
     expect(bubble.textContent).not.toContain('storagePath');
     expect([...desktop.querySelectorAll('[data-tool-sequence]')].map((node) => node.textContent)).toEqual(['1.', '2.']);
-    expect(bubble.querySelector('[data-activity-pane]')).toHaveClass('h-[6.667rem]', 'overflow-y-auto');
+    expect(bubble.querySelector('[data-activity-pane]')).toHaveStyle({ height: '107px' });
+    expect(bubble.querySelector('[data-activity-pane]')).toHaveClass('overflow-y-auto');
     expect(bubble.querySelector('[data-activity-pane]')).not.toContainElement(nodes.at(-1) as HTMLElement);
   });
 
@@ -157,26 +164,37 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.getByText(/First inspect the complete 2023 report.*Then compare every 2025 ratio/s)).toHaveClass('whitespace-pre-wrap');
   });
 
-  it('collapses desktop activity when streaming completes and allows reopening it', () => {
-    const { rerender } = render(<ConversationAssistantBubble
-      conversationId='conversation-1'
-      messageId='message-1'
-      isStreaming
-      components={[{ id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'Find revenue', status: 'running', renderKind: 'search' } }]}
-    />);
-    const toggle = screen.getByRole('button', { name: 'Show or hide tool activity' });
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
-
-    rerender(<ConversationAssistantBubble
+  it('keeps desktop activity visible and supports keyboard resizing', () => {
+    const { container } = render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
       isStreaming={false}
       components={[{ id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'Find revenue', status: 'completed', renderKind: 'search' } }]}
     />);
-
-    expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const pane = container.querySelector('[data-activity-pane]');
+    const separator = screen.getByRole('separator', { name: 'Resize tool activity pane' });
+    expect(pane).toHaveStyle({ height: '107px' });
+    expect(separator).toHaveAttribute('aria-valuenow', '107');
+    fireEvent.keyDown(separator, { key: 'ArrowDown' });
+    expect(pane).toHaveStyle({ height: '123px' });
+    expect(separator).toHaveAttribute('aria-valuenow', '123');
+    fireEvent.pointerDown(separator, { button: 0, clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(separator, { clientY: 200, pointerId: 2 });
+    expect(pane).toHaveStyle({ height: '123px' });
+    fireEvent.pointerMove(separator, { clientY: 140, pointerId: 1 });
+    expect(pane).toHaveStyle({ height: '163px' });
+    fireEvent.pointerUp(separator, { pointerId: 1 });
+    fireEvent.keyDown(separator, { key: 'Home' });
+    fireEvent.keyDown(separator, { key: 'ArrowUp' });
+    expect(pane).toHaveStyle({ height: '80px' });
+    fireEvent.keyDown(separator, { key: 'End' });
+    fireEvent.keyDown(separator, { key: 'ArrowDown' });
+    expect(pane).toHaveStyle({ height: '480px' });
+    fireEvent.pointerDown(separator, { button: 0, clientY: 100, pointerId: 3 });
+    fireEvent.lostPointerCapture(separator, { pointerId: 3 });
+    fireEvent.pointerMove(separator, { clientY: 50, pointerId: 3 });
+    expect(pane).toHaveStyle({ height: '480px' });
+    expect(screen.getAllByText(/Find revenue/)).not.toHaveLength(0);
   });
 
   it('uses detailed reasoning instead of a one-word activity summary and omits its text replay', () => {
@@ -192,7 +210,6 @@ describe('ConversationAssistantBubble', () => {
       ]}
     />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show or hide tool activity' }));
     expect(screen.getByRole('button', { name: 'Activity, Completed. Show full reasoning' })).toHaveTextContent('I am checking the official revenue statement');
     expect(container.querySelector('[data-answer-content]')).toHaveTextContent('Revenue was 33.9 million euros.');
     expect(container.querySelector('[data-answer-content]')).not.toHaveTextContent(detail);
@@ -430,21 +447,30 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.getByText(/"matches": 4/)).toBeInTheDocument();
   });
 
-  it('shows the full tool description and timestamp and copies expanded details', async () => {
+  it('shows full tool metadata and identifies repeated token totals as response-level', async () => {
     const summary = 'Locate every citation for the financial comparison across both annual reports, verify each source passage, and preserve the complete description so the final clause remains visible after expansion.';
     const completedAt = '2026-08-27T10:02:00Z';
     const { container } = render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
       isStreaming={false}
-      components={[{
-        id: 'tool-search',
-        type: 'toolActivity',
-        data: {
-          toolName: 'perform_standard_search', summary, status: 'completed', renderKind: 'search', completedAt,
-          paramsJson: JSON.stringify({ query: 'annual revenue' }), resultJson: JSON.stringify({ matches: 4 }),
+      inputTokens={1234}
+      outputTokens={56}
+      components={[
+        {
+          id: 'tool-search',
+          type: 'toolActivity',
+          data: {
+            toolName: 'perform_standard_search', summary, status: 'completed', renderKind: 'search', completedAt,
+            paramsJson: JSON.stringify({ query: 'annual revenue' }), resultJson: JSON.stringify({ matches: 4 }),
+          },
         },
-      }]}
+        {
+          id: 'tool-code',
+          type: 'toolActivity',
+          data: { toolName: 'run_code', displayKey: 'runCode', summary: 'Calculate totals', status: 'completed', renderKind: 'run_code' },
+        },
+      ]}
     />);
 
     const trigger = screen.getByRole('button', { name: '1. Tool response: Search (Completed)' });
@@ -452,13 +478,23 @@ describe('ConversationAssistantBubble', () => {
     fireEvent.click(trigger);
 
     expect(container.querySelector('[data-tool-full-description]')).toHaveTextContent(summary);
-    expect(container.querySelector('[data-tool-timestamp]')).toHaveTextContent(
+    expect(screen.queryByText('Description')).not.toBeInTheDocument();
+    const timestamp = container.querySelector('[data-tool-timestamp]') as HTMLElement;
+    const copyButton = screen.getByRole('button', { name: 'Copy tool details' });
+    expect(timestamp).toHaveTextContent(
       new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(completedAt)),
     );
+    expect(timestamp).not.toHaveTextContent('Timestamp');
+    expect(timestamp.compareDocumentPosition(copyButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '2. Tool response: Run code (Completed)' }));
+    const tokenUsage = [...container.querySelectorAll('[data-tool-token-usage]')];
+    expect(tokenUsage).toHaveLength(2);
+    tokenUsage.forEach((usage) => expect(usage).toHaveTextContent('Response tokens · Input 1,234 · Output 56'));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Copy tool details' }));
+    fireEvent.click(copyButton);
     await waitFor(() => expect(mocks.writeClipboard).toHaveBeenCalledWith(expect.stringContaining(summary)));
     expect(mocks.writeClipboard).toHaveBeenCalledWith(expect.stringContaining('annual revenue'));
+    expect(mocks.writeClipboard).toHaveBeenCalledWith(expect.stringContaining('Response tokens:\nInput: 1,234\nOutput: 56'));
   });
 
   it('falls back to the valid start timestamp when completion time is invalid', () => {
@@ -519,7 +555,8 @@ describe('ConversationAssistantBubble', () => {
     expect(container.querySelector('[data-tool-status="failed"]')).toBeInTheDocument();
     expect(container.querySelector('[data-tool-spinner]')).not.toBeInTheDocument();
     expect(screen.getByText('3 of 3 steps')).toBeInTheDocument();
-    expect(container.querySelector('[data-activity-pane]')).toHaveClass('h-[6.667rem]', 'overflow-y-auto');
+    expect(container.querySelector('[data-activity-pane]')).toHaveStyle({ height: '107px' });
+    expect(container.querySelector('[data-activity-pane]')).toHaveClass('overflow-y-auto');
     expect([...container.querySelectorAll('[data-tool-sequence]')].map((node) => node.textContent)).toEqual(['1.', '2.', '3.']);
     expect(container.querySelectorAll('[data-tool-spinner]')).toHaveLength(0);
     fireEvent.click(screen.getByRole('button', { name: '3. Tool response: Search (Failed)' }));

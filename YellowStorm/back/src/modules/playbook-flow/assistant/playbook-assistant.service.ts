@@ -589,7 +589,7 @@ export class PlaybookAssistantService {
           ownerId: actor.ownerId,
           platformConversationId: actor.conversationId,
           turnRequestId: question.requestId,
-          userMessageId: question._id.toString(),
+          userMessageId: question.id,
         })
       : undefined;
     return { text: question.content.trim(), handoff };

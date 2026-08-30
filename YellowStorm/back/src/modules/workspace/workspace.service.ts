@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Workspace, WorkspaceDocument } from './schemas/workspace.schema';
@@ -7,9 +7,9 @@ import {
   WorkspaceShareDocument,
 } from './schemas/workspace-share.schema';
 import {
-  Conversation,
-  ConversationDocument,
-} from '../conversation/schemas/conversation.schema';
+  CONVERSATION_STORE,
+  type ConversationStore,
+} from '../conversation/persistence/conversation-store';
 import { AgentRepository } from '../agent/repositories/agent.repository';
 import { Flow, FlowDocument } from '../playbook-flow/schemas/playbook-flow.schema';
 import {
@@ -39,8 +39,8 @@ export class WorkspaceService implements OnModuleInit {
     private readonly workspaceModel: Model<WorkspaceDocument>,
     @InjectModel(WorkspaceShare.name)
     private readonly shareModel: Model<WorkspaceShareDocument>,
-    @InjectModel(Conversation.name)
-    private readonly conversationModel: Model<ConversationDocument>,
+    @Inject(CONVERSATION_STORE)
+    private readonly conversationStore: ConversationStore,
     private readonly agentRepository: AgentRepository,
     @InjectModel(Flow.name)
     private readonly playbookModel: Model<FlowDocument>,
@@ -492,7 +492,10 @@ export class WorkspaceService implements OnModuleInit {
   ): Promise<WorkspaceResponse> {
     const workspace = await this.workspaceModel.findById(workspaceId).exec();
     if (!workspace) {
-      throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
+      throw new NotFoundException(
+        ErrorCode.WORKSPACE_NOT_FOUND,
+        'Workspace not found',
+      );
     }
     if (workspace.createdBy.toString() !== ownerId) {
       throw new ForbiddenException(
@@ -548,10 +551,7 @@ export class WorkspaceService implements OnModuleInit {
     await this.shareModel.deleteMany({ workspaceId: new Types.ObjectId(workspaceId) });
 
     // Remove workspace reference from all conversations
-    await this.conversationModel.updateMany(
-      { workspaces: new Types.ObjectId(workspaceId) },
-      { $pull: { workspaces: new Types.ObjectId(workspaceId) } },
-    );
+    await this.conversationStore.removeWorkspaceFromAll(workspaceId);
 
     // Remove workspace reference from all agents' knowledge bases
     await this.agentRepository.pullKnowledgeBaseFromAll(workspaceId);
@@ -791,10 +791,7 @@ export class WorkspaceService implements OnModuleInit {
     const workspace = await this.workspaceModel.findById(workspaceId);
 
     if (!workspace) {
-      throw new NotFoundException(
-        ErrorCode.WORKSPACE_NOT_FOUND,
-        'Workspace not found',
-      );
+      throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND, 'Workspace not found');
     }
 
     return workspace;

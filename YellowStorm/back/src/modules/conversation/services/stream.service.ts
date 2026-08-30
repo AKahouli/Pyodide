@@ -871,13 +871,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     runtimeCorrelationId = sessionId,
   ): Promise<BuiltAgentExecutionRequest> {
     const conversation = await this.conversationService.getConversationDocument(conversationId);
-    const systemWorkspaceId = conversation.systemWorkspaceId?.toString();
-    const groupMembers = conversation.groupMeta?.isGroup
+    const systemWorkspaceId = conversation.systemWorkspaceId;
+    const groupMembers = conversation.isGroup
       ? await this.conversationService.getGroupMembers(conversationId)
       : [];
-    const sharedAgentIds = conversation.groupMeta?.isGroup
-      ? conversation.groupMeta.taggedAgents?.map((id) => id.toString()) || []
-      : [];
+    const sharedAgentIds = conversation.isGroup ? conversation.groupTaggedAgentIds : [];
     const governanceOverride = request.governanceOverride;
     const requestedGovernedAgentIds = governanceOverride
       ? (request.agentIds.length ? request.agentIds : [governanceOverride.primaryAgentId])

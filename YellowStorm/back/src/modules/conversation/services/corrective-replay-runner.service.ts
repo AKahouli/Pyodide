@@ -180,7 +180,7 @@ export class CorrectiveReplayRunnerService {
     const messages = await this.messageService.findAllByConversation(conversationId);
     const history: ConversationHistoryEntry[] = [];
     for (const message of messages) {
-      if (message._id.toString() === questionMessageId) break;
+      if (message.id === questionMessageId) break;
       if (message.conversationType === 'user' && message.content?.trim()) {
         history.push({ role: 'CONVERSATION_HISTORY_ROLE_USER', text: message.content.slice(0, 30_000) });
       } else if (message.conversationType === 'ai') {

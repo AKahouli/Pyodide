@@ -13,6 +13,7 @@ import { mapConversationComponentsToContentParts } from '../../utils';
 import { formatActivityDuration, humanizeToolTitle, resolveToolDescription, resolveToolDisplayKey, resolveToolFallbackName, resolveToolRequest, resolveToolResponse, resolveToolSummary, sanitizeActivityActorName, sanitizeActivityFilename, sanitizeActivitySummary, sanitizeAssistantDisplayText } from '../../utils/tool-activity';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 import { useConversationSettings } from '../../hooks/useConversationSettings';
+import { ResizableActivityPane } from './ResizableActivityPane';
 
 interface NarrativeProps {
   conversationId: string;
@@ -20,6 +21,8 @@ interface NarrativeProps {
   components: readonly MessageComponent[];
   answerComponents?: readonly MessageComponent[];
   isStreaming: boolean;
+  inputTokens?: number;
+  outputTokens?: number;
   showWorking?: boolean;
   choiceInteractions?: Map<string, ChoiceInteractionMetadata>;
   onComponentAction?: (action: ChoiceComponentAction) => Promise<void>;
@@ -118,26 +121,33 @@ interface ToolDetailsProps {
   copyText: string;
   request?: string;
   response?: string;
+  inputTokens?: number;
+  outputTokens?: number;
   onRetry?: () => void;
 }
 
-function ToolDetails({ data, summary, timestamp, copyText, request, response, onRetry }: Readonly<ToolDetailsProps>) {
-  const { t } = useModuleTranslation('conversation');
+function ToolDetails({ data, summary, timestamp, copyText, request, response, inputTokens, outputTokens, onRetry }: Readonly<ToolDetailsProps>) {
+  const { t, language } = useModuleTranslation('conversation');
+  const hasTokenUsage = inputTokens != null || outputTokens != null;
   return (
     <CollapsibleContent className='ml-6 border-l pb-2 pl-4 pr-2'>
-      <div className='mb-3 flex items-start justify-between gap-3'>
-        <div className='min-w-0 space-y-2'>
+      <div className='mb-3 flex flex-wrap items-start gap-3'>
+        <div className='min-w-0 flex-1 basis-64'>
           {summary && (
-            <div>
-              <p className='mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('stream.activity.description')}</p>
-              <p data-tool-full-description className='whitespace-pre-wrap break-words text-sm text-foreground'>{summary}</p>
-            </div>
+            <p data-tool-full-description className='whitespace-pre-wrap break-words text-sm text-foreground'>{summary}</p>
           )}
-          <p data-tool-timestamp className='text-xs tabular-nums text-muted-foreground'>
-            <span className='font-semibold'>{t('stream.activity.timestamp')}:</span> {timestamp}
-          </p>
         </div>
-        <CodeBlockCopyButton code={copyText} aria-label={t('stream.activity.copyToolDetails')} title={t('stream.activity.copyToolDetails')} className='size-8' />
+        <div className='ml-auto flex shrink-0 items-center gap-3'>
+          <div className='text-right text-xs tabular-nums text-muted-foreground'>
+            <p data-tool-timestamp>{timestamp}</p>
+            {hasTokenUsage && (
+              <p data-tool-token-usage>
+                {t('stream.activity.responseTokens')} · {t('stream.activity.input')} {inputTokens?.toLocaleString(language) ?? '-'} · {t('stream.activity.output')} {outputTokens?.toLocaleString(language) ?? '-'}
+              </p>
+            )}
+          </div>
+          <CodeBlockCopyButton code={copyText} aria-label={t('stream.activity.copyToolDetails')} title={t('stream.activity.copyToolDetails')} className='size-8' />
+        </div>
       </div>
       {request && (
         <div className='mb-3'>
@@ -163,7 +173,7 @@ function ToolDetails({ data, summary, timestamp, copyText, request, response, on
   );
 }
 
-function ToolRow({ component, sequence, redactSensitiveText, isStreaming, onRetry }: Readonly<{ component: MessageComponent; sequence: number; redactSensitiveText: boolean; isStreaming: boolean; onRetry?: () => void }>) {
+function ToolRow({ component, sequence, redactSensitiveText, isStreaming, inputTokens, outputTokens, onRetry }: Readonly<{ component: MessageComponent; sequence: number; redactSensitiveText: boolean; isStreaming: boolean; inputTokens?: number; outputTokens?: number; onRetry?: () => void }>) {
   const { t, language } = useModuleTranslation('conversation');
   const data = component.data as ToolActivityData;
   const labels = {
@@ -189,6 +199,9 @@ function ToolRow({ component, sequence, redactSensitiveText, isStreaming, onRetr
     `${sequence}. ${label}`,
     description ? `${t('stream.activity.description')}: ${description}` : undefined,
     `${t('stream.activity.timestamp')}: ${timestamp}`,
+    inputTokens != null || outputTokens != null
+      ? `${t('stream.activity.responseTokens')}:\n${t('stream.activity.input')}: ${inputTokens?.toLocaleString(language) ?? '-'}\n${t('stream.activity.output')}: ${outputTokens?.toLocaleString(language) ?? '-'}`
+      : undefined,
     request ? `${t('stream.activity.request')}:\n${request}` : undefined,
     response ? `${t('stream.activity.response')}:\n${response}` : undefined,
   ].filter((value): value is string => Boolean(value)).join('\n\n');
@@ -209,7 +222,7 @@ function ToolRow({ component, sequence, redactSensitiveText, isStreaming, onRetr
           {row}
         </button>
       </CollapsibleTrigger>
-      <ToolDetails data={data} summary={description} timestamp={timestamp} copyText={copyText} request={request} response={response} onRetry={onRetry} />
+      <ToolDetails data={data} summary={description} timestamp={timestamp} copyText={copyText} request={request} response={response} inputTokens={inputTokens} outputTokens={outputTokens} onRetry={onRetry} />
     </Collapsible>
   );
 }
@@ -326,7 +339,6 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const { t } = useModuleTranslation('conversation');
   const settings = useConversationSettings();
   const activityPaneRef = useRef<HTMLDivElement>(null);
-  const [desktopActivityOpen, setDesktopActivityOpen] = useState(props.isStreaming);
   const redactSensitiveText = settings?.redactSensitiveText !== false;
   const useOriginalAnswer = !props.answerComponents || props.answerComponents === props.components;
   const source = useOriginalAnswer
@@ -350,9 +362,6 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     const pane = activityPaneRef.current;
     if (pane) pane.scrollTop = pane.scrollHeight;
   }, [activityCount]);
-  useEffect(() => {
-    setDesktopActivityOpen(props.isStreaming);
-  }, [props.isStreaming]);
   let answerBatch: MessageComponent[] = [];
   const flush = () => {
     if (!answerBatch.length) return;
@@ -374,7 +383,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     if (component.type === 'agentActivity') activityNodes.push(<AgentActivityRow key={component.id || index} data={component.data as AgentActivityData} isStreaming={props.isStreaming} redactSensitiveText={redactSensitiveText} />);
     if (component.type === 'toolActivity') {
       toolSequence += 1;
-      activityNodes.push(<ToolRow key={component.id || index} component={component} sequence={toolSequence} redactSensitiveText={redactSensitiveText} isStreaming={props.isStreaming} onRetry={props.onRetry} />);
+      activityNodes.push(<ToolRow key={component.id || index} component={component} sequence={toolSequence} redactSensitiveText={redactSensitiveText} isStreaming={props.isStreaming} inputTokens={props.inputTokens} outputTokens={props.outputTokens} onRetry={props.onRetry} />);
     }
     if (component.type === 'artifact') activityNodes.push(<ArtifactRow key={component.id || index} conversationId={props.conversationId} messageId={props.messageId} data={component.data as ArtifactActivityData} enabled={!props.isStreaming} />);
   });
@@ -387,10 +396,8 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   }, '') || t('stream.activity.assistant');
   return (
     <div data-message-role='assistant' data-testid='conversation-assistant-bubble' className={cn('w-full rounded-2xl rounded-tl-sm border border-border/70 bg-muted/45 px-4 py-4 text-sm text-foreground shadow-xs dark:bg-muted/30')}>
-      <Collapsible open={desktopActivityOpen} onOpenChange={setDesktopActivityOpen}>
         {activityNodes.length > 0 ? <>
-        <CollapsibleTrigger asChild>
-          <button type='button' aria-label={t('stream.activity.desktopDetailsAria')} data-agent-activity data-active={props.isStreaming || undefined} className='group mb-3 hidden min-w-0 w-full items-center gap-2 overflow-hidden rounded-md text-left text-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex'>
+          <div data-agent-activity data-active={props.isStreaming || undefined} className='mb-3 hidden min-w-0 w-full items-center gap-2 overflow-hidden text-sm text-muted-foreground md:flex'>
             <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
               {props.isStreaming && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
               <Bot className={cn('relative size-4', props.isStreaming && 'text-running')} />
@@ -400,9 +407,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
             <span className={cn('relative h-0.5 min-w-8 flex-1 overflow-hidden', props.isStreaming ? 'bg-running/20' : 'bg-border')} aria-hidden='true'>
               {props.isStreaming && <span data-agent-scan className='absolute inset-y-0 left-0 w-1/3 animate-agent-scan bg-gradient-to-r from-transparent via-running to-transparent' />}
             </span>
-            <ChevronRight className='size-4 shrink-0 transition-transform group-data-[state=open]:rotate-90' aria-hidden='true' />
-          </button>
-        </CollapsibleTrigger>
+          </div>
         <div data-agent-activity-mobile data-active={props.isStreaming || undefined} className='mb-3 flex min-w-0 items-center gap-2 overflow-hidden text-sm text-muted-foreground md:hidden' role={props.isStreaming ? 'status' : undefined}>
           <span className='relative flex size-8 shrink-0 items-center justify-center' aria-hidden='true'>
             {props.isStreaming && <Loader2 data-agent-spinner className='absolute size-7 animate-spin text-running [animation-duration:1.2s]' />}
@@ -429,13 +434,10 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
         ? <MobileActivityTimeline components={activityComponents} nodes={activityNodes} isStreaming={props.isStreaming} />
         : props.showWorking && <div data-mobile-working className='flex items-center gap-2 text-sm text-muted-foreground md:hidden'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>}
       {activityNodes.length > 0 && (
-        <CollapsibleContent forceMount className='hidden data-[state=closed]:hidden md:block'>
-          <div ref={activityPaneRef} data-activity-pane className='h-[6.667rem] overflow-y-auto overscroll-contain pr-2'>
-            <div data-desktop-activity className='space-y-2'>{activityNodes}</div>
-          </div>
-        </CollapsibleContent>
+        <ResizableActivityPane paneRef={activityPaneRef} resizeLabel={t('stream.activity.resizePaneAria')}>
+          <div data-desktop-activity className='space-y-2'>{activityNodes}</div>
+        </ResizableActivityPane>
       )}
-      </Collapsible>
       {answerNodes.length > 0 && <div data-answer-content className={cn('space-y-2', activityNodes.length > 0 && 'mt-3 border-t pt-3')}>{answerNodes}</div>}
     </div>
   );

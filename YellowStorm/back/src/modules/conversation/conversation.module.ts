@@ -1,15 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
-
-// Schemas
-import { Conversation, ConversationSchema } from './schemas/conversation.schema';
-import { Message, MessageSchema } from './schemas/message.schema';
-import { Report, ReportSchema } from './schemas/report.schema';
-import { SharedConversation, SharedConversationSchema } from './schemas/shared-conversation.schema';
-import { ConversationPlaybookHandoff, ConversationPlaybookHandoffSchema } from './schemas/conversation-playbook-handoff.schema';
-import { User, UserSchema } from '../user/schemas/user.schema';
 
 // Controllers
 import { ConversationController } from './controllers/conversation.controller';
@@ -65,18 +56,13 @@ import { CorrectiveReplayContextService } from './services/corrective-replay-con
 import { CorrectiveReplayPromptBuilder } from './services/corrective-replay-prompt.builder';
 import { CorrectiveReplayRunnerService } from './services/corrective-replay-runner.service';
 import { ConversationArtifactService } from './services/conversation-artifact.service';
+import { UserModule } from '../user/user.module';
+import { ConversationPersistenceModule } from './persistence/conversation-persistence.module';
 
 @Module({
   imports: [
     ConfigModule.forFeature(conversationConfig),
-    MongooseModule.forFeature([
-      { name: Conversation.name, schema: ConversationSchema },
-      { name: Message.name, schema: MessageSchema },
-      { name: Report.name, schema: ReportSchema },
-      { name: SharedConversation.name, schema: SharedConversationSchema },
-      { name: User.name, schema: UserSchema },
-      { name: ConversationPlaybookHandoff.name, schema: ConversationPlaybookHandoffSchema },
-    ]),
+    ConversationPersistenceModule,
     JwtModule.register({}),
     forwardRef(() => AuthModule),
     forwardRef(() => AuthorizationModule),
@@ -91,9 +77,10 @@ import { ConversationArtifactService } from './services/conversation-artifact.se
     EmailModule,
     GovernanceRuntimeModule,
     forwardRef(() => EvaluationModule),
+    UserModule,
   ],
   controllers: [
-    StreamController,  // Must be before ConversationController to avoid route conflict with :id param
+    StreamController, // Must be before ConversationController to avoid route conflict with :id param
     ComposerSuggestionsController,
     ConversationController,
     MessageController,

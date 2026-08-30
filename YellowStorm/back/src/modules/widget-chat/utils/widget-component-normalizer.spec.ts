@@ -163,6 +163,6 @@ describe('widget-component-normalizer', () => {
     expect(shouldEmitWidgetComponent('plan', { title: 'Plan', steps: [] })).toBe(false);
     expect(shouldEmitWidgetComponent('code', { content: 'print("hello")' })).toBe(false);
     expect(shouldEmitWidgetComponent('sandbox', { code: 'print("hello")' })).toBe(false);
-    expect(shouldEmitWidgetComponent('reasoning', { content: 'thinking...' })).toBe(false);
+    expect(shouldEmitWidgetComponent('agentActivity', { content: 'thinking...' })).toBe(false);
   });
 });
