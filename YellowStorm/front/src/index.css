@@ -545,3 +545,13 @@
 .react-flow__node {
   will-change: transform;
 }
+.react-flow__node.draggable {
+  cursor: grab;
+}
+.react-flow__node.dragging {
+  cursor: grabbing !important;
+}
+.react-flow__node.dragging,
+.react-flow__node.dragging * {
+  transition: none !important;
+}
