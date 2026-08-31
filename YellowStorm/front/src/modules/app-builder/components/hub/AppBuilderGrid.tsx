@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 
 import { useModuleTranslation } from '@/modules/localization';
-import type { AppSortKey, AppViewMode } from '../../hooks/useAppBuilderFilters';
-import { APP_BUILDER_TAB_LIST_HEADING_KEYS } from '../../ticket-i18n';
-import type { AppBuilderTab, DeployedApp, DraftApp } from '../../types';
+import type { AppViewMode } from '../../hooks/useAppBuilderFilters';
+import { APP_BUILDER_TAB_LIST_HEADING_KEYS } from '../../status-i18n';
+import type { AppBuilderTab, AppCatalogItem, DeployedApp, DraftApp } from '../../types';
 import { DeployedAppCard } from '../DeployedAppCard';
 import { DraftAppCard } from '../DraftAppCard';
 import { AppBuilderPagination } from './AppBuilderPagination';
@@ -15,20 +15,37 @@ interface AppBuilderGridProps {
   deployed: DeployedApp[];
   shared: DeployedApp[];
   drafts: DraftApp[];
+  all?: AppCatalogItem[];
   view: AppViewMode;
 }
 
-export function AppBuilderGrid({ tab, deployed, shared, drafts, view }: AppBuilderGridProps) {
+export function AppBuilderGrid({
+  tab,
+  deployed,
+  shared,
+  drafts,
+  all = [],
+  view,
+}: AppBuilderGridProps) {
   const { t } = useModuleTranslation('app-builder');
   const [page, setPage] = useState(1);
 
-  const apps = tab === 'shared' ? shared : tab === 'draft' ? drafts : deployed;
-  const totalPages = Math.max(1, Math.ceil(apps.length / APP_BUILDER_PAGE_SIZE));
+  const items: AppCatalogItem[] =
+    tab === 'all'
+      ? all
+      : tab === 'draft'
+        ? drafts.map((app) => ({ kind: 'draft' as const, app }))
+        : (tab === 'shared' ? shared : deployed).map((app) => ({
+            kind: 'deployed' as const,
+            app,
+          }));
+
+  const totalPages = Math.max(1, Math.ceil(items.length / APP_BUILDER_PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
 
   useEffect(() => {
     setPage(1);
-  }, [tab, deployed, shared, drafts]);
+  }, [tab, deployed, shared, drafts, all]);
 
   useEffect(() => {
     if (page > totalPages) {
@@ -37,7 +54,7 @@ export function AppBuilderGrid({ tab, deployed, shared, drafts, view }: AppBuild
   }, [page, totalPages]);
 
   const pageStart = (currentPage - 1) * APP_BUILDER_PAGE_SIZE;
-  const pageApps = apps.slice(pageStart, pageStart + APP_BUILDER_PAGE_SIZE);
+  const pageItems = items.slice(pageStart, pageStart + APP_BUILDER_PAGE_SIZE);
 
   const layoutClass =
     view === 'grid'
@@ -45,7 +62,9 @@ export function AppBuilderGrid({ tab, deployed, shared, drafts, view }: AppBuild
       : 'flex flex-col gap-2';
 
   const countLabel =
-    apps.length === 1 ? t('hub.sections.singleApp') : t('hub.sections.appsCount', { count: apps.length });
+    items.length === 1
+      ? t('hub.sections.singleApp')
+      : t('hub.sections.appsCount', { count: items.length });
 
   return (
     <section className='space-y-3' aria-labelledby='app-builder-list-heading'>
@@ -61,13 +80,13 @@ export function AppBuilderGrid({ tab, deployed, shared, drafts, view }: AppBuild
       </header>
 
       <div className={layoutClass} role='tabpanel'>
-        {tab === 'draft'
-          ? (pageApps as DraftApp[]).map((app) => (
-              <DraftAppCard key={app.sessionId} app={app} view={view} />
-            ))
-          : (pageApps as DeployedApp[]).map((app) => (
-              <DeployedAppCard key={app.sessionId} app={app} view={view} />
-            ))}
+        {pageItems.map((item) =>
+          item.kind === 'draft' ? (
+            <DraftAppCard key={item.app.sessionId} app={item.app} view={view} />
+          ) : (
+            <DeployedAppCard key={item.app.sessionId} app={item.app} view={view} />
+          ),
+        )}
       </div>
 
       <AppBuilderPagination page={currentPage} totalPages={totalPages} onPageChange={setPage} />

@@ -6,12 +6,31 @@
   "page": {
     "title": "App Builder",
     "description": "Parcourez vos applications déployées, partagées et brouillons au même endroit.",
-    "empty": "Aucune application pour le moment. Commencez dans une conversation, puis publiez quand vous êtes prêt.",
+    "empty": "Aucune application pour le moment. Commencez avec l'Agent ci-dessus, puis publiez quand vous êtes prêt.",
     "error": "Impossible de charger vos applications."
   },
+  "createWithAgent": {
+    "eyebrow": "Créer avec l'Agent",
+    "title": "Décrivez l'application à créer",
+    "description": "Rédigez un brief court — une conversation Agent s'ouvre pour construire avec vous.",
+    "placeholder": "ex. Un tableau de bord des ventes avec graphiques hebdo…",
+    "sending": "Ouverture de la conversation Agent…",
+    "error": "Impossible de démarrer la conversation Agent.",
+    "suggestions": {
+      "label": "Essayer une idée",
+      "dashboard": "Un tableau de bord des ventes avec graphiques hebdomadaires",
+      "tasks": "Un suivi de tâches avec priorités et échéances",
+      "form": "Un formulaire de contact avec confirmation par e-mail"
+    }
+  },
   "hub": {
-    "tickets": {
-      "ariaLabel": "Filtres par statut d'application",
+    "status": {
+      "all": {
+        "label": "Tout",
+        "description": "Toutes les applications de votre catalogue — déployées, partagées et brouillons.",
+        "listHeading": "Toutes les applications",
+        "empty": "Aucune application ne correspond à vos filtres."
+      },
       "deployed": {
         "label": "Déployées",
         "description": "Applications en ligne que vous avez publiées — ouvrez-les, partagez-les ou gérez-les.",
@@ -33,6 +52,7 @@
     },
     "filters": {
       "searchPlaceholder": "Rechercher des applications...",
+      "statusLabel": "Statut",
       "clear": "Effacer les filtres",
       "noResults": "Aucune application ne correspond à vos filtres."
     },
@@ -68,7 +88,8 @@
       "error": "Échec de publication"
     },
     "continue": "Continuer la création",
-    "shared": "Partagée avec vous",
+    "deployed": "Déployée",
+    "shared": "Partagée",
     "open": "Ouvrir l'application",
     "conversation": "Accéder à la conversation",
     "share": "Partager l'app et la conversation",
@@ -76,6 +97,11 @@
     "delete": "Supprimer",
     "deleteTitle": "Retirer l'application d'App Builder ?",
     "deleteDescription": "La conversation et l'application hébergée seront conservées. Une nouvelle publication l'ajoutera de nouveau à App Builder.",
+    "deleteDraft": "Supprimer",
+    "deleteDraftTitle": "Supprimer ce brouillon ?",
+    "deleteDraftDescription": "Cela supprimera définitivement la conversation associée. Cette action est irréversible.",
+    "deleteDraftSuccess": "Brouillon supprimé.",
+    "deleteDraftError": "Impossible de supprimer le brouillon.",
     "unshare": "Retirer",
     "unshareTitle": "Retirer l'application partagée ?",
     "unshareDescription": "Cela retire uniquement l'application de votre App Builder. La conversation du propriétaire reste privée.",

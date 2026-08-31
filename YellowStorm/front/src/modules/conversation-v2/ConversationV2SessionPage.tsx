@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
+import { X } from 'lucide-react';
 import { conversationV2Api } from './api';
 import { useConversationV2Store } from './store';
 import { MessageList } from './components/MessageList';
@@ -14,6 +15,7 @@ import { useConversationV2Translation } from './translation';
 import { FileViewerSidebar, useFileViewerStore } from '@/modules/file-viewer';
 import { useModels, useDefaultModel, useConversationV2DefaultModel, useModelsStore } from '@/modules/models';
 import type { AgentEvent } from './types';
+import type { AgentSessionSource } from './startAgentSession';
 import {
   canWriteConversationV2Session,
   ConversationV2SessionPermissions,
@@ -23,6 +25,7 @@ import {
 import { getOrCreateHost, removeHost } from './runtime/BrowserRuntimeHost';
 import { mapHostStatusToRuntimeUi } from './runtime/runtime.types';
 import { isTurnOpen } from './utils/session-reducer';
+import { Button } from '@/components/ui/button';
 
 interface LocationState {
   initialMessage?: string;
@@ -36,6 +39,8 @@ interface LocationState {
   skillIds?: string[];
   /** Connector selection carried from the new-conversation page for the initial send. */
   connectorIds?: string[];
+  /** Entry point that created this session — drives transition UX. */
+  source?: AgentSessionSource;
 }
 
 export default function ConversationV2SessionPage() {
@@ -45,6 +50,16 @@ export default function ConversationV2SessionPage() {
   const initialModel = (location.state as LocationState | null)?.model;
   const initialSkillIds = (location.state as LocationState | null)?.skillIds;
   const initialConnectorIds = (location.state as LocationState | null)?.connectorIds;
+  const entrySource = (location.state as LocationState | null)?.source;
+  const [showAppBuilderBanner, setShowAppBuilderBanner] = useState(false);
+
+  // Latch from navigation state once per session. Do not depend on entrySource
+  // continuously — the initial-message effect clears history state and would
+  // otherwise dismiss the banner immediately.
+  useEffect(() => {
+    setShowAppBuilderBanner(entrySource === 'app-builder');
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: read source only when session changes
+  }, [sessionId]);
 
   const {
     switchToSession,
@@ -298,6 +313,26 @@ export default function ConversationV2SessionPage() {
           readOnly={isReadOnlyViewer}
           permissions={sessionPermissions}
         />
+        {showAppBuilderBanner && (
+          <div className='flex items-start gap-3 border-b border-border/60 bg-muted/40 px-4 py-3'>
+            <div className='min-w-0 flex-1'>
+              <p className='text-sm font-medium'>{t('session.fromAppBuilder.title')}</p>
+              <p className='mt-0.5 text-xs text-muted-foreground sm:text-sm'>
+                {t('session.fromAppBuilder.body')}
+              </p>
+            </div>
+            <Button
+              type='button'
+              variant='ghost'
+              size='sm'
+              className='shrink-0'
+              onClick={() => setShowAppBuilderBanner(false)}
+            >
+              <X className='mr-1 h-3.5 w-3.5' aria-hidden />
+              {t('session.fromAppBuilder.dismiss')}
+            </Button>
+          </div>
+        )}
         {streamError && (
           <div className='bg-destructive p-2 text-sm text-destructive-foreground'>
             {t('session.errorTitle')}: {streamError}

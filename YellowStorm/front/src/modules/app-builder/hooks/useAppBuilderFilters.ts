@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { AppBuilderCatalog, AppBuilderTab, DeployedApp, DraftApp } from '../types';
+import type {
+  AppBuilderCatalog,
+  AppBuilderTab,
+  AppCatalogItem,
+  DeployedApp,
+  DraftApp,
+} from '../types';
 
 const SEARCH_DEBOUNCE_MS = 200;
 
@@ -15,7 +21,7 @@ export interface AppBuilderFilterState {
 }
 
 function isTab(value: string | null): value is AppBuilderTab {
-  return value === 'deployed' || value === 'shared' || value === 'draft';
+  return value === 'all' || value === 'deployed' || value === 'shared' || value === 'draft';
 }
 
 function isSortKey(value: string | null): value is AppSortKey {
@@ -66,12 +72,29 @@ function sortDrafts(list: DraftApp[], sort: AppSortKey): DraftApp[] {
   return copy;
 }
 
+function catalogItemDate(item: AppCatalogItem): number {
+  if (item.kind === 'draft') {
+    return new Date(item.app.lastUpdatedAt).getTime();
+  }
+  return new Date(item.app.lastDeployedAt ?? 0).getTime();
+}
+
+function sortCatalogItems(items: AppCatalogItem[], sort: AppSortKey): AppCatalogItem[] {
+  const copy = [...items];
+  if (sort === 'name') {
+    copy.sort((a, b) => (a.app.title || '').localeCompare(b.app.title || ''));
+  } else {
+    copy.sort((a, b) => catalogItemDate(b) - catalogItemDate(a));
+  }
+  return copy;
+}
+
 export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const rawSearch = searchParams.get('q') ?? '';
   const tabParam = searchParams.get('tab');
-  const tab: AppBuilderTab = isTab(tabParam) ? tabParam : 'deployed';
+  const tab: AppBuilderTab = isTab(tabParam) ? tabParam : 'all';
   const sortParam = searchParams.get('sort');
   const defaultSort: AppSortKey = tab === 'draft' ? 'updated' : 'deployed';
   const sort: AppSortKey = isSortKey(sortParam) ? sortParam : defaultSort;
@@ -128,7 +151,7 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
-          if (value === 'deployed') next.delete('tab');
+          if (value === 'all') next.delete('tab');
           else next.set('tab', value);
           if (value === 'draft' && (!sortParam || sortParam === 'deployed')) {
             next.set('sort', 'updated');
@@ -190,8 +213,22 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
     [catalog.drafts, rawSearch, sort],
   );
 
+  const filteredAll = useMemo(
+    () =>
+      sortCatalogItems(
+        [
+          ...filteredDeployed.map((app) => ({ kind: 'deployed' as const, app })),
+          ...filteredShared.map((app) => ({ kind: 'deployed' as const, app })),
+          ...filteredDrafts.map((app) => ({ kind: 'draft' as const, app })),
+        ],
+        sort,
+      ),
+    [filteredDeployed, filteredShared, filteredDrafts, sort],
+  );
+
   const tabCounts = useMemo(
     () => ({
+      all: catalog.deployed.length + catalog.shared.length + catalog.drafts.length,
       deployed: catalog.deployed.length,
       shared: catalog.shared.length,
       draft: catalog.drafts.length,
@@ -200,10 +237,11 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
   );
 
   const activeList = useMemo(() => {
+    if (tab === 'all') return filteredAll;
     if (tab === 'shared') return filteredShared;
     if (tab === 'draft') return filteredDrafts;
     return filteredDeployed;
-  }, [tab, filteredDeployed, filteredShared, filteredDrafts]);
+  }, [tab, filteredAll, filteredDeployed, filteredShared, filteredDrafts]);
 
   const hasActiveFilters = !!rawSearch || sort !== defaultSort;
   const isEmpty = activeList.length === 0;
@@ -225,6 +263,7 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
     filteredDeployed,
     filteredShared,
     filteredDrafts,
+    filteredAll,
     activeList,
     isEmpty,
     isCatalogEmpty,

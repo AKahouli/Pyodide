@@ -6,12 +6,31 @@
   "page": {
     "title": "App Builder",
     "description": "Browse deployed apps, shared apps, and drafts in one place.",
-    "empty": "No apps yet. Start building in a conversation, then publish when you are ready.",
+    "empty": "No apps yet. Start building with the Agent above, then publish when you are ready.",
     "error": "Failed to load your apps."
   },
+  "createWithAgent": {
+    "eyebrow": "Create with Agent",
+    "title": "Describe the app you want",
+    "description": "Write a short brief — we open an Agent conversation so you can build it together.",
+    "placeholder": "e.g. A simple sales dashboard with weekly charts…",
+    "sending": "Opening Agent conversation…",
+    "error": "Failed to start the Agent conversation.",
+    "suggestions": {
+      "label": "Try an idea",
+      "dashboard": "A simple sales dashboard with weekly charts",
+      "tasks": "A task tracker with priorities and due dates",
+      "form": "A contact form that sends an email confirmation"
+    }
+  },
   "hub": {
-    "tickets": {
-      "ariaLabel": "App status filters",
+    "status": {
+      "all": {
+        "label": "All",
+        "description": "Every app in your catalog — deployed, shared, and drafts.",
+        "listHeading": "All apps",
+        "empty": "No apps match your filters."
+      },
       "deployed": {
         "label": "Deployed",
         "description": "Live applications you published and can open, share, or manage.",
@@ -33,6 +52,7 @@
     },
     "filters": {
       "searchPlaceholder": "Search apps...",
+      "statusLabel": "Status",
       "clear": "Clear filters",
       "noResults": "No apps match your filters."
     },
@@ -68,7 +88,8 @@
       "error": "Publish failed"
     },
     "continue": "Continue building",
-    "shared": "Shared with you",
+    "deployed": "Deployed",
+    "shared": "Shared",
     "open": "Open the application",
     "conversation": "Go to the conversation",
     "share": "Share app & conversation",
@@ -76,6 +97,11 @@
     "delete": "Delete",
     "deleteTitle": "Remove app from App Builder?",
     "deleteDescription": "The conversation and hosted app will be kept. Publishing again will add it back to App Builder.",
+    "deleteDraft": "Delete",
+    "deleteDraftTitle": "Delete this draft?",
+    "deleteDraftDescription": "This permanently deletes the associated conversation. This action cannot be undone.",
+    "deleteDraftSuccess": "Draft deleted.",
+    "deleteDraftError": "Failed to delete the draft.",
     "unshare": "Remove",
     "unshareTitle": "Remove shared app?",
     "unshareDescription": "This only removes the app from your App Builder. The owner's conversation stays private.",

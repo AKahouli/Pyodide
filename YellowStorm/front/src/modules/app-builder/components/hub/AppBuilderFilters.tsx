@@ -11,12 +11,17 @@ import {
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { AppSortKey, AppViewMode } from '../../hooks/useAppBuilderFilters';
+import { APP_BUILDER_TAB_LABEL_KEYS } from '../../status-i18n';
 import type { AppBuilderTab } from '../../types';
+
+const STATUS_TABS: AppBuilderTab[] = ['all', 'deployed', 'shared', 'draft'];
 
 interface AppBuilderFiltersProps {
   searchInput: string;
   onSearchChange: (value: string) => void;
   tab: AppBuilderTab;
+  onTabChange: (value: AppBuilderTab) => void;
+  tabCounts: Record<AppBuilderTab, number>;
   sort: AppSortKey;
   onSortChange: (value: AppSortKey) => void;
   view: AppViewMode;
@@ -29,6 +34,8 @@ export function AppBuilderFilters({
   searchInput,
   onSearchChange,
   tab,
+  onTabChange,
+  tabCounts,
   sort,
   onSortChange,
   view,
@@ -60,6 +67,23 @@ export function AppBuilderFilters({
       </div>
 
       <div className='h-5 w-px bg-border/60' />
+
+      <Select value={tab} onValueChange={(v) => onTabChange(v as AppBuilderTab)}>
+        <SelectTrigger
+          className='h-9 w-[200px] gap-1.5 border-transparent bg-transparent shadow-none hover:bg-accent/50 [&>span]:line-clamp-1'
+          aria-label={t('hub.filters.statusLabel')}
+        >
+          <span className='shrink-0 text-muted-foreground'>{t('hub.filters.statusLabel')}:</span>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {STATUS_TABS.map((status) => (
+            <SelectItem key={status} value={status}>
+              {t(APP_BUILDER_TAB_LABEL_KEYS[status])} ({tabCounts[status]})
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
       <Select value={sort} onValueChange={(v) => onSortChange(v as AppSortKey)}>
         <SelectTrigger className='h-9 w-[260px] gap-1.5 border-transparent bg-transparent shadow-none hover:bg-accent/50 [&>span]:line-clamp-1'>

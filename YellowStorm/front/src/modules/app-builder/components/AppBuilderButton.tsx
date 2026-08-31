@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Store } from 'lucide-react';
+import { AppWindow } from 'lucide-react';
 import { SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
 import { useModuleTranslation } from '@/modules/localization';
 
@@ -10,7 +10,7 @@ export function AppBuilderButton() {
   return (
     <SidebarMenuItem>
       <SidebarMenuButton tooltip={t('button.tooltip')} onClick={() => navigate('/app-builder')}>
-        <Store />
+        <AppWindow />
         <span>{t('button.label')}</span>
       </SidebarMenuButton>
     </SidebarMenuItem>

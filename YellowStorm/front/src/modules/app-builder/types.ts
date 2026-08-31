@@ -1,6 +1,10 @@
 export type DeployedAppSource = 'owned' | 'shared';
 
-export type AppBuilderTab = 'deployed' | 'shared' | 'draft';
+export type AppBuilderTab = 'all' | 'deployed' | 'shared' | 'draft';
+
+export type AppCatalogItem =
+  | { kind: 'deployed'; app: DeployedApp }
+  | { kind: 'draft'; app: DraftApp };
 
 export type DraftDeployStatus = 'idle' | 'deploying' | 'error';
 

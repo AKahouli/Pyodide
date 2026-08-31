@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { DeployedApp, DraftApp } from '../types';
@@ -17,6 +18,12 @@ vi.mock('../api', () => ({
 vi.mock('@/lib/notifications', () => ({
   showSuccess: vi.fn(),
   showError: vi.fn(),
+}));
+
+vi.mock('./hub/AppBuilderCreateWithAgent', () => ({
+  AppBuilderCreateWithAgent: () => (
+    <div data-testid='create-with-agent'>createWithAgent.title</div>
+  ),
 }));
 
 vi.mock('react-router-dom', async (importOriginal) => ({
@@ -72,44 +79,60 @@ function renderPage(initialRoute = '/') {
   );
 }
 
+async function selectStatus(label: RegExp) {
+  await userEvent.click(screen.getByRole('combobox', { name: /hub\.filters\.statusLabel/i }));
+  await userEvent.click(await screen.findByRole('option', { name: label }));
+}
+
 describe('AppBuilderPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useAppBuilderStore.setState(initialState);
   });
 
-  it('renders deployed apps by default', async () => {
+  it('renders all apps by default', async () => {
     listAppsMock.mockResolvedValueOnce(fullCatalog);
 
     renderPage();
 
     expect(await screen.findByText('Generated app')).toBeInTheDocument();
-    expect(screen.queryByText('Shared app')).not.toBeInTheDocument();
-    expect(screen.queryByText('Draft app')).not.toBeInTheDocument();
+    expect(screen.getByTestId('create-with-agent')).toBeInTheDocument();
+    expect(screen.getByText('Shared app')).toBeInTheDocument();
+    expect(screen.getByText('Draft app')).toBeInTheDocument();
   });
 
-  it('switches to shared apps via status ticket', async () => {
+  it('shows create-with-agent section when the catalog is empty', async () => {
+    listAppsMock.mockResolvedValueOnce({ deployed: [], shared: [], drafts: [] });
+
+    renderPage();
+
+    expect(await screen.findByTestId('create-with-agent')).toBeInTheDocument();
+    expect(screen.getByText(/page\.empty/)).toBeInTheDocument();
+  });
+
+  it('switches to shared apps via status filter', async () => {
     listAppsMock.mockResolvedValueOnce(fullCatalog);
 
     renderPage();
     await screen.findByText('Generated app');
 
-    fireEvent.click(screen.getByRole('tab', { name: /hub\.tickets\.shared\.label/i }));
+    await selectStatus(/hub\.status\.shared\.label/i);
 
     expect(await screen.findByText('Shared app')).toBeInTheDocument();
     expect(screen.queryByText('Generated app')).not.toBeInTheDocument();
   });
 
-  it('switches to draft apps via status ticket', async () => {
+  it('switches to draft apps via status filter', async () => {
     listAppsMock.mockResolvedValueOnce(fullCatalog);
 
     renderPage();
     await screen.findByText('Generated app');
 
-    fireEvent.click(screen.getByRole('tab', { name: /hub\.tickets\.draft\.label/i }));
+    await selectStatus(/hub\.status\.draft\.label/i);
 
     expect(await screen.findByText('Draft app')).toBeInTheDocument();
     expect(screen.queryByText('Generated app')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /card\.deleteDraft/i })).toBeInTheDocument();
   });
 
   it('opens the deployed URL in a new tab', async () => {
@@ -255,10 +278,10 @@ describe('AppBuilderPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /hub\.pagination\.next/i }));
     expect(await screen.findByText('Deployed app 10')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('tab', { name: /hub\.tickets\.shared\.label/i }));
+    await selectStatus(/hub\.status\.shared\.label/i);
     expect(await screen.findByText('Shared app')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('tab', { name: /hub\.tickets\.deployed\.label/i }));
+    await selectStatus(/hub\.status\.deployed\.label/i);
     expect(await screen.findByText('Deployed app 1')).toBeInTheDocument();
     expect(screen.getByText('Deployed app 9')).toBeInTheDocument();
     expect(screen.queryByText('Deployed app 10')).not.toBeInTheDocument();

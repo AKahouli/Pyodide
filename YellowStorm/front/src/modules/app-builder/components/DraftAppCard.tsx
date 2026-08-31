@@ -1,7 +1,6 @@
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, Loader2, MessageSquare, PencilLine } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -10,18 +9,50 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { AppViewMode } from '../hooks/useAppBuilderFilters';
 import type { DraftApp } from '../types';
+import { DeleteDraftAppButton } from './DeleteDraftAppButton';
 
 interface DraftAppCardProps {
   app: DraftApp;
   view?: AppViewMode;
 }
 
+function ActionButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant='ghost'
+          size='icon'
+          className='h-7 w-7'
+          aria-label={label}
+          onClick={(e) => {
+            e.stopPropagation();
+            onClick();
+          }}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export const DraftAppCard = memo(function DraftAppCard({
   app,
-  view = 'list',
+  view = 'grid',
 }: DraftAppCardProps) {
   const { t } = useModuleTranslation('app-builder');
   const navigate = useNavigate();
@@ -46,46 +77,59 @@ export const DraftAppCard = memo(function DraftAppCard({
 
   const actions = (
     <TooltipProvider>
-      <div className='flex shrink-0 items-center gap-1'>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant='ghost'
-              size='icon-sm'
-              aria-label={t('card.continue')}
-              onClick={() => navigate(`/conversation-v2/${app.sessionId}`)}
-            >
-              <MessageSquare className='h-4 w-4' />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('card.continue')}</TooltipContent>
-        </Tooltip>
+      <div
+        className={cn(
+          'flex items-center gap-0.5 opacity-60 transition group-hover:opacity-100',
+          view === 'list' && 'shrink-0',
+        )}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <ActionButton
+          label={t('card.continue')}
+          onClick={() => navigate(`/conversation-v2/${app.sessionId}`)}
+        >
+          <MessageSquare className='h-3.5 w-3.5' />
+        </ActionButton>
+        <DeleteDraftAppButton sessionId={app.sessionId} />
       </div>
     </TooltipProvider>
   );
 
+  const body = (
+    <>
+      <div className='flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-amber-500/15'>
+        <PencilLine className='h-4 w-4 text-amber-700 dark:text-amber-300' />
+      </div>
+      <div className='min-w-0 flex-1'>
+        <div className='flex min-w-0 items-start gap-2'>
+          <h3 className='min-w-0 flex-1 truncate text-sm font-medium leading-snug tracking-tight' title={title}>
+            {title}
+          </h3>
+          {statusBadge}
+        </div>
+        <p className='mt-0.5 line-clamp-2 text-xs text-muted-foreground'>{t('card.draftHint')}</p>
+        <p className='mt-0.5 text-[11px] text-muted-foreground'>
+          {t('card.updatedAt', { date: new Date(app.lastUpdatedAt).toLocaleString() })}
+        </p>
+      </div>
+    </>
+  );
+
+  if (view === 'list') {
+    return (
+      <div className='group relative flex items-center gap-3 rounded-lg border border-amber-500/15 bg-card px-4 py-3 transition hover:border-amber-500/30 hover:bg-accent/30'>
+        {body}
+        {actions}
+      </div>
+    );
+  }
+
   return (
-    <Card className='overflow-hidden border-amber-500/15 bg-gradient-to-br from-amber-500/[0.04] to-transparent shadow-sm'>
-      <CardContent className='flex items-start gap-2.5 p-3'>
-        <div className='flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-amber-500/15'>
-          <PencilLine className='h-4 w-4 text-amber-700 dark:text-amber-300' />
-        </div>
-
-        <div className='min-w-0 flex-1'>
-          <div className='flex min-w-0 items-start gap-2'>
-            <h3 className='min-w-0 flex-1 truncate text-sm font-medium leading-snug' title={title}>
-              {title}
-            </h3>
-            {statusBadge}
-          </div>
-          <p className='mt-0.5 line-clamp-2 text-xs text-muted-foreground'>{t('card.draftHint')}</p>
-          <p className='mt-0.5 text-[11px] text-muted-foreground'>
-            {t('card.updatedAt', { date: new Date(app.lastUpdatedAt).toLocaleString() })}
-          </p>
-        </div>
-
-        <div className={view === 'grid' ? 'shrink-0 self-start' : 'shrink-0'}>{actions}</div>
-      </CardContent>
-    </Card>
+    <div className='group relative flex h-full flex-col rounded-xl border border-amber-500/15 bg-gradient-to-br from-amber-500/[0.04] to-transparent bg-card p-5 transition hover:border-amber-500/30 hover:shadow-sm'>
+      <div className='flex items-start gap-3'>{body}</div>
+      <div className='-mx-5 -mb-5 mt-4 flex items-center justify-end border-t border-border/50 bg-accent/20 px-3 py-2'>
+        {actions}
+      </div>
+    </div>
   );
 });

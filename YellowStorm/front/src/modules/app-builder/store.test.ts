@@ -1,13 +1,22 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { DeployedApp } from './types';
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { DeployedApp, DraftApp } from './types';
 
 const listAppsMock = vi.hoisted(() => vi.fn());
 const removeAppMock = vi.hoisted(() => vi.fn());
+const pointersRemoveMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./api', () => ({
   appBuilderApi: {
     listApps: listAppsMock,
     removeApp: removeAppMock,
+  },
+}));
+
+vi.mock('@/modules/conversation-v2/store', () => ({
+  useConversationV2PointersStore: {
+    getState: () => ({
+      remove: pointersRemoveMock,
+    }),
   },
 }));
 
@@ -23,6 +32,13 @@ const mockDeployed: DeployedApp[] = [
     shareId: null,
   },
 ];
+
+const mockDraft: DraftApp = {
+  sessionId: 'session-draft',
+  title: 'Draft app',
+  lastUpdatedAt: '2026-07-15T10:00:00.000Z',
+  deployStatus: 'idle',
+};
 
 describe('useAppBuilderStore', () => {
   beforeEach(() => {
@@ -66,6 +82,17 @@ describe('useAppBuilderStore', () => {
 
     expect(removeAppMock).toHaveBeenCalledWith('session-1');
     expect(useAppBuilderStore.getState().deployed).toEqual([]);
+    expect(useAppBuilderStore.getState().deletingSessionId).toBeNull();
+  });
+
+  it('removeDraft soft-deletes the conversation and drops the draft card', async () => {
+    useAppBuilderStore.setState({ drafts: [mockDraft] });
+    pointersRemoveMock.mockResolvedValueOnce(undefined);
+
+    await useAppBuilderStore.getState().removeDraft('session-draft');
+
+    expect(pointersRemoveMock).toHaveBeenCalledWith('session-draft');
+    expect(useAppBuilderStore.getState().drafts).toEqual([]);
     expect(useAppBuilderStore.getState().deletingSessionId).toBeNull();
   });
 });
