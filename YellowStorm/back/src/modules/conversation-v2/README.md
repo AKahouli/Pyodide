@@ -53,7 +53,7 @@ The App Builder runtime lives in the sibling module
 | **Source revisions** | **Commit immutable revision manifests to Ceph, presign file reads, hydrate revisions** |
 | Deploy | HTTP App Builder (`POST …/sessions/:id/deploy`), independent of Nodepod |
 | **App sharing** | **Email-based share with notification, App Marketplace with owned + shared apps** |
-| **RBAC** | **Owner / viewer roles with granular permissions (session.read, events.read, workspace_documents.read, session.write)** |
+| **RBAC** | **Owner / viewer roles with granular permissions (session.read, events.read, files.read, workspace_documents.read, session.write, session.delete, stream.write, deploy.write, share.write)** |
 
 ## Architecture
 
@@ -414,14 +414,22 @@ Returns a `shareToken` for public read-only access via `GET /share/v2/:token`.
 
 | Guard | Scope | Checks |
 |---|---|---|
-| `ConversationV2OwnerGuard` | Write operations | `session.ownerId === currentUser.id` |
-| `ConversationV2SessionAccessGuard` | Read operations | Owner → full access; shared → via app-share or token share |
+| `ConversationV2OwnerGuard` | Write operations (name is historical) | Owner **or** shared recipient via `ConversationV2SessionAccessService` |
+| `ConversationV2SessionAccessGuard` | Read operations | Owner → full access; shared → via app-share or token share; enforces fine-grained permissions |
 
-Permissions (via `@RequireConversationSessionPermission`):
+Permissions (via `@RequireConversationSessionPermission`, from
+`constants/conversation-v2-session-permissions.ts`):
 - `session.read` — read session metadata
-- `session.write` — send messages, issue runtime tickets
 - `events.read` — read event history
+- `files.read` — read revision/file metadata
 - `workspace_documents.read` — read workspace documents
+- `session.write` — send messages, issue runtime tickets
+- `session.delete` — delete a session
+- `stream.write` — write/send on the stream
+- `deploy.write` — deploy an app
+- `share.write` — share a session/app
+
+Shared recipients resolve to the same full permission set as the owner.
 
 ## API reference
 
@@ -563,13 +571,18 @@ Permissions (via `@RequireConversationSessionPermission`):
 | `conversationV2.maxSseConnections` | `5` | Max SSE connections per user |
 | `conversationV2.sseHeartbeatMs` | `15000` | SSE heartbeat interval |
 | `conversationV2.liveTailPollMs` | `1000` | Per-session SSE poll interval |
-| `conversationV2.grpcIdleTimeoutMs` | `120000` | Stream idle timeout |
+| `conversationV2.grpcUrl` | `localhost:50051` | AI service gRPC endpoint |
+| `conversationV2.grpcUnaryDeadlineMs` | `5000` | Unary gRPC call timeout |
+| `conversationV2.grpcStreamDeadlineMs` | `900000` | gRPC stream deadline (15min) |
+| `conversationV2.grpcMaxMessageBytes` | `16777216` | Max gRPC message size (16MB) |
+| `conversationV2.grpcIdleTimeoutMs` | `900000` | Idle background stream timeout (15min) |
 | `conversation.systemWorkspaceStorageBytes` | `52428800` | System workspace size (50MB) |
 | `conversationV2.appBuilderDeployBaseUrl` | `https://app-deployer.yellowsys.org/` | Deploy service URL |
 | `conversationV2.appBuilderDeployToken` | — | Deploy service auth token |
-| `conversationV2.appBuilderDeployTimeoutMs` | — | Deploy timeout |
-| `conversationV2.appBuilderDeployInitialStatusDelayMs` | — | First poll delay |
-| `conversationV2.appBuilderDeployStatusPollIntervalMs` | — | Poll interval |
+| `conversationV2.appBuilderDeployTimeoutMs` | `600000` | Deploy HTTP timeout (10min) |
+| `conversationV2.appBuilderDeployInitialStatusDelayMs` | `15000` | First poll delay |
+| `conversationV2.appBuilderDeployStatusPollIntervalMs` | `15000` | Status poll interval |
+| `conversationV2.appBuilderDeployedAppsPathPrefix` | `/apps` | Public URL prefix for deployed apps |
 
 ### app-runtime
 
