@@ -867,6 +867,7 @@ function normalizeTaskArtifact(raw: unknown): import('./types').TaskArtifact | n
     content: toNullableString(record.content) ?? undefined,
     filename: toNullableString(record.filename) ?? undefined,
     mimeType: toNullableString(record.mimeType ?? record.mime_type) ?? undefined,
+    url: toNullableString(record.url) ?? undefined,
     size: toNullableNumber(record.size) ?? undefined,
     availability: toNullableString(record.availability) ?? undefined,
     metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
