@@ -406,15 +406,19 @@ describe('MessageService store lifecycle', () => {
   });
 
   it('passes the durable lease through completion', async () => {
-    const message = record({ conversationType: 'ai' });
+    const components = [
+      { id: 'tool-1', type: 'toolActivity' as const, data: { status: 'completed' } },
+      { id: 'citation-1', type: 'citation' as const, data: { reference: '[1]' } },
+    ];
+    const message = record({ conversationType: 'ai', components });
     messageStore.completeAi.mockResolvedValue(message);
     await service.completeAIMessage({
       messageId: message.id,
       streamExecutionLeaseId: 'lease-1',
-      components: [],
+      components,
     });
     expect(messageStore.completeAi).toHaveBeenCalledWith(
-      expect.objectContaining({ messageId: message.id, streamExecutionLeaseId: 'lease-1' }),
+      expect.objectContaining({ messageId: message.id, streamExecutionLeaseId: 'lease-1', components }),
     );
   });
 });

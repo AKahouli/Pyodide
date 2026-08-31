@@ -90,6 +90,14 @@ export interface ActiveStreamSnapshot {
   components: MessageComponent[];
 }
 
+interface StreamTerminalCoordinator {
+  started: boolean;
+  settlement: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+  cancelIdleTimeout?: () => void;
+}
+
 // Log every Nth chunk to avoid overwhelming logs
 const CHUNK_LOG_INTERVAL = 10;
 
@@ -104,6 +112,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   private streamRevisions = new Map<string, number>(); // streamKey -> latest component-buffer revision
   private activeCalls = new Map<string, grpc.ClientReadableStream<any>>(); // streamKey -> gRPC call
   private streamExecutionLeases = new Map<string, string>(); // streamKey -> durable lease token
+  private streamTerminalCoordinators = new Map<string, StreamTerminalCoordinator>();
   private streamUsage = new Map<
     string,
     { inputTokens: number; outputTokens: number; model: string; modelId?: string }
@@ -628,7 +637,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     );
     if (!this.isGrpcAvailable) {
       this.logger.error('gRPC unavailable', { conversationId, messageId }, logOpts);
-      this.sendErrorEvent(userId, conversationId, ErrorCode.CHAT_GRPC_UNAVAILABLE);
+      await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_GRPC_UNAVAILABLE);
       throw new ServiceUnavailableException(
         ErrorCode.CHAT_GRPC_UNAVAILABLE,
         'AI service is currently unavailable',
@@ -669,7 +678,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         },
         logOpts,
       );
-      this.sendErrorEvent(userId, conversationId, ErrorCode.CHAT_STREAM_LIMIT);
+      await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_STREAM_LIMIT);
       throw new AppException({
         code: ErrorCode.CHAT_STREAM_LIMIT,
         message: 'Maximum concurrent streams reached',
@@ -680,7 +689,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     // Check if conversation already streaming
     if (userStreams?.has(conversationId)) {
       this.logger.warn('Conversation already streaming', { conversationId }, logOpts);
-      this.sendErrorEvent(userId, conversationId, ErrorCode.CHAT_ALREADY_STREAMING);
+      await this.sendErrorEvent(userId, conversationId, messageId, ErrorCode.CHAT_ALREADY_STREAMING);
       throw new ConflictException(
         ErrorCode.CHAT_ALREADY_STREAMING,
         'This conversation is already streaming',
@@ -1066,8 +1075,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       streamKey,
     });
 
-    const call = this.activeCalls.get(streamKey);
+    const existingTerminal = this.streamTerminalCoordinators.get(streamKey);
+    if (existingTerminal?.started) {
+      await existingTerminal.settlement;
+      return;
+    }
 
+    const call = this.activeCalls.get(streamKey);
     if (!call) {
       this.logger.warn('No active stream found for stop request', { streamKey });
       throw new AppException({
@@ -1077,87 +1091,96 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
-    // Remove from activeCalls first to prevent error handler from double-processing
-    this.activeCalls.delete(streamKey);
-
-    // Persist current buffer
-    const buffer = this.componentBuffers.get(streamKey) || new Map();
-    await this.finalizeRunningTools(
-      buffer,
-      'stopped',
-      conversationId,
-      await this.resolveMemberIds(conversationId),
-      { streamKey, messageId },
-    );
-    if (buffer.size > 0) {
-        this.logger.debug('Persisting buffer on stop', {
-        streamKey,
-        bufferSize: buffer.size,
-      });
+    const streamExecutionLeaseId = this.streamExecutionLeases.get(streamKey);
+    const claimedTerminal = this.beginStreamTerminal(streamKey, async () => {
       try {
-        await this.messageService.completeAIMessage({
-          messageId,
-          streamExecutionLeaseId: this.streamExecutionLeases.get(streamKey),
-          components: Array.from(buffer.values()),
-        });
-      } catch (err) {
-        this.logger.error('Failed to persist buffer on stop', {
-          messageId,
-          error: (err as Error).message,
-        });
-      }
-    } else {
-      await this.messageService.markStreamFailed(messageId, this.streamExecutionLeases.get(streamKey));
-    }
-
-    // Record partial usage on stop
-    const usageData = this.streamUsage.get(streamKey);
-    if (usageData && (usageData.inputTokens > 0 || usageData.outputTokens > 0)) {
-        this.logger.debug('Recording partial usage on stop', {
-        streamKey,
-        inputTokens: usageData.inputTokens,
-        outputTokens: usageData.outputTokens,
-      });
-      try {
-        await this.usageService.recordUsage({
-          userId,
-          inputTokens: usageData.inputTokens,
-          outputTokens: usageData.outputTokens,
-          modelName: usageData.model || usageData.modelId || undefined,
+        // Persist current buffer
+        const buffer = this.componentBuffers.get(streamKey) || new Map();
+        await this.finalizeRunningTools(
+          buffer,
+          'stopped',
           conversationId,
-          success: true,
+          await this.resolveMemberIds(conversationId),
+          { streamKey, messageId },
+        );
+        if (buffer.size > 0) {
+          this.logger.debug('Persisting buffer on stop', {
+            streamKey,
+            bufferSize: buffer.size,
+          });
+        }
+        try {
+          await this.messageService.completeAIMessage({
+            messageId,
+            streamExecutionLeaseId,
+            components: Array.from(buffer.values()),
+          });
+        } catch (err) {
+          this.logger.error('Failed to persist buffer on stop', {
+            messageId,
+            error: (err as Error).message,
+          });
+          throw err;
+        }
+
+        // Record partial usage on stop
+        const usageData = this.streamUsage.get(streamKey);
+        if (usageData && (usageData.inputTokens > 0 || usageData.outputTokens > 0)) {
+          this.logger.debug('Recording partial usage on stop', {
+            streamKey,
+            inputTokens: usageData.inputTokens,
+            outputTokens: usageData.outputTokens,
+          });
+          try {
+            await this.usageService.recordUsage({
+              userId,
+              inputTokens: usageData.inputTokens,
+              outputTokens: usageData.outputTokens,
+              modelName: usageData.model || usageData.modelId || undefined,
+              conversationId,
+              success: true,
+            });
+          } catch (err) {
+            this.logger.error('Failed to record usage on stop', {
+              error: (err as Error).message,
+              streamKey,
+            });
+          }
+        }
+
+        // Send stream_complete so frontend treats it as normal completion
+        this.streamGateway.sendToUser(userId, {
+          type: 'stream_complete',
+          data: {
+            conversationId,
+            messageId,
+            usage: {
+              inputTokens: usageData?.inputTokens || 0,
+              outputTokens: usageData?.outputTokens || 0,
+              durationMs: 0,
+            },
+          },
         });
-      } catch (err) {
-        this.logger.error('Failed to record usage on stop', {
-          error: (err as Error).message,
+
+        this.logger.debug('Stream stopped successfully', {
           streamKey,
+          conversationId,
+          messageId,
         });
+      } finally {
+        call.cancel();
+        this.cleanupStream(userId, conversationId, streamKey);
       }
+    });
+    const terminal = this.streamTerminalCoordinators.get(streamKey) ?? existingTerminal;
+    if (!claimedTerminal && !terminal) {
+      throw new AppException({
+        code: ErrorCode.CHAT_STREAM_FAILED,
+        message: 'No active stream found',
+        statusCode: HttpStatus.NOT_FOUND,
+      });
     }
-
-    // Send stream_complete so frontend treats it as normal completion
-    this.streamGateway.sendToUser(userId, {
-      type: 'stream_complete',
-      data: {
-        conversationId,
-        messageId,
-        usage: {
-          inputTokens: usageData?.inputTokens || 0,
-          outputTokens: usageData?.outputTokens || 0,
-          durationMs: 0,
-        },
-      },
-    });
-
-    // Cancel the gRPC call and cleanup
-    call.cancel();
-    this.cleanupStream(userId, conversationId, streamKey);
-
-    this.logger.debug('Stream stopped successfully', {
-      streamKey,
-      conversationId,
-      messageId,
-    });
+    await terminal!.settlement;
   }
 
   private executeGrpcStream(
@@ -1205,6 +1228,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const call = useSingleAgent
         ? this.chatbotClient.RunSingleAgent(grpcRequest, metadata)
         : this.chatbotClient.RunAgentTeam(grpcRequest, metadata);
+      const terminal = this.createStreamTerminalCoordinator(streamKey);
       this.activeCalls.set(streamKey, call);
 
       let totalInputTokens = 0;
@@ -1215,10 +1239,14 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       const startTime = Date.now();
       let timeToFirstChunk: number | null = null;
       let timeToFirstToken: number | null = null;
-
       // Idle timeout - resets every time data is received
       let timeoutHandle: NodeJS.Timeout | null = null;
+      terminal.cancelIdleTimeout = () => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      };
+      void terminal.settlement.then(resolve, reject);
       const resetIdleTimeout = () => {
+        if (terminal.started) return;
         if (timeoutHandle) clearTimeout(timeoutHandle);
         timeoutHandle = setTimeout(() => {
           this.logger.error(
@@ -1230,16 +1258,22 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             },
             logOpts,
           );
-          call.cancel();
-          this.handleStreamError(
-            userId,
-            conversationId,
-            messageId,
+          const timeoutError = new Error('Stream idle timeout - no data received');
+          this.beginStreamTerminal(
             streamKey,
-            ErrorCode.CHAT_STREAM_TIMEOUT,
-            requestId,
+            async () => {
+              call.cancel();
+              await this.handleStreamError(
+                userId,
+                conversationId,
+                messageId,
+                streamKey,
+                ErrorCode.CHAT_STREAM_TIMEOUT,
+                requestId,
+              );
+            },
+            timeoutError,
           );
-          reject(new Error('Stream idle timeout - no data received'));
         }, timeoutMs);
       };
 
@@ -1247,6 +1281,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       resetIdleTimeout();
 
       call.on('data', (chunk: any) => {
+        if (terminal.started) return;
         // Reset idle timeout on each chunk received
         resetIdleTimeout();
         chunkCount++;
@@ -1376,14 +1411,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       });
 
       call.on('end', async () => {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-
-        // If stopStream() already handled this call, don't double-process
-        if (!this.activeCalls.has(streamKey)) {
-          this.logger.debug('Stream already handled by stopStream', { streamKey }, logOpts);
-          resolve();
-          return;
-        }
+        if (terminal.started) return;
 
         const durationMs = Date.now() - startTime;
 
@@ -1399,10 +1427,11 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           logOpts,
         );
 
-        try {
-          const buffer = this.componentBuffers.get(streamKey) || new Map();
-          await this.finalizeRunningTools(buffer, 'failed', conversationId, memberIds, { streamKey, messageId });
-          const components = Array.from(buffer.values());
+        this.beginStreamTerminal(streamKey, async () => {
+          try {
+            const buffer = this.componentBuffers.get(streamKey) || new Map();
+            await this.finalizeRunningTools(buffer, 'failed', conversationId, memberIds, { streamKey, messageId });
+            const components = Array.from(buffer.values());
 
           this.logger.debug(
             'Persisting stream components',
@@ -1487,9 +1516,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             }, logOpts);
           });
 
-          this.cleanupStream(userId, conversationId, streamKey);
+            this.cleanupStream(userId, conversationId, streamKey);
 
-          this.logger.debug(
+            this.logger.debug(
             'Stream completed successfully',
             {
               streamKey,
@@ -1499,32 +1528,24 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               durationMs,
             },
             logOpts,
-          );
-
-          resolve();
-        } catch (error) {
-          this.logger.error(
-            'Error completing stream',
-            {
-              error: (error as Error).message,
-              streamKey,
-            },
-            logOpts,
-          );
-          this.cleanupStream(userId, conversationId, streamKey);
-          reject(error);
-        }
+            );
+          } catch (error) {
+            this.logger.error(
+              'Error completing stream',
+              {
+                error: (error as Error).message,
+                streamKey,
+              },
+              logOpts,
+            );
+            this.cleanupStream(userId, conversationId, streamKey);
+            throw error;
+          }
+        });
       });
 
       call.on('error', (error: any) => {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-
-        // If stopStream() already handled this call, don't double-process
-        if (!this.activeCalls.has(streamKey)) {
-          this.logger.debug('Stream error after stopStream handling', { streamKey }, logOpts);
-          resolve();
-          return;
-        }
+        if (terminal.started) return;
 
         this.logger.error(
           'gRPC stream error',
@@ -1547,15 +1568,18 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             ? ErrorCode.CHAT_GRPC_UNAUTHENTICATED
             : ErrorCode.CHAT_STREAM_FAILED;
 
-        this.handleStreamError(
-          userId,
-          conversationId,
-          messageId,
+        this.beginStreamTerminal(
           streamKey,
-          errorCode,
-          requestId,
+          () => this.handleStreamError(
+            userId,
+            conversationId,
+            messageId,
+            streamKey,
+            errorCode,
+            requestId,
+          ),
+          error,
         );
-        reject(error);
       });
     });
   }
@@ -1662,8 +1686,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    // Send error event to user
-    this.sendErrorEvent(userId, conversationId, errorCode);
+    // Keep terminal ownership until the scoped error event has been delivered or logged.
+    await this.sendErrorEvent(userId, conversationId, messageId, errorCode);
     this.cleanupStream(userId, conversationId, streamKey);
 
     this.logger.debug(
@@ -1708,31 +1732,56 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       };
       if (options.broadcast !== false) {
         const revision = options.streamKey ? this.nextStreamRevision(options.streamKey) : undefined;
-        await this.streamGateway.broadcastToConversation(memberIds, {
-          type: 'stream_chunk',
-          data: {
+        try {
+          await this.streamGateway.broadcastToConversation(memberIds, {
+            type: 'stream_chunk',
+            data: {
+              conversationId,
+              ...(options.messageId ? { messageId: options.messageId } : {}),
+              ...(revision !== undefined ? { revision } : {}),
+              action: 'update',
+              component: this.sanitizeComponent(component),
+            },
+          });
+        } catch (error) {
+          this.logger.error('Failed to broadcast terminal tool update', {
             conversationId,
-            ...(options.messageId ? { messageId: options.messageId } : {}),
-            ...(revision !== undefined ? { revision } : {}),
-            action: 'update',
-            component: this.sanitizeComponent(component),
-          },
-        });
+            messageId: options.messageId,
+            componentId: component.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     }
   }
 
-  private async sendErrorEvent(userId: string, conversationId: string, errorCode: ErrorCode): Promise<void> {
-    const memberIds = await this.resolveMemberIds(conversationId);
-    await this.streamGateway.broadcastToConversation(
-      memberIds, {
-      type: 'stream_error',
-      data: {
+  private async sendErrorEvent(
+    userId: string,
+    conversationId: string,
+    messageId: string,
+    errorCode: ErrorCode,
+  ): Promise<void> {
+    try {
+      const memberIds = await this.resolveMemberIds(conversationId);
+      await this.streamGateway.broadcastToConversation(
+        memberIds, {
+        type: 'stream_error',
+        data: {
+          conversationId,
+          messageId,
+          errorCode,
+          message: this.getErrorMessage(errorCode),
+        },
+      });
+    } catch (error) {
+      this.logger.error('Failed to broadcast stream error', {
+        userId,
         conversationId,
+        messageId,
         errorCode,
-        message: this.getErrorMessage(errorCode),
-      },
-    });
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private cleanupStream(userId: string, conversationId: string, streamKey: string): void {
@@ -1740,6 +1789,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     this.componentBuffers.delete(streamKey);
     this.streamRevisions.delete(streamKey);
     this.streamUsage.delete(streamKey);
+    this.streamTerminalCoordinators.delete(streamKey);
     const userStreams = this.activeStreams.get(userId);
     if (userStreams) {
       userStreams.delete(conversationId);
@@ -1747,6 +1797,35 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         this.activeStreams.delete(userId);
       }
     }
+  }
+
+  private createStreamTerminalCoordinator(streamKey: string): StreamTerminalCoordinator {
+    let resolve: () => void = () => undefined;
+    let reject: (error: unknown) => void = () => undefined;
+    const settlement = new Promise<void>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    void settlement.catch(() => undefined);
+    const terminal = { started: false, settlement, resolve, reject };
+    this.streamTerminalCoordinators.set(streamKey, terminal);
+    return terminal;
+  }
+
+  private beginStreamTerminal(
+    streamKey: string,
+    operation: () => Promise<void>,
+    terminalError?: unknown,
+  ): boolean {
+    const terminal = this.streamTerminalCoordinators.get(streamKey);
+    if (!terminal || terminal.started) return false;
+    terminal.started = true;
+    terminal.cancelIdleTimeout?.();
+    void operation().then(
+      () => terminalError === undefined ? terminal.resolve() : terminal.reject(terminalError),
+      (error) => terminal.reject(error),
+    );
+    return true;
   }
 
   private nextStreamRevision(streamKey: string): number {

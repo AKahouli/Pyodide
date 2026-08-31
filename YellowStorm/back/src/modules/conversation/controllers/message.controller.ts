@@ -708,6 +708,9 @@ export class MessageController {
       newAiMessageId: newAiMessage.id,
     });
 
+    const currentContent = userMessage.content || '';
+    const replayContentMatches = userMessage.replayContext?.content === currentContent;
+
     // Start streaming (non-blocking)
     this.streamService
       .startStream(
@@ -716,6 +719,11 @@ export class MessageController {
         newAiMessage.id,
         userMessage.replayContext ? {
           ...userMessage.replayContext,
+          content: currentContent,
+          ...(!replayContentMatches ? { taskSummary: undefined } : {}),
+          modelId: userMessage.modelId,
+          reasoningEffort: userMessage.reasoningEffort,
+          agentIds: userMessage.agentIds?.map((id) => id.toString()) ?? [],
           ...(pinnedAgentId ? {
             agentIds: [pinnedAgentId],
             modelId: undefined,
@@ -723,7 +731,7 @@ export class MessageController {
             connectorRepo: undefined,
           } : {}),
         } : {
-          content: userMessage.content || '',
+          content: currentContent,
           attachedFileIds: userMessage.attachedFileIds?.map((id) => id.toString()) ?? [],
           webSearchEnabled: userMessage.webSearchEnabled,
           deepSearchEnabled: false,

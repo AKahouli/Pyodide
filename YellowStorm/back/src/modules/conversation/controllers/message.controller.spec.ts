@@ -532,4 +532,77 @@ describe('MessageController.sendMessage sticky routing', () => {
       reasoningEffort: 'high',
     }));
   });
+
+  it('regenerates with the edited prompt instead of stale replay content', async () => {
+    const questionId = new Types.ObjectId();
+    const currentAgentId = new Types.ObjectId();
+    messageService.getMessageDocument
+      .mockResolvedValueOnce({ questionMessageId: questionId })
+      .mockResolvedValueOnce({
+        content: 'edited question',
+        modelId: 'model-current',
+        reasoningEffort: 'high',
+        agentIds: [currentAgentId],
+        replayContext: {
+          content: 'original question',
+          taskSummary: 'Choose the original option',
+          modelId: 'model-old',
+          reasoningEffort: 'low',
+          agentIds: ['agent-old'],
+          attachedFileIds: ['file-1'],
+        },
+      });
+    conversationService.getConversationDocument.mockResolvedValue({ runtimePurpose: 'standard' });
+
+    await controller.regenerate(user, conversationId, 'ai-1');
+
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(),
+      conversationId,
+      expect.any(String),
+      expect.objectContaining({
+        content: 'edited question',
+        modelId: 'model-current',
+        reasoningEffort: 'high',
+        agentIds: [currentAgentId.toString()],
+        attachedFileIds: ['file-1'],
+        taskSummary: undefined,
+      }),
+      'req-1',
+      undefined,
+      'Ada Lovelace',
+      undefined,
+    );
+  });
+
+  it('preserves a replay task summary when the prompt was not edited', async () => {
+    const questionId = new Types.ObjectId();
+    messageService.getMessageDocument
+      .mockResolvedValueOnce({ questionMessageId: questionId })
+      .mockResolvedValueOnce({
+        content: 'choose option b',
+        replayContext: {
+          content: 'choose option b',
+          taskSummary: 'The user selected option B',
+          agentIds: [],
+        },
+      });
+    conversationService.getConversationDocument.mockResolvedValue({ runtimePurpose: 'standard' });
+
+    await controller.regenerate(user, conversationId, 'ai-1');
+
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(),
+      conversationId,
+      expect.any(String),
+      expect.objectContaining({
+        content: 'choose option b',
+        taskSummary: 'The user selected option B',
+      }),
+      'req-1',
+      undefined,
+      'Ada Lovelace',
+      undefined,
+    );
+  });
 });

@@ -40,6 +40,10 @@ class ThoughtActivityTracker:
             if candidate_detail and text == candidate_detail:
                 return None
             if candidate_detail:
+                if self.is_standalone_fragment(text):
+                    if candidate_detail.endswith(text):
+                        return None
+                    text = f"{candidate_detail}{text}"
                 self._active_id = self._active_id or self._replay_id
                 self._active_started_at = self._active_started_at or self._replay_started_at
                 self._active_detail = text

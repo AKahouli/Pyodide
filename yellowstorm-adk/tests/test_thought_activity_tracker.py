@@ -94,6 +94,27 @@ def test_complete_one_word_can_correct_an_existing_activity() -> None:
     assert corrected.detail == "Done"
 
 
+def test_complete_short_suffix_does_not_replace_accumulated_reasoning() -> None:
+    tracker = ThoughtActivityTracker()
+    first = tracker.observe("Reuse citation-grounded citations", True, "start")
+    duplicate = tracker.observe("-grounded citations", False, "complete")
+
+    assert first is not None
+    assert duplicate is None
+
+
+def test_complete_short_delta_extends_accumulated_reasoning() -> None:
+    tracker = ThoughtActivityTracker()
+    first = tracker.observe("Reuse citation", True, "start")
+    suffix = tracker.observe("-grounded citations", False, "complete")
+
+    assert first is not None
+    assert suffix is not None
+    assert suffix.component_id == first.component_id
+    assert suffix.action == "update"
+    assert suffix.detail == "Reuse citation-grounded citations"
+
+
 def test_tool_boundary_allows_identical_reasoning_in_new_span() -> None:
     tracker = ThoughtActivityTracker()
     first = tracker.observe("Check revenue", False, "first")

@@ -56,6 +56,7 @@ export interface StreamErrorEvent {
   type: 'stream_error';
   data: {
     conversationId: string;
+    messageId: string;
     errorCode: string;
     message: string;
   };

@@ -458,6 +458,7 @@ export interface StreamCompleteEvent {
 
 export interface StreamErrorEvent {
   conversationId: string;
+  messageId: string;
   errorCode: string;
   message: string;
 }

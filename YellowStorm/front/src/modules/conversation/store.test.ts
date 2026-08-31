@@ -56,7 +56,12 @@ beforeEach(() => {
     isAwaitingFirstChunk: false,
     awaitingConversationId: null,
     pendingAssistantMessageId: null,
+    pendingTerminalErrorKey: null,
+    earlyStreamErrors: new Map(),
+    inFlightSendConversations: new Set(),
     streamingStateCache: new Map(),
+    criticalError: null,
+    inputDisabled: false,
   });
 });
 
@@ -125,6 +130,50 @@ describe('conversation optimistic messages', () => {
       },
     });
     await pending;
+  });
+
+  it('applies a scoped stream error that arrives before the send response', async () => {
+    let resolveSend: (value: { userMessage: Record<string, unknown>; aiMessageId: string }) => void = () => undefined;
+    sendMessageMock.mockImplementation(() => new Promise((resolve) => { resolveSend = resolve; }));
+    useConversationStore.setState({ currentConversationId: 'conv-1' });
+
+    const pending = useConversationStore.getState().sendMessage('conv-1', { content: 'hello' });
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    useConversationStore.getState().onMessageCreated({
+      conversationId: 'conv-1',
+      message: {
+        id: 'message-1', conversationId: 'conv-1', conversationType: 'user',
+        content: 'hello', createdAt: '2026-08-31T18:14:58.000Z',
+      },
+    });
+    expect(useConversationStore.getState().optimisticMessages).toHaveLength(0);
+    expect(useConversationStore.getState().inFlightSendConversations.has('conv-1')).toBe(true);
+    useConversationStore.getState().onStreamError({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      errorCode: 'ERR_1417',
+      message: 'Limit reached',
+    });
+
+    expect(useConversationStore.getState().criticalError).toBeNull();
+    resolveSend({
+      userMessage: {
+        id: 'message-1', conversationId: 'conv-1', conversationType: 'user',
+        content: 'hello', createdAt: '2026-08-31T18:14:58.000Z',
+      },
+      aiMessageId: 'ai-1',
+    });
+    await pending;
+
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: false,
+      isAwaitingFirstChunk: false,
+      pendingAssistantMessageId: null,
+      inputDisabled: true,
+      criticalError: { code: 'ERR_1417' },
+    });
+    expect(useConversationStore.getState().earlyStreamErrors.size).toBe(0);
+    expect(useConversationStore.getState().inFlightSendConversations.size).toBe(0);
   });
 });
 
@@ -860,6 +909,233 @@ describe('conversation streaming component updates', () => {
     });
   });
 
+  it('uses canonical completion components instead of live-only extras', () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-edited',
+      pendingAssistantMessageId: 'ai-edited',
+      streamingComponents: [
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'Find contract clauses', renderKind: 'search', status: 'completed' } },
+        { id: 'text-1', type: 'text', data: { content: 'The contract term is 42 months [1].' } },
+        { id: 'citation-1', type: 'citation', data: { parentId: 'text-1', reference: '[1]', fileName: 'contract.pdf', page: '3' } },
+      ],
+      messages: [{
+        id: 'ai-edited', conversationId: 'conv-1', conversationType: 'ai',
+        components: [], isComplete: false, createdAt: '2026-08-31T18:14:58.000Z',
+      }],
+    });
+
+    useConversationStore.getState().onMessageUpdated({
+      conversationId: 'conv-1',
+      messageId: 'ai-edited',
+      message: {
+        conversationType: 'ai',
+        components: [{ id: 'text-1', type: 'text', data: { content: 'The contract term is 42 months [1].' } }],
+        isComplete: true,
+        createdAt: '2026-08-31T18:14:58.000Z',
+      },
+    });
+
+    expect(useConversationStore.getState().messages[0].components?.map((component) => component.type)).toEqual(['text']);
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: false,
+      streamingComponents: [],
+    });
+  });
+
+  it('does not consume or clear a newer stream after delayed completion recovery', async () => {
+    let resolveCompletedMessage: (message: Record<string, unknown>) => void = () => undefined;
+    fetchMessageMock.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCompletedMessage = resolve; }),
+    );
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-1',
+      pendingAssistantMessageId: 'ai-1',
+      streamingComponents: [{ id: 'text-1', type: 'text', data: { content: 'Old partial' } }],
+      messages: [],
+    });
+
+    const oldCompletion = useConversationStore.getState().onStreamComplete({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+    });
+    await vi.waitFor(() => expect(fetchMessageMock).toHaveBeenCalledWith('conv-1', 'ai-1'));
+
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'ai-2' });
+    useConversationStore.getState().onStreamChunk({
+      conversationId: 'conv-1',
+      messageId: 'ai-2',
+      action: 'add',
+      component: { id: 'tool-2', type: 'toolActivity', data: { toolName: 'search', status: 'running' } },
+    });
+    resolveCompletedMessage({
+      id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+      components: [{ id: 'text-1', type: 'text', data: { content: 'Old complete' } }],
+      isComplete: true, createdAt: '2026-08-31T18:14:58.000Z',
+    });
+    await oldCompletion;
+
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-2',
+      pendingAssistantMessageId: 'ai-2',
+    });
+    expect(useConversationStore.getState().streamingComponents).toEqual([
+      expect.objectContaining({ id: 'tool-2' }),
+    ]);
+    expect(useConversationStore.getState().messages).toEqual([
+      expect.objectContaining({ id: 'ai-1', isComplete: true }),
+    ]);
+  });
+
+  it('ignores a delayed error from an older message while a newer stream is active', () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-2',
+      pendingAssistantMessageId: 'ai-2',
+      streamingComponents: [{ id: 'text-2', type: 'text', data: { content: 'New partial' } }],
+    });
+
+    useConversationStore.getState().onStreamError({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      errorCode: 'ERR_1404',
+      message: 'Old stream failed',
+    });
+
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-2',
+      pendingAssistantMessageId: 'ai-2',
+      streamingComponents: [{ id: 'text-2', type: 'text', data: { content: 'New partial' } }],
+    });
+  });
+
+  it('handles a scoped error after its canonical completion cleared stream ownership', () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-1',
+      pendingAssistantMessageId: 'ai-1',
+      messages: [{
+        id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+        components: [], isComplete: false, createdAt: '2026-08-31T18:14:58.000Z',
+      }],
+    });
+
+    useConversationStore.getState().onMessageUpdated({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      message: {
+        components: [{ id: 'error-1', type: 'error', data: { code: 'ERR_1417', message: 'Limit reached' } }],
+        isComplete: true,
+      },
+    });
+    useConversationStore.getState().onStreamError({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      errorCode: 'ERR_1417',
+      message: 'Limit reached',
+    });
+
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: false,
+      streamingMessageId: null,
+      pendingAssistantMessageId: null,
+      pendingTerminalErrorKey: null,
+      inputDisabled: true,
+      criticalError: { code: 'ERR_1417' },
+    });
+  });
+
+  it('preserves foreground terminal error ownership across a background stream start', () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-1',
+      pendingAssistantMessageId: 'ai-1',
+      messages: [{
+        id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+        components: [], isComplete: false, createdAt: '2026-08-31T18:14:58.000Z',
+      }],
+    });
+    useConversationStore.getState().onMessageUpdated({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      message: {
+        components: [{ id: 'error-1', type: 'error', data: { code: 'ERR_1417', message: 'Limit reached' } }],
+        isComplete: true,
+      },
+    });
+
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-2', messageId: 'ai-2' });
+    useConversationStore.getState().onStreamError({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      errorCode: 'ERR_1417',
+      message: 'Limit reached',
+    });
+
+    expect(useConversationStore.getState()).toMatchObject({
+      pendingTerminalErrorKey: null,
+      inputDisabled: true,
+      criticalError: { code: 'ERR_1417' },
+    });
+    expect(useConversationStore.getState().streamingStateCache.get('conv-2')).toMatchObject({
+      streamingMessageId: 'ai-2',
+    });
+  });
+
+  it('does not apply a completed old error after a newer stream starts', () => {
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-1',
+      pendingAssistantMessageId: 'ai-1',
+      messages: [{
+        id: 'ai-1', conversationId: 'conv-1', conversationType: 'ai',
+        components: [], isComplete: false, createdAt: '2026-08-31T18:14:58.000Z',
+      }],
+    });
+    useConversationStore.getState().onMessageUpdated({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      message: {
+        components: [{ id: 'error-1', type: 'error', data: { code: 'ERR_1417', message: 'Limit reached' } }],
+        isComplete: true,
+      },
+    });
+
+    useConversationStore.getState().onStreamStart({ conversationId: 'conv-1', messageId: 'ai-2' });
+    useConversationStore.getState().onStreamError({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      errorCode: 'ERR_1417',
+      message: 'Limit reached',
+    });
+
+    expect(useConversationStore.getState()).toMatchObject({
+      isStreaming: true,
+      streamingMessageId: 'ai-2',
+      pendingAssistantMessageId: 'ai-2',
+      pendingTerminalErrorKey: null,
+      inputDisabled: false,
+      criticalError: null,
+    });
+  });
+
   it('reconciles a persisted completion after the live event was missed', async () => {
     fetchMessageMock.mockResolvedValue({
       id: 'ai-1',
@@ -885,6 +1161,39 @@ describe('conversation streaming component updates', () => {
       streamingMessageId: null,
       pendingAssistantMessageId: null,
       messagesTotal: 1,
+    });
+  });
+
+  it('retains scoped error ownership after reconciliation finds an error completion', async () => {
+    fetchMessageMock.mockResolvedValue({
+      id: 'ai-1',
+      conversationId: 'conv-1',
+      conversationType: 'ai',
+      components: [{ id: 'error-1', type: 'error', data: { code: 'ERR_1417', message: 'Limit reached' } }],
+      isComplete: true,
+      createdAt: '2026-08-31T18:14:58.000Z',
+    });
+    useConversationStore.setState({
+      currentConversationId: 'conv-1',
+      isStreaming: true,
+      streamingConversationId: 'conv-1',
+      streamingMessageId: 'ai-1',
+      pendingAssistantMessageId: 'ai-1',
+    });
+
+    await useConversationStore.getState().reconcilePendingStream();
+    expect(useConversationStore.getState().pendingTerminalErrorKey).toBe('conv-1:ai-1');
+    useConversationStore.getState().onStreamError({
+      conversationId: 'conv-1',
+      messageId: 'ai-1',
+      errorCode: 'ERR_1417',
+      message: 'Limit reached',
+    });
+
+    expect(useConversationStore.getState()).toMatchObject({
+      pendingTerminalErrorKey: null,
+      inputDisabled: true,
+      criticalError: { code: 'ERR_1417' },
     });
   });
 
