@@ -10,17 +10,13 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import type {
-  AppOwnershipFilter,
-  AppSortKey,
-  AppViewMode,
-} from '../../hooks/useAppBuilderFilters';
+import type { AppSortKey, AppViewMode } from '../../hooks/useAppBuilderFilters';
+import type { AppBuilderTab } from '../../types';
 
 interface AppBuilderFiltersProps {
   searchInput: string;
   onSearchChange: (value: string) => void;
-  owner: AppOwnershipFilter;
-  onOwnerChange: (value: AppOwnershipFilter) => void;
+  tab: AppBuilderTab;
   sort: AppSortKey;
   onSortChange: (value: AppSortKey) => void;
   view: AppViewMode;
@@ -32,8 +28,7 @@ interface AppBuilderFiltersProps {
 export function AppBuilderFilters({
   searchInput,
   onSearchChange,
-  owner,
-  onOwnerChange,
+  tab,
   sort,
   onSortChange,
   view,
@@ -66,25 +61,23 @@ export function AppBuilderFilters({
 
       <div className='h-5 w-px bg-border/60' />
 
-      <Select value={owner} onValueChange={(v) => onOwnerChange(v as AppOwnershipFilter)}>
-        <SelectTrigger className='h-9 w-[200px] border-transparent bg-transparent shadow-none hover:bg-accent/50'>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value='all'>{t('hub.filters.ownerAll')}</SelectItem>
-          <SelectItem value='owned'>{t('hub.filters.ownerMine')}</SelectItem>
-          <SelectItem value='shared'>{t('hub.filters.ownerShared')}</SelectItem>
-        </SelectContent>
-      </Select>
-
       <Select value={sort} onValueChange={(v) => onSortChange(v as AppSortKey)}>
         <SelectTrigger className='h-9 w-[260px] gap-1.5 border-transparent bg-transparent shadow-none hover:bg-accent/50 [&>span]:line-clamp-1'>
           <span className='shrink-0 text-muted-foreground'>{t('hub.sort.label')}:</span>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value='deployed'>{t('hub.sort.deployed')}</SelectItem>
-          <SelectItem value='name'>{t('hub.sort.name')}</SelectItem>
+          {tab === 'draft' ? (
+            <>
+              <SelectItem value='updated'>{t('hub.sort.updated')}</SelectItem>
+              <SelectItem value='name'>{t('hub.sort.name')}</SelectItem>
+            </>
+          ) : (
+            <>
+              <SelectItem value='deployed'>{t('hub.sort.deployed')}</SelectItem>
+              <SelectItem value='name'>{t('hub.sort.name')}</SelectItem>
+            </>
+          )}
         </SelectContent>
       </Select>
 

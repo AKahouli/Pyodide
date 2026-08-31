@@ -5,22 +5,41 @@
   },
   "page": {
     "title": "App Builder",
-    "description": "Vos applications déployées et partagées",
-    "empty": "Aucune application déployée pour le moment. Publiez une application depuis une conversation pour la voir ici.",
-    "error": "Impossible de charger vos applications déployées."
+    "description": "Parcourez vos applications déployées, partagées et brouillons au même endroit.",
+    "empty": "Aucune application pour le moment. Commencez dans une conversation, puis publiez quand vous êtes prêt.",
+    "error": "Impossible de charger vos applications."
   },
   "hub": {
+    "tickets": {
+      "ariaLabel": "Filtres par statut d'application",
+      "deployed": {
+        "label": "Déployées",
+        "description": "Applications en ligne que vous avez publiées — ouvrez-les, partagez-les ou gérez-les.",
+        "listHeading": "Applications déployées",
+        "empty": "Aucune application déployée. Publiez depuis une conversation pour la voir ici."
+      },
+      "shared": {
+        "label": "Partagées",
+        "description": "Applications que vos collègues vous ont partagées, prêtes à ouvrir.",
+        "listHeading": "Partagées avec vous",
+        "empty": "Rien de partagé pour le moment. Quand quelqu'un partage une app, elle apparaît ici."
+      },
+      "draft": {
+        "label": "Brouillons",
+        "description": "Applications en cours de création, pas encore publiées.",
+        "listHeading": "Brouillons",
+        "empty": "Aucun brouillon. Continuez dans une conversation et publiez quand vous êtes prêt."
+      }
+    },
     "filters": {
       "searchPlaceholder": "Rechercher des applications...",
-      "ownerAll": "Toutes",
-      "ownerMine": "Les miennes",
-      "ownerShared": "Partagées avec moi",
       "clear": "Effacer les filtres",
       "noResults": "Aucune application ne correspond à vos filtres."
     },
     "sort": {
       "label": "Trier",
       "deployed": "Récemment déployées",
+      "updated": "Récemment modifiées",
       "name": "Nom (A–Z)"
     },
     "view": {
@@ -28,8 +47,6 @@
       "list": "Liste"
     },
     "sections": {
-      "personal": "Personnelles",
-      "shared": "Partagées avec moi",
       "appsCount": "{{count}} applications",
       "singleApp": "1 application"
     }
@@ -37,6 +54,14 @@
   "card": {
     "untitled": "Application sans titre",
     "deployedAt": "Déployée le {{date}}",
+    "updatedAt": "Modifiée le {{date}}",
+    "draftHint": "Pas encore publiée — reprenez dans la conversation pour déployer.",
+    "draftStatus": {
+      "idle": "Brouillon",
+      "deploying": "Publication…",
+      "error": "Échec de publication"
+    },
+    "continue": "Continuer la création",
     "shared": "Partagée avec vous",
     "open": "Ouvrir l'application",
     "conversation": "Accéder à la conversation",

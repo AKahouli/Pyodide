@@ -163,10 +163,10 @@ export class ConversationV2Controller {
     return { items, nextCursor };
   }
 
-  /** Owned + shared Marketplace apps for the current user. */
+  /** Owned deployed, shared, and draft apps for the current user (App Builder). */
   @Get('apps')
   async listDeployedApps(@CurrentUser() user: AuthUser): Promise<{
-    items: {
+    deployed: {
       sessionId: string;
       title: string;
       deployedUrl: string;
@@ -175,14 +175,33 @@ export class ConversationV2Controller {
       shareId: string | null;
       canOpenConversation: boolean;
     }[];
+    shared: {
+      sessionId: string;
+      title: string;
+      deployedUrl: string;
+      lastDeployedAt: string | null;
+      source: 'owned' | 'shared';
+      shareId: string | null;
+      canOpenConversation: boolean;
+    }[];
+    drafts: {
+      sessionId: string;
+      title: string;
+      lastUpdatedAt: string;
+      deployStatus: 'idle' | 'deploying' | 'error';
+    }[];
   }> {
-    const [owned, shared] = await Promise.all([
+    const [deployed, shared, drafts] = await Promise.all([
       this.sessions.listDeployedApps(user.id),
       this.appShares.listSharedWithUser(user.id),
+      this.sessions.listDraftApps(user.id),
     ]);
-    const ownedIds = new Set(owned.map((app) => app.sessionId));
-    const items = [...owned, ...shared.filter((app) => !ownedIds.has(app.sessionId))];
-    return { items };
+    const ownedIds = new Set(deployed.map((app) => app.sessionId));
+    return {
+      deployed,
+      shared: shared.filter((app) => !ownedIds.has(app.sessionId)),
+      drafts,
+    };
   }
 
   @Delete('apps/:id')

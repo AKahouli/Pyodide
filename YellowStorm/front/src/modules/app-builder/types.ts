@@ -1,5 +1,9 @@
 export type DeployedAppSource = 'owned' | 'shared';
 
+export type AppBuilderTab = 'deployed' | 'shared' | 'draft';
+
+export type DraftDeployStatus = 'idle' | 'deploying' | 'error';
+
 export interface DeployedApp {
   sessionId: string;
   title: string;
@@ -11,6 +15,37 @@ export interface DeployedApp {
   canOpenConversation?: boolean;
 }
 
-export interface ListDeployedAppsResponse {
-  items: DeployedApp[];
+export interface DraftApp {
+  sessionId: string;
+  title: string;
+  lastUpdatedAt: string;
+  deployStatus: DraftDeployStatus;
+}
+
+export interface AppBuilderCatalog {
+  deployed: DeployedApp[];
+  shared: DeployedApp[];
+  drafts: DraftApp[];
+}
+
+export interface ListAppBuilderAppsResponse {
+  deployed: DeployedApp[];
+  shared: DeployedApp[];
+  drafts: DraftApp[];
+}
+
+export interface AppEndUserGrants {
+  create: boolean;
+  read: boolean;
+  update: boolean;
+  delete: boolean;
+}
+
+export interface AppEndUserSummary {
+  id: string;
+  email: string;
+  displayName: string | null;
+  status: 'active' | 'disabled';
+  grants: AppEndUserGrants;
+  createdAt: string;
 }

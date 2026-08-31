@@ -5,22 +5,41 @@
   },
   "page": {
     "title": "App Builder",
-    "description": "Your deployed and shared applications",
-    "empty": "No deployed apps yet. Publish an app from a conversation to see it here.",
-    "error": "Failed to load your deployed apps."
+    "description": "Browse deployed apps, shared apps, and drafts in one place.",
+    "empty": "No apps yet. Start building in a conversation, then publish when you are ready.",
+    "error": "Failed to load your apps."
   },
   "hub": {
+    "tickets": {
+      "ariaLabel": "App status filters",
+      "deployed": {
+        "label": "Deployed",
+        "description": "Live applications you published and can open, share, or manage.",
+        "listHeading": "Deployed apps",
+        "empty": "No deployed apps yet. Publish from a conversation to see them here."
+      },
+      "shared": {
+        "label": "Shared",
+        "description": "Applications teammates shared with you, ready to open.",
+        "listHeading": "Shared with you",
+        "empty": "Nothing shared with you yet. When someone shares an app, it appears here."
+      },
+      "draft": {
+        "label": "Draft",
+        "description": "Work-in-progress apps that are not published yet.",
+        "listHeading": "Draft apps",
+        "empty": "No drafts yet. Keep building in a conversation and publish when ready."
+      }
+    },
     "filters": {
       "searchPlaceholder": "Search apps...",
-      "ownerAll": "All",
-      "ownerMine": "Mine",
-      "ownerShared": "Shared with me",
       "clear": "Clear filters",
       "noResults": "No apps match your filters."
     },
     "sort": {
       "label": "Sort",
       "deployed": "Recently deployed",
+      "updated": "Recently updated",
       "name": "Name (A–Z)"
     },
     "view": {
@@ -28,8 +47,6 @@
       "list": "List"
     },
     "sections": {
-      "personal": "Personal",
-      "shared": "Shared with me",
       "appsCount": "{{count}} apps",
       "singleApp": "1 app"
     }
@@ -37,6 +54,14 @@
   "card": {
     "untitled": "Untitled app",
     "deployedAt": "Deployed {{date}}",
+    "updatedAt": "Updated {{date}}",
+    "draftHint": "Not published yet — continue in the conversation to deploy.",
+    "draftStatus": {
+      "idle": "Draft",
+      "deploying": "Publishing…",
+      "error": "Publish failed"
+    },
+    "continue": "Continue building",
     "shared": "Shared with you",
     "open": "Open the application",
     "conversation": "Go to the conversation",

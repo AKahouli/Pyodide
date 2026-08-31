@@ -1,15 +1,15 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { DeployedApp } from '../types';
+import type { DeployedApp, DraftApp } from '../types';
 
-const listDeployedAppsMock = vi.hoisted(() => vi.fn());
+const listAppsMock = vi.hoisted(() => vi.fn());
 const removeAppMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../api', () => ({
   appBuilderApi: {
-    listDeployedApps: listDeployedAppsMock,
+    listApps: listAppsMock,
     removeApp: removeAppMock,
   },
 }));
@@ -27,7 +27,7 @@ vi.mock('react-router-dom', async (importOriginal) => ({
 import { AppBuilderPage } from './AppBuilderPage';
 import { useAppBuilderStore, initialState } from '../store';
 
-const mockApps: DeployedApp[] = [
+const mockDeployed: DeployedApp[] = [
   {
     sessionId: 'session-1',
     title: 'Generated app',
@@ -38,7 +38,7 @@ const mockApps: DeployedApp[] = [
   },
 ];
 
-const sharedApps: DeployedApp[] = [
+const mockShared: DeployedApp[] = [
   {
     sessionId: 'session-2',
     title: 'Shared app',
@@ -49,7 +49,20 @@ const sharedApps: DeployedApp[] = [
   },
 ];
 
-const mixedApps: DeployedApp[] = [...mockApps, ...sharedApps];
+const mockDrafts: DraftApp[] = [
+  {
+    sessionId: 'session-3',
+    title: 'Draft app',
+    lastUpdatedAt: '2026-07-15T10:00:00.000Z',
+    deployStatus: 'idle',
+  },
+];
+
+const fullCatalog = {
+  deployed: mockDeployed,
+  shared: mockShared,
+  drafts: mockDrafts,
+};
 
 function renderPage(initialRoute = '/') {
   return render(
@@ -65,17 +78,42 @@ describe('AppBuilderPage', () => {
     useAppBuilderStore.setState(initialState);
   });
 
-  it('renders the deployed apps returned by the API', async () => {
-    listDeployedAppsMock.mockResolvedValueOnce(mockApps);
+  it('renders deployed apps by default', async () => {
+    listAppsMock.mockResolvedValueOnce(fullCatalog);
 
     renderPage();
 
     expect(await screen.findByText('Generated app')).toBeInTheDocument();
-    expect(screen.getByText('https://apps.example/app-1')).toBeInTheDocument();
+    expect(screen.queryByText('Shared app')).not.toBeInTheDocument();
+    expect(screen.queryByText('Draft app')).not.toBeInTheDocument();
+  });
+
+  it('switches to shared apps via status ticket', async () => {
+    listAppsMock.mockResolvedValueOnce(fullCatalog);
+
+    renderPage();
+    await screen.findByText('Generated app');
+
+    fireEvent.click(screen.getByRole('tab', { name: /hub\.tickets\.shared\.label/i }));
+
+    expect(await screen.findByText('Shared app')).toBeInTheDocument();
+    expect(screen.queryByText('Generated app')).not.toBeInTheDocument();
+  });
+
+  it('switches to draft apps via status ticket', async () => {
+    listAppsMock.mockResolvedValueOnce(fullCatalog);
+
+    renderPage();
+    await screen.findByText('Generated app');
+
+    fireEvent.click(screen.getByRole('tab', { name: /hub\.tickets\.draft\.label/i }));
+
+    expect(await screen.findByText('Draft app')).toBeInTheDocument();
+    expect(screen.queryByText('Generated app')).not.toBeInTheDocument();
   });
 
   it('opens the deployed URL in a new tab', async () => {
-    listDeployedAppsMock.mockResolvedValueOnce(mockApps);
+    listAppsMock.mockResolvedValueOnce({ deployed: mockDeployed, shared: [], drafts: [] });
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
 
     renderPage();
@@ -86,7 +124,7 @@ describe('AppBuilderPage', () => {
   });
 
   it('navigates to the associated conversation', async () => {
-    listDeployedAppsMock.mockResolvedValueOnce(mockApps);
+    listAppsMock.mockResolvedValueOnce({ deployed: mockDeployed, shared: [], drafts: [] });
 
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: /card\.conversation/i }));
@@ -95,7 +133,7 @@ describe('AppBuilderPage', () => {
   });
 
   it('removes a card after delete confirmation', async () => {
-    listDeployedAppsMock.mockResolvedValueOnce(mockApps);
+    listAppsMock.mockResolvedValueOnce({ deployed: mockDeployed, shared: [], drafts: [] });
     removeAppMock.mockResolvedValueOnce(undefined);
     renderPage();
 
@@ -108,9 +146,9 @@ describe('AppBuilderPage', () => {
   });
 
   it('hides conversation and share actions for shared apps without conversation access', async () => {
-    listDeployedAppsMock.mockResolvedValueOnce(sharedApps);
+    listAppsMock.mockResolvedValueOnce({ deployed: [], shared: mockShared, drafts: [] });
 
-    renderPage();
+    renderPage('/?tab=shared');
 
     expect(await screen.findByText('Shared app')).toBeInTheDocument();
     expect(screen.getByText(/card\.shared/)).toBeInTheDocument();
@@ -119,11 +157,13 @@ describe('AppBuilderPage', () => {
   });
 
   it('shows conversation for shared apps with conversation access', async () => {
-    listDeployedAppsMock.mockResolvedValueOnce(
-      sharedApps.map((app) => ({ ...app, canOpenConversation: true })),
-    );
+    listAppsMock.mockResolvedValueOnce({
+      deployed: [],
+      shared: mockShared.map((app) => ({ ...app, canOpenConversation: true })),
+      drafts: [],
+    });
 
-    renderPage();
+    renderPage('/?tab=shared');
 
     expect(await screen.findByText('Shared app')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /card\.conversation/i })).toBeInTheDocument();
@@ -131,7 +171,7 @@ describe('AppBuilderPage', () => {
   });
 
   it('opens the share dialog from the card', async () => {
-    listDeployedAppsMock.mockResolvedValueOnce(mockApps);
+    listAppsMock.mockResolvedValueOnce({ deployed: mockDeployed, shared: [], drafts: [] });
 
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: /card\.share/i }));
@@ -139,8 +179,8 @@ describe('AppBuilderPage', () => {
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 
-  it('shows the empty state when no app is deployed', async () => {
-    listDeployedAppsMock.mockResolvedValueOnce([]);
+  it('shows the empty state when no app exists', async () => {
+    listAppsMock.mockResolvedValueOnce({ deployed: [], shared: [], drafts: [] });
 
     renderPage();
 
@@ -148,29 +188,20 @@ describe('AppBuilderPage', () => {
   });
 
   it('filters apps by search query from URL', async () => {
-    listDeployedAppsMock.mockResolvedValueOnce(mixedApps);
+    listAppsMock.mockResolvedValueOnce(fullCatalog);
 
-    renderPage('/?q=Shared');
-
-    expect(await screen.findByText('Shared app')).toBeInTheDocument();
-    expect(screen.queryByText('Generated app')).not.toBeInTheDocument();
-  });
-
-  it('filters apps to shared only from URL owner param', async () => {
-    listDeployedAppsMock.mockResolvedValueOnce(mixedApps);
-
-    renderPage('/?owner=shared');
+    renderPage('/?tab=shared&q=Shared');
 
     expect(await screen.findByText('Shared app')).toBeInTheDocument();
     expect(screen.queryByText('Generated app')).not.toBeInTheDocument();
   });
 
   it('shows shared app titles in grid view', async () => {
-    listDeployedAppsMock.mockResolvedValueOnce(mixedApps);
+    listAppsMock.mockResolvedValueOnce(fullCatalog);
 
-    renderPage('/?view=grid');
+    renderPage('/?tab=shared&view=grid');
 
     expect(await screen.findByText('Shared app')).toBeInTheDocument();
-    expect(screen.getByText('Generated app')).toBeInTheDocument();
+    expect(screen.queryByText('Generated app')).not.toBeInTheDocument();
   });
 });

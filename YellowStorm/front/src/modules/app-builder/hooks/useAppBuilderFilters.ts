@@ -1,38 +1,32 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { DeployedApp } from '../types';
+import type { AppBuilderCatalog, AppBuilderTab, DeployedApp, DraftApp } from '../types';
 
 const SEARCH_DEBOUNCE_MS = 200;
 
-export type AppOwnershipFilter = 'all' | 'owned' | 'shared';
-export type AppSortKey = 'deployed' | 'name';
+export type AppSortKey = 'deployed' | 'name' | 'updated';
 export type AppViewMode = 'grid' | 'list';
 
 export interface AppBuilderFilterState {
   search: string;
-  owner: AppOwnershipFilter;
+  tab: AppBuilderTab;
   sort: AppSortKey;
   view: AppViewMode;
 }
 
-export interface AppBuilderFilteredGroups {
-  owned: DeployedApp[];
-  shared: DeployedApp[];
-}
-
-function isOwnership(value: string | null): value is AppOwnershipFilter {
-  return value === 'all' || value === 'owned' || value === 'shared';
+function isTab(value: string | null): value is AppBuilderTab {
+  return value === 'deployed' || value === 'shared' || value === 'draft';
 }
 
 function isSortKey(value: string | null): value is AppSortKey {
-  return value === 'deployed' || value === 'name';
+  return value === 'deployed' || value === 'name' || value === 'updated';
 }
 
 function isViewMode(value: string | null): value is AppViewMode {
   return value === 'grid' || value === 'list';
 }
 
-function matches(app: DeployedApp, search: string): boolean {
+function matchesDeployed(app: DeployedApp, search: string): boolean {
   if (!search) return true;
   const needle = search.toLowerCase();
   return (
@@ -41,7 +35,12 @@ function matches(app: DeployedApp, search: string): boolean {
   );
 }
 
-function sortApps(list: DeployedApp[], sort: AppSortKey): DeployedApp[] {
+function matchesDraft(app: DraftApp, search: string): boolean {
+  if (!search) return true;
+  return app.title.toLowerCase().includes(search.toLowerCase());
+}
+
+function sortDeployed(list: DeployedApp[], sort: AppSortKey): DeployedApp[] {
   const copy = [...list];
   if (sort === 'name') {
     copy.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
@@ -54,14 +53,28 @@ function sortApps(list: DeployedApp[], sort: AppSortKey): DeployedApp[] {
   return copy;
 }
 
-export function useAppBuilderFilters(apps: DeployedApp[]) {
+function sortDrafts(list: DraftApp[], sort: AppSortKey): DraftApp[] {
+  const copy = [...list];
+  if (sort === 'name') {
+    copy.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  } else {
+    copy.sort(
+      (a, b) =>
+        new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime(),
+    );
+  }
+  return copy;
+}
+
+export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const rawSearch = searchParams.get('q') ?? '';
-  const ownerParam = searchParams.get('owner');
-  const owner: AppOwnershipFilter = isOwnership(ownerParam) ? ownerParam : 'all';
+  const tabParam = searchParams.get('tab');
+  const tab: AppBuilderTab = isTab(tabParam) ? tabParam : 'deployed';
   const sortParam = searchParams.get('sort');
-  const sort: AppSortKey = isSortKey(sortParam) ? sortParam : 'deployed';
+  const defaultSort: AppSortKey = tab === 'draft' ? 'updated' : 'deployed';
+  const sort: AppSortKey = isSortKey(sortParam) ? sortParam : defaultSort;
   const viewParam = searchParams.get('view');
   const view: AppViewMode = isViewMode(viewParam) ? viewParam : 'grid';
 
@@ -110,14 +123,32 @@ export function useAppBuilderFilters(apps: DeployedApp[]) {
     [applyParam],
   );
 
-  const setOwner = useCallback(
-    (value: AppOwnershipFilter) => applyParam('owner', value === 'all' ? '' : value),
-    [applyParam],
+  const setTab = useCallback(
+    (value: AppBuilderTab) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (value === 'deployed') next.delete('tab');
+          else next.set('tab', value);
+          if (value === 'draft' && (!sortParam || sortParam === 'deployed')) {
+            next.set('sort', 'updated');
+          } else if (value !== 'draft' && sortParam === 'updated') {
+            next.delete('sort');
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams, sortParam],
   );
 
   const setSort = useCallback(
-    (value: AppSortKey) => applyParam('sort', value === 'deployed' ? '' : value),
-    [applyParam],
+    (value: AppSortKey) => {
+      const isDefault = value === (tab === 'draft' ? 'updated' : 'deployed');
+      applyParam('sort', isDefault ? '' : value);
+    },
+    [applyParam, tab],
   );
 
   const setView = useCallback(
@@ -132,7 +163,6 @@ export function useAppBuilderFilters(apps: DeployedApp[]) {
       (prev) => {
         const next = new URLSearchParams(prev);
         next.delete('q');
-        next.delete('owner');
         next.delete('sort');
         return next;
       },
@@ -141,49 +171,62 @@ export function useAppBuilderFilters(apps: DeployedApp[]) {
   }, [setSearchParams]);
 
   const filters: AppBuilderFilterState = useMemo(
-    () => ({ search: rawSearch, owner, sort, view }),
-    [rawSearch, owner, sort, view],
+    () => ({ search: rawSearch, tab, sort, view }),
+    [rawSearch, tab, sort, view],
   );
 
-  const ownedApps = useMemo(
-    () => apps.filter((app) => app.source === 'owned'),
-    [apps],
-  );
-  const sharedApps = useMemo(
-    () => apps.filter((app) => app.source === 'shared'),
-    [apps],
+  const filteredDeployed = useMemo(
+    () => sortDeployed(catalog.deployed.filter((app) => matchesDeployed(app, rawSearch)), sort),
+    [catalog.deployed, rawSearch, sort],
   );
 
-  const filteredGroups: AppBuilderFilteredGroups = useMemo(() => {
-    const owned =
-      owner === 'all' || owner === 'owned'
-        ? sortApps(ownedApps.filter((app) => matches(app, rawSearch)), sort)
-        : [];
-    const shared =
-      owner === 'all' || owner === 'shared'
-        ? sortApps(sharedApps.filter((app) => matches(app, rawSearch)), sort)
-        : [];
-    return { owned, shared };
-  }, [ownedApps, sharedApps, rawSearch, owner, sort]);
-
-  const hasActiveFilters = !!rawSearch || owner !== 'all' || sort !== 'deployed';
-  const isEmpty = filteredGroups.owned.length === 0 && filteredGroups.shared.length === 0;
-  const visibleApps = useMemo(
-    () => [...filteredGroups.owned, ...filteredGroups.shared],
-    [filteredGroups],
+  const filteredShared = useMemo(
+    () => sortDeployed(catalog.shared.filter((app) => matchesDeployed(app, rawSearch)), sort),
+    [catalog.shared, rawSearch, sort],
   );
+
+  const filteredDrafts = useMemo(
+    () => sortDrafts(catalog.drafts.filter((app) => matchesDraft(app, rawSearch)), sort),
+    [catalog.drafts, rawSearch, sort],
+  );
+
+  const tabCounts = useMemo(
+    () => ({
+      deployed: catalog.deployed.length,
+      shared: catalog.shared.length,
+      draft: catalog.drafts.length,
+    }),
+    [catalog],
+  );
+
+  const activeList = useMemo(() => {
+    if (tab === 'shared') return filteredShared;
+    if (tab === 'draft') return filteredDrafts;
+    return filteredDeployed;
+  }, [tab, filteredDeployed, filteredShared, filteredDrafts]);
+
+  const hasActiveFilters = !!rawSearch || sort !== defaultSort;
+  const isEmpty = activeList.length === 0;
+  const isCatalogEmpty =
+    catalog.deployed.length === 0 &&
+    catalog.shared.length === 0 &&
+    catalog.drafts.length === 0;
 
   return {
     filters,
     searchInput,
     setSearchInput,
-    setOwner,
+    setTab,
     setSort,
     setView,
     clearAll,
     hasActiveFilters,
-    filteredGroups,
+    tabCounts,
+    filteredDeployed,
+    filteredShared,
+    filteredDrafts,
+    activeList,
     isEmpty,
-    visibleApps,
+    isCatalogEmpty,
   };
 }

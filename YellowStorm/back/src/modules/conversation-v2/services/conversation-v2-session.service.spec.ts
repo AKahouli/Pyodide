@@ -76,6 +76,44 @@ describe('ConversationV2SessionService', () => {
     );
   });
 
+  it('listDraftApps returns unpublished sessions with activity', async () => {
+    const id = new Types.ObjectId();
+    const select = jest.fn().mockReturnValue({
+      lean: () => ({
+        exec: () =>
+          Promise.resolve([
+            {
+              _id: id,
+              title: 'Work in progress',
+              deployedAppTitle: null,
+              deployStatus: 'idle',
+              lastEventAt: new Date('2026-07-15T10:00:00.000Z'),
+            },
+          ]),
+      }),
+    });
+    const sort = jest.fn().mockReturnValue({ select });
+    find.mockReturnValueOnce({ sort });
+
+    await expect(svc.listDraftApps('u1')).resolves.toEqual([
+      {
+        sessionId: id.toString(),
+        title: 'Work in progress',
+        lastUpdatedAt: '2026-07-15T10:00:00.000Z',
+        deployStatus: 'idle',
+      },
+    ]);
+    expect(find).toHaveBeenCalledWith({
+      ownerId: 'u1',
+      deletedAt: null,
+      aiSessionId: { $ne: null },
+      eventCount: { $gt: 0 },
+      $or: [{ deployStatus: { $ne: 'deployed' } }, { deployedUrl: null }],
+    });
+    expect(sort).toHaveBeenCalledWith({ lastEventAt: -1 });
+    expect(select).toHaveBeenCalledWith('title deployedAppTitle deployStatus lastEventAt');
+  });
+
   it('removeDeployedApp clears deployment state without deleting the conversation', async () => {
     const id = '507f1f77bcf86cd799439011';
     findOneAndUpdate.mockReturnValue({
