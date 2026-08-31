@@ -29,6 +29,8 @@ Never claim an execution started until the tool confirms it. Text such as "confi
 Never answer or resume runtime HITL; direct the user to the native Playbook HITL panel.
 Offer native navigation when a semantic UI target is available. Workspace and document search are unavailable.`;
 
+const normalizeInstruction = (value: string): string => value.replace(/\r\n/g, '\n');
+
 const createInput = (slug: string): CreateAgentInput => ({
   id: new Types.ObjectId().toString(),
   name: `Agent ${new Types.ObjectId().toString().slice(-6)}`,
@@ -62,7 +64,18 @@ describeIntegration('platform copilot identity migration', () => {
   const repository = new AgentRepository(db);
   const created: string[] = [];
 
-  afterEach(async () => deleteAgents(db, created.splice(0)));
+  beforeEach(async () => {
+    await pool.query(
+      `DELETE FROM agents WHERE slug IN ('my-second-brain', 'platform_copilot', 'platform-copilot')`,
+    );
+  });
+
+  afterEach(async () => {
+    await deleteAgents(db, created.splice(0));
+    await pool.query(
+      `DELETE FROM agents WHERE slug IN ('my-second-brain', 'platform_copilot', 'platform-copilot')`,
+    );
+  });
   afterAll(async () => close());
 
   it('renames the legacy Agent in place without changing capabilities', async () => {
@@ -97,8 +110,10 @@ describeIntegration('platform copilot identity migration', () => {
     expect(await repository.findById(canonical.id)).toMatchObject({
       _id: canonical.id,
       slug: 'platform-copilot',
-      instruction: migratedPlatformCopilotInstruction,
     });
+    expect(normalizeInstruction((await repository.findById(canonical.id))!.instruction)).toBe(
+      normalizeInstruction(migratedPlatformCopilotInstruction),
+    );
   });
 
   it('does nothing when only the hyphenated canonical Agent exists', async () => {
@@ -123,8 +138,10 @@ describeIntegration('platform copilot identity migration', () => {
     expect(await repository.findById(canonical.id)).toMatchObject({
       _id: canonical.id,
       slug: 'platform-copilot',
-      instruction: migratedPlatformCopilotInstruction,
     });
+    expect(normalizeInstruction((await repository.findById(canonical.id))!.instruction)).toBe(
+      normalizeInstruction(migratedPlatformCopilotInstruction),
+    );
   });
 
   it('does nothing when neither identity exists', async () => {

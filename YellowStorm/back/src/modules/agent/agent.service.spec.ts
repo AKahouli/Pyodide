@@ -122,7 +122,6 @@ describe('AgentService connector skill inheritance', () => {
       findAllActive: jest.fn().mockResolvedValue([]),
       findBySlug: jest.fn().mockResolvedValue(null),
       getManyForHydration: jest.fn().mockResolvedValue(new Map()),
-      findBySlug: jest.fn().mockResolvedValue(null),
     };
     const modelsService = {
       findById: jest.fn(),
