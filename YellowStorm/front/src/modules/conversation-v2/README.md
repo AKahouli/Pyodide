@@ -3,7 +3,7 @@
 React module for Manus conversations: composer, streaming timeline,
 right panel (tool details + **Nodepod app preview**), skills/connectors,
 **Runtime Browser Host**, **source revision viewer**, **deploy controls**,
-and **App Marketplace** integration.
+and **App Marketplace** integration. 
 
 Related docs:
 

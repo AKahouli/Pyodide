@@ -5,7 +5,7 @@ NestJS module that bridges YellowStorm to the APImanus gRPC
 fan-out, deploy, in-browser app preview, **Runtime MCP broker**, **source
 revision management**, and **Nodepod browser runtime** orchestration.
 
-Related docs in this folder:
+Related docs in this folder: 
 
 - [`SKILLS.md`](SKILLS.md) — skill selection → gRPC
 - [`CONNECTORS.md`](CONNECTORS.md) — connector bindings → gRPC
