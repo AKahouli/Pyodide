@@ -43,8 +43,6 @@ export function useConversationSettings() {
     };
     const refresh = () => {
       if (cached && cached.expiresAt > Date.now()) return;
-      cached = null;
-      update(null);
       void loadSettings().catch(() => update(null));
     };
     listeners.add(update);

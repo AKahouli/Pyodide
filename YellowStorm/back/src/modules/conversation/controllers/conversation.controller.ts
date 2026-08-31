@@ -20,6 +20,9 @@ import { DocumentQueryDto } from '../../workspace/dto/document-query.dto';
 import { ConversationOwnerGuard } from '../guards/conversation-owner.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { StreamService } from '../services/stream.service';
+import { PreparePlaybookHandoffDto } from '../dto/prepare-playbook-handoff.dto';
+import { ConversationPlaybookHandoffService } from '../services/conversation-playbook-handoff.service';
+import { RateLimit } from '../../rate-limiter';
 
 @ApiTags('Conversations')
 @Controller('conversations')
@@ -29,6 +32,7 @@ export class ConversationController {
     private readonly conversationService: ConversationService,
     private readonly conversationBranchService: ConversationBranchService,
     private readonly streamService: StreamService,
+    private readonly playbookHandoffService: ConversationPlaybookHandoffService,
   ) {}
 
   @Post()
@@ -67,6 +71,17 @@ export class ConversationController {
     @Body() dto: BranchConversationDto,
   ) {
     return this.conversationBranchService.createBranch(id, user._id.toString(), dto);
+  }
+
+  @Post(':id/playbook-handoffs')
+  @UseGuards(ConversationOwnerGuard)
+  @RateLimit({ limit: 5, windowMs: 60_000, keyPrefix: 'conversation:playbook-handoff' })
+  async preparePlaybookHandoff(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Body() dto: PreparePlaybookHandoffDto,
+  ) {
+    return this.playbookHandoffService.prepare(id, user._id.toString(), dto);
   }
 
   @Post(':id/join')

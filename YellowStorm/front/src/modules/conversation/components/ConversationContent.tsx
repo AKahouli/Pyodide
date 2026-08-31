@@ -119,13 +119,12 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
       {isUser && message.attachedFiles && message.attachedFiles.length > 0 && <MessageAttachments files={message.attachedFiles} />}
       <MessageProvider isLastAiMessage={isLastAiMessage} isStreaming={false}>
         {isUser && isEditing
-          ? <EditableUserMessage message={message} conversationId={conversationId} />
+            ? <EditableUserMessage message={message} conversationId={conversationId} />
           : isUser
-            ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} />
+            ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} footerActions={<UserMessageActions message={message} isLastUserMessage={isLastUserMessage} className='mt-0' />} />
             : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} />}
       </MessageProvider>
       {!isUser && (hasToolCall || hasRerunnableAnswer) && <MessageReliabilityCard conversationId={conversationId} messageId={message.id} evaluation={getAnswerEvaluation(message, displayedVersion)} originalEvaluation={message.reliabilityEvaluation} correctionWorkflow={message.correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={setDisplayedVersion} />}
-      {isUser && !isEditing && <UserMessageActions message={message} isLastUserMessage={isLastUserMessage} />}
       {showBranchNav && <BranchNavigation userMessageId={message.questionMessageId!} branches={branches!} activeBranchId={activeBranchId!} />}
       {message.conversationType === 'ai' && <MessageActions message={displayedMessage} isLastAiMessage={isLastAiMessage} conversationId={conversationId} displayedVersion={displayedVersion} />}
     </div>
@@ -255,7 +254,7 @@ export function ConversationContent() {
           )}
           </div>
         </ChatConversationContent>
-        <ChatScrollButton />
+        <ChatScrollButton className='bottom-3 left-auto right-3 z-10 translate-x-0' />
       </ChatConversation>
     </>
   );

@@ -1,40 +1,54 @@
 import { Types } from 'mongoose';
+import type { AiMessageComponentsRecord } from '../persistence/message-store';
 import { ChoiceInteractionService } from './choice-interaction.service';
 
 describe('ChoiceInteractionService', () => {
   const conversationId = new Types.ObjectId().toString();
   const sourceMessageId = new Types.ObjectId().toString();
   const componentId = 'choice-1';
-  let source: Record<string, unknown>;
+  let source: AiMessageComponentsRecord;
+  let messageStore: { findAiComponents: jest.Mock };
   let service: ChoiceInteractionService;
 
   beforeEach(() => {
     source = {
-      components: [{
-        id: componentId,
-        type: 'choice',
-        data: {
-          schemaVersion: 1,
-          questionId: 'financial-analysis',
-          prompt: 'Choose an analysis',
-          description: 'Select every relevant analysis.',
-          presentation: 'list',
-          selectionMode: 'multiple',
-          submitBehavior: 'explicit',
-          status: 'ready',
-          otherOption: { enabled: true, label: 'Other', maxLength: 500 },
-          options: [
-            { id: 'profitability', label: 'Profitability', submitText: 'Analyze profitability', description: 'Review margins and return.', value: 'profit' },
-            { id: 'liquidity', label: 'Liquidity', submitText: 'Analyze liquidity', description: 'Review short-term obligations.', value: 'liquid' },
-          ],
+      id: sourceMessageId,
+      components: [
+        {
+          id: componentId,
+          type: 'choice',
+          data: {
+            schemaVersion: 1,
+            questionId: 'financial-analysis',
+            prompt: 'Choose an analysis',
+            description: 'Select every relevant analysis.',
+            presentation: 'list',
+            selectionMode: 'multiple',
+            submitBehavior: 'explicit',
+            status: 'ready',
+            otherOption: { enabled: true, label: 'Other', maxLength: 500 },
+            options: [
+              {
+                id: 'profitability',
+                label: 'Profitability',
+                submitText: 'Analyze profitability',
+                description: 'Review margins and return.',
+                value: 'profit',
+              },
+              {
+                id: 'liquidity',
+                label: 'Liquidity',
+                submitText: 'Analyze liquidity',
+                description: 'Review short-term obligations.',
+                value: 'liquid',
+              },
+            ],
+          },
         },
-      }],
+      ],
     };
-    const exec = jest.fn(async () => source);
-    const lean = jest.fn(() => ({ exec }));
-    const select = jest.fn(() => ({ lean }));
-    const messageModel = { findOne: jest.fn(() => ({ select })) };
-    service = new ChoiceInteractionService(messageModel as any);
+    messageStore = { findAiComponents: jest.fn(async () => source) };
+    service = new ChoiceInteractionService(messageStore as never);
   });
 
   it('builds server-authoritative content with every selected description in source order', async () => {
@@ -58,13 +72,22 @@ describe('ChoiceInteractionService', () => {
         description: 'Select every relevant analysis.',
       },
       selectedChoices: [
-        { optionId: 'profitability', submitText: 'Analyze profitability', description: 'Review margins and return.' },
-        { optionId: 'liquidity', submitText: 'Analyze liquidity', description: 'Review short-term obligations.' },
+        {
+          optionId: 'profitability',
+          submitText: 'Analyze profitability',
+          description: 'Review margins and return.',
+        },
+        {
+          optionId: 'liquidity',
+          submitText: 'Analyze liquidity',
+          description: 'Review short-term obligations.',
+        },
       ],
       alternativeResponse: 'Focus on Q4',
       dismissed: false,
     });
     expect(result.taskSummary).toBe('Profitability, Liquidity, Focus on Q4');
+    expect(messageStore.findAiComponents).toHaveBeenCalledWith(conversationId, sourceMessageId);
     expect(result.interaction).toMatchObject({
       selectedOptions: [
         { optionId: 'profitability', label: 'Profitability', value: 'profit' },
@@ -76,7 +99,7 @@ describe('ChoiceInteractionService', () => {
   });
 
   it('uses explicit nulls for absent descriptions and alternative text', async () => {
-    const data = (source.components as Array<{ data: Record<string, unknown> }>)[0].data;
+    const data = source.components[0].data;
     data.description = undefined;
     data.options = [
       { id: 'profitability', label: 'Profitability', submitText: 'Analyze profitability' },
@@ -84,26 +107,37 @@ describe('ChoiceInteractionService', () => {
     ];
 
     const result = await service.canonicalize(conversationId, {
-      type: 'choice', componentId, questionId: 'financial-analysis', sourceMessageId,
-      selectionMode: 'multiple', selectedOptions: [{ optionId: 'profitability', label: 'Ignored' }],
+      type: 'choice',
+      componentId,
+      questionId: 'financial-analysis',
+      sourceMessageId,
+      selectionMode: 'multiple',
+      selectedOptions: [{ optionId: 'profitability', label: 'Ignored' }],
     });
 
     expect(JSON.parse(result.content)).toEqual({
       question: { prompt: 'Choose an analysis', description: null },
-      selectedChoices: [{ optionId: 'profitability', submitText: 'Analyze profitability', description: null }],
+      selectedChoices: [
+        { optionId: 'profitability', submitText: 'Analyze profitability', description: null },
+      ],
       alternativeResponse: null,
       dismissed: false,
     });
   });
 
   it('preserves question context when the interaction is dismissed', async () => {
-    const data = (source.components as Array<{ data: Record<string, unknown> }>)[0].data;
+    const data = source.components[0].data;
     data.dismissible = true;
     data.labels = { dismiss: 'Passer cette question' };
 
     const result = await service.canonicalize(conversationId, {
-      type: 'choice', componentId, questionId: 'financial-analysis', sourceMessageId,
-      selectionMode: 'multiple', selectedOptions: [], dismissed: true,
+      type: 'choice',
+      componentId,
+      questionId: 'financial-analysis',
+      sourceMessageId,
+      selectionMode: 'multiple',
+      selectedOptions: [],
+      dismissed: true,
     });
 
     expect(JSON.parse(result.content)).toEqual({
@@ -116,15 +150,23 @@ describe('ChoiceInteractionService', () => {
       dismissed: true,
     });
     expect(result.taskSummary).toBe('Passer cette question');
-    expect(result.interaction).toMatchObject({ dismissed: true, displayText: 'Passer cette question' });
+    expect(result.interaction).toMatchObject({
+      dismissed: true,
+      displayText: 'Passer cette question',
+    });
   });
 
   it('normalizes and bounds long task summaries without changing canonical content', async () => {
     const customAnswer = `A custom response with\n extra spacing ${'x'.repeat(150)}`;
 
     const result = await service.canonicalize(conversationId, {
-      type: 'choice', componentId, questionId: 'financial-analysis', sourceMessageId,
-      selectionMode: 'multiple', selectedOptions: [], customAnswer,
+      type: 'choice',
+      componentId,
+      questionId: 'financial-analysis',
+      sourceMessageId,
+      selectionMode: 'multiple',
+      selectedOptions: [],
+      customAnswer,
     });
 
     expect(result.taskSummary).toHaveLength(120);
@@ -136,7 +178,7 @@ describe('ChoiceInteractionService', () => {
   it('canonicalizes multiple interactions into one combined payload', async () => {
     const secondComponentId = 'choice-2';
     source.components = [
-      ...(source.components as Array<{ data: Record<string, unknown> }>),
+      ...source.components,
       {
         id: secondComponentId,
         type: 'choice',
@@ -158,19 +200,31 @@ describe('ChoiceInteractionService', () => {
 
     const result = await service.canonicalizeMany(conversationId, [
       {
-        type: 'choice', componentId, questionId: 'financial-analysis', sourceMessageId,
-        selectionMode: 'multiple', selectedOptions: [{ optionId: 'profitability', label: 'Profitability' }],
+        type: 'choice',
+        componentId,
+        questionId: 'financial-analysis',
+        sourceMessageId,
+        selectionMode: 'multiple',
+        selectedOptions: [{ optionId: 'profitability', label: 'Profitability' }],
       },
       {
-        type: 'choice', componentId: secondComponentId, questionId: 'region', sourceMessageId,
-        selectionMode: 'single', selectedOptions: [{ optionId: 'germany', label: 'Germany' }],
+        type: 'choice',
+        componentId: secondComponentId,
+        questionId: 'region',
+        sourceMessageId,
+        selectionMode: 'single',
+        selectedOptions: [{ optionId: 'germany', label: 'Germany' }],
       },
     ]);
 
     const content = JSON.parse(result.content) as Array<Record<string, unknown>>;
     expect(content).toHaveLength(2);
     expect(content[0].selectedChoices).toEqual([
-      { optionId: 'profitability', submitText: 'Analyze profitability', description: 'Review margins and return.' },
+      {
+        optionId: 'profitability',
+        submitText: 'Analyze profitability',
+        description: 'Review margins and return.',
+      },
     ]);
     expect(content[1].selectedChoices).toEqual([
       { optionId: 'germany', submitText: 'Use Germany', description: null },
@@ -178,18 +232,29 @@ describe('ChoiceInteractionService', () => {
     expect(result.taskSummary).toBe('Profitability, Germany');
     expect(result.interactions).toHaveLength(2);
     expect(result.interactions[0]).toMatchObject({ componentId, questionId: 'financial-analysis' });
-    expect(result.interactions[1]).toMatchObject({ componentId: secondComponentId, questionId: 'region' });
+    expect(result.interactions[1]).toMatchObject({
+      componentId: secondComponentId,
+      questionId: 'region',
+    });
   });
 
   it('rejects an invalid interaction inside a multi-submission', async () => {
     const result = service.canonicalizeMany(conversationId, [
       {
-        type: 'choice', componentId, questionId: 'financial-analysis', sourceMessageId,
-        selectionMode: 'multiple', selectedOptions: [{ optionId: 'profitability', label: 'Profitability' }],
+        type: 'choice',
+        componentId,
+        questionId: 'financial-analysis',
+        sourceMessageId,
+        selectionMode: 'multiple',
+        selectedOptions: [{ optionId: 'profitability', label: 'Profitability' }],
       },
       {
-        type: 'choice', componentId: 'missing-component', questionId: 'region', sourceMessageId,
-        selectionMode: 'single', selectedOptions: [{ optionId: 'germany', label: 'Germany' }],
+        type: 'choice',
+        componentId: 'missing-component',
+        questionId: 'region',
+        sourceMessageId,
+        selectionMode: 'single',
+        selectedOptions: [{ optionId: 'germany', label: 'Germany' }],
       },
     ]);
 

@@ -56,6 +56,26 @@ describe('public component sanitizer', () => {
     expect(component.data.content).toBe('Before  [REDACTED] after');
   });
 
+  it('does not classify numeric slash dates as storage paths', () => {
+    const component = sanitizePublicComponent({
+      id: 'text-date',
+      type: 'text',
+      data: { content: 'Cover pool au 30/06/2025 — 19 931,3 M€' },
+    });
+
+    expect(component.data.content).toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
+  });
+
+  it('keeps malformed dates and numeric relative paths protected', () => {
+    const component = sanitizePublicComponent({
+      id: 'text-numeric-path',
+      type: 'text',
+      data: { content: 'Invalid 31/02/2025 paths 123/456/789, 1/2/2025, 0001/02/2025, 2025/2/1, 2025/02/0001' },
+    });
+
+    expect(component.data.content).toBe('Invalid [REDACTED] paths [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED]');
+  });
+
   it('never exposes artifact storage paths', () => {
     const component = sanitizePublicComponent({
       id: 'artifact-1',

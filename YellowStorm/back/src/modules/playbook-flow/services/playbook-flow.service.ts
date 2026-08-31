@@ -236,7 +236,15 @@ export class PlaybookFlowService implements OnModuleInit {
     return [];
   }
 
-  async create(ownerId: string, dto: CreatePlaybookFlowDto, options?: { assistantOperationId?: string }): Promise<IFlowResponse> {
+  async create(ownerId: string, dto: CreatePlaybookFlowDto, options?: {
+    assistantOperationId?: string;
+    generationProvenance?: {
+      source: 'conversation_handoff'; handoffVersion: 1; sourceConversationId: string;
+      sourceTargetMessageId: string; displayedAnswerVersion: string; canonicalPathFingerprint: string;
+      contextFingerprint: string; assistantRequestId: string; acceptedBy: string; acceptedAt: Date;
+      confirmedWorkspaceIds: string[];
+    };
+  }): Promise<IFlowResponse> {
     const nodes = dto.nodes || [];
     const controlEdges = dto.controlEdges || [];
     const dataBindings = dto.dataBindings || [];
@@ -249,6 +257,7 @@ export class PlaybookFlowService implements OnModuleInit {
     const flow = new this.flowModel({
       ownerId,
       ...(options?.assistantOperationId ? { assistantOperationId: options.assistantOperationId } : {}),
+      ...(options?.generationProvenance ? { generationProvenance: options.generationProvenance } : {}),
       schemaVersion: 1,
       name: resolvedName,
       description: dto.description,

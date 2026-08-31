@@ -9,7 +9,13 @@ describe('TimingIndicator', () => {
   });
 
   it('renders formatted timing summary', () => {
-    render(<TimingIndicator timeToFirstChunk={250} timeToFirstToken={300} durationMs={1000} inputTokens={10} outputTokens={20} />);
+    render(<TimingIndicator timeToFirstChunk={250} timeToFirstToken={300} durationMs={1000} inputTokens={98_491} outputTokens={2_682} />);
     expect(screen.getByText('250ms')).toBeInTheDocument();
+    expect(screen.getByText('timing.compactTokens: 98.5k/2.7k')).toBeInTheDocument();
+  });
+
+  it('uses millions for large response totals', () => {
+    render(<TimingIndicator durationMs={1000} inputTokens={1_250_000} outputTokens={2_000_000} />);
+    expect(screen.getByText('timing.compactTokens: 1.3M/2M')).toBeInTheDocument();
   });
 });

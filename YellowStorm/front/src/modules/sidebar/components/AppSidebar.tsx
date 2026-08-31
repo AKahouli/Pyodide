@@ -68,7 +68,6 @@ import { ShareDialog } from '@/modules/conversation/components/ShareDialog';
 import { ConversationItem } from './ConversationItem';
 import { ProjectsSection } from './ProjectsSection';
 import { useAutoCollapse } from '../hooks/useAutoCollapse';
-import { useAuth } from '@/modules/auth';
 import { decodeConversationDrag, hasConversationDrag } from './drag-types';
 
 type OutcomeGroupKey = 'ask' | 'knowledge' | 'automate' | 'govern';
@@ -242,7 +241,6 @@ export const AppSidebar = memo(function AppSidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useModuleTranslation('sidebar');
-  const { user } = useAuth();
   const { hasAnyPermission } = usePermissions();
   const canOpenGovernance = hasAnyPermission(['governance.read', 'governance.*', '*']);
   const canOpenSemanticModels = hasAnyPermission(['semantic_models.read', 'semantic_models.*', '*']);
@@ -439,7 +437,7 @@ export const AppSidebar = memo(function AppSidebar() {
     const v1Rows: HistoryRow[] = historyConversations.map((conv) => ({
       kind: 'v1',
       id: conv.id,
-      sortTime: new Date(conv.updatedAt || conv.lastMessageAt).getTime(),
+      sortTime: new Date(conv.updatedAt ?? conv.lastMessageAt ?? conv.createdAt).getTime(),
       conv,
     }));
     const v2Rows: HistoryRow[] = v2Pointers.map((ptr) => ({
@@ -548,17 +546,14 @@ export const AppSidebar = memo(function AppSidebar() {
                     }
 
                     const conv = row.conv;
-                    const mentionCount =
-                      conv.groupMeta?.members?.find((m) => m.userId === user?.id)?.mentions?.filter((m) => !m.seenAt).length || 0;
-
                     return (
                       <ConversationItem
                         key={conv.id}
                         id={conv.id}
                         title={conv.title}
                         projectId={conv.projectId ?? null}
-                        isGroup={!!conv.groupMeta?.isGroup}
-                        mentionCount={mentionCount}
+                        isGroup={conv.isGroup}
+                        mentionCount={conv.unseenMentionCount}
                         onRename={(newTitle) => handleRename(conv.id, newTitle)}
                         onDelete={() => handleDelete(conv.id)}
                         onShare={() => handleShare(conv.id, conv.title)}

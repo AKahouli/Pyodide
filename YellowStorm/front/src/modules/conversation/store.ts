@@ -9,12 +9,13 @@ import * as api from './api';
 import { getStreamErrorMessage } from './utils';
 import { conversationStreamService } from './stream';
 import { translateConversation } from './translation';
-import type { Conversation, Message, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent } from './types';
+import type { Conversation, ConversationSummary, Message, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent } from './types';
 
 export const DEFAULT_CONVERSATIONS_LIMIT = 12;
 const DEFAULT_MESSAGES_LIMIT = 5;
 let currentConversationRequestSequence = 0;
 let currentMessagesRequestSequence = 0;
+let conversationListRequestSequence = 0;
 let currentStreamRevision = 0;
 let currentRevisionStreamKey: string | null = null;
 let receivedCurrentStreamStart = false;
@@ -380,8 +381,10 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
 interface ConversationState {
   // Conversation list - flat array for simpler CRUD
   conversations: Conversation[];
+  conversationSummaries: ConversationSummary[];
   conversationsTotal: number;
   conversationsHasMore: boolean;
+  conversationsCursor: string | null;
   conversationsLoading: boolean;
   historyPanelOpen: boolean;
 
@@ -396,6 +399,7 @@ interface ConversationState {
   messagesLoading: boolean;
   messagesLoadingOlder: boolean;
   messagesHasMore: boolean;
+  messagesCursor: string | null;
 
   // Streaming state
   streamingConversationId: string | null;
@@ -541,13 +545,17 @@ interface ConversationState {
   clearAll: () => void;
 }
 
+let lastConversationListParams: Parameters<ConversationState['fetchConversations']>[0] = {};
+
 export const useConversationStore = create<ConversationState>()(
   devtools(
     (set, get) => ({
       // Initial state - flat array for conversations
       conversations: [],
+      conversationSummaries: [],
       conversationsTotal: 0,
       conversationsHasMore: false,
+      conversationsCursor: null,
       conversationsLoading: false,
       projectConversations: {},
       projectConversationsLoading: {},
@@ -562,6 +570,7 @@ export const useConversationStore = create<ConversationState>()(
       messagesLoading: false,
       messagesLoadingOlder: false,
       messagesHasMore: false,
+      messagesCursor: null,
 
       streamingConversationId: null,
       streamingMessageId: null,
@@ -601,30 +610,31 @@ export const useConversationStore = create<ConversationState>()(
       // ===== Conversation Actions =====
 
       fetchConversations: async (params?: { reset?: boolean; limit?: number; search?: string; projectId?: string | 'none'; searchScope?: 'title' | 'fulltext' }) => {
+        const requestSequence = ++conversationListRequestSequence;
         const reset = params?.reset ?? false;
         const limit = params?.limit || DEFAULT_CONVERSATIONS_LIMIT;
+        lastConversationListParams = { ...params, reset: true };
 
         if (reset) {
-          set({ conversations: [], conversationsLoading: true });
+          set({ conversationsCursor: null, conversationsLoading: true });
         } else {
           set({ conversationsLoading: true });
         }
 
         try {
           const state = get();
-          const offset = reset ? 0 : state.conversations.length;
-          const page = Math.floor(offset / limit) + 1;
-
           const result = await api.fetchConversations({
-            page,
+            mode: 'cursor',
+            cursor: reset ? undefined : state.conversationsCursor ?? undefined,
             limit,
             search: params?.search,
             projectId: params?.projectId,
             searchScope: params?.searchScope,
           });
+          if (requestSequence !== conversationListRequestSequence) return;
 
           set((s) => {
-            const combined = reset ? result.items : [...s.conversations, ...result.items];
+            const combined = reset ? result.items : [...s.conversationSummaries, ...result.items];
 
             // Dedupe by ID (safety for edge cases)
             const seen = new Set<string>();
@@ -635,13 +645,15 @@ export const useConversationStore = create<ConversationState>()(
             });
 
             return {
-              conversations: deduped,
-              conversationsTotal: result.total,
-              conversationsHasMore: result.items.length === limit && deduped.length < result.total,
+              conversationSummaries: deduped,
+              conversationsTotal: deduped.length,
+              conversationsHasMore: result.hasMore ?? false,
+              conversationsCursor: result.nextCursor ?? null,
               conversationsLoading: false,
             };
           });
         } catch (err) {
+          if (requestSequence !== conversationListRequestSequence) return;
           set({ conversationsLoading: false });
           toast.error(translateConversation('toasts.conversation.loadListError'));
           console.error('[ConversationStore] fetchConversations error:', err);
@@ -675,6 +687,16 @@ export const useConversationStore = create<ConversationState>()(
           set((s) => {
             const next: Partial<ConversationState> = {
               conversations: [conversation, ...s.conversations],
+              conversationSummaries: [
+                {
+                  ...conversation,
+                  isGroup: Boolean(conversation.groupMeta?.isGroup),
+                  unseenMentionCount: 0,
+                  runtimeMode: conversation.runtimeMode ?? 'standard',
+                  runtimePurpose: conversation.runtimePurpose ?? 'chat',
+                },
+                ...s.conversationSummaries,
+              ],
               conversationsTotal: s.conversationsTotal + 1,
             };
             if (conversation.projectId && s.projectConversations[conversation.projectId]) {
@@ -685,6 +707,7 @@ export const useConversationStore = create<ConversationState>()(
             }
             return next;
           });
+          void get().fetchConversations(lastConversationListParams);
 
           return conversation;
         } catch (err) {
@@ -695,11 +718,15 @@ export const useConversationStore = create<ConversationState>()(
 
       updateConversation: async (id, data) => {
         const previousConversations = get().conversations;
+        const previousSummaries = get().conversationSummaries;
         const previousProjectConversations = get().projectConversations;
 
         // Optimistic update — also reflect in any project list that contains it
         set((s) => ({
           conversations: s.conversations.map((c) => (c.id === id ? { ...c, ...data } : c)),
+          conversationSummaries: s.conversationSummaries.map((c) =>
+            c.id === id ? { ...c, ...data } : c,
+          ),
           projectConversations: mapProjectLists(s.projectConversations, (c) =>
             c.id === id ? { ...c, ...data } : c,
           ),
@@ -710,13 +737,17 @@ export const useConversationStore = create<ConversationState>()(
           const updated = await api.updateConversation(id, data);
           set((s) => ({
             conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
+            conversationSummaries: s.conversationSummaries.map((c) =>
+              c.id === id ? { ...c, ...updated } : c,
+            ),
             projectConversations: mapProjectLists(s.projectConversations, (c) =>
               c.id === id ? updated : c,
             ),
             currentConversation: s.currentConversation?.id === id ? updated : s.currentConversation,
           }));
+          void get().fetchConversations(lastConversationListParams);
         } catch (err) {
-          set({ conversations: previousConversations, projectConversations: previousProjectConversations });
+          set({ conversations: previousConversations, conversationSummaries: previousSummaries, projectConversations: previousProjectConversations });
           toast.error(translateConversation('toasts.conversation.updateError'));
           throw err;
         }
@@ -725,6 +756,7 @@ export const useConversationStore = create<ConversationState>()(
       moveConversationToProject: async (id, projectId) => {
         const state = get();
         const previousConversations = state.conversations;
+        const previousSummaries = state.conversationSummaries;
         const previousProjectConversations = state.projectConversations;
 
         // Find the conversation in any list to capture its current shape
@@ -740,6 +772,9 @@ export const useConversationStore = create<ConversationState>()(
 
         set((s) => ({
           conversations: s.conversations.map((c) => (c.id === id ? { ...c, projectId } : c)),
+          conversationSummaries: s.conversationSummaries.map((c) =>
+            c.id === id ? { ...c, projectId } : c,
+          ),
           projectConversations: rebalanceProjectLists(
             s.projectConversations,
             id,
@@ -755,6 +790,9 @@ export const useConversationStore = create<ConversationState>()(
           const updated = await api.updateConversation(id, { projectId });
           set((s) => ({
             conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
+            conversationSummaries: s.conversationSummaries.map((c) =>
+              c.id === id ? { ...c, ...updated } : c,
+            ),
             projectConversations: rebalanceProjectLists(
               s.projectConversations,
               id,
@@ -765,8 +803,9 @@ export const useConversationStore = create<ConversationState>()(
             currentConversation:
               s.currentConversation?.id === id ? updated : s.currentConversation,
           }));
+          void get().fetchConversations(lastConversationListParams);
         } catch (err) {
-          set({ conversations: previousConversations, projectConversations: previousProjectConversations });
+          set({ conversations: previousConversations, conversationSummaries: previousSummaries, projectConversations: previousProjectConversations });
           toast.error(translateConversation('toasts.conversation.updateError'));
           throw err;
         }
@@ -778,6 +817,9 @@ export const useConversationStore = create<ConversationState>()(
           const { [projectId]: _removedLoading, ...remainingLoading } = s.projectConversationsLoading;
           return {
             conversations: s.conversations.map((c) =>
+              c.projectId === projectId ? { ...c, projectId: null } : c,
+            ),
+            conversationSummaries: s.conversationSummaries.map((c) =>
               c.projectId === projectId ? { ...c, projectId: null } : c,
             ),
             projectConversations: remainingLists,
@@ -793,12 +835,14 @@ export const useConversationStore = create<ConversationState>()(
       deleteConversation: async (id) => {
         const state = get();
         const previousConversations = state.conversations;
+        const previousSummaries = state.conversationSummaries;
         const previousProjectConversations = state.projectConversations;
         const previousTotal = state.conversationsTotal;
 
         // Optimistic removal from both lists
         set((s) => ({
           conversations: s.conversations.filter((c) => c.id !== id),
+          conversationSummaries: s.conversationSummaries.filter((c) => c.id !== id),
           projectConversations: filterProjectLists(s.projectConversations, (c) => c.id !== id),
           conversationsTotal: Math.max(0, s.conversationsTotal - 1),
           currentConversation: s.currentConversation?.id === id ? null : s.currentConversation,
@@ -807,9 +851,11 @@ export const useConversationStore = create<ConversationState>()(
 
         try {
           await api.deleteConversation(id);
+          void get().fetchConversations(lastConversationListParams);
         } catch (err) {
           set({
             conversations: previousConversations,
+            conversationSummaries: previousSummaries,
             projectConversations: previousProjectConversations,
             conversationsTotal: previousTotal,
           });
@@ -837,6 +883,7 @@ export const useConversationStore = create<ConversationState>()(
         set({
           conversationLoading: true,
           currentConversationId: id,
+          currentConversation: null,
           ...(isSwitchingConversation ? { selectedModelId: null, selectedReasoningEffort: null } : {}),
         });
         try {
@@ -869,11 +916,19 @@ export const useConversationStore = create<ConversationState>()(
           receivedCurrentStreamStart = false;
           pendingRecoveryChunks = [];
         }
-        set({ messagesLoading: true, messages: [] });
+        set({
+          messagesLoading: true,
+          messagesLoadingOlder: false,
+          messages: [],
+          messagesHasMore: false,
+          messagesCursor: null,
+          branchCache: new Map(),
+          activeBranches: new Map(),
+        });
 
         try {
           const result = await api.fetchMessages(conversationId, {
-            page: 1,
+            mode: 'cursor',
             limit: DEFAULT_MESSAGES_LIMIT,
           });
           if (requestSequence !== currentMessagesRequestSequence || get().currentConversationId !== conversationId) return;
@@ -891,19 +946,7 @@ export const useConversationStore = create<ConversationState>()(
             }
           }
 
-          // Fetch branches for all user messages that have answers, in parallel.
-          // This prevents the loader from disappearing before branches are ready.
-          const userMsgsWithAnswers = messages.filter((m) => m.conversationType === 'user' && m.answerMessageId);
-
-          const [branchResults, activeStream] = await Promise.all([
-            Promise.allSettled(
-              userMsgsWithAnswers.map((m) =>
-                api.fetchBranches(conversationId, m.id).then((branches) => ({
-                  userMessageId: m.id,
-                  branches,
-                })),
-              ),
-            ),
+          const [activeStream] = await Promise.all([
             api.fetchActiveStream(conversationId).catch((err) => {
               console.error('[ConversationStore] active stream recovery error:', err);
               return null;
@@ -913,13 +956,10 @@ export const useConversationStore = create<ConversationState>()(
 
           const newBranchCache = new Map(get().branchCache);
           const newActiveBranches = new Map(get().activeBranches);
-          for (const result of branchResults) {
-            if (result.status === 'fulfilled') {
-              const { userMessageId, branches } = result.value;
-              newBranchCache.set(userMessageId, branches);
-              if (!newActiveBranches.has(userMessageId) && branches.length > 0) {
-                newActiveBranches.set(userMessageId, branches[branches.length - 1].id);
-              }
+          for (const [userMessageId, branches] of Object.entries(result.branchesByQuestion ?? {})) {
+            newBranchCache.set(userMessageId, branches);
+            if (!newActiveBranches.has(userMessageId) && branches.length > 0) {
+              newActiveBranches.set(userMessageId, branches[branches.length - 1].id);
             }
           }
 
@@ -934,7 +974,8 @@ export const useConversationStore = create<ConversationState>()(
             return {
               messages: hydratedMessages,
               messagesTotal: Math.max(result.total || 0, hydratedMessages.length),
-              messagesHasMore: (result.totalPages || 1) > 1,
+              messagesHasMore: result.hasMore ?? (result.totalPages || 1) > 1,
+              messagesCursor: result.nextCursor ?? null,
               messagesLoading: false,
               ...(lastUserModelId ? { selectedModelId: lastUserModelId } : {}),
               ...(lastUserModelId ? { selectedReasoningEffort: lastUserReasoningEffort } : {}),
@@ -1073,26 +1114,40 @@ export const useConversationStore = create<ConversationState>()(
         }
 
         set({ messagesLoadingOlder: true });
+        const conversationId = state.currentConversationId;
+        const requestSequence = currentMessagesRequestSequence;
 
         try {
-          // Calculate next page based on current message count
-          const currentPage = Math.ceil(state.messages.length / DEFAULT_MESSAGES_LIMIT);
-          const nextPage = currentPage + 1;
-
-          const result = await api.fetchMessages(state.currentConversationId, {
-            page: nextPage,
+          const result = await api.fetchMessages(conversationId, {
+            mode: 'cursor',
+            cursor: state.messagesCursor ?? undefined,
             limit: DEFAULT_MESSAGES_LIMIT,
           });
+          if (
+            requestSequence !== currentMessagesRequestSequence ||
+            get().currentConversationId !== conversationId
+          ) return;
 
           set((s) => {
             // Prepend older messages, dedupe by ID
             const existingIds = new Set(s.messages.map((m) => m.id));
             const newMessages = (result.items || []).filter((m) => !existingIds.has(m.id));
+            const branchCache = new Map(s.branchCache);
+            const activeBranches = new Map(s.activeBranches);
+            for (const [userMessageId, branches] of Object.entries(result.branchesByQuestion ?? {})) {
+              branchCache.set(userMessageId, branches);
+              if (!activeBranches.has(userMessageId) && branches.length > 0) {
+                activeBranches.set(userMessageId, branches[branches.length - 1].id);
+              }
+            }
 
             return {
               messages: [...newMessages, ...s.messages], // Prepend older
-              messagesHasMore: nextPage < (result.totalPages || 1),
+              messagesHasMore: result.hasMore ?? false,
+              messagesCursor: result.nextCursor ?? null,
               messagesLoadingOlder: false,
+              branchCache,
+              activeBranches,
             };
           });
         } catch (err) {
@@ -2113,6 +2168,7 @@ export const useConversationStore = create<ConversationState>()(
         streamingBuffer.clear();
         set({
           conversations: [],
+          conversationSummaries: [],
           conversationsTotal: 0,
           conversationsHasMore: false,
           conversationsLoading: false,
@@ -2176,15 +2232,19 @@ export const useConversationStore = create<ConversationState>()(
 // ===== Selector Hooks =====
 
 const EMPTY_CONVERSATIONS: Conversation[] = [];
+const EMPTY_CONVERSATION_SUMMARIES: ConversationSummary[] = [];
 const EMPTY_MESSAGES: Message[] = [];
 
-export const useConversations = () => useConversationStore((s) => (s.conversations.length === 0 ? EMPTY_CONVERSATIONS : s.conversations));
+export const useConversations = () =>
+  useConversationStore((s) =>
+    s.conversationSummaries.length === 0 ? EMPTY_CONVERSATION_SUMMARIES : s.conversationSummaries,
+  );
 
 export const useHistoryConversations = () =>
   useConversationStore(
     useShallow((s) => {
-      const filtered = s.conversations.filter((c) => !c.projectId);
-      return filtered.length === 0 ? EMPTY_CONVERSATIONS : filtered;
+      const filtered = s.conversationSummaries.filter((c) => !c.projectId);
+      return filtered.length === 0 ? EMPTY_CONVERSATION_SUMMARIES : filtered;
     }),
   );
 
@@ -2303,7 +2363,8 @@ export const useAwaitingConversationId = () => useConversationStore((s) => s.awa
 
 export const useCriticalError = () => useConversationStore((s) => s.criticalError);
 
-export const useInputDisabled = () => useConversationStore((s) => s.inputDisabled);
+export const useInputDisabled = () =>
+  useConversationStore((s) => s.inputDisabled || s.conversationLoading);
 
 export const useMessagesHasMore = () => useConversationStore((s) => s.messagesHasMore);
 

@@ -30,6 +30,8 @@ import { FeatureVisibilityService } from '@modules/system/feature-visibility.ser
 import { Types } from 'mongoose';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
+import { ConversationPlaybookHandoffService } from '@modules/conversation/services/conversation-playbook-handoff.service';
+import type { ResolvedConversationPlaybookHandoffV1 } from '@modules/conversation/interfaces/conversation-playbook-handoff.interface';
 
 const DEFAULT_OPTIMIZATION_DIMENSIONS = ['clarity', 'agent', 'tools', 'inputs', 'outputs', 'bindings', 'cost', 'latency', 'determinism'];
 
@@ -61,6 +63,7 @@ export class PlaybookAssistantService {
     private readonly featureVisibility: FeatureVisibilityService,
     private readonly workspaceDocumentService: WorkspaceDocumentService,
     private readonly workspaceShareService: WorkspaceShareService,
+    private readonly playbookHandoffService: ConversationPlaybookHandoffService,
   ) {}
 
   assertEnabled(): void {
@@ -204,7 +207,7 @@ export class PlaybookAssistantService {
       const assessmentVersion = await this.requestService.claimAssessment(requestId);
       const assessment = await this.intentService.assessNewDesign(request.requestId, request.ownerId, {
         intent: request.originalText,
-      });
+      }, request.handoffContext ?? undefined);
       const normalized = this.normalizeAssessment(assessment as unknown as Record<string, unknown>);
       const saved = await this.requestService.saveAssessment(requestId, assessmentVersion, normalized);
       return {
@@ -408,8 +411,23 @@ export class PlaybookAssistantService {
       const flow = await this.flowService.create(request.ownerId, {
         name: requestedName.length >= 2 ? requestedName : 'New Playbook',
         description: request.originalText,
-        workspaces: [],
-      }, { assistantOperationId: operationId });
+        workspaces: await this.resolveGenerationWorkspaces(request),
+      }, {
+        assistantOperationId: operationId,
+        generationProvenance: request.handoffProvenance ? {
+          source: 'conversation_handoff',
+          handoffVersion: 1,
+          sourceConversationId: request.handoffProvenance.sourceConversationId,
+          sourceTargetMessageId: request.handoffProvenance.targetMessageId,
+          displayedAnswerVersion: request.handoffProvenance.displayedAnswerVersion,
+          canonicalPathFingerprint: request.handoffProvenance.canonicalPathFingerprint,
+          contextFingerprint: request.handoffProvenance.contextFingerprint,
+          assistantRequestId: request.requestId,
+          acceptedBy: request.ownerId,
+          acceptedAt: new Date(request.handoffProvenance.acceptedAt),
+          confirmedWorkspaceIds: request.workspaceDefaultIds ?? [],
+        } : undefined,
+      });
       playbookId = flow.id;
       baseDefinitionRevision = flow.definitionRevision ?? 0;
       await this.requestService.bindGeneratedPlaybook(request.requestId, playbookId, baseDefinitionRevision);
@@ -423,6 +441,7 @@ export class PlaybookAssistantService {
           requestId: request.requestId,
           operationKind: 'generation',
           createdPlaybookId: playbookId,
+          trustedHandoffContext: request.handoffContext ?? undefined,
         },
       );
       return this.withEventStreamPath(result);
@@ -458,11 +477,12 @@ export class PlaybookAssistantService {
         throw new ConflictException(ErrorCode.CONFLICT, 'Generation name does not match the original request');
       }
     } else {
-      const text = await this.resolveCurrentTurnQuestion(actor, 'generation');
+      const currentTurn = await this.resolveCurrentTurnQuestion(actor, 'generation');
       request = await this.requestService.claimGenerationForTurn({
         actor,
-        text,
+        text: currentTurn.text,
         requestedName: dto.name,
+        handoff: currentTurn.handoff,
       });
       requestId = request.requestId;
       if (request.mutationOperationId) {
@@ -497,7 +517,7 @@ export class PlaybookAssistantService {
       requestId = request.requestId;
       assessment = (await this.continueClarification(continuationId, actor, { answers: dto.answers ?? [], skip: dto.skip })) as Record<string, unknown> & { status?: string };
     } else {
-      const text = await this.resolveCurrentTurnQuestion(actor, 'modification');
+      const { text } = await this.resolveCurrentTurnQuestion(actor, 'modification');
       const request = await this.requestService.claimCurrentTurnModification({
         actor,
         playbookId,
@@ -541,7 +561,7 @@ export class PlaybookAssistantService {
     };
   }
 
-  private async resolveCurrentTurnQuestion(actor: TrustedPlaybookAssistantActor, purpose: 'generation' | 'modification'): Promise<string> {
+  private async resolveCurrentTurnQuestion(actor: TrustedPlaybookAssistantActor, purpose: 'generation' | 'modification'): Promise<{ text: string; handoff?: ResolvedConversationPlaybookHandoffV1 }> {
     const conversation = await this.conversationService.getConversationDocument(actor.conversationId);
     if (conversation.createdBy.toString() !== actor.ownerId
       || conversation.runtimePurpose !== PLATFORM_COPILOT
@@ -562,7 +582,17 @@ export class PlaybookAssistantService {
       || !question.content?.trim()) {
       throw new ConflictException(ErrorCode.CONFLICT, `Assistant ${purpose} question binding does not match`);
     }
-    return question.content.trim();
+    const handoffId = question.replayContext?.playbookHandoffId;
+    const handoff = purpose === 'generation' && handoffId && question.requestId
+      ? await this.playbookHandoffService.consume({
+          handoffId,
+          ownerId: actor.ownerId,
+          platformConversationId: actor.conversationId,
+          turnRequestId: question.requestId,
+          userMessageId: question.id,
+        })
+      : undefined;
+    return { text: question.content.trim(), handoff };
   }
 
   async startConstruction(playbookId: string, userId: string, dto: StartPlaybookAssistantConstructionDto) {
@@ -989,6 +1019,13 @@ export class PlaybookAssistantService {
         'The user explicitly skipped the remaining clarification questions. For those questions choose sensible defaults, record them as assumptions, and proceed without asking again.',
       ] : []),
     ].join('\n');
+  }
+
+  private async resolveGenerationWorkspaces(request: PlaybookAssistantRequest): Promise<string[]> {
+    const workspaceIds = request.workspaceDefaultIds ?? [];
+    if (workspaceIds.length === 0) return [];
+    await this.workspaceShareService.assertUserHasAccess(request.ownerId, workspaceIds);
+    return workspaceIds;
   }
 
   private async validateClarificationResources(

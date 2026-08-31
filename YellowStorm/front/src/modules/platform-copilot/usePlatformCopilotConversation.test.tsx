@@ -77,6 +77,29 @@ describe('usePlatformCopilotConversation', () => {
     expect(localStorage.getItem(PLATFORM_COPILOT_CONVERSATION_STORAGE_KEY)).toBe('conversation-1');
   });
 
+  it('hydrates and sends the prepared handoff on its dedicated conversation', async () => {
+    mocks.fetchConversation.mockResolvedValue({ id: 'conversation-handoff', runtimePurpose: 'platform_copilot' });
+    const pendingHandoff = {
+      handoffId: crypto.randomUUID(),
+      platformConversationId: 'conversation-handoff',
+      suggestedPrompt: 'Create a reusable Playbook',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      messageRequestId: crypto.randomUUID(),
+      preview: { executionSummaries: [], planSteps: [], actions: [], resources: [], omissions: {} },
+    };
+    const { result } = renderHook(() => usePlatformCopilotConversation(true, context, pendingHandoff));
+    await waitFor(() => expect(result.current.conversationId).toBe('conversation-handoff'));
+
+    await act(async () => { expect(await result.current.send(pendingHandoff.suggestedPrompt, undefined, undefined, pendingHandoff)).toBe(true); });
+
+    expect(mocks.createConversation).not.toHaveBeenCalled();
+    expect(mocks.sendMessage).toHaveBeenCalledWith('conversation-handoff', expect.objectContaining({
+      content: pendingHandoff.suggestedPrompt,
+      requestId: pendingHandoff.messageRequestId,
+      playbookHandoffId: pendingHandoff.handoffId,
+    }));
+  });
+
   it('migrates the legacy conversation storage key once', async () => {
     localStorage.setItem('ys_second_brain_conversation_id', 'conversation-1');
     mocks.fetchConversation.mockResolvedValue({ id: 'conversation-1', runtimePurpose: 'platform_copilot' });

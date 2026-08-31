@@ -47,5 +47,15 @@
   "navigation.executionTask": "Inspecter la tâche d’exécution",
   "navigation.executionTaskDescription": "Cibler cette tâche dans l’exécution",
   "navigation.unsaved": "Le Playbook contient des modifications non enregistrées. Continuer la navigation ?",
-  "error.generic": "Yellowmind n’a pas pu terminer cette demande."
+  "error.generic": "Yellowmind n’a pas pu terminer cette demande.",
+  "handoff.previewLabel": "Contexte source de la conversation en lecture seule",
+  "handoff.title": "Source de la conversation",
+  "handoff.description": "Examinez le contexte source sécurisé, puis modifiez et envoyez l’invite lorsque vous êtes prêt.",
+  "handoff.goal": "Objectif :",
+  "handoff.steps": "Étapes réutilisables du processus",
+  "handoff.actions": "Actions : {{actions}}",
+  "handoff.resources": "Ressources : {{resources}}",
+  "handoff.discard": "Abandonner",
+  "handoff.expires": "Disponible jusqu’au {{date}}",
+  "handoff.expired": "Ce transfert a expiré. Revenez à la réponse source pour le préparer à nouveau."
 }

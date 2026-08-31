@@ -93,6 +93,7 @@ describe('GovernanceScopeOverviewService', () => {
         { provide: GovernanceAccessService, useValue: { assertScopeAccess: jest.fn().mockResolvedValue(undefined), canActInScopeRole: jest.fn().mockResolvedValue(true) } },
       ],
     }).compile();
+    const service = moduleRef.get(GovernanceScopeOverviewService);
 
     const overview = await service.getOverview(agentId.toString(), programId.toString(), scopeId.toString());
 
@@ -114,10 +115,10 @@ describe('GovernanceScopeOverviewService', () => {
       'published_workspace_set_valid',
     ]);
     expect(overview.metricsSummary.byChannel.widget).toBe(3);
-    expect(overview.readiness.checks.find((check) => check.key === 'knowledge_mapped')).toEqual(expect.objectContaining({ status: 'passed', targetType: 'workspace' }));
-    expect(overview.readiness.checks.find((check) => check.key === 'guardrails_reviewed')?.status).toBe('passed');
-    expect(overview.readiness.checks.find((check) => check.key === 'published_agent_roster_valid')?.status).toBe('passed');
-    expect(overview.readiness.checks.find((check) => check.key === 'published_workspace_set_valid')?.status).toBe('passed');
+    expect(overview.readiness.checks.find((check) => checkKey(check) === 'knowledge_mapped')).toEqual(expect.objectContaining({ status: 'passed', targetType: 'workspace' }));
+    expect(overview.readiness.checks.find((check) => checkKey(check) === 'guardrails_reviewed')?.status).toBe('passed');
+    expect(overview.readiness.checks.find((check) => checkKey(check) === 'published_agent_roster_valid')?.status).toBe('passed');
+    expect(overview.readiness.checks.find((check) => checkKey(check) === 'published_workspace_set_valid')?.status).toBe('passed');
     expect(workspaceBindingModel.find).toHaveBeenCalledWith(expect.objectContaining({ programId, enabled: true, $or: [{ visibility: 'program_shared' }, { scopeIds: scopeId }] }));
   });
 
@@ -153,6 +154,7 @@ describe('GovernanceScopeOverviewService', () => {
         { provide: GovernanceAccessService, useValue: { assertScopeAccess: jest.fn().mockResolvedValue(undefined), canActInScopeRole: jest.fn().mockResolvedValue(true) } },
       ],
     }).compile();
+    const service = moduleRef.get(GovernanceScopeOverviewService);
 
     const overview = await service.getOverview(agentId.toString(), programId.toString(), scopeId.toString());
 

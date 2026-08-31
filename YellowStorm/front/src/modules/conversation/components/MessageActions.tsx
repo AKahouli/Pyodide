@@ -1,7 +1,7 @@
-import { memo, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ThumbsUp, ThumbsDown, Copy, RotateCcw, MoreHorizontal, FileText, Flag, GitBranch, Loader2 } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, Copy, RotateCcw, MoreHorizontal, FileText, Flag, GitBranch, Loader2, Workflow } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import { useModuleTranslation } from '@/modules/localization';
@@ -13,8 +13,10 @@ import { TimingIndicator } from './TimingIndicator';
 import { MessagePdfExport } from './MessagePdfExport';
 import { useNavigate } from 'react-router-dom';
 import { useApiAction } from '@/lib/use-api-action';
-import { branchConversation } from '../api';
+import { branchConversation, prepareConversationPlaybookHandoff } from '../api';
 import { useModelById } from '@/modules/models';
+import { playbookFeatures } from '@/modules/playbook/features';
+import { usePlatformCopilotPanelStore } from '@/modules/platform-copilot/platformCopilotPanelStore';
 
 import { cn } from '@/lib/utils';
 
@@ -26,7 +28,7 @@ interface MessageActionsProps {
   className?: string;
 }
 
-export const MessageActions = memo(function MessageActions({ message, isLastAiMessage, conversationId, className }: MessageActionsProps) {
+export const MessageActions = memo(function MessageActions({ message, isLastAiMessage, conversationId, displayedVersion = 'original', className }: MessageActionsProps) {
   const updateFeedback = useConversationStore((s) => s.updateFeedback);
   const regenerateMessage = useConversationStore((s) => s.regenerateMessage);
   const setReplyingToMessage = useConversationStore((s) => s.setReplyingToMessage);
@@ -36,6 +38,8 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const fetchConversations = useConversationStore((s) => s.fetchConversations);
   const isGroup = !!currentConversation?.groupMeta?.isGroup;
   const [reportOpen, setReportOpen] = useState(false);
+  const handoffCreationRequest = useRef<{ fingerprint: string; requestId: string }>();
+  const openHandoff = usePlatformCopilotPanelStore((state) => state.openHandoff);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const { t, language } = useModuleTranslation('conversation');
   const generationModelId = message.modelId
@@ -55,6 +59,13 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       navigate(`/conversation/${conversation.id}`);
     },
   });
+  const { execute: prepareHandoff, isLoading: isPreparingHandoff } = useApiAction(prepareConversationPlaybookHandoff, {
+    onSuccess: (handoff) => {
+      handoffCreationRequest.current = undefined;
+      openHandoff(handoff);
+    },
+  });
+  const canPrepareHandoff = playbookFeatures.mcpAssistantEnabled && message.isComplete && !message.isStreaming;
   const createdAt = new Date(message.createdAt);
   const formattedCreatedAt = Number.isNaN(createdAt.getTime())
     ? t('messageActions.dateUnavailable')
@@ -112,6 +123,38 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       requestId: crypto.randomUUID(),
       targetMessageId: message.id,
       activeBranches: selected,
+    });
+  };
+
+  const handlePlaybookHandoff = async () => {
+    const targetIndex = messages.findIndex((item) => item.id === message.id);
+    const prefixIds = new Set(messages.slice(0, targetIndex + 1).map((item) => item.id));
+    const selected = Object.fromEntries(Array.from(activeBranches.entries()).filter(([questionId, answerId]) => (
+      prefixIds.has(questionId) && prefixIds.has(answerId)
+    )));
+    if (message.questionMessageId) selected[message.questionMessageId] = message.id;
+    const activeBranchEntries = Object.entries(selected).sort(([left], [right]) => left.localeCompare(right));
+    const fingerprintSource = JSON.stringify({
+      contractVersion: 1,
+      targetMessageId: message.id,
+      displayedAnswerVersion: displayedVersion,
+      activeBranches: activeBranchEntries,
+    });
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(fingerprintSource));
+    const branchSelectionFingerprint = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    if (handoffCreationRequest.current?.fingerprint !== branchSelectionFingerprint) {
+      handoffCreationRequest.current = {
+        fingerprint: branchSelectionFingerprint,
+        requestId: crypto.randomUUID(),
+      };
+    }
+    void prepareHandoff(conversationId, {
+      contractVersion: 1,
+      targetMessageId: message.id,
+      activeBranches: selected,
+      branchSelectionFingerprint,
+      displayedAnswerVersion: displayedVersion,
+      creationRequestId: handoffCreationRequest.current.requestId,
     });
   };
 
@@ -173,11 +216,17 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
                 {isBranching ? t('messageActions.branching') : t('messageActions.branch')}
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem onClick={handleExportPdf} disabled={isExportingPdf}>
-              {isExportingPdf
-                ? <Loader2 className='h-3.5 w-3.5 mr-2 animate-spin' />
-                : <FileText className='h-3.5 w-3.5 mr-2' />}
-              {isExportingPdf ? t('messageActions.exporting') : t('messageActions.export')}
+            {canPrepareHandoff && (
+              <DropdownMenuItem onClick={() => { void handlePlaybookHandoff(); }} disabled={isPreparingHandoff}>
+                {isPreparingHandoff
+                  ? <Loader2 className='h-3.5 w-3.5 mr-2 animate-spin' />
+                  : <Workflow className='h-3.5 w-3.5 mr-2' />}
+                {isPreparingHandoff ? t('messageActions.playbookPreparing') : t('messageActions.playbookHandoff')}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem disabled>
+              <FileText className='h-3.5 w-3.5 mr-2' />
+              {t('messageActions.export')}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setReportOpen(true)}>
               <Flag className='h-3.5 w-3.5 mr-2' />

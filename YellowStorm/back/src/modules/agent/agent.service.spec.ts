@@ -122,7 +122,6 @@ describe('AgentService connector skill inheritance', () => {
       findAllActive: jest.fn().mockResolvedValue([]),
       findBySlug: jest.fn().mockResolvedValue(null),
       getManyForHydration: jest.fn().mockResolvedValue(new Map()),
-      findBySlug: jest.fn().mockResolvedValue(null),
     };
     const modelsService = {
       findById: jest.fn(),
@@ -304,6 +303,77 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].agent_params?.params.temperature).toBe('0');
   });
 
+  it('exposes every enabled Playbook MCP action to Platform Copilot', async () => {
+    const { service, connectorService, modelsService } = createService();
+    const enabledActions = [
+      'search_playbooks',
+      'open_playbook_context',
+      'get_playbook_summary',
+      'get_task_details',
+      'get_task_dependencies',
+      'validate_playbook',
+      'start_playbook_generation',
+      'modify_playbook',
+      'get_playbook_construction',
+      'start_playbook_execution',
+      'list_recent_executions',
+      'get_playbook_execution',
+      'get_execution_diagnostics',
+      'assess_playbook_request',
+      'continue_playbook_clarification',
+      'start_playbook_construction',
+    ];
+    const streamAgent: IAgentForStream = {
+      id: 'yellowmind', name: 'Yellowmind', agentTypeName: 'Platform Copilot',
+      agentTypeSlug: 'platform_copilot', agentTypeId: 'type-1', role: 'Platform Copilot',
+      description: '', temperature: 0, model: 'model-1', instruction: 'Use start_playbook_generation',
+      ignorePrePrompt: false, knowledgeBases: [], toolIds: [], guardrails: defaultGuardrails,
+      connectorIds: ['playbook-connector'], connectorActionSelections: [], skillIds: [],
+      disabledSkillIds: [], agentTypeSkillIds: [], enable_temporary_child_agents: false,
+      max_temporary_child_agents: 4, isDefault: true, isDefaultForType: true,
+    };
+    const getAgentsForUser = jest.spyOn(service as any, 'getAgentsForUser');
+    jest.spyOn(service as any, 'resolveManager').mockReturnValue(undefined);
+    connectorService.findByIds.mockResolvedValue([{
+      id: 'playbook-connector', name: 'Playbook MCP', slug: 'playbook-mcp',
+      actions: [
+        ...enabledActions.map((key) => ({ key, label: key, isEnabled: true })),
+        { key: 'disabled_action', label: 'disabled_action', isEnabled: false },
+      ],
+      referencedSkillIds: [],
+    }]);
+    modelsService.getGuardrailsClassifierModel.mockResolvedValue(null);
+
+    for (const connectorActionSelections of [
+      [],
+      [{ connectorId: 'playbook-connector', actionKeys: ['search_playbooks', 'disabled_action'] }],
+    ]) {
+      getAgentsForUser.mockResolvedValue([{ ...streamAgent, connectorActionSelections }]);
+      const result = await service.buildAgentsForStream(
+        userId,
+        undefined,
+        ['yellowmind'],
+        undefined,
+        undefined,
+        undefined,
+        { conversationId: 'conversation-1', correlationId: 'message-1', playbookHandoffAttached: true },
+      );
+
+      expect(result[0].tools.map((tool) => tool.name)).toEqual(
+        enabledActions.map((action) => `playbook-mcp_${action}`),
+      );
+      const bindings = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string);
+      expect(bindings[0].actions.map((action: { action_key: string }) => action.action_key)).toEqual(enabledActions);
+      expect(result[0].tools.map((tool) => tool.name)).not.toEqual(
+        expect.arrayContaining(['playbook-mcp_disabled_action']),
+      );
+      expect(result[0].prompt).toContain('[Trusted conversation handoff]');
+      expect(result[0].prompt).toContain('Call start_playbook_generation now');
+      expect(result[0].prompt).not.toContain('conversation-1');
+      expect(result[0].prompt).not.toContain('message-1');
+    }
+  });
+
   it('injects trusted actor headers into platform copilot connector bindings', async () => {
     const { service, skillService, connectorService } = createService();
     const platformAgent: IAgentForStream = {
@@ -340,6 +410,7 @@ describe('AgentService connector skill inheritance', () => {
       'X-Correlation-Id': 'message-1',
     }));
     expect(binding.auth_headers).not.toHaveProperty('X-YellowStorm-Tenant-Id');
+    expect(result[0].prompt).not.toContain('[Trusted conversation handoff]');
   });
 
   it('resolves the mono-agent directly from the DB even though it is not part of the user\'s roster', async () => {

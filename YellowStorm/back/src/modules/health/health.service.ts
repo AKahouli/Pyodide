@@ -10,6 +10,7 @@ import { LiteLLMConnectionService } from '../models/litellm-connection.service';
 import { StreamService } from '../conversation/services/stream.service';
 import { ConversationV2GrpcClientService } from '../conversation-v2/services/conversation-v2.grpc-client.service';
 import { SemanticModelDatabaseService } from '../semantic-model/infrastructure/semantic-model-database.service';
+import { PostgresConnectionService } from '../postgres/postgres-connection.service';
 
 @Injectable()
 export class HealthService {
@@ -28,6 +29,7 @@ export class HealthService {
     private readonly streamService: StreamService,
     private readonly conversationV2Grpc: ConversationV2GrpcClientService,
     private readonly semanticModelDatabase: SemanticModelDatabaseService,
+    private readonly postgres: PostgresConnectionService,
   ) {
     const memoryLimitMb = this.configService.get<number>('app.memoryLimitMb', 512);
     this.memoryLimitBytes = memoryLimitMb * 1024 * 1024;
@@ -35,11 +37,12 @@ export class HealthService {
 
   async check(userId?:string): Promise<HealthCheckResult> {
     // Run all checks in parallel — network pings are independent
-    const [memory, eventLoop, database, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp, semanticModel] =
+    const [memory, eventLoop, database, postgres, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp, semanticModel] =
       await Promise.all([
         this.checkMemory(),
         this.checkEventLoop(),
         this.checkDatabase(),
+        this.checkPostgres(),
         this.checkStorage(),
         this.checkEmail(),
         this.checkLiteLLM(),
@@ -50,7 +53,7 @@ export class HealthService {
       ]);
 
     const checks: Record<string, HealthCheckDetail> = {
-      memory, eventLoop, database, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp, semanticModel,
+      memory, eventLoop, database, postgres, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp, semanticModel,
     };
 
     const allUp = Object.values(checks).every((c) => c.status === 'up');
@@ -84,6 +87,8 @@ export class HealthService {
 
     const databaseCheck = await this.checkDatabase();
     checks.database = databaseCheck.status === 'up';
+
+    checks.postgres = await this.postgres.ping();
 
     const storageCheck = await this.checkStorage();
     checks.storage = storageCheck.status === 'up';
@@ -140,6 +145,17 @@ export class HealthService {
       status,
       responseTime: Date.now() - startTime,
       message,
+      lastChecked: new Date().toISOString(),
+    };
+  }
+
+  private async checkPostgres(): Promise<HealthCheckDetail> {
+    const startedAt = Date.now();
+    const healthy = await this.postgres.ping();
+    return {
+      status: healthy ? 'up' : 'down',
+      responseTime: Date.now() - startedAt,
+      message: healthy ? 'PostgreSQL is available' : 'PostgreSQL is unavailable',
       lastChecked: new Date().toISOString(),
     };
   }

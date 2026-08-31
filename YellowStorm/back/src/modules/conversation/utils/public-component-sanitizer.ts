@@ -19,6 +19,24 @@ function boundString(value: string): string {
     : value;
 }
 
+function isCalendarDate(candidate: string): boolean {
+  const value = candidate.replace(/[.,;:!?)]*$/, '');
+  const parts = value.split('/');
+  if (parts.length !== 3 || !parts.every((part) => /^\d+$/.test(part))) return false;
+  const yearFirst = /^\d{4}$/.test(parts[0]) && /^\d{2}$/.test(parts[1]) && /^\d{2}$/.test(parts[2]);
+  const yearLast = /^\d{2}$/.test(parts[0]) && /^\d{2}$/.test(parts[1]) && /^\d{4}$/.test(parts[2]);
+  if (yearFirst === yearLast) return false;
+  const year = Number(yearFirst ? parts[0] : parts[2]);
+  const month = Number(parts[1]);
+  const day = Number(yearFirst ? parts[2] : parts[0]);
+  if (year < 1000 || month < 1 || month > 12 || day < 1) return false;
+  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function redactStoragePath(_match: string, boundary: string, candidate: string): string {
+  return `${boundary}${isCalendarDate(candidate) ? candidate : REDACTED}`;
+}
+
 function sanitizeString(value: string, options: SanitizerOptions = {}): string {
   const trimmed = value.trim();
   if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
@@ -43,7 +61,7 @@ function sanitizeString(value: string, options: SanitizerOptions = {}): string {
   const displayRedacted = redacted
     .replace(/\/workspace(?:\/[^\s"'`)<>{}\]]+)*/g, REDACTED)
     .replace(/(^|[\s=:('"`])(?:[A-Za-z]:[\\/]|\/|\\\\)[^\s"'`]+/gi, (_match, boundary: string) => `${boundary}${REDACTED}`)
-    .replace(/(^|[\s=:('"`])(?:[A-Za-z0-9._-]+\/){2,}[^\s"'`]+/gi, (_match, boundary: string) => `${boundary}${REDACTED}`);
+    .replace(/(^|[\s=:('"`])((?:[A-Za-z0-9._-]+\/){2,}[^\s"'`]+)/gi, redactStoragePath);
 
   return boundString(displayRedacted);
 }

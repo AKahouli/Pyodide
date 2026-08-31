@@ -9,6 +9,7 @@ import {
   PlaybookAssistantRequest,
   PlaybookAssistantRequestDocument,
 } from '../schemas/playbook-assistant-request.schema';
+import type { ResolvedConversationPlaybookHandoffV1 } from '@modules/conversation/interfaces/conversation-playbook-handoff.interface';
 
 const REQUEST_RETENTION_MS = 24 * 60 * 60 * 1000;
 const LEGACY_DEFAULT_TENANT = 'default';
@@ -117,6 +118,7 @@ export class PlaybookAssistantRequestService {
     actor: { ownerId: string; agentId: string; conversationId: string; correlationId: string };
     text: string;
     requestedName?: string;
+    handoff?: ResolvedConversationPlaybookHandoffV1;
   }): Promise<PlaybookAssistantRequest> {
     const text = input.text.trim();
     const requestedName = input.requestedName?.trim() || null;
@@ -131,6 +133,9 @@ export class PlaybookAssistantRequestService {
       operationKind: 'generation',
       text,
       requestedName,
+      handoffId: input.handoff?.handoffId ?? null,
+      handoffVersion: input.handoff?.handoffVersion ?? null,
+      contextFingerprint: input.handoff?.contextFingerprint ?? null,
     };
     const messageHash = this.createRequestFingerprint(fingerprintInput);
     const legacyMessageHash = this.createRequestFingerprint({
@@ -175,6 +180,18 @@ export class PlaybookAssistantRequestService {
         messageHash,
         originalText: text,
         requestedName,
+        handoffContext: input.handoff?.context ?? null,
+        handoffProvenance: input.handoff ? {
+          handoffId: input.handoff.handoffId,
+          handoffVersion: input.handoff.handoffVersion,
+          sourceConversationId: input.handoff.sourceConversationId,
+          targetMessageId: input.handoff.targetMessageId,
+          displayedAnswerVersion: input.handoff.displayedAnswerVersion,
+          canonicalPathFingerprint: input.handoff.canonicalPathFingerprint,
+          contextFingerprint: input.handoff.contextFingerprint,
+          acceptedAt: input.handoff.acceptedAt,
+        } : null,
+        workspaceDefaultIds: input.handoff?.workspaceDefaultIds ?? [],
         selectedTaskId: null,
         executionId: null,
         attachmentIds: [],

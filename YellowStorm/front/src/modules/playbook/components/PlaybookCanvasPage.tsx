@@ -97,15 +97,14 @@ import { SharePlaybookDialog } from './SharePlaybookDialog';
 import { ConnectorSidebar } from './ConnectorSidebar';
 import { ConnectorBindingModal } from './ConnectorBindingModal';
 import { SkillSidebar } from './SkillSidebar';
-import { RepeatabilityDetails } from './RepeatabilityDetails';
-import { ReplayMigrationHarnessCard } from './ReplayMigrationHarnessCard';
+import { AdvisorEvaluationWorkspace } from './AdvisorEvaluationWorkspace';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
 import {
   createIntentSuggestionApplicationKey,
   createIntentSuggestionBindingId,
   createIntentSuggestionNodeId,
 } from '../utils/intent-application-key';
-import { appendDesignMessage, cancelPlaybookIntentConstruction, discardPlaybookIntentConstruction, fetchPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybookAssistantMessages, getPlaybookRepeatability, requestPlaybookNodeAdvisor, runPlaybookAssistantTurn, startAdvisorRemediationConstruction, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, uploadPlaybookAssistantAttachment } from '../api';
+import { appendDesignMessage, cancelPlaybookIntentConstruction, discardPlaybookIntentConstruction, fetchPlaybookIntentConstruction, fetchPlaybookIntentTraces, getPlaybookAssistantMessages, requestPlaybookNodeAdvisor, runPlaybookAssistantTurn, startAdvisorRemediationConstruction, startPlaybookIntentConstruction, streamPlaybookIntentConstruction, uploadPlaybookAssistantAttachment } from '../api';
 import { playbookFeatures } from '../features';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
 import type {
@@ -531,9 +530,6 @@ function PlaybookCanvasInner() {
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
   const pendingRerunTaskId = usePlaybookStore((s) => s.pendingRerunTaskId);
   const setPendingRerunTaskId = usePlaybookStore((s) => s.setPendingRerunTaskId);
-  const repeatability = usePlaybookStore((s) => s.repeatability);
-  const repeatabilityLoading = usePlaybookStore((s) => s.repeatabilityLoading);
-  const fetchRepeatability = usePlaybookStore((s) => s.fetchRepeatability);
   const clearPlaybookTriggerMail = usePlaybookStore((s) => s.clearPlaybookTriggerMail);
   const upsertPlaybookTriggerMail = usePlaybookStore((s) => s.upsertPlaybookTriggerMail);
   const { refreshUsage } = useUsage();
@@ -939,12 +935,6 @@ function PlaybookCanvasInner() {
     setIntentValue(intent.trim());
     setSearchParams((prev) => { prev.delete('intent'); return prev; }, { replace: true });
   }, []);
-
-  useEffect(() => {
-    if (!evaluationDialogOpen || !id || isGeneratingRoute) return;
-
-    void fetchRepeatability(id);
-  }, [evaluationDialogOpen, id, isGeneratingRoute, fetchRepeatability]);
 
   useEffect(() => {
     if (viewportInitializedPlaybookRef.current === id) {
@@ -4358,40 +4348,19 @@ function PlaybookCanvasInner() {
       )}
 
       <Dialog open={evaluationDialogOpen} onOpenChange={setEvaluationDialogOpen}>
-        <DialogContent className="flex max-h-[90vh] max-w-6xl grid-rows-[auto_minmax(0,1fr)] flex-col overflow-hidden">
+        <DialogContent className="flex max-h-[92vh] max-w-7xl grid-rows-[auto_minmax(0,1fr)] flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle>{t('evaluationDialog.title')}</DialogTitle>
             <DialogDescription>{t('evaluationDialog.description')}</DialogDescription>
           </DialogHeader>
-          <div className="min-h-0 overflow-y-auto pr-1 space-y-4">
-            {playbook && (
-              <ReplayMigrationHarnessCard
-                playbook={playbook}
-                disabled={isExecuting || isSaving || !id}
-                onRun={async ({ modelIdOverride, mode }) => {
-                  if (!id || !playbook) return;
-                  const stepExecutionModes = Object.fromEntries(
-                    playbook.tasks
-                      .filter((task) => task.enabled !== false && (task.activeReplayId || task.hasValidatedReplay))
-                      .map((task) => [task.id, mode]),
-                  );
-                  if (Object.keys(stepExecutionModes).length === 0) return;
-                  await executePlaybook(id, {
-                    executionMode: 'inherit',
-                    stepExecutionModes: stepExecutionModes as Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>,
-                    modelIdOverride,
-                    runNodeReflection: nodeReflectionEnabled,
-                  });
-                  setEvaluationDialogOpen(false);
-                }}
+          <div className="min-h-0 overflow-y-auto pr-1">
+            {playbook && id && (
+              <AdvisorEvaluationWorkspace
+                playbookId={id}
+                tasks={playbook.tasks}
+                enabled={evaluationDialogOpen}
               />
             )}
-            <RepeatabilityDetails
-              repeatability={repeatability}
-              loading={repeatabilityLoading}
-              onPageFetch={(limit, offset) => fetchRepeatability(id!, limit, offset)}
-              onExportFetch={(limit, offset) => getPlaybookRepeatability(id!, limit, offset)}
-            />
           </div>
         </DialogContent>
       </Dialog>

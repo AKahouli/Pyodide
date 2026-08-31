@@ -27,6 +27,11 @@ interface UserSearchResult {
   lastName?: string;
 }
 
+export interface UserSummary {
+  id: string;
+  email: string;
+}
+
 interface SearchUsersParams {
   query: string;
   excludeUserId?: string;
@@ -118,6 +123,11 @@ export class UserService {
    */
   async findById(id: string): Promise<UserDocument | null> {
     return this.userModel.findById(id);
+  }
+
+  async findSummaryById(id: string): Promise<UserSummary | null> {
+    const user = await this.userModel.findById(id).select('email').lean().exec();
+    return user ? { id: user._id.toString(), email: user.email } : null;
   }
 
   /**

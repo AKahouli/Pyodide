@@ -188,14 +188,13 @@ function buildCitationData(data: Record<string, unknown>): {
   };
 }
 
-function findTextPartByReference(parts: MessageContentPart[], reference?: string): number | undefined {
+function findTextPartsByReference(parts: MessageContentPart[], reference?: string): number[] {
   const ref = reference?.trim().replace(/^\[|\]$/g, '').trim();
   if (!ref) {
-    return undefined;
+    return [];
   }
 
-  const index = parts.findIndex((part) => part.type === 'text' && part.content.includes(`[${ref}]`));
-  return index >= 0 ? index : undefined;
+  return parts.flatMap((part, index) => part.type === 'text' && part.content.includes(`[${ref}]`) ? [index] : []);
 }
 
 function attachCitation(parts: MessageContentPart[], index: number, citation: ReturnType<typeof buildCitationData>): boolean {
@@ -365,14 +364,22 @@ export function mapComponentsToContentParts(components: MessageComponent[]): Mes
     const data = comp.data || {};
     const parentId = data.parentId as string;
     const citation = buildCitationData(data);
+    const attachedIndices = new Set<number>();
 
     if (parentId && idToIndex.has(parentId)) {
-      if (attachCitation(parts, idToIndex.get(parentId)!, citation)) {
-        continue;
+      const parentIndex = idToIndex.get(parentId)!;
+      if (attachCitation(parts, parentIndex, citation)) {
+        attachedIndices.add(parentIndex);
       }
     }
-    const referenceMatchIndex = findTextPartByReference(parts, citation.reference);
-    if (referenceMatchIndex !== undefined && attachCitation(parts, referenceMatchIndex, citation)) {
+
+    for (const referenceMatchIndex of findTextPartsByReference(parts, citation.reference)) {
+      if (!attachedIndices.has(referenceMatchIndex) && attachCitation(parts, referenceMatchIndex, citation)) {
+        attachedIndices.add(referenceMatchIndex);
+      }
+    }
+
+    if (attachedIndices.size > 0) {
       continue;
     }
     // Fallback: standalone citation part

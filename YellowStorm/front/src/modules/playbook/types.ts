@@ -1525,6 +1525,18 @@ export interface DynamicReasoningStreamUpdate {
   [key: string]: unknown;
 }
 
+export interface PlaybookExecutionSnapshotNode {
+  id: string;
+  kind?: string;
+  label?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PlaybookExecutionSnapshot {
+  nodes?: PlaybookExecutionSnapshotNode[];
+  [key: string]: unknown;
+}
+
 export interface PlaybookExecution {
   id: string;
   playbookId: string;
@@ -1588,6 +1600,7 @@ export interface PlaybookExecution {
   startedAt: string | null;
   completedAt: string | null;
   singleStepTaskId: string | null;
+  snapshot?: PlaybookExecutionSnapshot | null;
   playbookSnapshot: Record<string, unknown> | null;
   totalInputTokens: number;
   totalOutputTokens: number;

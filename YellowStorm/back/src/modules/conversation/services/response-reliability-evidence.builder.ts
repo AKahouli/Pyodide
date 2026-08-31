@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import type { MessageDocument } from '../schemas/message.schema';
 import type { MessageComponent } from '../interfaces/message.interface';
 
 export const MAX_ANSWER_CHARACTERS = 30_000;
@@ -32,6 +31,11 @@ export interface ResponseReliabilityInput {
   globalEvidence: ReliabilityEvidenceItem[];
 }
 
+export interface ReliabilityMessageRecord {
+  id: string;
+  components: MessageComponent[];
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
@@ -46,12 +50,13 @@ const MAX_TOOL_RESULT_CHARACTERS = 65_536;
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : undefined;
 }
 
 function parseToolResult(value: unknown): unknown {
-  if (typeof value !== 'string' || !value.trim() || value.length > MAX_TOOL_RESULT_CHARACTERS) return undefined;
+  if (typeof value !== 'string' || !value.trim() || value.length > MAX_TOOL_RESULT_CHARACTERS)
+    return undefined;
   try {
     return JSON.parse(value);
   } catch {
@@ -61,10 +66,14 @@ function parseToolResult(value: unknown): unknown {
 
 @Injectable()
 export class ResponseReliabilityEvidenceBuilder {
-  build(message: MessageDocument, question: string, requestId: string): ResponseReliabilityInput {
+  build(
+    message: ReliabilityMessageRecord,
+    question: string,
+    requestId: string,
+  ): ResponseReliabilityInput {
     return this.buildFromComponents({
-      messageId: message._id.toString(),
-      components: (message.components ?? []) as MessageComponent[],
+      messageId: message.id,
+      components: message.components,
       question,
       requestId,
     });
@@ -96,15 +105,28 @@ export class ResponseReliabilityEvidenceBuilder {
     const globalEvidence: ReliabilityEvidenceItem[] = [];
     let totalEvidenceCharacters = 0;
     let evidenceCount = 0;
-    const appendEvidence = (item: Omit<ReliabilityEvidenceItem, 'id' | 'content'> & { content: string }) => {
-      if (evidenceCount >= MAX_EVIDENCE_ITEMS || totalEvidenceCharacters >= MAX_TOTAL_EVIDENCE_CHARACTERS) return;
+    const appendEvidence = (
+      item: Omit<ReliabilityEvidenceItem, 'id' | 'content'> & { content: string },
+    ) => {
+      if (
+        evidenceCount >= MAX_EVIDENCE_ITEMS ||
+        totalEvidenceCharacters >= MAX_TOTAL_EVIDENCE_CHARACTERS
+      )
+        return;
       // Deterministic clipping bounds confidential payload size and evaluator cost.
-      const content = item.content.slice(0, Math.min(
-        MAX_EVIDENCE_ITEM_CHARACTERS,
-        MAX_TOTAL_EVIDENCE_CHARACTERS - totalEvidenceCharacters,
-      ));
+      const content = item.content.slice(
+        0,
+        Math.min(
+          MAX_EVIDENCE_ITEM_CHARACTERS,
+          MAX_TOTAL_EVIDENCE_CHARACTERS - totalEvidenceCharacters,
+        ),
+      );
       if (!content.trim()) return;
-      const evidence: ReliabilityEvidenceItem = { ...item, id: `evidence-${evidenceCount}`, content };
+      const evidence: ReliabilityEvidenceItem = {
+        ...item,
+        id: `evidence-${evidenceCount}`,
+        content,
+      };
       evidenceCount += 1;
       totalEvidenceCharacters += content.length;
       const parent = item.parentComponentId ? segmentById.get(item.parentComponentId) : undefined;
@@ -114,24 +136,46 @@ export class ResponseReliabilityEvidenceBuilder {
     for (const component of components) {
       const data = component.data || {};
       if (component.type === 'citation') {
-        const textSource = data.text_source && typeof data.text_source === 'object' ? data.text_source as Record<string, unknown> : undefined;
-        const imageSource = data.image_source && typeof data.image_source === 'object' ? data.image_source as Record<string, unknown> : undefined;
+        const textSource =
+          data.text_source && typeof data.text_source === 'object'
+            ? (data.text_source as Record<string, unknown>)
+            : undefined;
+        const imageSource =
+          data.image_source && typeof data.image_source === 'object'
+            ? (data.image_source as Record<string, unknown>)
+            : undefined;
         const nested = textSource || imageSource || data;
-        const content = stringValue(nested.highlightText) || stringValue(nested.highlight_text)
-          || stringValue(nested.pageContent) || stringValue(nested.page_content) || stringValue(nested.content);
+        const content =
+          stringValue(nested.highlightText) ||
+          stringValue(nested.highlight_text) ||
+          stringValue(nested.pageContent) ||
+          stringValue(nested.page_content) ||
+          stringValue(nested.content);
         if (!content) continue;
         appendEvidence({
           type: 'document',
           parentComponentId: stringValue(data.parentId) || stringValue(data.parent_id),
-          source: stringValue(nested.source) || stringValue(nested.fileName) || stringValue(nested.file_name) || stringValue(nested.documentName) || stringValue(nested.name),
+          source:
+            stringValue(nested.source) ||
+            stringValue(nested.fileName) ||
+            stringValue(nested.file_name) ||
+            stringValue(nested.documentName) ||
+            stringValue(nested.name),
           page: stringValue(nested.page),
           content,
-          workspaceId: stringValue(nested.workspaceId) || stringValue(nested.workspace_id) || stringValue(nested.workspace_name),
+          workspaceId:
+            stringValue(nested.workspaceId) ||
+            stringValue(nested.workspace_id) ||
+            stringValue(nested.workspace_name),
           reference: stringValue(nested.reference),
         });
       }
-      if (component.type === 'sandbox' && !stringValue(data.error)
-        && (data.outputAvailable === true || data.output_available === true) && stringValue(data.output)) {
+      if (
+        component.type === 'sandbox' &&
+        !stringValue(data.error) &&
+        (data.outputAvailable === true || data.output_available === true) &&
+        stringValue(data.output)
+      ) {
         const output = stringValue(data.output)!;
         appendEvidence({
           type: 'calculation',
@@ -152,7 +196,10 @@ export class ResponseReliabilityEvidenceBuilder {
             if (!content) continue;
             appendEvidence({
               type: 'document',
-              source: stringValue(item?.filename) || stringValue(item?.file_name) || stringValue(item?.source),
+              source:
+                stringValue(item?.filename) ||
+                stringValue(item?.file_name) ||
+                stringValue(item?.source),
               page: stringValue(item?.page),
               content,
               workspaceId: stringValue(item?.workspace_id) || stringValue(item?.workspaceId),
@@ -162,7 +209,9 @@ export class ResponseReliabilityEvidenceBuilder {
         } else if (toolName === 'perform_web_search') {
           const result = recordValue(parsed);
           const text = stringValue(result?.text);
-          const sources = Array.isArray(result?.sources) ? result.sources.map(recordValue).filter(Boolean) as Record<string, unknown>[] : [];
+          const sources = Array.isArray(result?.sources)
+            ? (result.sources.map(recordValue).filter(Boolean) as Record<string, unknown>[])
+            : [];
           const validSources = sources.filter((source) => {
             const url = stringValue(source.url);
             if (!url) return false;
@@ -176,20 +225,31 @@ export class ResponseReliabilityEvidenceBuilder {
             appendEvidence({
               type: 'document',
               source: stringValue(validSources[0].url),
-              content: `${text}\n\nSources:\n${validSources.map((source) => {
-                const title = stringValue(source.title);
-                const url = stringValue(source.url)!;
-                return title ? `${title}: ${url}` : url;
-              }).join('\n')}`,
+              content: `${text}\n\nSources:\n${validSources
+                .map((source) => {
+                  const title = stringValue(source.title);
+                  const url = stringValue(source.url)!;
+                  return title ? `${title}: ${url}` : url;
+                })
+                .join('\n')}`,
             });
           }
-        } else if (toolName === 'calculator' && (typeof parsed === 'string' || typeof parsed === 'number')) {
+        } else if (
+          toolName === 'calculator' &&
+          (typeof parsed === 'string' || typeof parsed === 'number')
+        ) {
           const output = String(parsed).trim();
           if (output) appendEvidence({ type: 'calculation', content: `Output:\n${output}` });
         }
       }
     }
 
-    return { requestId: input.requestId, messageId: input.messageId, question: input.question, segments, globalEvidence };
+    return {
+      requestId: input.requestId,
+      messageId: input.messageId,
+      question: input.question,
+      segments,
+      globalEvidence,
+    };
   }
 }

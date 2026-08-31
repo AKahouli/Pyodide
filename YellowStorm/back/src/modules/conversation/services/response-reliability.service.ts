@@ -3,13 +3,27 @@ import { ConfigService } from '@nestjs/config';
 import { Interval } from '@nestjs/schedule';
 import axios from 'axios';
 import { randomUUID } from 'node:crypto';
-import { EvaluationSettingsService, ResponseReliabilitySettings } from '@modules/evaluation/services/evaluation-settings.service';
+import {
+  EvaluationSettingsService,
+  ResponseReliabilitySettings,
+} from '@modules/evaluation/services/evaluation-settings.service';
 import { ModelsService } from '@modules/models/models.service';
 import { LoggerService } from '@modules/logger';
-import type { ReliabilityClaimImportance, ReliabilityClaimStatus, ReliabilityEvaluation } from '../interfaces/message.interface';
+import type {
+  MessageComponent,
+  ReliabilityClaimImportance,
+  ReliabilityClaimStatus,
+  ReliabilityEvaluation,
+} from '../interfaces/message.interface';
 import { MessageService } from './message.service';
-import { ResponseReliabilityEvidenceBuilder, ResponseReliabilityInput } from './response-reliability-evidence.builder';
-import { EvaluatedReliabilityClaim, ResponseReliabilityScoringService } from './response-reliability-scoring.service';
+import {
+  ResponseReliabilityEvidenceBuilder,
+  ResponseReliabilityInput,
+} from './response-reliability-evidence.builder';
+import {
+  EvaluatedReliabilityClaim,
+  ResponseReliabilityScoringService,
+} from './response-reliability-scoring.service';
 import { ResponseCorrectionService } from './response-correction.service';
 import { ResponseCorrectionPolicyService } from './response-correction-policy.service';
 import { AppException } from '../../exceptions/exceptions/base.exception';
@@ -71,7 +85,11 @@ export class ResponseReliabilityService implements OnModuleInit {
     const settings = (await this.settingsService.getSettings()).responseReliability;
     if (!settings.enabled) return;
 
-    const message = await this.messageService.claimReliabilityEvaluation(input.conversationId, input.messageId, false);
+    const message = await this.messageService.claimReliabilityEvaluation(
+      input.conversationId,
+      input.messageId,
+      false,
+    );
     if (!message || this.scheduledMessageIds.has(input.messageId)) return;
     const questionMessageId = input.questionMessageId || message.questionMessageId;
     const requestedAt = message.reliabilityEvaluation?.requestedAt;
@@ -97,9 +115,17 @@ export class ResponseReliabilityService implements OnModuleInit {
     this.drainQueue();
   }
 
-  async rerun(input: { messageId: string; conversationId: string; userId: string; requestId?: string }): Promise<{ messageId: string; reliabilityEvaluation: ReliabilityEvaluation }> {
+  async rerun(input: {
+    messageId: string;
+    conversationId: string;
+    userId: string;
+    requestId?: string;
+  }): Promise<{ messageId: string; reliabilityEvaluation: ReliabilityEvaluation }> {
     const settings = (await this.settingsService.getSettings()).responseReliability;
-    const message = await this.messageService.rerunReliabilityEvaluation(input.conversationId, input.messageId);
+    const message = await this.messageService.rerunReliabilityEvaluation(
+      input.conversationId,
+      input.messageId,
+    );
     const questionMessageId = message.questionMessageId;
     if (!questionMessageId || !message.reliabilityEvaluation) {
       throw new AppException({
@@ -134,7 +160,9 @@ export class ResponseReliabilityService implements OnModuleInit {
     try {
       // Heartbeats are shared through Mongo so another replica cannot expire live local work.
       await this.messageService.touchPendingReliabilityEvaluations([...this.scheduledMessageIds]);
-      const count = await this.messageService.markStaleReliabilityEvaluationsFailed(new Date(Date.now() - STALE_PENDING_MS));
+      const count = await this.messageService.markStaleReliabilityEvaluationsFailed(
+        new Date(Date.now() - STALE_PENDING_MS),
+      );
       if (count) this.logger.warn('Marked stale reliability evaluations failed', { count });
     } catch (error) {
       this.logger.error('Unable to clean stale reliability evaluations', {
@@ -148,16 +176,18 @@ export class ResponseReliabilityService implements OnModuleInit {
     while (this.activeEvaluations < concurrency && this.queue.length) {
       const job = this.queue.shift()!;
       this.activeEvaluations += 1;
-      void this.processJob(job).catch((error) => {
-        this.logger.error('Unable to persist reliability evaluation outcome', {
-          messageId: job.messageId,
-          error: error instanceof Error ? error.message : String(error),
+      void this.processJob(job)
+        .catch((error) => {
+          this.logger.error('Unable to persist reliability evaluation outcome', {
+            messageId: job.messageId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        })
+        .finally(() => {
+          this.activeEvaluations -= 1;
+          this.scheduledMessageIds.delete(job.messageId);
+          this.drainQueue();
         });
-      }).finally(() => {
-        this.activeEvaluations -= 1;
-        this.scheduledMessageIds.delete(job.messageId);
-        this.drainQueue();
-      });
     }
   }
 
@@ -166,32 +196,54 @@ export class ResponseReliabilityService implements OnModuleInit {
     try {
       const message = await this.messageService.getMessageDocument(job.messageId);
       const question = await this.messageService.getMessageDocument(job.questionMessageId);
-      const evidenceInput = this.evidenceBuilder.build(message, question.content || '', job.requestId);
-      const evidenceCount = evidenceInput.globalEvidence.length
-        + evidenceInput.segments.reduce((sum, segment) => sum + segment.evidence.length, 0);
+      const evidenceInput = this.evidenceBuilder.build(
+        {
+          id: message.id,
+          components: (message.components ?? []) as MessageComponent[],
+        },
+        question.content || '',
+        job.requestId,
+      );
+      const evidenceCount =
+        evidenceInput.globalEvidence.length +
+        evidenceInput.segments.reduce((sum, segment) => sum + segment.evidence.length, 0);
       if (!evidenceCount) {
         const evaluation = {
           status: 'insufficient_evidence',
-          summary: 'The answer did not include enough supporting evidence to verify its factual claims.',
+          summary:
+            'The answer did not include enough supporting evidence to verify its factual claims.',
           requestedAt: job.requestedAt,
           evaluatedAt: new Date().toISOString(),
           durationMs: 0,
         } as const;
         await this.messageService.updateReliabilityEvaluation(job.messageId, evaluation);
         if (!job.manual && job.settings.mode === 'corrective_transparent') {
-          await this.correctionService.applyInsufficientEvidence({ ...job, originalEvaluation: evaluation });
+          await this.correctionService.applyInsufficientEvidence({
+            ...job,
+            originalEvaluation: evaluation,
+          });
         }
         return;
       }
 
-      const model = job.settings.judgeModelId ? await this.modelsService.findById(job.settings.judgeModelId) : null;
-      if (!model?.isActive || !model.types.some((type) => type === 'chat' || type === 'completion')) {
+      const model = job.settings.judgeModelId
+        ? await this.modelsService.findById(job.settings.judgeModelId)
+        : null;
+      if (
+        !model?.isActive ||
+        !model.types.some((type) => type === 'chat' || type === 'completion')
+      ) {
         await this.failJob(job, 'judge_model_unavailable');
         return;
       }
 
       const modelName = this.modelsService.getModelIdentifier(model);
-      const result = await this.callEvaluator(evidenceInput, modelName, model.omitTemperature, job.settings);
+      const result = await this.callEvaluator(
+        evidenceInput,
+        modelName,
+        model.omitTemperature,
+        job.settings,
+      );
       if (result.applicability === 'not_applicable' || result.claims.length === 0) {
         await this.messageService.updateReliabilityEvaluation(job.messageId, {
           status: 'not_applicable',
@@ -221,17 +273,23 @@ export class ResponseReliabilityService implements OnModuleInit {
       } as const;
       await this.messageService.updateReliabilityEvaluation(job.messageId, evaluation);
       if (!job.manual && this.correctionPolicy.shouldCorrect(job.settings, evaluation)) {
-        void this.correctionService.schedule({ ...job, originalEvaluation: evaluation }).catch((error) => {
-          this.logger.error('Unable to schedule response correction', {
-            messageId: job.messageId,
-            error: error instanceof Error ? error.message : String(error),
+        void this.correctionService
+          .schedule({ ...job, originalEvaluation: evaluation })
+          .catch((error) => {
+            this.logger.error('Unable to schedule response correction', {
+              messageId: job.messageId,
+              error: error instanceof Error ? error.message : String(error),
+            });
           });
-        });
       }
     } catch (error) {
       const failureCode = axios.isAxiosError(error)
-        ? error.code === 'ECONNABORTED' ? 'evaluator_timeout' : 'evaluator_http_error'
-        : error instanceof InvalidEvaluatorResponseError ? 'evaluator_invalid_response' : 'unexpected_evaluation_error';
+        ? error.code === 'ECONNABORTED'
+          ? 'evaluator_timeout'
+          : 'evaluator_http_error'
+        : error instanceof InvalidEvaluatorResponseError
+          ? 'evaluator_invalid_response'
+          : 'unexpected_evaluation_error';
       this.logger.warn('Response reliability evaluation failed', {
         messageId: job.messageId,
         failureCode,
@@ -240,37 +298,70 @@ export class ResponseReliabilityService implements OnModuleInit {
     }
   }
 
-  private async callEvaluator(input: ResponseReliabilityInput, judgeModel: string, omitTemperature: boolean, settings: ResponseReliabilitySettings): Promise<AdkReliabilityResponse> {
-    const baseUrl = (this.configService.get<string>('indexing.apiAdk') || 'http://localhost:8001').replace(/\/$/, '');
+  private async callEvaluator(
+    input: ResponseReliabilityInput,
+    judgeModel: string,
+    omitTemperature: boolean,
+    settings: ResponseReliabilitySettings,
+  ): Promise<AdkReliabilityResponse> {
+    const baseUrl = (
+      this.configService.get<string>('indexing.apiAdk') || 'http://localhost:8001'
+    ).replace(/\/$/, '');
     const apiKey = (this.configService.get<string>('indexing.adkApiKey') || '').trim();
     if (!apiKey) throw new Error('ADK API key is not configured');
     const { data } = await axios.post(
       `${baseUrl}/response-evaluation/evaluate`,
       { ...input, judgeModel, maxFindings: settings.maxFindings, omitTemperature },
-      { headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'X-Request-ID': input.requestId }, timeout: settings.timeoutMs },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'X-Request-ID': input.requestId,
+        },
+        timeout: settings.timeoutMs,
+      },
     );
     return this.validateEvaluatorResponse(data, input);
   }
 
-  private validateEvaluatorResponse(value: unknown, input: ResponseReliabilityInput): AdkReliabilityResponse {
+  private validateEvaluatorResponse(
+    value: unknown,
+    input: ResponseReliabilityInput,
+  ): AdkReliabilityResponse {
     if (!value || typeof value !== 'object') throw new InvalidEvaluatorResponseError();
     const raw = value as Record<string, unknown>;
-    if (raw.applicability !== 'evaluated' && raw.applicability !== 'not_applicable') throw new InvalidEvaluatorResponseError();
-    if (!Array.isArray(raw.claims) || raw.claims.length > 100
-      || typeof raw.evaluatorVersion !== 'string' || typeof raw.promptVersion !== 'string') {
+    if (raw.applicability !== 'evaluated' && raw.applicability !== 'not_applicable')
+      throw new InvalidEvaluatorResponseError();
+    if (
+      !Array.isArray(raw.claims) ||
+      raw.claims.length > 100 ||
+      typeof raw.evaluatorVersion !== 'string' ||
+      typeof raw.promptVersion !== 'string'
+    ) {
       throw new InvalidEvaluatorResponseError();
     }
-    const validStatuses = new Set<ReliabilityClaimStatus>(['supported', 'partially_supported', 'unsupported', 'contradicted']);
+    const validStatuses = new Set<ReliabilityClaimStatus>([
+      'supported',
+      'partially_supported',
+      'unsupported',
+      'contradicted',
+    ]);
     const validImportance = new Set<ReliabilityClaimImportance>(['critical', 'major', 'minor']);
-    const evidenceIds = new Set([...input.globalEvidence.map((item) => item.id), ...input.segments.flatMap((segment) => segment.evidence.map((item) => item.id))]);
+    const evidenceIds = new Set([
+      ...input.globalEvidence.map((item) => item.id),
+      ...input.segments.flatMap((segment) => segment.evidence.map((item) => item.id)),
+    ]);
     const claims = raw.claims.map((claim): EvaluatedReliabilityClaim => {
       if (!claim || typeof claim !== 'object') throw new InvalidEvaluatorResponseError();
       const item = claim as Record<string, unknown>;
-      if (typeof item.claim !== 'string' || typeof item.explanation !== 'string'
-        || !validStatuses.has(item.status as ReliabilityClaimStatus)
-        || !validImportance.has(item.importance as ReliabilityClaimImportance)
-        || !Array.isArray(item.evidenceIds)
-        || item.evidenceIds.some((id) => typeof id !== 'string' || !evidenceIds.has(id))) {
+      if (
+        typeof item.claim !== 'string' ||
+        typeof item.explanation !== 'string' ||
+        !validStatuses.has(item.status as ReliabilityClaimStatus) ||
+        !validImportance.has(item.importance as ReliabilityClaimImportance) ||
+        !Array.isArray(item.evidenceIds) ||
+        item.evidenceIds.some((id) => typeof id !== 'string' || !evidenceIds.has(id))
+      ) {
         throw new InvalidEvaluatorResponseError();
       }
       return {
@@ -281,10 +372,19 @@ export class ResponseReliabilityService implements OnModuleInit {
         evidenceIds: item.evidenceIds as string[],
       };
     });
-    return { applicability: raw.applicability, claims, evaluatorVersion: raw.evaluatorVersion, promptVersion: raw.promptVersion };
+    return {
+      applicability: raw.applicability,
+      claims,
+      evaluatorVersion: raw.evaluatorVersion,
+      promptVersion: raw.promptVersion,
+    };
   }
 
-  private async failJob(job: ReliabilityJob, failureCode: string, durationMs?: number): Promise<void> {
+  private async failJob(
+    job: ReliabilityJob,
+    failureCode: string,
+    durationMs?: number,
+  ): Promise<void> {
     await this.messageService.updateReliabilityEvaluation(job.messageId, {
       status: 'failed',
       requestedAt: job.requestedAt,

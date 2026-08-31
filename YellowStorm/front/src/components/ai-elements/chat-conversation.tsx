@@ -71,6 +71,7 @@ export type ChatMessageBubbleProps = HTMLAttributes<HTMLDivElement> & {
   /** Whether this message is currently streaming. Affects default open state of collapsible components. */
   isStreaming?: boolean;
   showTaskDiagnostics?: boolean;
+  footerActions?: ReactNode;
   /**
    * Visual density. `comfortable` (default) is the full main-app chat sizing.
    * `compact` shrinks padding, type, and max-width so the same bubble fits a
@@ -84,7 +85,7 @@ export type ChatMessageBubbleProps = HTMLAttributes<HTMLDivElement> & {
  * User messages appear on the right, AI messages on the left
  * AI messages support structured activity, queues, plans, and answer content.
  */
-export const ChatMessageBubble = ({ message, className, showAvatar = true, userAvatar, assistantAvatar, isStreaming = false, showTaskDiagnostics = true, density = 'comfortable', ...props }: ChatMessageBubbleProps) => {
+export const ChatMessageBubble = ({ message, className, showAvatar = true, userAvatar, assistantAvatar, isStreaming = false, showTaskDiagnostics = true, footerActions, density = 'comfortable', ...props }: ChatMessageBubbleProps) => {
   const { t: tCommon, language } = useModuleTranslation('common');
   const isUser = message.role === 'user';
   const isStructuredContent = Array.isArray(message.content);
@@ -129,6 +130,7 @@ export const ChatMessageBubble = ({ message, className, showAvatar = true, userA
           </div>
         )}
         <div className='flex flex-1 items-end justify-end gap-2 mt-2'>
+          {footerActions}
           {isUser && message.timestamp && <time className='block text-xs text-muted-foreground'>{formatMessageTimestamp(message.timestamp, language)}</time>}
           {message.isEdited && <span className='text-xs text-muted-foreground text-[12px] opacity-70'>{tCommon('message.edited')}</span>}
         </div>

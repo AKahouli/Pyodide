@@ -94,8 +94,8 @@ describe('PlaybookAssistantInternalController', () => {
     expect(assistantService.startConstruction).not.toHaveBeenCalled();
   });
 
-  it('blocks generation when the trusted user lacks playbook.create', async () => {
-    const assistantService = { startGeneration: jest.fn() };
+  it('allows generation for a trusted user without playbook.create', async () => {
+    const assistantService = { startGeneration: jest.fn().mockResolvedValue({ status: 'planning' }) };
     const controller = new PlaybookAssistantInternalController(
       {} as never,
       assistantService as never,
@@ -110,17 +110,21 @@ describe('PlaybookAssistantInternalController', () => {
     };
 
     await expect(controller.startGeneration(headers, 'request-1', {} as never))
-      .rejects.toThrow('cannot perform this Playbook action');
-    expect(assistantService.startGeneration).not.toHaveBeenCalled();
+      .resolves.toEqual({ status: 'planning' });
+    expect(assistantService.startGeneration).toHaveBeenCalledWith(
+      'request-1',
+      expect.objectContaining({ ownerId: 'user-1', agentId: 'agent-1' }),
+      {},
+    );
   });
 
-  it('starts current-turn generation only after resolving playbook.create', async () => {
+  it('starts current-turn generation without resolving playbook.create', async () => {
     const assistantService = { startCurrentTurnGeneration: jest.fn().mockResolvedValue({ playbookId: 'playbook-1' }) };
     const controller = new PlaybookAssistantInternalController(
       {} as never,
       assistantService as never,
       { findById: jest.fn().mockResolvedValue({ roles: ['creator'] }) } as never,
-      { getUserPermissions: jest.fn().mockResolvedValue(['playbook.create']) } as never,
+      { getUserPermissions: jest.fn().mockResolvedValue(['playbook.read']) } as never,
     );
     const headers = {
       'x-yellowstorm-tenant-id': 'default',

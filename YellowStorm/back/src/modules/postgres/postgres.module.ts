@@ -1,4 +1,4 @@
-import { Global, Module, OnModuleDestroy, Inject } from '@nestjs/common';
+import { Global, Logger, Module, OnModuleDestroy, Inject } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -16,7 +16,7 @@ import * as schema from './schema';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
         const cfg = configService.get<PostgresConfig>('postgres')!;
-        console.log('[PostgresModule] Creating Postgres pool...');
+        const logger = new Logger(PostgresModule.name);
         const pool = new Pool({
           host: cfg.host,
           port: cfg.port,
@@ -27,9 +27,13 @@ import * as schema from './schema';
           max: cfg.maxPoolSize,
           idleTimeoutMillis: cfg.idleTimeoutMs,
           connectionTimeoutMillis: cfg.connectionTimeoutMs,
+          statement_timeout: cfg.statementTimeoutMs,
+          idle_in_transaction_session_timeout: cfg.idleInTransactionTimeoutMs,
+          keepAlive: cfg.keepAlive,
+          application_name: cfg.applicationName,
         });
         pool.on('error', (err) => {
-          console.error('[PostgresModule] Idle client error:', err.message);
+          logger.error('Idle PostgreSQL client error', err.stack);
         });
         return pool;
       },

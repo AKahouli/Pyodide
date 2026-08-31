@@ -157,7 +157,6 @@ export class PlaybookAssistantInternalController {
     @Body() dto: StartPlaybookGenerationDto,
   ) {
     const actor = this.actor(headers);
-    await this.assertUserPermission(actor.ownerId, Permissions.PLAYBOOK_CREATE);
     return this.assistantService.startGeneration(requestId, actor, dto);
   }
 
@@ -168,7 +167,6 @@ export class PlaybookAssistantInternalController {
     @Body() dto: StartPlaybookGenerationDto,
   ) {
     const actor = this.actor(headers);
-    await this.assertUserPermission(actor.ownerId, Permissions.PLAYBOOK_CREATE);
     return this.assistantService.startCurrentTurnGeneration(actor, dto);
   }
 

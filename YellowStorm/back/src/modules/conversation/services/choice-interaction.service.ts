@@ -1,11 +1,9 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { normalizeChoiceComponentData } from '../utils/choice-component-normalizer';
-import { Message, MessageDocument } from '../schemas/message.schema';
 import type { ChoiceInteractionDto } from '../dto/send-message.dto';
+import { MESSAGE_STORE, type MessageStore } from '../persistence/message-store';
 
 export interface CanonicalChoiceSubmission {
   content: string;
@@ -21,45 +19,69 @@ export interface CanonicalMultiChoiceSubmission {
 
 @Injectable()
 export class ChoiceInteractionService {
-  constructor(@InjectModel(Message.name) private readonly messageModel: Model<MessageDocument>) {}
+  constructor(@Inject(MESSAGE_STORE) private readonly messageStore: MessageStore) {}
 
-  async canonicalize(conversationId: string, interaction: ChoiceInteractionDto): Promise<CanonicalChoiceSubmission> {    const source = await this.messageModel.findOne({
-      _id: interaction.sourceMessageId,
-      conversationId: new Types.ObjectId(conversationId),
-      conversationType: 'ai',
-    }).select('components').lean().exec();
-    const component = source?.components?.find((item) => item.id === interaction.componentId && item.type === 'choice');
+  async canonicalize(
+    conversationId: string,
+    interaction: ChoiceInteractionDto,
+  ): Promise<CanonicalChoiceSubmission> {
+    const source = await this.messageStore.findAiComponents(
+      conversationId,
+      interaction.sourceMessageId,
+    );
+    const component = source?.components?.find(
+      (item) => item.id === interaction.componentId && item.type === 'choice',
+    );
     const choice = component ? normalizeChoiceComponentData(component.data) : null;
-    if (!choice || choice.status !== 'ready' || choice.questionId !== interaction.questionId || choice.selectionMode !== interaction.selectionMode) {
+    if (
+      !choice ||
+      choice.status !== 'ready' ||
+      choice.questionId !== interaction.questionId ||
+      choice.selectionMode !== interaction.selectionMode
+    ) {
       throw this.invalid();
     }
 
     const selectedIds = interaction.selectedOptions.map((item) => item.optionId);
     const selected = choice.options.filter((option) => selectedIds.includes(option.id));
-    if (selected.length !== selectedIds.length || selected.some((option) => option.disabled)) throw this.invalid();
+    if (selected.length !== selectedIds.length || selected.some((option) => option.disabled))
+      throw this.invalid();
     const customAnswer = interaction.customAnswer?.trim();
     if (interaction.dismissed) {
       if (!choice.dismissible || selected.length || customAnswer) throw this.invalid();
       const displayText = choice.labels?.dismiss ?? 'Dismissed';
       return {
-        content: JSON.stringify({
-          question: {
-            prompt: choice.prompt,
-            description: choice.description ?? null,
+        content: JSON.stringify(
+          {
+            question: {
+              prompt: choice.prompt,
+              description: choice.description ?? null,
+            },
+            selectedChoices: [],
+            alternativeResponse: null,
+            dismissed: true,
           },
-          selectedChoices: [],
-          alternativeResponse: null,
-          dismissed: true,
-        }, null, 2),
+          null,
+          2,
+        ),
         taskSummary: this.summarize([displayText]),
         interaction: {
-          type: 'choice', componentId: interaction.componentId, questionId: choice.questionId,
-          sourceMessageId: interaction.sourceMessageId, selectionMode: choice.selectionMode,
-          selectedOptions: [], dismissed: true, displayText,
+          type: 'choice',
+          componentId: interaction.componentId,
+          questionId: choice.questionId,
+          sourceMessageId: interaction.sourceMessageId,
+          selectionMode: choice.selectionMode,
+          selectedOptions: [],
+          dismissed: true,
+          displayText,
         },
       };
     }
-    if (customAnswer && (!choice.otherOption?.enabled || customAnswer.length > choice.otherOption.maxLength)) throw this.invalid();
+    if (
+      customAnswer &&
+      (!choice.otherOption?.enabled || customAnswer.length > choice.otherOption.maxLength)
+    )
+      throw this.invalid();
     if (choice.selectionMode === 'single' && selected.length > 1) throw this.invalid();
     if (choice.selectionMode === 'single' && customAnswer && selected.length) throw this.invalid();
     if (!selected.length && !customAnswer) throw this.invalid();
@@ -67,27 +89,39 @@ export class ChoiceInteractionService {
     const canonicalSelected = selected;
     const displayParts = canonicalSelected.map((option) => option.label);
     if (customAnswer) displayParts.push(customAnswer);
-    const content = JSON.stringify({
-      question: {
-        prompt: choice.prompt,
-        description: choice.description ?? null,
+    const content = JSON.stringify(
+      {
+        question: {
+          prompt: choice.prompt,
+          description: choice.description ?? null,
+        },
+        selectedChoices: canonicalSelected.map((option) => ({
+          optionId: option.id,
+          submitText: option.submitText,
+          description: option.description ?? null,
+        })),
+        alternativeResponse: customAnswer ?? null,
+        dismissed: false,
       },
-      selectedChoices: canonicalSelected.map((option) => ({
-        optionId: option.id,
-        submitText: option.submitText,
-        description: option.description ?? null,
-      })),
-      alternativeResponse: customAnswer ?? null,
-      dismissed: false,
-    }, null, 2);
+      null,
+      2,
+    );
     return {
       content,
       taskSummary: this.summarize(displayParts),
       interaction: {
-        type: 'choice', componentId: interaction.componentId, questionId: choice.questionId,
-        sourceMessageId: interaction.sourceMessageId, selectionMode: choice.selectionMode,
-        selectedOptions: canonicalSelected.map((option) => ({ optionId: option.id, label: option.label, ...(option.value ? { value: option.value } : {}) })),
-        ...(customAnswer ? { customAnswer } : {}), displayText: displayParts.join(', '),
+        type: 'choice',
+        componentId: interaction.componentId,
+        questionId: choice.questionId,
+        sourceMessageId: interaction.sourceMessageId,
+        selectionMode: choice.selectionMode,
+        selectedOptions: canonicalSelected.map((option) => ({
+          optionId: option.id,
+          label: option.label,
+          ...(option.value ? { value: option.value } : {}),
+        })),
+        ...(customAnswer ? { customAnswer } : {}),
+        displayText: displayParts.join(', '),
       },
     };
   }
