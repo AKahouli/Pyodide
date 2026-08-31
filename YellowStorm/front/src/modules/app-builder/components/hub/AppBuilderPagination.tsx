@@ -16,10 +16,10 @@ export function AppBuilderPagination({ page, totalPages, onPageChange }: AppBuil
 
   return (
     <nav
-      className='flex flex-col gap-3 border-t border-border/60 pt-4 sm:flex-row sm:items-center sm:justify-between'
+      className='flex flex-col gap-2 border-t border-border/60 pt-3 sm:flex-row sm:items-center sm:justify-between'
       aria-label={t('hub.pagination.ariaLabel')}
     >
-      <p className='text-sm text-muted-foreground'>
+      <p className='text-xs text-muted-foreground'>
         {t('hub.pagination.summary', { page, total: totalPages })}
       </p>
       <div className='flex gap-2'>

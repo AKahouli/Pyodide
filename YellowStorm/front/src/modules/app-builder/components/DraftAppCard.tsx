@@ -29,17 +29,17 @@ export const DraftAppCard = memo(function DraftAppCard({
 
   const statusBadge =
     app.deployStatus === 'deploying' ? (
-      <Badge variant='outline' className='shrink-0 gap-1 border-amber-500/30 text-amber-700 dark:text-amber-300'>
+      <Badge variant='outline' className='shrink-0 gap-1 border-amber-500/30 px-1.5 py-0 text-[10px] text-amber-700 dark:text-amber-300'>
         <Loader2 className='h-3 w-3 animate-spin' />
         {t('card.draftStatus.deploying')}
       </Badge>
     ) : app.deployStatus === 'error' ? (
-      <Badge variant='outline' className='shrink-0 gap-1 border-destructive/40 text-destructive'>
+      <Badge variant='outline' className='shrink-0 gap-1 border-destructive/40 px-1.5 py-0 text-[10px] text-destructive'>
         <AlertCircle className='h-3 w-3' />
         {t('card.draftStatus.error')}
       </Badge>
     ) : (
-      <Badge variant='outline' className='shrink-0 border-amber-500/30 text-amber-800 dark:text-amber-200'>
+      <Badge variant='outline' className='shrink-0 border-amber-500/30 px-1.5 py-0 text-[10px] text-amber-800 dark:text-amber-200'>
         {t('card.draftStatus.idle')}
       </Badge>
     );
@@ -65,46 +65,26 @@ export const DraftAppCard = memo(function DraftAppCard({
   );
 
   return (
-    <Card className='overflow-hidden border-amber-500/15 bg-gradient-to-br from-amber-500/[0.04] to-transparent'>
-      <CardContent
-        className={
-          view === 'grid'
-            ? 'flex h-full flex-col gap-4 p-4'
-            : 'flex items-center gap-4 p-4'
-        }
-      >
-        <div
-          className={
-            view === 'grid'
-              ? 'flex items-start justify-between gap-3'
-              : 'flex min-w-0 flex-1 items-center gap-4'
-          }
-        >
-          <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-amber-500/15'>
-            <PencilLine className='h-6 w-6 text-amber-700 dark:text-amber-300' />
-          </div>
-
-          <div className='min-w-0 flex-1'>
-            <div className='flex min-w-0 items-center gap-2'>
-              <h3 className='min-w-0 flex-1 truncate font-medium' title={title}>
-                {title}
-              </h3>
-              {statusBadge}
-            </div>
-            <p className='mt-0.5 text-sm text-muted-foreground'>{t('card.draftHint')}</p>
-            <p className='mt-0.5 text-xs text-muted-foreground'>
-              {t('card.updatedAt', { date: new Date(app.lastUpdatedAt).toLocaleString() })}
-            </p>
-          </div>
-
-          {view === 'list' ? actions : null}
+    <Card className='overflow-hidden border-amber-500/15 bg-gradient-to-br from-amber-500/[0.04] to-transparent shadow-sm'>
+      <CardContent className='flex items-start gap-2.5 p-3'>
+        <div className='flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-amber-500/15'>
+          <PencilLine className='h-4 w-4 text-amber-700 dark:text-amber-300' />
         </div>
 
-        {view === 'grid' ? (
-          <div className='mt-auto flex justify-end border-t border-border/60 pt-3'>
-            {actions}
+        <div className='min-w-0 flex-1'>
+          <div className='flex min-w-0 items-start gap-2'>
+            <h3 className='min-w-0 flex-1 truncate text-sm font-medium leading-snug' title={title}>
+              {title}
+            </h3>
+            {statusBadge}
           </div>
-        ) : null}
+          <p className='mt-0.5 line-clamp-2 text-xs text-muted-foreground'>{t('card.draftHint')}</p>
+          <p className='mt-0.5 text-[11px] text-muted-foreground'>
+            {t('card.updatedAt', { date: new Date(app.lastUpdatedAt).toLocaleString() })}
+          </p>
+        </div>
+
+        <div className={view === 'grid' ? 'shrink-0 self-start' : 'shrink-0'}>{actions}</div>
       </CardContent>
     </Card>
   );

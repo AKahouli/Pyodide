@@ -41,14 +41,14 @@ export function AppBuilderGrid({ tab, deployed, shared, drafts, view }: AppBuild
 
   const layoutClass =
     view === 'grid'
-      ? 'grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'
+      ? 'grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3'
       : 'flex flex-col gap-2';
 
   const countLabel =
     apps.length === 1 ? t('hub.sections.singleApp') : t('hub.sections.appsCount', { count: apps.length });
 
   return (
-    <section className='space-y-4' aria-labelledby='app-builder-list-heading'>
+    <section className='space-y-3' aria-labelledby='app-builder-list-heading'>
       <header className='flex items-baseline gap-3'>
         <h2
           id='app-builder-list-heading'

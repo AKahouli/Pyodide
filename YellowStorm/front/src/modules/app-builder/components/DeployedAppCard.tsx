@@ -105,54 +105,37 @@ export const DeployedAppCard = memo(function DeployedAppCard({
 
   return (
     <>
-      <Card className='overflow-hidden'>
-        <CardContent
-          className={
-            view === 'grid'
-              ? 'flex h-full flex-col gap-4 p-4'
-              : 'flex items-center gap-4 p-4'
-          }
-        >
-          <div
-            className={
-              view === 'grid'
-                ? 'flex items-start justify-between gap-3'
-                : 'flex min-w-0 flex-1 items-center gap-4'
-            }
-          >
-            <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10'>
-              <Globe className='h-6 w-6 text-primary' />
-            </div>
-
-            <div className='min-w-0 flex-1'>
-              <div className='flex min-w-0 items-center gap-2'>
-                <h3 className='min-w-0 flex-1 truncate font-medium' title={title}>
-                  {title}
-                </h3>
-                {!isOwned && (
-                  <Badge variant='outline' className='shrink-0'>
-                    {t('card.shared')}
-                  </Badge>
-                )}
-              </div>
-              <p className='mt-0.5 truncate text-sm text-muted-foreground' title={app.deployedUrl}>
-                {app.deployedUrl}
-              </p>
-              {app.lastDeployedAt && (
-                <p className='mt-0.5 text-xs text-muted-foreground'>
-                  {t('card.deployedAt', { date: new Date(app.lastDeployedAt).toLocaleString() })}
-                </p>
-              )}
-            </div>
-
-            {view === 'list' ? actions : null}
+      <Card className='overflow-hidden shadow-sm'>
+        <CardContent className='flex items-start gap-2.5 p-3'>
+          <div className='flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10'>
+            <Globe className='h-4 w-4 text-primary' />
           </div>
 
-          {view === 'grid' ? (
-            <div className='mt-auto flex justify-end border-t border-border/60 pt-3'>
-              {actions}
+          <div className='min-w-0 flex-1'>
+            <div className='flex min-w-0 items-start gap-2'>
+              <h3 className='min-w-0 flex-1 truncate text-sm font-medium leading-snug' title={title}>
+                {title}
+              </h3>
+              {!isOwned && (
+                <Badge variant='outline' className='shrink-0 px-1.5 py-0 text-[10px]'>
+                  {t('card.shared')}
+                </Badge>
+              )}
             </div>
-          ) : null}
+            <p
+              className='mt-0.5 truncate text-xs text-muted-foreground'
+              title={app.deployedUrl}
+            >
+              {app.deployedUrl}
+            </p>
+            {app.lastDeployedAt && (
+              <p className='mt-0.5 text-[11px] text-muted-foreground'>
+                {t('card.deployedAt', { date: new Date(app.lastDeployedAt).toLocaleString() })}
+              </p>
+            )}
+          </div>
+
+          <div className={view === 'grid' ? 'shrink-0 self-start' : 'shrink-0'}>{actions}</div>
         </CardContent>
       </Card>
 
