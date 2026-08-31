@@ -9,7 +9,10 @@ Reuses the project's LLMFactory so model/proxy config stays in one place.
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
+from email.utils import parseaddr
 from typing import Awaitable, Callable, List, Optional
 
 from google.adk.agents import LlmAgent
@@ -145,13 +148,117 @@ def _stop_after_n_calls(limit: int, model_name: str, *,
 
     return _cb
 
+
+# The filler messages the backend passes as the workflow's shared new_message
+# (see service.py _drive/resume). They carry no task — the real per-step task is
+# injected below — so a step-agent is better off never seeing them. Kept exact so
+# a real email reply (which a resumed step gets as its front user turn) is never
+# mistaken for one.
+_KICKOFF_SENTINELS = frozenset({"run the plan", "continue"})
+
+
+def _skip_if_cancelled(step: Step):
+    """Short-circuit a step the user cancelled mid-run (a converse amend).
+
+    The factory closes over the LIVE step object, and this callback runs at
+    model-call time — AFTER an amend may have set status=CANCELLED — so a step
+    still PENDING when its wave arrives is caught here and does NO real work
+    (no tool calls, no email). The node still emits, but _apply_event ignores a
+    CANCELLED step's events, so its status stays cancelled. Topology is
+    unchanged (same node, same edges), so ADK's replay barrier is unaffected —
+    this is the only kind of cancel that's safe on a running plan (see the
+    _SilentJoinNode docstring in graph.py for why touching topology is not)."""
+    async def _cb(callback_context, llm_request):
+        if step.status == Status.CANCELLED:
+            from google.adk.models.llm_response import LlmResponse
+            return LlmResponse(content=genai_types.Content(
+                role="model",
+                parts=[genai_types.Part(text="This step was cancelled by the user.")]))
+        return None
+    return _cb
+
+
+def _inject_task_turn(task_text):
+    """Deliver the step's task as a USER turn instead of baking it into the
+    system prompt.
+
+    `task_text` may be a str or a zero-arg callable returning one. The callable
+    form is read fresh on every model call, so an amend that rewrites a still-
+    pending step's `description` (a converse "modify") takes effect when the
+    node fires, with no workflow rebuild — same lever as _skip_if_cancelled.
+
+    ADK hands the whole workflow ONE shared kickoff message ("run the plan"), so
+    a step's own task can normally only reach it through system_instruction. We
+    put it in as a distinct user turn — which lets the big rules block stay
+    identical across every step (cacheable) — placed EARLY, never last. A task
+    pinned last is re-read as the most-recent instruction every round and
+    out-shouts terminal flow signals: seen live, a persona step that had already
+    sent its mail and created its await_reply step (whose tool result says "end
+    your turn now") kept polling the mailbox because the appended task stayed
+    more recent than that stop. Kept early, the growing tool history — including
+    those stop messages — stays more recent than the task.
+
+    If the front turn is the shared filler kickoff, we REPLACE it (no reason to
+    keep noise the model has to reconcile). Otherwise the front turn is real —
+    on a resume it's the incoming email reply — so we keep it and splice the task
+    in right after. Re-applied every model call (the splice lives only on the
+    transient request, never in session state) and idempotent.
+    """
+    async def _cb(callback_context, llm_request):
+        text = task_text() if callable(task_text) else task_text
+        contents = list(llm_request.contents or [])
+        task = genai_types.Content(
+            role="user", parts=[genai_types.Part(text=text)])
+
+        def user_text(c):
+            return (c.parts[0].text if getattr(c, "role", None) == "user"
+                    and c.parts and getattr(c.parts[0], "text", None) is not None else None)
+
+        first_txt = user_text(contents[0]) if contents else None
+        if first_txt in _KICKOFF_SENTINELS:
+            contents[0] = task                       # drop the filler, task takes its place
+        elif not (len(contents) > 1 and user_text(contents[1]) == text):
+            contents.insert(1, task)                 # keep the real front turn, task right after
+        else:
+            return None                              # already spliced
+        llm_request.contents = contents
+        return None
+    return _cb
+
+
+def _trace_execution(step: Step, name: str):
+    """DIAGNOSTIC (remove once replay-vs-rerun is confirmed): fires ONLY on a
+    real model call for this step. ADK replays an already-completed node from
+    recorded history WITHOUT invoking the model, so this callback never runs on
+    a replay. Therefore: if a step a previous pass already COMPLETED logs this
+    on a later (add/modify amend) pass, the plan is genuinely RE-EXECUTING it
+    from scratch, not replaying it — that's the bug the user suspects."""
+    async def _cb(callback_context, llm_request):
+        logger.info("[worky] ⚡ REAL MODEL CALL node=%s status=%s task=%r",
+                    name, step.status.value,
+                    (step.description or step.id)[:50])
+        return None
+    return _cb
+
+
+def _compose_before_model(*cbs):
+    """Chain before_model callbacks; the first to return a response wins."""
+    async def _run(callback_context, llm_request):
+        for cb in cbs:
+            resp = await cb(callback_context, llm_request)
+            if resp is not None:
+                return resp
+        return None
+    return _run
+
+
 EXECUTOR_INSTRUCTION = """{identity}
 
 {do_this_line}
 {description}
 
 You are not told the plan's wider goal or its other steps, on purpose — the
-planner already wrote your task above as a complete, standalone instruction,
+planner already wrote your task as a complete, standalone instruction,
 and every other step in this plan has the SAME toolset you do (including
 things like sending email). Reaching for one of those tools because it looks
 useful for the overall task is another step's job, not yours.
@@ -207,6 +314,13 @@ def is_send_email_tool(tool) -> bool:
     from (tool names are `{connector_slug}_{action_key}`)."""
     name = getattr(getattr(tool, "func", None), "__name__", "") or ""
     return name.endswith("_send_email")
+
+
+def is_send_teams_tool(tool) -> bool:
+    """True for a connector's send_teams_message action tool, whatever connector
+    it came from. The Teams sibling of is_send_email_tool."""
+    name = getattr(getattr(tool, "func", None), "__name__", "") or ""
+    return name.endswith("_send_teams_message")
 
 
 def artifacts_from_tool_result(result) -> List[dict]:
@@ -303,13 +417,33 @@ def capture_artifacts_tool(tool, *, on_artifact: Callable[[dict], Awaitable[None
     return SearchToolADK(capturing, {"function": tool.custom_schema})
 
 
+def _recipients(kwargs) -> List[str]:
+    """Every address a reply may come from — all `to_recipients` entries, as bare
+    lower-cased addresses. A mail to several people can be answered by any of
+    them, so the wait accepts a reply from any recipient; an empty list leaves the
+    wait token-only (nothing to check against)."""
+    to = kwargs.get("to_recipients")
+    if isinstance(to, str):
+        to = [to]
+    if not isinstance(to, (list, tuple)):
+        return []
+    out: List[str] = []
+    for x in to:
+        addr = parseaddr(str(x))[1].strip().lower()
+        if addr:
+            out.append(addr)
+    return out
+
+
 def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Optional[str]]],
-                          on_sent: Optional[Callable[[str], Awaitable[None]]] = None):
+                          on_sent: Optional[Callable[[str, List[str]], Awaitable[None]]] = None):
     """Wrap a send_email tool so the outbound mail carries its routing token.
 
-    `on_sent(token)` — optional — runs only after the underlying send returns
-    successfully, for callers that need to persist the wait (see
-    _mail_stamping's eager path). A send that raises must leave no wait behind.
+    `on_sent(token, recipients)` — optional — runs only after the underlying
+    send returns successfully, for callers that need to persist the wait (see
+    _mail_stamping's eager path) or record who the reply may come from.
+    `recipients` is the mail's recipient addresses (possibly several, possibly
+    empty). A send that raises must leave no wait behind.
 
     Deterministic on purpose. The alternative — telling the executor LLM to put a
     marker in the subject — fails open: the one time the model omits it, the
@@ -346,13 +480,75 @@ def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Option
         # token has to be IN the mail — but persisting waits for the send to
         # come back.
         if token and on_sent is not None:
-            await on_sent(token)
+            await on_sent(token, _recipients(kwargs))
         return result
 
     stamped.__name__ = original.__name__
     stamped.__signature__ = original.__signature__
     stamped.__annotations__ = original.__annotations__
     return SearchToolADK(stamped, {"function": tool.custom_schema})
+
+
+def _teams_chat_id(result) -> Optional[str]:
+    """The 1:1 chat id of the message send_teams_message just posted, from its
+    JSON result — or None (a channel send has no chat id; that path is not
+    resumable yet, backlog #4). The reply is correlated by this chat id, so a
+    missing one means the reply can never route back."""
+    try:
+        top = json.loads(result) if isinstance(result, str) else (result or {})
+        # Prefer the id the send tool surfaces explicitly; fall back to the one
+        # Graph echoes on the created message (not always present).
+        return top.get("chat_id") or (top.get("data") or {}).get("chatId")
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def record_send_teams_tool(tool, *, token_provider: Callable[[], Awaitable[Optional[str]]],
+                           on_sent: Optional[Callable[[str, Optional[str]], Awaitable[None]]] = None):
+    """Wrap a send_teams_message tool so its wait learns which chat to resume on.
+
+    Unlike mail, NOTHING is stamped into the message: Teams correlates a reply
+    structurally (the Graph chat id), so there is no routing token in the
+    payload and the executor's message goes out untouched. `on_sent(token,
+    chat_id)` runs only after a successful send — chat_id comes from the send
+    result — for the caller to bind the wait to that chat. A send that raises
+    leaves no chat bound, so no reply can resume a message that never went out.
+    """
+    from src.smart_rag.tools.search.tools import SearchToolADK
+
+    original = tool.func
+
+    async def recorded(**kwargs):
+        result = await original(**kwargs)
+        token = await token_provider()
+        if token and on_sent is not None:
+            chat_id = _teams_chat_id(result)
+            if not chat_id:
+                logger.warning("send_teams_message: no chat id in the send result — a "
+                               "reply cannot resume this step (channel send, or send failed)")
+            await on_sent(token, chat_id)
+        return result
+
+    recorded.__name__ = original.__name__
+    recorded.__signature__ = original.__signature__
+    recorded.__annotations__ = original.__annotations__
+    return SearchToolADK(recorded, {"function": tool.custom_schema})
+
+
+def _stored_result_node(name: str, text: str):
+    """A FunctionNode that just re-emits a step's already-produced result.
+
+    Must return types.Content, not a plain string: _function_node.py's
+    _to_event() only populates ev.content (what _apply_event reads the result
+    text from) for a Content return — a bare string becomes ev.output, which
+    _apply_event never looks at, so the read model would silently get "" for a
+    step that already has a real answer."""
+    from google.adk.workflow import FunctionNode
+
+    async def _replay():
+        return genai_types.Content(role="model", parts=[genai_types.Part(text=text)])
+
+    return FunctionNode(func=_replay, name=name)
 
 
 def make_llm_node_factory(
@@ -363,6 +559,7 @@ def make_llm_node_factory(
     custom_instruction: Optional[str] = None,
     tools_for_step: Optional[Callable[[Step, List], List]] = None,
     instruction_for_step: Optional[Callable[[Step], Optional[str]]] = None,
+    replay_completed: bool = False,
 ) -> NodeFactory:
     """Build a NodeFactory that creates one LlmAgent per step.
 
@@ -404,19 +601,17 @@ def make_llm_node_factory(
         # interrupt id, discarding the real answer that's already sitting
         # in step.result. Short-circuit with the stored result instead.
         if step.is_dynamic_delegate and step.status == Status.COMPLETED:
-            from google.adk.workflow import FunctionNode
-            stored_result = step.result or ""
-
-            # Must return types.Content, not a plain string: _function_node.py's
-            # _to_event() only populates ev.content (what _apply_event reads
-            # the result text from, below) for a Content return — a bare
-            # string instead becomes ev.output, which _apply_event never
-            # looks at, so the read model would silently get "" for a step
-            # that actually already has a real answer.
-            async def _replay_stored_result():
-                return genai_types.Content(role="model", parts=[genai_types.Part(text=stored_result)])
-
-            return FunctionNode(func=_replay_stored_result, name=name)
+            return _stored_result_node(name, step.result or "")
+        # Any already-COMPLETED step, on a re-drive that does NOT use ADK's replay
+        # barrier (the continuation loop / continue_turn pass a plain "run the
+        # plan"/"continue" message, which ADK treats as a fresh invocation and
+        # re-runs the whole graph — confirmed at the event level: a completed s1
+        # re-ran its entire GitHub backlog pull on the second pass). Rebuild it as
+        # its stored result so it emits instantly and re-executes NOTHING. NOT set
+        # on resume_turn, where resume_part genuinely replays completed nodes from
+        # history and a FunctionNode swap would diverge from that recorded shape.
+        if replay_completed and step.status == Status.COMPLETED:
+            return _stored_result_node(name, step.result or "")
         # An "ask" step blocks deterministically asking the user (FunctionNode:
         # its interrupt id is stable across replays, so resume matches — unlike an
         # LLM tool call whose id is random each rerun).
@@ -437,8 +632,16 @@ def make_llm_node_factory(
             "Do exactly this — using whatever consultation your role above requires — "
             "and nothing else:" if step.is_persona else
             "Do exactly this and nothing else:")
-        base_instruction = EXECUTOR_INSTRUCTION.format(
-            identity=identity, do_this_line=do_this_line, description=step.description)
+        # The task ({do_this_line}+{description}) no longer lives in the system
+        # prompt: it is delivered as a user turn (see _inject_task_turn), where
+        # attention is highest and the shared "run the plan" kickoff otherwise
+        # competes with it. So the built-in instruction is resolved with the task
+        # placeholders emptied, leaving identity + the invariant rules.
+        base_instruction = re.sub(r"\n{3,}", "\n\n", EXECUTOR_INSTRUCTION.format(
+            identity=identity, do_this_line="", description="")).strip()
+        # Read lazily off the live step so a converse "modify" of a still-pending
+        # step's description is picked up when the node fires, no rebuild needed.
+        task_text = lambda: f"{do_this_line}\n{step.description}"
         # A dynamic delegate's description is ALREADY the message to relay to
         # assignee_name (composed by the caller, typically second-person:
         # "Hi Firas — ... Do you confirm?") — not an open question this step
@@ -483,11 +686,13 @@ def make_llm_node_factory(
             )
         elif step.is_persona:
             persona_preamble = (
-                f"You represent {step.assignee_name} — a real person at this company."
-                + (f" {step.assignee_role}" if step.assignee_role else "")
+                f"You are an assistant acting for {step.assignee_name} — a real "
+                "person at this company. You never answer in their place; your "
+                "job is to reach them and get their real words."
+                + (f" Their role: {step.assignee_role}" if step.assignee_role else "")
                 + "\n\n"
-                f"Your task below is addressed TO {step.assignee_name}, and is for "
-                f"them to answer — not something you answer as them. That holds "
+                f"The task below is addressed to {step.assignee_name} and is theirs "
+                f"to answer — not something you answer as them. That holds "
                 "however easy the answer looks: if it reads as a question about "
                 "what they want, have, or plan, you do not know that, and "
                 "\"nothing\" or \"none\" is still THEIR answer to give, never "
@@ -565,27 +770,43 @@ def make_llm_node_factory(
                         .replace("{do_this_line}", do_this_line)
                         .replace("{description}", step.description))
 
+        # A full instruction carries the task itself ({description}); strip that
+        # task out to the user turn exactly as the built-in path does — otherwise
+        # the agentstore executor prompt (a byte-copy of EXECUTOR_INSTRUCTION,
+        # {description} and all) would bake the task back into system and the
+        # injection would never fire in production.
+        def _resolve_full(text: str) -> str:
+            return re.sub(r"\n{3,}", "\n\n",
+                          text.replace("{identity}", identity)
+                              .replace("{do_this_line}", "")
+                              .replace("{description}", "")).strip()
+
         custom_is_full_instruction = bool(
             custom_instruction and "{description}" in custom_instruction)
-        body = _resolve(custom_instruction) if custom_is_full_instruction else base_instruction
+        body = _resolve_full(custom_instruction) if custom_is_full_instruction else base_instruction
         mail_reply_instruction = instruction_for_step(step) if instruction_for_step else None
         extra_preamble = None if custom_is_full_instruction or not custom_instruction \
             else _resolve(custom_instruction)
         preambles = [p for p in (extra_preamble, persona_preamble, mail_reply_instruction) if p]
         instruction = "\n\n".join(preambles + [body]) if preambles else body
         step_tools = tools_for_step(step, shared_tools) if tools_for_step else shared_tools
-        tool_names = [getattr(getattr(t, "func", None), "__name__", "?") for t in step_tools]
-        logger.info("[worky] 8. step=%s executor context:\n--- instruction ---\n%s\n"
-                    "--- tools (%d) ---\n%s", step.id, instruction, len(tool_names), tool_names)
+        stop_cb = _stop_after_n_calls(
+            MAX_PERSONA_STEP_MODEL_CALLS if step.is_persona else MAX_STEP_MODEL_CALLS,
+            model_name, is_persona=step.is_persona, assignee_name=step.assignee_name)
         return LlmAgent(
             name=name,
             model=build_llm(model_name, with_tools=bool(step_tools), temperature=temperature),
             instruction=instruction,
             tools=step_tools,
             output_key=name,  # step result lands in session state under this key
-            before_model_callback=_stop_after_n_calls(
-                MAX_PERSONA_STEP_MODEL_CALLS if step.is_persona else MAX_STEP_MODEL_CALLS,
-                model_name, is_persona=step.is_persona, assignee_name=step.assignee_name),
+            # Cancel check first (a cancelled step must do nothing at all — and
+            # short-circuiting before the trace keeps "⚡ REAL MODEL CALL" honest,
+            # firing only when a real call actually follows), then inject the task
+            # as the user turn, then the call-budget guard on the resulting
+            # contents (so its forced-answer fallback carries the task).
+            before_model_callback=_compose_before_model(
+                _skip_if_cancelled(step), _trace_execution(step, name),
+                _inject_task_turn(task_text), stop_cb),
         )
 
     return factory

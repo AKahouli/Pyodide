@@ -1,7 +1,8 @@
-import type { DragEvent } from 'react';
+import { useMemo, type DragEvent } from 'react';
 import { useModuleTranslation } from '@/modules/localization';
 import { useWorkyBoard, useWorkyBoardLoading, useWorkyBoardError } from '../store';
 import { useTaskOps } from '../query/hooks';
+import { useStreamAgents } from '../agents/useStreamAgents';
 import { KanbanCard } from './KanbanCard';
 import type { WorkyTask } from '../types';
 import { ORCH_LANES, toOrchColumns, orchDropLane, type OrchStepStatus } from '../status';
@@ -18,6 +19,11 @@ export function KanbanBoard({ streamId, onTaskClick }: KanbanBoardProps): JSX.El
   const loading = useWorkyBoardLoading();
   const error = useWorkyBoardError();
   const taskOps = useTaskOps(streamId);
+
+  // Resolve each executor `assigneeKey` to its display name via the same agent
+  // roster the agents tab uses, so status cards show friendly names, not raw keys.
+  const { agents } = useStreamAgents();
+  const nameByKey = useMemo(() => new Map(agents.map((a) => [a.key, a.name])), [agents]);
 
   // Columns are the orchestrator step statuses; tasks are aggregated from the
   // legacy lanes. A drop maps the orchestrator column back to a canonical
@@ -90,7 +96,12 @@ export function KanbanBoard({ streamId, onTaskClick }: KanbanBoardProps): JSX.El
                     onClick={() => onTaskClick?.(task)}
                     className='w-full text-left'
                   >
-                    <KanbanCard task={task} />
+                    <KanbanCard
+                      task={task}
+                      assigneeName={
+                        task.assigneeKey ? nameByKey.get(task.assigneeKey) ?? task.assigneeKey : null
+                      }
+                    />
                   </button>
                 ))}
               </div>

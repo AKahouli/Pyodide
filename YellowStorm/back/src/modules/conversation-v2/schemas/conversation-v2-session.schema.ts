@@ -24,9 +24,12 @@ export class ConversationV2Session extends Document {
 
   // AI service's session id (returned by gRPC.CreateSession). Optional
   // because it's only set AFTER gRPC succeeds — doc-first creation inserts
-  // the pointer with aiSessionId=null, then patches it. Stored only for
-  // gRPC routing; never exposed externally. The document's `_id` is the
-  // canonical session id.
+  // the pointer with aiSessionId=null, then patches it. The document's `_id`
+  // is the canonical session id for the API and the frontend.
+  //
+  // Used for gRPC routing and as the app-runtime `workspaceId`: APImanus binds
+  // the runtime with this id, so the browser's runtime ticket must be keyed on
+  // it too or the socket registers under a workspace no tool call targets.
   @Prop({ type: String, default: null })
   aiSessionId?: string | null;
 

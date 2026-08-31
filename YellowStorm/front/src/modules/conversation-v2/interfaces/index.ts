@@ -2,6 +2,8 @@ export type {
   ConversationV2EventType,
   AgentEvent,
   BaseEvent,
+  QuestionOption,
+  PendingQuestion,
   FileInfo,
   ToolContent,
   UserSearchResult,

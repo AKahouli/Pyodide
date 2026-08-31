@@ -5,13 +5,14 @@ import { conversationV2Api } from './api';
 import { useConversationV2Store } from './store';
 import { MessageList } from './components/MessageList';
 import { Composer } from './components/Composer';
+import { QuestionChoices } from './components/QuestionChoices';
 import { ConversationV2Header } from './components/ConversationV2Header';
 import { FilesSheet } from './components/FilesSheet';
 import { PlanPanel } from './components/PlanPanel';
 import { RightPanel } from './components/RightPanel/RightPanel';
 import { useConversationV2Translation } from './translation';
 import { FileViewerSidebar, useFileViewerStore } from '@/modules/file-viewer';
-import { useModelsStore } from '@/modules/models';
+import { useModels, useDefaultModel, useConversationV2DefaultModel, useModelsStore } from '@/modules/models';
 import type { AgentEvent } from './types';
 import {
   canWriteConversationV2Session,
@@ -19,6 +20,9 @@ import {
   hasConversationV2SessionPermission,
   type ConversationV2SessionPermission,
 } from './session-permissions';
+import { getOrCreateHost, removeHost } from './runtime/BrowserRuntimeHost';
+import { mapHostStatusToRuntimeUi } from './runtime/runtime.types';
+import { isTurnOpen } from './utils/session-reducer';
 
 interface LocationState {
   initialMessage?: string;
@@ -55,6 +59,9 @@ export default function ConversationV2SessionPage() {
     events,
     hydrateSelectedModelForSession,
     sendMessage,
+    pendingQuestion,
+    streaming,
+    selectedModelId,
   } = useConversationV2Store(
     useShallow((s) => ({
       switchToSession: s.switchToSession,
@@ -69,6 +76,9 @@ export default function ConversationV2SessionPage() {
       events: s.events,
       hydrateSelectedModelForSession: s.hydrateSelectedModelForSession,
       sendMessage: s.sendMessage,
+      pendingQuestion: s.pendingQuestion,
+      streaming: s.streaming,
+      selectedModelId: s.selectedModelId,
     })),
   );
   const [loading, setLoading] = useState(true);
@@ -86,6 +96,18 @@ export default function ConversationV2SessionPage() {
     ConversationV2SessionPermissions.WORKSPACE_DOCUMENTS_READ,
   );
   const isReadOnlyViewer = !canWrite;
+  const models = useModels();
+  const defaultModel = useDefaultModel();
+  const conversationV2DefaultModel = useConversationV2DefaultModel();
+  const activeModel =
+    (selectedModelId && models.find((m) => m.id === selectedModelId)) ||
+    conversationV2DefaultModel ||
+    defaultModel ||
+    null;
+
+  const handleSend = (text: string) => {
+    void sendMessage(text, activeModel?.litellmModel || undefined);
+  };
 
   const latestPlan = useMemo(() => {
     for (let i = events.length - 1; i >= 0; i--) {
@@ -171,14 +193,15 @@ export default function ConversationV2SessionPage() {
         replayEvents(collected);
 
         // If the session is mid-turn server-side, show the thinking state; the
-        // per-user pipe delivers the rest (and a done/error to clear it). Guard
-        // the fresh-session case (status 'active' but no events yet).
-        const nonTerminal = pointer.status === 'active' || pointer.status === 'waiting';
+        // per-user pipe delivers the rest (and a done/error to clear it).
         const last = collected[collected.length - 1];
         const lastIsTerminal = last?.type === 'done' || last?.type === 'error';
         setStreaming(
           canWriteConversationV2Session(pointer.permissions)
-            ? nonTerminal && collected.length > 0 && !lastIsTerminal
+            ? isTurnOpen(collected) ||
+                (pointer.status === 'active' &&
+                  collected.length > 0 &&
+                  !lastIsTerminal)
             : false,
         );
       } catch {
@@ -213,6 +236,46 @@ export default function ConversationV2SessionPage() {
     }
   }, [loading, notFound, isReadOnlyViewer, sessionId, initialMessage, initialModel, initialSkillIds, setSelectedSkillIds, initialConnectorIds, setSelectedConnectorIds, sendMessage]);
 
+  // Boot BrowserRuntimeHost at session open so Nodepod is long-lived.
+  // Read-only viewers don't get a runtime (no ticket request).
+  // ApplicationComponentView / useNodepodPreview only subscribe — they must not call start().
+  useEffect(() => {
+    if (!sessionId || loading || isReadOnlyViewer) return;
+    const appComp = useConversationV2Store.getState().applicationComponent;
+    const host = getOrCreateHost(sessionId);
+    const syncRuntime = () => {
+      useConversationV2Store
+        .getState()
+        .setRuntimeStatus(mapHostStatusToRuntimeUi(host.state.status));
+    };
+    syncRuntime();
+    const unsubscribe = host.subscribe(syncRuntime);
+    if (host.state.status === 'idle') {
+      void host.start(
+        sessionId,
+        appComp?.cephPath ?? null,
+        appComp?.filesTree ?? null,
+      );
+    }
+    return () => {
+      unsubscribe();
+      removeHost(sessionId);
+      useConversationV2Store.getState().setRuntimeStatus('idle');
+    };
+  }, [sessionId, loading, isReadOnlyViewer]);
+
+  // While a turn is in flight, periodically gap-fill events in case the SSE
+  // pipe missed the terminal `done` (backend already completed via gRPC).
+  useEffect(() => {
+    if (!sessionId || loading || !streaming || isReadOnlyViewer) return;
+    const reconcile = () => {
+      void useConversationV2Store.getState().reconcileCurrentSession();
+    };
+    reconcile();
+    const timer = window.setInterval(reconcile, 8_000);
+    return () => window.clearInterval(timer);
+  }, [sessionId, loading, streaming, isReadOnlyViewer]);
+
   if (loading) {
     return (
       <div className='flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground'>
@@ -246,7 +309,14 @@ export default function ConversationV2SessionPage() {
             <PlanPanel steps={latestPlan.steps} />
           </div>
         )}
-        {canWrite && <Composer onSend={sendMessage} />}
+        {pendingQuestion && canWrite && (
+          <QuestionChoices
+            pendingQuestion={pendingQuestion}
+            disabled={streaming}
+            onSelect={handleSend}
+          />
+        )}
+        {canWrite && <Composer onSend={handleSend} />}
       </div>
       {canWrite && <RightPanel />}
       <FileViewerSidebar />

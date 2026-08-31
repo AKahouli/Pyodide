@@ -12,6 +12,7 @@ import { AppModule } from './app.module';
 import { LoggerService } from './modules/logger';
 import { SystemService } from './modules/system/system.service';
 import { parseTrustProxySetting } from './common/utils/client-ip';
+import { APP_DATA_CORS_REQUEST_HEADERS } from './modules/app-data/constants/app-data.constants';
 
 function serializeUnhandledReason(reason: unknown) {
   if (reason instanceof Error) {
@@ -110,6 +111,7 @@ async function bootstrap() {
       'Cache-Control',
       'Connection',
       'Last-Event-ID',
+      ...APP_DATA_CORS_REQUEST_HEADERS,
       'Range',
     ],
     exposedHeaders: ['Set-Cookie', 'Accept-Ranges', 'Content-Disposition', 'Content-Length', 'Content-Range'],

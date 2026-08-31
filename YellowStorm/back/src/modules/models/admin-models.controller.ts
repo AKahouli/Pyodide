@@ -153,6 +153,70 @@ export class AdminModelsController {
     return model;
   }
 
+  @Post(':id/set-conversation-v2-default')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.MODELS_SET_DEFAULT)
+  @ApiOperation({ summary: 'Set a model as the conversation-v2 default' })
+  @ApiParam({ name: 'id', description: 'Model ID (e.g., gpt-4o)' })
+  @ApiResponse({ status: 200, description: 'Model set as conversation-v2 default' })
+  @ApiResponse({ status: 404, description: 'Model not found' })
+  async setConversationV2DefaultModel(
+    @Param('id') id: string,
+    @CurrentUser() actor: UserDocument,
+    @Req() req: Request,
+  ): Promise<ModelResponse> {
+    const model = await this.modelsService.setConversationV2DefaultModel(id);
+
+    if (!model) {
+      throw new NotFoundException(ErrorCode.MODEL_NOT_FOUND);
+    }
+
+    this.auditLogService.logSuccess({
+      actorId: actor._id.toString(),
+      actorEmail: actor.email,
+      action: 'models.set_conversation_v2_default',
+      targetId: id,
+      targetType: 'Model',
+      metadata: { modelName: model.name },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return model;
+  }
+
+  @Post(':id/clear-conversation-v2-default')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.MODELS_SET_DEFAULT)
+  @ApiOperation({ summary: 'Clear conversation-v2 default status from a model' })
+  @ApiParam({ name: 'id', description: 'Model ID (e.g., gpt-4o)' })
+  @ApiResponse({ status: 200, description: 'Conversation-v2 default status cleared' })
+  @ApiResponse({ status: 404, description: 'Model not found' })
+  async clearConversationV2DefaultModel(
+    @Param('id') id: string,
+    @CurrentUser() actor: UserDocument,
+    @Req() req: Request,
+  ): Promise<ModelResponse> {
+    const model = await this.modelsService.clearConversationV2DefaultModel(id);
+
+    if (!model) {
+      throw new NotFoundException(ErrorCode.MODEL_NOT_FOUND);
+    }
+
+    this.auditLogService.logSuccess({
+      actorId: actor._id.toString(),
+      actorEmail: actor.email,
+      action: 'models.clear_conversation_v2_default',
+      targetId: id,
+      targetType: 'Model',
+      metadata: { modelName: model.name },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return model;
+  }
+
   @Post('sync')
   @HttpCode(HttpStatus.OK)
   @RequirePermissions(Permissions.MODELS_UPDATE)

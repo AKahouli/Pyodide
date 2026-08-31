@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     QDRANT_URL: Optional[str] = None
     QDRANT_API_KEY: Optional[str] = None
     QDRANT_COLLECTION_NAME: Optional[str] = None
-    # Embedding dimensions: ada-002=1536, text-embedding-3-small=1536, text-embedding-3-large=3072
-    EMBEDDING_DIMS: int = 3072
+    # Default output size for the configured embedding model.
+    EMBEDDING_DIMS: int = 2560
 
     # Azure Storage
     AZURE_STORAGE_ACCOUNT: str

@@ -35,6 +35,44 @@ export interface IWorkyStreamResponse {
 }
 
 /**
+ * Live per-stream task rollup aggregated from `worky_tasks` (by `lane`) for the
+ * streams list. `progress` is `done / totalTasks` in the range 0..1 (0 when the
+ * stream has no tasks yet).
+ */
+export interface IWorkyStreamStats {
+  totalTasks: number;
+  running: number;
+  done: number;
+  blocked: number;
+  failed: number;
+  progress: number;
+}
+
+/**
+ * A stream list row: the canonical stream response plus its live task stats.
+ */
+export interface IWorkyStreamListItem extends IWorkyStreamResponse {
+  stats: IWorkyStreamStats;
+}
+
+/**
+ * Paginated envelope for `GET /worky/streams`. `statusCounts` maps each stream
+ * status to how many of the owner's streams (within the current search/date
+ * scope, ignoring the status filter) are in that status — powers the home-page
+ * KPI tiles / filter chips accurately across pages.
+ */
+export interface IWorkyStreamListResult {
+  data: IWorkyStreamListItem[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+    statusCounts: Record<string, number>;
+  };
+}
+
+/**
  * Generic ack shape returned by the internal-callback controller. Every
  * `/worky/internal/*` endpoint responds with this — `applied: true` is a
  * stub for Part 1; Parts 2/3/4 replace it with the actual outcome.

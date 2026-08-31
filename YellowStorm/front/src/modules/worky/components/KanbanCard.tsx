@@ -7,9 +7,11 @@ import type { WorkyTask } from '../types';
 
 interface KanbanCardProps {
   task: WorkyTask;
+  /** Resolved executor agent name (`assigneeKey` → roster). Null when unattributed. */
+  assigneeName?: string | null;
 }
 
-export function KanbanCard({ task }: KanbanCardProps): JSX.Element {
+export function KanbanCard({ task, assigneeName }: KanbanCardProps): JSX.Element {
   const { t } = useModuleTranslation('worky');
   return (
     <article className='rounded-md border border-border/60 bg-background/70 p-3 text-sm shadow-sm'>
@@ -23,7 +25,9 @@ export function KanbanCard({ task }: KanbanCardProps): JSX.Element {
         <p className='line-clamp-3 text-xs text-muted-foreground'>{task.description}</p>
       ) : null}
       <footer className='mt-2 flex items-center justify-between text-[10px] text-muted-foreground'>
-        <span>{t(`kanban.assignees.${task.assigneeType}`)}</span>
+        <span title={assigneeName ?? undefined}>
+          {assigneeName ?? t(`kanban.assignees.${task.assigneeType}`)}
+        </span>
         <StatusBadge status={laneToOrch(task.lane)} />
         {task.theoreticalDeadlineAt ? (
           <span className='flex items-center gap-1'>

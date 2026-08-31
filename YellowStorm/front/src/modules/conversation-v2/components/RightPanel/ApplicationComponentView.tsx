@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   ColumnsIcon,
   EyeIcon,
@@ -28,16 +28,21 @@ import type { FilesTreeNode } from '../../types';
 import { useNodepodPreview, type NodepodPreviewStatus } from '../../hooks/useNodepodPreview';
 import { AppSourceFileTree } from './AppSourceFileTree';
 import { AppSourceFileViewer } from './AppSourceFileViewer';
+import { resolveSourceFilesTree } from '../../utils/files-tree';
+
+// Vague 5 contract: this view NEVER boots Nodepod.
+// BrowserRuntimeHost is started once in ConversationV2SessionPage; useNodepodPreview
+// only subscribes. Props (filesTree, …) are display-only and must not trigger a second boot.
+// Ticket / mcpToken must never be passed into the preview iframe (URL, props, postMessage).
 
 type LayoutMode = 'preview-only' | 'split';
 type ContentPane = 'preview' | 'source';
 
 interface ApplicationComponentViewProps {
   title?: string;
-  cephPath?: string | null;
+  /** Kept for the file-tree sidebar display; no longer drives Nodepod boot. */
   filesTree?: FilesTreeNode | null;
   fileCount?: number;
-  revision: string;
   buildProgress?: import('../../types').AppBuildProgress | null;
 }
 
@@ -90,28 +95,25 @@ function statusBadgeKey(
 
 export function ApplicationComponentView({
   title,
-  cephPath,
   filesTree,
   fileCount,
-  revision,
   buildProgress,
 }: ApplicationComponentViewProps) {
   const { t } = useConversationV2Translation();
   const sessionId = useConversationV2Store((s) => s.sessionId);
   const appViewMode = useConversationV2Store((s) => s.appViewMode);
   const deployedUrl = useConversationV2Store((s) => s.deployedUrl);
-  // Always boot/keep Nodepod — even while the deployed iframe is shown.
-  const { status, previewUrl, error, files, retry } = useNodepodPreview({
+  const workspaceRevisionId = useConversationV2Store(
+    (s) => s.applicationComponent?.workspaceRevisionId,
+  );
+  // The host is long-lived in ConversationV2SessionPage; this hook subscribes.
+  const { status, previewUrl, error, files, retry, previewIframeRef } = useNodepodPreview({
     sessionId,
-    cephPath,
-    filesTree,
-    revision,
   });
 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('preview-only');
   const [contentPane, setContentPane] = useState<ContentPane>('preview');
-  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const showDeployedApp = appViewMode === 'deployed' && !!deployedUrl;
 
@@ -137,10 +139,25 @@ export function ApplicationComponentView({
   const badge = badgeKey && badgeClass ? { label: t(badgeKey), className: badgeClass } : null;
   const busy = status === 'loading' || status === 'installing' || status === 'starting';
 
+  const sourceTree = useMemo(
+    () => resolveSourceFilesTree(filesTree, files),
+    [filesTree, files],
+  );
+
   const selectedContent = useMemo(() => {
     if (!selectedPath || !files) return null;
-    const key = selectedPath.startsWith('/') ? selectedPath : `/${selectedPath}`;
-    return files[key] ?? files[selectedPath] ?? null;
+    const rel = selectedPath.replace(/^\/+/, '');
+    const candidates = [
+      selectedPath,
+      rel,
+      `/${rel}`,
+      rel.startsWith('/') ? rel : `/${rel}`,
+    ];
+    for (const key of candidates) {
+      const hit = files[key];
+      if (hit != null) return hit;
+    }
+    return null;
   }, [files, selectedPath]);
 
   const statusLabel =
@@ -166,7 +183,13 @@ export function ApplicationComponentView({
 
   const handleOpenExternal = useCallback(() => {
     if (!previewUrl) return;
-    window.open(previewUrl, '_blank', 'noopener,noreferrer');
+    const base = import.meta.env.BASE_URL || '/';
+    const wrapper = new URL('preview-wrapper.html', `${window.location.origin}${base}`);
+    wrapper.searchParams.set('src', previewUrl);
+    const opened = window.open(wrapper.toString(), '_blank', 'noopener,noreferrer');
+    if (!opened) {
+      window.open(previewUrl, '_blank', 'noopener,noreferrer');
+    }
   }, [previewUrl]);
 
   const setPreviewOnly = () => {
@@ -222,10 +245,13 @@ export function ApplicationComponentView({
       {status === 'ready' && previewUrl ? (
         <div className='relative h-full min-h-0 overflow-hidden bg-muted/20'>
           <iframe
-            ref={iframeRef}
+            key={`${workspaceRevisionId ?? 'preview'}-${previewUrl}`}
+            ref={previewIframeRef}
             title={title || t('nodepod.previewTitle')}
             src={previewUrl}
             className='absolute inset-0 size-full border-0 bg-white'
+            // allow-same-origin required for preview_action + Nodepod SW (Vague 4).
+            // Ticket/mcpToken must never appear in src, props, or postMessage.
             sandbox='allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts'
           />
         </div>
@@ -413,7 +439,7 @@ export function ApplicationComponentView({
                   className='flex min-h-0 min-w-0 flex-col overflow-hidden'
                 >
                   <AppSourceFileTree
-                    tree={filesTree}
+                    tree={sourceTree}
                     selectedPath={selectedPath}
                     onSelect={handleSelectFile}
                     className='h-full min-h-0'

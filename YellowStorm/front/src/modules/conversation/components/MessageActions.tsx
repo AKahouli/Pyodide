@@ -10,6 +10,7 @@ import { componentsToMarkdown } from '../utils';
 import type { DisplayedAnswerVersion, Message } from '../types';
 import { ReportDialog } from './ReportDialog';
 import { TimingIndicator } from './TimingIndicator';
+import { MessagePdfExport } from './MessagePdfExport';
 import { useNavigate } from 'react-router-dom';
 import { useApiAction } from '@/lib/use-api-action';
 import { branchConversation, prepareConversationPlaybookHandoff } from '../api';
@@ -39,6 +40,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const [reportOpen, setReportOpen] = useState(false);
   const handoffCreationRequest = useRef<{ fingerprint: string; requestId: string }>();
   const openHandoff = usePlatformCopilotPanelStore((state) => state.openHandoff);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const { t, language } = useModuleTranslation('conversation');
   const generationModelId = message.modelId
     || (message.questionMessageId ? messages.find((candidate) => candidate.id === message.questionMessageId)?.modelId : undefined);
@@ -71,13 +73,11 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   const modelName = model?.name || generationModelId || t('messageActions.modelUnavailable');
 
   const handleLike = () => {
-    // Don't allow removing feedback (clicking same button twice)
     if (message.feedback === 'like') return;
     updateFeedback(conversationId, message.id, 'like');
   };
 
   const handleDislike = () => {
-    // Don't allow removing feedback (clicking same button twice)
     if (message.feedback === 'dislike') return;
     updateFeedback(conversationId, message.id, 'dislike');
   };
@@ -98,6 +98,16 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
 
   const handleReply = () => {
     setReplyingToMessage(message);
+  };
+
+  const handleExportPdf = () => {
+    if (isExportingPdf) return;
+    setIsExportingPdf(true);
+  };
+
+  const handlePdfExportFinish = (ok: boolean) => {
+    setIsExportingPdf(false);
+    if (!ok) toast.error(t('toasts.message.exportError'));
   };
 
   const handleBranch = () => {
@@ -233,6 +243,14 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       </div>
 
       <ReportDialog open={reportOpen} onOpenChange={setReportOpen} conversationId={conversationId} messageId={message.id} />
+      {isExportingPdf && (
+        <MessagePdfExport
+          message={message}
+          title={currentConversation?.title?.trim() || t('exportPdf.untitledConversation')}
+          subtitle={`${formattedCreatedAt} · ${modelName}`}
+          onFinish={handlePdfExportFinish}
+        />
+      )}
     </>
   );
 });

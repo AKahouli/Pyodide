@@ -32,13 +32,16 @@ export function useWorkyVoiceSession(
   startRef.current = session.start;
   stopRef.current = session.stop;
 
+  // `streamId` is a dependency: switching streams must tear down the old
+  // Gemini Live session and start a fresh one. Without it the same session
+  // (and its server-side conversation context) leaks into the new stream.
   useEffect(() => {
     if (!active) return undefined;
     const startNow = startRef.current;
     const stopThis = stopRef.current;
     startNow();
     return () => stopThis();
-  }, [active, useRealtime]);
+  }, [active, useRealtime, streamId]);
 
   return { ...session, usingRealtime: useRealtime };
 }

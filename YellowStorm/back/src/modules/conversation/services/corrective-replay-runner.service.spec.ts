@@ -1,6 +1,10 @@
 import { CorrectiveReplayFailure, CorrectiveReplayRunnerService } from './corrective-replay-runner.service';
 
 describe('CorrectiveReplayRunnerService', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('uses an isolated seeded session, collects privately, filters internals, and cleans up', async () => {
     const streamService = {
       seedConversationSession: jest.fn().mockResolvedValue(undefined),
@@ -132,6 +136,7 @@ describe('CorrectiveReplayRunnerService', () => {
   });
 
   it('retries idempotent shadow-session cleanup without invalidating the result', async () => {
+    jest.useFakeTimers();
     const streamService = {
       seedConversationSession: jest.fn().mockResolvedValue(undefined),
       deleteConversationSession: jest.fn()
@@ -151,11 +156,14 @@ describe('CorrectiveReplayRunnerService', () => {
       { recordUsage: jest.fn().mockResolvedValue(undefined) } as never,
       { setContext: jest.fn(), warn: jest.fn() } as never,
     );
-    await expect(service.run({
+    const pending = service.run({
       userId: 'user-1', conversationId: 'conversation-1', messageId: 'message-1', questionMessageId: 'question-1',
       request: { content: 'Question?', attachedFileIds: [], webSearchEnabled: false, deepSearchEnabled: false, agentIds: [], skillIds: [] },
       originalComponents: [], evaluation: { status: 'completed' }, attemptNumber: 1, timeoutMs: 1_000,
-    })).resolves.toEqual(expect.objectContaining({ promptVersion: 'corrective-replay-v2' }));
+    });
+    await jest.runAllTimersAsync();
+    await expect(pending).resolves.toEqual(expect.objectContaining({ promptVersion: 'corrective-replay-v2' }));
     expect(streamService.deleteConversationSession).toHaveBeenCalledTimes(3);
+    jest.useRealTimers();
   });
 });

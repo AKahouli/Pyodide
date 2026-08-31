@@ -26,7 +26,7 @@ export function AppMarketplaceGrid({ groups, view, showSections }: AppMarketplac
     return (
       <div className={layoutClass}>
         {apps.map((app) => (
-          <DeployedAppCard key={app.sessionId} app={app} />
+          <DeployedAppCard key={app.sessionId} app={app} view={view} />
         ))}
       </div>
     );
@@ -50,7 +50,7 @@ export function AppMarketplaceGrid({ groups, view, showSections }: AppMarketplac
             </header>
             <div className={layoutClass}>
               {section.apps.map((app) => (
-                <DeployedAppCard key={app.sessionId} app={app} />
+                <DeployedAppCard key={app.sessionId} app={app} view={view} />
               ))}
             </div>
           </section>

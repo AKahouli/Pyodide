@@ -1,5 +1,7 @@
-import type { AgentEvent, AppBuildProgress } from '../types';
+import type { AgentEvent, AppBuildProgress, PendingQuestion } from '../types';
 import type { ApplicationComponentState, SessionSlice } from '../store';
+import { isRuntimePreviewVisible } from '../runtime/runtime.types';
+import { normalizeFilesTree } from './files-tree';
 
 export function emptySlice(): SessionSlice {
   return {
@@ -11,8 +13,10 @@ export function emptySlice(): SessionSlice {
     streaming: true,
     streamError: null,
     rightPanelMode: 'closed',
+    rightPanelAppTab: 'preview',
     applicationComponent: null,
     appBuildProgress: null,
+    runtimeStatus: 'idle',
     filesSheetOpen: false,
     systemWorkspaceId: null,
     workspaceIds: [],
@@ -24,7 +28,26 @@ export function emptySlice(): SessionSlice {
     selectedConnectorRepo: null,
     selectedSkillIds: [],
     selectedConnectorIds: [],
+    pendingQuestion: null,
   };
+}
+
+export function pendingQuestionFromWaitEvent(event: Extract<AgentEvent, { type: 'wait' }>): PendingQuestion | null {
+  if (!event.options?.length) return null;
+  return {
+    questionId: event.question_id,
+    questionText: event.question_text,
+    options: event.options,
+  };
+}
+
+export function derivePendingQuestion(events: AgentEvent[]): PendingQuestion | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.type === 'done' || ev.type === 'error') return null;
+    if (ev.type === 'wait') return pendingQuestionFromWaitEvent(ev);
+  }
+  return null;
 }
 
 export function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSlice {
@@ -41,10 +64,34 @@ export function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSl
   switch (event.type) {
     case 'title':
       return { ...base, title: event.title };
-    case 'done':
-      return { ...base, streaming: false, liveToolCallId: null };
+    case 'done': {
+      if (!shouldApplyTerminalEvent(slice.events, event)) {
+        return { ...base, events: [...slice.events, event] };
+      }
+      const showRuntimePreview =
+        isRuntimePreviewVisible(slice.runtimeStatus) || !!slice.applicationComponent;
+      return {
+        ...base,
+        events: [...completePendingToolsInTurn(slice.events), event],
+        streaming: false,
+        liveToolCallId: null,
+        liveAssistantIds: new Set<string>(),
+        pendingQuestion: null,
+        ...(showRuntimePreview ? { rightPanelMode: 'app' as const } : {}),
+      };
+    }
     case 'error':
-      return { ...base, streamError: event.error, streaming: false, liveToolCallId: null };
+      if (!shouldApplyTerminalEvent(slice.events, event)) {
+        return { ...base, events: [...slice.events, event] };
+      }
+      return {
+        ...base,
+        events: [...slice.events, event],
+        streamError: event.error,
+        streaming: false,
+        liveToolCallId: null,
+        pendingQuestion: null,
+      };
     case 'tool': {
       const turnStart = currentTurnStartIndex(slice.events);
       const idx = findIndexFrom(
@@ -84,7 +131,16 @@ export function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSl
       return { ...base, events: [...filtered, event] };
     }
     case 'wait':
-      return { ...base, streaming: false, liveToolCallId: null };
+      if (!shouldApplyTerminalEvent(slice.events, event)) {
+        return { ...base, events: [...slice.events, event] };
+      }
+      return {
+        ...base,
+        events: [...slice.events, event],
+        streaming: false,
+        liveToolCallId: null,
+        pendingQuestion: pendingQuestionFromWaitEvent(event),
+      };
     case 'app_build_progress': {
       const progress: AppBuildProgress = {
         phase: event.phase,
@@ -103,9 +159,10 @@ export function reduceSession(slice: SessionSlice, event: AgentEvent): SessionSl
         url: event.url,
         title: event.title ?? '',
         cephPath: event.ceph_path,
-        filesTree: event.files_tree ?? null,
+        filesTree: normalizeFilesTree(event.files_tree) ?? event.files_tree ?? null,
         fileCount: event.file_count,
         revision: event.event_id,
+        workspaceRevisionId: event.revision_id ?? slice.applicationComponent?.workspaceRevisionId,
       };
       return {
         ...base,
@@ -164,9 +221,10 @@ export function deriveApplicationComponent(
         url: ev.url,
         title: ev.title ?? '',
         cephPath: ev.ceph_path,
-        filesTree: ev.files_tree ?? null,
+        filesTree: normalizeFilesTree(ev.files_tree) ?? ev.files_tree ?? null,
         fileCount: ev.file_count,
         revision: ev.event_id,
+        workspaceRevisionId: ev.revision_id ?? previous?.workspaceRevisionId,
       };
     }
   }
@@ -202,6 +260,56 @@ export function currentTurnStartIndex(events: AgentEvent[]): number {
     if (ev.type === 'message' && ev.role === 'user') return i;
   }
   return 0;
+}
+
+/** True when the latest user prompt has no terminal event (done/error/wait) after it. */
+export function isTurnOpen(events: AgentEvent[]): boolean {
+  let lastUserIdx = -1;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.type === 'message' && ev.role === 'user') {
+      lastUserIdx = i;
+      break;
+    }
+  }
+  if (lastUserIdx < 0) return false;
+  for (let i = lastUserIdx + 1; i < events.length; i++) {
+    const ev = events[i];
+    if (ev.type === 'done' || ev.type === 'error' || ev.type === 'wait') return false;
+  }
+  return true;
+}
+
+/** Ignore terminal SSE frames that predate the latest persisted user prompt. */
+export function shouldApplyTerminalEvent(events: AgentEvent[], terminal: AgentEvent): boolean {
+  const termSeq =
+    typeof (terminal as { sequence?: number }).sequence === 'number'
+      ? (terminal as { sequence: number }).sequence
+      : null;
+  if (termSeq === null) return true;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.type !== 'message' || ev.role !== 'user') continue;
+    const userSeq = typeof ev.sequence === 'number' ? ev.sequence : null;
+    if (userSeq !== null && termSeq <= userSeq) return false;
+    break;
+  }
+  return true;
+}
+
+const PENDING_TOOL_STATUSES = new Set(['calling', 'running', 'pending']);
+
+/** Mark in-flight tools as completed when the turn ends without a final tool SSE. */
+export function completePendingToolsInTurn(events: AgentEvent[]): AgentEvent[] {
+  const turnStart = currentTurnStartIndex(events);
+  let changed = false;
+  const next = events.map((ev, index) => {
+    if (index < turnStart || ev.type !== 'tool') return ev;
+    if (!PENDING_TOOL_STATUSES.has(ev.status)) return ev;
+    changed = true;
+    return { ...ev, status: 'called' };
+  });
+  return changed ? next : events;
 }
 
 export function findIndexFrom<T>(arr: T[], start: number, pred: (t: T) => boolean): number {

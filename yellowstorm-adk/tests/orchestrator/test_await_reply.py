@@ -25,6 +25,19 @@ from src.companion_ai.plan import Plan, Status, Step
 from src.companion_ai.service import OrchestratorService
 
 
+def _task_turn(agent) -> str:
+    """The task the injector delivers as the USER turn — it moved out of the
+    system instruction (see nodes._inject_task_turn), replacing the plan's
+    shared "run the plan" kickoff. Tests that used to look for the step's task
+    in agent.instruction look here instead."""
+    from types import SimpleNamespace as NS
+    req = NS(contents=[NS(role="user", parts=[NS(
+        text="run the plan", function_response=None, function_call=None)])])
+    asyncio.run(agent.before_model_callback(callback_context=None, llm_request=req))
+    return "\n".join(p.text for c in req.contents if c.role == "user"
+                     for p in (c.parts or []) if getattr(p, "text", None))
+
+
 # --- the node primitive, on the real ADK engine -----------------------------
 
 async def _roundtrip():
@@ -105,6 +118,37 @@ def test_a_completed_dynamic_delegate_step_replays_its_stored_result_instead_of_
     assert outputs == ["James's original second opinion."]
 
 
+def test_replay_completed_short_circuits_any_completed_step_without_rerunning(monkeypatch):
+    """The continuation re-drive / continue_turn pass a plain 'run the plan'
+    message, which ADK treats as a fresh invocation and re-runs the WHOLE graph
+    (confirmed at the event level: session 1e8d0f72, a completed s1 re-ran its
+    entire GitHub backlog pull on the second pass). With replay_completed=True,
+    an already-COMPLETED plain step must emit its stored result and re-execute
+    nothing — no LLM call at all."""
+    def _must_not_build_a_real_llm(*a, **k):
+        raise AssertionError("a completed step must not re-call the LLM on a re-drive")
+    monkeypatch.setattr(nodes, "build_llm", _must_not_build_a_real_llm)
+
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[], replay_completed=True)
+    step = Step(id="s1", kind="execute", status=Status.COMPLETED,
+                result="## backlog summary (already produced)")
+
+    node = factory(step, "s1")
+    outputs = asyncio.run(_run_single_node(node, "s1"))
+    assert outputs == ["## backlog summary (already produced)"]
+
+
+def test_without_replay_completed_a_completed_step_is_still_a_live_llm_agent():
+    """resume_turn must NOT set replay_completed — there ADK's resume_part
+    genuinely replays completed nodes from history, and a FunctionNode swap
+    would diverge from that recorded shape. So a completed step still builds a
+    real LlmAgent (ADK, not us, decides not to re-invoke it)."""
+    from google.adk.agents import LlmAgent
+    factory = nodes.make_llm_node_factory(model_name="x", tools=[])  # replay_completed defaults False
+    step = Step(id="s1", kind="execute", status=Status.COMPLETED, result="done")
+    assert isinstance(factory(step, "s1"), LlmAgent)
+
+
 def test_a_completed_dynamic_await_reply_step_replays_too_not_just_execute_ones():
     """The is_dynamic_delegate+COMPLETED short-circuit above must be checked
     BEFORE the kind=="await_reply" branch, not after it -- otherwise a
@@ -142,10 +186,11 @@ def test_an_executor_never_sees_the_plan_wide_goal_or_another_steps_task():
 
     for step in plan.steps:
         agent = factory(step, step.id)
-        assert step.description in agent.instruction
-        assert plan.goal not in agent.instruction
+        rendered = agent.instruction + "\n" + _task_turn(agent)
+        assert step.description in rendered
+        assert plan.goal not in rendered
         other = next(s for s in plan.steps if s.id != step.id)
-        assert other.description not in agent.instruction
+        assert other.description not in rendered
 
 
 def test_a_client_prompts_literal_description_token_gets_substituted():
@@ -160,10 +205,13 @@ def test_a_client_prompts_literal_description_token_gets_substituted():
         model_name="x", tools=[],
         custom_instruction="Do this step:\n{description}\nReturn concisely.")
 
-    instruction = factory(step, "a").instruction
+    agent = factory(step, "a")
 
-    assert "{description}" not in instruction
-    assert "Search Bitcoin price." in instruction
+    # No unresolved token in what ADK templates (the system instruction) — that
+    # was the KeyError. The task itself now rides in the user turn.
+    assert "{description}" not in agent.instruction
+    assert "{description}" not in _task_turn(agent)
+    assert "Search Bitcoin price." in _task_turn(agent)
 
 
 def test_a_persona_step_never_gets_a_competing_execution_agent_identity():
@@ -177,7 +225,7 @@ def test_a_persona_step_never_gets_a_competing_execution_agent_identity():
     plain_step = Step(id="b", kind="execute", description="Search the web for Tesla news.")
 
     assert "You are an execution agent" not in factory(persona_step, "a").instruction
-    assert "You represent Rabeb" in factory(persona_step, "a").instruction
+    assert "You are an assistant acting for Rabeb" in factory(persona_step, "a").instruction
     assert "You are an execution agent" in factory(plain_step, "b").instruction
 
 
@@ -200,9 +248,13 @@ def test_a_client_prompt_carrying_the_description_replaces_the_builtin_one():
 
     step = Step(id="a", kind="execute", description="Should we migrate to Databricks?",
                 is_persona=True, assignee_name="Hamdi Imed", assignee_role="data lead")
-    instruction = factory(step, "a").instruction
+    agent = factory(step, "a")
+    instruction = agent.instruction
 
-    assert instruction.count("Should we migrate to Databricks?") == 1, instruction
+    # Task lives in the user turn exactly once; the built-in rules block appears
+    # exactly once in system (replaced, not stacked).
+    assert _task_turn(agent).count("Should we migrate to Databricks?") == 1
+    assert instruction.count("Should we migrate to Databricks?") == 0
     assert instruction.count("You are not told the plan's wider goal") == 1
     assert "{description}" not in instruction
 
@@ -214,10 +266,12 @@ def test_a_client_prompt_without_the_description_still_prepends():
     factory = nodes.make_llm_node_factory(
         model_name="x", tools=[], custom_instruction="Always answer in French.")
     step = Step(id="a", kind="execute", description="Search the web for Tesla news.")
-    instruction = factory(step, "a").instruction
+    agent = factory(step, "a")
+    instruction = agent.instruction
 
     assert "Always answer in French." in instruction
-    assert instruction.count("Search the web for Tesla news.") == 1
+    assert _task_turn(agent).count("Search the web for Tesla news.") == 1
+    assert instruction.count("Search the web for Tesla news.") == 0
     assert "You are not told the plan's wider goal" in instruction
 
 
@@ -258,9 +312,10 @@ def test_a_persona_step_is_never_told_and_nothing_else():
                         is_persona=True, assignee_name="Rabeb", assignee_role="Investment analyst.")
     plain_step = Step(id="b", kind="execute", description="Search the web for Tesla news.")
 
-    assert "Do exactly this and nothing else:" not in factory(persona_step, "a").instruction
-    assert "using whatever consultation your role above requires" in factory(persona_step, "a").instruction
-    assert "Do exactly this and nothing else:" in factory(plain_step, "b").instruction
+    # do_this_line rides in the task's user turn now, not the system instruction.
+    assert "Do exactly this and nothing else:" not in _task_turn(factory(persona_step, "a"))
+    assert "using whatever consultation your role above requires" in _task_turn(factory(persona_step, "a"))
+    assert "Do exactly this and nothing else:" in _task_turn(factory(plain_step, "b"))
 
 
 def test_a_persona_step_is_told_to_act_on_a_reply_already_in_context_not_just_note_it():
@@ -313,7 +368,7 @@ def _service():
         upsert_plan=AsyncMock(), upsert_steps=AsyncMock(), add_message=AsyncMock(),
         outstanding_interrupts=AsyncMock(return_value=[]),
         register_mail_wait=AsyncMock(), cancel_mail_waits=AsyncMock(),
-        bind_mail_wait_interrupt=AsyncMock())
+        set_mail_wait_expected_from=AsyncMock(), bind_mail_wait_interrupt=AsyncMock())
     svc = OrchestratorService(MagicMock(), rm, planner_model="m")
     return svc, rm
 
@@ -489,7 +544,7 @@ def test_a_send_that_fails_leaves_no_wait_behind():
     failing = SearchToolADK(_explodes, {"function": {"name": "microsoft365_send_email",
                                                      "description": "", "parameters": {}}})
 
-    async def on_sent(token):
+    async def on_sent(token, expected_from=None):
         registered.append(token)
 
     wrapped = nodes.stamp_send_email_tool(
@@ -506,8 +561,8 @@ def test_a_successful_send_registers_the_wait_after_the_mail_is_away():
     sent = []
     registered = []
 
-    async def on_sent(token):
-        registered.append(token)
+    async def on_sent(token, expected_from=None):
+        registered.append((token, expected_from))
 
     wrapped = nodes.stamp_send_email_tool(
         _fake_send_tool(sent), token_provider=AsyncMock(return_value="YW-abcdefghijklmnop12"),
@@ -516,7 +571,8 @@ def test_a_successful_send_registers_the_wait_after_the_mail_is_away():
     asyncio.run(wrapped.func(to_recipients=["r@example.com"], subject="Q", body="<p>Hi</p>"))
 
     assert len(sent) == 1
-    assert registered == ["YW-abcdefghijklmnop12"]
+    # The recipients are passed through so the wait can verify the sender.
+    assert registered == [("YW-abcdefghijklmnop12", ["r@example.com"])]
 
 
 def test_the_send_step_feeding_a_wait_carries_that_wait_s_own_token():
@@ -674,6 +730,30 @@ def test_only_send_email_is_recognised_among_a_connectors_tools():
                   "microsoft365_create_meeting", "linkup_linkup_search"):
         assert not nodes.is_send_email_tool(_tool(other)), other
 
+    # The Teams sibling recognises only send_teams_message, and never the mail tool.
+    assert nodes.is_send_teams_tool(_tool("microsoft365_send_teams_message"))
+    for other in ("microsoft365_send_email", "microsoft365_search_documents",
+                  "microsoft365_create_meeting"):
+        assert not nodes.is_send_teams_tool(_tool(other)), other
+
+
+def test_teams_chat_id_is_read_from_the_send_result():
+    """The Teams wait is bound to the chat the message landed in — parsed from
+    send_teams_message's JSON result. A channel send (no chatId) or a failure
+    yields None, so the wrapper knows the reply cannot be routed."""
+    import json
+    # Explicit top-level chat_id (what send_teams_message surfaces).
+    explicit = json.dumps({"status": "success", "chat_id": "19:abc@thread.v2", "data": {"id": "1"}})
+    assert nodes._teams_chat_id(explicit) == "19:abc@thread.v2"
+    # Fallback: Graph echoed chatId on the message resource.
+    echoed = json.dumps({"status": "success", "data": {"id": "1", "chatId": "19:def@thread.v2"}})
+    assert nodes._teams_chat_id(echoed) == "19:def@thread.v2"
+    # Neither present (channel send / no chat) → None so the wrapper warns.
+    assert nodes._teams_chat_id(json.dumps({"status": "success", "data": {"id": "1"}})) is None
+    assert nodes._teams_chat_id('{"status":"error","message":"nope"}') is None
+    assert nodes._teams_chat_id("not json") is None
+    assert nodes._teams_chat_id(None) is None
+
 
 if __name__ == "__main__":
     test_await_reply_parks_then_resumes_with_the_reply_body()
@@ -758,3 +838,15 @@ def test_a_delivered_reply_is_attributed_to_its_sender_not_the_plan():
     assert answer.startswith("Email reply from firasworky@gmail.com")
     # The reply's own words survive intact after the attribution line.
     assert answer.rstrip().endswith("do me a search about new mcps in the market")
+
+
+def test_recipients_extracted_as_bare_lowercased_addresses():
+    """expected_from is built from EVERY recipient — a reply from any of them
+    resolves the wait — as bare, lower-cased addresses; empty when none."""
+    assert nodes._recipients({"to_recipients": ["rabeb@yellowsys.fr"]}) == ["rabeb@yellowsys.fr"]
+    assert nodes._recipients({"to_recipients": ["Rabeb <Rabeb@Yellowsys.FR>"]}) == ["rabeb@yellowsys.fr"]
+    assert nodes._recipients({"to_recipients": "rabeb@yellowsys.fr"}) == ["rabeb@yellowsys.fr"]
+    assert nodes._recipients({"to_recipients": ["a@x.fr", "B@x.fr"]}) == ["a@x.fr", "b@x.fr"]
+    assert nodes._recipients({"to_recipients": []}) == []
+    assert nodes._recipients({}) == []
+    print("ok  recipients: all, bare and lower-cased")

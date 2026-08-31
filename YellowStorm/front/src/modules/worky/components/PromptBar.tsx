@@ -1,11 +1,11 @@
-import { Loader2, MessageCircle, Mic, Send, Square } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { Loader2, MessageCircle, Send, Square } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group';
 import { useModuleTranslation } from '@/modules/localization';
-import { useSendMessage, useTranscribeAudio } from '../query/hooks';
+import { useSendMessage } from '../query/hooks';
+import { useStopSession } from '../hooks/useStopSession';
 import { useWorkyStore, useWorkyStreaming } from '../store';
 import { useWorkyUiStore } from '../uiStore';
-import { useAudioRecorder, type RecordingResult } from '../useAudioRecorder';
 import type { WorkyStreamStatus } from '../types';
 
 interface PromptBarProps {
@@ -20,6 +20,10 @@ interface PromptBarProps {
  * exposed here: the planner and executor are admin-created default agents
  * (resolved server-side by agent type), so there is no per-stream or per-turn
  * model override to configure.
+ *
+ * Voice input lives in the centre voice dock (the realtime concierge), so the
+ * old in-composer dictation mic was removed — the send button doubles as a
+ * stop control while a run is streaming.
  */
 export function PromptBar({
   streamId,
@@ -29,6 +33,7 @@ export function PromptBar({
 }: PromptBarProps): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const [value, setValue] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const send = useSendMessage(streamId);
   const streaming = useWorkyStreaming();
   const setStreamError = useWorkyStore((s) => s.setStreamError);
@@ -36,67 +41,45 @@ export function PromptBar({
   const notifySendError = useWorkyUiStore((s) => s.notifySendError);
   const clearSendError = useWorkyUiStore((s) => s.clearSendError);
   const sendError = useWorkyUiStore((s) => s.sendError);
-  const transcribe = useTranscribeAudio();
+  const { stop, isStopping } = useStopSession(streamId);
 
-  // Shared finalizer for both manual stop and silence auto-stop: skip silent
-  // clips (Whisper hallucinates on them) and otherwise append the transcript
-  // to the current draft so the owner can edit before sending.
-  const transcribeResult = useCallback(
-    async ({ blob, hadSpeech }: RecordingResult) => {
-      if (!blob) return;
-      if (!hadSpeech) {
-        notifySendError(t('promptBar.voice.empty'));
-        return;
-      }
-      try {
-        const { text } = await transcribe.mutateAsync({ blob });
-        const trimmed = text.trim();
-        if (trimmed) {
-          setValue((prev) => (prev ? `${prev.trim()} ${trimmed}` : trimmed));
-        } else {
-          notifySendError(t('promptBar.voice.empty'));
-        }
-      } catch {
-        notifySendError(t('promptBar.voice.failed'));
-      }
-    },
-    [transcribe, notifySendError, t],
-  );
-
-  // Hands-free dictation: the recorder auto-stops ~2.5s after the speaker goes
-  // quiet — but only once they've actually started, so long lead-ins and
-  // mid-sentence breaths/pauses are preserved. Manual tap ends the take early.
-  const recorder = useAudioRecorder({ onAutoStop: transcribeResult, silenceTimeoutMs: 1500 });
   const isDisabled = send.isPending || status === 'archived';
-  const isTranscribing = transcribe.isPending;
+
+  // Grow the composer to fit its content, but cap it at 40% of the chat
+  // sidebar's height (falling back to 40vh when the composer is not inside the
+  // desktop rail, e.g. the mobile sheet). Past that the height is fixed and the
+  // textarea scrolls instead of pushing the message thread off-screen.
+  const autoResize = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const sidebar = el.closest<HTMLElement>('[data-testid="worky-chat-sidebar"]');
+    const maxHeight = Math.round(
+      (sidebar?.clientHeight ?? window.innerHeight) * 0.4,
+    );
+    // Reset first so shrinking (deleting text) is measured correctly.
+    el.style.height = 'auto';
+    const next = Math.min(el.scrollHeight, maxHeight);
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, []);
+
+  useLayoutEffect(() => {
+    autoResize();
+  }, [value, autoResize]);
+
+  // The 40% cap is derived from the sidebar height, so recompute on viewport
+  // resize (which is what changes the sidebar's height).
+  useEffect(() => {
+    window.addEventListener('resize', autoResize);
+    return () => window.removeEventListener('resize', autoResize);
+  }, [autoResize]);
 
   // Reset the draft and any in-flight error on stream switch so the
   // composer never carries text or stale failure toasts across streams.
   useEffect(() => {
     setValue('');
     clearSendError();
-    if (recorder.isRecording) recorder.cancel();
   }, [streamId, clearSendError]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Tap to start dictating; tap again to cut the take short (auto-stop on
-  // silence handles the common case via `transcribeResult`).
-  const toggleMic = async () => {
-    clearSendError();
-    if (recorder.isRecording) {
-      const result = await recorder.stop();
-      await transcribeResult(result);
-      return;
-    }
-    await recorder.start();
-  };
-
-  // `start()` sets `error` asynchronously, so surface mic failures here rather
-  // than inline after the call (where the value would still be stale).
-  useEffect(() => {
-    if (recorder.error === 'permission') notifySendError(t('promptBar.voice.denied'));
-    else if (recorder.error === 'unsupported')
-      notifySendError(t('promptBar.voice.unsupported'));
-  }, [recorder.error]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -140,6 +123,7 @@ export function PromptBar({
       <form onSubmit={submit}>
         <InputGroup className='bg-background/60'>
           <InputGroupTextarea
+            ref={textareaRef}
             id='worky-prompt-content'
             name='content'
             data-testid='worky-prompt-content'
@@ -148,7 +132,10 @@ export function PromptBar({
             placeholder={t('promptBar.placeholder')}
             rows={1}
             disabled={isDisabled}
-            className='max-h-40 min-h-[44px] py-2 text-xs'
+            // flex-none: the block-end addon makes InputGroup a column flex
+            // container, and the inherited `flex-1` (flex-basis:0%) would
+            // otherwise override our inline height and keep the box collapsed.
+            className='flex-none min-h-[44px] py-2 text-xs'
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -177,40 +164,37 @@ export function PromptBar({
                 ) : null}
               </InputGroupButton>
             ) : null}
-            {recorder.isSupported ? (
+            {streaming ? (
+              // While a run streams, the primary button stops the whole run
+              // (terminal StopSession) instead of submitting an empty draft.
               <InputGroupButton
                 type='button'
                 size='icon-sm'
-                variant={recorder.isRecording ? 'destructive' : 'ghost'}
-                onClick={toggleMic}
-                disabled={isDisabled || isTranscribing}
-                aria-pressed={recorder.isRecording}
-                aria-label={
-                  isTranscribing
-                    ? t('promptBar.voice.transcribing')
-                    : recorder.isRecording
-                      ? t('promptBar.voice.stop')
-                      : t('promptBar.voice.start')
-                }
-                data-testid='worky-prompt-mic'
+                variant='default'
+                onClick={stop}
+                disabled={isStopping}
+                aria-label={t('promptBar.stop')}
+                title={t('promptBar.stop')}
+                data-testid='worky-prompt-stop'
               >
-                {isTranscribing ? (
+                {isStopping ? (
                   <Loader2 className='h-4 w-4 animate-spin' />
                 ) : (
-                  <Mic className={recorder.isRecording ? 'h-4 w-4 animate-pulse' : 'h-4 w-4'} />
+                  <Square className='h-4 w-4' />
                 )}
               </InputGroupButton>
-            ) : null}
-            <InputGroupButton
-              type='submit'
-              size='icon-sm'
-              variant='default'
-              disabled={isDisabled || !value.trim()}
-              aria-label={streaming ? t('promptBar.streaming') : t('promptBar.send')}
-              data-testid='worky-prompt-send'
-            >
-              {streaming ? <Square className='h-4 w-4' /> : <Send className='h-4 w-4' />}
-            </InputGroupButton>
+            ) : (
+              <InputGroupButton
+                type='submit'
+                size='icon-sm'
+                variant='default'
+                disabled={isDisabled || !value.trim()}
+                aria-label={t('promptBar.send')}
+                data-testid='worky-prompt-send'
+              >
+                <Send className='h-4 w-4' />
+              </InputGroupButton>
+            )}
           </InputGroupAddon>
         </InputGroup>
       </form>

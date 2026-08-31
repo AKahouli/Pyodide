@@ -57,6 +57,7 @@ export interface ApplicationComponentEventPayload extends ConversationV2BaseEven
   ceph_path?: string;
   files_tree?: FilesTreeNode | null;
   file_count?: number;
+  revision_id?: string;
 }
 
 /** Agent workflow progress while generating / validating an app before preview. */
@@ -75,7 +76,17 @@ export interface FilesTreeNode {
 }
 
 export type DoneEventPayload = ConversationV2BaseEvent;
-export type WaitEventPayload = ConversationV2BaseEvent;
+
+export interface QuestionOptionPayload {
+  label: string;
+  description?: string;
+}
+
+export interface WaitEventPayload extends ConversationV2BaseEvent {
+  question_id?: string;
+  question_text?: string;
+  options?: QuestionOptionPayload[];
+}
 // No-op liveness signal while a step is still in flight — never persisted or
 // pushed to the frontend; only resets the gRPC stream's idle timer.
 export type HeartbeatEventPayload = ConversationV2BaseEvent;

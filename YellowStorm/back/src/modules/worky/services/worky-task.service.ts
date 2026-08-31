@@ -61,10 +61,12 @@ export class WorkyTaskService {
   }
 
   /**
-   * Project the stream's tasks onto the six user-visible Kanban lanes
-   * (`backlog|ready|running|review|blocked|done`). System lanes
-   * (`failed|canceled|superseded|archived`) live in the collection but are
-   * excluded from the projection per canonical §3.3.
+   * Project the stream's tasks onto the user-visible Kanban lanes
+   * (`backlog|ready|running|review|blocked|done` plus the terminal
+   * `failed|canceled` lanes). The terminal lanes keep a stopped/failed run's
+   * tasks on the board with their status rather than dropping them. The status
+   * is authored by the orchestrator via Electric — we only surface it, never
+   * set it here. `superseded|archived` remain excluded as pure system states.
    *
    * Tasks whose id appears in `blockedTaskIds` (typically because a
    * pending `WorkyInteraction.blocksTaskIds` contains them) are placed
@@ -91,6 +93,8 @@ export class WorkyTaskService {
       review: [],
       blocked: [],
       done: [],
+      failed: [],
+      canceled: [],
     };
     for (const task of tasks) {
       const id = (task._id as Types.ObjectId).toString();
@@ -175,6 +179,11 @@ export const BOARD_LANES = [
   'review',
   'blocked',
   'done',
+  // Terminal lanes. The orchestrator sets these via Electric (a run that is
+  // stopped cancels its tasks; a step that errors fails) and we surface them so
+  // the tasks stay visible with their status instead of vanishing off the board.
+  'failed',
+  'canceled',
 ] as const;
 
 export type BoardLane = (typeof BOARD_LANES)[number];

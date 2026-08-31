@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -73,6 +73,13 @@ vi.mock('../utils', async () => {
 
 vi.mock('./ReportDialog', () => ({ ReportDialog: () => null }));
 vi.mock('./TimingIndicator', () => ({ TimingIndicator: () => <div>timing</div> }));
+const pdfExportMock = vi.hoisted(() => ({ onFinish: null as null | ((ok: boolean) => void) }));
+vi.mock('./MessagePdfExport', () => ({
+  MessagePdfExport: ({ onFinish }: { onFinish: (ok: boolean) => void }) => {
+    pdfExportMock.onFinish = onFinish;
+    return <div data-testid='message-pdf-export' />;
+  },
+}));
 
 vi.mock('sonner', () => ({
   toast: {
@@ -105,7 +112,9 @@ describe('MessageActions', () => {
     const actions = screen.getByRole('button', { name: 'messageActions.likeAria' }).parentElement;
     expect(actions).not.toHaveClass('opacity-0', 'group-hover/msg:opacity-100');
     expect(screen.getByText('Model One')).toBeInTheDocument();
-    expect(screen.getByText(new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date('2026-07-29T13:00:00.000Z')))).toBeInTheDocument();
+    expect(screen.getByText(
+      new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date('2026-07-29T13:00:00.000Z')),
+    )).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'messageActions.likeAria' }));
     expect(updateFeedbackMock).toHaveBeenCalledWith('conv-1', 'ai-1', 'like');

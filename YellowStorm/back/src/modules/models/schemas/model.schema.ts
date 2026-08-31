@@ -39,6 +39,9 @@ export class AiModel extends Document {
   isDefault!: boolean; // Only one model can be default at a time
 
   @Prop({ default: false })
+  isConversationV2Default!: boolean; // Only one model can be the conversation-v2 default
+
+  @Prop({ default: false })
   omitTemperature!: boolean; // Do not forward temperature for providers that reject it
 
   @Prop({ type: [String], enum: ['text', 'image'], default: ['text'] })
@@ -71,6 +74,7 @@ AiModelSchema.index({ type: 1, isActive: 1 });
 AiModelSchema.index({ types: 1, isActive: 1 });
 AiModelSchema.index({ isActive: 1 });
 AiModelSchema.index({ isDefault: 1 });
+AiModelSchema.index({ isConversationV2Default: 1 });
 
 // JSON transform
 AiModelSchema.set('toJSON', {

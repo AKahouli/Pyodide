@@ -11,6 +11,8 @@ import {
   Pencil,
   Star,
   Cloud,
+  MessagesSquare,
+  Bot,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -55,8 +57,11 @@ import {
   updateModel,
   setDefaultModel,
   clearDefaultModel,
+  setConversationV2DefaultModel,
+  clearConversationV2DefaultModel,
   syncModels,
 } from '../api';
+import { useModelsStore } from '@/modules/models';
 import type { AdminModelResponse, AdminModelsListResponse, ModelInputModality, ModelType } from '../types';
 import { MODEL_INPUT_MODALITIES, MODEL_TYPES } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
@@ -231,6 +236,46 @@ export function ModelsPage() {
     }
   };
 
+  const handleToggleConversationV2Default = async (model: AdminModelResponse) => {
+    try {
+      if (model.isConversationV2Default) {
+        // Clear conversation-v2 default
+        const updated = await clearConversationV2DefaultModel(model.id);
+        setModels((prev) =>
+          sortModels(prev.map((m) => (m.id === updated.id ? normalizeModel(updated) : m)))
+        );
+        useModelsStore.getState().syncConversationV2Default(null);
+        toast.success(t('models.toasts.conversationV2DefaultCleared.title'), {
+          description: t('models.toasts.conversationV2DefaultCleared.description', {
+            name: updated.name,
+          }),
+        });
+      } else {
+        // Set as conversation-v2 default
+        const updated = await setConversationV2DefaultModel(model.id);
+        // Update all models - clear previous conversation-v2 default and set new one
+        setModels((prev) =>
+          sortModels(
+            prev.map((m) => ({
+              ...m,
+              isConversationV2Default: m.id === updated.id,
+            }))
+          )
+        );
+        useModelsStore.getState().syncConversationV2Default(updated.id);
+        toast.success(t('models.toasts.conversationV2DefaultSet.title'), {
+          description: t('models.toasts.conversationV2DefaultSet.description', {
+            name: updated.name,
+          }),
+        });
+      }
+    } catch (err) {
+      toast.error(t('models.toasts.conversationV2DefaultError.title'), {
+        description: err instanceof Error ? err.message : tCommon('errorUnknown'),
+      });
+    }
+  };
+
   const openEditDialog = (model: AdminModelResponse) => {
     setEditingModel(model);
     setEditFormData({
@@ -396,6 +441,12 @@ export function ModelsPage() {
                                 {t('models.table.defaultBadge')}
                               </Badge>
                             )}
+                            {model.isConversationV2Default && (
+                              <Badge variant="secondary" className="text-xs">
+                                <MessagesSquare className="mr-1 h-3 w-3" />
+                                {t('models.table.conversationV2DefaultBadge')}
+                              </Badge>
+                            )}
                           </div>
                           <span className="text-xs text-muted-foreground font-mono">
                             {model.id}
@@ -459,6 +510,29 @@ export function ModelsPage() {
                               {model.isDefault
                                 ? t('models.table.actions.clearDefault')
                                 : t('models.table.actions.setDefault')}
+                            </TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleToggleConversationV2Default(model)}
+                                disabled={!model.isActive}
+                              >
+                                <Bot
+                                  className={`h-4 w-4 ${
+                                    model.isConversationV2Default
+                                      ? 'fill-yellow-400 text-yellow-400'
+                                      : 'text-muted-foreground'
+                                  }`}
+                                /> 
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {model.isConversationV2Default
+                                ? t('models.table.actions.clearConversationV2Default')
+                                : t('models.table.actions.setConversationV2Default')}
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>

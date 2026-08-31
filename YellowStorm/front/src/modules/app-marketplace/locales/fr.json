@@ -45,8 +45,8 @@
     "shared": "Partagée avec vous",
     "open": "Ouvrir l'application",
     "conversation": "Accéder à la conversation",
-    "conversationReadOnly": "Ouvrir la conversation (lecture seule)",
     "share": "Partager l'app et la conversation",
+    "manageUsers": "Gérer les utilisateurs",
     "delete": "Supprimer",
     "deleteTitle": "Retirer l'application du Marketplace ?",
     "deleteDescription": "La conversation et l'application hébergée seront conservées. Une nouvelle publication l'ajoutera de nouveau au Marketplace.",
@@ -58,5 +58,45 @@
     "deleteError": "Impossible de retirer l'application.",
     "unshareSuccess": "Application partagée retirée de votre Marketplace.",
     "unshareError": "Impossible de retirer l'application partagée."
+  },
+  "endUsers": {
+    "title": "Utilisateurs et permissions",
+    "description": "Utilisateurs inscrits et permissions CRUD pour cette application déployée.",
+    "descriptionNamed": "Gérer les utilisateurs et permissions pour « {{title}} ».",
+    "hint": "Les nouveaux utilisateurs n'ont aucune permission par défaut. Accordez explicitement les droits CRUD nécessaires.",
+    "searchPlaceholder": "Rechercher par nom ou e-mail…",
+    "refresh": "Actualiser",
+    "retry": "Réessayer",
+    "userCount": "{{count}} utilisateurs",
+    "userCountOne": "1 utilisateur",
+    "noResults": "Aucun utilisateur ne correspond à votre recherche.",
+    "loading": "Chargement des utilisateurs…",
+    "emptyTitle": "Aucun utilisateur inscrit",
+    "empty": "Les personnes qui s'inscrivent sur votre application déployée apparaîtront ici.",
+    "loadError": "Impossible de charger les utilisateurs.",
+    "saveError": "Impossible de mettre à jour les permissions.",
+    "statusError": "Impossible de mettre à jour le statut du compte.",
+    "registeredAt": "Inscrit le {{date}}",
+    "statusActive": "Actif",
+    "statusDisabled": "Désactivé",
+    "userColumn": "Utilisateur",
+    "statusColumn": "Compte",
+    "grantsColumn": "Permissions",
+    "actionsColumn": "Raccourcis",
+    "enableAccount": "Réactiver le compte",
+    "disableAccount": "Désactiver le compte",
+    "grantsSummary": "{{enabled}}/{{total}} permissions",
+    "presets": {
+      "label": "Appliquer un profil",
+      "none": "Aucune permission",
+      "readOnly": "Lecture seule",
+      "full": "Accès complet"
+    },
+    "grants": {
+      "create": "Créer",
+      "read": "Lire",
+      "update": "Modifier",
+      "delete": "Supprimer"
+    }
   }
 }

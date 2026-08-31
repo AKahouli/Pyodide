@@ -939,10 +939,15 @@ def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
             object.__setattr__(self, "_n", self._n + 1)
             n = self._n
             instr = llm_request.config.system_instruction or ""
-            is_followup = "Give the real final answer" in instr
-            seen_reply = any(
-                "APPROVED THE PILOT" in (getattr(p, "text", "") or "")
+            contents_text = "\n".join(
+                getattr(p, "text", "") or ""
                 for c in llm_request.contents for p in (c.parts or []))
+            # The step's task now rides in the user turn, not system_instruction
+            # (see nodes._inject_task_turn) — look in both so the scripted model
+            # still recognizes the follow-up step.
+            is_followup = ("Give the real final answer" in instr
+                           or "Give the real final answer" in contents_text)
+            seen_reply = "APPROVED THE PILOT" in contents_text
             if is_followup:
                 yield LlmResponse(content=types.Content(role="model", parts=[
                     types.Part(text=f"REAL FINAL ANSWER — reply seen: {seen_reply}")]))
@@ -1035,6 +1040,120 @@ def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
         followup_final = plan2.step(followup_step.id)
         assert followup_final.status is Status.COMPLETED
         assert followup_final.result == "REAL FINAL ANSWER — reply seen: True"
+
+
+async def test_inject_steps_appends_to_live_plan_with_fresh_ids():
+    """converse_turn amends a running plan by appending the planner's steps to
+    the live Plan object; the drive loop then runs them (same path create_task
+    uses). Fresh ids so they can't collide with running steps; the batch's own
+    depends_on is remapped to those ids; the executor is stamped."""
+    rm = MagicMock(upsert_steps=AsyncMock(), register_mail_wait=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    live = Plan(id="p", title="t", goal="g", executor_id="exec1", executor_name="Worky",
+                steps=[Step(id="s1", kind="execute", description="orig", status=Status.RUNNING)])
+    new = [Step(id="s1", kind="execute", description="added A", depends_on=[]),
+           Step(id="s2", kind="execute", description="added B", depends_on=["s1"])]
+
+    n = await service._inject_steps("sess", "u", live, new)
+
+    assert n == 2 and len(live.steps) == 3
+    added = live.steps[1:]
+    assert all(s.id != "s1" for s in added)              # no collision with the running step
+    # A batch-root hangs off the frontier (the existing s1) so it lands in a NEW
+    # wave — not wave 0 alongside the completed step, which would re-run it.
+    assert added[0].depends_on == ["s1"]
+    assert added[1].depends_on == [added[0].id]          # internal dep remapped
+    assert all(s.assignee == "exec1" for s in added)     # executor stamped
+    assert all(s.status is Status.PENDING for s in added)
+    rm.upsert_steps.assert_awaited()                     # projected so the card grows
+    rm.register_mail_wait.assert_not_awaited()           # no await_reply in this batch
+
+
+async def test_inject_steps_registers_a_mail_wait_for_injected_await_reply():
+    """An await_reply step ADDED by an amend must get its own routing token, or
+    the reply it waits on can never match and the step hangs forever (seen live:
+    session 1e8d0f72 — 'Attendre Firas' blocked with an empty mail_waits)."""
+    rm = MagicMock(upsert_steps=AsyncMock(), register_mail_wait=AsyncMock(),
+                   cancel_mail_waits=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    live = Plan(id="p", title="t", executor_id="e", executor_name="W",
+                steps=[Step(id="s1", kind="execute", status=Status.RUNNING)])
+    new = [Step(id="w", kind="await_reply", description="wait for the reply")]
+
+    await service._inject_steps("sess", "u", live, new)
+
+    rm.register_mail_wait.assert_awaited_once()          # token minted for the new wait
+    rm.cancel_mail_waits.assert_not_awaited()            # existing waits NOT dropped
+    _, kw = rm.register_mail_wait.await_args
+    assert kw["session_id"] == "sess" and kw["step_id"] == live.steps[-1].id
+
+
+async def test_apply_ops_cancel_persists_status_via_set_step_status():
+    """A cancel op must persist through set_step_status — upsert_steps (what
+    _project_step uses) does NOT touch `status` on conflict, so projecting a
+    cancel that way leaves the read-model row 'pending' while memory says
+    canceled (seen live: session e9adde, s2 stuck 'pending')."""
+    rm = MagicMock(set_step_status=AsyncMock(), upsert_steps=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    live = Plan(id="p", steps=[Step(id="s2", kind="execute", title="Transmettre",
+                                    status=Status.PENDING)])
+
+    notes = await service._apply_ops("sess", live, [{"op": "cancel", "step_id": "s2"}])
+
+    assert live.step("s2").status is Status.CANCELLED
+    rm.set_step_status.assert_awaited_once_with("sess", "s2", "canceled")
+    assert any("cancelled" in n for n in notes)
+
+
+async def test_apply_ops_refuses_a_non_pending_step():
+    """Only a still-pending step can be safely amended; a running/completed one
+    is already in ADK's replay history."""
+    rm = MagicMock(set_step_status=AsyncMock(), upsert_steps=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    live = Plan(id="p", steps=[Step(id="s1", kind="execute", title="Analyser",
+                                    status=Status.COMPLETED, result="done")])
+
+    notes = await service._apply_ops("sess", live, [{"op": "cancel", "step_id": "s1"}])
+
+    assert live.step("s1").status is Status.COMPLETED          # untouched
+    rm.set_step_status.assert_not_awaited()
+    assert any("already completed" in n for n in notes)
+
+
+def test_amend_message_embeds_plan_results_as_context():
+    """CASE C: the amend planner is given the running plan AND its results, so it
+    can paste an existing result into a new step ('email the summary') instead of
+    asking the user what the summary is."""
+    live = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="s1", kind="execute", title="Search Bitcoin",
+             status=Status.COMPLETED, result="BTC is ~$63,000"),
+        Step(id="s2", kind="execute", title="Summarize", status=Status.RUNNING),
+    ])
+    msg = svc.OrchestratorService._amend_message(live, "email that to Firas")
+    assert "AMENDING" in msg                     # framed as an amend, not a fresh plan
+    assert "BTC is ~$63,000" in msg              # the result is embedded for reuse
+    assert "email that to Firas" in msg          # the user's request is carried
+    assert "[s1]" in msg and "[s2]" in msg       # existing steps listed as done
+
+
+async def test_drive_registers_live_plan_for_converse():
+    """_drive_until_quiescent must expose the live plan in self._active while the
+    drive loop runs (so converse_turn can reach it), and clear it after."""
+    service = svc.OrchestratorService(MagicMock(), None, planner_model="m")
+    plan = Plan(id="p", title="t", goal="g", steps=[])
+
+    seen = {}
+
+    async def fake_loop(*a, **k):
+        seen["active"] = service._active.get("sess") is plan
+        return []
+
+    service._drive_loop = fake_loop
+    await service._drive_until_quiescent(
+        None, "sess", "u", plan, {}, None,
+        model="m", connectors=None, executor_prompt=None)
+    assert seen["active"] is True                         # live during the loop
+    assert "sess" not in service._active                  # cleared after
 
 
 def test_create_task_after_builds_a_join_not_just_a_fan_out():
@@ -1292,3 +1411,72 @@ def test_a_projection_failure_never_fails_the_tool_call():
 
     assert asyncio.run(wrapped.func()) == {"ceph_path": "ceph/x/report.pdf",
                                            "path": "/report.pdf"}
+
+
+def test_requester_context_names_the_user_and_forbids_delegating_to_them():
+    """The planner/executor preamble must name the requester and rule out
+    emailing or delegating work back to them — the fix for worky not knowing who
+    it works for."""
+    ctx = svc.requester_context(
+        {"name": "Rabeb Sdiri", "email": "rabeb@yellowsys.fr", "role": "Data Scientist"})
+    assert "Rabeb Sdiri" in ctx and "rabeb@yellowsys.fr" in ctx and "Data Scientist" in ctx
+    low = ctx.lower()
+    assert "never" in low and ("delegat" in low or "assign" in low) and "email" in low
+
+
+def test_requester_context_is_empty_without_a_name_or_email():
+    """No identity -> no preamble, so behaviour is unchanged for older clients."""
+    assert svc.requester_context(None) == ""
+    assert svc.requester_context({"name": "", "email": "", "role": "x"}) == ""
+    # email alone is enough to name someone
+    assert "a@b.fr" in svc.requester_context({"email": "a@b.fr"})
+
+
+def test_with_requester_appends_but_preserves_the_base_prompt():
+    assert svc._with_requester("BASE", None) == "BASE"
+    out = svc._with_requester("BASE", {"name": "R", "email": "r@x.fr"})
+    assert out.startswith("BASE\n\n") and "r@x.fr" in out
+    # no base prompt -> just the context
+    assert svc._with_requester(None, {"email": "r@x.fr"}).startswith("You are working for")
+
+
+async def test_concurrent_amends_on_one_session_are_serialized():
+    """Two 'update the plan' messages racing on the same session must NOT plan
+    concurrently: the per-session lock serializes them so the second plans
+    against the first's already-applied steps, not the same stale snapshot.
+    Without the lock both would enter _make_plan at once (max_concurrent == 2)."""
+    rm = MagicMock(upsert_steps=AsyncMock(), set_step_status=AsyncMock(),
+                   register_mail_wait=AsyncMock())
+    service = svc.OrchestratorService(MagicMock(), rm, planner_model="m")
+    live = Plan(id="p", title="t", executor_id="e", executor_name="W",
+                steps=[Step(id="s1", kind="execute", status=Status.RUNNING)])
+    service._active["sess"] = live
+    service._add_message = AsyncMock()
+
+    inside = 0
+    max_concurrent = 0
+    seen_steps_at_plan = []
+
+    async def fake_make_plan(session_id, user_id, message, **kw):
+        nonlocal inside, max_concurrent
+        inside += 1
+        max_concurrent = max(max_concurrent, inside)
+        # how many steps the live plan already has when THIS amend plans
+        seen_steps_at_plan.append(len(service._active["sess"].steps))
+        await asyncio.sleep(0)            # yield: a second coroutine runs here if unlocked
+        await asyncio.sleep(0)
+        inside -= 1
+        return Plan(id="x", steps=[Step(id="n", kind="execute", description="added")])
+
+    service._make_plan = fake_make_plan
+
+    await asyncio.gather(
+        service.converse_turn(session_id="sess", user_id="u", message="A"),
+        service.converse_turn(session_id="sess", user_id="u", message="B"),
+    )
+
+    assert max_concurrent == 1                 # never overlapped -> serialized
+    assert len(live.steps) == 3                # both amends applied (1 orig + 2 injected)
+    # The second amend planned AFTER the first applied its step, so it saw a
+    # bigger plan — proof it wasn't working from the same stale snapshot.
+    assert seen_steps_at_plan == [1, 2]

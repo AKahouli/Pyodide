@@ -29,9 +29,10 @@ import {
   PromptInputActionMenuTrigger,
 } from '@/components/ai-elements/prompt-input';
 import { RecentConnectorsMenu, ManageConnectorsDialog, SelectedConnectorsPills } from '@/modules/connector';
-import { useChefs, useDefaultModel, useModels } from '@/modules/models';
+import { useChefs, useDefaultModel, useConversationV2DefaultModel, useModels } from '@/modules/models';
 import { useConversationV2PointersStore, useConversationV2Store } from '../store';
 import { useConversationV2Translation } from '../translation';
+import { isTurnOpen } from '../utils/session-reducer';
 import { getActiveConnectors, getActiveSkills, type ConnectorOption } from '@/modules/agent/api';
 import type { SkillOption } from '@/modules/agent/types';
 import { RecentSkillsMenu } from '@/modules/skill/components/RecentSkillsMenu';
@@ -44,6 +45,7 @@ interface ComposerProps {
 
 export function Composer({ onSend }: ComposerProps) {
   const streaming = useConversationV2Store((s) => s.streaming);
+  const events = useConversationV2Store((s) => s.events);
   const sessionId = useConversationV2Store((s) => s.sessionId);
   const stop = useConversationV2Store((s) => s.stop);
   const pause = useConversationV2Store((s) => s.pause);
@@ -58,6 +60,7 @@ export function Composer({ onSend }: ComposerProps) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
+  const conversationV2DefaultModel = useConversationV2DefaultModel();
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
 
   const [connectors, setConnectors] = useState<ConnectorOption[]>([]);
@@ -92,14 +95,19 @@ export function Composer({ onSend }: ComposerProps) {
   // admin default. Both for the trigger label and for what we send on the
   // wire. (The wire payload is the LiteLLM identifier, not the modelId.)
   const activeModel =
-    (selectedModelId && models.find((m) => m.id === selectedModelId)) || defaultModel || null;
+    (selectedModelId && models.find((m) => m.id === selectedModelId)) ||
+    conversationV2DefaultModel ||
+    defaultModel ||
+    null;
 
   const status: 'ready' | 'streaming' = streaming ? 'streaming' : 'ready';
   const isPaused = !streaming && pointerStatus === 'paused';
+  const turnOpen = isTurnOpen(events);
+  const inputLocked = streaming || turnOpen;
 
   const handleSubmit = (message: PromptInputMessage) => {
     const value = message.text?.trim() ?? '';
-    if (!value || streaming) return;
+    if (!value || inputLocked) return;
     onSend(value, activeModel?.litellmModel || undefined);
   };
 
@@ -114,14 +122,14 @@ export function Composer({ onSend }: ComposerProps) {
         <PromptInputProvider>
           <PromptInput onSubmit={handleSubmit}>
             <PromptInputBody>
-              <PromptInputTextarea placeholder={t('composer.placeholder')} disabled={streaming} />
+              <PromptInputTextarea placeholder={t('composer.placeholder')} disabled={inputLocked} />
             </PromptInputBody>
             <PromptInputFooter>
               <PromptInputTools>
                 {models.length > 0 && (
                   <ModelSelector open={modelSelectorOpen} onOpenChange={setModelSelectorOpen}>
                     <ModelSelectorTrigger asChild>
-                      <PromptInputButton type='button' disabled={streaming}>
+                      <PromptInputButton type='button' disabled={inputLocked}>
                         {activeModel?.chefSlug && (
                           <ModelSelectorLogo provider={activeModel.chefSlug} />
                         )}
@@ -196,7 +204,10 @@ export function Composer({ onSend }: ComposerProps) {
                   </PromptInputButton>
                 )}
               </PromptInputTools>
-              <PromptInputSubmit status={status} onStop={() => void stop()} />
+              <PromptInputSubmit
+                status={inputLocked ? 'streaming' : status}
+                onStop={() => void stop()}
+              />
             </PromptInputFooter>
           </PromptInput>
           <SelectedConnectorsPills

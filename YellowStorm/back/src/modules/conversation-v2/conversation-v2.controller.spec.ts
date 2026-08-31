@@ -10,7 +10,7 @@ import { WorkspaceShareService } from '@modules/workspace/workspace-share.servic
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
 import { EmailService } from '@modules/email';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import * as grpc from '@grpc/grpc-js';
 import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
@@ -18,6 +18,11 @@ import { ConversationV2AppShareService } from './services/conversation-v2-app-sh
 import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-session-access.guard';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
 import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
+import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
+import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
+import { RuntimeBindingService } from '@modules/app-runtime/services/runtime-binding.service';
+import { CONVERSATION_V2_SESSION_PERMISSION_KEY } from './decorators/require-conversation-session-permission.decorator';
+import { ConversationV2SessionPermissions } from './constants/conversation-v2-session-permissions';
 
 describe('ConversationV2Controller', () => {
   let controller: ConversationV2Controller;
@@ -99,6 +104,13 @@ describe('ConversationV2Controller', () => {
 
   const mockConfig = { get: jest.fn().mockReturnValue(52428800) };
   const mockDeployment = { deploy: jest.fn() };
+  const mockRuntimeTickets = { issue: jest.fn() };
+  const mockRuntimeRevisions = {
+    listFiles: jest.fn(),
+    getAuthorizedRevision: jest.fn(),
+    resolveObjectKeys: jest.fn(),
+  };
+  const mockRuntimeBindings = { findByWorkspaceId: jest.fn() };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -115,6 +127,9 @@ describe('ConversationV2Controller', () => {
         { provide: EmailService, useValue: mockEmail },
         { provide: ConversationV2DeployService, useValue: mockDeployment },
         { provide: ConversationV2AppShareService, useValue: mockAppShares },
+        { provide: RuntimeTicketService, useValue: mockRuntimeTickets },
+        { provide: RuntimeRevisionService, useValue: mockRuntimeRevisions },
+        { provide: RuntimeBindingService, useValue: mockRuntimeBindings },
       ],
     })
       .overrideGuard(ConversationV2SessionAccessGuard)
@@ -134,6 +149,9 @@ describe('ConversationV2Controller', () => {
       ...Object.values(mockEventStore),
       ...Object.values(mockDeployment),
       ...Object.values(mockAppShares),
+      ...Object.values(mockRuntimeTickets),
+      ...Object.values(mockRuntimeRevisions),
+      ...Object.values(mockRuntimeBindings),
     ].forEach((fn) => (fn as jest.Mock).mockReset?.());
     mockConfig.get.mockReturnValue(52428800);
     mockAppShares.listSharedWithUser.mockResolvedValue([]);
@@ -404,9 +422,12 @@ describe('ConversationV2Controller', () => {
     expect(mockAppShares.removeShareForRecipient).toHaveBeenCalledWith('user-2', 'session-1');
   });
 
-  it('POST /sessions/:id/deploy calls app-builder with the user and AI session ids', async () => {
+  it('POST /sessions/:id/deploy calls app-builder with aiSessionId and revisionId', async () => {
     mockSessions.setDeployState.mockResolvedValue({});
-    mockDeployment.deploy.mockResolvedValueOnce({ url: 'https://deployed.example/app' });
+    mockDeployment.deploy.mockResolvedValueOnce({ url: 'https://apps.yellowsys.org/apps/conversation-1/' });
+    mockRuntimeBindings.findByWorkspaceId.mockResolvedValueOnce({
+      latestRevisionId: 'rev_15',
+    });
     const result = await controller.deploySession(
       resolvedSession('user-1', {
         aiSessionId: 'conversation-1',
@@ -416,7 +437,8 @@ describe('ConversationV2Controller', () => {
       { title: 'Generated app' },
     );
 
-    expect(mockDeployment.deploy).toHaveBeenCalledWith('user-1', 'conversation-1');
+    expect(mockRuntimeBindings.findByWorkspaceId).toHaveBeenCalledWith('conversation-1');
+    expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15');
     expect(mockSessions.setDeployState).toHaveBeenNthCalledWith(
       1,
       'user-1',
@@ -429,7 +451,7 @@ describe('ConversationV2Controller', () => {
       'session-1',
       expect.objectContaining({
         deployStatus: 'deployed',
-        deployedUrl: 'https://deployed.example/app',
+        deployedUrl: 'https://apps.yellowsys.org/apps/conversation-1/',
         deployedAppTitle: 'Generated app',
       }),
     );
@@ -437,10 +459,45 @@ describe('ConversationV2Controller', () => {
       'session-1',
       expect.objectContaining({
         title: 'Generated app',
-        deployedUrl: 'https://deployed.example/app',
+        deployedUrl: 'https://apps.yellowsys.org/apps/conversation-1/',
       }),
     );
-    expect(result.deployedUrl).toBe('https://deployed.example/app');
+    expect(result.deployedUrl).toBe('https://apps.yellowsys.org/apps/conversation-1/');
+  });
+
+  it('POST /sessions/:id/deploy prefers an explicit revisionId from the client', async () => {
+    mockSessions.setDeployState.mockResolvedValue({});
+    mockDeployment.deploy.mockResolvedValueOnce({
+      url: 'https://apps.yellowsys.org/apps/conversation-1/',
+    });
+
+    await controller.deploySession(
+      resolvedSession('user-1', { aiSessionId: 'conversation-1' }),
+      'session-1',
+      { revisionId: 'rev_15' },
+    );
+
+    expect(mockRuntimeBindings.findByWorkspaceId).not.toHaveBeenCalled();
+    expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15');
+  });
+
+  it('POST /sessions/:id/deploy rejects when no finalized revision exists', async () => {
+    mockSessions.setDeployState.mockResolvedValue({});
+    mockRuntimeBindings.findByWorkspaceId.mockResolvedValueOnce({
+      latestRevisionId: 'starter_react_vite_v1',
+    });
+
+    await expect(
+      controller.deploySession(
+        resolvedSession('user-1', { aiSessionId: 'conversation-1' }),
+        'session-1',
+        {},
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(mockDeployment.deploy).not.toHaveBeenCalled();
+    expect(mockSessions.setDeployState).toHaveBeenLastCalledWith('user-1', 'session-1', {
+      deployStatus: 'error',
+    });
   });
 
   // --- GET /share/v2/:token ---
@@ -493,5 +550,89 @@ describe('ConversationV2Controller', () => {
     expect(err).toBeInstanceOf(ConflictException);
     expect((err as ConflictException).getStatus()).toBe(409);
     expect((err as ConflictException).getResponse()).toMatchObject({ code: 'VM_UNAVAILABLE' });
+  });
+
+  // --- POST /sessions/:id/runtime-ticket ---
+
+  it('POST /sessions/:id/runtime-ticket returns a browser ticket and never the MCP token', async () => {
+    mockRuntimeTickets.issue.mockResolvedValueOnce({
+      runtimeSessionId: 'rts_0011223344556677',
+      ticket: 'one-shot-ticket',
+      workspaceId: 'sess_1',
+      revisionId: 'rev_0',
+      expiresAt: '2026-01-01T00:01:00.000Z',
+    });
+
+    const result = await controller.issueRuntimeTicket(
+      resolvedSession('u1', { aiSessionId: 'sess_1' }),
+    );
+
+    expect(mockRuntimeTickets.issue).toHaveBeenCalledWith({
+      conversationSessionId: 'sess_1',
+      userId: 'u1',
+    });
+    expect(Object.keys(result).sort()).toEqual([
+      'expiresAt',
+      'revisionId',
+      'runtimeSessionId',
+      'ticket',
+      'workspaceId',
+    ]);
+  });
+
+  it('POST /sessions/:id/runtime-ticket requires the session write permission', () => {
+    const permission = Reflect.getMetadata(
+      CONVERSATION_V2_SESSION_PERMISSION_KEY,
+      ConversationV2Controller.prototype.issueRuntimeTicket,
+    );
+    expect(permission).toBe(ConversationV2SessionPermissions.SESSION_WRITE);
+  });
+
+  it('POST /sessions/:id/runtime-ticket throws NotFoundException when the AI session is not attached yet', () => {
+    mockRuntimeTickets.issue.mockClear();
+
+    expect(() =>
+      controller.issueRuntimeTicket(resolvedSession('u1', { aiSessionId: null })),
+    ).toThrow(NotFoundException);
+    expect(mockRuntimeTickets.issue).not.toHaveBeenCalled();
+  });
+
+  it("POST /sessions/:id/runtime-ticket binds to the owner, not the collaborator asking for the ticket", async () => {
+    mockRuntimeTickets.issue.mockResolvedValueOnce({});
+    const shared = resolvedSession('owner-1', { aiSessionId: 'sess_1' }, 'shared');
+    shared.actorUserId = 'collab-1';
+
+    await controller.issueRuntimeTicket(shared);
+
+    expect(mockRuntimeTickets.issue).toHaveBeenCalledWith({
+      conversationSessionId: 'sess_1',
+      userId: 'owner-1',
+    });
+  });
+
+  // --- Revision reads share the runtime workspace key ---
+
+  it('GET /sessions/:id/revisions/:revisionId/files lists from the aiSessionId workspace', async () => {
+    mockRuntimeRevisions.listFiles.mockResolvedValueOnce({ revisionId: 'rev_0', files: [] });
+
+    await controller.getRevisionFiles(
+      resolvedSession('u1', { aiSessionId: 'sess_1' }),
+      'rev_0',
+    );
+
+    expect(mockRuntimeRevisions.listFiles).toHaveBeenCalledWith('sess_1', 'rev_0');
+  });
+
+  it('POST /sessions/:id/revisions/:revisionId/presign authorizes against the aiSessionId workspace', async () => {
+    mockRuntimeRevisions.getAuthorizedRevision.mockResolvedValueOnce({ revisionId: 'rev_0' });
+    mockRuntimeRevisions.resolveObjectKeys.mockReturnValueOnce([]);
+
+    await controller.presignRevisionFiles(
+      resolvedSession('u1', { aiSessionId: 'sess_1' }),
+      'rev_0',
+      { paths: ['src/App.tsx'] },
+    );
+
+    expect(mockRuntimeRevisions.getAuthorizedRevision).toHaveBeenCalledWith('sess_1', 'rev_0');
   });
 });

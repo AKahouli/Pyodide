@@ -1,14 +1,16 @@
-import { PlayIcon, XIcon, CodeIcon, EyeIcon } from 'lucide-react';
+import { PlayIcon, XIcon, CodeIcon, EyeIcon, DatabaseIcon } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { Button } from '@/components/ui/button';
 import { ResizablePanel } from '@/components/ui/resizable-panel';
 import { cn } from '@/lib/utils';
 import { useConversationV2Store } from '../../store';
 import { useConversationV2Translation } from '../../translation';
+import { isRuntimePreviewVisible } from '../../runtime/runtime.types';
 import { ToolDetailDispatch } from './tool-views/ToolDetailDispatch';
 import { ApplicationComponentView } from './ApplicationComponentView';
 import { AppBuildProgressPanel } from './AppBuildProgressPanel';
 import { DeployControls } from './DeployControls';
+import { AppDataPanel } from './AppDataPanel';
 
 const RIGHT_PANEL_STORAGE_KEY = 'conversation-v2-right-panel-width';
 const RIGHT_PANEL_DEFAULT_WIDTH = 560;
@@ -19,6 +21,8 @@ export function RightPanel() {
   const { t } = useConversationV2Translation();
   const {
     mode,
+    appTab,
+    sessionId,
     close,
     selectedToolCallId,
     liveToolCallId,
@@ -26,10 +30,13 @@ export function RightPanel() {
     streaming,
     applicationComponent,
     appBuildProgress,
+    runtimeStatus,
     setRightPanelView,
   } = useConversationV2Store(
     useShallow((s) => ({
       mode: s.rightPanelMode,
+      appTab: s.rightPanelAppTab,
+      sessionId: s.sessionId,
       close: s.closeRightPanel,
       selectedToolCallId: s.selectedToolCallId,
       liveToolCallId: s.liveToolCallId,
@@ -37,27 +44,29 @@ export function RightPanel() {
       streaming: s.streaming,
       applicationComponent: s.applicationComponent,
       appBuildProgress: s.appBuildProgress,
+      runtimeStatus: s.runtimeStatus,
       setRightPanelView: s.setRightPanelView,
     })),
   );
 
   if (mode === 'closed') return null;
 
+  const runtimePreview = isRuntimePreviewVisible(runtimeStatus);
   const hasCode = !!selectedToolCallId;
-  const hasPreview = !!applicationComponent || !!appBuildProgress;
+  const hasPreview =
+    !!applicationComponent || !!appBuildProgress || runtimePreview;
   if (!hasCode && !hasPreview) return null;
 
-  const showBuildProgress = !!appBuildProgress && !applicationComponent;
-  const showNodepod = !!applicationComponent;
-
-  // Which tab is active, clamped to what's actually available: prefer the
-  // preview when we're in 'app' mode (or when there's no code to show).
-  const showPreview = (showNodepod || showBuildProgress) && (mode === 'app' || !hasCode);
-  // The Code/Preview toggle only makes sense once BOTH exist.
+  const showBuildProgress =
+    !!appBuildProgress && !applicationComponent && !runtimePreview;
+  const showNodepod = !!applicationComponent || runtimePreview;
+  const showAppPanel = (showNodepod || showBuildProgress) && (mode === 'app' || !hasCode);
+  const showDataTab = showAppPanel && appTab === 'data';
+  const showPreviewTab = showAppPanel && appTab !== 'data';
   const canToggle = hasCode && hasPreview;
 
   const realTime = selectedToolCallId === liveToolCallId;
-  const showJumpToLive = !showPreview && streaming && !!liveToolCallId && !realTime;
+  const showJumpToLive = !showAppPanel && streaming && !!liveToolCallId && !realTime;
 
   const tabClass = (active: boolean) =>
     cn(
@@ -66,6 +75,8 @@ export function RightPanel() {
         ? 'bg-background text-foreground shadow-sm'
         : 'text-muted-foreground hover:text-foreground',
     );
+
+  const previewTitle = applicationComponent?.title || t('nodepod.previewTitle');
 
   return (
     <ResizablePanel
@@ -80,50 +91,69 @@ export function RightPanel() {
     >
       <aside className='flex h-full min-w-0 flex-col overflow-hidden'>
         <header className='flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3'>
-          {canToggle ? (
+          {canToggle || showAppPanel ? (
             <div className='inline-flex items-center rounded-lg border bg-muted/40 p-0.5'>
-              <button type='button' onClick={() => setRightPanelView('code')} className={tabClass(!showPreview)}>
-                <CodeIcon className='size-3.5' />
-                {t('rightPanel.tabCode')}
-              </button>
-              <button type='button' onClick={() => setRightPanelView('preview')} className={tabClass(showPreview)}>
-                <EyeIcon className='size-3.5' />
-                {t('rightPanel.tabPreview')}
-              </button>
+              {hasCode && (
+                <button type='button' onClick={() => setRightPanelView('code')} className={tabClass(mode === 'tool')}>
+                  <CodeIcon className='size-3.5' />
+                  {t('rightPanel.tabCode')}
+                </button>
+              )}
+              {hasPreview && (
+                <>
+                  <button type='button' onClick={() => setRightPanelView('preview')} className={tabClass(showPreviewTab)}>
+                    <EyeIcon className='size-3.5' />
+                    {t('rightPanel.tabPreview')}
+                  </button>
+                  <button type='button' onClick={() => setRightPanelView('data')} className={tabClass(showDataTab)}>
+                    <DatabaseIcon className='size-3.5' />
+                    {t('rightPanel.tabData')}
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <span className='truncate text-sm font-semibold'>
-              {showPreview
-                ? applicationComponent?.title ||
-                  (showBuildProgress ? t('nodepod.previewTitle') : t('rightPanel.title'))
-                : t('rightPanel.title')}
+              {showAppPanel ? previewTitle : t('rightPanel.title')}
             </span>
           )}
           <div className='flex shrink-0 items-center gap-1'>
-            {hasPreview && showNodepod && <DeployControls />}
+            {hasPreview && showNodepod && applicationComponent && <DeployControls />}
             <Button variant='ghost' size='icon-sm' aria-label={t('rightPanel.close')} onClick={close}>
               <XIcon className='size-4' />
             </Button>
           </div>
         </header>
         <div className='relative flex min-h-0 flex-1 flex-col overflow-hidden'>
-          {showPreview ? (
-            showNodepod ? (
-              <ApplicationComponentView
-                key={applicationComponent!.revision}
-                title={applicationComponent!.title}
-                cephPath={applicationComponent!.cephPath}
-                filesTree={applicationComponent!.filesTree}
-                fileCount={applicationComponent!.fileCount}
-                revision={applicationComponent!.revision}
-                buildProgress={appBuildProgress}
-              />
-            ) : (
-              <AppBuildProgressPanel
-                key={appBuildProgress!.revision}
-                progress={appBuildProgress!}
-              />
-            )
+          {showAppPanel ? (
+            <>
+              {showNodepod ? (
+                <div
+                  className={cn(
+                    'flex min-h-0 flex-1 flex-col overflow-hidden',
+                    showDataTab && 'invisible pointer-events-none absolute inset-0',
+                  )}
+                  aria-hidden={showDataTab || undefined}
+                >
+                  <ApplicationComponentView
+                    title={applicationComponent?.title}
+                    filesTree={applicationComponent?.filesTree}
+                    fileCount={applicationComponent?.fileCount}
+                    buildProgress={appBuildProgress}
+                  />
+                </div>
+              ) : (
+                <AppBuildProgressPanel
+                  key={appBuildProgress!.revision}
+                  progress={appBuildProgress!}
+                />
+              )}
+              {showDataTab && sessionId ? (
+                <div className='relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden'>
+                  <AppDataPanel sessionId={sessionId} />
+                </div>
+              ) : null}
+            </>
           ) : (
             <div className='relative flex min-h-0 flex-1 flex-col p-3'>
               <ToolDetailDispatch />

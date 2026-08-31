@@ -579,6 +579,20 @@ export async function clearDefaultModel(id: string): Promise<AdminModelResponse>
   return response.data.data;
 }
 
+export async function setConversationV2DefaultModel(id: string): Promise<AdminModelResponse> {
+  const response = await apiClient.post<ApiResponse<AdminModelResponse>>(
+    API_ENDPOINTS.adminModels.setConversationV2Default(id)
+  );
+  return response.data.data;
+}
+
+export async function clearConversationV2DefaultModel(id: string): Promise<AdminModelResponse> {
+  const response = await apiClient.post<ApiResponse<AdminModelResponse>>(
+    API_ENDPOINTS.adminModels.clearConversationV2Default(id)
+  );
+  return response.data.data;
+}
+
 export async function syncModels(): Promise<SyncModelsResponse> {
   const response = await apiClient.post<ApiResponse<SyncModelsResponse>>(
     API_ENDPOINTS.adminModels.sync

@@ -9,6 +9,17 @@ export interface BaseEvent {
   sequence?: number;
 }
 
+export interface QuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface PendingQuestion {
+  questionId?: string;
+  questionText?: string;
+  options: QuestionOption[];
+}
+
 export interface RawFilesTreeNode {
   name: string;
   type: 'file' | 'directory';
@@ -29,7 +40,11 @@ export type AgentEvent =
   | ({ type: 'plan' } & BaseEvent & { steps: Array<{ id: string; status: string; description: string }> })
   | ({ type: 'title' } & BaseEvent & { title: string })
   | ({ type: 'done' } & BaseEvent)
-  | ({ type: 'wait' } & BaseEvent)
+  | ({ type: 'wait' } & BaseEvent & {
+      question_id?: string;
+      question_text?: string;
+      options?: QuestionOption[];
+    })
   | ({ type: 'error' } & BaseEvent & { error: string })
   | ({ type: 'application_component' } & BaseEvent & {
       url: string;
@@ -37,6 +52,7 @@ export type AgentEvent =
       ceph_path?: string;
       files_tree?: RawFilesTreeNode | null;
       file_count?: number;
+      revision_id?: string;
     })
   | ({ type: 'app_build_progress' } & BaseEvent & {
       phase: string;

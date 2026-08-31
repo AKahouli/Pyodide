@@ -10,19 +10,21 @@
  */
 import type { WorkyBoardLane, WorkyStreamStatus, WorkyTask } from './types';
 
-export type OrchStepStatus = 'pending' | 'running' | 'blocked' | 'completed' | 'failed';
+export type OrchStepStatus = 'pending' | 'running' | 'blocked' | 'completed' | 'failed' | 'canceled';
 export type OrchSessionStatus = OrchStepStatus | 'waiting' | 'paused';
 
-/** Board columns = the 5 orchestrator step statuses, left→right. */
+/** Board columns = the orchestrator step statuses, left→right. `canceled` is a
+ * terminal column that holds the tasks of a stopped run. */
 export const ORCH_LANES: OrchStepStatus[] = [
   'pending',
   'running',
   'blocked',
   'completed',
   'failed',
+  'canceled',
 ];
 
-/** Legacy board lane → orchestrator status (aggregates 7 lanes into 5). */
+/** Legacy board lane → orchestrator status. */
 const LANE_TO_ORCH: Record<WorkyBoardLane, OrchStepStatus> = {
   backlog: 'pending',
   ready: 'pending',
@@ -31,6 +33,7 @@ const LANE_TO_ORCH: Record<WorkyBoardLane, OrchStepStatus> = {
   blocked: 'blocked',
   failed: 'failed',
   done: 'completed',
+  canceled: 'canceled',
 };
 
 /** Canonical legacy lane a drop onto an orchestrator column maps back to. */
@@ -40,6 +43,7 @@ const ORCH_TO_LANE: Record<OrchStepStatus, WorkyBoardLane> = {
   blocked: 'blocked',
   completed: 'done',
   failed: 'failed',
+  canceled: 'canceled',
 };
 
 export function laneToOrch(lane: WorkyBoardLane): OrchStepStatus {
@@ -60,6 +64,7 @@ export function toOrchColumns(
     blocked: [],
     completed: [],
     failed: [],
+    canceled: [],
   };
   if (!board) return out;
   (Object.keys(board) as WorkyBoardLane[]).forEach((lane) => {
@@ -85,6 +90,8 @@ export function streamStatusToOrch(status?: WorkyStreamStatus): OrchSessionStatu
     case 'paused':
       return 'paused';
     case 'stopped':
+      // A stopped run is terminal-but-not-successful — mirror its canceled tasks.
+      return 'canceled';
     case 'completed':
     case 'archived':
       return 'completed';
