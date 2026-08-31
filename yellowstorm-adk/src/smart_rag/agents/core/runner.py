@@ -404,6 +404,8 @@ class AgentRunner:
                         agent_type != "html"
                         and part.text
                         and getattr(part, "thought", False) is True
+                        and not part.function_call
+                        and not part.function_response
                         and not guarded_output
                     )
                     if not is_thought and part.text:
@@ -442,9 +444,13 @@ class AgentRunner:
                         agent_type != "html"
                         and part.text
                         and getattr(part, "thought", False) is not True
+                        and not part.function_call
+                        and not part.function_response
                         and has_function_call
+                        and getattr(event, "partial", None) is not True
                         and not event.is_final_response()
                         and not guarded_output
+                        and not thought_activity_tracker.is_standalone_fragment(part.text)
                     ):
                         summary = sanitize_activity_summary(part.text)
                         if summary and q:
@@ -471,6 +477,7 @@ class AgentRunner:
                         agent_type != "html"
                         and part.text
                         and getattr(part, "thought", False) is not True
+                        and not part.function_response
                         and not event.is_final_response()
                         and not has_function_call
                         and not guarded_output

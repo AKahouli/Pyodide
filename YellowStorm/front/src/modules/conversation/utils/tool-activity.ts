@@ -2,6 +2,9 @@ const REDACTED = '[REDACTED]';
 const MAX_DEPTH = 6;
 const MAX_ITEMS = 100;
 const MAX_TEXT_LENGTH = 20_000;
+const MAX_SERIALIZED_PAYLOAD_LENGTH = 65_536;
+const MAX_FORMATTED_PAYLOAD_LENGTH = 12_000;
+const TRUNCATION_SUFFIX = '... [truncated]';
 const SENSITIVE_KEY = /^(?:authorization|cookie|set-cookie|credentials?|password|passwd|secret|api[-_]?key|access[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|client[-_]?secret|private[-_]?key|connection[-_]?string)$/i;
 const UNSAFE_SUMMARY = /YELLOWSTORM_ATTACHMENT_SENTINEL_\d+|(?:^|[\s=:('\\"])(?:[A-Za-z]:[\\/]|\/|\\\\)\S+|(?:^|[\s=:('\\"])(?:[A-Za-z0-9._-]+\/){2,}[^\s"']+|\b(?:const|let|var|def|class|import|from)\s+[A-Za-z_$]|=>|[{};]/i;
 const OPAQUE_IDENTIFIER = /(?:[a-f0-9]{24}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})/i;
@@ -66,10 +69,14 @@ export function sanitizeToolValue(value: unknown, depth = 0, redactSensitiveText
 
 export function formatSanitizedToolText(value: string | undefined, redactSensitiveText = true): string | undefined {
   if (!value) return undefined;
+  if (value.length > MAX_SERIALIZED_PAYLOAD_LENGTH) return '[truncated]';
   try {
     const sanitized = sanitizeToolValue(JSON.parse(value), 0, redactSensitiveText);
     if (sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized) && !Object.keys(sanitized).length) return undefined;
-    return typeof sanitized === 'string' ? sanitized : JSON.stringify(sanitized, null, 2);
+    const formatted = typeof sanitized === 'string' ? sanitized : JSON.stringify(sanitized, null, 2);
+    return formatted.length > MAX_FORMATTED_PAYLOAD_LENGTH
+      ? `${formatted.slice(0, MAX_FORMATTED_PAYLOAD_LENGTH - TRUNCATION_SUFFIX.length)}${TRUNCATION_SUFFIX}`
+      : formatted;
   } catch {
     return sanitizeToolDetailText(value, redactSensitiveText);
   }
@@ -113,13 +120,21 @@ function sanitizeCodeInterpreterValue(value: unknown, preserveExecutableFields: 
 
 function formatCodeInterpreterPayload(value: string | undefined, preserveExecutableFields = false, redactSensitiveText = true): string | undefined {
   if (!value) return undefined;
+  if (value.length > MAX_SERIALIZED_PAYLOAD_LENGTH) return '[truncated]';
   try {
-    const sanitized = sanitizeCodeInterpreterValue(JSON.parse(value), preserveExecutableFields, redactSensitiveText);
-    if (sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized) && !Object.keys(sanitized).length) return undefined;
-    return typeof sanitized === 'string' ? sanitized : JSON.stringify(sanitized, null, 2);
+    return formatCodeInterpreterValue(JSON.parse(value), preserveExecutableFields, redactSensitiveText);
   } catch {
     return sanitizeRunCodeInput(value, redactSensitiveText);
   }
+}
+
+function formatCodeInterpreterValue(value: unknown, preserveExecutableFields: boolean, redactSensitiveText: boolean): string | undefined {
+  const sanitized = sanitizeCodeInterpreterValue(value, preserveExecutableFields, redactSensitiveText);
+  if (sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized) && !Object.keys(sanitized).length) return undefined;
+  const formatted = typeof sanitized === 'string' ? sanitized : JSON.stringify(sanitized, null, 2);
+  return formatted.length > MAX_FORMATTED_PAYLOAD_LENGTH
+    ? `${formatted.slice(0, MAX_FORMATTED_PAYLOAD_LENGTH - TRUNCATION_SUFFIX.length)}${TRUNCATION_SUFFIX}`
+    : formatted;
 }
 
 export function isCodeInterpreterActivity(data: Record<string, unknown>): boolean {
@@ -133,13 +148,15 @@ export function isCodeInterpreterActivity(data: Record<string, unknown>): boolea
 export function resolveCodeInterpreterRequest(data: Record<string, unknown>, redactSensitiveText = true): string | undefined {
   const primaryInput = sanitizeRunCodeInput(data.primaryInput, redactSensitiveText);
   if (primaryInput) return primaryInput;
-  const params = parseToolParams(data.paramsJson ?? data.params);
+  const rawParams = data.paramsJson ?? data.params;
+  if (typeof rawParams === 'string' && rawParams.length > MAX_SERIALIZED_PAYLOAD_LENGTH) return '[truncated]';
+  const params = parseToolParams(rawParams);
   if (!params) return formatCodeInterpreterPayload(asNonEmptyString(data.paramsJson), false, redactSensitiveText);
   for (const key of ['code', 'source_code', 'script', 'command']) {
     const executable = sanitizeRunCodeInput(params[key], redactSensitiveText);
     if (executable) return executable;
   }
-  return formatCodeInterpreterPayload(JSON.stringify(params), true, redactSensitiveText);
+  return formatCodeInterpreterValue(params, true, redactSensitiveText);
 }
 
 export function resolveCodeInterpreterResponse(data: Record<string, unknown>, redactSensitiveText = true): string | undefined {

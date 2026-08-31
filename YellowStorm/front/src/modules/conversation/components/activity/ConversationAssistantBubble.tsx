@@ -59,6 +59,17 @@ function hasMeaningfulActivityText(value: string): boolean {
   return /[\p{L}\p{N}]/u.test(value);
 }
 
+function countLexicalWords(value: string): number {
+  return value.match(/[\p{L}\p{N}]+/gu)?.length || 0;
+}
+
+function isStandaloneActivityFragment(value: string): boolean {
+  const first = value.trim().match(/[\p{L}\p{N}]/u)?.[0];
+  return countLexicalWords(value) <= 3
+    && Boolean(first)
+    && (/\p{N}/u.test(first!) || /\p{Ll}/u.test(first!));
+}
+
 function resolveAgentActivityPreview(data: AgentActivityData, redactSensitiveText: boolean, fallback: string): string {
   const summary = sanitizeActivitySummary(data.summary, redactSensitiveText);
   const detail = sanitizeActivitySummary(data.detail, redactSensitiveText);
@@ -78,22 +89,27 @@ function stripReasoningReplayPrefix(component: MessageComponent, reasoningTexts:
   return content.trim() ? { ...component, data: { ...component.data, content } } : undefined;
 }
 
-function projectActivityComponents(components: MessageComponent[]): MessageComponent[] {
-  return components.map((component) => component.type === 'agentActivity'
-    ? { ...component, data: { ...component.data, detail: collapseExactTandem(component.data.detail) } }
-    : component);
+function projectActivityComponents(components: MessageComponent[], redactSensitiveText: boolean): MessageComponent[] {
+  return components.flatMap((component) => {
+    if (component.type !== 'agentActivity') return [component];
+    const data = component.data as AgentActivityData;
+    const detail = collapseExactTandem(data.detail);
+    const normalized: MessageComponent = { ...component, data: { ...data, detail } };
+    const candidates = [data.summary, detail]
+      .map((value) => sanitizeActivitySummary(value, redactSensitiveText))
+      .filter((value): value is string => typeof value === 'string' && countLexicalWords(value) > 0);
+    return candidates.length > 0 && candidates.every(isStandaloneActivityFragment) ? [] : [normalized];
+  });
 }
 
 interface ToolDetailsProps {
   data: ToolActivityData;
+  redactSensitiveText: boolean;
   fullToolName: string;
   summary?: string;
   compactTimestamp: string;
   fullTimestamp: string;
   timestampDateTime?: string;
-  copyText: string;
-  request?: string;
-  response?: string;
   onRetry?: () => void;
 }
 
@@ -113,8 +129,17 @@ function ToolPayload({ label, content, language, kind }: Readonly<{ label: strin
   );
 }
 
-function ToolDetails({ data, fullToolName, summary, compactTimestamp, fullTimestamp, timestampDateTime, copyText, request, response, onRetry }: Readonly<ToolDetailsProps>) {
+function ToolDetails({ data, redactSensitiveText, fullToolName, summary, compactTimestamp, fullTimestamp, timestampDateTime, onRetry }: Readonly<ToolDetailsProps>) {
   const { t } = useModuleTranslation('conversation');
+  const request = resolveToolRequest(data, redactSensitiveText);
+  const response = resolveToolResponse(data, redactSensitiveText);
+  const copyText = [
+    fullToolName,
+    summary ? `${t('stream.activity.description')}: ${summary}` : undefined,
+    `${t('stream.activity.timestamp')}: ${fullTimestamp}`,
+    request ? `${t('stream.activity.request')}:\n${request}` : undefined,
+    response ? `${t('stream.activity.response')}:\n${response}` : undefined,
+  ].filter((value): value is string => Boolean(value)).join('\n\n');
   return (
     <CollapsibleContent className='px-1 pb-2 pt-1 sm:px-3'>
       <div data-tool-detail-card className='rounded-lg border border-border/70 bg-background/55 p-3 shadow-xs'>
@@ -146,6 +171,7 @@ function ToolDetails({ data, fullToolName, summary, compactTimestamp, fullTimest
 
 function ToolRow({ component, redactSensitiveText, onRetry }: Readonly<{ component: MessageComponent; redactSensitiveText: boolean; onRetry?: () => void }>) {
   const { t, language } = useModuleTranslation('conversation');
+  const [open, setOpen] = useState(false);
   const data = component.data as ToolActivityData;
   const labels = {
     runCode: t('stream.activity.tool.runCode'), searchKnowledge: t('stream.activity.tool.searchKnowledge'),
@@ -166,8 +192,6 @@ function ToolRow({ component, redactSensitiveText, onRetry }: Readonly<{ compone
   const summary = resolveToolSummary(data, redactSensitiveText);
   const description = resolveToolDescription(data, redactSensitiveText);
   const duration = formatActivityDuration(data.durationMs);
-  const request = resolveToolRequest(data, redactSensitiveText);
-  const response = resolveToolResponse(data, redactSensitiveText);
   const statusLabel = t(`stream.activity.toolStatus.${data.status}`);
   const rowAriaLabel = summary
     ? t('stream.activity.toolRowAria', { description: summary, tool: label, status: statusLabel })
@@ -175,13 +199,6 @@ function ToolRow({ component, redactSensitiveText, onRetry }: Readonly<{ compone
   const timestamp = formatToolTimestamp(data, language);
   const compactTimestamp = timestamp?.compact || t('stream.activity.timestampUnavailable');
   const fullTimestamp = timestamp?.full || t('stream.activity.timestampUnavailable');
-  const copyText = [
-    fullToolName,
-    description ? `${t('stream.activity.description')}: ${description}` : undefined,
-    `${t('stream.activity.timestamp')}: ${fullTimestamp}`,
-    request ? `${t('stream.activity.request')}:\n${request}` : undefined,
-    response ? `${t('stream.activity.response')}:\n${response}` : undefined,
-  ].filter((value): value is string => Boolean(value)).join('\n\n');
   const row = (
     <>
       <span data-tool-status={data.status} className='shrink-0' aria-hidden='true'>{statusIcon(data.status)}</span>
@@ -196,13 +213,13 @@ function ToolRow({ component, redactSensitiveText, onRetry }: Readonly<{ compone
     </>
   );
   return (
-    <Collapsible>
+    <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger asChild>
         <button type='button' aria-label={rowAriaLabel} className='group flex min-h-12 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-1 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:border-border/70 data-[state=open]:bg-muted/55'>
           {row}
         </button>
       </CollapsibleTrigger>
-      <ToolDetails data={data} fullToolName={fullToolName} summary={description} compactTimestamp={compactTimestamp} fullTimestamp={fullTimestamp} timestampDateTime={timestamp?.dateTime} copyText={copyText} request={request} response={response} onRetry={onRetry} />
+      {open && <ToolDetails data={data} redactSensitiveText={redactSensitiveText} fullToolName={fullToolName} summary={description} compactTimestamp={compactTimestamp} fullTimestamp={fullTimestamp} timestampDateTime={timestamp?.dateTime} onRetry={onRetry} />}
     </Collapsible>
   );
 }
@@ -330,7 +347,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
   const activityComponents = projectActivityComponents(source.filter(
     (component): component is MessageComponent & { type: 'agentActivity' | 'toolActivity' | 'artifact' } =>
       component.type === 'agentActivity' || component.type === 'toolActivity' || component.type === 'artifact',
-  ));
+  ), redactSensitiveText);
   const activityCount = activityComponents.length;
   const reasoningTexts = [...new Set(activityComponents.flatMap((component) => {
     if (component.type !== 'agentActivity') return [];

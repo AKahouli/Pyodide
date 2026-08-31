@@ -306,23 +306,54 @@ describe('ConversationAssistantBubble', () => {
     expect(container.querySelector('[data-answer-content]')).not.toHaveTextContent(detail);
   });
 
-  it('keeps a generated one-word activity row without an Activity prefix', () => {
+  it('filters standalone one-word activity fragments while preserving planning, tools, and the answer', () => {
     const { container } = render(<ConversationAssistantBubble
       conversationId='conversation-1'
       messageId='message-1'
       isStreaming={false}
       components={[
-        { id: 'activity-1', type: 'agentActivity', data: { summary: 'revenue', detail: '.', status: 'completed' } },
-        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'create_sandbox', summary: 'Prepare the revenue workspace', status: 'completed', renderKind: 'generic' } },
+        { id: 'initial', type: 'agentActivity', data: { summary: '', status: 'completed' } },
+        { id: 'activity-start', type: 'agentActivity', data: { summary: 'start', detail: ' start', status: 'completed' } },
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'activate_skill', summary: '', status: 'completed', renderKind: 'generic' } },
+        { id: 'activity-contracts', type: 'agentActivity', data: { summary: 'contracts', detail: ' contracts', status: 'completed' } },
+        { id: 'tool-2', type: 'toolActivity', data: { toolName: 'search', summary: 'Find the SFR contract', status: 'completed', renderKind: 'search' } },
+        { id: 'activity-parallel', type: 'agentActivity', data: { summary: 'parallel', detail: ' parallel', status: 'completed' } },
+        { id: 'activity-call', type: 'agentActivity', data: { summary: 'call', detail: ' call', status: 'completed' } },
+        { id: 'activity-now', type: 'agentActivity', data: { summary: 'now', detail: ' now', status: 'completed' } },
         { id: 'answer', type: 'text', data: { content: 'Revenue was 33.9 million euros.' } },
       ]}
     />);
 
     expect(container.querySelectorAll('[data-agent-summary]')).toHaveLength(1);
-    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('revenue');
+    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+    expect(container.querySelector('[data-desktop-activity]')).not.toHaveTextContent(/start|contracts|parallel|call|now/);
     expect(container.querySelector('[data-desktop-activity]')).not.toHaveTextContent('Activity');
-    expect(screen.getAllByText(/Prepare the revenue workspace/)).not.toHaveLength(0);
+    expect(screen.getAllByText(/Activate Skill/)).not.toHaveLength(0);
+    expect(screen.getAllByText(/Find the SFR contract/)).not.toHaveLength(0);
     expect(screen.getByText('Revenue was 33.9 million euros.')).toBeInTheDocument();
+  });
+
+  it('filters persisted short thought fragments around tools', () => {
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'get_document_strategy', summary: 'Get the document strategy', status: 'completed', resultJson: JSON.stringify({ files: [{}, {}, {}, {}] }) } },
+        { id: 'activity-echo', type: 'agentActivity', data: { summary: '4 Files', detail: '4 Files', status: 'completed' } },
+        { id: 'activity-fragment', type: 'agentActivity', data: { summary: 'sections now', detail: 'sections now', status: 'completed' } },
+        { id: 'activity-uncased-script', type: 'agentActivity', data: { summary: '检查合同', detail: '检查合同', status: 'completed' } },
+        { id: 'activity-four-words', type: 'agentActivity', data: { summary: 'search,read,compare,respond', detail: 'search,read,compare,respond', status: 'completed' } },
+        { id: 'activity-reasoning', type: 'agentActivity', data: { summary: 'Analyze retrieved files', detail: 'Analyze retrieved files', status: 'completed' } },
+      ]}
+    />);
+
+    expect(screen.queryByText('4 Files')).not.toBeInTheDocument();
+    expect(screen.queryByText('sections now')).not.toBeInTheDocument();
+    expect(screen.getAllByText('检查合同')).not.toHaveLength(0);
+    expect(screen.getAllByText('search,read,compare,respond')).not.toHaveLength(0);
+    expect(screen.getAllByText('Analyze retrieved files')).not.toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Get the document strategy, Tool response: Get Document Strategy (Completed)' })).toBeInTheDocument();
   });
 
   it('removes concatenated summary-only reasoning from persisted answer components', () => {
@@ -586,6 +617,29 @@ describe('ConversationAssistantBubble', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Response' }));
     expect(screen.getByText(/annual revenue/)).toBeInTheDocument();
     expect(screen.getByText(/"matches": 4/)).toBeInTheDocument();
+  });
+
+  it('bounds a large raw tool response when expanded', () => {
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[{
+        id: 'tool-search',
+        type: 'toolActivity',
+        data: {
+          toolName: 'perform_standard_search', summary: 'Read matching files', status: 'completed', renderKind: 'search',
+          resultJson: JSON.stringify({ rows: Array.from({ length: 100 }, (_, index) => ({ index, values: Array.from({ length: 30 }, (_, value) => value) })) }),
+        },
+      }]}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Read matching files, Tool response: Search (Completed)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Response' }));
+
+    const payload = container.querySelector('[data-tool-payload="response"]');
+    expect(payload).toHaveTextContent('[truncated]');
+    expect(payload?.textContent?.length).toBeLessThan(12_100);
   });
 
   it('shows full tool metadata without repeating response totals on tool rows', async () => {

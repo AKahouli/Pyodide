@@ -33,6 +33,26 @@ def _usage_event(text="hello", is_final=False, thought=False, function_call=None
   return event
 
 
+def _function_call_event(narration, partial, narration_on_tool=False):
+  function_call = SimpleNamespace(id="call-1", name="search", args={"q": "docs"})
+  tool_part = SimpleNamespace(
+    text=narration if narration_on_tool else None,
+    thought=False,
+    function_call=function_call,
+    function_response=None,
+  )
+  content = SimpleNamespace(parts=[tool_part] if narration_on_tool else [
+    SimpleNamespace(text=narration, thought=False, function_call=None, function_response=None),
+    tool_part,
+  ])
+  return SimpleNamespace(
+    content=content,
+    usage_metadata=None,
+    partial=partial,
+    is_final_response=MagicMock(return_value=False),
+  )
+
+
 class TestStreamingEventProcessor:
   @pytest.fixture
   def processor(self):
@@ -144,6 +164,53 @@ class TestStreamingEventProcessor:
       "The", "The user", "The user just", "The user just said",
     ]
     assert len({event["component"]["data"]["started_at"] for event in first_span}) == 1
+
+  @pytest.mark.asyncio
+  @pytest.mark.parametrize(("partial", "narration", "narration_on_tool", "expected_narration"), [
+    (True, "Inspect the selected document.", False, []),
+    (False, "Inspect the selected document.", False, ["Inspect the selected document."]),
+    (None, "Inspect the selected document.", False, ["Inspect the selected document."]),
+    (False, "start", False, []),
+    (False, "Inspect the selected document.", True, []),
+  ])
+  async def test_function_call_narration_requires_complete_event(
+    self, processor, partial, narration, narration_on_tool, expected_narration,
+  ):
+    queue = AsyncMock()
+
+    async def fake_stream():
+      yield _function_call_event(narration, partial, narration_on_tool)
+
+    agent_runner = MagicMock()
+    agent_runner.run_async.return_value = fake_stream()
+    with patch("src.smart_rag.engines.multi_agent.streaming_processor.types.Content"), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.types.Part"
+    ), patch("src.smart_rag.engines.multi_agent.streaming_processor.RunConfig"), patch(
+      "src.smart_rag.engines.multi_agent.streaming_processor.langfuse_client"
+    ):
+      await processor.process_streaming_events(
+        session_id="narration",
+        user_prompt="Hi",
+        manager_agent=SimpleNamespace(id="mgr-1", name="Team Manager"),
+        agent_runner=agent_runner,
+        q=queue,
+      )
+
+    component_events = [
+      call.args[0] for call in queue.put.await_args_list
+      if isinstance(call.args[0], dict) and "component" in call.args[0]
+    ]
+    activity_summaries = [
+      event["component"]["data"]["summary"] for event in component_events
+      if event["component"]["type"] == "agent_activity"
+    ]
+    tool_events = [
+      event for event in component_events
+      if event["component"]["type"] == "tool_activity"
+    ]
+    assert activity_summaries == expected_narration
+    assert len(tool_events) == 1
+    assert tool_events[0]["component"]["data"]["tool_name"] == "search"
 
   @pytest.mark.asyncio
   async def test_guarded_output_emits_only_validated_final_text(self, processor):
@@ -278,7 +345,7 @@ class TestStreamingEventProcessor:
     events = [
       event_for(SimpleNamespace(text=None, function_call=SimpleNamespace(id="call-1", name="search", args={"q": "one", "path": "/mnt/workspace", "url": "https://user:password@example.test/private/report", "signed_url": "https://storage.example/private/report?X-Amz-Credential=private-scope&X-Amz-Signature=private-signature", "authorization": "Bearer private", "display_purpose": "Find the first source"}), function_response=None)),
       event_for(SimpleNamespace(text=None, function_call=SimpleNamespace(id="call-2", name="search", args={"q": "two", "display_purpose": "Find the second source"}), function_response=None)),
-      event_for(SimpleNamespace(text=None, function_call=None, function_response=SimpleNamespace(id="call-1", name="search", response={"matches": 1, "url": "ws://sandbox.internal/session/abc123", "detail": "api_token=private"}, is_error=False))),
+      event_for(SimpleNamespace(text="4 Files", thought=True, function_call=None, function_response=SimpleNamespace(id="call-1", name="search", response={"matches": 1, "url": "ws://sandbox.internal/session/abc123", "detail": "api_token=private"}, is_error=False))),
       event_for(SimpleNamespace(text=None, function_call=None, function_response=SimpleNamespace(id="call-2", name="search", response={"matches": 2}, is_error=False))),
     ]
 
@@ -313,6 +380,11 @@ class TestStreamingEventProcessor:
     assert [event["component"]["data"].get("summary") for event in tool_events[:2]] == [
       "Find the first source", "Find the second source",
     ]
+    activity_events = [
+      call.args[0] for call in queue.put.await_args_list
+      if isinstance(call.args[0], dict) and call.args[0].get("component", {}).get("type") == "agent_activity"
+    ]
+    assert activity_events == []
     assert all(
       "display_purpose" not in event["component"]["data"].get("params_json", "")
       and "_display_purpose" not in event["component"]["data"].get("params_json", "")
