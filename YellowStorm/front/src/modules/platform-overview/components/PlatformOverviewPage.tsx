@@ -160,7 +160,7 @@ const quickDestinations: QuickDestination[] = [
   { labelKey: 'quick.workspace', to: '/workspace', icon: LibraryBig },
   { labelKey: 'quick.agents', to: '/agents', icon: Bot },
   { labelKey: 'quick.playbooks', to: '/playbooks', icon: Workflow },
-  { labelKey: 'quick.marketplace', to: '/app-market', icon: Store },
+  { labelKey: 'quick.marketplace', to: '/app-builder', icon: Store },
 ];
 
 const atlasDomains: AtlasDomain[] = [
@@ -228,7 +228,7 @@ const atlasDomains: AtlasDomain[] = [
       {
         titleKey: 'atlas.marketplace.title',
         descriptionKey: 'atlas.marketplace.description',
-        to: '/app-market',
+        to: '/app-builder',
         icon: Store,
       },
     ],

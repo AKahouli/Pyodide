@@ -90,7 +90,7 @@ describe('admin api', () => {
       workspace: true,
       playbook: false,
       governance: true,
-      appMarketplace: true,
+      appBuilder: true,
       worky: false,
       agents: true,
       platformCopilot: false,

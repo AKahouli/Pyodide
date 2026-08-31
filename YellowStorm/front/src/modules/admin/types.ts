@@ -190,7 +190,7 @@ export interface FeatureVisibility {
   workspace: boolean;
   playbook: boolean;
   governance: boolean;
-  appMarketplace: boolean;
+  appBuilder: boolean;
   worky: boolean;
   agents: boolean;
   platformCopilot: boolean;

@@ -59,6 +59,7 @@ describe('ConversationV2Controller', () => {
     setShared: jest.fn(),
     setDeployState: jest.fn(),
     listDeployedApps: jest.fn(),
+    listDraftApps: jest.fn(),
     removeDeployedApp: jest.fn(),
     softDelete: jest.fn(),
   };
@@ -330,7 +331,7 @@ describe('ConversationV2Controller', () => {
     expect(mockClient.resumeSession).toHaveBeenCalledWith('u1', 'ai-1');
   });
 
-  it('GET /apps returns owned and shared deployed apps', async () => {
+  it('GET /apps returns deployed, shared, and draft apps', async () => {
     mockSessions.listDeployedApps.mockResolvedValueOnce([
       {
         sessionId: 'session-1',
@@ -340,6 +341,14 @@ describe('ConversationV2Controller', () => {
         source: 'owned',
         shareId: null,
         canOpenConversation: true,
+      },
+    ]);
+    mockSessions.listDraftApps.mockResolvedValueOnce([
+      {
+        sessionId: 'session-3',
+        title: 'Draft app',
+        lastUpdatedAt: '2026-07-15T10:00:00.000Z',
+        deployStatus: 'idle',
       },
     ]);
     mockAppShares.listSharedWithUser.mockResolvedValueOnce([
@@ -355,7 +364,7 @@ describe('ConversationV2Controller', () => {
     ]);
 
     await expect(controller.listDeployedApps({ id: 'user-1' })).resolves.toEqual({
-      items: [
+      deployed: [
         {
           sessionId: 'session-1',
           title: 'Generated app',
@@ -365,6 +374,8 @@ describe('ConversationV2Controller', () => {
           shareId: null,
           canOpenConversation: true,
         },
+      ],
+      shared: [
         {
           sessionId: 'session-2',
           title: 'Shared app',
@@ -375,8 +386,17 @@ describe('ConversationV2Controller', () => {
           canOpenConversation: true,
         },
       ],
+      drafts: [
+        {
+          sessionId: 'session-3',
+          title: 'Draft app',
+          lastUpdatedAt: '2026-07-15T10:00:00.000Z',
+          deployStatus: 'idle',
+        },
+      ],
     });
     expect(mockAppShares.listSharedWithUser).toHaveBeenCalledWith('user-1');
+    expect(mockSessions.listDraftApps).toHaveBeenCalledWith('user-1');
   });
 
   it('POST /sessions/:id/share-deploy grants Marketplace access by email', async () => {

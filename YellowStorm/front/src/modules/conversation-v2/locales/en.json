@@ -7,7 +7,12 @@
   "session": {
     "loading": "Loading session…",
     "notFound": "Session not found.",
-    "errorTitle": "Stream error"
+    "errorTitle": "Stream error",
+    "fromAppBuilder": {
+      "title": "Building from App Builder",
+      "body": "Your prompt was sent to the Agent. Keep chatting here to refine the app — the live preview opens in the side panel when a version is ready. Return to App Builder anytime from the sidebar.",
+      "dismiss": "Got it"
+    }
   },
   "composer": {
     "placeholder": "Type a message…",
@@ -19,6 +24,9 @@
       "search": "Search models…",
       "empty": "No models found."
     }
+  },
+  "agentComposer": {
+    "placeholder": "Give the agent a task — e.g. \"find the current Bitcoin price\""
   },
   "questionChoices": {
     "fallbackTitle": "Choose an option to continue"

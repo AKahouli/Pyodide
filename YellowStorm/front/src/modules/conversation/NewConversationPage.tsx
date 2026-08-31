@@ -1,35 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { BotIcon, BrainCircuit, CheckIcon, ChevronDown, MessageSquareIcon } from 'lucide-react';
+import { BotIcon, BrainCircuit, ChevronDown, MessageSquareIcon } from 'lucide-react';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import Input from '@/components/ai-elements/input';
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import {
-  PromptInput,
-  PromptInputActionMenu,
-  PromptInputActionMenuContent,
-  PromptInputActionMenuTrigger,
-  PromptInputBody,
   PromptInputButton,
-  PromptInputFooter,
-  PromptInputProvider,
-  PromptInputSubmit,
-  PromptInputTextarea,
   type PromptInputMessage,
 } from '@/components/ai-elements/prompt-input';
-import {
-  ModelSelector,
-  ModelSelectorContent,
-  ModelSelectorEmpty,
-  ModelSelectorGroup,
-  ModelSelectorInput,
-  ModelSelectorItem,
-  ModelSelectorList,
-  ModelSelectorLogo,
-  ModelSelectorName,
-  ModelSelectorTrigger,
-} from '@/components/ai-elements/model-selector';
 import { cn } from '@/lib/utils';
 import { useUsage } from '@/modules/usage/UsageContext';
 import {
@@ -48,15 +27,10 @@ import { SelectedConnectorRepo } from './components/SelectedConnectorRepo';
 import { ComposerSuggestionChips } from './components/ComposerSuggestionChips';
 import { PlaybooksCarousel } from '@/modules/playbook/components/playbook-swiper';
 import { GovernedScopesCarousel } from '@/modules/governance/components/consumer/GovernedScopesCarousel';
-import { conversationV2Api } from '@/modules/conversation-v2/api';
-import { useConversationV2PointersStore, useConversationV2Store } from '@/modules/conversation-v2/store';
-import { writeSelectedModelForSession } from '@/modules/conversation-v2/selectedModelStorage';
-import { useChefs, useDefaultModel, useConversationV2DefaultModel, useModels, useModelsStore, CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT } from '@/modules/models';
-import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect';
-import { RecentSkillsMenu, ManageSkillsDialog, SelectedSkillsPills } from '@/modules/skill';
-import { RecentConnectorsMenu, ManageConnectorsDialog, SelectedConnectorsPills } from '@/modules/connector';
-import { getActiveSkills, getActiveConnectors, type ConnectorOption } from '@/modules/agent/api';
-import type { SkillOption } from '@/modules/agent/types';
+import { AgentComposer } from '@/modules/conversation-v2/components/AgentComposer';
+import { startConversationV2AgentSession } from '@/modules/conversation-v2/startAgentSession';
+import { useConversationV2Store } from '@/modules/conversation-v2/store';
+import { useDefaultModel, useModels } from '@/modules/models';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 type Mode = 'chat' | 'agent';
@@ -157,49 +131,12 @@ export function NewConversationPage() {
     if (!text) return;
     setIsSending(true);
     try {
-      const { sessionId, workspaceIds: sessionWorkspaceIds } =
-        await conversationV2Api.createSession(workspaceIds);
-
-      // Surface the new v2 session in the sidebar history immediately, rather
-      // than waiting for the next pointers refresh.
-      useConversationV2PointersStore.getState().prepend({
-        sessionId,
-        title: '',
-        status: 'active',
-        lastEventAt: new Date().toISOString(),
-        isShared: false,
-        workspaceIds: sessionWorkspaceIds ?? workspaceIds,
-      });
-
-      // Persist + resolve the picked model BEFORE navigation, so:
-      //   1. The session page's hydrateSelectedModelForSession finds it in
-      //      localStorage and the composer reflects the right model.
-      //   2. The initial-message send doesn't have to wait for the models
-      //      cache to load — we already have the LiteLLM identifier here.
-      let litellmModel: string | undefined;
-      if (modelId) {
-        writeSelectedModelForSession(sessionId, modelId);
-      }
-      const lookupId =
-        modelId ??
-        useModelsStore.getState().models.find((m) => m.isConversationV2Default)?.id ??
-        null;
-      if (lookupId) {
-        const model = useModelsStore.getState().models.find((m) => m.id === lookupId);
-        litellmModel = model?.litellmModel || undefined;
-      }
-
-      navigate(`/conversation-v2/${sessionId}`, {
-        state: {
-          initialMessage: text,
-          model: litellmModel,
-          // Carry the skill selection to the session page so the initial send
-          // ships it. Needed because the session loader hydrates (and would
-          // otherwise overwrite) selectedSkillIds from the brand-new — empty —
-          // pointer before the first message is sent.
-          skillIds: useConversationV2Store.getState().selectedSkillIds,
-          connectorIds: useConversationV2Store.getState().selectedConnectorIds,
-        },
+      await startConversationV2AgentSession({
+        text,
+        workspaceIds,
+        modelId,
+        navigate,
+        source: 'new-conversation',
       });
     } catch {
       toast.error(t('toasts.conversation.createError'));
@@ -347,7 +284,11 @@ export function NewConversationPage() {
                 <SelectedConnectorRepo />
               </>
             ) : (
-              <AgentInput onSubmit={handleAgentSubmit} disabled={isSending} />
+              <AgentComposer
+                onSubmit={handleAgentSubmit}
+                disabled={isSending}
+                placeholder={t('newConversation.agentPlaceholder')}
+              />
             )}
           </div>
         </div>
@@ -404,195 +345,5 @@ function ModeToggle({ mode, onChange }: ModeToggleProps) {
         );
       })}
     </div>
-  );
-}
-
-interface AgentInputProps {
-  onSubmit: (message: PromptInputMessage, workspaceIds: string[], modelId: string | null) => void;
-  disabled: boolean;
-}
-
-function AgentInput({ onSubmit, disabled }: AgentInputProps) {
-  const { t } = useModuleTranslation('conversation');
-  const [selectedWorkspaceIds, setSelectedWorkspaceIds] = useState<string[]>([]);
-
-  // Skills selected for the agent (v2) conversation. Kept in the conv-v2 store
-  // so the session page's initial send (and every later message) ships them.
-  const [skills, setSkills] = useState<SkillOption[]>([]);
-  const [skillsLoading, setSkillsLoading] = useState(false);
-  const [manageSkillsOpen, setManageSkillsOpen] = useState(false);
-  const selectedSkillIds = useConversationV2Store((s) => s.selectedSkillIds);
-  const toggleSelectedSkill = useConversationV2Store((s) => s.toggleSelectedSkill);
-
-  // Connectors selected for the agent (v2) conversation. Same store-backed
-  // pattern as skills, so the session page's initial send ships them.
-  const [connectors, setConnectors] = useState<ConnectorOption[]>([]);
-  const [connectorsLoading, setConnectorsLoading] = useState(false);
-  const [manageConnectorsOpen, setManageConnectorsOpen] = useState(false);
-  const selectedConnectorIds = useConversationV2Store((s) => s.selectedConnectorIds);
-  const toggleSelectedConnector = useConversationV2Store((s) => s.toggleSelectedConnector);
-
-  useEffect(() => {
-    setSkillsLoading(true);
-    getActiveSkills()
-      .then((data) => setSkills(data || []))
-      .catch((err) => console.error('Failed to fetch skills:', err))
-      .finally(() => setSkillsLoading(false));
-  }, []);
-
-  useEffect(() => {
-    setConnectorsLoading(true);
-    getActiveConnectors()
-      .then((data) => setConnectors(data || []))
-      .catch((err) => console.error('Failed to fetch connectors:', err))
-      .finally(() => setConnectorsLoading(false));
-  }, []);
-
-  const models = useModels();
-  const chefs = useChefs();
-  const defaultModel = useDefaultModel();
-  const conversationV2DefaultModel = useConversationV2DefaultModel();
-  // New conversations always start at the admin default — the user can
-  // override before submitting. We keep modelId null when it matches the
-  // default so we don't write a stale snapshot if the admin rotates the
-  // default later.
-  const [pickedModelId, setPickedModelId] = useState<string | null>(null);
-  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
-
-  useEffect(() => {
-    // Idempotent: 5-min cache in the models store, no-ops if already loaded.
-    void useModelsStore.getState().fetchModels().catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
-    const onDefaultChanged = (event: Event) => {
-      const previousDefaultId = (event as CustomEvent<{ previousDefaultId?: string | null }>).detail
-        ?.previousDefaultId;
-      if (!previousDefaultId) return;
-      setPickedModelId((current) => (current === previousDefaultId ? null : current));
-    };
-    window.addEventListener(CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT, onDefaultChanged);
-    return () =>
-      window.removeEventListener(CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT, onDefaultChanged);
-  }, []);
-
-  const activeModel =
-    (pickedModelId && models.find((m) => m.id === pickedModelId)) ||
-    conversationV2DefaultModel ||
-    defaultModel ||
-    null;
-
-  const handleSubmit = (message: PromptInputMessage) => {
-    // Persist the actual model id we want to remember — either the user's
-    // explicit pick or the current admin default. handleAgentSubmit needs a
-    // concrete id to look up the LiteLLM identifier.
-    onSubmit(message, selectedWorkspaceIds, pickedModelId);
-  };
-
-  const handlePickModel = (modelId: string) => {
-    setPickedModelId(modelId);
-    setModelSelectorOpen(false);
-  };
-
-  return (
-    <PromptInputProvider>
-      <PromptInput onSubmit={handleSubmit}>
-        <PromptInputBody>
-          <PromptInputTextarea
-            placeholder={t('newConversation.agentPlaceholder')}
-            disabled={disabled}
-          />
-        </PromptInputBody>
-        <PromptInputFooter>
-          <PromptInputActionMenu>
-            <PromptInputActionMenuTrigger />
-            <PromptInputActionMenuContent>
-              <RecentConnectorsMenu
-                connectors={connectors}
-                loading={connectorsLoading}
-                onSelectConnector={(connector) => toggleSelectedConnector(connector.id)}
-                onOpenManage={() => setManageConnectorsOpen(true)}
-              />
-              <RecentSkillsMenu
-                skills={skills}
-                loading={skillsLoading}
-                selectedIds={selectedSkillIds}
-                onSelectSkill={(skill) => toggleSelectedSkill(skill.id)}
-                onOpenManage={() => setManageSkillsOpen(true)}
-              />
-            </PromptInputActionMenuContent>
-          </PromptInputActionMenu>
-          <WorkspaceSelect
-            selectedIds={selectedWorkspaceIds}
-            onChange={setSelectedWorkspaceIds}
-            disabled={disabled}
-          />
-          {models.length > 0 && (
-            <ModelSelector open={modelSelectorOpen} onOpenChange={setModelSelectorOpen}>
-              <ModelSelectorTrigger asChild>
-                <PromptInputButton type='button' disabled={disabled}>
-                  {activeModel?.chefSlug && <ModelSelectorLogo provider={activeModel.chefSlug} />}
-                  <ModelSelectorName>
-                    {activeModel?.name ?? t('newConversation.modelSelector.unset')}
-                  </ModelSelectorName>
-                </PromptInputButton>
-              </ModelSelectorTrigger>
-              <ModelSelectorContent>
-                <ModelSelectorInput placeholder={t('newConversation.modelSelector.search')} />
-                <ModelSelectorList>
-                  <ModelSelectorEmpty>{t('newConversation.modelSelector.empty')}</ModelSelectorEmpty>
-                  {chefs.map((chef) => (
-                    <ModelSelectorGroup heading={chef.name} key={chef.slug}>
-                      {models
-                        .filter((m) => m.chefSlug === chef.slug)
-                        .map((m) => (
-                          <ModelSelectorItem
-                            key={m.id}
-                            value={`${m.name} ${m.chef}`}
-                            onSelect={() => handlePickModel(m.id)}
-                          >
-                            <ModelSelectorLogo provider={m.chefSlug} />
-                            <ModelSelectorName>{m.name}</ModelSelectorName>
-                            {activeModel?.id === m.id && (
-                              <CheckIcon className='ml-auto size-4 text-muted-foreground' />
-                            )}
-                          </ModelSelectorItem>
-                        ))}
-                    </ModelSelectorGroup>
-                  ))}
-                </ModelSelectorList>
-              </ModelSelectorContent>
-            </ModelSelector>
-          )}
-          <div className='flex-1' />
-          <PromptInputSubmit status={disabled ? 'submitted' : 'ready'} />
-        </PromptInputFooter>
-      </PromptInput>
-      <SelectedConnectorsPills
-        connectors={connectors}
-        selectedIds={selectedConnectorIds}
-        onRemove={toggleSelectedConnector}
-      />
-      <SelectedSkillsPills
-        skills={skills}
-        selectedIds={selectedSkillIds}
-        onRemove={toggleSelectedSkill}
-      />
-      <ManageConnectorsDialog
-        open={manageConnectorsOpen}
-        onOpenChange={setManageConnectorsOpen}
-        connectors={connectors}
-        loading={connectorsLoading}
-        onUseConnector={(connector) => toggleSelectedConnector(connector.id)}
-      />
-      <ManageSkillsDialog
-        open={manageSkillsOpen}
-        onOpenChange={setManageSkillsOpen}
-        skills={skills}
-        loading={skillsLoading}
-        selectedIds={selectedSkillIds}
-        onToggleSkill={(skill) => toggleSelectedSkill(skill.id)}
-      />
-    </PromptInputProvider>
   );
 }

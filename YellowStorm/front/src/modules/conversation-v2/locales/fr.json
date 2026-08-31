@@ -7,7 +7,12 @@
   "session": {
     "loading": "Chargement de la session…",
     "notFound": "Session introuvable.",
-    "errorTitle": "Erreur de flux"
+    "errorTitle": "Erreur de flux",
+    "fromAppBuilder": {
+      "title": "Création depuis App Builder",
+      "body": "Votre demande a été envoyée à l'Agent. Continuez la conversation ici pour affiner l'application — l'aperçu en direct s'ouvre dans le panneau latéral dès qu'une version est prête. Revenez à App Builder à tout moment via la barre latérale.",
+      "dismiss": "Compris"
+    }
   },
   "composer": {
     "placeholder": "Tapez un message…",
@@ -19,6 +24,9 @@
       "search": "Rechercher des modèles…",
       "empty": "Aucun modèle trouvé."
     }
+  },
+  "agentComposer": {
+    "placeholder": "Donnez une tâche à l'agent — ex : « trouve le prix du Bitcoin »"
   },
   "questionChoices": {
     "fallbackTitle": "Choisissez une option pour continuer"

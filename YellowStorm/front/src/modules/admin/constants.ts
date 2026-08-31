@@ -11,7 +11,7 @@ export const DEFAULT_FEATURE_VISIBILITY: FeatureVisibility = Object.freeze({
   workspace: true,
   playbook: true,
   governance: true,
-  appMarketplace: true,
+  appBuilder: true,
   worky: true,
   agents: true,
   platformCopilot: false,

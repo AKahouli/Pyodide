@@ -56,7 +56,7 @@ import { PlaybookButton } from '@/modules/playbook/components/PlaybookButton';
 import { WorkyButton } from '@/modules/worky/components/WorkyButton';
 import { GovernanceButton } from '@/modules/governance';
 import { ConnectedAppButton } from '@/modules/connected-app';
-import { AppMarketplaceButton } from '@/modules/app-marketplace';
+import { AppBuilderButton } from '@/modules/app-builder';
 import { AdminButton, DEFAULT_FEATURE_VISIBILITY, getFeatureVisibility } from '@/modules/admin';
 import type { FeatureVisibility } from '@/modules/admin';
 import { usePermissions } from '@/modules/admin/hooks/usePermissions';
@@ -307,7 +307,7 @@ export const AppSidebar = memo(function AppSidebar() {
       path.startsWith('/playbooks') ||
       path.startsWith('/worky') ||
       path.startsWith('/apps') ||
-      path.startsWith('/app-market')
+      path.startsWith('/app-builder')
     ) {
       return 'automate';
     }
@@ -643,10 +643,10 @@ export const AppSidebar = memo(function AppSidebar() {
             label={t('groups.integrations.label')}
             tooltip={t('groups.integrations.tooltip')}
             icon={<Plug />}
-            active={location.pathname.startsWith('/apps') || location.pathname.startsWith('/app-market')}
+            active={location.pathname.startsWith('/apps') || location.pathname.startsWith('/app-builder')}
           >
             <ConnectedAppButton />
-            {featureVisibility.appMarketplace && <AppMarketplaceButton />}
+            {featureVisibility.appBuilder && <AppBuilderButton />}
           </OutcomeSubgroup>
         </OutcomeGroup>
 

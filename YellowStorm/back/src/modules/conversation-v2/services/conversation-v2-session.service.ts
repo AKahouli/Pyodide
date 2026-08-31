@@ -33,6 +33,13 @@ export interface DeployedAppSummary {
   canOpenConversation: boolean;
 }
 
+export interface DraftAppSummary {
+  sessionId: string;
+  title: string;
+  lastUpdatedAt: string;
+  deployStatus: Exclude<ConversationV2DeployStatus, 'deployed'>;
+}
+
 @Injectable()
 export class ConversationV2SessionService {
   constructor(
@@ -125,6 +132,35 @@ export class ConversationV2SessionService {
       source: 'owned' as const,
       shareId: null,
       canOpenConversation: true,
+    }));
+  }
+
+  /**
+   * List the owner's in-progress app conversations that have not been published
+   * yet (or were unpublished from App Builder). Requires at least one persisted
+   * event so empty sessions do not appear as drafts.
+   */
+  async listDraftApps(ownerId: string): Promise<DraftAppSummary[]> {
+    const docs = await this.model
+      .find({
+        ownerId,
+        deletedAt: null,
+        aiSessionId: { $ne: null },
+        eventCount: { $gt: 0 },
+        $or: [{ deployStatus: { $ne: 'deployed' } }, { deployedUrl: null }],
+      })
+      .sort({ lastEventAt: -1 })
+      .select('title deployedAppTitle deployStatus lastEventAt')
+      .lean()
+      .exec();
+    return docs.map((doc) => ({
+      sessionId: doc._id.toString(),
+      title:
+        (doc.deployedAppTitle as string | undefined) ??
+        (doc.title as string | undefined) ??
+        '',
+      lastUpdatedAt: new Date(doc.lastEventAt).toISOString(),
+      deployStatus: (doc.deployStatus as DraftAppSummary['deployStatus']) ?? 'idle',
     }));
   }
 

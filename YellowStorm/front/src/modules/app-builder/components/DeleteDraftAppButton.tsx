@@ -14,31 +14,21 @@ import {
 } from '@/components/ui/alert-dialog';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
-import { useAppMarketplaceStore } from '../store';
-import type { DeployedAppSource } from '../types';
+import { useAppBuilderStore } from '../store';
 
-export function DeleteDeployedAppButton({
-  sessionId,
-  source = 'owned',
-}: {
-  sessionId: string;
-  source?: DeployedAppSource;
-}) {
-  const { t } = useModuleTranslation('app-marketplace');
+export function DeleteDraftAppButton({ sessionId }: { sessionId: string }) {
+  const { t } = useModuleTranslation('app-builder');
   const [open, setOpen] = useState(false);
-  const removeApp = useAppMarketplaceStore((state) => state.removeApp);
-  const isDeleting = useAppMarketplaceStore(
-    (state) => state.deletingSessionId === sessionId,
-  );
-  const isShared = source === 'shared';
+  const removeDraft = useAppBuilderStore((state) => state.removeDraft);
+  const isDeleting = useAppBuilderStore((state) => state.deletingSessionId === sessionId);
 
   const handleDelete = async () => {
     try {
-      await removeApp(sessionId);
-      showSuccess(isShared ? t('card.unshareSuccess') : t('card.deleteSuccess'));
+      await removeDraft(sessionId);
+      showSuccess(t('card.deleteDraftSuccess'));
       setOpen(false);
     } catch {
-      showError(isShared ? t('card.unshareError') : t('card.deleteError'));
+      showError(t('card.deleteDraftError'));
     }
   };
 
@@ -47,26 +37,23 @@ export function DeleteDeployedAppButton({
       <AlertDialogTrigger asChild>
         <Button
           variant='ghost'
-          size='icon-sm'
-          aria-label={isShared ? t('card.unshare') : t('card.delete')}
+          size='icon'
+          className='h-7 w-7 text-destructive hover:bg-destructive/10 hover:text-destructive'
+          aria-label={t('card.deleteDraft')}
         >
-          <Trash2 className='h-4 w-4 text-destructive' />
+          <Trash2 className='h-3.5 w-3.5' />
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>
-            {isShared ? t('card.unshareTitle') : t('card.deleteTitle')}
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            {isShared ? t('card.unshareDescription') : t('card.deleteDescription')}
-          </AlertDialogDescription>
+          <AlertDialogTitle>{t('card.deleteDraftTitle')}</AlertDialogTitle>
+          <AlertDialogDescription>{t('card.deleteDraftDescription')}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>{t('card.cancel')}</AlertDialogCancel>
           <AlertDialogAction disabled={isDeleting} onClick={handleDelete}>
             {isDeleting && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
-            {isShared ? t('card.unshare') : t('card.delete')}
+            {t('card.deleteDraft')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

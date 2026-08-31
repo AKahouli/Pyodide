@@ -1,5 +1,7 @@
 # Conversation V2 — Frontend
 
+> **Documentation technique junior (Conversation en mode Agent / conversation-v2, code vérifié)** : [../../../../back/src/modules/conversation-v2/DOCUMENTATION_TECHNIQUE.md](../../../../back/src/modules/conversation-v2/DOCUMENTATION_TECHNIQUE.md)
+
 React module for Manus conversations: composer, streaming timeline,
 right panel (tool details + **Nodepod app preview**), skills/connectors,
 **Runtime Browser Host**, **source revision viewer**, **deploy controls**,

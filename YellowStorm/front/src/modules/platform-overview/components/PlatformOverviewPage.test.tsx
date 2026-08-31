@@ -83,7 +83,7 @@ describe('PlatformOverviewPage', () => {
     expect(screen.getByText('trust.score.description')).toBeInTheDocument();
     expect(screen.getByText('trust.claims.description')).toBeInTheDocument();
     expect(screen.getByText('trust.audit.description')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'quick.marketplace' })).toHaveAttribute('href', '/app-market');
+    expect(screen.getByRole('link', { name: 'quick.marketplace' })).toHaveAttribute('href', '/app-builder');
     expect(screen.getAllByRole('link', { name: /authorizations/ })).toEqual(
       expect.arrayContaining([expect.objectContaining({ pathname: '/apps' })]),
     );
@@ -123,7 +123,7 @@ describe('PlatformOverviewPage', () => {
     expect(screen.getByRole('link', { name: /atlas.worky.title/ })).toHaveAttribute('href', '/worky');
     expect(screen.getByRole('link', { name: /atlas.playbooks.title/ })).toHaveAttribute('href', '/playbooks');
     expect(screen.getByRole('link', { name: /atlas.connectedApps.title/ })).toHaveAttribute('href', '/apps');
-    expect(screen.getByRole('link', { name: /atlas.marketplace.title/ })).toHaveAttribute('href', '/app-market');
+    expect(screen.getByRole('link', { name: /atlas.marketplace.title/ })).toHaveAttribute('href', '/app-builder');
     expect(screen.queryByRole('link', { name: /atlas.semanticModels.title/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /atlas.governance.title/ })).not.toBeInTheDocument();
     expect(screen.getAllByText('access.restricted')).toHaveLength(2);

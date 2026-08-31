@@ -1,31 +1,22 @@
 import { apiClient, type ApiResponse } from '@/lib/api/client';
-import type { DeployedApp, ListDeployedAppsResponse } from './types';
+import type {
+  AppEndUserGrants,
+  AppEndUserSummary,
+  AppBuilderCatalog,
+  ListAppBuilderAppsResponse,
+} from './types';
 
-export interface AppEndUserGrants {
-  create: boolean;
-  read: boolean;
-  update: boolean;
-  delete: boolean;
-}
+export type { AppEndUserGrants, AppEndUserSummary };
 
-export interface AppEndUserSummary {
-  id: string;
-  email: string;
-  displayName: string | null;
-  status: 'active' | 'disabled';
-  grants: AppEndUserGrants;
-  createdAt: string;
-}
-
-export const appMarketplaceApi = {
-  /** Owned + shared deployed apps of the current user, newest first. */
-  async listDeployedApps(): Promise<DeployedApp[]> {
-    const res = await apiClient.get<ApiResponse<ListDeployedAppsResponse>>(
+export const appBuilderApi = {
+  /** Owned deployed, shared, and draft apps for the current user. */
+  async listApps(): Promise<AppBuilderCatalog> {
+    const res = await apiClient.get<ApiResponse<ListAppBuilderAppsResponse>>(
       '/conversation-v2/apps',
     );
-    return res.data.data.items;
+    return res.data.data;
   },
-  /** Remove an app from Marketplace without deleting its conversation. */
+  /** Remove an app from App Builder without deleting its conversation. */
   async removeApp(sessionId: string): Promise<void> {
     await apiClient.delete(`/conversation-v2/apps/${sessionId}`);
   },

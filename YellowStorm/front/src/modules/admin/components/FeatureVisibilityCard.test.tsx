@@ -39,7 +39,7 @@ const visibility = {
   workspace: true,
   playbook: true,
   governance: true,
-  appMarketplace: true,
+  appBuilder: true,
   worky: true,
   agents: true,
   platformCopilot: false,

@@ -10,17 +10,18 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import type {
-  AppOwnershipFilter,
-  AppSortKey,
-  AppViewMode,
-} from '../../hooks/useAppMarketplaceFilters';
+import type { AppSortKey, AppViewMode } from '../../hooks/useAppBuilderFilters';
+import { APP_BUILDER_TAB_LABEL_KEYS } from '../../status-i18n';
+import type { AppBuilderTab } from '../../types';
 
-interface AppMarketplaceFiltersProps {
+const STATUS_TABS: AppBuilderTab[] = ['all', 'deployed', 'shared', 'draft'];
+
+interface AppBuilderFiltersProps {
   searchInput: string;
   onSearchChange: (value: string) => void;
-  owner: AppOwnershipFilter;
-  onOwnerChange: (value: AppOwnershipFilter) => void;
+  tab: AppBuilderTab;
+  onTabChange: (value: AppBuilderTab) => void;
+  tabCounts: Record<AppBuilderTab, number>;
   sort: AppSortKey;
   onSortChange: (value: AppSortKey) => void;
   view: AppViewMode;
@@ -29,19 +30,20 @@ interface AppMarketplaceFiltersProps {
   onClearAll: () => void;
 }
 
-export function AppMarketplaceFilters({
+export function AppBuilderFilters({
   searchInput,
   onSearchChange,
-  owner,
-  onOwnerChange,
+  tab,
+  onTabChange,
+  tabCounts,
   sort,
   onSortChange,
   view,
   onViewChange,
   hasActiveFilters,
   onClearAll,
-}: AppMarketplaceFiltersProps) {
-  const { t } = useModuleTranslation('app-marketplace');
+}: AppBuilderFiltersProps) {
+  const { t } = useModuleTranslation('app-builder');
 
   return (
     <div className='flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-card/40 p-2'>
@@ -66,14 +68,20 @@ export function AppMarketplaceFilters({
 
       <div className='h-5 w-px bg-border/60' />
 
-      <Select value={owner} onValueChange={(v) => onOwnerChange(v as AppOwnershipFilter)}>
-        <SelectTrigger className='h-9 w-[200px] border-transparent bg-transparent shadow-none hover:bg-accent/50'>
+      <Select value={tab} onValueChange={(v) => onTabChange(v as AppBuilderTab)}>
+        <SelectTrigger
+          className='h-9 w-[200px] gap-1.5 border-transparent bg-transparent shadow-none hover:bg-accent/50 [&>span]:line-clamp-1'
+          aria-label={t('hub.filters.statusLabel')}
+        >
+          <span className='shrink-0 text-muted-foreground'>{t('hub.filters.statusLabel')}:</span>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value='all'>{t('hub.filters.ownerAll')}</SelectItem>
-          <SelectItem value='owned'>{t('hub.filters.ownerMine')}</SelectItem>
-          <SelectItem value='shared'>{t('hub.filters.ownerShared')}</SelectItem>
+          {STATUS_TABS.map((status) => (
+            <SelectItem key={status} value={status}>
+              {t(APP_BUILDER_TAB_LABEL_KEYS[status])} ({tabCounts[status]})
+            </SelectItem>
+          ))}
         </SelectContent>
       </Select>
 
@@ -83,8 +91,17 @@ export function AppMarketplaceFilters({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value='deployed'>{t('hub.sort.deployed')}</SelectItem>
-          <SelectItem value='name'>{t('hub.sort.name')}</SelectItem>
+          {tab === 'draft' ? (
+            <>
+              <SelectItem value='updated'>{t('hub.sort.updated')}</SelectItem>
+              <SelectItem value='name'>{t('hub.sort.name')}</SelectItem>
+            </>
+          ) : (
+            <>
+              <SelectItem value='deployed'>{t('hub.sort.deployed')}</SelectItem>
+              <SelectItem value='name'>{t('hub.sort.name')}</SelectItem>
+            </>
+          )}
         </SelectContent>
       </Select>
 

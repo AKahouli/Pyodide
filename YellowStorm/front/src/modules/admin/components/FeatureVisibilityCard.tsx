@@ -29,7 +29,7 @@ const FEATURES = [
   { key: 'workspace', icon: Layers3, labelKey: 'system.features.items.workspace.label', descriptionKey: 'system.features.items.workspace.description' },
   { key: 'playbook', icon: Workflow, labelKey: 'system.features.items.playbook.label', descriptionKey: 'system.features.items.playbook.description' },
   { key: 'governance', icon: ShieldCheck, labelKey: 'system.features.items.governance.label', descriptionKey: 'system.features.items.governance.description' },
-  { key: 'appMarketplace', icon: Store, labelKey: 'system.features.items.appMarketplace.label', descriptionKey: 'system.features.items.appMarketplace.description' },
+  { key: 'appBuilder', icon: Store, labelKey: 'system.features.items.appBuilder.label', descriptionKey: 'system.features.items.appBuilder.description' },
   { key: 'worky', icon: Sparkles, labelKey: 'system.features.items.worky.label', descriptionKey: 'system.features.items.worky.description' },
   { key: 'agents', icon: Bot, labelKey: 'system.features.items.agents.label', descriptionKey: 'system.features.items.agents.description' },
   { key: 'platformCopilot', icon: Sparkles, labelKey: 'system.features.items.platformCopilot.label', descriptionKey: 'system.features.items.platformCopilot.description' },

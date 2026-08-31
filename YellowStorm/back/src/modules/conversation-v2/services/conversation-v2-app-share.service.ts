@@ -237,7 +237,7 @@ export class ConversationV2AppShareService {
     const appName = this.config.get<string>('app.name', 'YelloStorm');
     const frontBase = this.config.get<string>('app.frontendUrl') ?? 'http://localhost:5173';
     const base = frontBase.replace(/\/$/, '');
-    const marketplaceUrl = `${base}/#/app-market`;
+    const marketplaceUrl = `${base}/#/app-builder`;
     const conversationUrl = `${base}/#/conversation-v2/${params.sessionId}`;
     const subject = `${params.title || 'An app'} has been shared with you`;
     const html = `
@@ -245,13 +245,13 @@ export class ConversationV2AppShareService {
       <p>An app and its conversation built on ${appName} have been shared with you.</p>
       <p><strong>App:</strong> <a href="${params.deployedUrl}" target="_blank" rel="noreferrer">${params.deployedUrl}</a></p>
       <p><strong>Conversation:</strong> <a href="${conversationUrl}">Open the conversation</a></p>
-      <p>You can also open the app from your <a href="${marketplaceUrl}">App Marketplace</a>.</p>
+      <p>You can also open the app from your <a href="${marketplaceUrl}">App Builder</a>.</p>
     `;
     const text = [
       'An app and its conversation have been shared with you.',
       `App: ${params.deployedUrl}`,
       `Conversation: ${conversationUrl}`,
-      `Marketplace: ${marketplaceUrl}`,
+      `App Builder: ${marketplaceUrl}`,
     ].join('\n');
 
     const result = await this.email.send({ to: params.to, subject, html, text });
@@ -269,8 +269,8 @@ export class ConversationV2AppShareService {
       await this.notifications.sendToUser(userId, {
         type: NotificationType.INFO,
         title: 'App shared with you',
-        message: `"${title || 'An app'}" and its conversation were added to your App Marketplace.`,
-        data: { route: '/app-market' },
+        message: `"${title || 'An app'}" and its conversation were added to your App Builder.`,
+        data: { route: '/app-builder' },
         metadata: { sourceModule: 'conversation-v2-app-share' },
       });
     } catch (error) {
