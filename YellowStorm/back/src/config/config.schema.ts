@@ -42,6 +42,13 @@ export const configValidationSchema = Joi.object({
   POSTGRES_MAX_POOL_SIZE: Joi.number().min(1).max(100).default(10),
   POSTGRES_IDLE_TIMEOUT: Joi.number().min(0).default(30000),
   POSTGRES_CONNECT_TIMEOUT: Joi.number().min(1000).default(10000),
+  POSTGRES_STATEMENT_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
+  POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
+  POSTGRES_KEEPALIVE: Joi.boolean().default(true),
+  REPLICA_ID: Joi.string().max(100).optional(),
+  CONVERSATION_MAX_CLONE_MESSAGES: Joi.number().min(1).max(10000).default(2000),
+  CONVERSATION_MAX_PRIVATE_SHARE_RECIPIENTS: Joi.number().min(1).max(20).default(20),
+  CONVERSATION_CLONE_INSERT_BATCH_SIZE: Joi.number().min(1).max(1000).default(250),
 
   // Semantic Model PostgreSQL / Apache AGE
   SEMANTIC_MODELS_ENABLED: Joi.boolean().default(false),

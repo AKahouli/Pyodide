@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
@@ -39,6 +39,8 @@ import {
   type ConversationStore,
 } from '../persistence/conversation-store';
 import { newOwnedId } from '../persistence/owned-id';
+import { PG_POOL } from '../../postgres/postgres.constants';
+import type { Pool, PoolClient } from 'pg';
 
 @Injectable()
 export class ConversationService {
@@ -54,6 +56,7 @@ export class ConversationService {
     private readonly emailService: EmailService,
     private readonly agentRepository: AgentRepository,
     private readonly featureVisibility: FeatureVisibilityService,
+    @Optional() @Inject(PG_POOL) private readonly postgresPool?: Pool,
   ) {
     this.logger.setContext('ConversationService');
   }
@@ -233,7 +236,39 @@ export class ConversationService {
   async findAllByUser(
     userId: string,
     params: ConversationQueryParams,
-  ): Promise<PaginatedConversations> {
+  ): Promise<PaginatedConversations | import('../interfaces/conversation.interface').CursorPaginatedConversations> {
+    if ((params.mode ?? 'legacy') === 'cursor') {
+      if (params.page !== undefined) {
+        throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'page is not valid in cursor mode');
+      }
+      const limit = params.limit ?? 50;
+      const result = await this.conversationStore.listCursor({
+        userId,
+        limit,
+        cursor: params.cursor,
+        search: params.search,
+        sortBy: params.sortBy ?? 'lastMessageAt',
+        sortOrder: params.sortOrder ?? 'desc',
+        isArchived: params.isArchived,
+        projectId: params.projectId,
+        searchScope: params.searchScope,
+        runtimePurpose: params.runtimePurpose,
+      });
+      const users = await this.usersById(result.records.map((record) => record.createdBy));
+      return {
+        conversations: result.records.map((record) => ({
+          ...record,
+          ownerName: this.userName(users.get(record.createdBy)),
+          lastMessageAt: record.lastMessageAt?.toISOString(),
+          createdAt: record.createdAt.toISOString(),
+          updatedAt: record.updatedAt.toISOString(),
+        })),
+        pagination: { mode: 'cursor', limit, hasMore: result.hasMore, nextCursor: result.nextCursor },
+      };
+    }
+    if (params.cursor !== undefined) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'cursor requires cursor mode');
+    }
     const page = params.page ?? 1;
     const limit = params.limit ?? 20;
     const result = await this.conversationStore.list({
@@ -481,7 +516,18 @@ export class ConversationService {
   async cleanupOrphanedConversations(): Promise<void> {
     if (this.isCleaningUp) return;
     this.isCleaningUp = true;
+    let lockClient: PoolClient | undefined;
+    let lockHeld = false;
     try {
+      if (this.postgresPool) {
+        lockClient = await this.postgresPool.connect();
+        const lockResult = await lockClient.query<{ acquired: boolean }>(
+          'SELECT pg_try_advisory_lock(hashtext($1)) AS acquired',
+          ['conversation:orphan-cleanup:v1'],
+        );
+        lockHeld = lockResult.rows[0]?.acquired === true;
+        if (!lockHeld) return;
+      }
       const hours = this.configService.get<number>(
         'conversation.orphanedConversationThresholdHours',
         24,
@@ -502,6 +548,20 @@ export class ConversationService {
         }
       }
     } finally {
+      if (lockClient) {
+        if (lockHeld) {
+          try {
+            await lockClient.query('SELECT pg_advisory_unlock(hashtext($1))', [
+              'conversation:orphan-cleanup:v1',
+            ]);
+          } catch (error) {
+            this.logger.warn('Failed to release orphan cleanup advisory lock', {
+              error: error instanceof Error ? error.message : 'Unknown error',
+            });
+          }
+        }
+        lockClient.release();
+      }
       this.isCleaningUp = false;
     }
   }

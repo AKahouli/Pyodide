@@ -86,6 +86,10 @@ export interface MessagePageInput {
   conversationType?: 'user' | 'ai';
 }
 
+export interface MessageCursorInput extends Omit<MessagePageInput, 'page'> {
+  cursor?: string;
+}
+
 export interface MessageStore {
   createUser(input: CreateUserMessageData): Promise<MessageRecord>;
   createAiPlaceholder(input: CreateAIPlaceholderData): Promise<MessageRecord>;
@@ -94,7 +98,12 @@ export interface MessageStore {
   ): Promise<MessageRecord | null>;
   findById(id: string): Promise<MessageRecord | null>;
   listPage(input: MessagePageInput): Promise<{ records: MessageRecord[]; total: number }>;
-  listByConversation(conversationId: string): Promise<MessageRecord[]>;
+  listCursor(input: MessageCursorInput): Promise<{
+    records: MessageRecord[];
+    hasMore: boolean;
+    nextCursor: string | null;
+  }>;
+  listByConversation(conversationId: string, limit?: number): Promise<MessageRecord[]>;
   findTurnByRequestId(
     conversationId: string,
     senderId: string,
@@ -141,6 +150,7 @@ export interface MessageStore {
   ): Promise<MessageRecord | null>;
   deleteByConversation(conversationId: string): Promise<number>;
   findBranchesByQuestion(questionMessageId: string): Promise<MessageRecord[]>;
+  findBranchesByQuestions(questionMessageIds: string[]): Promise<Map<string, MessageRecord[]>>;
   findAiComponents(
     conversationId: string,
     messageId: string,

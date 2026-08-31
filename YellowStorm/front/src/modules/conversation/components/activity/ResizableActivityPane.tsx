@@ -1,7 +1,7 @@
-import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode, type RefObject } from 'react';
+import { useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode, type RefObject } from 'react';
 
-const DEFAULT_HEIGHT = 107;
 const MIN_HEIGHT = 80;
+const AUTO_MAX_HEIGHT = 320;
 const MAX_HEIGHT = 480;
 const KEYBOARD_STEP = 16;
 
@@ -12,11 +12,26 @@ interface ResizableActivityPaneProps {
 }
 
 export function ResizableActivityPane({ children, paneRef, resizeLabel }: Readonly<ResizableActivityPaneProps>) {
-  const [height, setHeight] = useState(DEFAULT_HEIGHT);
+  const [manualHeight, setManualHeight] = useState<number>();
+  const [measuredHeight, setMeasuredHeight] = useState(MIN_HEIGHT);
   const dragStartY = useRef(0);
   const dragStartHeight = useRef(0);
   const activePointerId = useRef<number | null>(null);
   const clampHeight = (value: number) => Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, value));
+  const height = manualHeight ?? measuredHeight;
+
+  useLayoutEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const updateHeight = () => {
+      const nextHeight = clampHeight(Math.round(pane.getBoundingClientRect().height) || MIN_HEIGHT);
+      setMeasuredHeight((current) => current === nextHeight ? current : nextHeight);
+    };
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, [paneRef]);
 
   const startResize = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || activePointerId.current !== null) return;
@@ -29,7 +44,7 @@ export function ResizableActivityPane({ children, paneRef, resizeLabel }: Readon
 
   const resize = (event: PointerEvent<HTMLDivElement>) => {
     if (activePointerId.current !== event.pointerId) return;
-    setHeight(clampHeight(dragStartHeight.current + event.clientY - dragStartY.current));
+    setManualHeight(clampHeight(dragStartHeight.current + event.clientY - dragStartY.current));
   };
 
   const stopResize = (event: PointerEvent<HTMLDivElement>) => {
@@ -50,12 +65,18 @@ export function ResizableActivityPane({ children, paneRef, resizeLabel }: Readon
     if (event.key === 'End') nextHeight = MAX_HEIGHT;
     if (nextHeight === undefined) return;
     event.preventDefault();
-    setHeight(clampHeight(nextHeight));
+    setManualHeight(clampHeight(nextHeight));
   };
 
   return (
     <div className='relative hidden md:block'>
-      <div ref={paneRef} data-activity-pane className='overflow-y-auto overscroll-contain pr-2' style={{ height }}>
+      <div
+        ref={paneRef}
+        data-activity-pane
+        data-auto-sized={manualHeight === undefined || undefined}
+        className='overflow-y-auto overscroll-contain pr-2'
+        style={manualHeight === undefined ? { minHeight: MIN_HEIGHT, maxHeight: AUTO_MAX_HEIGHT } : { height: manualHeight }}
+      >
         {children}
       </div>
       <div

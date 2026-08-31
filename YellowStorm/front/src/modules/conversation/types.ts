@@ -264,6 +264,25 @@ export interface ChoiceInteractionMetadata {
   selectedOptions: Array<{ optionId: string; label: string; value?: string }>; customAnswer?: string; dismissed?: boolean; displayText?: string;
 }
 
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  createdBy: string;
+  ownerName?: string;
+  messageCount: number;
+  lastMessageAt?: string;
+  isArchived: boolean;
+  isShared: boolean;
+  isGroup: boolean;
+  unseenMentionCount: number;
+  projectId?: string | null;
+  runtimeMode: 'standard' | 'governed';
+  runtimePurpose: 'chat' | 'platform_copilot';
+  pinnedAgentId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SafeExecutionSummary { summary: string; status: string; actorLabel?: string }
 export interface SafePlanStep { label: string; status?: string }
 export interface SafeActionIdentity { name: string; label?: string; kind?: string; status?: string; summary?: string }
@@ -323,6 +342,8 @@ export interface StreamingComponent extends MessageComponent {
 }
 
 export interface ConversationListParams {
+  mode?: 'legacy' | 'cursor';
+  cursor?: string;
   page?: number;
   limit?: number;
   search?: string;
@@ -346,8 +367,11 @@ export interface CreateConversationPayload {
 }
 
 export interface MessageListParams {
+  mode?: 'legacy' | 'cursor';
+  cursor?: string;
   page?: number;
   limit?: number;
+  conversationType?: 'user' | 'ai';
 }
 
 export interface PaginatedResponse<T> {
@@ -356,6 +380,9 @@ export interface PaginatedResponse<T> {
   page: number;
   limit: number;
   totalPages: number;
+  hasMore?: boolean;
+  nextCursor?: string | null;
+  branchesByQuestion?: Record<string, Message[]>;
 }
 
 export interface SendMessagePayload {

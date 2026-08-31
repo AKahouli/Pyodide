@@ -17,7 +17,7 @@ import { ConversationService } from './conversation.service';
 import { StreamGatewayService } from './stream-gateway.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { LoggerService } from '../../logger';
-import { ConflictException, NotFoundException } from '../../exceptions';
+import { BadRequestException, ConflictException, NotFoundException } from '../../exceptions';
 import { AppException } from '../../exceptions/exceptions/base.exception';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { sanitizeTaskDiagnosticItems } from '../utils/task-diagnostics';
@@ -26,6 +26,8 @@ import { StreamEvent } from '../interfaces/stream.interface';
 import { EmailService } from '../../email/email.service';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
 import { MESSAGE_STORE, type MessageRecord, type MessageStore } from '../persistence/message-store';
+
+const SETTINGS_LOOKUP_TIMEOUT_MS = 1_000;
 
 @Injectable()
 export class MessageService {
@@ -318,14 +320,64 @@ export class MessageService {
   async findByConversation(
     conversationId: string,
     params: MessageQueryParams,
-  ): Promise<PaginatedMessages> {
+  ): Promise<PaginatedMessages | import('../interfaces/message.interface').CursorPaginatedMessages> {
+    if ((params.mode ?? 'legacy') === 'cursor') {
+      if (params.page !== undefined) {
+        throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'page is not valid in cursor mode');
+      }
+      const limit = params.limit ?? 50;
+      const [window, redactSensitiveText] = await Promise.all([
+        this.messageStore.listCursor({
+          conversationId,
+          limit,
+          cursor: params.cursor,
+          conversationType: params.conversationType,
+        }),
+        this.resolveRedactSensitiveText(),
+      ]);
+      const questionIds = window.records
+        .filter((message) => message.conversationType === 'user')
+        .map((message) => message.id);
+      const branches = await this.messageStore.findBranchesByQuestions(questionIds);
+      const allRecords = [...window.records, ...[...branches.values()].flat()];
+      const fileMap = await this.resolveAttachedFiles(
+        allRecords.flatMap((message) => message.attachedFileIds ?? []),
+      );
+      const mapResponse = (message: MessageRecord): MessageResponse => {
+        const response = this.mapToResponse(message, redactSensitiveText);
+        if (message.attachedFileIds?.length) {
+          response.attachedFiles = message.attachedFileIds
+            .map((id) => fileMap.get(id))
+            .filter((file): file is AttachedFileResponse => Boolean(file));
+        }
+        return response;
+      };
+      return {
+        messages: window.records.map(mapResponse),
+        branchesByQuestion: Object.fromEntries(
+          [...branches].map(([id, records]) => [id, records.map(mapResponse)]),
+        ),
+        pagination: {
+          mode: 'cursor',
+          limit,
+          hasMore: window.hasMore,
+          nextCursor: window.nextCursor,
+        },
+      };
+    }
+    if (params.cursor !== undefined) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'cursor requires cursor mode');
+    }
     const { page = 1, limit = 50, conversationType } = params;
-    const { records: messages, total } = await this.messageStore.listPage({
-      conversationId,
-      page,
-      limit,
-      conversationType,
-    });
+    const [{ records: messages, total }, redactSensitiveText] = await Promise.all([
+      this.messageStore.listPage({
+        conversationId,
+        page,
+        limit,
+        conversationType,
+      }),
+      this.resolveRedactSensitiveText(),
+    ]);
 
     // Batch-resolve attached files for all messages on this page
     const allFileIds: string[] = [];
@@ -341,7 +393,7 @@ export class MessageService {
 
     return {
       messages: messages.map((m) => {
-        const response = this.mapToResponse(m);
+        const response = this.mapToResponse(m, redactSensitiveText);
         if (m.attachedFileIds?.length) {
           response.attachedFiles = m.attachedFileIds
             .map((fid) => fileMap.get(fid))
@@ -359,13 +411,16 @@ export class MessageService {
   }
 
   async findById(messageId: string): Promise<MessageResponse> {
-    const message = await this.messageStore.findById(messageId);
+    const [message, redactSensitiveText] = await Promise.all([
+      this.messageStore.findById(messageId),
+      this.resolveRedactSensitiveText(),
+    ]);
 
     if (!message) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Message not found');
     }
 
-    const response = this.mapToResponse(message);
+    const response = this.mapToResponse(message, redactSensitiveText);
 
     if (message.attachedFileIds?.length) {
       const fileIds = message.attachedFileIds;
@@ -808,7 +863,7 @@ export class MessageService {
     return map;
   }
 
-  private mapToResponse(message: MessageRecord): MessageResponse {
+  private mapToResponse(message: MessageRecord, redactSensitiveText?: boolean): MessageResponse {
     const toStr = (v: any) => v?.toString?.() ?? v;
     const toISO = (v: any) => (v instanceof Date ? v.toISOString() : v);
     return {
@@ -816,7 +871,7 @@ export class MessageService {
       conversationId: toStr(message.conversationId),
       conversationType: message.conversationType as 'user' | 'ai',
       content: message.content,
-      components: this.publicComponents(message.components, true) as any,
+      components: this.publicComponents(message.components, true, redactSensitiveText) as any,
       attachedFileIds: message.attachedFileIds?.map((id: any) => toStr(id)),
       modelId: message.modelId,
       reasoningEffort: message.reasoningEffort,
@@ -847,6 +902,8 @@ export class MessageService {
               ? {
                   correctedComponents: this.publicComponents(
                     message.correctionWorkflow.correctedComponents,
+                    false,
+                    redactSensitiveText,
                   ),
                 }
               : {}),
@@ -855,7 +912,11 @@ export class MessageService {
                   attempts: message.correctionWorkflow.attempts.map(
                     (attempt: ResponseCorrectionAttempt) => ({
                       ...attempt,
-                      components: this.publicComponents(attempt.components),
+                      components: this.publicComponents(
+                        attempt.components,
+                        false,
+                        redactSensitiveText,
+                      ),
                     }),
                   ),
                 }
@@ -874,9 +935,11 @@ export class MessageService {
   private publicComponents(
     components: unknown,
     includeToolResults = false,
+    resolvedRedactSensitiveText?: boolean,
   ): MessageComponent[] | undefined {
     if (!Array.isArray(components)) return undefined;
-    const redactSensitiveText = this.conversationSettings?.shouldRedactSensitiveText() !== false;
+    const redactSensitiveText = resolvedRedactSensitiveText
+      ?? this.conversationSettings?.shouldRedactSensitiveText() !== false;
     const options = { redactSensitiveText, includeAgentDetail: true };
     return components.map((component) => {
       if (component?.type === 'task' && component.data) {
@@ -911,6 +974,30 @@ export class MessageService {
         options,
       );
     });
+  }
+
+  private async resolveRedactSensitiveText(): Promise<boolean> {
+    if (!this.conversationSettings) return true;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const settings = await Promise.race([
+        this.conversationSettings.getSettings(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error('Conversation redaction setting lookup timed out')),
+            SETTINGS_LOOKUP_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      return settings.redactSensitiveText !== false;
+    } catch (error) {
+      this.logger.warn('Failed to resolve conversation redaction setting', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      return true;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 
   private findGuardrailDecision(

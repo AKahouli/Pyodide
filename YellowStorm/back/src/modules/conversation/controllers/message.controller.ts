@@ -39,6 +39,7 @@ import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constan
 import { ConversationArtifactService } from '../services/conversation-artifact.service';
 import { ResolveCitationUrlDto } from '../dto/resolve-citation-url.dto';
 import { ConversationPlaybookHandoffService } from '../services/conversation-playbook-handoff.service';
+import { isMessageRequestIdentityConflict } from '../utils/postgres-error';
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -371,7 +372,7 @@ export class MessageController {
         await this.playbookHandoffService.attachUserMessage(dto.playbookHandoffId, user._id.toString(), userMessage.id);
       }
     } catch (error: unknown) {
-      if (dto.requestId && typeof error === 'object' && error !== null && 'code' in error && (error as { code?: number }).code === 11000) {
+      if (dto.requestId && isMessageRequestIdentityConflict(error)) {
         const racedTurn = await this.messageService.findTurnByRequestId(conversationId, user._id.toString(), dto.requestId);
         if (racedTurn?.requestFingerprint === requestFingerprint) {
           if (platformCopilot) {

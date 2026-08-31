@@ -20,4 +20,13 @@ export default registerAs('conversation', () => ({
     process.env.CONVERSATION_ORPHANED_THRESHOLD_HOURS || '24',
     10,
   ),
+  maxCloneMessages: Number.parseInt(process.env.CONVERSATION_MAX_CLONE_MESSAGES || '2000', 10),
+  maxPrivateShareRecipients: Number.parseInt(
+    process.env.CONVERSATION_MAX_PRIVATE_SHARE_RECIPIENTS || '20',
+    10,
+  ),
+  cloneInsertBatchSize: Number.parseInt(
+    process.env.CONVERSATION_CLONE_INSERT_BATCH_SIZE || '250',
+    10,
+  ),
 }));

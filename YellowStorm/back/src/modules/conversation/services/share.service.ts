@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { nanoid } from 'nanoid';
-import { ForbiddenException, NotFoundException } from '../../exceptions';
+import { BadRequestException, ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { LoggerService } from '../../logger';
 import type {
@@ -11,6 +11,7 @@ import type {
   ShareResponse,
 } from '../interfaces/share.interface';
 import {
+  ConversationCloneLimitError,
   SHARE_STORE,
   type SharedConversationRecord,
   type ShareSourceConversationRecord,
@@ -88,18 +89,30 @@ export class ShareService {
         'Governed conversations cannot be shared',
       );
     }
+    const maxCloneMessages = this.configService.get<number>('conversation.maxCloneMessages', 2000);
+    const sourceMessages = await this.shareStore.listSnapshotMessages(
+      conversation.id,
+      maxCloneMessages + 1,
+    );
+    if (sourceMessages.length > maxCloneMessages) {
+      throw new BadRequestException(
+        ErrorCode.CHAT_BRANCH_INVALID,
+        `Conversation exceeds the ${maxCloneMessages} message sharing limit`,
+      );
+    }
     return data.shareType === 'public'
-      ? this.createPublicShare(userId, conversation, data)
-      : this.createPrivateShare(userId, conversation, data);
+      ? this.createPublicShare(userId, conversation, data, sourceMessages)
+      : this.createPrivateShare(userId, conversation, data, maxCloneMessages);
   }
 
   private async createPublicShare(
     userId: string,
     conversation: ShareSourceConversationRecord,
     data: CreateShareData,
+    sourceMessages: EmbeddedMessage[],
   ): Promise<ShareResponse> {
     const messages = sanitizePublicShareMessages(
-      await this.shareStore.listSnapshotMessages(conversation.id),
+      sourceMessages,
     );
     const expiryDays =
       data.expiresInDays || this.configService.get<number>('conversation.shareExpiryDays', 30);
@@ -123,35 +136,49 @@ export class ShareService {
     userId: string,
     conversation: ShareSourceConversationRecord,
     data: CreateShareData,
+    maxCloneMessages: number,
   ): Promise<ShareResponse> {
     const recipientEmails = data.recipientEmails || [];
     const forkedConversationIds: string[] = [];
-    for (const _email of recipientEmails) {
-      try {
-        forkedConversationIds.push(
-          await this.shareStore.forkConversation({ original: conversation, sharedBy: userId }),
-        );
-      } catch (error) {
-        this.logger.error('Failed to fork conversation', {
-          originalId: conversation.id,
-          error: (error as Error).message,
-        });
+    try {
+      for (const _email of recipientEmails) {
+        try {
+          forkedConversationIds.push(
+            await this.shareStore.forkConversation({
+              original: conversation,
+              sharedBy: userId,
+              maxMessages: maxCloneMessages,
+            }),
+          );
+        } catch (error) {
+          if (error instanceof ConversationCloneLimitError) throw error;
+          this.logger.error('Failed to fork conversation', {
+            originalId: conversation.id,
+            error: (error as Error).message,
+          });
+        }
       }
+      const shared = await this.shareStore.createPrivate({
+        originalConversationId: conversation.id,
+        sharedBy: userId,
+        title: data.title || conversation.title,
+        recipientEmails,
+        forkedConversationIds,
+      });
+      this.logger.log('Private share created', {
+        shareId: shared.id,
+        conversationId: conversation.id,
+        userId,
+        recipientCount: recipientEmails.length,
+      });
+      return this.mapToResponse(shared);
+    } catch (error) {
+      await this.shareStore.deleteForkConversations(forkedConversationIds, userId);
+      if (error instanceof ConversationCloneLimitError) {
+        throw new BadRequestException(ErrorCode.CHAT_BRANCH_INVALID, error.message);
+      }
+      throw error;
     }
-    const shared = await this.shareStore.createPrivate({
-      originalConversationId: conversation.id,
-      sharedBy: userId,
-      title: data.title || conversation.title,
-      recipientEmails,
-      forkedConversationIds,
-    });
-    this.logger.log('Private share created', {
-      shareId: shared.id,
-      conversationId: conversation.id,
-      userId,
-      recipientCount: recipientEmails.length,
-    });
-    return this.mapToResponse(shared);
   }
 
   async getSharesForConversation(conversationId: string): Promise<ShareResponse[]> {

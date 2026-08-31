@@ -1,21 +1,41 @@
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { ActiveStreamSnapshot, Conversation, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload, PrepareConversationPlaybookHandoffV1, PreparedConversationPlaybookHandoffV1 } from './types';
+import type { ActiveStreamSnapshot, Conversation, ConversationSummary, ConversationSettings, Message, ConversationListParams, MessageListParams, PaginatedResponse, SendMessagePayload, CreateReportPayload, CreateSharePayload, ShareResponse, PublicShareViewResponse, BranchConversationPayload, ReliabilityRerunResponse, CreateConversationPayload, PrepareConversationPlaybookHandoffV1, PreparedConversationPlaybookHandoffV1 } from './types';
 
 // ===== Conversation APIs =====
 
-interface BackendPaginatedConversations {
-  conversations: Conversation[];
-  pagination: { page: number; limit: number; total: number; totalPages: number };
+interface BackendPaginatedConversations<T extends Conversation | ConversationSummary> {
+  conversations: T[];
+  pagination:
+    | { page: number; limit: number; total: number; totalPages: number }
+    | { mode: 'cursor'; limit: number; hasMore: boolean; nextCursor: string | null };
 }
 
 interface BackendPaginatedMessages {
   messages: Message[];
-  pagination: { page: number; limit: number; total: number; totalPages: number };
+  branchesByQuestion?: Record<string, Message[]>;
+  pagination:
+    | { page: number; limit: number; total: number; totalPages: number }
+    | { mode: 'cursor'; limit: number; hasMore: boolean; nextCursor: string | null };
 }
 
-export async function fetchConversations(params?: ConversationListParams): Promise<PaginatedResponse<Conversation>> {
-  const response = await apiClient.get<ApiResponse<BackendPaginatedConversations>>(API_ENDPOINTS.conversations.list, { params });
+export function fetchConversations(params: ConversationListParams & { mode: 'cursor' }): Promise<PaginatedResponse<ConversationSummary>>;
+export function fetchConversations(params?: ConversationListParams): Promise<PaginatedResponse<Conversation>>;
+export async function fetchConversations(
+  params?: ConversationListParams,
+): Promise<PaginatedResponse<Conversation | ConversationSummary>> {
+  const response = await apiClient.get<ApiResponse<BackendPaginatedConversations<Conversation | ConversationSummary>>>(API_ENDPOINTS.conversations.list, { params });
   const data = response.data.data;
+  if ('mode' in data.pagination) {
+    return {
+      items: data.conversations,
+      total: data.conversations.length,
+      page: 1,
+      limit: data.pagination.limit,
+      totalPages: data.pagination.hasMore ? 2 : 1,
+      hasMore: data.pagination.hasMore,
+      nextCursor: data.pagination.nextCursor,
+    };
+  }
   return {
     items: data.conversations || [],
     total: data.pagination.total,
@@ -74,6 +94,18 @@ export async function fetchTaggedAgents(id: string): Promise<any[]> {
 export async function fetchMessages(conversationId: string, params?: MessageListParams): Promise<PaginatedResponse<Message>> {
   const response = await apiClient.get<ApiResponse<BackendPaginatedMessages>>(API_ENDPOINTS.conversations.messages(conversationId), { params });
   const data = response.data.data;
+  if ('mode' in data.pagination) {
+    return {
+      items: data.messages || [],
+      total: data.messages?.length ?? 0,
+      page: 1,
+      limit: data.pagination.limit,
+      totalPages: data.pagination.hasMore ? 2 : 1,
+      hasMore: data.pagination.hasMore,
+      nextCursor: data.pagination.nextCursor,
+      branchesByQuestion: data.branchesByQuestion ?? {},
+    };
+  }
   return {
     items: data.messages || [],
     total: data.pagination.total,

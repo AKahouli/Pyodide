@@ -1,4 +1,5 @@
-import { HttpStatus, Inject, Injectable } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { createHash, randomUUID } from 'node:crypto';
 import { BranchConversationDto } from '../dto/branch-conversation.dto';
@@ -40,6 +41,7 @@ export class ConversationBranchService {
     private readonly conversationService: ConversationService,
     private readonly streamService: StreamService,
     private readonly logger: LoggerService,
+    @Optional() private readonly configService?: ConfigService,
   ) {
     this.logger.setContext('ConversationBranchService');
   }
@@ -62,7 +64,14 @@ export class ConversationBranchService {
     const requestFingerprint = this.requestFingerprint(dto);
     let destination = await this.branchStore.findByRequest(userId, dto.requestId);
     if (!destination) {
-      const messages = await this.messageStore.listByConversation(source.id);
+      const maxCloneMessages = this.configService?.get<number>('conversation.maxCloneMessages', 2000) ?? 2000;
+      const messages = await this.messageStore.listByConversation(source.id, maxCloneMessages + 1);
+      if (messages.length > maxCloneMessages) {
+        throw new BadRequestException(
+          ErrorCode.CHAT_BRANCH_INVALID,
+          `Conversation exceeds the ${maxCloneMessages} message branch limit`,
+        );
+      }
       const path = this.derivePath(messages, dto);
       const selectedAnswerIds = path
         .filter((message) => message.conversationType === 'ai')

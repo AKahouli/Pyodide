@@ -12,6 +12,10 @@ vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
 }));
 
+vi.mock('@/modules/admin', () => ({
+  usePermissions: () => ({ hasPermission: () => true }),
+}));
+
 vi.mock('@/lib/use-api-action', () => ({
   useApiAction: (fn: unknown, options: { onSuccess?: (data: any) => void }) => {
     if (fn === profileApi.getHealthStatus) {

@@ -24,12 +24,35 @@ export class PostgresConnectionService {
   }
 
   async ping(): Promise<boolean> {
+    const client = await this.pool.connect().catch(() => null);
+    if (!client) return false;
     try {
-      await this.pool.query('SELECT 1');
+      await client.query('SET statement_timeout TO 1500');
+      await client.query('SELECT 1');
       return true;
     } catch (error) {
       this.logger.error('Postgres ping failed', { error: (error as Error).message });
       return false;
+    } finally {
+      try {
+        await client.query('SET statement_timeout TO DEFAULT');
+      } finally {
+        client.release();
+      }
     }
+  }
+
+  getPoolStats(): {
+    totalCount: number;
+    idleCount: number;
+    checkedOutCount: number;
+    waitingCount: number;
+  } {
+    return {
+      totalCount: this.pool.totalCount,
+      idleCount: this.pool.idleCount,
+      checkedOutCount: this.pool.totalCount - this.pool.idleCount,
+      waitingCount: this.pool.waitingCount,
+    };
   }
 }

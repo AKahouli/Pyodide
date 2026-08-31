@@ -1,5 +1,6 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
@@ -10,10 +11,14 @@ import type {
   ShareSourceConversationRecord,
   ShareStore,
 } from '../share-store';
+import { ConversationCloneLimitError } from '../share-store';
 
 @Injectable()
 export class PostgresShareStore implements ShareStore {
-  constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
+  constructor(
+    @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
+    @Optional() private readonly configService?: ConfigService,
+  ) {}
 
   async findSourceConversation(id: string): Promise<ShareSourceConversationRecord | null> {
     const [row] = await this.db
@@ -21,6 +26,7 @@ export class PostgresShareStore implements ShareStore {
         id: schema.conversations.id,
         title: schema.conversations.title,
         runtimeMode: schema.conversations.runtimeMode,
+        messageCount: schema.conversations.messageCount,
         lastMessageAt: schema.conversations.lastMessageAt,
       })
       .from(schema.conversations)
@@ -31,12 +37,13 @@ export class PostgresShareStore implements ShareStore {
           id: row.id.trim(),
           title: row.title,
           runtimeMode: row.runtimeMode,
+          messageCount: row.messageCount,
           lastMessageAt: row.lastMessageAt ?? undefined,
         }
       : null;
   }
 
-  async listSnapshotMessages(conversationId: string): Promise<EmbeddedMessage[]> {
+  async listSnapshotMessages(conversationId: string, limit: number): Promise<EmbeddedMessage[]> {
     const rows = await this.db
       .select({
         conversationType: schema.messages.conversationType,
@@ -47,7 +54,8 @@ export class PostgresShareStore implements ShareStore {
       })
       .from(schema.messages)
       .where(eq(schema.messages.conversationId, conversationId))
-      .orderBy(schema.messages.createdAt, schema.messages.id);
+      .orderBy(schema.messages.createdAt, schema.messages.id)
+      .limit(limit);
     return rows.map((row) => ({
       conversationType: row.conversationType as 'user' | 'ai',
       content: row.content ?? undefined,
@@ -75,14 +83,22 @@ export class PostgresShareStore implements ShareStore {
   async forkConversation(input: {
     original: ShareSourceConversationRecord;
     sharedBy: string;
+    maxMessages: number;
   }): Promise<string> {
     return this.db.transaction(async (tx) => {
       const conversationId = newOwnedId();
+      const maxCloneMessages = input.maxMessages;
       const sourceMessages = await tx
         .select()
         .from(schema.messages)
         .where(eq(schema.messages.conversationId, input.original.id))
-        .orderBy(schema.messages.createdAt, schema.messages.id);
+        .orderBy(schema.messages.createdAt, schema.messages.id)
+        .limit(maxCloneMessages + 1);
+      if (sourceMessages.length > maxCloneMessages) {
+        throw new ConversationCloneLimitError(
+          `Conversation exceeds the ${maxCloneMessages} message sharing limit`,
+        );
+      }
       const ids = new Map(sourceMessages.map((message) => [message.id.trim(), newOwnedId()]));
       const now = new Date();
       await tx
@@ -100,8 +116,7 @@ export class PostgresShareStore implements ShareStore {
           updatedAt: now,
         });
       if (sourceMessages.length) {
-        await tx.insert(schema.messages).values(
-          sourceMessages.map((message) => ({
+        const messages = sourceMessages.map((message) => ({
             ...message,
             id: ids.get(message.id.trim())!,
             conversationId,
@@ -122,11 +137,26 @@ export class PostgresShareStore implements ShareStore {
             streamExecutionLeaseExpiresAt: null,
             createdAt: message.createdAt,
             updatedAt: message.updatedAt,
-          })),
-        );
+          }));
+        const batchSize = this.configService?.get<number>('conversation.cloneInsertBatchSize', 250) ?? 250;
+        for (let offset = 0; offset < messages.length; offset += batchSize) {
+          await tx.insert(schema.messages).values(messages.slice(offset, offset + batchSize));
+        }
       }
       return conversationId;
     });
+  }
+
+  async deleteForkConversations(ids: string[], ownerId: string): Promise<void> {
+    if (!ids.length) return;
+    await this.db
+      .delete(schema.conversations)
+      .where(
+        and(
+          inArray(schema.conversations.id, ids),
+          eq(schema.conversations.createdBy, ownerId),
+        ),
+      );
   }
 
   async createPrivate(input: {

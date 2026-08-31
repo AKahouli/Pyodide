@@ -37,7 +37,6 @@ import {
   PLATFORM_COPILOT,
   PLATFORM_COPILOT_AGENT_SLUG,
   PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION,
-  PLATFORM_COPILOT_PLAYBOOK_ACTION_KEYS,
   PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
 } from './constants/platform-copilot.constants';
 
@@ -1790,7 +1789,7 @@ export class AgentService {
     for (const connectorId of connectorIds) {
       const connector = connectorsMap.get(connectorId);
       if (connector?.slug?.toLowerCase() === PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG) {
-        runtimeSelections.set(connectorId, new Set(PLATFORM_COPILOT_PLAYBOOK_ACTION_KEYS));
+        runtimeSelections.delete(connectorId);
       }
     }
     return runtimeSelections.size ? runtimeSelections : undefined;

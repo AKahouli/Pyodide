@@ -2,9 +2,12 @@ import type { EmbeddedMessage, ShareType } from '../interfaces/share.interface';
 
 export const SHARE_STORE = Symbol('SHARE_STORE');
 
+export class ConversationCloneLimitError extends Error {}
+
 export interface ShareSourceConversationRecord {
   id: string;
   title: string;
+  messageCount: number;
   runtimeMode?: string;
   lastMessageAt?: Date;
 }
@@ -28,7 +31,7 @@ export interface SharedConversationRecord {
 
 export interface ShareStore {
   findSourceConversation(id: string): Promise<ShareSourceConversationRecord | null>;
-  listSnapshotMessages(conversationId: string): Promise<EmbeddedMessage[]>;
+  listSnapshotMessages(conversationId: string, limit: number): Promise<EmbeddedMessage[]>;
   createPublic(input: {
     originalConversationId: string;
     sharedBy: string;
@@ -40,7 +43,9 @@ export interface ShareStore {
   forkConversation(input: {
     original: ShareSourceConversationRecord;
     sharedBy: string;
+    maxMessages: number;
   }): Promise<string>;
+  deleteForkConversations(ids: string[], ownerId: string): Promise<void>;
   createPrivate(input: {
     originalConversationId: string;
     sharedBy: string;

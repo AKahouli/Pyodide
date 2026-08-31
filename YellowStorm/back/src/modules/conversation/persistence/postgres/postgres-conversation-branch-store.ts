@@ -1,4 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { and, eq, inArray, lt } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
@@ -11,7 +12,10 @@ import type {
 
 @Injectable()
 export class PostgresConversationBranchStore implements ConversationBranchStore {
-  constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
+  constructor(
+    @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
+    @Optional() private readonly configService?: ConfigService,
+  ) {}
 
   async findByRequest(ownerId: string, requestId: string): Promise<BranchStateRecord | null> {
     const [row] = await this.db
@@ -112,7 +116,10 @@ export class PostgresConversationBranchStore implements ConversationBranchStore 
             .values(values.map((value, position) => ({ conversationId: id, position, value })));
         }
       }
-      if (messages.length) await tx.insert(schema.messages).values(messages);
+      const batchSize = this.configService?.get<number>('conversation.cloneInsertBatchSize', 250) ?? 250;
+      for (let offset = 0; offset < messages.length; offset += batchSize) {
+        await tx.insert(schema.messages).values(messages.slice(offset, offset + batchSize));
+      }
       return this.map(row);
     });
   }

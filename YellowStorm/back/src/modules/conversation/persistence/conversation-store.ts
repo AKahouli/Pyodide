@@ -111,6 +111,28 @@ export interface ConversationListInput {
   runtimePurpose?: string;
 }
 
+export interface ConversationSummaryRecord {
+  id: string;
+  title: string;
+  createdBy: string;
+  messageCount: number;
+  lastMessageAt?: Date;
+  isArchived: boolean;
+  isShared: boolean;
+  isGroup: boolean;
+  unseenMentionCount: number;
+  projectId?: string | null;
+  runtimeMode: ConversationRecord['runtimeMode'];
+  runtimePurpose: ConversationRecord['runtimePurpose'];
+  pinnedAgentId?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ConversationCursorListInput extends Omit<ConversationListInput, 'page'> {
+  cursor?: string;
+}
+
 export interface ConversationStore {
   create(input: CreateConversationRecord): Promise<ConversationRecord>;
   findById(id: string, includeInitializing?: boolean): Promise<ConversationRecord | null>;
@@ -118,6 +140,11 @@ export interface ConversationStore {
   findLatestPlatformConversation(ownerId: string, pinnedAgentId: string): Promise<ConversationRecord | null>;
   findByGovernedCreationRequest(ownerId: string, requestId: string): Promise<ConversationRecord | null>;
   list(input: ConversationListInput): Promise<{ records: ConversationRecord[]; total: number }>;
+  listCursor(input: ConversationCursorListInput): Promise<{
+    records: ConversationSummaryRecord[];
+    hasMore: boolean;
+    nextCursor: string | null;
+  }>;
   updateOwned(id: string, ownerId: string, patch: Partial<Pick<ConversationRecord, 'title' | 'isArchived' | 'workspaces' | 'selectedSkills' | 'projectId' | 'isFirstMessage' | 'groupTaggedAgentIds' | 'members' | 'invitedUsers' | 'isGroup'>>): Promise<ConversationRecord | null>;
   deleteOwned(id: string, ownerId: string): Promise<ConversationRecord | null>;
   setSystemWorkspace(id: string, workspaceId: string): Promise<void>;

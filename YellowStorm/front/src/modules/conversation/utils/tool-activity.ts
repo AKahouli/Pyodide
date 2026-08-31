@@ -224,6 +224,14 @@ export function sanitizeActivitySummary(value: unknown, redactSensitiveText = tr
   return sanitized.length > 140 ? `${sanitized.slice(0, 137)}...` : sanitized;
 }
 
+export function sanitizeActivityDetail(value: unknown, redactSensitiveText = true): string | undefined {
+  const text = asNonEmptyString(value);
+  if (!text) return undefined;
+  const sanitized = sanitizeToolValue(text, 0, redactSensitiveText);
+  if (typeof sanitized !== 'string') return undefined;
+  return sanitizeAssistantDisplayText(sanitized, redactSensitiveText).trim() || undefined;
+}
+
 export function resolveToolDisplayKey(data: Record<string, unknown>): string | undefined {
   const explicit = asNonEmptyString(data.displayKey);
   if (explicit) return explicit;
@@ -243,6 +251,15 @@ export function resolveToolFallbackName(data: Record<string, unknown>, redactSen
   if (explicit) return sanitizeActivitySummary(explicit, redactSensitiveText);
   const name = asNonEmptyString(data.toolName) || asNonEmptyString(data.title);
   return name ? sanitizeActivitySummary(humanizeToolTitle(name), redactSensitiveText) : undefined;
+}
+
+export function resolveToolShortName(data: Record<string, unknown>, redactSensitiveText = true): string | undefined {
+  const fullName = resolveToolFallbackName(data, redactSensitiveText);
+  if (!fullName) return undefined;
+  const paddleMarker = fullName.toLowerCase().lastIndexOf(' paddle ');
+  if (paddleMarker < 0) return fullName;
+  const shortName = fullName.slice(paddleMarker + ' paddle '.length);
+  return `${shortName.charAt(0)}${shortName.slice(1).toLowerCase()}`;
 }
 
 export function resolveToolSummary(data: Record<string, unknown>, redactSensitiveText = true): string | undefined {

@@ -44,6 +44,7 @@ import {
 } from '@/components/ui/chart';
 import { useApiAction } from '@/lib/use-api-action';
 import { useModuleTranslation } from '@/modules/localization';
+import { usePermissions } from '@/modules/admin';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 import * as profileApi from '../api';
 import type {
@@ -414,6 +415,8 @@ export function HealthSection() {
   const [history, setHistory] = React.useState<HealthHistoryResponse | null>(null);
   const [stats, setStats] = React.useState<HealthHistoryStats | null>(null);
   const { t } = useModuleTranslation('profile');
+  const { hasPermission } = usePermissions();
+  const canViewHealth = hasPermission('system.maintenance');
 
   const { execute: fetchHealth, isLoading: isLoadingHealth } = useApiAction(
     profileApi.getHealthStatus,
@@ -440,15 +443,18 @@ export function HealthSection() {
   );
 
   const refreshAll = React.useCallback(() => {
+    if (!canViewHealth || document.visibilityState === 'hidden') return;
     fetchHealth();
     fetchHistory({ minutes: 60, limit: 100 });
     fetchStats(60);
-  }, [fetchHealth, fetchHistory, fetchStats]);
+  }, [canViewHealth, fetchHealth, fetchHistory, fetchStats]);
 
   React.useEffect(() => {
-    refreshAll();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (canViewHealth) refreshAll();
+  }, [canViewHealth]); // refresh callbacks are intentionally invoked only when permission changes
   const isLoading = isLoadingHealth || isLoadingHistory || isLoadingStats;
+
+  if (!canViewHealth) return null;
 
   const serviceHistoryData = React.useMemo(() => {
     if (!history?.records?.length) return {};

@@ -4,6 +4,7 @@ import {
   asc,
   desc,
   eq,
+  getTableColumns,
   ilike,
   inArray,
   isNull,
@@ -18,11 +19,20 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import type {
   ConversationAccessRecord,
+  ConversationCursorListInput,
   ConversationListInput,
   ConversationRecord,
+  ConversationSummaryRecord,
   ConversationStore,
   CreateConversationRecord,
 } from '../conversation-store';
+import {
+  conversationFilterHash,
+  decodeConversationCursor,
+  encodeConversationCursor,
+} from '../../utils/conversation-cursor';
+import { BadRequestException } from '../../../exceptions';
+import { ErrorCode } from '../../../exceptions/constants/error-codes';
 
 @Injectable()
 export class PostgresConversationStore implements ConversationStore {
@@ -30,31 +40,26 @@ export class PostgresConversationStore implements ConversationStore {
 
   async findActiveAccessById(id: string): Promise<ConversationAccessRecord | null> {
     const [conversation] = await this.db
-      .select({ id: schema.conversations.id, createdBy: schema.conversations.createdBy })
+      .select({
+        id: schema.conversations.id,
+        createdBy: schema.conversations.createdBy,
+        memberIds: sql<string[]>`COALESCE((SELECT array_agg(gm.user_id ORDER BY gm.position) FROM conversation.conversation_group_members gm WHERE gm.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
+        invitedEmails: sql<string[]>`COALESCE((SELECT array_agg(gi.email ORDER BY gi.position) FROM conversation.conversation_group_invites gi WHERE gi.conversation_id = ${schema.conversations.id}), ARRAY[]::varchar[])`,
+      })
       .from(schema.conversations)
       .where(
         and(
           eq(schema.conversations.id, id),
-          sql`${schema.conversations.initializationStatus} NOT IN ('pending', 'seeding', 'cleanup_pending')`,
+          eq(schema.conversations.initializationStatus, 'ready'),
         ),
       )
       .limit(1);
     if (!conversation) return null;
-    const [members, invites] = await Promise.all([
-      this.db
-        .select({ userId: schema.conversationGroupMembers.userId })
-        .from(schema.conversationGroupMembers)
-        .where(eq(schema.conversationGroupMembers.conversationId, id)),
-      this.db
-        .select({ email: schema.conversationGroupInvites.email })
-        .from(schema.conversationGroupInvites)
-        .where(eq(schema.conversationGroupInvites.conversationId, id)),
-    ]);
     return {
       id: conversation.id.trim(),
       createdBy: conversation.createdBy.trim(),
-      memberIds: members.map((row) => row.userId.trim()),
-      invitedEmails: invites.map((row) => row.email),
+      memberIds: conversation.memberIds.map((value) => value.trim()),
+      invitedEmails: conversation.invitedEmails,
     };
   }
 
@@ -110,9 +115,113 @@ export class PostgresConversationStore implements ConversationStore {
     return new Set(rows.map((row) => row.conversationId.trim())).size;
   }
 
+  private hydratedSelection() {
+    return {
+      ...getTableColumns(schema.conversations),
+      workspaceIds: sql<string[]>`COALESCE((SELECT array_agg(cw.workspace_id ORDER BY cw.position) FROM conversation.conversation_workspaces cw WHERE cw.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
+      skillIds: sql<string[]>`COALESCE((SELECT array_agg(cs.skill_id ORDER BY cs.position) FROM conversation.conversation_selected_skills cs WHERE cs.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
+      taggedIds: sql<string[]>`COALESCE((SELECT array_agg(ca.agent_id ORDER BY ca.position) FROM conversation.conversation_tagged_agents ca WHERE ca.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
+      groupTaggedIds: sql<string[]>`COALESCE((SELECT array_agg(cga.agent_id ORDER BY cga.position) FROM conversation.conversation_group_tagged_agents cga WHERE cga.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
+      memberRows: sql<Array<{
+        userId: string;
+        joinedAt: string;
+        status: 'owner' | 'member';
+        job: string | null;
+        mentions: Array<{ messageId: string; seenAt: string | null }>;
+      }>>`COALESCE((
+        SELECT jsonb_agg(jsonb_build_object(
+          'userId', gm.user_id,
+          'joinedAt', gm.joined_at,
+          'status', gm.status,
+          'job', gm.job,
+          'mentions', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('messageId', mm.message_id, 'seenAt', mm.seen_at) ORDER BY mm.position)
+            FROM conversation.conversation_member_mentions mm
+            WHERE mm.conversation_id = gm.conversation_id AND mm.user_id = gm.user_id
+          ), '[]'::jsonb)
+        ) ORDER BY gm.position)
+        FROM conversation.conversation_group_members gm
+        WHERE gm.conversation_id = ${schema.conversations.id}
+      ), '[]'::jsonb)`,
+      inviteRows: sql<Array<{
+        email: string;
+        status: 'Confirmed' | 'Guest';
+        invitedAt: string;
+        job: string | null;
+      }>>`COALESCE((
+        SELECT jsonb_agg(jsonb_build_object(
+          'email', gi.email,
+          'status', gi.status,
+          'invitedAt', gi.invited_at,
+          'job', gi.job
+        ) ORDER BY gi.position)
+        FROM conversation.conversation_group_invites gi
+        WHERE gi.conversation_id = ${schema.conversations.id}
+      ), '[]'::jsonb)`,
+    };
+  }
+
+  private mapAggregateRow(
+    row: typeof schema.conversations.$inferSelect & {
+      workspaceIds: string[];
+      skillIds: string[];
+      taggedIds: string[];
+      groupTaggedIds: string[];
+      memberRows: Array<{
+        userId: string;
+        joinedAt: string;
+        status: 'owner' | 'member';
+        job: string | null;
+        mentions: Array<{ messageId: string; seenAt: string | null }>;
+      }>;
+      inviteRows: Array<{
+        email: string;
+        status: 'Confirmed' | 'Guest';
+        invitedAt: string;
+        job: string | null;
+      }>;
+    },
+  ): ConversationRecord {
+    return {
+      ...this.mapHydratedRow(row, {
+        workspaces: [],
+        skills: [],
+        tagged: [],
+        groupTagged: [],
+        members: [],
+        invites: [],
+        mentions: [],
+      }),
+      workspaces: row.workspaceIds.map((value) => value.trim()),
+      selectedSkills: row.skillIds.map((value) => value.trim()),
+      taggedAgentIds: row.taggedIds.map((value) => value.trim()),
+      groupTaggedAgentIds: row.groupTaggedIds.map((value) => value.trim()),
+      members: row.memberRows.map((member) => ({
+        userId: member.userId.trim(),
+        joinedAt: new Date(member.joinedAt),
+        status: member.status,
+        job: member.job ?? undefined,
+        mentions: member.mentions.map((mention) => ({
+          messageId: mention.messageId.trim(),
+          seenAt: mention.seenAt ? new Date(mention.seenAt) : undefined,
+        })),
+      })),
+      invitedUsers: row.inviteRows.map((invite) => ({
+        email: invite.email,
+        status: invite.status,
+        invitedAt: new Date(invite.invitedAt),
+        job: invite.job ?? undefined,
+      })),
+    };
+  }
+
   private async findOne(where: ReturnType<typeof and>): Promise<ConversationRecord | null> {
-    const [row] = await this.db.select().from(schema.conversations).where(where).limit(1);
-    return row ? this.hydrate(row) : null;
+    const [row] = await this.db
+      .select(this.hydratedSelection())
+      .from(schema.conversations)
+      .where(where)
+      .limit(1);
+    return row ? this.mapAggregateRow(row) : null;
   }
 
   private async hydrate(
@@ -362,12 +471,7 @@ export class PostgresConversationStore implements ConversationStore {
           'cleanup_pending',
         ]),
       );
-    const [row] = await this.db
-      .select()
-      .from(schema.conversations)
-      .where(and(...conditions))
-      .limit(1);
-    return row ? this.hydrate(row) : null;
+    return this.findOne(and(...conditions));
   }
 
   async findByPlatformCreationRequest(
@@ -436,11 +540,7 @@ export class PostgresConversationStore implements ConversationStore {
           );
     const conditions = [
       access,
-      notInArray(schema.conversations.initializationStatus, [
-        'pending',
-        'seeding',
-        'cleanup_pending',
-      ]),
+       eq(schema.conversations.initializationStatus, 'ready'),
     ];
     if (input.isArchived !== undefined)
       conditions.push(eq(schema.conversations.isArchived, input.isArchived));
@@ -475,10 +575,10 @@ export class PostgresConversationStore implements ConversationStore {
           : desc(sortColumn);
     const [rows, count] = await Promise.all([
       this.db
-        .select()
+        .select(this.hydratedSelection())
         .from(schema.conversations)
         .where(where)
-        .orderBy(sortExpression)
+        .orderBy(sortExpression, input.sortOrder === 'asc' ? asc(schema.conversations.id) : desc(schema.conversations.id))
         .limit(input.limit)
         .offset((input.page - 1) * input.limit),
       this.db
@@ -487,8 +587,149 @@ export class PostgresConversationStore implements ConversationStore {
         .where(where),
     ]);
     return {
-      records: await this.hydrateMany(rows),
+      records: rows.map((row) => this.mapAggregateRow(row)),
       total: count[0]?.count ?? 0,
+    };
+  }
+
+  async listCursor(input: ConversationCursorListInput): Promise<{
+    records: ConversationSummaryRecord[];
+    hasMore: boolean;
+    nextCursor: string | null;
+  }> {
+    const filters = {
+      search: input.search?.trim() || null,
+      searchScope: input.searchScope ?? null,
+      isArchived: input.isArchived ?? null,
+      projectId: input.projectId ?? null,
+      runtimePurpose: input.runtimePurpose ?? null,
+      sortBy: input.sortBy,
+      sortOrder: input.sortOrder,
+    };
+    const filterHash = conversationFilterHash(filters);
+    const cursor = input.cursor ? decodeConversationCursor(input.cursor) : undefined;
+    if (cursor && (cursor.f !== filterHash || cursor.s !== input.sortBy || cursor.d !== input.sortOrder)) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Conversation cursor does not match the request filters');
+    }
+    const conditions = [
+      eq(schema.conversations.initializationStatus, 'ready'),
+      input.runtimePurpose === 'platform_copilot'
+        ? and(eq(schema.conversations.createdBy, input.userId), eq(schema.conversations.runtimePurpose, 'platform_copilot'))!
+        : and(
+            ne(schema.conversations.runtimePurpose, 'platform_copilot'),
+            sql`${schema.conversations.id} IN (
+              SELECT c.id FROM conversation.conversations c WHERE c.created_by = ${input.userId}
+              UNION
+              SELECT gm.conversation_id FROM conversation.conversation_group_members gm WHERE gm.user_id = ${input.userId}
+            )`,
+          )!,
+    ];
+    if (input.isArchived !== undefined) conditions.push(eq(schema.conversations.isArchived, input.isArchived));
+    if (input.projectId === 'none') conditions.push(isNull(schema.conversations.projectId));
+    else if (input.projectId) conditions.push(eq(schema.conversations.projectId, input.projectId));
+    if (input.search) {
+      const search = input.search.trim();
+      if (search.length < 3) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Search must contain at least three characters');
+      const pattern = `%${search.replace(/[\\%_]/g, '\\$&')}%`;
+      conditions.push(
+        input.searchScope === 'fulltext'
+          ? or(
+              ilike(schema.conversations.title, pattern),
+              sql`${schema.conversations.id} IN (SELECT DISTINCT m.conversation_id FROM conversation.messages m WHERE m.content ILIKE ${pattern} ESCAPE '\\')`,
+            )!
+          : ilike(schema.conversations.title, pattern),
+      );
+    }
+    const sortColumn = input.sortBy === 'createdAt'
+      ? schema.conversations.createdAt
+      : input.sortBy === 'title'
+        ? schema.conversations.title
+        : schema.conversations.lastMessageAt;
+    if (cursor) {
+      const after = input.sortOrder === 'asc' ? sql`>` : sql`<`;
+      if (input.sortBy === 'lastMessageAt') {
+        if (cursor.n === 1) {
+          conditions.push(
+            input.sortOrder === 'asc'
+              ? or(
+                  and(
+                    isNull(schema.conversations.lastMessageAt),
+                    sql`${schema.conversations.id} > ${cursor.id}`,
+                  ),
+                  sql`${schema.conversations.lastMessageAt} IS NOT NULL`,
+                )!
+              : and(
+                  isNull(schema.conversations.lastMessageAt),
+                  sql`${schema.conversations.id} < ${cursor.id}`,
+                )!,
+          );
+        } else if (input.sortOrder === 'desc') {
+          conditions.push(sql`(${schema.conversations.lastMessageAt} < ${new Date(cursor.value!)} OR (${schema.conversations.lastMessageAt} = ${new Date(cursor.value!)} AND ${schema.conversations.id} < ${cursor.id}) OR ${schema.conversations.lastMessageAt} IS NULL)`);
+        } else {
+          conditions.push(sql`(${schema.conversations.lastMessageAt} > ${new Date(cursor.value!)} OR (${schema.conversations.lastMessageAt} = ${new Date(cursor.value!)} AND ${schema.conversations.id} > ${cursor.id}))`);
+        }
+      } else {
+        const value = input.sortBy === 'createdAt' ? new Date(cursor.value!) : cursor.value!;
+        conditions.push(sql`(${sortColumn} ${after} ${value} OR (${sortColumn} = ${value} AND ${schema.conversations.id} ${after} ${cursor.id}))`);
+      }
+    }
+    const sortExpression = input.sortBy === 'lastMessageAt'
+      ? input.sortOrder === 'asc' ? sql`${asc(sortColumn)} NULLS FIRST` : sql`${desc(sortColumn)} NULLS LAST`
+      : input.sortOrder === 'asc' ? asc(sortColumn) : desc(sortColumn);
+    const rows = await this.db
+      .select({
+        id: schema.conversations.id,
+        title: schema.conversations.title,
+        createdBy: schema.conversations.createdBy,
+        messageCount: schema.conversations.messageCount,
+        lastMessageAt: schema.conversations.lastMessageAt,
+        isArchived: schema.conversations.isArchived,
+        isShared: schema.conversations.isShared,
+        isGroup: schema.conversations.isGroup,
+        unseenMentionCount: sql<number>`(SELECT count(*)::int FROM conversation.conversation_member_mentions mm WHERE mm.conversation_id = ${schema.conversations.id} AND mm.user_id = ${input.userId} AND mm.seen_at IS NULL)`,
+        projectId: schema.conversations.projectId,
+        runtimeMode: schema.conversations.runtimeMode,
+        runtimePurpose: schema.conversations.runtimePurpose,
+        pinnedAgentId: schema.conversations.pinnedAgentId,
+        createdAt: schema.conversations.createdAt,
+        updatedAt: schema.conversations.updatedAt,
+      })
+      .from(schema.conversations)
+      .where(and(...conditions))
+      .orderBy(sortExpression, input.sortOrder === 'asc' ? asc(schema.conversations.id) : desc(schema.conversations.id))
+      .limit(input.limit + 1);
+    const hasMore = rows.length > input.limit;
+    const page = rows.slice(0, input.limit);
+    const records = page.map((row) => ({
+      ...row,
+      id: row.id.trim(),
+      createdBy: row.createdBy.trim(),
+      projectId: row.projectId?.trim() ?? null,
+      pinnedAgentId: row.pinnedAgentId?.trim() ?? null,
+      runtimeMode: row.runtimeMode as ConversationRecord['runtimeMode'],
+      runtimePurpose: row.runtimePurpose as ConversationRecord['runtimePurpose'],
+      lastMessageAt: row.lastMessageAt ?? undefined,
+    }));
+    const last = records.at(-1);
+    const value = last
+      ? input.sortBy === 'title'
+        ? last.title
+        : input.sortBy === 'createdAt'
+          ? last.createdAt.toISOString()
+          : last.lastMessageAt?.toISOString() ?? null
+      : null;
+    return {
+      records,
+      hasMore,
+      nextCursor: hasMore && last ? encodeConversationCursor({
+        v: 1,
+        s: input.sortBy,
+        d: input.sortOrder,
+        n: input.sortBy === 'lastMessageAt' && !last.lastMessageAt ? 1 : 0,
+        value,
+        id: last.id,
+        f: filterHash,
+      }) : null,
     };
   }
 

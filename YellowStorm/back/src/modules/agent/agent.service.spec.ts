@@ -303,9 +303,9 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].agent_params?.params.temperature).toBe('0');
   });
 
-  it('restricts Platform Copilot to the public Playbook MCP action surface', async () => {
+  it('exposes every enabled Playbook MCP action to Platform Copilot', async () => {
     const { service, connectorService, modelsService } = createService();
-    const allowedActions = [
+    const enabledActions = [
       'search_playbooks',
       'open_playbook_context',
       'get_playbook_summary',
@@ -313,12 +313,12 @@ describe('AgentService connector skill inheritance', () => {
       'get_task_dependencies',
       'validate_playbook',
       'start_playbook_generation',
+      'modify_playbook',
+      'get_playbook_construction',
       'start_playbook_execution',
       'list_recent_executions',
       'get_playbook_execution',
       'get_execution_diagnostics',
-    ];
-    const internalActions = [
       'assess_playbook_request',
       'continue_playbook_clarification',
       'start_playbook_construction',
@@ -336,14 +336,17 @@ describe('AgentService connector skill inheritance', () => {
     jest.spyOn(service as any, 'resolveManager').mockReturnValue(undefined);
     connectorService.findByIds.mockResolvedValue([{
       id: 'playbook-connector', name: 'Playbook MCP', slug: 'playbook-mcp',
-      actions: [...allowedActions, ...internalActions].map((key) => ({ key, label: key, isEnabled: true })),
+      actions: [
+        ...enabledActions.map((key) => ({ key, label: key, isEnabled: true })),
+        { key: 'disabled_action', label: 'disabled_action', isEnabled: false },
+      ],
       referencedSkillIds: [],
     }]);
     modelsService.getGuardrailsClassifierModel.mockResolvedValue(null);
 
     for (const connectorActionSelections of [
       [],
-      [{ connectorId: 'playbook-connector', actionKeys: internalActions }],
+      [{ connectorId: 'playbook-connector', actionKeys: ['search_playbooks', 'disabled_action'] }],
     ]) {
       getAgentsForUser.mockResolvedValue([{ ...streamAgent, connectorActionSelections }]);
       const result = await service.buildAgentsForStream(
@@ -357,12 +360,12 @@ describe('AgentService connector skill inheritance', () => {
       );
 
       expect(result[0].tools.map((tool) => tool.name)).toEqual(
-        allowedActions.map((action) => `playbook-mcp_${action}`),
+        enabledActions.map((action) => `playbook-mcp_${action}`),
       );
       const bindings = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string);
-      expect(bindings[0].actions.map((action: { action_key: string }) => action.action_key)).toEqual(allowedActions);
+      expect(bindings[0].actions.map((action: { action_key: string }) => action.action_key)).toEqual(enabledActions);
       expect(result[0].tools.map((tool) => tool.name)).not.toEqual(
-        expect.arrayContaining(internalActions.map((action) => `playbook-mcp_${action}`)),
+        expect.arrayContaining(['playbook-mcp_disabled_action']),
       );
       expect(result[0].prompt).toContain('[Trusted conversation handoff]');
       expect(result[0].prompt).toContain('Call start_playbook_generation now');

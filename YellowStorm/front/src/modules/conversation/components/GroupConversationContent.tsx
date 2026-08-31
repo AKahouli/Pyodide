@@ -115,6 +115,9 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   const isEditing = editingMessageId === message.id;
   const isUser = message.conversationType === 'user';
   const isCurrentUser = isUser && (!message.senderId || !currentUserId || message.senderId === currentUserId);
+  const inlineUserActions = isCurrentUser && !isEditing
+    ? <UserMessageActions message={message} isLastUserMessage={isLastUserMessage} currentUserId={currentUserId} className='mt-0' />
+    : undefined;
   const markMentionSeen = useConversationStore((s) => s.markMentionSeen);
 
   // Mark mention as seen when message becomes visible
@@ -185,7 +188,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
             {isCurrentUser ? (
               <>
                 <div className="flex justify-end min-w-0">
-                  <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} />
+                  <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} footerActions={inlineUserActions} />
                 </div>
                 <MessageAvatar message={message} currentConversation={currentConversation} />
               </>
@@ -195,7 +198,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
                 <div className="flex justify-start min-w-0">
                   {isUser
                     ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} className='[&>div:first-child]:w-auto [&>div:first-child]:min-w-0' />
-                    : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} isStreaming={false} inputTokens={message.inputTokens} outputTokens={message.outputTokens} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} />}
+                    : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} isStreaming={false} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} />}
                 </div>
               </>
             )}
@@ -204,19 +207,19 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
               <>
                 {!isCurrentUser && <div />} 
                 <div className={cn("flex min-w-0", isCurrentUser ? "justify-end" : "justify-start")}>
-                  {isUser ? (
+                  {isUser && !isCurrentUser ? (
                     <UserMessageActions 
                       message={message} 
                       isLastUserMessage={isLastUserMessage} 
                       currentUserId={currentUserId} 
                     />
-                  ) : (
+                  ) : !isUser ? (
                     <MessageActions 
                       message={message} 
                       isLastAiMessage={isLastAiMessage} 
                       conversationId={conversationId} 
                     />
-                  )}
+                  ) : null}
                 </div>
                 {isCurrentUser && <div />} 
               </>
@@ -376,7 +379,7 @@ export function GroupConversationContent() {
           </div>
         </ChatConversationContent>
         <MentionMessageJump />
-        <ChatScrollButton />
+        <ChatScrollButton className='bottom-3 left-auto right-3 z-10 translate-x-0' />
       </ChatConversation>
     </>
   );

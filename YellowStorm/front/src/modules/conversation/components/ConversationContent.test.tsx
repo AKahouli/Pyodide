@@ -7,8 +7,8 @@ import { ConversationContent } from './ConversationContent';
 vi.mock('@/components/ai-elements/chat-conversation', () => ({
   ChatConversation: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ChatConversationContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  ChatMessageBubble: () => <div>bubble</div>,
-  ChatScrollButton: () => <button type='button'>scroll</button>,
+  ChatMessageBubble: ({ footerActions }: { footerActions?: ReactNode }) => <div>bubble{footerActions}</div>,
+  ChatScrollButton: ({ className }: { className?: string }) => <button type='button' className={className}>scroll</button>,
   ChatConversationEmptyState: () => <div>empty-state</div>,
 }));
 
@@ -67,13 +67,14 @@ describe('ConversationContent', () => {
   it('renders empty state when there are no messages', () => {
     render(<ConversationContent />);
     expect(screen.getByText('empty-state')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'scroll' })).toHaveClass('right-3', 'left-auto', 'translate-x-0');
   });
 
   it('shows activity before the first stream chunk arrives', () => {
     isAwaitingFirstChunk = true;
     storeState.awaitingConversationId = 'conv-1';
     render(<ConversationContent />);
-    expect(screen.getByRole('status')).toBeInTheDocument();
+    expect(screen.getAllByRole('status')).not.toHaveLength(0);
     expect(screen.getByTestId('conversation-assistant-bubble')).toBeInTheDocument();
     isAwaitingFirstChunk = false;
     storeState.awaitingConversationId = null;
@@ -115,6 +116,16 @@ describe('ConversationContent', () => {
     expect(screen.getByText('reliability-card')).toBeInTheDocument();
   });
 
+  it('places user actions in the message metadata footer', () => {
+    displayMessages = [{
+      id: 'user-1', conversationId: 'conv-1', conversationType: 'user', content: 'Question', createdAt: '2026-07-28T00:00:00.000Z',
+    }];
+
+    render(<ConversationContent />);
+
+    expect(screen.getByText('user-actions')).toBeInTheDocument();
+  });
+
   it('shows the rerun surface for a completed text answer without a tool call', () => {
     displayMessages = [{
       id: 'ai-text-only', conversationId: 'conv-1', conversationType: 'ai', isComplete: true, createdAt: '2026-07-28T00:00:00.000Z',
@@ -139,9 +150,9 @@ describe('ConversationContent', () => {
 
     const { container } = render(<ConversationContent />);
 
-    expect(screen.getByText('Completed Agent')).toBeInTheDocument();
-    expect(screen.getByText('Live Agent')).toBeInTheDocument();
+    expect(screen.getAllByText('Completed Agent')).not.toHaveLength(0);
+    expect(screen.getAllByText('Live Agent')).not.toHaveLength(0);
     expect(container.querySelectorAll('[data-agent-activity][data-active="true"]')).toHaveLength(1);
-    expect(container.querySelectorAll('[data-agent-scan]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-agent-scan]')).toHaveLength(2);
   });
 });

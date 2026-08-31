@@ -54,8 +54,10 @@ export const API_ENDPOINTS = {
     check: '/health',
     live: '/health/live',
     ready: '/health/ready',
-    history: '/health/history',
-    stats: '/health/stats',
+    admin: '/admin/health',
+    history: '/admin/health/history',
+    stats: '/admin/health/stats',
+    postgres: '/admin/health/postgres',
   },
   system: {
     maintenance: '/experimental/system/maintenance',

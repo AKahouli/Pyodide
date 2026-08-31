@@ -1,6 +1,7 @@
 import { ShareService } from './share.service';
 import type { EmbeddedMessage } from '../interfaces/share.interface';
 import type { MessageComponent } from '../interfaces/message.interface';
+import { ConversationCloneLimitError } from '../persistence/share-store';
 
 const now = new Date('2026-07-15T10:00:00.000Z');
 const components: MessageComponent[] = [
@@ -59,9 +60,10 @@ function createService(overrides: Record<string, jest.Mock> = {}) {
     findSourceConversation: jest
       .fn()
       .mockResolvedValue({ id: 'conversation-1', title: 'Shared title' }),
-    listSnapshotMessages: jest.fn(),
+    listSnapshotMessages: jest.fn().mockResolvedValue([]),
     createPublic: jest.fn(),
     forkConversation: jest.fn(),
+    deleteForkConversations: jest.fn().mockResolvedValue(undefined),
     createPrivate: jest.fn(),
     listForConversation: jest.fn(),
     findById: jest.fn(),
@@ -157,6 +159,26 @@ describe('ShareService', () => {
         forkedConversationIds: ['fork-2'],
       }),
     );
+  });
+
+  it('deletes committed forks when a later recipient exceeds the clone limit', async () => {
+    const { service, store } = createService({
+      forkConversation: jest
+        .fn()
+        .mockResolvedValueOnce('fork-1')
+        .mockRejectedValueOnce(new ConversationCloneLimitError('clone limit')),
+    });
+
+    await expect(
+      service.createShare('user-1', {
+        conversationId: 'conversation-1',
+        shareType: 'private',
+        recipientEmails: ['one@example.com', 'two@example.com'],
+      }),
+    ).rejects.toMatchObject({ message: 'clone limit' });
+
+    expect(store.deleteForkConversations).toHaveBeenCalledWith(['fork-1'], 'user-1');
+    expect(store.createPrivate).not.toHaveBeenCalled();
   });
 
   it('does not increment expired public shares', async () => {

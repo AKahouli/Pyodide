@@ -43,6 +43,13 @@
       "when": 1788071920611,
       "tag": "0005_conversation",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788091200000,
+      "tag": "0006_conversation_scalability",
+      "breakpoints": true
     }
   ]
 }

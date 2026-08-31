@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { alias } from 'drizzle-orm/pg-core';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import type {
@@ -10,12 +11,20 @@ import type {
 import { newOwnedId } from '../owned-id';
 import type {
   AiMessageComponentsRecord,
+  MessageCursorInput,
   MessagePageInput,
   MessageRecord,
   MessageStore,
   ReportMessageRecord,
 } from '../message-store';
 import { mapPostgresMessage } from './postgres-message-record.mapper';
+import {
+  decodeMessageCursor,
+  encodeMessageCursor,
+  messageFilterHash,
+} from '../../utils/message-cursor';
+import { BadRequestException } from '../../../exceptions';
+import { ErrorCode } from '../../../exceptions/constants/error-codes';
 
 @Injectable()
 export class PostgresMessageStore implements MessageStore {
@@ -176,14 +185,64 @@ export class PostgresMessageStore implements MessageStore {
     };
   }
 
-  async listByConversation(conversationId: string): Promise<MessageRecord[]> {
-    return (
-      await this.db
+  async listCursor(input: MessageCursorInput): Promise<{
+    records: MessageRecord[];
+    hasMore: boolean;
+    nextCursor: string | null;
+  }> {
+    const filterHash = messageFilterHash(input.conversationType);
+    const cursor = input.cursor ? decodeMessageCursor(input.cursor) : undefined;
+    if (cursor && cursor.f !== filterHash) {
+      throw new BadRequestException(
+        ErrorCode.VALIDATION_ERROR,
+        'Message cursor does not match the request filters',
+      );
+    }
+    const conditions = [eq(schema.messages.conversationId, input.conversationId)];
+    if (input.conversationType) {
+      conditions.push(eq(schema.messages.conversationType, input.conversationType));
+    }
+    if (cursor) {
+      const createdAt = new Date(cursor.createdAt);
+      conditions.push(
+        or(
+          lt(schema.messages.createdAt, createdAt),
+          and(eq(schema.messages.createdAt, createdAt), lt(schema.messages.id, cursor.id)),
+        )!,
+      );
+    }
+    const rows = await this.db
+      .select()
+      .from(schema.messages)
+      .where(and(...conditions))
+      .orderBy(desc(schema.messages.createdAt), desc(schema.messages.id))
+      .limit(input.limit + 1);
+    const hasMore = rows.length > input.limit;
+    const selected = rows.slice(0, input.limit);
+    const oldest = selected.at(-1);
+    return {
+      records: selected.reverse().map(mapPostgresMessage),
+      hasMore,
+      nextCursor:
+        hasMore && oldest
+          ? encodeMessageCursor({
+              v: 1,
+              createdAt: oldest.createdAt.toISOString(),
+              id: oldest.id.trim(),
+              f: filterHash,
+            })
+          : null,
+    };
+  }
+
+  async listByConversation(conversationId: string, limit?: number): Promise<MessageRecord[]> {
+    const query = this.db
         .select()
         .from(schema.messages)
         .where(eq(schema.messages.conversationId, conversationId))
         .orderBy(asc(schema.messages.createdAt), asc(schema.messages.id))
-    ).map(mapPostgresMessage);
+        .$dynamic();
+    return (await (limit === undefined ? query : query.limit(limit))).map(mapPostgresMessage);
   }
 
   async findTurnByRequestId(
@@ -191,9 +250,20 @@ export class PostgresMessageStore implements MessageStore {
     senderId: string,
     requestId: string,
   ): Promise<{ user: MessageRecord; aiId?: string } | null> {
-    const [user] = await this.db
-      .select()
+    const ai = alias(schema.messages, 'request_ai');
+    const [turn] = await this.db
+      .select({ user: schema.messages, aiId: ai.id })
       .from(schema.messages)
+      .leftJoin(
+        ai,
+        and(
+          eq(ai.conversationId, conversationId),
+          eq(ai.senderId, senderId),
+          eq(ai.conversationType, 'ai'),
+          eq(ai.questionMessageId, schema.messages.id),
+          eq(ai.requestId, requestId),
+        ),
+      )
       .where(
         and(
           eq(schema.messages.conversationId, conversationId),
@@ -203,21 +273,8 @@ export class PostgresMessageStore implements MessageStore {
         ),
       )
       .limit(1);
-    if (!user) return null;
-    const [ai] = await this.db
-      .select({ id: schema.messages.id })
-      .from(schema.messages)
-      .where(
-        and(
-          eq(schema.messages.conversationId, conversationId),
-          eq(schema.messages.senderId, senderId),
-          eq(schema.messages.conversationType, 'ai'),
-          eq(schema.messages.questionMessageId, user.id),
-          eq(schema.messages.requestId, requestId),
-        ),
-      )
-      .limit(1);
-    return { user: mapPostgresMessage(user), aiId: ai?.id.trim() };
+    if (!turn) return null;
+    return { user: mapPostgresMessage(turn.user), aiId: turn.aiId?.trim() };
   }
 
   async updateFeedback(id: string, feedback: MessageRecord['feedback'], feedbackAt: Date) {
@@ -435,47 +492,47 @@ export class PostgresMessageStore implements MessageStore {
   }
 
   async failStaleReliability(cutoff: Date): Promise<MessageRecord[]> {
-    const candidates = await this.db
-      .select({ id: schema.messages.id })
-      .from(schema.messages)
-      .where(
-        and(
-          sql`${schema.messages.reliabilityEvaluation}->>'status' = 'pending'`,
-          or(
-            lt(schema.messages.reliabilityEvaluationHeartbeatAt, cutoff),
-            and(
-              isNull(schema.messages.reliabilityEvaluationHeartbeatAt),
-              sql`(${schema.messages.reliabilityEvaluation}->>'requestedAt')::timestamptz < ${cutoff}`,
-            ),
-          ),
-        ),
+    const withoutHeartbeat = await this.db.execute(sql`
+      WITH candidates AS (
+        SELECT id FROM conversation.messages
+        WHERE reliability_evaluation->>'status' = 'pending'
+          AND reliability_evaluation_heartbeat_at IS NULL
+          AND COALESCE(NULLIF(reliability_evaluation->>'requestedAt', '')::timestamptz, updated_at) < ${cutoff}
+        ORDER BY COALESCE(NULLIF(reliability_evaluation->>'requestedAt', '')::timestamptz, updated_at), id
+        LIMIT 1000 FOR UPDATE SKIP LOCKED
+      )
+      UPDATE conversation.messages m
+      SET reliability_evaluation = jsonb_set(jsonb_set(m.reliability_evaluation, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${new Date().toISOString()}),
+          updated_at = now()
+      FROM candidates c
+      WHERE m.id = c.id
+      RETURNING m.*
+    `);
+    const remaining = 1000 - withoutHeartbeat.rows.length;
+    if (remaining === 0) {
+      return withoutHeartbeat.rows.map((row) =>
+        mapPostgresMessage(row as typeof schema.messages.$inferSelect),
       );
-    const updated: MessageRecord[] = [];
-    for (const candidate of candidates) {
-      const [row] = await this.db
-        .update(schema.messages)
-        .set({
-          reliabilityEvaluation: sql`jsonb_set(jsonb_set(${schema.messages.reliabilityEvaluation}, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${new Date().toISOString()})`,
-          reliabilityEvaluationHeartbeatAt: null,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(schema.messages.id, candidate.id),
-            sql`${schema.messages.reliabilityEvaluation}->>'status' = 'pending'`,
-            or(
-              lt(schema.messages.reliabilityEvaluationHeartbeatAt, cutoff),
-              and(
-                isNull(schema.messages.reliabilityEvaluationHeartbeatAt),
-                sql`(${schema.messages.reliabilityEvaluation}->>'requestedAt')::timestamptz < ${cutoff}`,
-              ),
-            ),
-          ),
-        )
-        .returning();
-      if (row) updated.push(mapPostgresMessage(row));
     }
-    return updated;
+    const withStaleHeartbeat = await this.db.execute(sql`
+      WITH candidates AS (
+        SELECT id FROM conversation.messages
+        WHERE reliability_evaluation->>'status' = 'pending'
+          AND reliability_evaluation_heartbeat_at < ${cutoff}
+        ORDER BY reliability_evaluation_heartbeat_at, id
+        LIMIT ${remaining} FOR UPDATE SKIP LOCKED
+      )
+      UPDATE conversation.messages m
+      SET reliability_evaluation = jsonb_set(jsonb_set(m.reliability_evaluation, '{status}', '"failed"'), '{failureCode}', '"stale_pending_after_restart"') || jsonb_build_object('evaluatedAt', ${new Date().toISOString()}),
+          reliability_evaluation_heartbeat_at = NULL,
+          updated_at = now()
+      FROM candidates c
+      WHERE m.id = c.id
+      RETURNING m.*
+    `);
+    return [...withoutHeartbeat.rows, ...withStaleHeartbeat.rows].map((row) =>
+      mapPostgresMessage(row as typeof schema.messages.$inferSelect),
+    );
   }
 
   async touchPendingReliability(ids: string[], now: Date): Promise<void> {
@@ -501,12 +558,20 @@ export class PostgresMessageStore implements MessageStore {
   }
 
   async cleanupStaleStreams(cutoff: Date): Promise<number> {
-    const rows = await this.db
-      .update(schema.messages)
-      .set({ isStreaming: false, isComplete: false, updatedAt: new Date() })
-      .where(and(eq(schema.messages.isStreaming, true), lt(schema.messages.updatedAt, cutoff)))
-      .returning({ id: schema.messages.id });
-    return rows.length;
+    const result = await this.db.execute(sql`
+      WITH candidates AS (
+        SELECT id FROM conversation.messages
+        WHERE is_streaming = true AND updated_at < ${cutoff}
+        ORDER BY updated_at, id
+        LIMIT 1000 FOR UPDATE SKIP LOCKED
+      )
+      UPDATE conversation.messages m
+      SET is_streaming = false, is_complete = false, updated_at = now()
+      FROM candidates c
+      WHERE m.id = c.id
+      RETURNING m.id
+    `);
+    return result.rowCount ?? 0;
   }
 
   async updateUser(
@@ -550,6 +615,33 @@ export class PostgresMessageStore implements MessageStore {
         )
         .orderBy(asc(schema.messages.createdAt), asc(schema.messages.id))
     ).map(mapPostgresMessage);
+  }
+
+  async findBranchesByQuestions(questionMessageIds: string[]): Promise<Map<string, MessageRecord[]>> {
+    if (!questionMessageIds.length) return new Map();
+    const rows = await this.db
+      .select()
+      .from(schema.messages)
+      .where(
+        and(
+          inArray(schema.messages.questionMessageId, questionMessageIds),
+          eq(schema.messages.conversationType, 'ai'),
+        ),
+      )
+      .orderBy(
+        asc(schema.messages.questionMessageId),
+        asc(schema.messages.createdAt),
+        asc(schema.messages.id),
+      );
+    const result = new Map<string, MessageRecord[]>();
+    for (const row of rows) {
+      const questionId = row.questionMessageId?.trim();
+      if (!questionId) continue;
+      const records = result.get(questionId) ?? [];
+      records.push(mapPostgresMessage(row));
+      result.set(questionId, records);
+    }
+    return result;
   }
 
   async findAiComponents(

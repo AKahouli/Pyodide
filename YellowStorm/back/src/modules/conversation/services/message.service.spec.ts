@@ -5,6 +5,7 @@ describe('MessageService store lifecycle', () => {
   let messageStore: Record<string, jest.Mock>;
   let conversationService: Record<string, jest.Mock>;
   let streamGateway: Record<string, jest.Mock>;
+  let conversationSettings: Record<string, jest.Mock>;
   let service: MessageService;
 
   const conversationId = new Types.ObjectId().toString();
@@ -34,7 +35,9 @@ describe('MessageService store lifecycle', () => {
       completeAi: jest.fn(),
       findById: jest.fn(),
       listPage: jest.fn(),
+      listCursor: jest.fn(),
       listByConversation: jest.fn(),
+      findBranchesByQuestions: jest.fn(),
       findTurnByRequestId: jest.fn(),
       updateFeedback: jest.fn(),
       updateReliability: jest.fn(),
@@ -64,6 +67,10 @@ describe('MessageService store lifecycle', () => {
       broadcastToConversation: jest.fn().mockResolvedValue(undefined),
       sendToUser: jest.fn(),
     };
+    conversationSettings = {
+      shouldRedactSensitiveText: jest.fn().mockReturnValue(true),
+      getSettings: jest.fn().mockResolvedValue({ redactSensitiveText: true }),
+    };
     const configService = {
       get: jest.fn((key: string, fallback?: unknown) => {
         if (key === 'conversation.maxMessageLength') return 50000;
@@ -86,6 +93,7 @@ describe('MessageService store lifecycle', () => {
       configService as never,
       logger as never,
       {} as never,
+      conversationSettings as never,
     );
     jest.spyOn(service as any, 'extractAndNotifyMentions').mockResolvedValue(undefined);
   });
@@ -147,6 +155,117 @@ describe('MessageService store lifecycle', () => {
       { id: 'artifact-1', type: 'artifact', data: { artifactId: 'opaque-1', filename: 'report.pdf' } },
       { id: 'activity-1', type: 'agentActivity', data: { summary: 'Reviewing', detail: 'detail', status: 'completed' } },
     ]);
+  });
+
+  it('awaits the current redaction setting when loading persisted messages', async () => {
+    conversationSettings.shouldRedactSensitiveText.mockReturnValue(true);
+    conversationSettings.getSettings.mockResolvedValue({ redactSensitiveText: false });
+    messageStore.listPage.mockResolvedValue({
+      records: [record({
+        conversationType: 'ai',
+        components: [{
+          id: 'answer',
+          type: 'text',
+          data: { content: 'Cover pool au 30/06/2025 — 19 931,3 M€' },
+        }],
+      })],
+      total: 1,
+    });
+
+    const result = await service.findByConversation(conversationId, {});
+
+    expect(conversationSettings.getSettings).toHaveBeenCalled();
+    expect(result.messages[0].components?.[0].data.content)
+      .toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
+  });
+
+  it('fails closed when the current redaction setting cannot be loaded', async () => {
+    conversationSettings.getSettings.mockRejectedValue(new Error('settings unavailable'));
+    messageStore.listPage.mockResolvedValue({
+      records: [record({
+        conversationType: 'ai',
+        components: [{
+          id: 'answer',
+          type: 'text',
+          data: { content: 'Stored at owner/runs/private/result.txt' },
+        }],
+      })],
+      total: 1,
+    });
+
+    const result = await service.findByConversation(conversationId, {});
+
+    expect(result.messages[0].components?.[0].data.content).toContain('[REDACTED]');
+  });
+
+  it('fails closed without hanging when the redaction setting lookup stalls', async () => {
+    jest.useFakeTimers();
+    try {
+      conversationSettings.getSettings.mockReturnValue(new Promise(() => undefined));
+      messageStore.listPage.mockResolvedValue({
+        records: [record({
+          conversationType: 'ai',
+          components: [{
+            id: 'answer',
+            type: 'text',
+            data: { content: 'Stored at owner/runs/private/result.txt' },
+          }],
+        })],
+        total: 1,
+      });
+
+      const resultPromise = service.findByConversation(conversationId, {});
+      await jest.advanceTimersByTimeAsync(1_000);
+      const result = await resultPromise;
+
+      expect(result.messages[0].components?.[0].data.content).toContain('[REDACTED]');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('uses the current redaction setting for cursor messages and branches', async () => {
+    conversationSettings.getSettings.mockResolvedValue({ redactSensitiveText: false });
+    const question = record();
+    const answer = record({
+      conversationType: 'ai',
+      components: [{
+        id: 'answer',
+        type: 'text',
+        data: { content: 'Cover pool au 30/06/2025 — 19 931,3 M€' },
+      }],
+    });
+    messageStore.listCursor.mockResolvedValue({
+      records: [question],
+      hasMore: false,
+      nextCursor: undefined,
+    });
+    messageStore.findBranchesByQuestions.mockResolvedValue(
+      new Map([[question.id, [answer]]]),
+    );
+
+    const result = await service.findByConversation(conversationId, { mode: 'cursor' });
+
+    expect('branchesByQuestion' in result && result.branchesByQuestion[question.id][0]
+      .components?.[0].data.content).toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
+  });
+
+  it('uses the current redaction setting when loading a message by id', async () => {
+    conversationSettings.getSettings.mockResolvedValue({ redactSensitiveText: false });
+    const answer = record({
+      conversationType: 'ai',
+      components: [{
+        id: 'answer',
+        type: 'text',
+        data: { content: 'Cover pool au 30/06/2025 — 19 931,3 M€' },
+      }],
+    });
+    messageStore.findById.mockResolvedValue(answer);
+
+    const result = await service.findById(answer.id);
+
+    expect(result.components?.[0].data.content)
+      .toBe('Cover pool au 30/06/2025 — 19 931,3 M€');
   });
 
   it('awaits the canonical completion broadcast', async () => {
