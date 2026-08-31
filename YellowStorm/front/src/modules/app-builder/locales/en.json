@@ -49,6 +49,12 @@
     "sections": {
       "appsCount": "{{count}} apps",
       "singleApp": "1 app"
+    },
+    "pagination": {
+      "ariaLabel": "App list pagination",
+      "previous": "Previous",
+      "next": "Next",
+      "summary": "Page {{page}} of {{total}}"
     }
   },
   "card": {

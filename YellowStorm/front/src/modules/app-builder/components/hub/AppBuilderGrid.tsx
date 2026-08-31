@@ -1,9 +1,14 @@
+import { useEffect, useState } from 'react';
+
 import { useModuleTranslation } from '@/modules/localization';
 import type { AppSortKey, AppViewMode } from '../../hooks/useAppBuilderFilters';
 import { APP_BUILDER_TAB_LIST_HEADING_KEYS } from '../../ticket-i18n';
 import type { AppBuilderTab, DeployedApp, DraftApp } from '../../types';
 import { DeployedAppCard } from '../DeployedAppCard';
 import { DraftAppCard } from '../DraftAppCard';
+import { AppBuilderPagination } from './AppBuilderPagination';
+
+export const APP_BUILDER_PAGE_SIZE = 9;
 
 interface AppBuilderGridProps {
   tab: AppBuilderTab;
@@ -15,9 +20,24 @@ interface AppBuilderGridProps {
 
 export function AppBuilderGrid({ tab, deployed, shared, drafts, view }: AppBuilderGridProps) {
   const { t } = useModuleTranslation('app-builder');
+  const [page, setPage] = useState(1);
 
-  const apps =
-    tab === 'shared' ? shared : tab === 'draft' ? drafts : deployed;
+  const apps = tab === 'shared' ? shared : tab === 'draft' ? drafts : deployed;
+  const totalPages = Math.max(1, Math.ceil(apps.length / APP_BUILDER_PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+
+  useEffect(() => {
+    setPage(1);
+  }, [tab, deployed, shared, drafts]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
+  const pageStart = (currentPage - 1) * APP_BUILDER_PAGE_SIZE;
+  const pageApps = apps.slice(pageStart, pageStart + APP_BUILDER_PAGE_SIZE);
 
   const layoutClass =
     view === 'grid'
@@ -42,11 +62,15 @@ export function AppBuilderGrid({ tab, deployed, shared, drafts, view }: AppBuild
 
       <div className={layoutClass} role='tabpanel'>
         {tab === 'draft'
-          ? drafts.map((app) => <DraftAppCard key={app.sessionId} app={app} view={view} />)
-          : apps.map((app) => (
-              <DeployedAppCard key={app.sessionId} app={app as DeployedApp} view={view} />
+          ? (pageApps as DraftApp[]).map((app) => (
+              <DraftAppCard key={app.sessionId} app={app} view={view} />
+            ))
+          : (pageApps as DeployedApp[]).map((app) => (
+              <DeployedAppCard key={app.sessionId} app={app} view={view} />
             ))}
       </div>
+
+      <AppBuilderPagination page={currentPage} totalPages={totalPages} onPageChange={setPage} />
     </section>
   );
 }

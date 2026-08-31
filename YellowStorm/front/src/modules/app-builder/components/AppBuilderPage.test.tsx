@@ -204,4 +204,63 @@ describe('AppBuilderPage', () => {
     expect(await screen.findByText('Shared app')).toBeInTheDocument();
     expect(screen.queryByText('Generated app')).not.toBeInTheDocument();
   });
+
+  it('paginates deployed apps with nine cards per page', async () => {
+    const deployedApps: DeployedApp[] = Array.from({ length: 10 }, (_, index) => ({
+      sessionId: `session-deployed-${index + 1}`,
+      title: `Deployed app ${index + 1}`,
+      deployedUrl: `https://apps.example/app-${index + 1}`,
+      lastDeployedAt: '2026-07-17T10:00:00.000Z',
+      source: 'owned',
+      shareId: null,
+    }));
+
+    listAppsMock.mockResolvedValueOnce({
+      deployed: deployedApps,
+      shared: [],
+      drafts: [],
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Deployed app 1')).toBeInTheDocument();
+    expect(screen.getByText('Deployed app 9')).toBeInTheDocument();
+    expect(screen.queryByText('Deployed app 10')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /hub\.pagination\.next/i }));
+
+    expect(await screen.findByText('Deployed app 10')).toBeInTheDocument();
+    expect(screen.queryByText('Deployed app 1')).not.toBeInTheDocument();
+  });
+
+  it('resets pagination when switching tabs', async () => {
+    const deployedApps: DeployedApp[] = Array.from({ length: 10 }, (_, index) => ({
+      sessionId: `session-deployed-${index + 1}`,
+      title: `Deployed app ${index + 1}`,
+      deployedUrl: `https://apps.example/app-${index + 1}`,
+      lastDeployedAt: '2026-07-17T10:00:00.000Z',
+      source: 'owned',
+      shareId: null,
+    }));
+
+    listAppsMock.mockResolvedValueOnce({
+      deployed: deployedApps,
+      shared: mockShared,
+      drafts: [],
+    });
+
+    renderPage();
+    await screen.findByText('Deployed app 1');
+
+    fireEvent.click(screen.getByRole('button', { name: /hub\.pagination\.next/i }));
+    expect(await screen.findByText('Deployed app 10')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: /hub\.tickets\.shared\.label/i }));
+    expect(await screen.findByText('Shared app')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: /hub\.tickets\.deployed\.label/i }));
+    expect(await screen.findByText('Deployed app 1')).toBeInTheDocument();
+    expect(screen.getByText('Deployed app 9')).toBeInTheDocument();
+    expect(screen.queryByText('Deployed app 10')).not.toBeInTheDocument();
+  });
 });
