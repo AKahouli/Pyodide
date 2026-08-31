@@ -27,7 +27,10 @@ import { UpdateWorkyStreamDto } from '../dto/update-worky-stream.dto';
 import { QueryWorkyStreamsDto } from '../dto/query-worky-streams.dto';
 import { WorkyStreamControlDto } from '../dto/worky-stream-control.dto';
 import { WorkyBudgetControlDto } from '../dto/worky-budget-control.dto';
-import { IWorkyStreamResponse } from '../interfaces/worky-stream.interface';
+import {
+  IWorkyStreamResponse,
+  IWorkyStreamListResult,
+} from '../interfaces/worky-stream.interface';
 import {
   IWorkyExecutionSnapshotResponse,
   IWorkyStartValidationResult,
@@ -63,11 +66,13 @@ export class WorkyStreamController {
 
   @Get()
   @RequirePermissions(Permissions.WORKY_STREAM_READ)
-  @ApiOperation({ summary: 'List the owner’s Worky streams' })
+  @ApiOperation({
+    summary: 'List the owner’s Worky streams (paginated, with per-stream task stats)',
+  })
   async findAll(
     @CurrentUser() user: UserDocument,
     @Query() query: QueryWorkyStreamsDto,
-  ): Promise<IWorkyStreamResponse[]> {
+  ): Promise<IWorkyStreamListResult> {
     return this.streams.findAllForUser(user._id.toString(), query);
   }
 

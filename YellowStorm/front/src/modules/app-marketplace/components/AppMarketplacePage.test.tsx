@@ -174,4 +174,13 @@ describe('AppMarketplacePage', () => {
     expect(await screen.findByText('Shared app')).toBeInTheDocument();
     expect(screen.queryByText('Generated app')).not.toBeInTheDocument();
   });
+
+  it('shows shared app titles in grid view', async () => {
+    listDeployedAppsMock.mockResolvedValueOnce(mixedApps);
+
+    renderPage('/?view=grid');
+
+    expect(await screen.findByText('Shared app')).toBeInTheDocument();
+    expect(screen.getByText('Generated app')).toBeInTheDocument();
+  });
 });

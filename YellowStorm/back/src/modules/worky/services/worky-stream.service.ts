@@ -12,7 +12,12 @@ import { AgentTypeService } from '../../agent-type/agent-type.service';
 import { CreateWorkyStreamDto } from '../dto/create-worky-stream.dto';
 import { UpdateWorkyStreamDto } from '../dto/update-worky-stream.dto';
 import { QueryWorkyStreamsDto } from '../dto/query-worky-streams.dto';
-import { IWorkyStreamResponse } from '../interfaces/worky-stream.interface';
+import {
+  IWorkyStreamResponse,
+  IWorkyStreamListItem,
+  IWorkyStreamListResult,
+  IWorkyStreamStats,
+} from '../interfaces/worky-stream.interface';
 import { LoggerService } from '../../logger';
 import { NotFoundException, ForbiddenException, ConflictException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
@@ -213,17 +218,112 @@ export class WorkyStreamService implements OnModuleInit {
   async findAllForUser(
     userId: string,
     query: QueryWorkyStreamsDto,
-  ): Promise<IWorkyStreamResponse[]> {
-    const filter: Record<string, unknown> = { ownerUserId: new Types.ObjectId(userId) };
+  ): Promise<IWorkyStreamListResult> {
+    const ownerUserId = new Types.ObjectId(userId);
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 12));
+
+    // `baseFilter` scopes to the owner + search + created-date window. It drives
+    // `statusCounts` so the home-page tiles/chips show the full breakdown
+    // regardless of which status is currently selected.
+    const baseFilter: Record<string, unknown> = { ownerUserId };
     if (query.search) {
-      filter.title = { $regex: escapeRegex(query.search), $options: 'i' };
+      baseFilter.title = { $regex: escapeRegex(query.search), $options: 'i' };
     }
-    const streams = await this.streamModel
-      .find(filter)
-      .sort({ lastActivityAt: -1, createdAt: -1 })
-      .lean()
-      .exec();
-    return streams.map((s) => this.toResponse(s));
+    const createdAt: Record<string, Date> = {};
+    if (query.createdFrom) createdAt.$gte = new Date(query.createdFrom);
+    if (query.createdTo) createdAt.$lte = new Date(query.createdTo);
+    if (Object.keys(createdAt).length > 0) baseFilter.createdAt = createdAt;
+
+    // `filter` adds the active status selection — it bounds the paginated data
+    // and the total count, but intentionally NOT statusCounts.
+    const filter: Record<string, unknown> = { ...baseFilter };
+    if (query.status?.length) filter.status = { $in: query.status };
+
+    const sortSpec = this.buildStreamSortSpec(query.sort, query.sortDir);
+
+    const [total, streams, statusAgg] = await Promise.all([
+      this.streamModel.countDocuments(filter).exec(),
+      this.streamModel
+        .find(filter)
+        .sort(sortSpec)
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean()
+        .exec(),
+      this.streamModel
+        .aggregate([{ $match: baseFilter }, { $group: { _id: '$status', count: { $sum: 1 } } }])
+        .exec(),
+    ]);
+
+    const statusCounts: Record<string, number> = {};
+    for (const row of statusAgg as Array<{ _id: string; count: number }>) {
+      if (row._id) statusCounts[row._id] = row.count;
+    }
+
+    const streamIds = (streams as Array<{ _id: Types.ObjectId }>).map((s) => s._id);
+    const laneAgg =
+      streamIds.length > 0
+        ? ((await this.connection
+            .model(WorkyTask.name)
+            .aggregate([
+              { $match: { streamId: { $in: streamIds } } },
+              { $group: { _id: { streamId: '$streamId', lane: '$lane' }, count: { $sum: 1 } } },
+            ])
+            .exec()) as Array<{ _id: { streamId: Types.ObjectId; lane: string }; count: number }>)
+        : [];
+
+    const statsByStream = this.buildStatsByStream(laneAgg);
+
+    const data: IWorkyStreamListItem[] = (streams as unknown[]).map((s) => {
+      const item = this.toResponse(s);
+      return { ...item, stats: statsByStream.get(item.id) ?? this.emptyStreamStats() };
+    });
+
+    return {
+      data,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 0, statusCounts },
+    };
+  }
+
+  private buildStreamSortSpec(
+    sort: QueryWorkyStreamsDto['sort'],
+    sortDir: QueryWorkyStreamsDto['sortDir'],
+  ): Record<string, 1 | -1> {
+    const dir: 1 | -1 = sortDir === 'asc' ? 1 : -1;
+    switch (sort) {
+      case 'created':
+        return { createdAt: dir };
+      case 'title':
+        return { title: dir };
+      case 'lastActivity':
+      default:
+        return { lastActivityAt: dir, createdAt: -1 };
+    }
+  }
+
+  private emptyStreamStats(): IWorkyStreamStats {
+    return { totalTasks: 0, running: 0, done: 0, blocked: 0, failed: 0, progress: 0 };
+  }
+
+  private buildStatsByStream(
+    laneAgg: Array<{ _id: { streamId: Types.ObjectId; lane: string }; count: number }>,
+  ): Map<string, IWorkyStreamStats> {
+    const map = new Map<string, IWorkyStreamStats>();
+    for (const row of laneAgg) {
+      const streamId = row._id.streamId.toString();
+      const stats = map.get(streamId) ?? this.emptyStreamStats();
+      stats.totalTasks += row.count;
+      if (row._id.lane === 'running') stats.running += row.count;
+      else if (row._id.lane === 'done') stats.done += row.count;
+      else if (row._id.lane === 'blocked') stats.blocked += row.count;
+      else if (row._id.lane === 'failed') stats.failed += row.count;
+      map.set(streamId, stats);
+    }
+    for (const stats of map.values()) {
+      stats.progress = stats.totalTasks > 0 ? stats.done / stats.totalTasks : 0;
+    }
+    return map;
   }
 
   async findById(userId: string, streamId: string): Promise<IWorkyStreamResponse> {

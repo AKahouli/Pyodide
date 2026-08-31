@@ -21,7 +21,7 @@ from src.grpc_generated import companion_ai_pb2 as pb
 from src.grpc_generated import companion_ai_pb2_grpc as pb_grpc
 from src.companion_ai import mail_token
 from src.companion_ai.readmodel import ReadModel
-from src.companion_ai.service import OrchestratorService
+from src.companion_ai.service import OrchestratorService, _with_requester
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,18 @@ def _agent_by_type(agents, agent_type: str):
     return next((a for a in agents if a.agent_type == agent_type), None)
 
 
+def _requester(request) -> Optional[dict]:
+    """The turn's requester {name, email, role} from RunRequest.user_*, or None
+    when the client sent no identity (older backend) — then behaviour is
+    unchanged."""
+    name = (getattr(request, "user_name", "") or "").strip()
+    email = (getattr(request, "user_email", "") or "").strip()
+    role = (getattr(request, "user_role", "") or "").strip()
+    if not (name or email):
+        return None
+    return {"name": name, "email": email, "role": role}
+
+
 def _describe_request(request) -> str:
     """One-line dump of every RunRequest field, secrets redacted (connector
     auth_headers carry Bearer tokens; skill/agent instructions are large)."""
@@ -86,6 +98,16 @@ def _describe_request(request) -> str:
         f"agents={agents} "
         f"message={request.message!r} skills={skills} connectors={connectors}"
     )
+
+
+def _agent_models(request) -> str:
+    """Just the model each incoming agent will run on — the field most often
+    worth eyeballing when a completion is rejected for a bad model name
+    (e.g. a proxy alias that doesn't match). Greppable on its own line."""
+    if not request.agents:
+        return "(no agents — using built-in defaults)"
+    return ", ".join(f"{a.agent_type or a.name or a.id}→{a.chatbot.model or '(default)'}"
+                     for a in request.agents)
 
 
 def _connectors_to_dicts(connectors) -> list:
@@ -141,6 +163,22 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         # this one request; the RPC itself only ever returns an ack.
         run_id = uuid.uuid4().hex
         logger.info("[worky] 1. RunTask ◄ incoming request: %s", _describe_request(request))
+        logger.info("[worky] 1. RunTask ◄ models: %s", _agent_models(request))
+
+        # A message that arrives WHILE a plan is executing is NOT a supersede.
+        # The old behaviour cancelled the running turn and replanned — which
+        # destroyed the plan the user was watching, and cancelling a mid-LLM-call
+        # turn is slow and noisy (litellm wraps the aborted call as an APIError).
+        # Instead run it as a concurrent conversation with the planner, alongside
+        # the still-executing plan. Tracked in _bg only (NOT _running): the
+        # executing turn keeps ownership of _running, so Stop still targets it.
+        if await self._plan_is_executing(request.session_id):
+            task = asyncio.create_task(self._run_converse(request, run_id))
+            self._bg.add(task)
+            task.add_done_callback(self._bg.discard)
+            logger.info("[worky] 3. RunTask accepted → concurrent converse "
+                        "(session=%s run=%s)", request.session_id, run_id)
+            return pb.RunResponse(session_id=request.session_id, accepted=True, run_id=run_id)
 
         # STEP 3 — ack now, run the turn in the background. The client watches
         # progress arrive in the read model, not on this call. Last-answer-wins:
@@ -156,6 +194,41 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         logger.info("[worky] 3. RunTask accepted → background turn (session=%s run=%s)",
                     request.session_id, run_id)
         return pb.RunResponse(session_id=request.session_id, accepted=True, run_id=run_id)
+
+    async def _plan_is_executing(self, session_id: str) -> bool:
+        """True when a plan is mid-execution — running, with steps projected, and
+        NOT parked on user input. A message then talks WITH the planner alongside
+        the plan instead of superseding it. False during the initial planning
+        phase (no steps yet) and while blocked on an ask/await_reply (that message
+        is the awaited answer → the normal resume path handles it)."""
+        if self._rm is None:
+            return False
+        try:
+            snap = await self._rm.snapshot(session_id)
+        except Exception:
+            return False
+        if not snap:
+            return False
+        sess = snap.get("session") or {}
+        return (sess.get("status") == "running" and not sess.get("interrupt_id")
+                and bool(snap.get("steps")))
+
+    async def _run_converse(self, request: pb.RunRequest, run_id: str) -> None:
+        try:
+            planner = _agent_by_type(request.agents, PLANNER_AGENT_TYPE)
+            await self._svc.converse_turn(
+                session_id=request.session_id, user_id=request.user_id,
+                message=request.message,
+                planner_model=planner.chatbot.model if planner else None,
+                planner_prompt=planner.prompt if planner else None,
+                requester=_requester(request))
+            logger.info("[worky] converse turn done (session=%s run=%s)",
+                        request.session_id, run_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("[worky] converse turn failed (session=%s run=%s)",
+                             request.session_id, run_id)
 
     def _forget_running(self, session_id: str):
         """Done-callback that drops the session's task ref only if it's still the
@@ -203,15 +276,20 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
             logger.info("[worky] 4. %s (session=%s)", mode, request.session_id)
             executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
             executor_prompt = executor.prompt if executor else None
+            # Who the turn is for. RunRequest carries the requester's identity so
+            # the planner/executor address them directly and never delegate or
+            # email work back to the person who asked for it.
+            requester = _requester(request)
             if interrupt_id:
                 await self._svc.resume_turn(
                     session_id=request.session_id, user_id=request.user_id,
                     answer=request.message, model=model, connectors=connectors,
-                    executor_prompt=executor_prompt)
+                    executor_prompt=_with_requester(executor_prompt, requester))
             elif status == "paused":
                 await self._svc.continue_turn(
                     session_id=request.session_id, user_id=request.user_id,
-                    model=model, connectors=connectors, executor_prompt=executor_prompt)
+                    model=model, connectors=connectors,
+                    executor_prompt=_with_requester(executor_prompt, requester))
             else:
                 planner = _agent_by_type(request.agents, PLANNER_AGENT_TYPE)
                 await self._svc.plan_turn(
@@ -221,7 +299,8 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                     planner_prompt=planner.prompt if planner else None,
                     executor_prompt=executor_prompt,
                     executor_name=executor.name if executor else None,
-                    executor_id=executor.id if executor else None)
+                    executor_id=executor.id if executor else None,
+                    requester=requester)
             logger.info("RunTask turn done (session=%s run=%s)", request.session_id, run_id)
         except asyncio.CancelledError:
             logger.info("RunTask turn superseded/cancelled (session=%s)", request.session_id)
@@ -261,7 +340,14 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         return resp
 
     async def StopSession(self, request: pb.StopSessionRequest, context) -> pb.StopSessionResponse:
-        task = self._running.get(request.session_id)
+        # Claim the task out of _running so a repeat Stop can't double-act. We do
+        # NOT await its cancellation: a turn mid–LLM-call takes tens of seconds to
+        # unwind (the call runs in a thread cancel() can't interrupt), and blocking
+        # the RPC on that hung Stop past the client deadline. cancel() is
+        # fire-and-forget; the read-model projection below marks the session
+        # terminal right now, so the board is correct immediately regardless of
+        # when the cancelled turn actually finishes dying.
+        task = self._running.pop(request.session_id, None)
         stopped = False
         if task and not task.done():
             task.cancel()
@@ -274,7 +360,10 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 # forever for work nobody is doing — and a late reply would try
                 # to resume a stopped plan.
                 await self._rm.cancel_mail_waits(request.session_id)
-                await self._rm.set_session_status(request.session_id, "completed")
+                # 'canceled' (one L, the client board spelling), not 'completed':
+                # a user Stop is a deliberate termination, distinct from a plan
+                # that ran to the end.
+                await self._rm.set_session_status(request.session_id, "canceled")
             except Exception as e:
                 logger.warning("StopSession projection failed: %s", e)
         return pb.StopSessionResponse(stopped=stopped)
@@ -318,15 +407,22 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         # Claim before anything else: this is what makes a duplicate delivery a
         # no-op instead of a second resume. Graph retries whatever it thinks
         # failed, so this path is walked twice as a matter of course.
-        wait = await self._rm.claim_mail_wait(request.token)
+        # Teams passes chat_id (no routing token in the payload — Graph correlates
+        # the reply by chat identity); mail passes the token. Both resolve to a
+        # parked wait and resume identically from here.
+        if request.chat_id:
+            wait = await self._rm.claim_chat_wait(request.chat_id, reply_from=request.reply_from)
+        else:
+            wait = await self._rm.claim_mail_wait(request.token, reply_from=request.reply_from)
         if wait is None:
-            logger.info("[worky] DeliverMailReply ignored — token unknown, already "
-                        "delivered, expired or cancelled")
+            logger.info("[worky] DeliverMailReply ignored — token/chat unknown, wrong sender, "
+                        "already delivered, expired or cancelled")
             return pb.DeliverMailReplyResponse(delivered=False)
 
         session_id, user_id = wait["session_id"], wait["user_id"]
-        logger.info("[worky] DeliverMailReply ◄ session=%s step=%s from=%s (%d chars)",
-                    session_id, wait["step_id"], request.reply_from or "?",
+        channel = "Teams" if request.chat_id else "Email"
+        logger.info("[worky] DeliverMailReply ◄ %s session=%s step=%s from=%s (%d chars)",
+                    channel, session_id, wait["step_id"], request.reply_from or "?",
                     len(request.reply_body))
 
         # Ack immediately and resume in the background: the caller is answering a
@@ -334,7 +430,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
         model = (executor.chatbot.model if executor else "") or DEFAULT_MODEL
         prev = self._running.get(session_id)
-        task = asyncio.create_task(self._resume_with_reply(request, wait, model, prev))
+        task = asyncio.create_task(self._resume_with_reply(request, wait, model, prev, channel=channel))
         self._bg.add(task)
         task.add_done_callback(self._bg.discard)
         task.add_done_callback(self._forget_running(session_id))
@@ -342,8 +438,22 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         return pb.DeliverMailReplyResponse(
             delivered=True, session_id=session_id, step_id=wait["step_id"])
 
+    async def ListOpenChatWaits(self, request: pb.ListOpenChatWaitsRequest,
+                                context) -> pb.ListOpenChatWaitsResponse:
+        """The Teams chats worky is waiting on a reply in. The backend poller reads
+        each one and hands any human reply back via DeliverMailReply(chat_id=...).
+        Read-only; empty when nothing is waiting or the read model is absent."""
+        if self._rm is None:
+            return pb.ListOpenChatWaitsResponse()
+        waits = await self._rm.open_chat_waits()
+        return pb.ListOpenChatWaitsResponse(waits=[
+            pb.ChatWait(chat_id=w["conversation_id"], user_id=w["user_id"],
+                        session_id=w["session_id"])
+            for w in waits])
+
     async def _resume_with_reply(self, request: pb.DeliverMailReplyRequest, wait: dict,
-                                 model: str, prev: Optional[asyncio.Task] = None) -> None:
+                                 model: str, prev: Optional[asyncio.Task] = None,
+                                 channel: str = "Email") -> None:
         session_id = wait["session_id"]
         try:
             # Same last-answer-wins handshake as RunTask: never let two turns run
@@ -378,9 +488,9 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
             # override it.
             sender = (request.reply_from or "").strip()
             answer = mail_token.scrub(request.reply_body)
-            answer = (f"Email reply from {sender}, answering the message this step was "
+            answer = (f"{channel} reply from {sender}, answering the message this step was "
                       f"waiting on:\n\n{answer}" if sender else
-                      f"Email reply answering the message this step was waiting on:"
+                      f"{channel} reply answering the message this step was waiting on:"
                       f"\n\n{answer}")
             await self._svc.resume_turn(
                 session_id=session_id, user_id=wait["user_id"],

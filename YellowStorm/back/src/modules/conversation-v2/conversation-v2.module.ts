@@ -19,6 +19,8 @@ import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-sessi
 import { ConversationV2SessionAccessService } from './services/conversation-v2-session-access.service';
 import { SseAuthGuard } from '@modules/conversation/guards/stream-auth.guard';
 import { AuthModule } from '@modules/auth/auth.module';
+import { AppRuntimeModule } from '@modules/app-runtime/app-runtime.module';
+import { AppDataModule } from '@modules/app-data/app-data.module';
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
 import { ChatCompletionModule } from '@modules/chat-completion';
 import { ModelsModule } from '@modules/models/models.module';
@@ -47,6 +49,8 @@ import {
     JwtModule.register({}),
     forwardRef(() => AuthModule),
     forwardRef(() => WorkspaceModule),
+    forwardRef(() => AppRuntimeModule),
+    forwardRef(() => AppDataModule),
     UserModule,
     NotificationsModule,
     ChatCompletionModule,
@@ -61,6 +65,6 @@ import {
   ],
   controllers: [ConversationV2Controller, ConversationV2StreamController],
   providers: [ConversationV2GrpcClientService, ConversationV2SessionService, SseAuthGuard, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2StreamGatewayService, ConversationV2StreamService, ConversationV2OwnerGuard, ConversationV2SessionAccessGuard, ConversationV2SessionAccessService, ConversationV2NameGeneratorService, ConversationV2DeployService, ConversationV2AppShareService],
-  exports: [ConversationV2GrpcClientService, ConversationV2SessionService, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2OwnerGuard, ConversationV2SessionAccessGuard, ConversationV2SessionAccessService],
+  exports: [ConversationV2GrpcClientService, ConversationV2SessionService, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2OwnerGuard, ConversationV2SessionAccessGuard, ConversationV2SessionAccessService, ConversationV2StreamService],
 })
 export class ConversationV2Module {}

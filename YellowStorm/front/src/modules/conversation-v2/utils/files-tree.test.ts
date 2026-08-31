@@ -4,6 +4,9 @@ import {
   filterFilesTree,
   flattenFilesTree,
   restoreMangledDotfilePath,
+  buildFilesTreeFromVfsPaths,
+  normalizeFilesTree,
+  resolveSourceFilesTree,
 } from './files-tree';
 
 describe('restoreMangledDotfilePath', () => {
@@ -103,5 +106,63 @@ describe('filterFilesTree', () => {
 
   it('returns null when nothing matches', () => {
     expect(filterFilesTree(tree, 'zzznomatch')).toBeNull();
+  });
+});
+
+describe('buildFilesTreeFromVfsPaths', () => {
+  it('adds relative paths on file nodes', () => {
+    const tree = buildFilesTreeFromVfsPaths(['/src/App.jsx', '/package.json']);
+    expect(countFilesInTree(tree)).toBe(2);
+    expect(flattenFilesTree(tree).map((f) => f.path)).toEqual(['package.json', 'src/App.jsx']);
+  });
+});
+
+describe('normalizeFilesTree', () => {
+  it('converts legacy runtime trees with dir nodes and no paths', () => {
+    const tree = normalizeFilesTree({
+      name: '/',
+      type: 'dir',
+      children: [
+        { name: 'package.json', type: 'file' },
+        {
+          name: 'src',
+          type: 'dir',
+          children: [{ name: 'App.jsx', type: 'file' }],
+        },
+      ],
+    });
+    expect(flattenFilesTree(tree)).toEqual([
+      { path: 'package.json', size: 0 },
+      { path: 'src/App.jsx', size: 0 },
+    ]);
+  });
+});
+
+describe('resolveSourceFilesTree', () => {
+  it('prefers live Nodepod VFS over SSE metadata', () => {
+    const tree = resolveSourceFilesTree(
+      {
+        name: '',
+        type: 'directory',
+        children: [{ name: 'old.tsx', type: 'file', path: 'old.tsx' }],
+      },
+      {
+        '/src/App.jsx': 'export default function App() {}',
+        '/package.json': '{}',
+      },
+    );
+    expect(flattenFilesTree(tree).map((f) => f.path)).toEqual(['package.json', 'src/App.jsx']);
+  });
+
+  it('falls back to SSE metadata when VFS is empty', () => {
+    const tree = resolveSourceFilesTree(
+      {
+        name: '',
+        type: 'directory',
+        children: [{ name: 'App.jsx', type: 'file', path: 'src/App.jsx' }],
+      },
+      null,
+    );
+    expect(countFilesInTree(tree)).toBe(1);
   });
 });

@@ -214,4 +214,17 @@ describe('ConversationV2SessionService', () => {
       deletedAt: null,
     });
   });
+
+  it('findByAiSessionId looks up a live pointer by APImanus session id', async () => {
+    const doc = { _id: new Types.ObjectId(), aiSessionId: '72e7924c2cc04f5f' };
+    findOne.mockReturnValueOnce({
+      lean: () => ({ exec: () => Promise.resolve(doc) }),
+    });
+
+    await expect(svc.findByAiSessionId('72e7924c2cc04f5f')).resolves.toEqual(doc);
+    expect(findOne).toHaveBeenCalledWith({
+      aiSessionId: '72e7924c2cc04f5f',
+      deletedAt: null,
+    });
+  });
 });

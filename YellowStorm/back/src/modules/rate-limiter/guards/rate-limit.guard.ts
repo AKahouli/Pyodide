@@ -61,8 +61,10 @@ export class RateLimitGuard implements CanActivate {
     const userId = request.user?.sub ?? request.user?.id;
     const ip = getClientIp(request);
     const endpoint = `${request.method}:${context.getClass().name}:${context.getHandler().name}`;
+    const appDataId = request.params?.appDataId;
+    const scopedEndpoint = appDataId ? `${endpoint}:${appDataId}` : endpoint;
 
-    return this.rateLimiterService.generateKey(userId, ip, endpoint);
+    return this.rateLimiterService.generateKey(userId, ip, scopedEndpoint);
   }
 
   private setHeaders(

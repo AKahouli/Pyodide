@@ -6,13 +6,17 @@ import { RequirePermissions } from '../../authorization/decorators/require-permi
 import { Permissions } from '../../authorization/constants/permissions';
 import { GeminiTokenService, VoiceSessionEnvelope } from './gemini-token.service';
 import { VoiceToolService } from './voice-tool.service';
+import { requesterOpts } from '../worky-requester.util';
 import { WorkyPlanningService } from '../services/worky-planning.service';
 import { CONCIERGE_SYSTEM_PROMPT } from './voice-concierge.config';
 import {
   CreateVoiceSessionDto,
   VoiceDispatchDto,
+  VoiceListTasksDto,
   VoicePromptDto,
   VoiceStatusDto,
+  VoiceStopDto,
+  VoiceTaskDetailsDto,
   VoiceTranscriptDto,
 } from './dto/voice.dto';
 
@@ -42,7 +46,14 @@ export class WorkyVoiceController {
     const prompt = dto.streamId
       ? ((await this.planning.getVoicePrompt(user._id.toString(), dto.streamId)).prompt ?? undefined)
       : undefined;
-    return this.tokens.mintSessionToken({ resumptionHandle: dto.resumptionHandle, prompt });
+    // Tell the concierge who it is speaking with (name + role) so it greets and
+    // addresses them naturally. Same identity the orchestrator turn gets.
+    const r = requesterOpts(user);
+    return this.tokens.mintSessionToken({
+      resumptionHandle: dto.resumptionHandle,
+      prompt,
+      requester: { name: r.userName, email: r.userEmail, role: r.userRole },
+    });
   }
 
   @Get('prompt/:streamId')
@@ -79,6 +90,30 @@ export class WorkyVoiceController {
   @ApiOperation({ summary: 'Voice tool: query the current worky task status' })
   async status(@CurrentUser() user: UserDocument, @Body() dto: VoiceStatusDto) {
     return this.tools.queryStatus(user._id.toString(), dto.streamId);
+  }
+
+  @Post('tool/stop')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Voice tool: stop the whole worky run (StopSession RPC, terminal)' })
+  async stop(@CurrentUser() user: UserDocument, @Body() dto: VoiceStopDto) {
+    return this.tools.stopSession(user._id.toString(), dto.streamId);
+  }
+
+  @Post('tool/list-tasks')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Voice tool: list the stream tasks as compact summaries' })
+  async listTasks(@CurrentUser() user: UserDocument, @Body() dto: VoiceListTasksDto) {
+    return this.tools.listTasks(user._id.toString(), dto.streamId);
+  }
+
+  @Post('tool/task-details')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Voice tool: get full detail for one task' })
+  async taskDetails(@CurrentUser() user: UserDocument, @Body() dto: VoiceTaskDetailsDto) {
+    return this.tools.getTaskDetails(user._id.toString(), dto.streamId, dto.taskId);
   }
 
   @Post('tool/transcript')

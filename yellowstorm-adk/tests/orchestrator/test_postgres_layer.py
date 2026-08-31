@@ -159,7 +159,8 @@ async def test_a_reply_claims_its_wait_exactly_once(pool):
     await rm.bind_mail_wait_interrupt("s1", "m", "mail:plan@1/m@1")
 
     # Ten concurrent deliveries of the same notification; exactly one wins.
-    claims = await asyncio.gather(*[rm.claim_mail_wait(token) for _ in range(10)])
+    claims = await asyncio.gather(
+        *[rm.claim_mail_wait(token, reply_from="x@example.com") for _ in range(10)])
     won = [c for c in claims if c is not None]
     assert len(won) == 1, f"expected exactly one claim to win, got {len(won)}"
     assert won[0]["session_id"] == "s1" and won[0]["step_id"] == "m"
@@ -168,6 +169,203 @@ async def test_a_reply_claims_its_wait_exactly_once(pool):
     assert await rm.claim_mail_wait(token) is None, "a matched wait must not re-claim"
     assert await rm.claim_mail_wait("YW-nosuchtoken") is None, "unknown token must not resolve"
     print("ok  mail wait: claimed exactly once under concurrent deliveries")
+
+
+async def test_a_teams_reply_claims_its_wait_by_chat_exactly_once(pool):
+    """The Teams path carries no routing token — a reply is correlated by the 1:1
+    chat id — so claim_chat_wait keys on conversation_id. Same claim-once
+    guarantee as mail: Graph retries duplicate notifications, and only one wins."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    token = mail_token.mint()
+    chat = "19:1a2b3c@thread.v2"
+    await rm.register_mail_wait(token, session_id="t1", step_id="tm", user_id="u1")
+    await rm.bind_teams_wait_target(token, chat)          # send succeeded, chat learned
+    await rm.bind_mail_wait_interrupt("t1", "tm", "mail:plan@1/tm@1")  # step parked
+
+    claims = await asyncio.gather(
+        *[rm.claim_chat_wait(chat, reply_from="rabeb@yellowsys.fr") for _ in range(10)])
+    won = [c for c in claims if c is not None]
+    assert len(won) == 1, f"expected exactly one claim to win, got {len(won)}"
+    assert won[0]["session_id"] == "t1" and won[0]["step_id"] == "tm"
+    assert won[0]["interrupt_id"] == "mail:plan@1/tm@1"
+
+    assert await rm.claim_chat_wait(chat) is None, "a matched chat wait must not re-claim"
+    assert await rm.claim_chat_wait("19:unknown@thread.v2") is None, "unknown chat must not resolve"
+    print("ok  teams wait: claimed exactly once by chat id")
+
+
+async def test_a_teams_wait_is_not_claimable_before_the_step_parks(pool):
+    """conversation_id is bound at send, but interrupt_id only when the step
+    parks. A reply that beats the parking must not claim — there is nothing to
+    resume yet (mirrors the mail interrupt_id guard)."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    token = mail_token.mint()
+    chat = "19:notparked@thread.v2"
+    await rm.register_mail_wait(token, session_id="t2", step_id="tm", user_id="u1")
+    await rm.bind_teams_wait_target(token, chat)
+    # interrupt NOT bound yet
+    assert await rm.claim_chat_wait(chat) is None, "must not claim before the step parks"
+    await rm.bind_mail_wait_interrupt("t2", "tm", "mail:plan@1/tm@1")
+    assert await rm.claim_chat_wait(chat) is not None, "claimable once parked"
+    print("ok  teams wait: not deliverable until the step parks")
+
+
+async def test_two_open_teams_questions_in_one_chat_resolve_oldest_first(pool):
+    """Backlog #4's known ceiling: a plain Teams reply can't say which message it
+    answers, so when one chat holds two open waits the OLDEST is claimed first
+    (FIFO), and a second reply claims the next."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    chat = "19:twoq@thread.v2"
+    t_old, t_new = mail_token.mint(), mail_token.mint()
+    await rm.register_mail_wait(t_old, session_id="t3", step_id="q1", user_id="u1")
+    await rm.bind_teams_wait_target(t_old, chat)
+    await rm.bind_mail_wait_interrupt("t3", "q1", "mail:plan@1/q1@1")
+    await asyncio.sleep(0.01)  # created_at ordering
+    await rm.register_mail_wait(t_new, session_id="t3", step_id="q2", user_id="u1")
+    await rm.bind_teams_wait_target(t_new, chat)
+    await rm.bind_mail_wait_interrupt("t3", "q2", "mail:plan@1/q2@1")
+
+    first = await rm.claim_chat_wait(chat)
+    second = await rm.claim_chat_wait(chat)
+    assert first["step_id"] == "q1", "oldest open question claimed first"
+    assert second["step_id"] == "q2", "next reply claims the next-oldest"
+    assert await rm.claim_chat_wait(chat) is None, "no more open waits in the chat"
+    print("ok  teams wait: two open questions resolve oldest-first")
+
+
+async def test_open_chat_waits_lists_only_deliverable_teams_waits(pool):
+    """The poller must see a Teams wait only once it can actually take a reply:
+    the chat is known (message sent) AND the step has parked (interrupt bound).
+    A mail wait (no conversation_id) never shows up here."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    # A mail wait — must never appear (no conversation_id).
+    await rm.register_mail_wait(mail_token.mint(), session_id="p0", step_id="m",
+                                user_id="u1")
+    # A Teams wait not yet parked — chat known, interrupt not bound → not listed.
+    t1 = mail_token.mint()
+    await rm.register_mail_wait(t1, session_id="p1", step_id="tm", user_id="u1")
+    await rm.bind_teams_wait_target(t1, "19:pending@thread.v2")
+    # A Teams wait fully deliverable → listed.
+    t2 = mail_token.mint()
+    await rm.register_mail_wait(t2, session_id="p2", step_id="tm", user_id="u2")
+    await rm.bind_teams_wait_target(t2, "19:ready@thread.v2")
+    await rm.bind_mail_wait_interrupt("p2", "tm", "mail:plan@1/tm@1")
+
+    waits = await rm.open_chat_waits()
+    chats = {w["conversation_id"] for w in waits}
+    assert "19:ready@thread.v2" in chats, "a deliverable teams wait must be listed"
+    assert "19:pending@thread.v2" not in chats, "a not-yet-parked wait must not be listed"
+    assert all(w["conversation_id"] for w in waits), "mail waits (no chat) must not leak in"
+    print("ok  open_chat_waits lists only deliverable teams waits")
+
+
+async def test_a_wait_only_resolves_for_its_expected_sender(pool):
+    """A wait registered for a specific recipient must not be claimed by a reply
+    from someone else. Repro of the observed bug: an await_reply step waiting on
+    rabeb@ was resolved by an email from agara@, because claim was token-only and
+    never checked the sender."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    token = mail_token.mint()
+    await rm.register_mail_wait(token, session_id="s7", step_id="rabeb-e2e",
+                                user_id="u1", expected_from="rabeb@yellowsys.fr")
+    await rm.bind_mail_wait_interrupt("s7", "rabeb-e2e", "mail:plan@1/rabeb-e2e@1")
+
+    # The wrong sender must NOT claim it.
+    assert await rm.claim_mail_wait(token, reply_from="agara@yellowsys.fr") is None, \
+        "a reply from the wrong sender must not resolve the wait"
+
+    # The wait is still live, so the right sender still resolves it exactly once.
+    won = await rm.claim_mail_wait(token, reply_from="Rabeb Sdiri <rabeb@yellowsys.fr>")
+    assert won is not None and won["step_id"] == "rabeb-e2e", \
+        "the expected sender must resolve the wait"
+    print("ok  mail wait: only the expected sender resolves the wait")
+
+
+async def test_deliver_mail_reply_rpc_refuses_a_wrong_sender(pool):
+    """End-to-end through the gRPC entrypoint: a DeliverMailReply carrying the
+    right token but the WRONG sender must not deliver, must not resume the plan,
+    and must leave the wait open for the real recipient's reply."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.grpc_server import companion_ai_servicer as srv
+
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    token = mail_token.mint()
+    await rm.register_mail_wait(token, session_id="s10", step_id="await-rabeb",
+                                user_id="u1", expected_from="rabeb@yellowsys.fr")
+    await rm.bind_mail_wait_interrupt("s10", "await-rabeb", "mail:plan@1/await-rabeb@1")
+
+    svc_mock = MagicMock(resume_turn=AsyncMock())
+    servicer = srv.CompanionAiServicer(svc_mock, rm)
+    request = MagicMock(token=token, chat_id="", reply_body="looks fine to me",
+                        reply_from="agara@yellowsys.fr", agents=[], connectors=[])
+
+    resp = await servicer.DeliverMailReply(request, MagicMock())
+
+    assert resp.delivered is False, "a wrong-sender reply must not be delivered"
+    svc_mock.resume_turn.assert_not_awaited()  # the plan must not resume on it
+    # The wait is untouched: the real recipient can still claim it.
+    won = await rm.claim_mail_wait(token, reply_from="rabeb@yellowsys.fr")
+    assert won is not None and won["step_id"] == "await-rabeb", \
+        "the wrong-sender attempt must leave the wait open for the real sender"
+    print("ok  DeliverMailReply: wrong sender refused, wait left open")
+
+
+async def test_expected_from_is_recorded_at_send_then_enforced(pool):
+    """End-to-end of the fix: the wait is minted at projection with no sender
+    (the recipient isn't known yet), the recipient is recorded when the mail is
+    sent, and from then on only that sender resolves the wait."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    token = mail_token.mint()
+    # Minted at plan projection — no expected_from yet.
+    await rm.register_mail_wait(token, session_id="s9", step_id="await", user_id="u1")
+    await rm.bind_mail_wait_interrupt("s9", "await", "mail:plan@1/await@1")
+    # Recorded when the send_email tool actually sends (sole recipient).
+    await rm.set_mail_wait_expected_from(token, "rabeb@yellowsys.fr")
+    # Now the wrong sender can't claim it, the right one can.
+    assert await rm.claim_mail_wait(token, reply_from="agara@yellowsys.fr") is None
+    won = await rm.claim_mail_wait(token, reply_from="rabeb@yellowsys.fr")
+    assert won is not None and won["step_id"] == "await"
+    print("ok  mail wait: expected_from recorded at send, then enforced")
+
+
+async def test_a_multi_recipient_wait_resolves_for_any_recipient_only(pool):
+    """A mail to several people can be answered by any of them, so the wait
+    accepts a reply from any recipient — but still rejects a stranger (and worky's
+    own outgoing copy, whose sender is none of the recipients)."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    token = mail_token.mint()
+    await rm.register_mail_wait(token, session_id="s11", step_id="await", user_id="u1")
+    await rm.bind_mail_wait_interrupt("s11", "await", "mail:plan@1/await@1")
+    # Recorded at send: two recipients, comma-joined.
+    await rm.set_mail_wait_expected_from(token, "amine@yellowsys.fr,firas@yellowsys.fr")
+    # A stranger cannot claim it.
+    assert await rm.claim_mail_wait(token, reply_from="rabeb@yellowsys.fr") is None
+    # The second recipient (case-insensitive, full header) can.
+    won = await rm.claim_mail_wait(token, reply_from="Firas <Firas@Yellowsys.FR>")
+    assert won is not None and won["step_id"] == "await"
+    print("ok  mail wait: any recipient resolves a multi-recipient wait, strangers don't")
+
+
+async def test_a_wait_with_no_expected_sender_still_resolves(pool):
+    """Backward compatibility: when expected_from is NULL (nothing to check
+    against), any reply carrying the token resolves it, as before."""
+    rm = readmodel.ReadModel(pool, schema=SCHEMA)
+    await readmodel.init_schema(pool, SCHEMA)
+    token = mail_token.mint()
+    await rm.register_mail_wait(token, session_id="s8", step_id="m", user_id="u1")
+    await rm.bind_mail_wait_interrupt("s8", "m", "mail:plan@1/m@1")
+    won = await rm.claim_mail_wait(token, reply_from="anyone@example.com")
+    assert won is not None and won["step_id"] == "m", \
+        "with no expected sender, any reply still resolves the wait"
+    print("ok  mail wait: unconstrained wait resolves for any sender")
 
 
 async def test_waits_are_cancelled_and_expired_out_of_the_waiting_set(pool):

@@ -17,12 +17,17 @@ vi.mock('@/lib/notifications', () => ({ showError: vi.fn() }));
 vi.mock('../../query/hooks', () => ({
   useStream: () => ({ data: { title: 'Q3 Market Expansion', status: 'active' } }),
   useStreams: () => ({
-    data: [
-      { id: 's1', title: 'Q3 Market Expansion' },
-      { id: 's2', title: 'Hiring' },
-    ],
+    data: {
+      data: [
+        { id: 's1', title: 'Q3 Market Expansion' },
+        { id: 's2', title: 'Hiring' },
+      ],
+      meta: { total: 2, page: 1, limit: 100, totalPages: 1, statusCounts: {} },
+    },
   }),
   useCreateStream: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  // Consumed by useStopSession (stop button in the top bar).
+  useStopTurn: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 import { WorkyTopBar } from './WorkyTopBar';

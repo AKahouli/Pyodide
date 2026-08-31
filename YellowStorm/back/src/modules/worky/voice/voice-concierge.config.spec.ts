@@ -1,39 +1,51 @@
-import { CONCIERGE_SYSTEM_PROMPT, VOICE_TOOLS, buildLiveConstraints, buildSetupMessage } from './voice-concierge.config';
+import {
+  CONCIERGE_SYSTEM_PROMPT,
+  buildSetupMessage,
+  connectorActionsToFunctionDeclarations,
+} from './voice-concierge.config';
+
+const ACTIONS = [
+  {
+    key: 'dispatch_task',
+    description: 'Start a worky task.',
+    parameterSchema: {
+      type: 'object',
+      properties: { message: { type: 'string', description: 'the task' }, streamId: { type: 'string' } },
+      required: ['message'],
+    },
+  },
+  {
+    key: 'get_task_details',
+    description: 'Detail one task.',
+    parameterSchema: {
+      type: 'object',
+      properties: { taskId: { type: 'string' }, streamId: { type: 'string' } },
+      required: ['taskId'],
+    },
+  },
+];
 
 describe('voice-concierge.config', () => {
-  it('declares exactly the two v1 tools', () => {
-    const names = VOICE_TOOLS.map((t) => t.name).sort();
-    expect(names).toEqual(['dispatch_task', 'query_status']);
-    const dispatch = VOICE_TOOLS.find((t) => t.name === 'dispatch_task')!;
-    expect(Object.keys(dispatch.parameters!.properties!)).toContain('message');
-    expect(dispatch.parameters!.required).toContain('message');
-  });
-
-  it('binds model, voice, transcription, resumption, compression and tools', () => {
-    const c = buildLiveConstraints('gemini-live', 'Kore');
-    expect(c.model).toBe('models/gemini-live');
-    expect((c.config as any).responseModalities).toEqual(['AUDIO']);
-    expect((c.config as any).speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Kore');
-    expect((c.config as any).inputAudioTranscription).toBeDefined();
-    expect((c.config as any).outputAudioTranscription).toBeDefined();
-    expect((c.config as any).sessionResumption).toBeDefined();
-    expect((c.config as any).contextWindowCompression).toBeDefined();
-    expect((c.config as any).tools[0].functionDeclarations).toHaveLength(2);
-    expect((c.config as any).systemInstruction.parts[0].text).toContain('worky');
-    expect(CONCIERGE_SYSTEM_PROMPT).toContain('worky');
-  });
-
-  it('passes a resumption handle through when reconnecting', () => {
-    const c = buildLiveConstraints('gemini-live', 'Kore', { resumptionHandle: 'h-123' });
-    expect((c.config as any).sessionResumption.handle).toBe('h-123');
+  describe('connectorActionsToFunctionDeclarations', () => {
+    it('maps connector actions to Gemini declarations with UPPERCASE schema types', () => {
+      const decls = connectorActionsToFunctionDeclarations(ACTIONS) as any[];
+      expect(decls.map((d) => d.name)).toEqual(['dispatch_task', 'get_task_details']);
+      expect(decls[0].description).toBe('Start a worky task.');
+      expect(decls[0].parameters.type).toBe('OBJECT');
+      expect(decls[0].parameters.properties.message.type).toBe('STRING');
+      expect(decls[0].parameters.required).toEqual(['message']);
+      // camelCase param names, matching the front tool-call relay + DTOs
+      expect(Object.keys(decls[1].parameters.properties)).toContain('taskId');
+    });
   });
 
   describe('buildSetupMessage (raw WS proto shape)', () => {
-    it('nests responseModalities/speechConfig under generationConfig', () => {
-      const s = buildSetupMessage('gemini-live', 'Kore') as any;
+    const decls = connectorActionsToFunctionDeclarations(ACTIONS);
+
+    it('nests responseModalities/speechConfig under generationConfig and carries the tools', () => {
+      const s = buildSetupMessage('gemini-live', 'Kore', decls) as any;
       expect(s.model).toBe('models/gemini-live');
-      // Must NOT be at the top level (Gemini rejects that with 1007).
-      expect(s.responseModalities).toBeUndefined();
+      expect(s.responseModalities).toBeUndefined(); // Gemini rejects top-level (1007)
       expect(s.generationConfig.responseModalities).toEqual(['AUDIO']);
       expect(s.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Kore');
       expect(s.systemInstruction.parts[0].text).toContain('worky');
@@ -44,18 +56,39 @@ describe('voice-concierge.config', () => {
     });
 
     it('threads the resumption handle', () => {
-      const s = buildSetupMessage('gemini-live', 'Kore', { resumptionHandle: 'h-1' }) as any;
+      const s = buildSetupMessage('gemini-live', 'Kore', decls, { resumptionHandle: 'h-1' }) as any;
       expect(s.sessionResumption.handle).toBe('h-1');
     });
 
     it('uses a provided prompt override', () => {
-      const s = buildSetupMessage('gemini-live', 'Kore', { prompt: 'Custom persona X' }) as any;
+      const s = buildSetupMessage('gemini-live', 'Kore', decls, { prompt: 'Custom persona X' }) as any;
       expect(s.systemInstruction.parts[0].text).toBe('Custom persona X');
     });
 
     it('falls back to the default prompt when override is blank', () => {
-      const s = buildSetupMessage('gemini-live', 'Kore', { prompt: '   ' }) as any;
+      const s = buildSetupMessage('gemini-live', 'Kore', decls, { prompt: '   ' }) as any;
       expect(s.systemInstruction.parts[0].text).toContain('worky');
+    });
+
+    it('CONCIERGE_SYSTEM_PROMPT mentions worky', () => {
+      expect(CONCIERGE_SYSTEM_PROMPT).toContain('worky');
+    });
+
+    it('appends the requester name and role to the system instruction', () => {
+      const s = buildSetupMessage('gemini-live', 'Kore', decls, {
+        requester: { name: 'Rabeb Sdiri', email: 'rabeb@yellowsys.fr', role: 'Data Scientist' },
+      }) as any;
+      const text = s.systemInstruction.parts[0].text;
+      expect(text).toContain('worky'); // base persona kept
+      expect(text).toContain('Rabeb Sdiri');
+      expect(text).toContain('Data Scientist');
+    });
+
+    it('adds no identity line when there is no requester name', () => {
+      const s = buildSetupMessage('gemini-live', 'Kore', decls, {
+        requester: { name: '', email: '', role: 'x' },
+      }) as any;
+      expect(s.systemInstruction.parts[0].text).toBe(CONCIERGE_SYSTEM_PROMPT);
     });
   });
 });

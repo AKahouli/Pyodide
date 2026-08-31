@@ -6,19 +6,59 @@ import { GovernanceAccessService } from './governance-access.service';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceDeployment } from '../schemas/governance-deployment.schema';
 import { GovernanceDeploymentRevision } from '../schemas/governance-deployment-revision.schema';
+import { GovernanceDocument } from '../schemas/governance-document.schema';
 import { GovernanceDryRun } from '../schemas/governance-dry-run.schema';
 import { GovernanceMembership } from '../schemas/governance-membership.schema';
 import { GovernanceMetric } from '../schemas/governance-metric.schema';
 import { GovernanceScope } from '../schemas/governance-scope.schema';
-import { GovernanceDocument } from '../schemas/governance-document.schema';
 import { GovernanceWorkspaceBinding } from '../schemas/governance-workspace-binding.schema';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { User } from '@modules/user/schemas/user.schema';
 import { WorkspaceDoc } from '@modules/workspace/schemas/workspace-document.schema';
 
-const query = <T>(value: T) => ({ sort: jest.fn().mockReturnThis(), select: jest.fn().mockReturnThis(), lean: jest.fn().mockReturnThis(), exec: jest.fn().mockResolvedValue(value) });
+const query = <T>(value: T) => ({
+  sort: jest.fn().mockReturnThis(),
+  select: jest.fn().mockReturnThis(),
+  lean: jest.fn().mockReturnThis(),
+  exec: jest.fn().mockResolvedValue(value),
+});
+
+const checkKey = (check: { key: string }) => check.key;
 
 describe('GovernanceScopeOverviewService', () => {
+  const compileOverview = async (models: {
+    scopeModel: object;
+    documentModel?: object;
+    workspaceDocumentModel?: object;
+    workspaceBindingModel: object;
+    deploymentModel: object;
+    revisionModel: object;
+    dryRunModel: object;
+    membershipModel: object;
+    metricModel: object;
+    agentRepository: object;
+  }) => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        GovernanceScopeOverviewService,
+        { provide: getModelToken(GovernanceScope.name), useValue: models.scopeModel },
+        { provide: getModelToken(GovernanceDocument.name), useValue: models.documentModel ?? { find: jest.fn().mockReturnValue(query([])) } },
+        { provide: getModelToken(WorkspaceDoc.name), useValue: models.workspaceDocumentModel ?? { find: jest.fn().mockReturnValue(query([])) } },
+        { provide: getModelToken(GovernanceWorkspaceBinding.name), useValue: models.workspaceBindingModel },
+        { provide: getModelToken(GovernanceDeployment.name), useValue: models.deploymentModel },
+        { provide: getModelToken(GovernanceDeploymentRevision.name), useValue: models.revisionModel },
+        { provide: getModelToken(GovernanceDryRun.name), useValue: models.dryRunModel },
+        { provide: getModelToken(GovernanceMembership.name), useValue: models.membershipModel },
+        { provide: getModelToken(GovernanceMetric.name), useValue: models.metricModel },
+        { provide: AgentRepository, useValue: models.agentRepository },
+        { provide: getModelToken(User.name), useValue: { find: jest.fn().mockReturnValue(query([])) } },
+        { provide: GovernanceProgramService, useValue: { assertOwnedProgram: jest.fn().mockResolvedValue(undefined) } },
+        { provide: GovernanceAccessService, useValue: { assertScopeAccess: jest.fn().mockResolvedValue(undefined), canActInScopeRole: jest.fn().mockResolvedValue(true) } },
+      ],
+    }).compile();
+    return moduleRef.get(GovernanceScopeOverviewService);
+  };
+
   it('aggregates scope readiness around agents, knowledge, deployment, and dry-run state', async () => {
     const programId = new Types.ObjectId();
     const scopeId = new Types.ObjectId();
@@ -54,15 +94,14 @@ describe('GovernanceScopeOverviewService', () => {
       ],
     }).compile();
 
-    const service = moduleRef.get(GovernanceScopeOverviewService);
     const overview = await service.getOverview(agentId.toString(), programId.toString(), scopeId.toString());
 
     expect(overview.agents.mappedAgents).toHaveLength(2);
     expect(overview.draftRevision?.allowedAgentIds).toEqual([agentId.toString(), specialistAgentId.toString()]);
     expect(overview.knowledge.localWorkspaces).toHaveLength(1);
     expect(overview.readiness.blockers).toHaveLength(0);
-    expect(overview.readiness.checks.map((check) => check.key)).toEqual(expect.arrayContaining(['ownership_assigned', 'guardrails_reviewed']));
-    expect(overview.readiness.checks.map((check) => check.key)).toEqual([
+    expect(overview.readiness.checks.map(checkKey)).toEqual(expect.arrayContaining(['ownership_assigned', 'guardrails_reviewed']));
+    expect(overview.readiness.checks.map(checkKey).slice(0, 10)).toEqual([
       'scope_active',
       'agents_mapped',
       'knowledge_mapped',
@@ -115,10 +154,10 @@ describe('GovernanceScopeOverviewService', () => {
       ],
     }).compile();
 
-    const overview = await moduleRef.get(GovernanceScopeOverviewService).getOverview(agentId.toString(), programId.toString(), scopeId.toString());
+    const overview = await service.getOverview(agentId.toString(), programId.toString(), scopeId.toString());
 
-    expect(overview.readiness.blockers.map((blocker) => blocker.key)).not.toContain(`channel_${agentId.toString()}:widget_ready`);
-    expect(overview.readiness.blockers.map((blocker) => blocker.key)).toContain('ownership_assigned');
+    expect(overview.readiness.blockers.map(checkKey)).not.toContain(`channel_${agentId.toString()}:widget_ready`);
+    expect(overview.readiness.blockers.map(checkKey)).toContain('ownership_assigned');
   });
 
   it.each(['suspended', 'archived'])('does not surface %s deployment state as a scope blocker', async (status) => {

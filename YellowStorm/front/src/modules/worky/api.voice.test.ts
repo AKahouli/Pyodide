@@ -4,7 +4,9 @@ import {
   getVoicePrompt,
   setVoicePrompt,
   voiceDispatch,
+  voiceListTasks,
   voiceStatus,
+  voiceTaskDetails,
   voiceTranscript,
 } from './api';
 import apiClient from '@/lib/api/client';
@@ -47,6 +49,20 @@ describe('voice api', () => {
     const res = await voiceStatus('s1');
     expect(apiClient.post).toHaveBeenCalledWith('/worky/voice/tool/status', { streamId: 's1' });
     expect(res.status).toBe('running');
+  });
+
+  it('voiceListTasks posts streamId and unwraps the task list', async () => {
+    (apiClient.post as any).mockResolvedValue({ data: { data: { tasks: [{ id: 't1', title: 'A', lane: 'running', executionState: 'running', blocked: false }] } } });
+    const res = await voiceListTasks('s1');
+    expect(apiClient.post).toHaveBeenCalledWith('/worky/voice/tool/list-tasks', { streamId: 's1' });
+    expect(res.tasks[0].id).toBe('t1');
+  });
+
+  it('voiceTaskDetails posts streamId + taskId', async () => {
+    (apiClient.post as any).mockResolvedValue({ data: { data: { id: 't1', title: 'A', result: 'done', artifacts: [] } } });
+    const res = await voiceTaskDetails('s1', 't1');
+    expect(apiClient.post).toHaveBeenCalledWith('/worky/voice/tool/task-details', { streamId: 's1', taskId: 't1' });
+    expect(res.result).toBe('done');
   });
 
   it('voiceTranscript posts the turn', async () => {

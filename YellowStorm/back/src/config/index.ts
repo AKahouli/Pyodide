@@ -17,4 +17,5 @@ export { default as litellmConfig } from './litellm.config';
 export { default as playbookFlowConfig } from './playbook-flow.config';
 export { default as dataRoomConfig } from './data-room.config';
 export { default as semanticModelConfig } from './semantic-model.config';
+export { default as appDataConfig } from './app-data.config';
 export { configValidationSchema } from './config.schema';

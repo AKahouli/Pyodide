@@ -122,6 +122,7 @@ describe('AgentService connector skill inheritance', () => {
       findAllActive: jest.fn().mockResolvedValue([]),
       findBySlug: jest.fn().mockResolvedValue(null),
       getManyForHydration: jest.fn().mockResolvedValue(new Map()),
+      findBySlug: jest.fn().mockResolvedValue(null),
     };
     const modelsService = {
       findById: jest.fn(),
@@ -717,6 +718,76 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].chatbot.model).toBe('explicit-fallback');
     expect(result[0].agent_params?.params).toEqual(expect.objectContaining({ omit_temperature: 'true' }));
     expect(result[0].agent_params?.params.temperature).toBeUndefined();
+  });
+
+  describe('sandbox scope injection', () => {
+    const CI_ID = 'aaaaaaaaaaaaaaaaaaaaaaaa';
+    const PB_ID = 'bbbbbbbbbbbbbbbbbbbbbbbb';
+    const scope = {
+      userId,
+      scopeType: 'playbook' as const,
+      scopeId: 'playbook:exec-42',
+      laneId: 'main',
+    };
+
+    const setup = () => {
+      const ctx = createService();
+      const objectId = new Types.ObjectId();
+      ctx.agentRepository.findByIds.mockResolvedValue([
+        makeRecord({
+          _id: objectId.toString(),
+          name: 'Agent 1',
+          instruction: 'Follow instructions',
+          agentType: '333333333333333333333333',
+          connectors: [CI_ID, PB_ID],
+        }),
+      ]);
+      ctx.agentTypeService.getManyForHydration.mockResolvedValue(
+        new Map([['333333333333333333333333', { id: '333333333333333333333333', name: 'Worker', slug: 'worker', skills: [] }]]),
+      );
+      ctx.connectorService.findByIds.mockResolvedValue([
+        {
+          id: CI_ID,
+          name: 'Code Interpreter',
+          slug: 'code-interpreter',
+          actions: [{ key: 'run', label: 'Run', description: '', isEnabled: true }],
+          referencedSkillIds: [],
+        },
+        {
+          id: PB_ID,
+          name: 'Playbook MCP',
+          slug: 'playbook-mcp',
+          actions: [{ key: 'start', label: 'Start', description: '', isEnabled: true }],
+          referencedSkillIds: [],
+        },
+      ]);
+      return { ...ctx, agentId: objectId.toString() };
+    };
+
+    it('stamps playbook scope onto the code-interpreter binding', async () => {
+      const { service, agentId } = setup();
+
+      const agents = await service.buildGrpcAgentsForPlaybook(userId, [agentId], undefined, 'exec-42', scope);
+
+      const ci: any = agents[0].connector_bindings?.find(
+        (b: any) => b.connector_slug === 'code-interpreter',
+      );
+      expect(ci.auth_headers['x-sandbox-scope-id']).toBe('playbook:exec-42');
+      expect(ci.auth_headers['x-sandbox-scope-type']).toBe('playbook');
+      expect(ci.auth_headers['x-user-id']).toBe(userId);
+    });
+
+    it('leaves the existing playbook-mcp X-YellowStorm-* headers intact and unscoped', async () => {
+      const { service, agentId } = setup();
+
+      const agents = await service.buildGrpcAgentsForPlaybook(userId, [agentId], undefined, 'exec-42', scope);
+
+      const pb: any = agents[0].connector_bindings?.find(
+        (b: any) => b.connector_slug === 'playbook-mcp',
+      );
+      expect(pb.auth_headers['X-YellowStorm-Agent-Id']).toBeDefined();
+      expect(pb.auth_headers['x-sandbox-scope-id']).toBeUndefined();
+    });
   });
 
   describe('canWriteAgent', () => {

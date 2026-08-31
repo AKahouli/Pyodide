@@ -958,6 +958,7 @@ export interface AdminModelResponse {
   types: string[];
   isActive: boolean;
   isDefault: boolean;
+  isConversationV2Default: boolean;
   omitTemperature: boolean;
   inputModalities: ModelInputModality[];
   maxInputTokens: number | null;

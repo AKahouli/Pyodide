@@ -18,9 +18,20 @@ class Status(str, Enum):
     BLOCKED = "blocked"      # suspended: awaiting user input or a long-running task
     COMPLETED = "completed"
     FAILED = "failed"
+    # "canceled" (one L) is the spelling the client's board contract uses
+    # (front .../worky/status.ts OrchStepStatus) — a "cancelled" step matches no
+    # Kanban lane and silently vanishes from the UI. _missing_ below still parses
+    # legacy "cancelled" rows written before this was aligned.
+    CANCELLED = "canceled"  # terminated by a user StopSession / converse cancel — not an error
+
+    @classmethod
+    def _missing_(cls, value):
+        if value == "cancelled":  # legacy read-model rows (pre-spelling-fix)
+            return cls.CANCELLED
+        return None
 
     def is_terminal(self) -> bool:
-        return self in (Status.COMPLETED, Status.FAILED)
+        return self in (Status.COMPLETED, Status.FAILED, Status.CANCELLED)
 
 
 class Step(BaseModel):
@@ -73,6 +84,10 @@ class Plan(BaseModel):
     # planner, leaving no plain sibling to copy an executor name from.
     executor_id: Optional[str] = None
     executor_name: Optional[str] = None
+    # Amend operations on EXISTING steps ({"op","step_id","description"}),
+    # populated only by the converse planner and consumed by converse_turn.
+    # Never projected or persisted — the plan proper is just `steps`.
+    ops: List[dict] = Field(default_factory=list)
 
     def step(self, step_id: str) -> Optional[Step]:
         return next((s for s in self.steps if s.id == step_id), None)

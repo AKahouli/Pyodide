@@ -45,8 +45,8 @@
     "shared": "Shared with you",
     "open": "Open the application",
     "conversation": "Go to the conversation",
-    "conversationReadOnly": "Open conversation (read-only)",
     "share": "Share app & conversation",
+    "manageUsers": "Manage app users",
     "delete": "Delete",
     "deleteTitle": "Remove app from Marketplace?",
     "deleteDescription": "The conversation and hosted app will be kept. Publishing again will add it back to Marketplace.",
@@ -58,5 +58,45 @@
     "deleteError": "Failed to remove the app.",
     "unshareSuccess": "Shared app removed from your Marketplace.",
     "unshareError": "Failed to remove the shared app."
+  },
+  "endUsers": {
+    "title": "App users & permissions",
+    "description": "Registered users and their CRUD permissions for this deployed app.",
+    "descriptionNamed": "Manage users and permissions for \"{{title}}\".",
+    "hint": "New users have no permissions by default. Explicitly grant the CRUD access they need.",
+    "searchPlaceholder": "Search by name or email…",
+    "refresh": "Refresh",
+    "retry": "Retry",
+    "userCount": "{{count}} users",
+    "userCountOne": "1 user",
+    "noResults": "No users match your search.",
+    "loading": "Loading users…",
+    "emptyTitle": "No registered users yet",
+    "empty": "People who register on your deployed app will appear here.",
+    "loadError": "Failed to load app users.",
+    "saveError": "Failed to update permissions.",
+    "statusError": "Failed to update account status.",
+    "registeredAt": "Registered {{date}}",
+    "statusActive": "Active",
+    "statusDisabled": "Disabled",
+    "userColumn": "User",
+    "statusColumn": "Account",
+    "grantsColumn": "Permissions",
+    "actionsColumn": "Shortcuts",
+    "enableAccount": "Enable account",
+    "disableAccount": "Disable account",
+    "grantsSummary": "{{enabled}}/{{total}} permissions",
+    "presets": {
+      "label": "Apply preset",
+      "none": "No permissions",
+      "readOnly": "Read only",
+      "full": "Full access"
+    },
+    "grants": {
+      "create": "Create",
+      "read": "Read",
+      "update": "Update",
+      "delete": "Delete"
+    }
   }
 }

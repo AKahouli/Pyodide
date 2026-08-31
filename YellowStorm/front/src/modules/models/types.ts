@@ -16,6 +16,7 @@ export interface Model {
   types: string[];
   isActive: boolean;
   isDefault: boolean;
+  isConversationV2Default: boolean;
   omitTemperature: boolean;
   inputModalities: Array<'text' | 'image'>;
   maxInputTokens: number | null;
@@ -65,6 +66,9 @@ export interface ModelsActions {
 
   // Refresh models (force fetch)
   refreshModels: () => Promise<void>;
+
+  /** Push Conversation V2 default change to all consumers (chat, composer) without refetch. */
+  syncConversationV2Default: (modelId: string | null) => void;
 
   // Clear store
   reset: () => void;

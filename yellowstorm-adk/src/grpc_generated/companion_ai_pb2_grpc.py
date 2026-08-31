@@ -5,7 +5,7 @@ import warnings
 
 from src.grpc_generated import companion_ai_pb2 as companion__ai__pb2
 
-GRPC_GENERATED_VERSION = '1.71.2'
+GRPC_GENERATED_VERSION = '1.80.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in companion_ai_pb2_grpc.py depends on'
+        + ' but the generated code in companion_ai_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -63,6 +63,11 @@ class CompanionAiStub(object):
                 '/yellowstorm.orchestrator.v1.CompanionAi/DeliverMailReply',
                 request_serializer=companion__ai__pb2.DeliverMailReplyRequest.SerializeToString,
                 response_deserializer=companion__ai__pb2.DeliverMailReplyResponse.FromString,
+                _registered_method=True)
+        self.ListOpenChatWaits = channel.unary_unary(
+                '/yellowstorm.orchestrator.v1.CompanionAi/ListOpenChatWaits',
+                request_serializer=companion__ai__pb2.ListOpenChatWaitsRequest.SerializeToString,
+                response_deserializer=companion__ai__pb2.ListOpenChatWaitsResponse.FromString,
                 _registered_method=True)
 
 
@@ -109,16 +114,30 @@ class CompanionAiServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def DeliverMailReply(self, request, context):
-        """Hand an email reply to the step waiting for it. The routing token travelled
-        in the outbound mail and came back on the reply; only worky can turn it into
-        a session/step/interrupt, so the caller passes the token and worky resolves
-        and resumes internally — it does NOT reimplement continuation, it delegates
-        to the same resume the RunTask path uses.
+        """Hand a reply (email OR Teams) to the step waiting for it. Mail carries a
+        routing token that travelled in the outbound message; Teams carries none —
+        Graph correlates the reply structurally, so the caller passes the chat id
+        instead. Either way only worky can turn the identifier into a
+        session/step/interrupt: the caller passes token OR chat_id and worky
+        resolves and resumes internally, delegating to the same resume the RunTask
+        path uses rather than reimplementing continuation.
 
-        Claim-once: a token resolves for exactly one delivery. A duplicate (Graph
-        retries anything it thinks failed) returns delivered=false rather than
-        resuming the step a second time. Acks immediately like RunTask, so the
+        Claim-once: an identifier resolves for exactly one delivery. A duplicate
+        (Graph retries anything it thinks failed) returns delivered=false rather
+        than resuming the step a second time. Acks immediately like RunTask, so the
         caller's webhook can answer Graph inside its timeout.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListOpenChatWaits(self, request, context):
+        """The Teams chats worky is currently waiting on a reply in. Teams carries no
+        routing token and worky cannot subscribe to a chat it does not know, so the
+        backend polls: it asks which chats are open, reads each for a human reply,
+        and hands any back via DeliverMailReply(chat_id=...). Only waits that are
+        deliverable (message sent -> chat known, and step parked -> interrupt bound)
+        are listed; a claimed wait drops off the list, which is what stops the poll.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -156,6 +175,11 @@ def add_CompanionAiServicer_to_server(servicer, server):
                     servicer.DeliverMailReply,
                     request_deserializer=companion__ai__pb2.DeliverMailReplyRequest.FromString,
                     response_serializer=companion__ai__pb2.DeliverMailReplyResponse.SerializeToString,
+            ),
+            'ListOpenChatWaits': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListOpenChatWaits,
+                    request_deserializer=companion__ai__pb2.ListOpenChatWaitsRequest.FromString,
+                    response_serializer=companion__ai__pb2.ListOpenChatWaitsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -320,6 +344,33 @@ class CompanionAi(object):
             '/yellowstorm.orchestrator.v1.CompanionAi/DeliverMailReply',
             companion__ai__pb2.DeliverMailReplyRequest.SerializeToString,
             companion__ai__pb2.DeliverMailReplyResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListOpenChatWaits(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/yellowstorm.orchestrator.v1.CompanionAi/ListOpenChatWaits',
+            companion__ai__pb2.ListOpenChatWaitsRequest.SerializeToString,
+            companion__ai__pb2.ListOpenChatWaitsResponse.FromString,
             options,
             channel_credentials,
             insecure,

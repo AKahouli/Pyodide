@@ -6,6 +6,7 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
+import { Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { Subscription } from 'rxjs';
@@ -17,10 +18,12 @@ import { ConversationV2SessionService } from './conversation-v2-session.service'
 import { ConversationV2SessionAccessService } from './conversation-v2-session-access.service';
 import { ConversationV2StreamGatewayService } from './conversation-v2-stream-gateway.service';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
+import { SandboxRuntimeContext } from '@common/runtime/sandbox-scope';
 import { SkillService } from '@modules/skill/skill.service';
 import type { IGrpcSkill } from '@modules/skill/interfaces/skill.interface';
 import { ConnectorService } from '@modules/connector/connector.service';
 import type { IGrpcConnector } from '@modules/connector/interfaces/connector.interface';
+import { ModelsService } from '@modules/models/models.service';
 import type { ConversationV2Event } from '../types/conversation-v2.types';
 
 export interface StartStreamRequest {
@@ -77,6 +80,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     private readonly workspaceDocuments: WorkspaceDocumentService,
     private readonly skillService: SkillService,
     private readonly connectorService: ConnectorService,
+    private readonly modelsService: ModelsService,
   ) {}
 
   onModuleDestroy(): void {
@@ -136,6 +140,11 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     const eventCount = (pointer as unknown as { eventCount?: number }).eventCount ?? 0;
     const isFirstMessage = eventCount === 0;
 
+    // Resolve the model actually used by this turn: an explicit per-message
+    // model wins; otherwise the conversation-v2 default (admin-configured on an
+    // existing model, reusing its config) and then the global default.
+    const model = req.model ?? (await this.resolveConversationV2DefaultModel());
+
     // Persist + emit the user's prompt before invoking gRPC, so a reloading
     // client sees what was asked. event_id comes from the client when provided
     // so the pipe frame replaces the optimistic echo instead of duplicating it.
@@ -167,7 +176,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     this.activeStreams.get(userId)!.add(sessionId);
 
     if (isFirstMessage) {
-      void this.nameGenerator.generate(req.message, req.model).then((title) => {
+      void this.nameGenerator.generate(req.message, model).then((title) => {
         if (!title) return;
         const titleEvent = {
           type: 'title',
@@ -178,7 +187,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
           },
         } as unknown as ConversationV2Event;
         // Route through the same persistence + push path as AI events.
-        this.processEvent(userId, sessionId, titleEvent, req.model, null, {
+        this.processEvent(userId, sessionId, titleEvent, model, null, {
           done: () => undefined,
         }).catch(() => undefined);
       });
@@ -189,14 +198,20 @@ export class ConversationV2StreamService implements OnModuleDestroy {
       : [];
     // Resolve the selected connectors into gRPC bindings with the current user's
     // auth (token + identity headers) resolved per request, exactly like v1.
+    const runtimeContext: SandboxRuntimeContext = {
+      userId,
+      scopeType: 'conversation',
+      scopeId: `conversation:${sessionId}`,
+      laneId: 'main',
+    };
     const connectors = req.connectorIds?.length
-      ? await this.connectorService.findByIdsForGrpc(req.connectorIds, userId)
+      ? await this.connectorService.findByIdsForGrpc(req.connectorIds, userId, runtimeContext)
       : [];
     // Persist the current selection on the session so it survives a reload
     // (mirrors v1's conversation-level `selectedSkills`). Refreshed every send.
     await this.sessions.setSelectedSkills(sessionId, req.skillIds ?? []);
     await this.sessions.setSelectedConnectors(sessionId, req.connectorIds ?? []);
-    this.runGrpc(userId, grpcUserId, sessionId, aiSessionId, systemWorkspaceId, req, skills, connectors);
+    this.runGrpc(userId, grpcUserId, sessionId, aiSessionId, systemWorkspaceId, req, model, skills, connectors);
   }
 
   /**
@@ -219,6 +234,31 @@ export class ConversationV2StreamService implements OnModuleDestroy {
 
   // ===================== internals =====================
 
+  /**
+   * Resolve the conversation-v2 default model identifier (LiteLLM model name)
+   * when the client does not send one explicitly: the admin-configured
+   * conversation-v2 default (e.g. the OpenCode-provider DeepSeek V4 Flash)
+   * wins, then the global admin default, then nothing (the AI service falls
+   * back to its own default). Never throws — a lookup failure degrades to the
+   * legacy omission behaviour.
+   */
+  private async resolveConversationV2DefaultModel(): Promise<string | undefined> {
+    try {
+      const conversationV2Default =
+        await this.modelsService.getConversationV2DefaultModel();
+      const identifier = this.modelsService.getModelIdentifier(conversationV2Default);
+      if (identifier) return identifier;
+
+      const globalDefault = await this.modelsService.getDefaultModel();
+      return this.modelsService.getModelIdentifier(globalDefault) || undefined;
+    } catch (err) {
+      this.logger.warn(
+        `Failed to resolve conversation-v2 default model: ${(err as Error).message}`,
+      );
+      return undefined;
+    }
+  }
+
 
   private runGrpc(
     actorUserId: string,
@@ -227,6 +267,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     aiSessionId: string,
     systemWorkspaceId: string | null,
     req: StartStreamRequest,
+    model: string | undefined,
     skills: IGrpcSkill[],
     connectors: IGrpcConnector[],
   ): void {
@@ -236,12 +277,34 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     // the terminal handlers wait for in-flight appends to drain.
     let pending: Promise<void> = Promise.resolve();
     let terminalEmitted = false;
+    let terminalReceived = false;
     let firstAssistantMessageEventId: string | null = null;
 
     const finish = () => {
       const active = this.activeCalls.get(key);
       if (active?.idleTimer) clearTimeout(active.idleTimer);
       this.cleanup(actorUserId, sessionId);
+    };
+
+    const emitTerminalDone = async (): Promise<void> => {
+      if (terminalEmitted) return;
+      terminalEmitted = true;
+      const doneEvent = {
+        type: 'done',
+        payload: {
+          event_id: randomUUID(),
+          timestamp: Math.floor(Date.now() / 1000),
+        },
+      } as unknown as ConversationV2Event;
+      let sequence: number | undefined;
+      try {
+        const r = await this.eventStore.append(sessionId, doneEvent);
+        sequence = r.sequence;
+        await this.pointerWriter.apply(sessionId, doneEvent).catch(() => undefined);
+      } catch {
+        /* persistence failed — still push so the client can react */
+      }
+      this.push(actorUserId, sessionId, doneEvent, sequence);
     };
 
     const emitTerminalError = async (message: string): Promise<void> => {
@@ -289,7 +352,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
       : req.message;
 
     const subscription = this.grpcClient
-      .chat(grpcUserId, aiSessionId, gRpcMessage, req.model, req.connectorRepo, skills, connectors)
+      .chat(grpcUserId, aiSessionId, gRpcMessage, model, req.connectorRepo, skills, connectors)
       .subscribe({
         next: (event) => {
           resetIdle();
@@ -297,8 +360,11 @@ export class ConversationV2StreamService implements OnModuleDestroy {
           // flight upstream. Nothing to persist or push; resetting the idle
           // timer above is the entire point.
           if (event.type === 'heartbeat') return;
+          if (event.type === 'done' || event.type === 'error' || event.type === 'wait') {
+            terminalReceived = true;
+          }
           pending = pending.then(() =>
-            this.processEvent(actorUserId, sessionId, event, req.model, systemWorkspaceId, {
+            this.processEvent(actorUserId, sessionId, event, model, systemWorkspaceId, {
               done: () => undefined,
               setFirstAssistantId: (id) => {
                 firstAssistantMessageEventId = id;
@@ -317,12 +383,59 @@ export class ConversationV2StreamService implements OnModuleDestroy {
           });
         },
         complete: () => {
-          void pending.catch(() => undefined).then(finish);
+          void pending.catch(() => undefined).then(async () => {
+            if (!terminalReceived) {
+              await emitTerminalDone();
+            }
+            finish();
+          });
         },
       });
 
     this.activeCalls.set(key, { subscription, idleTimer: null });
     resetIdle();
+  }
+
+  /**
+   * Push an application_component from the app-runtime finalize path when
+   * OpenCode does not relay it over gRPC/SSE.
+   */
+  async publishApplicationComponent(
+    userId: string,
+    sessionOrWorkspaceId: string,
+    payload: {
+      event_id: string;
+      timestamp: number;
+      url: string;
+      title?: string;
+      ceph_path?: string;
+      files_tree?: import('../types/conversation-v2.types').FilesTreeNode | null;
+      file_count?: number;
+      revision_id?: string;
+    },
+  ): Promise<void> {
+    const sessionId = await this.resolveConversationSessionId(sessionOrWorkspaceId);
+    const event = {
+      type: 'application_component',
+      payload,
+    } as unknown as ConversationV2Event;
+    const { sequence } = await this.eventStore.append(sessionId, event);
+    await this.pointerWriter.apply(sessionId, event).catch(() => undefined);
+    this.push(userId, sessionId, event, sequence);
+  }
+
+  /**
+   * Runtime bindings are keyed by APImanus `aiSessionId` (`workspaceId`).
+   * Conversation events are keyed by the YellowStorm pointer `_id`.
+   */
+  private async resolveConversationSessionId(sessionOrWorkspaceId: string): Promise<string> {
+    const byAi = await this.sessions.findByAiSessionId(sessionOrWorkspaceId);
+    if (byAi?._id) return byAi._id.toString();
+    if (Types.ObjectId.isValid(sessionOrWorkspaceId)) {
+      const byId = await this.sessions.getById(sessionOrWorkspaceId);
+      if (byId?._id) return byId._id.toString();
+    }
+    throw new NotFoundException(`Invalid session id ${sessionOrWorkspaceId}`);
   }
 
   /** Persist one event, run side effects, and push it to the user's pipe. */

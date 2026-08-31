@@ -120,6 +120,54 @@ export class PlaybookFlowMailGraphClientService {
     return payload.value ?? [];
   }
 
+  /**
+   * Recent messages in a 1:1 Teams chat, for the reply poller. Graph forbids
+   * $filter/$orderby on chatMessage, so this reads the newest page and drops
+   * anything older than `since` client-side. Re-reading is safe — claim-once
+   * downstream makes a replay a no-op — so a generous overlap costs nothing.
+   */
+  async listChatMessagesSince(
+    userId: string,
+    mailboxAppKey: string,
+    chatId: string,
+    since: Date,
+    top = 20,
+  ): Promise<Array<Record<string, any>>> {
+    const { token: accessToken } =
+      await this.connectedAppTokenService.getM365ValidToken(userId, mailboxAppKey);
+    const url = `${GRAPH_BASE}/chats/${encodeURIComponent(chatId)}/messages?$top=${top}`;
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Graph chat list failed: ${response.status} ${body}`);
+    }
+    const payload = (await response.json()) as { value?: Array<Record<string, any>> };
+    const cutoff = since.getTime();
+    return (payload.value ?? []).filter((m) => {
+      const ts = Date.parse((m.createdDateTime as string) ?? '');
+      return Number.isNaN(ts) || ts >= cutoff;
+    });
+  }
+
+  /**
+   * The signed-in account's own AAD id — used to tell worky's OWN outgoing Teams
+   * message apart from the human's reply in the same chat, so the poller never
+   * feeds worky's own message back as the answer.
+   */
+  async getMyId(userId: string, mailboxAppKey: string): Promise<string> {
+    const { token: accessToken } =
+      await this.connectedAppTokenService.getM365ValidToken(userId, mailboxAppKey);
+    const response = await fetch(`${GRAPH_BASE}/me?$select=id`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Graph /me failed: ${response.status} ${body}`);
+    }
+    const payload = (await response.json()) as { id?: string };
+    return payload.id ?? '';
+  }
+
   async listAttachments(userId: string, mailboxAppKey: string, messageId: string) {
     const { token: accessToken } =
       await this.connectedAppTokenService.getM365ValidToken(userId, mailboxAppKey);

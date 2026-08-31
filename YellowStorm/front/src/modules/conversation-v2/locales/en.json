@@ -20,6 +20,9 @@
       "empty": "No models found."
     }
   },
+  "questionChoices": {
+    "fallbackTitle": "Choose an option to continue"
+  },
   "conversation": {
     "emptyTitle": "Send a message to start",
     "emptyDescription": "The agent will respond and may use tools and a virtual machine to complete your task.",
@@ -40,7 +43,18 @@
     "jumpToLive": "Jump to live",
     "tabCode": "Code",
     "tabPreview": "Preview",
+    "tabData": "Data",
     "resizeHandle": "Drag to resize preview"
+  },
+  "appData": {
+    "loading": "Loading app data…",
+    "disabled": "App Data is not enabled for this workspace.",
+    "loadError": "Failed to load app data.",
+    "refresh": "Refresh data",
+    "schemaVersion": "Schema version",
+    "noTables": "No tables yet.",
+    "envDev": "DEV",
+    "envProd": "PROD"
   },
   "nodepod": {
     "inBrowser": "In-browser preview",
@@ -141,8 +155,8 @@
     }
   },
   "deploy": {
-    "publish": "Publish",
-    "publishing": "Publishing…",
+    "publish": "Deploy",
+    "publishing": "Deploying…",
     "update": "Update",
     "liveUrl": "Live URL",
     "copy": "Copy link",
